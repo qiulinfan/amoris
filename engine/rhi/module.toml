@@ -1,0 +1,6 @@
+name = "pocket_rhi"
+kind = "static_library"
+description = "Render hardware interface on wgpu-native (WebGPU API). Frames render into an offscreen RGBA8 target; presenting to a window is an optional blit, so headless and windowed runs produce identical pixels."
+sources = ["src/**/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core", "wgpu"]

@@ -1,0 +1,7 @@
+name = "hello"
+entry = "scripts/main.ts"
+
+[window]
+title = "Pocket: hello"
+width = 960
+height = 540

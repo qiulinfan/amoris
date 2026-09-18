@@ -1,0 +1,6 @@
+name = "catch2"
+kind = "static_library"
+description = "Catch2 v3.16.0 amalgamated, provides main() for test executables. BSL-1.0."
+sources = ["src/catch_amalgamated.cpp"]
+public_include = ["include"]
+third_party = true

@@ -12,7 +12,7 @@ Pocket3D is an AI-agent-first game engine started from zero in 2026. Its human c
 |---|---|---|
 | Engine runtime and editor core | C++26 (feature allowlist in ADR 0001) | Anything that runs per frame or ships in the runtime. |
 | Build tool `pocket` | Rust (pinned in `rust-toolchain.toml`) | The only binary needed to bootstrap a checkout: toolchains, dependency fetch, build graph, codegen, TypeScript transform, asset cooking, tests, packaging, MCP server. |
-| Gameplay, UI, editor extensions, SDK | TypeScript 7 on V8 | The public face of the engine: game logic, all UI (editor and runtime, ADR 0004) and editor extensions. Type declarations are generated from engine metadata, never hand-written. |
+| Gameplay, UI, editor extensions, SDK | TypeScript 7 on a JIT engine (JavaScriptCore now, V8 planned; ADR 0005) | The public face of the engine: game logic, all UI (editor and runtime, ADR 0004) and editor extensions. Type declarations are generated from engine metadata, never hand-written. |
 | Offline tooling | Python 3.14 with uv | Analysis, data conversion, experiments. Never on the build or runtime critical path; the engine must build and run without Python. |
 
 Lua is not used. CMake is not used for our own code (it may be invoked by `pocket` to build a third-party library as a cached foreign step).
@@ -28,7 +28,26 @@ Lua is not used. CMake is not used for our own code (it may be invoked by `pocke
 7. User-facing explanations match the language the human uses (currently Chinese). Code, identifiers, commit messages and repository documentation are English.
 8. Commit only when asked. AI-authored commits end with the agent's co-author trailer.
 
-## Repository layout (planned; directories appear when their first real content lands)
+## Daily commands
+
+```bash
+export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself is unusable
+./scripts/bootstrap.sh                 # once: build tools/pocket, fetch dependencies
+./.pocket/pocket build [--config release] [--json]
+./.pocket/pocket run hello -- --headless --frames 120 --json --capture out.png
+./.pocket/pocket test [--filter core] --json
+./.pocket/pocket ts samples/hello      # bundle only
+./.pocket/pocket graph                 # module graph
+```
+
+Rules that follow from the implementation:
+
+- Engine modules declare `public_deps` and `private_deps` in `module.toml`; a header in `include/` must not include a private dependency's headers (SDL, JavaScriptCore stay inside their modules).
+- Simulation code never reads the wall clock; use the tick's `dt`. Randomness comes from the seeded `Random` (C++) or `random()` (TypeScript).
+- Anything observable by an agent goes through `expose()` in scripts or the report; do not print to stdout from the engine (stdout is the JSON channel).
+- Golden values under `tests/evidence/` change only deliberately, with the reason in the commit message.
+
+## Repository layout
 
 ```
 pocket.toml        workspace manifest: targets, platforms, toolchain and dependency pins

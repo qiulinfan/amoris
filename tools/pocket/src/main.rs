@@ -1,0 +1,128 @@
+//! `pocket`: the Pocket3D build tool.
+//!
+//! One binary that reads the workspace manifest (`pocket.toml`) and every
+//! `module.toml`, resolves the module graph, fetches or builds third-party
+//! dependencies into `.pocket/`, writes a Ninja build graph, runs it, and
+//! exposes the same operations with `--json` output for agents.
+
+mod commands;
+mod deps;
+mod graph;
+mod manifest;
+mod ninja;
+mod report;
+mod toolchain;
+mod ts;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(name = "pocket", version, about = "Pocket3D build tool")]
+struct Cli {
+    /// Workspace root (defaults to the nearest ancestor containing pocket.toml).
+    #[arg(long, global = true)]
+    root: Option<PathBuf>,
+    /// Emit one JSON document instead of human-readable text.
+    #[arg(long, global = true)]
+    json: bool,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Fetch prebuilt dependencies and build foreign (CMake) dependencies into .pocket/.
+    Setup {
+        /// Re-fetch and rebuild even when the stamp matches.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Report toolchain and dependency status.
+    Doctor,
+    /// Generate the Ninja graph and build the requested targets.
+    Build {
+        /// Module names to build (default: everything).
+        targets: Vec<String>,
+        #[arg(long, default_value = "debug")]
+        config: String,
+        /// Only write build.ninja and compile_commands.json.
+        #[arg(long)]
+        generate_only: bool,
+    },
+    /// Build and run an executable module or a sample project.
+    Run {
+        target: String,
+        #[arg(long, default_value = "debug")]
+        config: String,
+        /// Arguments passed to the executable after `--`.
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Build and run every test module, then summarise.
+    Test {
+        #[arg(long, default_value = "debug")]
+        config: String,
+        /// Substring filter on test module names.
+        #[arg(long)]
+        filter: Option<String>,
+    },
+    /// Transform and bundle a TypeScript project into one JavaScript file.
+    Ts {
+        /// Project directory containing project.toml, or an entry .ts file.
+        project: PathBuf,
+        /// Output bundle path (default: build/ts/<project>.js).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Remove build outputs (keeps .pocket/ dependencies).
+    Clean,
+    /// Print the resolved module graph.
+    Graph,
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let json = cli.json;
+    let result = run(cli);
+    match result {
+        Ok(rep) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rep).unwrap());
+            } else {
+                print!("{}", rep.human());
+            }
+            if !rep.ok {
+                std::process::exit(1);
+            }
+        }
+        Err(err) => {
+            if json {
+                let rep = report::Report::failure("error", format!("{err:#}"));
+                println!("{}", serde_json::to_string_pretty(&rep).unwrap());
+            } else {
+                eprintln!("pocket: error: {err:#}");
+            }
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<report::Report> {
+    let root = match cli.root {
+        Some(r) => r,
+        None => manifest::find_root(&std::env::current_dir()?)?,
+    };
+    let ws = manifest::Workspace::load(&root)?;
+    match cli.command {
+        Command::Setup { force } => commands::setup(&ws, force),
+        Command::Doctor => commands::doctor(&ws),
+        Command::Build { targets, config, generate_only } => commands::build(&ws, &config, &targets, generate_only),
+        Command::Run { target, config, args } => commands::run(&ws, &config, &target, &args),
+        Command::Test { config, filter } => commands::test(&ws, &config, filter.as_deref()),
+        Command::Ts { project, out } => commands::ts_bundle(&ws, &project, out.as_deref()),
+        Command::Clean => commands::clean(&ws),
+        Command::Graph => commands::graph(&ws),
+    }
+}

@@ -1,0 +1,7 @@
+name = "pocket_platform"
+kind = "static_library"
+description = "Window, OS events and input state on top of SDL3. Headless mode creates no window and touches no OS video subsystem. SDL stays private to this module."
+sources = ["src/**/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core"]
+private_deps = ["sdl3"]

@@ -1,0 +1,7 @@
+name = "pocket_script"
+kind = "static_library"
+description = "ScriptHost interface for running the TypeScript bundle, with a JavaScriptCore backend (JIT). See ADR 0005 for why JavaScriptCore is the reference backend on macOS."
+sources = ["src/**/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core"]
+private_deps = ["javascriptcore"]

@@ -1,0 +1,11 @@
+{
+  "note": "state hash of samples/hello after 120 headless ticks at 60 Hz; regenerate deliberately when the sample or the hash contract changes",
+  "frames": 120,
+  "state_hash": "08cb4ca0c92b98cd",
+  "state": {
+    "hue": 0.1,
+    "ball.y": 0.3913,
+    "ball.grounded": false,
+    "bounces": 2
+  }
+}

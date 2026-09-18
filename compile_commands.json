@@ -1,0 +1,200 @@
+[
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/fs.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include  -c /Users/qiulinfan/Desktop/aipocket/engine/core/src/fs.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/fs.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/core/src/fs.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/fs.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/log.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include  -c /Users/qiulinfan/Desktop/aipocket/engine/core/src/log.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/log.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/core/src/log.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/log.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/math.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include  -c /Users/qiulinfan/Desktop/aipocket/engine/core/src/math.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/math.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/core/src/math.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/math.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/time.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include  -c /Users/qiulinfan/Desktop/aipocket/engine/core/src/time.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/time.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/core/src/time.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_core/src/time.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_platform/src/platform.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/platform/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/sdl3-3.4.16/include  -c /Users/qiulinfan/Desktop/aipocket/engine/platform/src/platform.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_platform/src/platform.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/platform/src/platform.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_platform/src/platform.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_rhi/src/device.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/rhi/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/wgpu-29.0.1.1/include  -c /Users/qiulinfan/Desktop/aipocket/engine/rhi/src/device.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_rhi/src/device.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/rhi/src/device.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_rhi/src/device.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_script/src/jsc_host.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/script/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include  -c /Users/qiulinfan/Desktop/aipocket/engine/script/src/jsc_host.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_script/src/jsc_host.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/script/src/jsc_host.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_script/src/jsc_host.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/stb/src/stb_impl.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1  -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include  -c /Users/qiulinfan/Desktop/aipocket/third_party/stb/src/stb_impl.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/stb/src/stb_impl.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/stb/src/stb_impl.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/stb/src/stb_impl.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_app/src/runtime.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/app/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/platform/include -I/Users/qiulinfan/Desktop/aipocket/engine/rhi/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/wgpu-29.0.1.1/include -I/Users/qiulinfan/Desktop/aipocket/engine/script/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include  -c /Users/qiulinfan/Desktop/aipocket/engine/app/src/runtime.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_app/src/runtime.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/app/src/runtime.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_app/src/runtime.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_runtime/src/main.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/app/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/platform/include -I/Users/qiulinfan/Desktop/aipocket/engine/rhi/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/wgpu-29.0.1.1/include -I/Users/qiulinfan/Desktop/aipocket/engine/script/include  -c /Users/qiulinfan/Desktop/aipocket/engine/runtime/src/main.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_runtime/src/main.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/runtime/src/main.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_runtime/src/main.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/catch2/src/catch_amalgamated.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/catch2/include  -c /Users/qiulinfan/Desktop/aipocket/third_party/catch2/src/catch_amalgamated.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/catch2/src/catch_amalgamated.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/catch2/src/catch_amalgamated.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/catch2/src/catch_amalgamated.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/flecs/src/flecs.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1  -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/third_party/flecs/src/flecs.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/flecs/src/flecs.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/flecs/src/flecs.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/flecs/src/flecs.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGConfig.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGConfig.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGConfig.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGConfig.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGConfig.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGEnums.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGEnums.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGEnums.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGEnums.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGEnums.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNode.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGNode.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNode.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGNode.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNode.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNodeLayout.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGNodeLayout.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNodeLayout.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGNodeLayout.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNodeLayout.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNodeStyle.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGNodeStyle.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNodeStyle.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGNodeStyle.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGNodeStyle.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGPixelGrid.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGPixelGrid.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGPixelGrid.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGPixelGrid.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGPixelGrid.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGValue.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGValue.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGValue.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/YGValue.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/YGValue.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/AbsoluteLayout.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/AbsoluteLayout.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/AbsoluteLayout.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/AbsoluteLayout.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/AbsoluteLayout.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/Baseline.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/Baseline.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/Baseline.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/Baseline.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/Baseline.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/Cache.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/Cache.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/Cache.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/Cache.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/Cache.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/CalculateLayout.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/CalculateLayout.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/CalculateLayout.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/CalculateLayout.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/CalculateLayout.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/FlexLine.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/FlexLine.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/FlexLine.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/FlexLine.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/FlexLine.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/PixelGrid.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/PixelGrid.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/PixelGrid.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/algorithm/PixelGrid.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/algorithm/PixelGrid.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/config/Config.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/config/Config.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/config/Config.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/config/Config.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/config/Config.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/debug/AssertFatal.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/debug/AssertFatal.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/debug/AssertFatal.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/debug/AssertFatal.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/debug/AssertFatal.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/debug/Log.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/debug/Log.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/debug/Log.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/debug/Log.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/debug/Log.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/event/event.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/event/event.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/event/event.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/event/event.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/event/event.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/node/LayoutResults.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/node/LayoutResults.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/node/LayoutResults.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/node/LayoutResults.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/node/LayoutResults.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/node/Node.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/yoga/.  -c /Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/node/Node.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/node/Node.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/yoga/yoga/node/Node.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/yoga/yoga/node/Node.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/core_tests/core_tests.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/catch2/include  -c /Users/qiulinfan/Desktop/aipocket/tests/core_tests/core_tests.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/core_tests/core_tests.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/tests/core_tests/core_tests.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/core_tests/core_tests.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/runtime_tests/runtime_tests.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/app/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/platform/include -I/Users/qiulinfan/Desktop/aipocket/engine/rhi/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/wgpu-29.0.1.1/include -I/Users/qiulinfan/Desktop/aipocket/engine/script/include -I/Users/qiulinfan/Desktop/aipocket/third_party/catch2/include  -c /Users/qiulinfan/Desktop/aipocket/tests/runtime_tests/runtime_tests.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/runtime_tests/runtime_tests.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/tests/runtime_tests/runtime_tests.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/runtime_tests/runtime_tests.cpp.o"
+  }
+]

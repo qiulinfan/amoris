@@ -1,0 +1,100 @@
+{
+  "ok": true,
+  "project": "hello",
+  "bundle": "build/ts/hello.js",
+  "seed": 1,
+  "tick_rate": 60.0,
+  "platform": {
+    "headless": true,
+    "pixel_width": 320,
+    "pixel_height": 180
+  },
+  "gpu": {
+    "api": "webgpu",
+    "implementation": "wgpu-native",
+    "adapter": "Apple M5",
+    "driver": "",
+    "backend": "metal",
+    "width": 320,
+    "height": 180,
+    "surface": false
+  },
+  "script": {
+    "engine": "JavaScriptCore",
+    "jit": true
+  },
+  "frames": 120,
+  "ticks": 120,
+  "sim_seconds": 2.0,
+  "state": {
+    "hue": 0.1,
+    "ball.y": 0.3913,
+    "ball.grounded": false,
+    "bounces": 2
+  },
+  "state_hash": "08cb4ca0c92b98cd",
+  "tick_hash_tail": [
+    "45ec43d4c42e3ba8",
+    "67d13d66f12108c4",
+    "3f09ec472f71214a",
+    "5c41d8d699ca8a5e",
+    "2d5a34e8d7b9ace0",
+    "9f069f5e82ac8fe7",
+    "72af9a25eeff4a12",
+    "08cb4ca0c92b98cd"
+  ],
+  "clear_color": [
+    0.550000011920929,
+    0.45100000500679016,
+    0.30250000953674316,
+    1.0
+  ],
+  "log_tail": [
+    {
+      "seq": 1,
+      "t_ms": 0.0,
+      "level": "info",
+      "cat": "rhi",
+      "msg": "adapter Apple M5 (), backend metal, target 320x180, surface no"
+    },
+    {
+      "seq": 2,
+      "t_ms": 1.8105,
+      "level": "info",
+      "cat": "script",
+      "msg": "hello from TypeScript on Pocket",
+      "fields": {
+        "tickRate": 60,
+        "headless": true,
+        "firstRandom": 0.7871484458446503
+      }
+    },
+    {
+      "seq": 3,
+      "t_ms": 9.096584,
+      "tick": 46,
+      "level": "info",
+      "cat": "script",
+      "msg": "bounce",
+      "fields": {
+        "tick": 46,
+        "bounces": 1,
+        "speed": 5.373666666666661
+      }
+    },
+    {
+      "seq": 4,
+      "t_ms": 14.610125,
+      "tick": 111,
+      "level": "info",
+      "cat": "script",
+      "msg": "bounce",
+      "fields": {
+        "tick": 111,
+        "bounces": 2,
+        "speed": 3.670099999999998
+      }
+    }
+  ],
+  "elapsed_ms": 27.780541999999997
+}

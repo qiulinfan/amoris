@@ -4,6 +4,8 @@ Work proceeds in vertical slices; each milestone ends with something that builds
 
 ## M0: hello (build tool v0)
 
+Status: done on macOS (2026-09-18), evidence in `tests/evidence/m0/`. Deviations from the plan below: the script engine is JavaScriptCore instead of V8 (ADR 0005), the executor is Ninja itself rather than n2 (n2 embedding is a tool milestone), and CI is not set up yet.
+
 Goal: `pocket setup && pocket build && pocket run hello` opens an SDL3 window on macOS; a TypeScript script compiled by `pocket` runs in V8 and calls an engine API that logs; `pocket test` runs a Catch2 suite and a headless golden-image test without a display; CI builds macOS and Ubuntu.
 
 - `tools/pocket` v0: workspace and module manifests, clang toolchain discovery, Ninja-compatible graph executed by n2, `compile_commands.json`, prebuilt fetch by content hash (V8, tsgo), oxc-based TypeScript transform, `--json` output for build and test.
