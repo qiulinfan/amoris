@@ -1,0 +1,48 @@
+# Roadmap
+
+Work proceeds in vertical slices; each milestone ends with something that builds, runs and is verified by `pocket test` on CI. A milestone starts only when the previous one's evidence is in `tests/evidence/`.
+
+## M0: hello (build tool v0)
+
+Goal: `pocket setup && pocket build && pocket run hello` opens an SDL3 window on macOS; a TypeScript script compiled by `pocket` runs in V8 and calls an engine API that logs; `pocket test` runs a Catch2 suite and a headless golden-image test without a display; CI builds macOS and Ubuntu.
+
+- `tools/pocket` v0: workspace and module manifests, clang toolchain discovery, Ninja-compatible graph executed by n2, `compile_commands.json`, prebuilt fetch by content hash (V8, tsgo), oxc-based TypeScript transform, `--json` output for build and test.
+- V8 monolith build recipe and the first prebuilt artifact (macOS arm64).
+- `engine/core`: log, time, fixed step, seeded RNG, the `std::expected` error convention, no globals.
+- `engine/platform`: SDL3 window, input, main loop, headless mode.
+- `engine/script`: isolate, context, module loader, one hello binding.
+
+## M1: world model and metadata
+
+ECS decision (ADR 0003), component metadata DSL, code generation for bindings, `.d.ts` and serialization, the TypeScript component API with zero-copy typed-array views, the in-engine TypeScript test runner, the scene format (text, schema, stable order), and the first version of the agent eval suite (models given only the SDK types and docs must complete sample tasks). Ports the Phase 1 config and component specs from PocketEngine as tests.
+
+## M2: graphics
+
+RHI decision (ADR 0002), mesh, material, light and camera, offscreen render targets, frame capture and golden images. Ports the Phase 1 math conventions spec (right-handed, +Y up, depth [0,1], counter-clockwise front faces, column-major matrices) as tests.
+
+## M3: UI system and editor shell
+
+Pocket UI (ADR 0004): element tree with a DOM-like API, Yoga flexbox layout, CSS subset, FreeType and HarfBuzz text, the 2D batch renderer on the RHI, TSX components with signals, tree snapshots and selector queries, golden-image UI tests. Then the editor shell on top of it: docking, menus, document and command model, scene view, inspector generated from metadata, play and stop, an MCP server exposing the same commands as the CLI, evidence capture hooks as a product feature. No Dear ImGui at any milestone; before M3, verification is headless.
+
+## M4: physics
+
+Port of the aipocket `Physics3D` engine (bodies, shapes, SAT manifolds, sequential impulses, sleeping, triggers, raycasts) with its unit tests, bridged to the ECS and TypeScript.
+
+## M5: assets, cook, package
+
+Asset registry, content-addressed derived-data cache, cooking, packaging for the three desktop platforms, the first dream-game templates.
+
+## M6: ship by link
+
+Web export: the core compiled to wasm32 with Emscripten and SDL3, the RHI on browser WebGPU, scripts running on the browser's JavaScript engine. Portability of the core and the WebGPU-shaped RHI are constraints from M0 so that this milestone is a port, not a rewrite.
+
+## Reuse of existing tests
+
+| Source | Kept as | Notes |
+|---|---|---|
+| PocketEngine `tests/pocket3d/phase1_math_spec_tests.cpp` | M2 convention spec | Rewritten against the new RHI; the conventions stay. |
+| PocketEngine `phase1_config_tests`, `phase1_components_tests`, `phase1_test_spec_tests` | M1 specs | Config and scene formats change; the behaviors are the spec. |
+| PocketEngine editor bridge and AI service tests | M3 reference | The protocol becomes MCP-first; tests are re-derived. |
+| aipocket `physics3d_tests.cpp` (14 cases) | M4, ported nearly as is | Pure C++, no engine dependency. |
+| aipocket OpenGL and Metal smoke tests | M2 reference | The backend API changes; the checks (clear, draw, readback, pixel identity across backends) carry over. |
+| aipocket runtime physics smoke tests and the `Pocket3DPhysics` Lua project | M4 sample | Rewritten in TypeScript as the first sample project. |
