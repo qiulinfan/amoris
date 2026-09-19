@@ -1,7 +1,7 @@
 // Navigation (docs/design/navigation.md): a walkability grid baked from the static colliders or a
 // tile map, and A* paths over it, for scripts that steer things and agents that ask "can it get
 // there" and "which way". Every call is a runtime command.
-import { command, type EntityRef, type Vec3 } from "./world";
+import { command, world, type EntityRef, type Vec3 } from "./world";
 
 export interface NavPath {
     /** From the start cell's center to the goal's; y is the ground height (or the map's plane). */
@@ -67,6 +67,8 @@ export interface NavAgentInfo {
     /** Length of the remaining path. */
     distance: number;
     neighbours: number;
+    /** Mode 3: the slot relative to the leader (x along its heading, z or y to its right). */
+    offset: Vec3;
     queue: number;
     priority: number;
     /** Whether the agent slowed down behind another this tick. */
@@ -78,6 +80,21 @@ export interface NavAgentInfo {
 }
 
 export type NavPoint = Vec3 | [number, number, number] | EntityRef;
+
+/** The NavAgent fields a walk, follow or slot may set alongside its mode. */
+export interface AgentOptions {
+    speed?: number;
+    radius?: number;
+    arrive?: number;
+    replan?: number;
+    avoidance?: number;
+    queue?: number;
+    priority?: number;
+}
+
+function entityId(ref: EntityRef): number {
+    return typeof ref === "number" ? ref : (world.find(ref) ?? 0);
+}
 
 export const nav = {
     /**
@@ -112,6 +129,44 @@ export const nav = {
         return command("nav.info");
     },
     /** Every NavAgent with its state and plan, ordered by entity id (docs/design/navigation.md, Agents). */
+    /** Send an entity walking to a point (it gets a NavAgent in mode 1; the options are the agent's fields). */
+    walk(entity: EntityRef, goal: Vec3, options: AgentOptions = {}): void {
+        world.set(entity, "NavAgent", { ...options, mode: 1, goal });
+    },
+    /** Make an entity follow another (mode 2). */
+    follow(entity: EntityRef, target: EntityRef, options: AgentOptions = {}): void {
+        world.set(entity, "NavAgent", { ...options, mode: 2, target: entityId(target) });
+    },
+    /**
+     * Keep a slot beside a leader (mode 3): `forward` along the leader's heading (negative is
+     * behind), `side` to its right; the follower matches the leader's speed and steers to the slot.
+     */
+    slot(entity: EntityRef, leader: EntityRef, offset: { forward: number; side: number }, options: AgentOptions = {}): void {
+        const xy = nav.info().plane === "xy";
+        world.set(entity, "NavAgent", { ...options, mode: 3, target: entityId(leader), offset: { x: offset.forward, y: xy ? offset.side : 0, z: xy ? 0 : offset.side } });
+    },
+    /**
+     * Put a group in formation behind or around a leader: a column (one behind the other), a line
+     * (beside the leader, right then left), a wedge (a V behind it) or a circle around it, `spacing`
+     * apart (default 1). Returns each member's slot.
+     */
+    formation(leader: EntityRef, members: EntityRef[], options: AgentOptions & { shape?: "column" | "line" | "wedge" | "circle"; spacing?: number } = {}): Array<{ entity: EntityRef; forward: number; side: number }> {
+        const { shape = "column", spacing = 1, ...agent } = options;
+        const n = members.length;
+        const slots = members.map((entity, i) => {
+            const k = Math.ceil((i + 1) / 2), sign = i % 2 === 0 ? 1 : -1;
+            if (shape === "line") return { entity, forward: 0, side: sign * k * spacing };
+            if (shape === "wedge") return { entity, forward: -k * spacing, side: sign * k * spacing };
+            if (shape === "circle") { const a = (2 * Math.PI * (i + 1)) / (n + 1); return { entity, forward: Math.cos(a) * spacing, side: Math.sin(a) * spacing }; }
+            return { entity, forward: -(i + 1) * spacing, side: 0 };
+        });
+        for (const s of slots) nav.slot(s.entity, leader, { forward: s.forward, side: s.side }, agent);
+        return slots;
+    },
+    /** Leave the entity where it is (mode 0). */
+    stop(entity: EntityRef): void {
+        world.set(entity, "NavAgent", { mode: 0 });
+    },
     agents(): NavAgentInfo[] {
         return command("nav.agents");
     },

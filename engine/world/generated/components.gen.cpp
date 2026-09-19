@@ -1308,6 +1308,7 @@ void to_json(Json& j, const NavAgent& v) {
     j["mode"] = v.mode;
     vec_to_json(j["goal"], v.goal);
     j["target"] = v.target;
+    vec_to_json(j["offset"], v.offset);
     j["speed"] = v.speed;
     j["radius"] = v.radius;
     j["arrive"] = v.arrive;
@@ -1327,6 +1328,7 @@ void from_json(const Json& j, NavAgent& v) {
     scalar_from_json(j, "mode", v.mode);
     if (j.is_object() && j.contains("goal")) vec_from_json(j["goal"], v.goal);
     scalar_from_json(j, "target", v.target);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
     scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "radius", v.radius);
     scalar_from_json(j, "arrive", v.arrive);
@@ -1348,6 +1350,9 @@ void hash_component(StateHasherRef& h, const NavAgent& v) {
     h.f32(v.goal.y);
     h.f32(v.goal.z);
     h.i64(static_cast<std::int64_t>(v.target));
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
     h.f32(v.speed);
     h.f32(v.radius);
     h.f32(v.arrive);
@@ -1373,6 +1378,10 @@ std::size_t numeric_span(NavAgent& v, std::string_view path, float** out) {
     if (path == "goal.x") { *out = &v.goal.x; return 1; }
     if (path == "goal.y") { *out = &v.goal.y; return 1; }
     if (path == "goal.z") { *out = &v.goal.z; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
     if (path == "speed") { *out = &v.speed; return 1; }
     if (path == "radius") { *out = &v.radius; return 1; }
     if (path == "arrive") { *out = &v.arrive; return 1; }
@@ -1642,10 +1651,11 @@ constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane."},
     FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component."},
 }};
-constexpr std::array<FieldInfo, 16> kNavAgentFields = {{
-    FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target."},
+constexpr std::array<FieldInfo, 17> kNavAgentFields = {{
+    FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations)."},
     FieldInfo{"goal", "vec3", "The point to reach in mode 1."},
-    FieldInfo{"target", "entity", "The entity to follow in mode 2."},
+    FieldInfo{"target", "entity", "The entity to follow in mode 2, or the leader whose slot to keep in mode 3."},
+    FieldInfo{"offset", "vec3", "In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes."},
     FieldInfo{"speed", "f32", "Top speed, units per second."},
     FieldInfo{"radius", "f32", "The agent's radius for keeping clear of other agents and obstacles."},
     FieldInfo{"arrive", "f32", "Distance from the goal at which the agent stops (state 2)."},

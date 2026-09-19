@@ -430,6 +430,7 @@ struct NavAgent {
     std::int32_t mode = 0;
     Vec3 goal{0.0f, 0.0f, 0.0f};
     std::uint64_t target = 0;
+    Vec3 offset{0.0f, 0.0f, 0.0f};
     float speed = 3.0f;
     float radius = 0.35f;
     float arrive = 0.3f;

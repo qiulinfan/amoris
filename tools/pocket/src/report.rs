@@ -34,10 +34,6 @@ impl Report {
     pub fn failure(command: &str, summary: impl Into<String>) -> Self {
         Report { command: command.to_string(), ok: false, summary: summary.into(), diagnostics: vec![], data: Value::Null, elapsed_ms: 0 }
     }
-    pub fn with_data(mut self, data: Value) -> Self {
-        self.data = data;
-        self
-    }
     pub fn human(&self) -> String {
         let mut out = String::new();
         for d in &self.diagnostics {

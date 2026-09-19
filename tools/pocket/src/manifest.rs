@@ -19,8 +19,11 @@ pub fn find_root(start: &Path) -> Result<PathBuf> {
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceSection {
+    /// The workspace's name and version: part of the manifest's contract, read by people, not by the tool yet.
+    #[allow(dead_code)]
     pub name: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub version: String,
     /// Directories scanned (recursively) for module.toml files.
     #[serde(default = "default_module_dirs")]
@@ -93,7 +96,9 @@ pub struct Dependency {
     pub link_flags: Vec<String>,
     #[serde(default)]
     pub defines: Vec<String>,
+    /// Recorded for the dependency's provenance; the tool does not act on it.
     #[serde(default)]
+    #[allow(dead_code)]
     pub license: String,
     /// Role on the wasm target: "" (cmake sources are rebuilt with Emscripten; prebuilt and system
     /// dependencies are skipped), "port" (an Emscripten port supplies it), "skip".
@@ -145,8 +150,9 @@ pub struct ModuleFile {
     /// Executable file name (defaults to the module name).
     #[serde(default)]
     pub output: Option<String>,
-    /// Extra description shown by `pocket graph`.
+    /// A note for readers of the manifest; the tool does not print it.
     #[serde(default)]
+    #[allow(dead_code)]
     pub description: String,
     /// Suppress warnings-as-errors for third-party code.
     #[serde(default)]

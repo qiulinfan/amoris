@@ -141,6 +141,13 @@ class Nav {
         bool partial = false;
         bool planned = false;
     };
+    // A formation leader as its followers see it: where it was last tick, the way it last moved and how fast.
+    struct Lead {
+        Vec3 last;
+        float hu = 1, hv = 0, speed = 0;
+        std::uint64_t tick = 0;
+        bool seen = false;
+    };
     void reapply_obstacles();
     void build_mesh();
     [[nodiscard]] Result<Path> grid_path(Vec3 from, Vec3 to, bool smooth) const;
@@ -149,6 +156,7 @@ class Nav {
     NavMesh mesh_;
     std::vector<Obstacle> obstacles_;
     std::map<world::EntityId, AgentRun> runs_;
+    std::map<world::EntityId, Lead> leads_;
     CrowdStats crowd_;
 };
 

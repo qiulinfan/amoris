@@ -343,9 +343,10 @@ fields = [
 name = "NavAgent"
 doc = "A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions."
 fields = [
-    { name = "mode", type = "i32", default = 0, doc = "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target." },
+    { name = "mode", type = "i32", default = 0, doc = "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations)." },
     { name = "goal", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The point to reach in mode 1." },
-    { name = "target", type = "entity", default = 0, doc = "The entity to follow in mode 2." },
+    { name = "target", type = "entity", default = 0, doc = "The entity to follow in mode 2, or the leader whose slot to keep in mode 3." },
+    { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes." },
     { name = "speed", type = "f32", default = 3.0, doc = "Top speed, units per second." },
     { name = "radius", type = "f32", default = 0.35, doc = "The agent's radius for keeping clear of other agents and obstacles." },
     { name = "arrive", type = "f32", default = 0.3, doc = "Distance from the goal at which the agent stops (state 2)." },

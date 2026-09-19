@@ -19,7 +19,6 @@ fn q(s: &str) -> String {
 
 pub struct Generated {
     pub build_dir: PathBuf,
-    pub targets: Vec<String>,
 }
 
 pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> Result<Generated> {
@@ -140,7 +139,7 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     writeln!(n, "build all: phony {}", targets.join(" "))?;
     writeln!(n, "default all")?;
     std::fs::write(build_dir.join("build.ninja"), n)?;
-    Ok(Generated { build_dir, targets })
+    Ok(Generated { build_dir })
 }
 
 fn dedup(v: Vec<String>) -> Vec<String> {

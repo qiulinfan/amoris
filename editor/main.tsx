@@ -10,6 +10,7 @@ import type { Orbit } from "./orbit";
 import * as history from "./history";
 import { axisDelta, layoutFor, multiplyQuat, planeDelta, yawQuat } from "./gizmo";
 import type { Axis, GizmoLayout } from "./gizmo";
+import type { Vec3 } from "pocket";
 
 // ------------------------------------------------------------------------------------ state
 interface TreeRow { id: number; name: string; path: string; depth: number }
@@ -29,6 +30,8 @@ const selection = signal<number[]>([]);   // ordered; the last one is the primar
 const playing = signal(false);
 const paused = signal(true);
 const overlays = signal(false);   // colliders and joints drawn as lines in the scene pane
+const snap = signal(false);       // gizmo drags land on the grid: half units, 15 degrees, quarter scales
+const SNAP_MOVE = 0.5, SNAP_ANGLE = Math.PI / 12, SNAP_SCALE = 0.25;
 const tab = signal<"console" | "events" | "transcript">("console");
 const status = signal({ tick: 0, hash: "", entities: 0, frames: 0 });
 const rows = signal<TreeRow[]>([]);
@@ -49,7 +52,7 @@ let lastViewport = "";
 let viewportRect = { x: 0, y: 0, w: 0, h: 0 };
 let mainRect = { x: 0, y: 0, w: 0, h: 0 };
 let frame = 0;
-let dragState: { ids: number[]; before: Map<number, Transform>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number } | null = null;
+let dragState: { ids: number[]; before: Map<number, Transform>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
 let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
 
 /** JSON copy (structuredClone is not in the script host). */
@@ -133,9 +136,10 @@ function refreshBottom(): void {
 function loadLayout(): void {
     try {
         const r = command<{ text: string }>("project.read", { path: LAYOUT_PATH });
-        const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: "console" | "events" | "transcript" };
+        const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: "console" | "events" | "transcript"; snap?: boolean };
         if (j.layout) layout.set({ ...DEFAULT_LAYOUT, ...j.layout });
         if (j.tab === "console" || j.tab === "events" || j.tab === "transcript") tab.set(j.tab);
+        if (j.snap === true) snap.set(true);
     } catch {
         // No saved layout yet.
     }
@@ -143,7 +147,7 @@ function loadLayout(): void {
 
 function saveLayout(): void {
     try {
-        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab() } });
+        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab(), snap: snap() } });
     } catch (e) {
         notice.set(`Layout not saved: ${String(e)}`);
     }
@@ -509,30 +513,39 @@ function gizmoDown(axis: Axis): void {
     if (!lay) return;
     const before = new Map<number, Transform>();
     for (const id of ids) before.set(id, clone(world.get(id, "Transform")!));
-    dragState = { ids, before, layout: lay, axis, turned: 0, scaled: 1 };
+    dragState = { ids, before, layout: lay, axis, turned: 0, scaled: 1, moved: { x: 0, y: 0, z: 0 } };
+}
+
+/** Round to the nearest multiple of `step`. */
+function snapTo(v: number, step: number): number {
+    return Math.round(v / step) * step;
 }
 
 function gizmoDrag(e: UiEvent): void {
     if (!dragState) return;
     const s = pixelScale();
     const dx = (e.dx ?? 0) * s, dy = (e.dy ?? 0) * s;
+    // Every drag is applied from the transforms at its start, so snapping rounds the whole move
+    // (with Snap on: positions to half units on the dragged axes, turns to 15 degrees, scales to quarters).
+    const snapping = snap();
     if (dragState.axis === "rotate") {
         // Horizontal drag turns the selection around the world Y axis, 100 px per radian.
         dragState.turned += dx * 0.01;
-        const q = yawQuat(dragState.turned);
+        const q = yawQuat(snapping ? snapTo(dragState.turned, SNAP_ANGLE) : dragState.turned);
         for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { rotation: multiplyQuat(q, before.rotation) });
     } else if (dragState.axis === "scale") {
         // Drag right to grow, left to shrink; uniform, relative to the size at the start of the drag.
         dragState.scaled = Math.max(0.01, dragState.scaled * Math.exp(dx * 0.005));
         const k = dragState.scaled;
-        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { scale: { x: before.scale.x * k, y: before.scale.y * k, z: before.scale.z * k } });
+        const scaled = (v: number) => (snapping ? Math.max(SNAP_SCALE, snapTo(v * k, SNAP_SCALE)) : v * k);
+        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { scale: { x: scaled(before.scale.x), y: scaled(before.scale.y), z: scaled(before.scale.z) } });
     } else {
         const delta = dragState.axis === "plane" ? planeDelta(selected(), dx, dy) : axisDelta(dragState.layout, dragState.axis, dx, dy);
-        for (const id of dragState.ids) {
-            const t = world.get(id, "Transform");
-            if (!t) continue;
-            world.set(id, "Transform", { position: { x: t.position.x + delta.x, y: t.position.y + delta.y, z: t.position.z + delta.z } });
-        }
+        const m = dragState.moved;
+        m.x += delta.x; m.y += delta.y; m.z += delta.z;
+        const onAxis = (a: "x" | "y" | "z") => dragState!.axis === "plane" || dragState!.axis === a;
+        const at = (v: number, a: "x" | "y" | "z") => (snapping && onAxis(a) ? snapTo(v + m[a], SNAP_MOVE) : v + m[a]);
+        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { position: { x: at(before.position.x, "x"), y: at(before.position.y, "y"), z: at(before.position.z, "z") } });
     }
     command("world.update_transforms");   // paused: no tick will do it before the handles are placed
     refreshSelected();
@@ -614,6 +627,12 @@ function toggleOverlays(): void {
     overlays.set(on);
 }
 
+function toggleSnap(): void {
+    snap.set(!snap());
+    saveLayout();
+    notice.set(snap() ? "Snap on: moves to half units, turns to 15 degrees, scales to quarters" : "Snap off");
+}
+
 function Toolbar() {
     const s = status();
     historyVersion();
@@ -635,6 +654,7 @@ function Toolbar() {
             <Button label="Delete" name="delete" onClick={deleteSelected} disabled={selection().length === 0} />
             <box width={12} />
             <Button label={overlays() ? "Overlays: on" : "Overlays"} name="overlays" onClick={toggleOverlays} />
+            <Button label={snap() ? "Snap: on" : "Snap"} name="snap" onClick={toggleSnap} />
             <box flex={1} />
             <Label text={`tick ${s.tick}`} muted name="tick" />
             <Label text={`${s.entities} entities`} muted name="entities" />

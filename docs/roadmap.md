@@ -42,6 +42,8 @@ The original plan was a port of the aipocket `Physics3D` engine (bodies, shapes,
 
 Asset registry, content-addressed derived-data cache, cooking, packaging for the three desktop platforms, the first dream-game templates.
 
+Status (2026-09-19): partly there. Packaging exists for macOS (`pocket pack`) and the web (`--web`); Windows and Linux packs wait on their platforms (ADR 0005). Assets load from the project's files through the asset store (`assets.list`, `assets.describe`, `assets.reload`), with no registry file and no content-addressed derived-data cache: the only cook step is the font subset of a web pack, and glTF, images, sounds and maps are read as they are. Templates are the samples: `pocket new <name> --from <sample>` copies one (`docs/status.md`, Authoring).
+
 ## M6: ship by link
 
 Web export: the core compiled to wasm32 with Emscripten and SDL3, the RHI on browser WebGPU, scripts running on the browser's JavaScript engine. Portability of the core and the WebGPU-shaped RHI are constraints from M0 so that this milestone is a port, not a rewrite.

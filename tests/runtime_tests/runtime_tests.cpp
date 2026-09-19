@@ -874,6 +874,133 @@ TEST_CASE("save slots hold the world and script state and load back exactly", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("layers and tilesets are added at runtime: drawn, solid, saved and removed", "[runtime][tilemap][layers]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    Json info = s.command("tilemap.info", Json{{"entity", "Level"}}).value();
+    const std::size_t layers_before = info["layers"].size(), sets_before = info["tilesets"].size();
+    const int drawn_before = s.command("render.stats", Json::object()).value()["tile_layers"].get<int>();
+    // A cell in the air holds nothing on any layer.
+    auto tile_at = [&](int x, int y) { return s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", x}, {"tile_y", y}}).value(); };
+    auto solid_at = [&](int x, int y) { return s.command("tilemap.solid", Json{{"entity", "Level"}, {"tile_x", x}, {"tile_y", y}}).value()["solid"].get<bool>(); };
+    // tilemap.tile lists every layer; the ones holding a tile there have a gid.
+    auto filled = [](const Json& t) { Json out = Json::array(); for (const Json& l : t["layers"]) if (l["gid"].get<std::uint32_t>() != 0) out.push_back(l); return out; };
+    auto has_layer = [](const Json& t, const char* name) { for (const Json& l : t["layers"]) if (l["layer"] == name) return true; return false; };
+    REQUIRE(filled(tile_at(3, 1)).empty());
+    REQUIRE_FALSE(has_layer(tile_at(3, 1), "extra"));
+    REQUIRE_FALSE(solid_at(3, 1));
+    // A solid layer on top, three tiles of the first tileset on it: seen, solid and drawn.
+    Json added = s.command("tilemap.add_layer", Json{{"entity", "Level"}, {"name", "extra"}, {"solid", true}}).value();
+    INFO(added.dump());
+    REQUIRE(added["layer"] == "extra");
+    REQUIRE(added["index"].get<std::size_t>() == layers_before);
+    REQUIRE(added["solid"] == true);
+    REQUIRE(added["layers"].get<std::size_t>() == layers_before + 1);
+    REQUIRE(s.command("tilemap.add_layer", Json{{"entity", "Level"}, {"name", "extra"}}).error().code == "duplicate_layer");
+    REQUIRE(s.command("tilemap.fill", Json{{"entity", "Level"}, {"layer", "extra"}, {"tile_x", 2}, {"tile_y", 1}, {"width", 3}, {"height", 1}, {"id", 0}}).value()["changed"] == 3);
+    Json t = filled(tile_at(3, 1));
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0]["layer"] == "extra");
+    REQUIRE(t[0]["gid"] == 1);
+    REQUIRE(t[0]["solid"] == true);
+    REQUIRE(solid_at(3, 1));
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_before + 1);
+    // A second tileset from another image of the project: its ids follow the first's.
+    Json set = s.command("tilemap.add_tileset", Json{{"entity", "Level"}, {"name", "coins"}, {"image", "assets/coin.png"}, {"tiles", Json{{"1", Json{{"solid", true}}}}}}).value();
+    INFO(set.dump());
+    REQUIRE(set["tile_count"] == 4);
+    REQUIRE(set["columns"] == 4);
+    REQUIRE(set["first_gid"].get<std::uint32_t>() == 1 + info["tilesets"][0]["tile_count"].get<std::uint32_t>());
+    REQUIRE(set["tilesets"].get<std::size_t>() == sets_before + 1);
+    REQUIRE(s.command("tilemap.add_tileset", Json{{"entity", "Level"}, {"name", "coins"}, {"image", "assets/coin.png"}}).error().code == "duplicate_tileset");
+    REQUIRE(s.command("tilemap.add_tileset", Json{{"entity", "Level"}, {"name", "nope"}, {"image", "assets/missing.png"}}).error().code == "bad_image");
+    const std::uint32_t coin_gid = set["first_gid"].get<std::uint32_t>() + 1;
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Level"}, {"layer", "extra"}, {"tile_x", 6}, {"tile_y", 1}, {"id", 1}, {"tileset", "coins"}}).value()["gid"].get<std::uint32_t>() == coin_gid);
+    t = filled(tile_at(6, 1));
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0]["tileset"] == "coins");
+    REQUIRE(t[0]["id"] == 1);
+    REQUIRE(t[0]["solid"] == true);
+    // Hidden, the layer is neither drawn nor solid; shown again, it is.
+    REQUIRE(s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "extra"}, {"visible", false}}).value()["changed"] == true);
+    REQUIRE_FALSE(solid_at(3, 1));
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_before);
+    REQUIRE(s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "extra"}, {"visible", true}, {"opacity", 0.5}}).value()["opacity"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(solid_at(3, 1));
+    REQUIRE(s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "extra"}}).value()["changed"] == false);
+    REQUIRE(s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "nope"}}).error().code == "unknown_layer");
+    // Moved under the others, it is drawn first and saved first; moved back, last.
+    Json moved = s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "extra"}, {"index", 0}}).value();
+    REQUIRE(moved["index"] == 0);
+    REQUIRE(moved["changed"] == true);
+    REQUIRE(s.command("tilemap.info", Json{{"entity", "Level"}}).value()["layers"][0]["name"] == "extra");
+    REQUIRE(s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "extra"}, {"index", 9}}).error().code == "bad_args");
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_before + 1);
+    {
+        REQUIRE(s.command("tilemap.save", Json{{"entity", "Level"}, {"path", "assets/level-layers.tmj"}}).has_value());
+        auto first = fs::read_text(root() / "samples" / "sprites" / "assets" / "level-layers.tmj");
+        REQUIRE(first.has_value());
+        auto parsed = assets::parse_tilemap(*first, "assets/level-layers.tmj");
+        REQUIRE(parsed.has_value());
+        REQUIRE(parsed->layers.front().name == "extra");
+        REQUIRE(parsed->layers.front().gids[1 * parsed->width + 3] == 1);
+    }
+    REQUIRE(s.command("tilemap.layer", Json{{"entity", "Level"}, {"name", "extra"}, {"index", layers_before}}).value()["index"].get<std::size_t>() == layers_before);
+    // Saved with the map: the new layer, its tiles and the new tileset come back from the file.
+    const auto saved_path = root() / "samples" / "sprites" / "assets" / "level-layers.tmj";
+    REQUIRE(s.command("tilemap.save", Json{{"entity", "Level"}, {"path", "assets/level-layers.tmj"}}).value()["layers"].get<std::size_t>() == layers_before + 1);
+    auto text = fs::read_text(saved_path);
+    REQUIRE(text.has_value());
+    auto again = assets::parse_tilemap(*text, "assets/level-layers.tmj");
+    REQUIRE(again.has_value());
+    REQUIRE(again->layers.size() == layers_before + 1);
+    REQUIRE(again->layers.back().name == "extra");
+    REQUIRE(again->layers.back().solid_layer());
+    REQUIRE(again->layers.back().opacity == Catch::Approx(0.5));
+    REQUIRE(again->layers.back().gids[1 * again->width + 3] == 1);
+    REQUIRE(again->layers.back().gids[1 * again->width + 6] == coin_gid);
+    REQUIRE(again->tilesets.size() == sets_before + 1);
+    REQUIRE(again->tilesets.back().name == "coins");
+    REQUIRE(again->tilesets.back().first_gid == set["first_gid"].get<std::uint32_t>());
+    REQUIRE(again->tilesets.back().tile_count == 4);
+    REQUIRE(again->tilesets.back().solid(1));
+    REQUIRE(again->tilesets.back().image == "assets/coin.png");
+    std::filesystem::remove(saved_path);
+    // Removed, the layer and its tiles are gone, from the map and from the next save.
+    REQUIRE(s.command("tilemap.remove_layer", Json{{"entity", "Level"}, {"name", "extra"}}).value()["layers"].get<std::size_t>() == layers_before);
+    REQUIRE(s.command("tilemap.remove_layer", Json{{"entity", "Level"}, {"name", "extra"}}).error().code == "unknown_layer");
+    REQUIRE(filled(tile_at(3, 1)).empty());
+    REQUIRE_FALSE(has_layer(tile_at(3, 1), "extra"));
+    REQUIRE_FALSE(solid_at(3, 1));
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_before);
+    REQUIRE(s.command("tilemap.save", Json{{"entity", "Level"}, {"path", "assets/level-layers.tmj"}}).has_value());
+    text = fs::read_text(saved_path);
+    REQUIRE(text.has_value());
+    again = assets::parse_tilemap(*text, "assets/level-layers.tmj");
+    REQUIRE(again.has_value());
+    REQUIRE(again->layers.size() == layers_before);
+    REQUIRE(again->tilesets.size() == sets_before + 1);
+    std::filesystem::remove(saved_path);
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["tilemap.layer"].get<int>() == 6);   // added, hidden, shown (a read without changes emits nothing), moved twice, removed
+    REQUIRE(hist["tilemap.tileset"].get<int>() == 1);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("tiles are edited at runtime: drawn, solid, felt by bodies and saved", "[runtime][tilemap]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";

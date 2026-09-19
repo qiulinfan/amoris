@@ -173,6 +173,15 @@ struct TileMap {
     // Put a gid (0 clears; flip flags allowed) into a cell of a tile layer; returns what was there.
     // Errors name an unknown layer, a cell outside the layer or a gid no tileset covers.
     Result<std::uint32_t> set(std::string_view layer_name, int x, int y, std::uint32_t gid);
+    // Layers and tilesets at runtime (docs/design/tilemaps.md, Editing): a new, empty tile layer
+    // of the map's size, added last (drawn on top); a layer removed; a tileset added after the
+    // last (its first gid follows). Each is kept in the source document too, so save writes it.
+    Result<TileLayer*> add_layer(const std::string& name, bool visible, float opacity, Json properties);
+    Status remove_layer(std::string_view name);
+    // Move a tile layer to a position among the tile layers (0 is drawn first, under the others).
+    // Refused for a document with layer groups, whose order the groups own.
+    Status move_layer(std::string_view name, std::size_t index);
+    Result<TileSet*> add_tileset(TileSet set);
     // The map as Tiled JSON: the source document with every tile layer's data replaced by the
     // current cells (a map built in memory gets a minimal document).
     [[nodiscard]] Json to_json() const;

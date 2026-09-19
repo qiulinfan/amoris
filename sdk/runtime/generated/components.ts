@@ -480,12 +480,14 @@ export interface NavObstacle {
 
 /** A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions. */
 export interface NavAgent {
-    /** 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target. */
+    /** 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations). */
     mode: number;
     /** The point to reach in mode 1. */
     goal: Vec3;
-    /** The entity to follow in mode 2. */
+    /** The entity to follow in mode 2, or the leader whose slot to keep in mode 3. */
     target: number;
+    /** In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes. */
+    offset: Vec3;
     /** Top speed, units per second. */
     speed: number;
     /** The agent's radius for keeping clear of other agents and obstacles. */
@@ -575,7 +577,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
     NavObstacle: { radius: 0.5, enabled: true },
-    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
+    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },
 };
 

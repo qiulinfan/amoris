@@ -346,7 +346,6 @@ pub fn pack_web(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, 
     }
     total += std::fs::metadata(&data)?.len() + std::fs::metadata(&data_js)?.len();
     // The page.
-    let title = serde_json::to_string(&name)?;
     std::fs::write(dist.join("index.html"), render_shell(&name, config, editor))?;
     std::fs::write(dist.join("README.txt"), format!("{name} for the web (packed by pocket, {config} configuration)\n\nServe this folder from any static web server and open index.html; file:// does not work because the\nbrowser must fetch the wasm module. For a quick look: python3 -m http.server --directory . 8080\n\nContents: index.html (the page), pocket_runtime.js + pocket_runtime.wasm (the engine), {name}.data + {name}.data.js\n(the project: scripts bundled, settings, scene, assets, UI font). The page exposes window.pocket for tests and agents\n(pocket.command(name, params) runs any runtime command, pocket.download(path) saves a file of the page's file system,\nsuch as the scene the editor saved or a save slot, to the visitor's downloads; docs/web.md in the repository has the details).\n"))?;
     let mut rep_data = json!({ "project": project, "dist": dist, "config": config, "bytes": total, "staged_bytes": staged.bytes, "font": staged.font, "editor": editor, "index": dist.join("index.html") });

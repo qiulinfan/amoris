@@ -127,12 +127,18 @@ enum Command {
     Graph,
     /// Serve the Model Context Protocol over stdio: build, test, run and drive live sessions.
     Mcp,
-    /// Create a project: project.toml, a scene, a prefab, assets/ and a first script.
+    /// Create a project: project.toml, a scene, a prefab, assets/ and a first script; or a copy of a sample to start from (--from).
     New {
-        name: String,
+        name: Option<String>,
         /// Parent directory (default projects/).
         #[arg(long, default_value = "projects")]
         dir: PathBuf,
+        /// Start from a sample (its scene, scripts, assets, prefabs and scenarios), renamed; `--list` shows them.
+        #[arg(long)]
+        from: Option<String>,
+        /// List the samples a project can start from.
+        #[arg(long)]
+        list: bool,
     },
     /// Pack a project into a self-contained folder (dist/<name>) that runs without the repository.
     Pack {
@@ -218,7 +224,18 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),
-        Command::New { name, dir } => commands::new_project(&ws, &name, &dir),
+        Command::New { name, dir, from, list } => {
+            if list {
+                commands::list_templates(&ws)
+            } else if let Some(name) = name {
+                match from {
+                    Some(from) => commands::new_from_template(&ws, &name, &dir, &from),
+                    None => commands::new_project(&ws, &name, &dir),
+                }
+            } else {
+                Ok(report::Report::failure("new", "give the project's name, or --list to see the samples to start from"))
+            }
+        }
         Command::Pack { target, config, out, zip, web, editor } => {
             if web {
                 pack::pack_web(&ws, config.as_deref().unwrap_or("wasm"), &target, out.as_deref(), zip, editor)

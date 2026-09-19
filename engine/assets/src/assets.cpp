@@ -172,6 +172,118 @@ Json tiled_properties(const Json& props) {
 
 }  // namespace
 
+Result<TileLayer*> TileMap::add_layer(const std::string& name, bool visible, float opacity, Json properties) {
+    if (name.empty()) return fail("bad_args", "a layer needs a name");
+    if (layer(name)) return fail("duplicate_layer", "{} already has a tile layer '{}'", path, name);
+    TileLayer l;
+    l.name = name;
+    int next_id = 1;
+    for (const TileLayer& other : layers) next_id = std::max(next_id, other.id + 1);
+    if (source.is_object() && source.contains("nextlayerid") && source["nextlayerid"].is_number()) next_id = std::max(next_id, source["nextlayerid"].get<int>());
+    l.id = next_id;
+    l.width = width;
+    l.height = height;
+    l.gids.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0u);
+    l.visible = visible;
+    l.opacity = std::clamp(opacity, 0.0f, 1.0f);
+    l.properties = properties.is_object() ? std::move(properties) : Json::object();
+    l.revision = 1;
+    ++revision;
+    if (source.is_object()) {
+        Json lj{{"id", l.id}, {"type", "tilelayer"}, {"name", l.name}, {"width", l.width}, {"height", l.height}, {"x", 0}, {"y", 0}, {"opacity", l.opacity}, {"visible", l.visible}, {"data", Json::array()}};
+        if (!l.properties.empty()) lj["properties"] = tiled_properties(l.properties);
+        if (!source.contains("layers") || !source["layers"].is_array()) source["layers"] = Json::array();
+        source["layers"].push_back(std::move(lj));
+        source["nextlayerid"] = l.id + 1;
+    }
+    layers.push_back(std::move(l));
+    return &layers.back();
+}
+
+Status TileMap::remove_layer(std::string_view name) {
+    std::size_t k = 0;
+    for (; k < layers.size(); ++k) if (layers[k].name == name) break;
+    if (k == layers.size()) return fail("unknown_layer", "{} has no tile layer '{}'", path, name);
+    layers.erase(layers.begin() + static_cast<std::ptrdiff_t>(k));
+    ++revision;
+    if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
+        // The k-th tile layer of the document, in document order with groups flattened.
+        std::size_t seen = 0;
+        std::function<bool(Json&)> remove_kth = [&](Json& list) -> bool {
+            for (auto it = list.begin(); it != list.end(); ++it) {
+                if (!it->is_object()) continue;
+                const std::string type = it->value("type", "tilelayer");
+                if (type == "group") {
+                    if (it->contains("layers") && (*it)["layers"].is_array() && remove_kth((*it)["layers"])) return true;
+                    continue;
+                }
+                if (type != "tilelayer") continue;
+                if (seen++ == k) {
+                    list.erase(it);
+                    return true;
+                }
+            }
+            return false;
+        };
+        remove_kth(source["layers"]);
+    }
+    return {};
+}
+
+Status TileMap::move_layer(std::string_view name, std::size_t index) {
+    std::size_t k = 0;
+    for (; k < layers.size(); ++k) if (layers[k].name == name) break;
+    if (k == layers.size()) return fail("unknown_layer", "{} has no tile layer '{}'", path, name);
+    if (index >= layers.size()) return fail("bad_args", "index {} is outside the {} tile layers of {}", index, layers.size(), path);
+    if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
+        for (const Json& l : source["layers"]) if (l.is_object() && l.value("type", "tilelayer") == "group") return fail("has_groups", "{} has layer groups, whose order the groups own; reorder it in Tiled", path);
+    }
+    if (index == k) return {};
+    TileLayer moving = std::move(layers[k]);
+    layers.erase(layers.begin() + static_cast<std::ptrdiff_t>(k));
+    layers.insert(layers.begin() + static_cast<std::ptrdiff_t>(index), std::move(moving));
+    ++revision;
+    for (TileLayer& l : layers) ++l.revision;   // every layer's draw order moved: the meshes are keyed by it
+    if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
+        Json& list = source["layers"];
+        std::vector<std::size_t> tile_nodes;   // positions of the tile layer nodes, in order
+        for (std::size_t i = 0; i < list.size(); ++i) if (list[i].is_object() && list[i].value("type", "tilelayer") == "tilelayer") tile_nodes.push_back(i);
+        if (k < tile_nodes.size() && index < tile_nodes.size()) {
+            Json node = list[tile_nodes[k]];
+            list.erase(list.begin() + static_cast<std::ptrdiff_t>(tile_nodes[k]));
+            tile_nodes.clear();
+            for (std::size_t i = 0; i < list.size(); ++i) if (list[i].is_object() && list[i].value("type", "tilelayer") == "tilelayer") tile_nodes.push_back(i);
+            // Before the node now holding the target position, or after the last tile layer.
+            const std::size_t at = index < tile_nodes.size() ? tile_nodes[index] : (tile_nodes.empty() ? list.size() : tile_nodes.back() + 1);
+            list.insert(list.begin() + static_cast<std::ptrdiff_t>(at), std::move(node));
+        }
+    }
+    return {};
+}
+
+Result<TileSet*> TileMap::add_tileset(TileSet set) {
+    if (set.name.empty()) return fail("bad_args", "a tileset needs a name");
+    for (const TileSet& t : tilesets) if (t.name == set.name) return fail("duplicate_tileset", "{} already has a tileset '{}'", path, set.name);
+    if (set.tile_width <= 0 || set.tile_height <= 0 || set.columns <= 0 || set.tile_count <= 0) return fail("bad_args", "a tileset needs positive tile_width, tile_height, columns and tile_count");
+    std::uint32_t first = 1;
+    for (const TileSet& t : tilesets) first = std::max(first, t.first_gid + static_cast<std::uint32_t>(std::max(t.tile_count, 1)));
+    set.first_gid = first;
+    ++revision;
+    if (source.is_object()) {
+        const std::filesystem::path base = std::filesystem::path(path).parent_path();
+        std::string image = std::filesystem::path(set.image).lexically_relative(base).generic_string();
+        if (image.empty()) image = std::filesystem::path(set.image).filename().generic_string();
+        Json tj{{"name", set.name}, {"firstgid", set.first_gid}, {"image", image}, {"tilewidth", set.tile_width}, {"tileheight", set.tile_height}, {"columns", set.columns}, {"tilecount", set.tile_count}, {"imagewidth", set.image_width}, {"imageheight", set.image_height}, {"spacing", set.spacing}, {"margin", set.margin}};
+        Json tiles = Json::array();
+        for (const auto& [tid, props] : set.tile_properties) tiles.push_back(Json{{"id", tid}, {"properties", tiled_properties(props)}});
+        if (!tiles.empty()) tj["tiles"] = tiles;
+        if (!source.contains("tilesets") || !source["tilesets"].is_array()) source["tilesets"] = Json::array();
+        source["tilesets"].push_back(std::move(tj));
+    }
+    tilesets.push_back(std::move(set));
+    return &tilesets.back();
+}
+
 Json TileMap::to_json() const {
     Json doc = source.is_object() ? source : Json::object();
     if (!source.is_object()) {

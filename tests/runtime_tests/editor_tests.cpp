@@ -290,6 +290,85 @@ TEST_CASE("editor gizmo drags the selection along a world axis", "[editor]") {
     ok(s.finish());
 }
 
+TEST_CASE("editor snaps gizmo moves, turns and scales to the grid", "[editor][snap]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ramp")}}));
+    ok(s.idle_frame());
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "snap")}}));
+    ok(s.idle_frame());
+    auto transform = [&]() { return ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}})); };
+    auto multiple_of = [](double v, double step) { return std::abs(v / step - std::round(v / step)) < 1e-4; };
+    const Json before = transform();
+    // A move along X lands on a half unit; the other axes are left alone.
+    Json cq = ok(s.command("ui.query", Json{{"name", "gizmo:plane"}}));
+    Json xq = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));
+    REQUIRE(cq.size() == 1);
+    REQUIRE(xq.size() == 1);
+    const double dx = xq[0]["rect"]["x"].get<double>() - cq[0]["rect"]["x"].get<double>(), dy = xq[0]["rect"]["y"].get<double>() - cq[0]["rect"]["y"].get<double>();
+    ok(s.command("ui.drag", Json{{"id", xq[0]["id"]}, {"dx", dx * 1.3}, {"dy", dy * 1.3}, {"steps", 5}}));
+    Json t = transform();
+    INFO(before.dump() << " -> " << t.dump());
+    REQUIRE(t["position"]["x"].get<double>() > before["position"]["x"].get<double>() + 0.1);
+    REQUIRE(multiple_of(t["position"]["x"].get<double>(), 0.5));
+    REQUIRE(t["position"]["y"].get<double>() == Catch::Approx(before["position"]["y"].get<double>()));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(before["position"]["z"].get<double>()));
+    // A turn of a radian (100 px) lands on 60 degrees about world Y, applied over the ramp's own roll.
+    ok(s.idle_frame());
+    Json rq = ok(s.command("ui.query", Json{{"name", "gizmo:rotate"}}));
+    REQUIRE(rq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", rq[0]["id"]}, {"dx", 100}, {"dy", 0}, {"steps", 5}}));
+    t = transform();
+    INFO(t.dump());
+    {
+        const Json& r0 = before["rotation"];
+        const double ax = 0, ay = std::sin(M_PI / 6), az = 0, aw = std::cos(M_PI / 6);   // yaw 60 degrees
+        const double bx = r0["x"].get<double>(), by = r0["y"].get<double>(), bz = r0["z"].get<double>(), bw = r0["w"].get<double>();
+        const double ex = aw * bx + ax * bw + ay * bz - az * by, ey = aw * by - ax * bz + ay * bw + az * bx, ez = aw * bz + ax * by - ay * bx + az * bw, ew = aw * bw - ax * bx - ay * by - az * bz;
+        REQUIRE(t["rotation"]["x"].get<double>() == Catch::Approx(ex).margin(1e-3));
+        REQUIRE(t["rotation"]["y"].get<double>() == Catch::Approx(ey).margin(1e-3));
+        REQUIRE(t["rotation"]["z"].get<double>() == Catch::Approx(ez).margin(1e-3));
+        REQUIRE(t["rotation"]["w"].get<double>() == Catch::Approx(ew).margin(1e-3));
+    }
+    // A scale drag of 100 px (times e^0.5) lands on quarters.
+    ok(s.idle_frame());
+    Json sq = ok(s.command("ui.query", Json{{"name", "gizmo:scale"}}));
+    REQUIRE(sq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", sq[0]["id"]}, {"dx", 100}, {"dy", 0}, {"steps", 5}}));
+    t = transform();
+    INFO(t.dump());
+    for (const char* a : {"x", "y", "z"}) {
+        const double v = before["scale"][a].get<double>() * std::exp(0.5);
+        REQUIRE(t["scale"][a].get<double>() == Catch::Approx(std::max(0.25, std::round(v / 0.25) * 0.25)).margin(1e-4));
+    }
+    // The setting is kept with the layout; off again, a drag is free.
+    Json saved = ok(s.command("project.read", Json{{"path", ".pocket/editor.json"}}));
+    REQUIRE(Json::parse(saved["text"].get<std::string>())["snap"] == true);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "snap")}}));
+    ok(s.idle_frame());
+    xq = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));
+    cq = ok(s.command("ui.query", Json{{"name", "gizmo:plane"}}));
+    const double dx2 = xq[0]["rect"]["x"].get<double>() - cq[0]["rect"]["x"].get<double>(), dy2 = xq[0]["rect"]["y"].get<double>() - cq[0]["rect"]["y"].get<double>();
+    const double snapped_x = t["position"]["x"].get<double>();
+    ok(s.command("ui.drag", Json{{"id", xq[0]["id"]}, {"dx", dx2 * 0.37}, {"dy", dy2 * 0.37}, {"steps", 5}}));
+    t = transform();
+    INFO(t.dump());
+    REQUIRE(t["position"]["x"].get<double>() > snapped_x + 0.01);
+    REQUIRE_FALSE(multiple_of(t["position"]["x"].get<double>(), 0.5));
+    REQUIRE(Json::parse(ok(s.command("project.read", Json{{"path", ".pocket/editor.json"}}))["text"].get<std::string>())["snap"] == false);
+    // Four undo steps put everything back.
+    for (int i = 0; i < 4; ++i) ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    t = transform();
+    REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(before["position"]["x"].get<double>()).margin(1e-5));
+    REQUIRE(t["scale"] == before["scale"]);
+    REQUIRE(t["rotation"]["y"].get<double>() == Catch::Approx(before["rotation"]["y"].get<double>()).margin(1e-5));
+    ok(s.finish());
+    std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");   // the layout file the toggle wrote
+}
+
 TEST_CASE("editor remembers its layout in the project", "[editor]") {
     std::filesystem::path saved = root() / "samples" / "physics" / ".pocket" / "editor.json";
     std::filesystem::remove(saved);

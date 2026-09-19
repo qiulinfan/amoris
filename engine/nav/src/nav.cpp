@@ -1,6 +1,7 @@
 #include <pocket/nav/nav.hpp>
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <limits>
 #include <queue>
@@ -427,6 +428,7 @@ constexpr float kLookahead = 0.3f;        // seconds ahead a velocity must keep 
 constexpr float kWeightDesired = 2.0f;    // deviation from the desired velocity, per unit of top speed
 constexpr float kWeightCollision = 4.0f;  // a collision at the horizon's edge counts nothing, one now counts this: more than a right-angle turn
 constexpr float kWeightOffGrid = 3.0f;    // leaving walkable ground
+constexpr float kFormationGain = 4.0f;    // per second: how fast a follower closes on its slot beyond matching the leader
 constexpr float kWeightAcross = 4.0f;     // at queue 1, sideways deviation costs this much more than slowing while someone ahead goes the agent's way
 constexpr int kMaxNeighbours = 8;
 
@@ -528,6 +530,35 @@ void Nav::step(world::World& w, float dt) {
     }
     if (items.empty() || dt <= 0) return;
     const float cell = baked() ? grid_.cell : 0.5f;
+    // Formation leaders: their heading is the way they last moved, their speed the move over the tick.
+    {
+        std::set<world::EntityId> led;
+        for (const Item& it : items) {
+            if (it.agent.mode != 3 || it.agent.target == 0 || !w.alive(it.agent.target)) continue;
+            Vec3 lp;
+            if (const auto* wt = w.try_get<world::WorldTransform>(it.agent.target)) lp = wt->position;
+            else if (const auto* t = w.try_get<world::Transform>(it.agent.target)) lp = t->position;
+            else continue;
+            led.insert(it.agent.target);
+            Lead& L = leads_[it.agent.target];
+            if (L.tick == tick && L.seen) continue;   // several followers, one leader: once a tick
+            if (L.seen) {
+                const P2 d = sub(p2(plane, lp), p2(plane, L.last));
+                const float dl = len2(d);
+                if (dl > 1e-5f) {
+                    L.hu = d.u / dl;
+                    L.hv = d.v / dl;
+                    L.speed = dl / dt;
+                } else {
+                    L.speed = 0;
+                }
+            }
+            L.last = lp;
+            L.seen = true;
+            L.tick = tick;
+        }
+        for (auto it = leads_.begin(); it != leads_.end();) it = led.contains(it->first) ? std::next(it) : leads_.erase(it);
+    }
     const float other_axis = 0.0f;
     (void)other_axis;
 
@@ -558,6 +589,14 @@ void Nav::step(world::World& w, float dt) {
         } else if (a.mode == 2 && a.target != 0 && w.alive(a.target)) {
             if (const auto* wt = w.try_get<world::WorldTransform>(a.target)) goal = wt->position;
             else if (const auto* t = w.try_get<world::Transform>(a.target)) goal = t->position;
+        } else if (a.mode == 3) {
+            if (auto lead = leads_.find(a.target); lead != leads_.end()) {
+                const Lead& L = lead->second;
+                const P2 fwd{L.hu, L.hv}, right{-L.hv, L.hu};
+                const float side = plane == 0 ? a.offset.z : a.offset.y;
+                const P2 slot = add(p2(plane, L.last), add(mul(fwd, a.offset.x), mul(right, side)));
+                goal = v3(plane, slot, plane == 0 ? it.pos.y : it.pos.z);
+            }
         }
         if (!goal) {
             pl.state = 3;
@@ -570,6 +609,23 @@ void Nav::step(world::World& w, float dt) {
         const P2 p = p2(plane, it.pos), gq = p2(plane, *goal);
         const float dgoal = len2(sub(gq, p));
         pl.distance = dgoal;
+        if (a.mode == 3) {
+            // A follower steers to its slot, no path: the leader's velocity plus a pull toward the
+            // slot, capped at its speed; arrived only once the leader stands and it is in place.
+            const Lead& L = leads_[a.target];
+            runs_.erase(it.id);
+            if (L.speed < 1e-3f && dgoal <= a.arrive) {
+                pl.state = 2;
+                continue;
+            }
+            pl.state = 1;
+            P2 want = add(mul(P2{L.hu, L.hv}, L.speed), mul(sub(gq, p), kFormationGain));
+            const float wl = len2(want), top = std::max(a.speed, 0.0f);
+            if (wl > top && wl > 1e-6f) want = mul(want, top / wl);
+            pl.desired = want;
+            pl.chosen = want;
+            continue;
+        }
         if (dgoal <= a.arrive) {
             pl.state = 2;
             runs_.erase(it.id);
@@ -643,6 +699,7 @@ void Nav::step(world::World& w, float dt) {
         for (std::size_t j = 0; j < items.size(); ++j) {
             if (j == i || items[j].agent.mode == 0) continue;
             if (items[j].agent.priority < a.priority) continue;   // it gets out of this one's way
+            if (items[j].agent.mode == 3 && items[j].agent.target == items[i].id) continue;   // its own followers keep their slots; a leader that fled them would stall
             const P2 rel = sub(p2(plane, items[j].pos), p);
             const float dist = len2(rel);
             if (dist > reach + items[j].agent.radius) continue;
@@ -822,6 +879,7 @@ Json Nav::agents(world::World& w) const {
         j["corner"] = json_of_vec(a.corner);
         j["distance"] = a.distance;
         j["neighbours"] = a.neighbours;
+        j["offset"] = json_of_vec(a.offset);
         j["queue"] = a.queue;
         j["priority"] = a.priority;
         j["queued"] = a.queued;

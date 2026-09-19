@@ -340,9 +340,10 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mode` | i32 | 0 | 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target. |
+| `mode` | i32 | 0 | 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations). |
 | `goal` | vec3 | [0.0, 0.0, 0.0] | The point to reach in mode 1. |
-| `target` | entity | 0 | The entity to follow in mode 2. |
+| `target` | entity | 0 | The entity to follow in mode 2, or the leader whose slot to keep in mode 3. |
+| `offset` | vec3 | [0.0, 0.0, 0.0] | In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes. |
 | `speed` | f32 | 3.0 | Top speed, units per second. |
 | `radius` | f32 | 0.35 | The agent's radius for keeping clear of other agents and obstacles. |
 | `arrive` | f32 | 0.3 | Distance from the goal at which the agent stops (state 2). |

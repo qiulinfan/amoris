@@ -6,6 +6,7 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -1068,6 +1069,130 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         }
         if (changed > 0) world_->events().emit(clock_.tick, "tilemap.changed", id, Json{{"path", map->path}, {"layer", layer}, {"tile_x", x0}, {"tile_y", y0}, {"width", std::max(0, x1 - x0)}, {"height", std::max(0, y1 - y0)}, {"gid", gid}, {"count", changed}}, 0, "tilemap");
         return Json{{"layer", layer}, {"gid", gid}, {"changed", changed}, {"revision", map->revision}, {"tile_x", x0}, {"tile_y", y0}, {"width", std::max(0, x1 - x0)}, {"height", std::max(0, y1 - y0)}};
+    }
+    // Layers and tilesets at runtime: a layer is added last (drawn on top), empty, the map's size;
+    // a tileset after the last; both are saved with the map.
+    auto layer_json = [&](const assets::TileLayer& l) {
+        std::size_t index = 0;
+        for (; index < map->layers.size(); ++index) if (&map->layers[index] == &l) break;
+        std::size_t filled = 0;
+        for (std::uint32_t g : l.gids) filled += g != 0;
+        return Json{{"layer", l.name}, {"id", l.id}, {"index", index}, {"width", l.width}, {"height", l.height}, {"visible", l.visible}, {"opacity", l.opacity}, {"solid", l.solid_layer()}, {"tiles", filled}, {"properties", l.properties}, {"layers", map->layers.size()}, {"revision", map->revision}};
+    };
+    if (op == "add_layer") {
+        const std::string name = opt<std::string>(p, "name", "");
+        Json props = p.contains("properties") && p["properties"].is_object() ? p["properties"] : Json::object();
+        if (p.contains("solid")) props["solid"] = opt<bool>(p, "solid", false);
+        POCKET_TRY(layer, map->add_layer(name, opt<bool>(p, "visible", true), static_cast<float>(opt<double>(p, "opacity", 1.0)), props));
+        world_->events().emit(clock_.tick, "tilemap.layer", id, Json{{"path", map->path}, {"layer", layer->name}, {"op", "added"}}, 0, "tilemap");
+        return layer_json(*layer);
+    }
+    if (op == "remove_layer") {
+        const std::string name = opt<std::string>(p, "name", "");
+        if (name.empty()) return fail("bad_args", "missing 'name'");
+        POCKET_TRY_VOID(map->remove_layer(name));
+        world_->events().emit(clock_.tick, "tilemap.layer", id, Json{{"path", map->path}, {"layer", name}, {"op", "removed"}}, 0, "tilemap");
+        return Json{{"layer", name}, {"removed", true}, {"layers", map->layers.size()}, {"revision", map->revision}};
+    }
+    if (op == "layer") {
+        // Read a layer, or change its visibility, opacity, solidity, properties or name.
+        const std::string name = opt<std::string>(p, "name", "");
+        assets::TileLayer* layer = map->layer_mut(name);
+        if (!layer) return fail("unknown_layer", "{} has no tile layer '{}'", map->path, name);
+        bool changed = false;
+        if (p.contains("visible")) { const bool v = opt<bool>(p, "visible", true); changed |= v != layer->visible; layer->visible = v; }
+        if (p.contains("opacity")) { const float o = std::clamp(static_cast<float>(opt<double>(p, "opacity", 1.0)), 0.0f, 1.0f); changed |= o != layer->opacity; layer->opacity = o; }
+        if (p.contains("solid")) { if (!layer->properties.is_object()) layer->properties = Json::object(); const bool sd = opt<bool>(p, "solid", false); changed |= layer->solid_layer() != sd; layer->properties["solid"] = sd; }
+        if (p.contains("properties") && p["properties"].is_object()) { if (!layer->properties.is_object()) layer->properties = Json::object(); for (auto& [k, v] : p["properties"].items()) { changed |= layer->properties.value(k, Json()) != v; layer->properties[k] = v; } }
+        if (p.contains("rename")) {
+            const std::string to = opt<std::string>(p, "rename", "");
+            if (to.empty()) return fail("bad_args", "'rename' needs a name");
+            if (to != layer->name && map->layer(to)) return fail("duplicate_layer", "{} already has a tile layer '{}'", map->path, to);
+            changed |= to != layer->name;
+            layer->name = to;
+        }
+        bool moved = false;
+        if (p.contains("index")) {
+            const int index = opt<int>(p, "index", 0);
+            if (index < 0) return fail("bad_args", "index must not be negative");
+            std::size_t was = 0;
+            for (; was < map->layers.size(); ++was) if (&map->layers[was] == layer) break;
+            const std::string moved_name = layer->name;   // the pointer is stale once the vector moves
+            POCKET_TRY_VOID(map->move_layer(moved_name, static_cast<std::size_t>(index)));
+            moved = static_cast<std::size_t>(index) != was;
+            layer = map->layer_mut(moved_name);
+        }
+        if (changed) {
+            ++map->revision;
+            ++layer->revision;
+            // The document keeps the layer's attributes too: patch the k-th tile layer.
+            std::size_t k = 0;
+            for (; k < map->layers.size(); ++k) if (&map->layers[k] == layer) break;
+            if (map->source.is_object() && map->source.contains("layers") && map->source["layers"].is_array()) {
+                std::size_t seen = 0;
+                std::function<bool(Json&)> patch_kth = [&](Json& list) -> bool {
+                    for (Json& l : list) {
+                        if (!l.is_object()) continue;
+                        const std::string type = l.value("type", "tilelayer");
+                        if (type == "group") { if (l.contains("layers") && l["layers"].is_array() && patch_kth(l["layers"])) return true; continue; }
+                        if (type != "tilelayer") continue;
+                        if (seen++ != k) continue;
+                        l["name"] = layer->name;
+                        l["visible"] = layer->visible;
+                        l["opacity"] = layer->opacity;
+                        if (layer->properties.is_object() && !layer->properties.empty()) {
+                            Json props = Json::array();
+                            for (auto it = layer->properties.begin(); it != layer->properties.end(); ++it) {
+                                const Json& v = it.value();
+                                const char* type_name = v.is_boolean() ? "bool" : v.is_number_integer() ? "int" : v.is_number() ? "float" : "string";
+                                props.push_back(Json{{"name", it.key()}, {"type", type_name}, {"value", v.is_string() || v.is_number() || v.is_boolean() ? v : Json(v.dump())}});
+                            }
+                            l["properties"] = props;
+                        }
+                        return true;
+                    }
+                    return false;
+                };
+                patch_kth(map->source["layers"]);
+            }
+            world_->events().emit(clock_.tick, "tilemap.layer", id, Json{{"path", map->path}, {"layer", layer->name}, {"op", "changed"}}, 0, "tilemap");
+        } else if (moved) {
+            world_->events().emit(clock_.tick, "tilemap.layer", id, Json{{"path", map->path}, {"layer", layer->name}, {"op", "moved"}}, 0, "tilemap");
+        }
+        Json j = layer_json(*layer);
+        j["changed"] = changed || moved;
+        return j;
+    }
+    if (op == "add_tileset") {
+        assets::TileSet set;
+        set.name = opt<std::string>(p, "name", "");
+        const std::string image = opt<std::string>(p, "image", "");
+        if (image.empty()) return fail("bad_args", "missing 'image' (a project-relative image path)");
+        auto img = assets_->image(image);
+        if (!img) return fail("bad_image", "{}: {}", image, img.error().message);
+        set.image = image;
+        set.image_width = static_cast<int>((*img)->width);
+        set.image_height = static_cast<int>((*img)->height);
+        set.tile_width = opt<int>(p, "tile_width", map->tile_width);
+        set.tile_height = opt<int>(p, "tile_height", map->tile_height);
+        set.spacing = opt<int>(p, "spacing", 0);
+        set.margin = opt<int>(p, "margin", 0);
+        if (set.tile_width <= 0 || set.tile_height <= 0) return fail("bad_args", "tile_width and tile_height must be positive");
+        set.columns = (set.image_width - 2 * set.margin + set.spacing) / (set.tile_width + set.spacing);
+        if (set.columns <= 0) return fail("bad_args", "{} ({}x{}) does not hold a single {}x{} tile", image, set.image_width, set.image_height, set.tile_width, set.tile_height);
+        set.tile_count = set.columns * ((set.image_height - 2 * set.margin + set.spacing) / (set.tile_height + set.spacing));
+        if (p.contains("tiles") && p["tiles"].is_object()) {
+            for (auto& [key, props] : p["tiles"].items()) {
+                if (!props.is_object()) continue;
+                int tile_id = 0;
+                const auto [end, ec] = std::from_chars(key.data(), key.data() + key.size(), tile_id);
+                if (ec != std::errc() || end != key.data() + key.size()) return fail("bad_args", "tile ids in 'tiles' must be numbers, not '{}'", key);
+                set.tile_properties[tile_id] = props;
+            }
+        }
+        POCKET_TRY(added, map->add_tileset(std::move(set)));
+        world_->events().emit(clock_.tick, "tilemap.tileset", id, Json{{"path", map->path}, {"tileset", added->name}, {"first_gid", added->first_gid}, {"op", "added"}}, 0, "tilemap");
+        return Json{{"tileset", added->name}, {"first_gid", added->first_gid}, {"tile_count", added->tile_count}, {"columns", added->columns}, {"image", added->image}, {"tile_width", added->tile_width}, {"tile_height", added->tile_height}, {"tilesets", map->tilesets.size()}, {"revision", map->revision}};
     }
     if (op == "save") {
         // Write the map back as Tiled JSON, to its own file or another path in the project.
@@ -2725,7 +2850,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

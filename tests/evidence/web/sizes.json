@@ -1,0 +1,60 @@
+{
+  "date": "2026-09-19",
+  "browser": "Chromium 152 (the built-in browser of the Claude desktop app)",
+  "measure": "pocket.command('step', {ticks: 600}) on the physics sample, three calls in a row, milliseconds; the first call warms up",
+  "runtimes": [
+    {
+      "config": "wasm-jspi",
+      "flags": "-O2, JSPI",
+      "wasm_bytes": 4902867,
+      "ms_per_600_ticks": [
+        18,
+        18,
+        18
+      ]
+    },
+    {
+      "config": "wasm-small",
+      "flags": "-Oz -flto, JSPI",
+      "wasm_bytes": 3995840,
+      "ms_per_600_ticks": [
+        39,
+        25,
+        25
+      ]
+    },
+    {
+      "config": "wasm-os (not kept)",
+      "flags": "-Os -flto, JSPI",
+      "wasm_bytes": 4454561
+    },
+    {
+      "config": "wasm-lto (not kept)",
+      "flags": "-O2 -flto, JSPI",
+      "wasm_bytes": 5325716
+    },
+    {
+      "config": "wasm",
+      "flags": "-O2, Asyncify",
+      "wasm_bytes": 7146912
+    }
+  ],
+  "object_code_bytes": {
+    "note": "llvm-size --totals on the wasm static libraries of the -O2 JSPI build, before linking",
+    "flecs": 1173216,
+    "pocket_app": 948130,
+    "pocket_world": 526696,
+    "pocket_renderer": 325235,
+    "pocket_assets": 317952,
+    "pocket_ui": 278350,
+    "pocket_physics": 246112,
+    "pocket_script": 161879,
+    "pocket_nav": 149908,
+    "pocket_core": 140510,
+    "yoga": 126054,
+    "stb": 117635,
+    "pocket_audio": 90758,
+    "pocket_platform": 83623,
+    "pocket_rhi": 77572
+  }
+}

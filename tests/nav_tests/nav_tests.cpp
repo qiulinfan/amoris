@@ -268,6 +268,69 @@ TEST_CASE("a queuing agent falls in behind one going its way instead of passing"
     REQUIRE(min_gap > 0.7f);
 }
 
+TEST_CASE("formation followers keep their slots behind and beside a leader as it walks and turns", "[nav][agents][formation]") {
+    World w;
+    nav::Nav n;
+    n.set_grid(open_grid(12, 12));
+    auto spawn = [&](const char* name, Vec3 pos, Json agent) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"NavAgent", agent}}).value();
+    };
+    auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+    auto state = [&](EntityId id) { return w.try_get<NavAgent>(id)->state; };
+    // The leader walks +X along a row; one follower a unit behind, one two behind, one behind and to the right (+Z).
+    const EntityId leader = spawn("Leader", {2.5f, 0, 6.5f}, Json{{"mode", 1}, {"goal", {{"x", 9.5f}, {"y", 0}, {"z", 6.5f}}}, {"speed", 2.0}, {"radius", 0.3}});
+    const EntityId f1 = spawn("F1", {1.5f, 0, 6.5f}, Json{{"mode", 3}, {"target", leader}, {"offset", {{"x", -1.0f}, {"y", 0}, {"z", 0}}}, {"speed", 3.0}, {"radius", 0.3}});
+    const EntityId f2 = spawn("F2", {0.5f, 0, 6.5f}, Json{{"mode", 3}, {"target", leader}, {"offset", {{"x", -2.0f}, {"y", 0}, {"z", 0}}}, {"speed", 3.0}, {"radius", 0.3}});
+    const EntityId f3 = spawn("F3", {1.5f, 0, 7.5f}, Json{{"mode", 3}, {"target", leader}, {"offset", {{"x", -1.0f}, {"y", 0}, {"z", 1.0f}}}, {"speed", 3.0}, {"radius", 0.3}});
+    int tick = 0;
+    float worst = 0;   // the largest slot error of F1 once the group is under way
+    for (; tick < 600 && state(leader) != 2; ++tick) {
+        w.set_tick_index(tick);
+        n.step(w, 1.0f / 60.0f);
+        if (tick > 60) worst = std::max(worst, std::hypot(pos(f1).x - (pos(leader).x - 1.0f), pos(f1).z - 6.5f));
+    }
+    // Under way, no follower reported an arrival: the three at tick 0 (they start in their slots
+    // with the leader still standing) and the leader's are all there is when the leader stops.
+    const std::size_t arrived_at_stop = w.events().since(0, 100, "nav.arrived").size();
+    for (int i = 0; i < 90; ++i) {
+        w.set_tick_index(tick++);
+        n.step(w, 1.0f / 60.0f);
+    }
+    INFO("leader " << pos(leader).x << "," << pos(leader).z << " f1 " << pos(f1).x << "," << pos(f1).z << " f2 " << pos(f2).x << "," << pos(f2).z << " f3 " << pos(f3).x << "," << pos(f3).z << " worst " << worst << " arrived at stop " << arrived_at_stop);
+    REQUIRE(state(leader) == 2);
+    REQUIRE(arrived_at_stop <= 4);
+    REQUIRE(worst < 0.5f);   // it kept up while the leader walked
+    REQUIRE(std::hypot(pos(f1).x - (pos(leader).x - 1.0f), pos(f1).z - pos(leader).z) < 0.25f);
+    REQUIRE(std::hypot(pos(f2).x - (pos(leader).x - 2.0f), pos(f2).z - pos(leader).z) < 0.25f);
+    REQUIRE(std::hypot(pos(f3).x - (pos(leader).x - 1.0f), pos(f3).z - (pos(leader).z + 1.0f)) < 0.3f);
+    REQUIRE(state(f1) == 2);   // in place with the leader standing
+    REQUIRE(w.try_get<NavAgent>(f1)->distance < 0.3f);
+    // Arrival was reported once per follower, when the leader stopped.
+    REQUIRE(w.events().since(0, 100, "nav.arrived").size() == arrived_at_stop + 3);
+    // The leader turns down the column (-Z): the slots swing round behind it and to its new right (+X).
+    REQUIRE(w.set(leader, "NavAgent", Json{{"goal", {{"x", 9.5f}, {"y", 0}, {"z", 1.5f}}}}).has_value());
+    w.set_tick_index(tick++);
+    n.step(w, 1.0f / 60.0f);   // the state leaves 2 on the first step toward the new goal
+    for (int i = 0; i < 600 && state(leader) != 2; ++i) {
+        w.set_tick_index(tick++);
+        n.step(w, 1.0f / 60.0f);
+    }
+    for (int i = 0; i < 90; ++i) {
+        w.set_tick_index(tick++);
+        n.step(w, 1.0f / 60.0f);
+    }
+    INFO("after the turn: leader " << pos(leader).x << "," << pos(leader).z << " f1 " << pos(f1).x << "," << pos(f1).z << " f3 " << pos(f3).x << "," << pos(f3).z);
+    REQUIRE(state(leader) == 2);
+    REQUIRE(std::hypot(pos(f1).x - pos(leader).x, pos(f1).z - (pos(leader).z + 1.0f)) < 0.3f);
+    REQUIRE(std::hypot(pos(f2).x - pos(leader).x, pos(f2).z - (pos(leader).z + 2.0f)) < 0.3f);
+    REQUIRE(std::hypot(pos(f3).x - (pos(leader).x + 1.0f), pos(f3).z - (pos(leader).z + 1.0f)) < 0.35f);
+    // A leader that vanishes leaves its followers stuck.
+    REQUIRE(w.destroy(leader).has_value());
+    w.set_tick_index(tick++);
+    n.step(w, 1.0f / 60.0f);
+    REQUIRE(state(f1) == 3);
+}
+
 TEST_CASE("a higher-priority agent walks straight while the lower one yields", "[nav][agents][priority]") {
     World w;
     nav::Nav n;

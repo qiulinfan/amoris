@@ -231,11 +231,123 @@ pub fn editor(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Re
 
 /// `pocket new <name>`: a runnable project with a scene, a prefab and a script that already
 /// exposes state, so `pocket run <name>` and `pocket editor <name>` work immediately.
-pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
-    let t0 = Instant::now();
+fn check_project_name(name: &str) -> Result<()> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         bail!("project names use letters, digits, '-' and '_'");
     }
+    Ok(())
+}
+
+/// The first line of a project's entry script without its comment marks: what a sample is about.
+fn project_summary(project: &Path) -> String {
+    let entry = std::fs::read_to_string(project.join("project.toml"))
+        .ok()
+        .and_then(|t| toml::from_str::<crate::ts::ProjectFile>(&t).ok())
+        .and_then(|pf| pf.entry)
+        .unwrap_or_else(|| "scripts/main.ts".into());
+    std::fs::read_to_string(project.join(entry))
+        .ok()
+        .and_then(|s| s.lines().next().map(|l| l.trim_start_matches('/').trim().to_string()))
+        .unwrap_or_default()
+}
+
+/// The samples a project can start from: `pocket new <name> --from <sample>`.
+pub fn list_templates(ws: &Workspace) -> Result<Report> {
+    let t0 = Instant::now();
+    let samples = ws.root.join("samples");
+    let mut names: Vec<String> = std::fs::read_dir(&samples)
+        .with_context(|| format!("reading {}", samples.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("project.toml").exists())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let rows: Vec<serde_json::Value> = names.iter().map(|n| json!({ "name": n, "about": project_summary(&samples.join(n)) })).collect();
+    let mut text = String::from("samples to start from (pocket new <name> --from <sample>):\n");
+    for r in &rows {
+        text.push_str(&format!("  {:<12}{}\n", r["name"].as_str().unwrap_or(""), r["about"].as_str().unwrap_or("")));
+    }
+    let mut rep = Report::success("new", text.trim_end().to_string());
+    rep.data = json!({ "templates": rows });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
+}
+
+/// Copy a project directory as a new project: everything but the editor's `.pocket/` state and
+/// build leftovers, with the name and the window title in project.toml replaced. Returns the
+/// number of files copied.
+pub fn copy_template(src: &Path, dst: &Path, name: &str) -> Result<usize> {
+    fn walk(src: &Path, dst: &Path, count: &mut usize) -> Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src).with_context(|| format!("reading {}", src.display()))? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let n = file_name.to_string_lossy();
+            if n == ".pocket" || n == "build" || n == "dist" || n == ".DS_Store" {
+                continue;
+            }
+            let from = entry.path();
+            let to = dst.join(&file_name);
+            if from.is_dir() {
+                walk(&from, &to, count)?;
+            } else {
+                std::fs::copy(&from, &to).with_context(|| format!("copying {}", from.display()))?;
+                *count += 1;
+            }
+        }
+        Ok(())
+    }
+    let mut count = 0;
+    walk(src, dst, &mut count)?;
+    let toml_path = dst.join("project.toml");
+    let text = std::fs::read_to_string(&toml_path).with_context(|| format!("reading {}", toml_path.display()))?;
+    let mut out = String::new();
+    let mut section = String::new();
+    let mut named = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            section = trimmed.to_string();
+        }
+        if section.is_empty() && !named && trimmed.starts_with("name") && trimmed[4..].trim_start().starts_with('=') {
+            out.push_str(&format!("name = \"{name}\"\n"));
+            named = true;
+            continue;
+        }
+        if section == "[window]" && trimmed.starts_with("title") && trimmed[5..].trim_start().starts_with('=') {
+            out.push_str(&format!("title = \"{name}\"\n"));
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !named {
+        out = format!("name = \"{name}\"\n{out}");
+    }
+    std::fs::write(&toml_path, out)?;
+    Ok(count)
+}
+
+/// A new project that starts as a copy of a sample (`pocket new <name> --from sprites`).
+pub fn new_from_template(ws: &Workspace, name: &str, dir: &Path, from: &str) -> Result<Report> {
+    let t0 = Instant::now();
+    check_project_name(name)?;
+    let src = find_project(ws, from).ok_or_else(|| anyhow!("no sample or project named '{from}' (pocket new --list shows the samples)"))?;
+    let base = if dir.is_absolute() { dir.to_path_buf() } else { ws.root.join(dir) };
+    let project = base.join(name);
+    if project.exists() {
+        bail!("{} already exists", project.display());
+    }
+    let files = copy_template(&src, &project, name)?;
+    let mut rep = Report::success("new", format!("created {} from {} ({files} files; run: pocket run {name}; editor: pocket editor {name})", project.display(), src.display()));
+    rep.data = json!({ "project": project, "from": src, "files": files });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
+}
+
+pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
+    let t0 = Instant::now();
+    check_project_name(name)?;
     let base = if dir.is_absolute() { dir.to_path_buf() } else { ws.root.join(dir) };
     let project = base.join(name);
     if project.exists() {
@@ -779,4 +891,55 @@ pub fn graph(ws: &Workspace) -> Result<Report> {
     let mut rep = Report::success("graph", format!("{} modules\n{}", g.modules.len(), text));
     rep.data = json!({ "modules": data });
     Ok(rep)
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::copy_template;
+    use std::path::PathBuf;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pocket-template-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn copy_template_renames_and_skips_editor_state() {
+        let dir = scratch("copy");
+        let src = dir.join("sample");
+        std::fs::create_dir_all(src.join("scripts")).unwrap();
+        std::fs::create_dir_all(src.join(".pocket")).unwrap();
+        std::fs::create_dir_all(src.join("assets").join("deep")).unwrap();
+        std::fs::write(src.join("project.toml"), "name = \"sample\"\nentry = \"scripts/main.ts\"\n\n[window]\ntitle = \"Pocket: sample\"\nwidth = 960\n\n[input.actions]\nname = \"not the project name\"\n").unwrap();
+        std::fs::write(src.join("scripts").join("main.ts"), "// A sample.\n").unwrap();
+        std::fs::write(src.join(".pocket").join("editor.json"), "{}").unwrap();
+        std::fs::write(src.join("assets").join("deep").join("tile.png"), b"png").unwrap();
+        let dst = dir.join("mine");
+        let files = copy_template(&src, &dst, "mine").unwrap();
+        assert_eq!(files, 3);
+        assert!(dst.join("scripts").join("main.ts").exists());
+        assert!(dst.join("assets").join("deep").join("tile.png").exists());
+        assert!(!dst.join(".pocket").exists());
+        let toml = std::fs::read_to_string(dst.join("project.toml")).unwrap();
+        assert!(toml.starts_with("name = \"mine\"\n"), "{toml}");
+        assert!(toml.contains("title = \"mine\"\n"), "{toml}");
+        assert!(toml.contains("name = \"not the project name\""), "{toml}");   // a key in a later section is left alone
+        assert!(toml.contains("width = 960"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_template_adds_a_name_when_the_file_has_none() {
+        let dir = scratch("noname");
+        let src = dir.join("sample");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("project.toml"), "entry = \"scripts/main.ts\"\n").unwrap();
+        let dst = dir.join("named");
+        copy_template(&src, &dst, "named").unwrap();
+        let toml = std::fs::read_to_string(dst.join("project.toml")).unwrap();
+        assert_eq!(toml, "name = \"named\"\nentry = \"scripts/main.ts\"\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

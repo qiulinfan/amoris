@@ -1,13 +1,12 @@
 //! Module graph resolution: transitive includes, defines and link closure.
 
-use crate::manifest::{Dependency, Workspace};
+use crate::manifest::Workspace;
 use anyhow::{anyhow, bail, Result};
 use indexmap::{IndexMap, IndexSet};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Resolved {
-    pub name: String,
     pub kind: String,
     pub dir: PathBuf,
     pub sources: Vec<PathBuf>,
@@ -122,7 +121,6 @@ impl Graph {
             modules.insert(
                 name.clone(),
                 Resolved {
-                    name: name.clone(),
                     kind: m.file.kind.clone(),
                     dir: m.dir.clone(),
                     sources,
@@ -142,9 +140,6 @@ impl Graph {
         Ok(Graph { modules })
     }
 
-    pub fn dependency_link_info<'a>(&self, ws: &'a Workspace, name: &str) -> Option<&'a Dependency> {
-        ws.dependency(name)
-    }
 }
 
 fn merge_dep_surface(ws: &Workspace, surfaces: &IndexMap<String, Surface>, dep: &str, inc: &mut IndexSet<PathBuf>, def: &mut IndexSet<String>, target: &str) {

@@ -53,6 +53,39 @@ export interface TileFill {
     height: number;
 }
 
+export interface TileLayerInfo {
+    layer: string;
+    id: number;
+    /** Position among the map's tile layers (draw order: later layers are drawn on top). */
+    index: number;
+    width: number;
+    height: number;
+    visible: boolean;
+    opacity: number;
+    solid: boolean;
+    /** Cells holding a tile. */
+    tiles: number;
+    properties: Record<string, unknown>;
+    /** How many tile layers the map has now. */
+    layers: number;
+    revision: number;
+    /** On `layer`: whether the call changed anything. */
+    changed?: boolean;
+}
+
+export interface TilesetInfo {
+    tileset: string;
+    first_gid: number;
+    tile_count: number;
+    columns: number;
+    image: string;
+    tile_width: number;
+    tile_height: number;
+    /** How many tilesets the map has now. */
+    tilesets: number;
+    revision: number;
+}
+
 function spec(tile: TileSpec): Record<string, unknown> {
     return tile === null ? { clear: true } : typeof tile === "number" ? { id: tile } : tile;
 }
@@ -89,6 +122,30 @@ export const tilemap = {
     /** Fill a rectangle of cells (clipped to the map) with one tile; returns how many changed. */
     fill(entity: EntityRef, rect: { tile_x: number; tile_y: number; width?: number; height?: number }, tile: TileSpec, layer?: string): TileFill {
         return command("tilemap.fill", { entity, ...rect, ...spec(tile), layer }) as TileFill;
+    },
+    /**
+     * Add an empty tile layer of the map's size, drawn on top of the others (`solid` makes every
+     * tile put on it solid). Saved with the map.
+     */
+    addLayer(entity: EntityRef, name: string, options: { visible?: boolean; opacity?: number; solid?: boolean; properties?: Record<string, unknown> } = {}): TileLayerInfo {
+        return command("tilemap.add_layer", { entity, name, ...options }) as TileLayerInfo;
+    },
+    /** Remove a tile layer (its tiles go with it). */
+    removeLayer(entity: EntityRef, name: string): { layer: string; removed: boolean; layers: number; revision: number } {
+        return command("tilemap.remove_layer", { entity, name }) as { layer: string; removed: boolean; layers: number; revision: number };
+    },
+    /** Read a tile layer, or change its visibility, opacity, solidity, properties, name or position among the layers (`index`, 0 drawn first). */
+    layer(entity: EntityRef, name: string, changes: { visible?: boolean; opacity?: number; solid?: boolean; properties?: Record<string, unknown>; rename?: string; index?: number } = {}): TileLayerInfo {
+        return command("tilemap.layer", { entity, name, ...changes }) as TileLayerInfo;
+    },
+    /**
+     * Add a tileset from a project image, cut into tiles of the map's tile size (or the given
+     * one); its tiles follow the last tileset's ids. `tiles` gives properties per local id
+     * (`{ 3: { solid: true } }`).
+     */
+    addTileset(entity: EntityRef, options: { name: string; image: string; tileWidth?: number; tileHeight?: number; spacing?: number; margin?: number; tiles?: Record<number, Record<string, unknown>> }): TilesetInfo {
+        const { tileWidth, tileHeight, ...rest } = options;
+        return command("tilemap.add_tileset", { entity, ...rest, tile_width: tileWidth, tile_height: tileHeight }) as TilesetInfo;
     },
     /** Write the map back as Tiled JSON, to its own file or another path inside the project. */
     save(entity: EntityRef, path?: string): { path: string; bytes: number; revision: number; layers: number } {

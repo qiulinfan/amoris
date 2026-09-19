@@ -48,6 +48,16 @@ c_flags = ["-O2", "--use-port=sdl3"]
 defines = ["NDEBUG=1", "POCKET_WEB=1"]
 link_flags = ["-O2", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
 
+# The smallest runtime: JSPI at -Oz with link-time optimization, a fifth smaller than wasm-jspi and
+# about two fifths slower at stepping the simulation (docs/web.md, Costs). `pocket pack <name> --web --config wasm-small`.
+[configs.wasm-small]
+target = "wasm"
+warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-initializers"]
+cxx_flags = ["-Oz", "-flto", "-fno-exceptions", "--use-port=sdl3", "--use-port=emdawnwebgpu"]
+c_flags = ["-Oz", "-flto", "--use-port=sdl3"]
+defines = ["NDEBUG=1", "POCKET_WEB=1"]
+link_flags = ["-Oz", "-flto", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
+
 [[dependencies]]
 name = "sdl3"
 version = "3.4.16"
