@@ -438,6 +438,16 @@ void from_json(const Json& j, AudioSource& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(AudioSource& v, std::string_view path, float** out);
 
+/// Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera.
+struct AudioListener {
+    bool enabled = true;
+    constexpr bool operator==(const AudioListener&) const = default;
+};
+void to_json(Json& j, const AudioListener& v);
+void from_json(const Json& j, AudioListener& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AudioListener& v, std::string_view path, float** out);
+
 /// A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.
 struct NavObstacle {
     float radius = 0.5f;
@@ -523,6 +533,7 @@ void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
+void hash_component(struct StateHasherRef& h, const AudioListener& v);
 void hash_component(struct StateHasherRef& h, const NavObstacle& v);
 void hash_component(struct StateHasherRef& h, const NavAgent& v);
 void hash_component(struct StateHasherRef& h, const Morph& v);

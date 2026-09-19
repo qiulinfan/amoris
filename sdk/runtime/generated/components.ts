@@ -490,7 +490,7 @@ export interface AudioSource {
     loop: boolean;
     /** Start playing as soon as the component exists. */
     autoplay: boolean;
-    /** Heard from where the entity is: the volume falls from full within `near` of the listener (the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). */
+    /** Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). */
     spatial: boolean;
     /** Distance within which a spatial source plays at its full volume. */
     near: number;
@@ -500,6 +500,12 @@ export interface AudioSource {
     playing: boolean;
     /** Id of the playing voice, 0 when silent (written by the engine). */
     voice: number;
+}
+
+/** Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera. */
+export interface AudioListener {
+    /** Whether this listener is the one; disabled, the camera listens again. */
+    enabled: boolean;
 }
 
 /** A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors. */
@@ -576,6 +582,7 @@ export interface Components {
     Body2D: Body2D;
     Collider: Collider;
     AudioSource: AudioSource;
+    AudioListener: AudioListener;
     NavObstacle: NavObstacle;
     NavAgent: NavAgent;
     Morph: Morph;
@@ -583,7 +590,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -608,6 +615,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, playing: false, voice: 0 },
+    AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },

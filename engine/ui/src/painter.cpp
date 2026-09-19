@@ -4,6 +4,8 @@
 
 #include <cstring>
 
+#include <map>
+
 namespace pocket::ui {
 
 namespace {
@@ -65,26 +67,37 @@ fn sd_round_box(p: vec2f, half: vec2f, r: f32) -> f32 {
     let mode = in.params.y;
     var alpha = in.color.a;
     // Sampled outside the branches: implicit-derivative sampling must stay in uniform control flow.
-    let coverage = textureSample(atlas, smp, in.uv).r;
+    let tex = textureSample(atlas, smp, in.uv);
+    let coverage = tex.r;
+    var rgb = in.color.rgb;
     if (mode > 0.5 && mode < 1.5) {
         alpha = alpha * coverage;
     } else if (mode > 1.5 && mode < 2.5) {
         let d = sd_round_box(in.px - in.rect.xy, in.rect.zw, in.params.x);
         alpha = alpha * (1.0 - smoothstep(-0.6, 0.6, d));
-    } else if (mode > 2.5) {
+    } else if (mode > 2.5 && mode < 3.5) {
         let d = sd_round_box(in.px - in.rect.xy, in.rect.zw, in.params.x);
         let outer = 1.0 - smoothstep(-0.6, 0.6, d);
         let inner = 1.0 - smoothstep(-0.6, 0.6, d + in.params.z);
         alpha = alpha * max(outer - inner, 0.0);
+    } else if (mode > 3.5) {
+        // An image: the texture's color and alpha under the tint, inside rounded corners when asked.
+        rgb = rgb * tex.rgb;
+        alpha = alpha * tex.a;
+        if (in.params.x > 0.0) {
+            let d = sd_round_box(in.px - in.rect.xy, in.rect.zw, in.params.x);
+            alpha = alpha * (1.0 - smoothstep(-0.6, 0.6, d));
+        }
     }
     if (alpha <= 0.001) { discard; }
-    return vec4f(in.color.rgb * alpha, alpha);
+    return vec4f(rgb * alpha, alpha);
 }
 )WGSL";
 
 struct DrawRange {
     std::uint32_t first_index = 0, index_count = 0;
     Rect clip;  // in pixels
+    WGPUTextureView view = nullptr;  // an image's texture; null draws from the font atlas
 };
 
 }  // namespace
@@ -103,6 +116,7 @@ struct Painter::Impl {
     std::uint64_t vbuf_size = 0, ibuf_size = 0;
     WGPUBindGroup bind_group = nullptr;
     WGPUTextureView bound_view = nullptr;
+    std::map<WGPUTextureView, WGPUBindGroup> image_groups;   // this frame's image textures, released at the next begin()
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<DrawRange> ranges;
@@ -227,27 +241,53 @@ struct Painter::Impl {
         bound_view = view;
     }
 
+    WGPUBindGroup group_for(WGPUTextureView view) {
+        if (auto it = image_groups.find(view); it != image_groups.end()) return it->second;
+        WGPUBindGroupEntry entries[3]{};
+        entries[0].binding = 0;
+        entries[0].buffer = globals;
+        entries[0].size = sizeof(Globals);
+        entries[1].binding = 1;
+        entries[1].textureView = view;
+        entries[2].binding = 2;
+        entries[2].sampler = sampler;
+        WGPUBindGroupDescriptor bgd{};
+        bgd.label = rhi::str("pocket.ui.image");
+        bgd.layout = bgl;
+        bgd.entryCount = 3;
+        bgd.entries = entries;
+        WGPUBindGroup g = wgpuDeviceCreateBindGroup(device->device(), &bgd);
+        image_groups[view] = g;
+        return g;
+    }
+
+    void release_image_groups() {
+        for (auto& [view, g] : image_groups) wgpuBindGroupRelease(g);
+        image_groups.clear();
+    }
+
     Rect clip_px() const {
         if (clip_stack.empty()) return {0, 0, width * scale, height * scale};
         const Rect& c = clip_stack.back();
         return {c.x * scale, c.y * scale, c.w * scale, c.h * scale};
     }
 
-    void new_range_if_needed() {
+    void new_range_if_needed(WGPUTextureView view) {
         Rect clip = clip_px();
         if (!ranges.empty()) {
             DrawRange& last = ranges.back();
-            if (last.clip.x == clip.x && last.clip.y == clip.y && last.clip.w == clip.w && last.clip.h == clip.h) return;
+            if (last.view == view && last.clip.x == clip.x && last.clip.y == clip.y && last.clip.w == clip.w && last.clip.h == clip.h) return;
             if (last.index_count == 0) {
                 last.clip = clip;
+                last.view = view;
                 return;
             }
         }
-        ranges.push_back({static_cast<std::uint32_t>(indices.size()), 0, clip});
+        ranges.push_back({static_cast<std::uint32_t>(indices.size()), 0, clip, view});
     }
 
-    void quad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d) {
-        new_range_if_needed();
+    void quad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, WGPUTextureView view = nullptr) {
+        new_range_if_needed(view);
         auto base = static_cast<std::uint32_t>(vertices.size());
         vertices.insert(vertices.end(), {a, b, c, d});
         indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
@@ -277,7 +317,9 @@ struct Painter::Impl {
 };
 
 Painter::Painter() : impl_(std::make_unique<Impl>()) {}
-Painter::~Painter() = default;
+Painter::~Painter() {
+    if (impl_) impl_->release_image_groups();
+}
 
 Result<std::unique_ptr<Painter>> Painter::create(rhi::Device& device, Font& font) {
     std::unique_ptr<Painter> p(new Painter());
@@ -297,6 +339,7 @@ void Painter::begin(float width_points, float height_points, float scale) {
     im.ranges.clear();
     im.clip_stack.clear();
     im.draws = 0;
+    im.release_image_groups();
 }
 
 void Painter::rect(const Rect& r, Color color, float radius) {
@@ -305,6 +348,24 @@ void Painter::rect(const Rect& r, Color color, float radius) {
 
 void Painter::border(const Rect& r, Color color, float thickness, float radius) {
     impl_->box(r, color, radius, 3.0f, thickness);
+}
+
+void Painter::image(const Rect& r_points, WGPUTextureView view, float u0, float v0, float u1, float v1, Color tint, float radius_points) {
+    Impl& im = *impl_;
+    if (!view) return;
+    const float x = r_points.x * im.scale, y = r_points.y * im.scale, w = r_points.w * im.scale, h = r_points.h * im.scale;
+    if (w <= 0 || h <= 0) return;
+    Vertex v{};
+    v.r = tint.r; v.g = tint.g; v.b = tint.b; v.a = tint.a;
+    v.cx = x + w * 0.5f; v.cy = y + h * 0.5f; v.hw = w * 0.5f; v.hh = h * 0.5f;
+    v.radius = std::min(radius_points * im.scale, std::min(v.hw, v.hh));
+    v.mode = 4.0f;
+    Vertex a = v, b = v, c = v, d = v;
+    a.x = x; a.y = y; a.u = u0; a.v = v0;
+    b.x = x + w; b.y = y; b.u = u1; b.v = v0;
+    c.x = x + w; c.y = y + h; c.u = u1; c.v = v1;
+    d.x = x; d.y = y + h; d.u = u0; d.v = v1;
+    im.quad(a, b, c, d, view);
 }
 
 void Painter::line(float x0, float y0, float x1, float y1, Color color, float thickness) {
@@ -438,6 +499,7 @@ Status Painter::flush(rhi::Frame& frame) {
         auto ex = static_cast<std::uint32_t>(std::min(static_cast<float>(frame.width), std::ceil(r.clip.x + r.clip.w)));
         auto ey = static_cast<std::uint32_t>(std::min(static_cast<float>(frame.height), std::ceil(r.clip.y + r.clip.h)));
         if (ex <= sx || ey <= sy) continue;
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, r.view ? im.group_for(r.view) : im.bind_group, 0, nullptr);
         wgpuRenderPassEncoderSetScissorRect(pass, sx, sy, ex - sx, ey - sy);
         wgpuRenderPassEncoderDrawIndexed(pass, r.index_count, 1, r.first_index, 0, 0);
         im.draws++;

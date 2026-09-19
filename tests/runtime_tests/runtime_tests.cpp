@@ -612,7 +612,7 @@ TEST_CASE("a scenario bundle plays the game and reports its verdict", "[runtime]
     REQUIRE(s.frame().has_value());  // exposed state is sampled at the end of a tick
     Json state = s.command("state", Json::object()).value()["state"];
     INFO(state.dump());
-    REQUIRE(state["__scenarios"].size() == 9);
+    REQUIRE(state["__scenarios"].size() == 10);
     REQUIRE(state["__scenario"]["status"] == "running");
     REQUIRE_FALSE(s.quit_requested());
     int frames = 1;
@@ -1788,6 +1788,25 @@ TEST_CASE("a spatial source is heard from where its entity is: quieter with dist
     REQUIRE(s.frame().has_value());
     REQUIRE(s.frame().has_value());
     REQUIRE(voice()["volume"].get<double>() == Catch::Approx(0.0).margin(0.001));
+    // An AudioListener entity stands in for the camera: at the source it hears it full and centered,
+    // two units to its right it hears it on the left; disabled, the camera listens again.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ear"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -40}}}}}, {"AudioListener", Json::object()}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    v = voice();
+    INFO(v.dump());
+    REQUIRE(v["volume"].get<double>() == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(std::fabs(v["pan"].get<double>()) < 0.05);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ear"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 2}, {"y", 0}, {"z", -40}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    v = voice();
+    REQUIRE(v["volume"].get<double>() == Catch::Approx((10.0 - 2.0) / 9.0).margin(0.02));
+    REQUIRE(v["pan"].get<double>() < -0.5);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ear"}, {"component", "AudioListener"}, {"value", Json{{"enabled", false}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(voice()["volume"].get<double>() == Catch::Approx(0.0).margin(0.001));   // forty units from the camera again
     // A spatial one-shot follows its entity too, and needs one.
     REQUIRE(s.command("audio.play", Json{{"clip", "assets/beep.wav"}, {"spatial", true}}).error().code == "bad_args");
     REQUIRE(s.command("world.set", Json{{"entity", "Ping"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 4}, {"y", 0}, {"z", 0}}}}}}).has_value());
@@ -2519,4 +2538,100 @@ TEST_CASE("the control server answers over HTTP, runs past 3600 frames and fails
     REQUIRE(s2.command("step", Json{{"ticks", 1}}, "test").has_value());
     REQUIRE(s2.finished());
     REQUIRE(s2.finish());
+}
+
+TEST_CASE("render.compare records a reference frame, then tells a matching frame from a changed one", "[runtime][compare]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    const std::filesystem::path scratch = o.project_dir / ".pocket" / "compare";
+    std::filesystem::remove_all(scratch);
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // The first call writes the reference; the same frame then matches it exactly.
+    Json first = s.command("render.compare", Json{{"path", ".pocket/compare/ref.png"}}).value();
+    INFO(first.dump());
+    REQUIRE(first["written"] == true);
+    REQUIRE(first["match"] == true);
+    REQUIRE(std::filesystem::exists(scratch / "ref.png"));
+    Json same = s.command("render.compare", Json{{"path", ".pocket/compare/ref.png"}}).value();
+    INFO(same.dump());
+    REQUIRE(same["written"] == false);
+    REQUIRE(same["match"] == true);
+    REQUIRE(same["differing"] == 0);
+    REQUIRE(same["width"] == 320);
+    // A big sprite over the middle of the frame: many pixels differ, in a rectangle the answer names.
+    Json block;
+    block["name"] = "Block";
+    block["components"]["Transform"]["position"] = Json{{"x", 0.0}, {"y", 0.0}, {"z", 0.5}};
+    block["components"]["Sprite"] = Json{{"size", {{"x", 6.0}, {"y", 3.0}}}, {"color", {{"r", 1.0}, {"g", 0.0}, {"b", 1.0}, {"a", 1.0}}}, {"layer", 50}};
+    REQUIRE(s.command("world.spawn", block).has_value());
+    REQUIRE(s.frame().has_value());
+    Json changed = s.command("render.compare", Json{{"path", ".pocket/compare/ref.png"}, {"diff", ".pocket/compare/diff.png"}}).value();
+    INFO(changed.dump());
+    REQUIRE(changed["match"] == false);
+    REQUIRE(changed["fraction"].get<double>() > 0.05);
+    REQUIRE(changed["fraction"].get<double>() < 0.9);
+    REQUIRE(changed["bounds"]["x1"].get<int>() > changed["bounds"]["x0"].get<int>());
+    REQUIRE(changed["bounds"]["y1"].get<int>() > changed["bounds"]["y0"].get<int>());
+    REQUIRE(std::filesystem::exists(scratch / "diff.png"));
+    // A tolerance above the change accepts it; update rewrites the reference so it matches again.
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/compare/ref.png"}, {"tolerance", 0.95}}).value()["match"] == true);
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/compare/ref.png"}, {"update", true}}).value()["written"] == true);
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/compare/ref.png"}}).value()["match"] == true);
+    // A reference of another size is a mismatch by size, and a path outside the project is refused.
+    REQUIRE(s.command("render.compare", Json{{"path", "assets/coin.png"}}).value()["reason"] == "size");
+    REQUIRE(s.command("render.compare", Json{{"path", "../outside.png"}}).error().code == "forbidden");
+    std::filesystem::remove_all(scratch);
+}
+
+TEST_CASE("an interface box draws a project image, fitted, cropped or stretched, and a missing one draws nothing", "[runtime][ui][image]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const Json plain = s.command("capture", Json::object()).value()["center_pixel"];
+    // A box over the middle of the window showing the top of the sky column (its darkest rows).
+    Json ops = Json::array();
+    ops.push_back(Json::array({"create", 50, "box"}));
+    ops.push_back(Json::array({"set", 50, Json{{"position", "absolute"}, {"left", 140}, {"top", 70}, {"width", 40}, {"height", 40}, {"image", "assets/sky.png"}, {"fit", "fill"}, {"uv", Json::array({0.0, 0.0, 1.0, 0.05})}, {"name", "picture"}}}));
+    ops.push_back(Json::array({"append", 1, 50}));
+    REQUIRE(s.command("ui.apply", Json{{"ops", ops}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json c = s.command("capture", Json::object()).value();
+    INFO(c["center_pixel"].dump() << " over " << plain.dump());
+    const auto px = [&](const Json& p, int i) { return p[i].get<int>(); };
+    REQUIRE(px(c["center_pixel"], 0) == Catch::Approx(58).margin(14));    // the sky's top color (58, 95, 154)
+    REQUIRE(px(c["center_pixel"], 1) == Catch::Approx(95).margin(14));
+    REQUIRE(px(c["center_pixel"], 2) == Catch::Approx(154).margin(14));
+    Json d = s.command("ui.describe", Json{{"id", 50}}).value();
+    REQUIRE(d["image"] == "assets/sky.png");
+    REQUIRE(d["fit"] == "fill");
+    // Contain keeps the column's proportions: a 32x8 strip in a 40x40 box is 40x10 across the middle, the rest of the box empty.
+    REQUIRE(s.command("ui.apply", Json{{"ops", Json::array({Json::array({"set", 50, Json{{"fit", "contain"}}})})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    c = s.command("capture", Json::object()).value();
+    REQUIRE(px(c["center_pixel"], 2) == Catch::Approx(154).margin(14));   // the strip runs through the center
+    // A picture that does not exist draws nothing: the scene shows through again.
+    REQUIRE(s.command("ui.apply", Json{{"ops", Json::array({Json::array({"set", 50, Json{{"image", "assets/nothing-here.png"}}})})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    c = s.command("capture", Json::object()).value();
+    INFO(c["center_pixel"].dump() << " vs plain " << plain.dump());
+    for (int i = 0; i < 3; ++i) REQUIRE(px(c["center_pixel"], i) == Catch::Approx(px(plain, i)).margin(2));
+    REQUIRE(s.finish().has_value());
 }

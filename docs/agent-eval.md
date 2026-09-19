@@ -21,14 +21,16 @@ Each task starts one of the samples paused in a headless runtime with the JSON-R
 | `spawn_stars` | hello (a copy) | edit the script to spawn five named spheres on start | `world.find`, `world.get` |
 | `double_jump` | sprites (a copy) | design a mechanic: a second jump in the air, once per flight | `input.press`, `state` (the rise of a jump pressed again in the air) |
 | `coin_respawn` | sprites (a copy) | design a mechanic: a collected coin returns after three seconds | `world.set`, `state` (the coin count once taken, at 1.7 s and at 3.2 s) |
+| `jump_sound` | sprites (a copy) | make an asset and use it: write a WAV under `assets/` and play it on every jump from the ground | `assets.list`, `audio.list` (silent before a jump, a voice of the file after it, again after the next) |
+| `lamp_prefab` | hello (a copy) | write a prefab file and instantiate it three times from the script | `project.read`, `world.find`, `world.get`, `world.describe` (three yellow spheres where asked, a point light under each) |
 
-Five tasks change the world through commands, three ask a question about it, and five ask for a change to the project's TypeScript: three a line or two, and two a mechanic the runner has to design (where the jump counter lives and when it clears; what a coin is, where it was, how to bring it back later), with a check that plays the result rather than reads the source. The question tasks take their truth from the same commands at check time, so a runner that reads the world correctly passes them and one that guesses does not. The script tasks run on a copy of the sample (`pocket new --from`, under `build/agent-eval/`): the runner gets `project_dir` and edits the project's entry script there (`scripts/main.ts`, or `scripts/main.tsx` for the sprites sample; the task text names it), and when it returns the harness bundles the copy again with the tool, reloads the project (`project.reload`: a fresh world from the scene, the edited script started over it) and steps two ticks before the check. The copy and its bundle are removed afterwards.
+Five tasks change the world through commands, three ask a question about it, and seven ask for a change to the project's files: three a line or two of TypeScript, two a mechanic the runner has to design (where the jump counter lives and when it clears; what a coin is, where it was, how to bring it back later), with a check that plays the result rather than reads the source, and two that span files, a sound the runner has to make and play and a prefab it has to write and instantiate, where the check reads the file through the runtime and then looks at what the world does with it. The question tasks take their truth from the same commands at check time, so a runner that reads the world correctly passes them and one that guesses does not. The script tasks run on a copy of the sample (`pocket new --from`, under `build/agent-eval/`): the runner gets `project_dir` and edits the project's entry script there (`scripts/main.ts`, or `scripts/main.tsx` for the sprites sample; the task text names it), and when it returns the harness bundles the copy again with the tool, reloads the project (`project.reload`: a fresh world from the scene, the edited script started over it) and steps two ticks before the check. The copy and its bundle are removed afterwards.
 
 ## Runners
 
 ```bash
-python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 13/13
-python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor, 0/13
+python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 15/15
+python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor, 0/15
 python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,recolor --json
 ```
 
@@ -38,4 +40,4 @@ python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,rec
 
 ## Limits
 
-Eleven tasks: eight one-step edits or reads through commands and three one-line script edits; there is no task that needs an asset made, a scene composed or a mechanic designed, and none that is timed. A model scored here is scored on reading the docs and making the right call or the right edit, which is the first thing an agent must do and far from the last.
+Fifteen tasks: eight one-step edits or reads through commands, three one-line script edits, two mechanics and two files made beside the script (a sound, a prefab); none is timed, and none needs art drawn, a level laid out or a scene composed by eye. A model scored here is scored on reading the docs and making the right call or the right edit, which is the first thing an agent must do and far from the last.

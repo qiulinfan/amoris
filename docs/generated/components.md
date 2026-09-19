@@ -329,11 +329,19 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `pitch` | f32 | 1.0 | Playback rate multiplier. |
 | `loop` | bool | false | Restart when the clip ends. |
 | `autoplay` | bool | false | Start playing as soon as the component exists. |
-| `spatial` | bool | false | Heard from where the entity is: the volume falls from full within `near` of the listener (the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). |
+| `spatial` | bool | false | Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). |
 | `near` | f32 | 1.0 | Distance within which a spatial source plays at its full volume. |
 | `range` | f32 | 20.0 | Distance at which a spatial source is silent. |
 | `playing` | bool | false | Whether a voice is currently playing this source (written by the engine). |
 | `voice` | u32 | 0 | Id of the playing voice, 0 when silent (written by the engine). |
+
+## AudioListener
+
+Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | bool | true | Whether this listener is the one; disabled, the camera listens again. |
 
 ## NavObstacle
 

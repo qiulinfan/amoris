@@ -11,6 +11,7 @@
 #include <pocket/core/result.hpp>
 #include <pocket/platform/platform.hpp>
 #include <pocket/ui/painter.hpp>
+#include <functional>
 
 #include <memory>
 #include <string>
@@ -36,6 +37,14 @@ class Document {
     Document& operator=(const Document&) = delete;
 
     [[nodiscard]] NodeId root() const;
+    // Where a box's `image` comes from: a texture view for a project-relative path with the
+    // picture's pixel size, or a null view when there is no such image. The runtime plugs the
+    // renderer's textures in; without a source, images are ignored.
+    struct ImageSource {
+        WGPUTextureView view = nullptr;
+        float width = 0, height = 0;
+    };
+    void set_image_source(std::function<ImageSource(const std::string&)> source);
     // Apply a batch of operations: [["create", id, type], ["set", id, props], ["append", parent, id, index?],
     // ["remove", id], ["text", id, string], ["clear", id]]. Stops at the first invalid op.
     Status apply(const Json& ops);

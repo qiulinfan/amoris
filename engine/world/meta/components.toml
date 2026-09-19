@@ -344,11 +344,18 @@ fields = [
     { name = "pitch", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
     { name = "loop", type = "bool", default = false, doc = "Restart when the clip ends." },
     { name = "autoplay", type = "bool", default = false, doc = "Start playing as soon as the component exists." },
-    { name = "spatial", type = "bool", default = false, doc = "Heard from where the entity is: the volume falls from full within `near` of the listener (the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)." },
+    { name = "spatial", type = "bool", default = false, doc = "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)." },
     { name = "near", type = "f32", default = 1.0, doc = "Distance within which a spatial source plays at its full volume." },
     { name = "range", type = "f32", default = 20.0, doc = "Distance at which a spatial source is silent." },
     { name = "playing", type = "bool", default = false, doc = "Whether a voice is currently playing this source (written by the engine)." },
     { name = "voice", type = "u32", default = 0, doc = "Id of the playing voice, 0 when silent (written by the engine)." },
+]
+
+[[component]]
+name = "AudioListener"
+doc = "Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera."
+fields = [
+    { name = "enabled", type = "bool", default = true, doc = "Whether this listener is the one; disabled, the camera listens again." },
 ]
 
 [[component]]

@@ -571,7 +571,7 @@ Json TileMap::describe() const {
     for (const ObjectLayer& o : object_layers) os.push_back(Json{{"name", o.name}, {"objects", o.objects.size()}});
     j["object_layers"] = os;
     Json is = Json::array();
-    for (const ImageLayer& il : image_layers) is.push_back(Json{{"name", il.name}, {"id", il.id}, {"image", il.image}, {"offset_x", il.offset_x}, {"offset_y", il.offset_y}, {"repeat_x", il.repeat_x}, {"repeat_y", il.repeat_y}, {"opacity", il.opacity}, {"visible", il.visible}, {"before", il.before}, {"properties", il.properties}});
+    for (const ImageLayer& il : image_layers) is.push_back(Json{{"name", il.name}, {"id", il.id}, {"image", il.image}, {"offset_x", il.offset_x}, {"offset_y", il.offset_y}, {"repeat_x", il.repeat_x}, {"repeat_y", il.repeat_y}, {"parallax_x", il.parallax_x}, {"parallax_y", il.parallax_y}, {"opacity", il.opacity}, {"visible", il.visible}, {"before", il.before}, {"properties", il.properties}});
     j["image_layers"] = is;
     j["properties"] = properties;
     return j;
@@ -694,6 +694,8 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
             il.visible = l.value("visible", true);
             il.repeat_x = l.value("repeatx", false);
             il.repeat_y = l.value("repeaty", false);
+            il.parallax_x = l.value("parallaxx", 1.0f);
+            il.parallax_y = l.value("parallaxy", 1.0f);
             if (const std::string tint = l.value("tintcolor", ""); tint.size() == 7 || tint.size() == 9) {
                 // "#rrggbb" or "#aarrggbb"
                 auto hex = [&](std::size_t at) { return static_cast<float>(std::stoi(tint.substr(at, 2), nullptr, 16)) / 255.0f; };

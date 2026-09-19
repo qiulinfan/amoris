@@ -85,6 +85,13 @@ class Renderer {
     Result<world::EntityId> pick(std::uint32_t x, std::uint32_t y);
     [[nodiscard]] const RenderStats& stats() const;
     [[nodiscard]] Json describe() const;
+    // A project image as a texture for the interface (uploaded and cached like a sprite's), with
+    // its pixel size; a null view when the file is missing or undecodable (reported once).
+    struct ImageView {
+        WGPUTextureView view = nullptr;
+        std::uint32_t width = 0, height = 0;
+    };
+    [[nodiscard]] ImageView image_view(const std::string& path);
     // Camera used by the last frame (default camera when the world has none).
     [[nodiscard]] const CameraView& camera() const;
     // Project a world point to pixel coordinates using the last frame's camera; false if behind.

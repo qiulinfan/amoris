@@ -156,6 +156,15 @@ Status Session::start() {
         POCKET_TRY(painter, ui::Painter::create(*device_, *font_));
         painter_ = std::move(painter);
         ui_ = std::make_unique<ui::Document>(*font_);
+        ui_->set_image_source([this](const std::string& path) {
+            ui::Document::ImageSource src;
+            if (!renderer_) return src;
+            const auto v = renderer_->image_view(path);
+            src.view = v.view;
+            src.width = static_cast<float>(v.width);
+            src.height = static_cast<float>(v.height);
+            return src;
+        });
         font_path_ = font;
     } else {
         log::warn("runtime", "ui disabled: no font found (project config 'font' or POCKET_FONT)");
@@ -175,6 +184,15 @@ Status Session::start() {
     if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
         if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
         else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
+    }
+    // input.json beside project.toml, written by the editor's Input tab, replaces that map
+    // (docs/design/input.md, Map): {"actions": {...}} in the same shape.
+    if (const std::filesystem::path override = options_.project_dir / "input.json"; std::filesystem::exists(override)) {
+        auto text = fs::read_text(override);
+        Json j = text ? Json::parse(*text, nullptr, false) : Json();
+        if (!text || j.is_discarded() || !j.is_object() || !j.contains("actions") || !j["actions"].is_object()) log::warn("runtime", "input.json is not an object with \"actions\"; keeping the project.toml map");
+        else if (auto r = input_map_.configure(j["actions"]); !r) log::warn("runtime", "input.json: {}", r.error().to_string());
+        else log::info("runtime", "input map: {} actions from input.json", input_map_.size());
     }
     if (project_.contains("sprite_clips") && project_["sprite_clips"].is_object()) {
         for (const auto& [name, j] : project_["sprite_clips"].items()) {
@@ -1604,6 +1622,85 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         }
         return j;
     }
+    if (op == "compare") {
+        // The last frame against a reference PNG in the project (docs/design/rendering.md,
+        // Comparing frames): a pixel differs when a channel is off by more than `threshold`
+        // (16 of 255), and the frame matches when at most `tolerance` (0.01) of the pixels
+        // differ. A missing reference is written from this frame and reported as `written`
+        // (delete it to record again); `update: true` rewrites it; `diff` names a PNG to write,
+        // when the frame does not match, with the differing pixels in red over the dimmed reference.
+        const std::string rel = opt<std::string>(p, "path", "");
+        POCKET_TRY(path, inside_dir(options_.project_dir, rel));
+        POCKET_TRY(img, device_->capture());
+        const double tolerance = std::clamp(opt<double>(p, "tolerance", 0.01), 0.0, 1.0);
+        const int threshold = std::clamp(opt<int>(p, "threshold", 16), 0, 255);
+        Json j;
+        j["path"] = rel;
+        j["width"] = img.width;
+        j["height"] = img.height;
+        j["tolerance"] = tolerance;
+        j["threshold"] = threshold;
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec) || opt<bool>(p, "update", false)) {
+            std::filesystem::create_directories(path.parent_path(), ec);
+            POCKET_TRY_VOID(write_png(path, img));
+            j["written"] = true;
+            j["match"] = true;
+            j["differing"] = 0;
+            j["fraction"] = 0.0;
+            return j;
+        }
+        POCKET_TRY(bytes, fs::read_bytes(path));
+        POCKET_TRY(ref, assets::decode_image(std::string(bytes.begin(), bytes.end()), rel));
+        j["written"] = false;
+        j["ref_width"] = ref.width;
+        j["ref_height"] = ref.height;
+        if (ref.width != img.width || ref.height != img.height) {
+            j["match"] = false;
+            j["differing"] = static_cast<std::uint64_t>(img.width) * img.height;
+            j["fraction"] = 1.0;
+            j["reason"] = "size";
+            return j;
+        }
+        const std::string diff_rel = opt<std::string>(p, "diff", "");
+        rhi::Image diff;
+        if (!diff_rel.empty()) {
+            diff.width = img.width;
+            diff.height = img.height;
+            diff.rgba.resize(img.rgba.size());
+        }
+        std::uint64_t differing = 0;
+        std::uint32_t x0 = img.width, y0 = img.height, x1 = 0, y1 = 0;
+        for (std::uint32_t y = 0; y < img.height; ++y) {
+            for (std::uint32_t x = 0; x < img.width; ++x) {
+                const std::size_t i = (static_cast<std::size_t>(y) * img.width + x) * 4;
+                bool off = false;
+                for (std::size_t c = 0; c < 4 && !off; ++c) off = std::abs(static_cast<int>(img.rgba[i + c]) - static_cast<int>(ref.rgba[i + c])) > threshold;
+                if (off) {
+                    ++differing;
+                    x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y);
+                }
+                if (!diff_rel.empty()) {
+                    if (off) { diff.rgba[i] = 255; diff.rgba[i + 1] = 0; diff.rgba[i + 2] = 0; }
+                    else { diff.rgba[i] = ref.rgba[i] / 3; diff.rgba[i + 1] = ref.rgba[i + 1] / 3; diff.rgba[i + 2] = ref.rgba[i + 2] / 3; }
+                    diff.rgba[i + 3] = 255;
+                }
+            }
+        }
+        const std::uint64_t total = static_cast<std::uint64_t>(img.width) * img.height;
+        const double fraction = total > 0 ? static_cast<double>(differing) / static_cast<double>(total) : 0.0;
+        j["differing"] = differing;
+        j["fraction"] = fraction;
+        j["match"] = fraction <= tolerance;
+        if (differing > 0) j["bounds"] = Json{{"x0", x0}, {"y0", y0}, {"x1", x1 + 1}, {"y1", y1 + 1}};
+        if (!diff_rel.empty() && fraction > tolerance) {   // the picture of what went wrong, only when something did
+            POCKET_TRY(diff_path, inside_dir(options_.project_dir, diff_rel));
+            std::filesystem::create_directories(diff_path.parent_path(), ec);
+            POCKET_TRY_VOID(write_png(diff_path, diff));
+            j["diff"] = diff_rel;
+        }
+        return j;
+    }
     if (op == "ids" || op == "visible") {
         POCKET_TRY(img, renderer_->read_ids());
         struct Span { std::uint64_t pixels = 0; std::uint32_t x0 = ~0u, y0 = ~0u, x1 = 0, y1 = 0; };
@@ -1979,12 +2076,23 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
 void Session::place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range) {
     const auto* wt = world_->try_get<world::WorldTransform>(entity);
     if (!wt) return;
+    // The listener: the first enabled AudioListener entity, else the camera of the last frame.
     const renderer::CameraView& cam = renderer_->camera();
-    const Vec3 to = wt->position - cam.position;
+    Vec3 ear = cam.position, forward = cam.forward;
+    world::EntityId listener = 0;
+    world_->ecs().each([&](flecs::entity e, const world::AudioListener& l) {
+        if (l.enabled && (listener == 0 || e.id() < listener) && world_->try_get<world::WorldTransform>(e.id())) listener = e.id();
+    });
+    if (listener != 0) {
+        const auto* lt = world_->try_get<world::WorldTransform>(listener);
+        ear = lt->position;
+        forward = lt->rotation.rotate(Vec3{0, 0, -1});
+    }
+    const Vec3 to = wt->position - ear;
     const float d = length(to);
     const float span = std::max(range - near, 1e-3f);
     const float gain = std::clamp((range - d) / span, 0.0f, 1.0f);
-    Vec3 right = cross(cam.forward, Vec3{0, 1, 0});
+    Vec3 right = cross(forward, Vec3{0, 1, 0});
     if (length(right) < 1e-4f) right = Vec3{1, 0, 0};
     right = normalize(right);
     const float pan = d > 1e-4f ? std::clamp(dot(to * (1.0f / d), right), -1.0f, 1.0f) * 0.8f : 0.0f;
@@ -2949,7 +3057,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

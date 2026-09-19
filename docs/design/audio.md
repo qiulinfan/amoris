@@ -15,7 +15,7 @@ Sound in Pocket follows the same rule as everything else: the state an agent can
 
 ## Where a sound is
 
-A source with `spatial` is heard from where its entity is: every tick the engine takes the entity's world position against the listener, the camera of the last frame, and sets the voice's volume to the source's, full within `near` of the camera and falling in a straight line to nothing at `range`, and its pan toward the side the entity is on (most of the way, so a sound straight to the right still reaches the left ear). A one-shot follows its entity the same way: `audio.play {clip, entity, spatial: true, near?, range?}` places the voice now and every tick until it ends. The placement goes through `audio.set`, so `audio.list` shows the volume and pan a spatial voice has right now, and a headless run places its voices the same way a window does (the mixer never runs, the numbers do). A source without `spatial` keeps the volume and pan it was given.
+A source with `spatial` is heard from where its entity is: every tick the engine takes the entity's world position against the listener, an entity with an enabled `AudioListener` (its world position and facing; the first by id when there are several, so a third-person game puts one on the player and sounds are placed around the player, not the camera) or else the camera of the last frame, and sets the voice's volume to the source's, full within `near` of the camera and falling in a straight line to nothing at `range`, and its pan toward the side the entity is on (most of the way, so a sound straight to the right still reaches the left ear). A one-shot follows its entity the same way: `audio.play {clip, entity, spatial: true, near?, range?}` places the voice now and every tick until it ends. The placement goes through `audio.set`, so `audio.list` shows the volume and pan a spatial voice has right now, and a headless run places its voices the same way a window does (the mixer never runs, the numbers do). A source without `spatial` keeps the volume and pan it was given.
 
 ## Commands and SDK
 
@@ -31,4 +31,4 @@ A source with `spatial` is heard from where its entity is: every tick the engine
 
 ## Not yet
 
-Compressed formats (OGG/MP3), occlusion and reverb (a spatial source is distance and side only, a wall between does nothing), a listener other than the camera, effects buses, streaming long clips, and audio in the state hash (voices are deterministic but kept out of the hash like the interface).
+Compressed formats (OGG/MP3), occlusion and reverb (a spatial source is distance and side only, a wall between does nothing), a listener's velocity (no Doppler), effects buses, streaming long clips, and audio in the state hash (voices are deterministic but kept out of the hash like the interface).

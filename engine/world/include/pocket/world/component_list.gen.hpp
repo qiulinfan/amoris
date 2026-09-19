@@ -23,6 +23,7 @@
     X(Body2D) \
     X(Collider) \
     X(AudioSource) \
+    X(AudioListener) \
     X(NavObstacle) \
     X(NavAgent) \
     X(Morph)

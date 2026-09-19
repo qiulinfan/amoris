@@ -42,6 +42,9 @@ struct Node {
     std::vector<NodeId> children;
     // Paint
     Color background{0, 0, 0, 0};
+    std::string image;               // a project-relative picture drawn over the background
+    std::string fit = "contain";     // contain (inside, proportions kept), cover (cropped to fill), fill (stretched)
+    float uv[4] = {0, 0, 1, 1};      // the part of the picture shown: u0, v0, u1, v1
     Color border_color{0, 0, 0, 0};
     float border_width = 0;
     float radius = 0;
@@ -138,6 +141,7 @@ std::size_t utf8_next(const std::string& s, std::size_t i) {
 
 struct Document::Impl {
     Font& font;
+    std::function<Document::ImageSource(const std::string&)> image_source;
     std::map<NodeId, Node> nodes;
     NodeId root_id = 1;
     YGConfigRef config = nullptr;
@@ -283,6 +287,9 @@ struct Document::Impl {
             }
             else if (k == "display") { std::string s = v.get<std::string>(); n.visible = s != "none"; YGNodeStyleSetDisplay(y, n.visible ? YGDisplayFlex : YGDisplayNone); }
             else if (k == "background" || k == "backgroundColor" || k == "bg") n.background = parse_color(v, n.background);
+            else if (k == "image") n.image = v.is_string() ? v.get<std::string>() : "";
+            else if (k == "fit") n.fit = v.is_string() ? v.get<std::string>() : "contain";
+            else if (k == "uv") { if (v.is_array() && v.size() == 4) for (std::size_t i = 0; i < 4; ++i) n.uv[i] = v[i].is_number() ? v[i].get<float>() : n.uv[i]; }
             else if (k == "borderColor") n.border_color = parse_color(v, n.border_color);
             else if (k == "border" || k == "borderWidth") { n.border_width = v.is_number() ? v.get<float>() : 0.0f; YGNodeStyleSetBorder(y, YGEdgeAll, n.border_width); }
             else if (k == "radius" || k == "borderRadius") n.radius = v.get<float>();
@@ -335,6 +342,26 @@ struct Document::Impl {
             if (!(n.parent == 0)) return;
         }
         if (n.background.a > 0) p.rect(r, n.background.with_alpha(op), n.radius);
+        if (!n.image.empty() && image_source) {
+            const Document::ImageSource src = image_source(n.image);
+            if (src.view && src.width > 0 && src.height > 0) {
+                // The picture's box: stretched over the element (fill), fitted inside it with its
+                // proportions kept and centered (contain), or covering it with the excess cropped (cover).
+                Rect box = r;
+                float u0 = n.uv[0], v0 = n.uv[1], u1 = n.uv[2], v1 = n.uv[3];
+                const float pw = src.width * (u1 - u0), ph = src.height * (v1 - v0);
+                if (n.fit == "contain" && pw > 0 && ph > 0) {
+                    const float s = std::min(r.w / pw, r.h / ph);
+                    box = {r.x + (r.w - pw * s) * 0.5f, r.y + (r.h - ph * s) * 0.5f, pw * s, ph * s};
+                } else if (n.fit == "cover" && pw > 0 && ph > 0) {
+                    const float s = std::max(r.w / pw, r.h / ph);
+                    const float vw = r.w / (s * src.width), vh = r.h / (s * src.height);   // the part that shows, in uv
+                    const float cu = (u0 + u1) * 0.5f, cv = (v0 + v1) * 0.5f;
+                    u0 = cu - vw * 0.5f; u1 = cu + vw * 0.5f; v0 = cv - vh * 0.5f; v1 = cv + vh * 0.5f;
+                }
+                p.image(box, src.view, u0, v0, u1, v1, Color{1, 1, 1, op}, n.radius);
+            }
+        }
         if (n.border_width > 0 && n.border_color.a > 0) p.border(r, n.border_color.with_alpha(op), n.border_width, n.radius);
         if (n.type == "text" || n.type == "input") {
             Rect inner{r.x + YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) + n.border_width, r.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width, r.w - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - YGNodeLayoutGetPadding(n.yoga, YGEdgeRight) - 2 * n.border_width, r.h - YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) - YGNodeLayoutGetPadding(n.yoga, YGEdgeBottom) - 2 * n.border_width};
@@ -444,6 +471,10 @@ Document::Document(Font& font) : impl_(std::make_unique<Impl>(font)) {
     YGConfigSetContext(impl_->config, impl_.get());
 }
 Document::~Document() = default;
+
+void Document::set_image_source(std::function<ImageSource(const std::string&)> source) {
+    impl_->image_source = std::move(source);
+}
 
 NodeId Document::root() const { return impl_->root_id; }
 bool Document::exists(NodeId id) const { return impl_->get(id) != nullptr; }
@@ -745,6 +776,31 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                         if (it) emit(it, "input", Json{{"value", v}});
                     }
                 }
+                if (!consumed && ev.key_name == "Tab") {
+                    // Tab walks the focus through the inputs and the elements that listen for clicks,
+                    // in tree order, wrapping at the ends; Shift+Tab walks back.
+                    bool shift = false;
+                    for (const Json& m : platform::mods_to_json(ev.mods)) if (m == "shift") shift = true;
+                    std::vector<NodeId> order;
+                    std::function<void(NodeId)> collect = [&](NodeId id) {
+                        const Node* node = im.get(id);
+                        if (!node || !node->visible) return;
+                        if (!node->disabled && node->rect.w > 0 && node->rect.h > 0 && (node->type == "input" || (node->listeners & kClick))) order.push_back(id);
+                        for (NodeId c : node->children) collect(c);
+                    };
+                    collect(im.root_id);
+                    if (!order.empty()) {
+                        std::size_t at = order.size();
+                        for (std::size_t i = 0; i < order.size(); ++i) if (order[i] == im.focused) at = i;
+                        NodeId next = at == order.size() ? (shift ? order.back() : order.front()) : order[(at + (shift ? order.size() - 1 : 1)) % order.size()];
+                        set_focus_to(next);
+                    }
+                    consumed = true;
+                } else if (!consumed && n && n->type != "input" && !n->disabled && (n->listeners & kClick) && (ev.key_name == "Return" || ev.key_name == "Keypad Enter" || ev.key_name == "Space")) {
+                    // A focused button pressed from the keyboard: a click at its center.
+                    emit(im.focused, "click", with_mods(Json{{"x", n->rect.x + n->rect.w * 0.5f}, {"y", n->rect.y + n->rect.h * 0.5f}, {"keyboard", true}}, ev.mods));
+                    consumed = true;
+                }
                 NodeId t = im.listener_target(im.focused ? im.focused : im.hovered, kKeyDown);
                 if (t) emit(t, "keydown", with_mods(Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", consumed}}, ev.mods));
                 else if (!consumed) {
@@ -792,6 +848,10 @@ Json Document::describe(NodeId id) const {
     if (n->scroll) { j["scrollTop"] = n->scroll_y; j["contentHeight"] = n->content_height; }
     j["background"] = color_hex(n->background);
     j["color"] = color_hex(n->color);
+    if (!n->image.empty()) {
+        j["image"] = n->image;
+        j["fit"] = n->fit;
+    }
     return j;
 }
 

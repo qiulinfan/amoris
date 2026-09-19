@@ -19,8 +19,9 @@ interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 interface Layout { hierarchy: number; inspector: number; bottom: number }
 interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "other"; bytes: number; loaded: boolean }
-type Tab = "console" | "events" | "transcript" | "assets";
-const TABS: Tab[] = ["console", "events", "transcript", "assets"];
+type Tab = "console" | "events" | "transcript" | "assets" | "input";
+const TABS: Tab[] = ["console", "events", "transcript", "assets", "input"];
+interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
 const LAYOUT_PATH = ".pocket/editor.json";
@@ -50,6 +51,9 @@ const layout = signal<Layout>({ ...DEFAULT_LAYOUT });
 const gizmo = signal<GizmoView | null>(null);
 const historyVersion = signal(0);
 const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
+const actions = signal<Record<string, ActionBindings>>({});   // the input map, shown and edited by the Input tab
+const newAction = signal("");    // the Input tab's new-action name and keys, until Add
+const newKeys = signal("");
 const assetRows = signal<AssetRow[]>([]);      // the project's assets/ folder, shown by the Assets tab
 const assetPick = signal("");                  // the asset whose description is shown
 const assetInfo = signal("");
@@ -138,6 +142,7 @@ function refreshBottom(): void {
     if (t === "console") logs.set(command<LogRow[]>("log.tail", { n: 40 }));
     else if (t === "events") recentEvents.set(command<WorldEvent[]>("events.recent", { n: 40 }));
     else if (t === "assets") assetRows.set(command<AssetRow[]>("assets.list"));
+    else if (t === "input") actions.set(command<Record<string, ActionBindings>>("input.describe"));
     else transcriptText.set(command<{ text: string }>("transcript", { max_lines: 30 }).text);
 }
 
@@ -489,6 +494,62 @@ function dropRow(id: number, e: UiEvent): void {
     history.perform(`move ${name} under ${where}`, () => move(parent), () => move(before));
     historyVersion.update((v) => v + 1);
     notice.set(`${name} moved under ${where}`);
+}
+
+// ------------------------------------------------------------------------------------ input map
+/** Apply a whole map through input.map (live state of actions that stay is kept) and show it. */
+function applyActions(map: Record<string, ActionBindings>): void {
+    command("input.map", { actions: map });
+    actions.set(command<Record<string, ActionBindings>>("input.describe"));
+}
+
+function splitBindings(text: string): string[] {
+    return text.split(/[,\s]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/** One direction of one action rebound from its text field: an undoable edit. */
+function rebind(name: string, part: "positive" | "negative" | "axis", text: string): void {
+    const before = clone(actions());
+    const after = clone(actions());
+    const entry = after[name] ?? {};
+    const list = splitBindings(text);
+    if (list.length > 0) entry[part] = list;
+    else delete entry[part];
+    after[name] = entry;
+    if (JSON.stringify(before[name]) === JSON.stringify(after[name])) return;
+    edit(`Rebind ${name}`, () => applyActions(after), () => applyActions(before));
+    notice.set(`${name} ${part}: ${list.length > 0 ? list.join(", ") : "nothing"}`);
+}
+
+function addAction(name: string, keys: string): void {
+    const clean = name.trim();
+    const list = splitBindings(keys);
+    if (!clean) { notice.set("A new action needs a name"); return; }
+    if (list.length === 0) { notice.set(`${clean} needs at least one key (an action without bindings is refused)`); return; }
+    if (actions()[clean] !== undefined) { notice.set(`There is already an action named ${clean}`); return; }
+    const before = clone(actions());
+    const after = { ...clone(actions()), [clean]: { positive: list } };
+    edit(`Add action ${clean}`, () => applyActions(after), () => applyActions(before));
+    newAction.set("");
+    newKeys.set("");
+    notice.set(`${clean} added: ${list.join(", ")}`);
+}
+
+function removeAction(name: string): void {
+    const before = clone(actions());
+    const after = clone(actions());
+    delete after[name];
+    edit(`Remove action ${name}`, () => applyActions(after), () => applyActions(before));
+}
+
+/** The map as input.json beside project.toml, which the runtime takes over project.toml's. */
+function saveBindings(): void {
+    try {
+        command("project.write", { path: "input.json", json: { actions: actions() } });
+        notice.set(`Bindings saved to input.json (${Object.keys(actions()).length} actions); it replaces the project.toml map`);
+    } catch (e) {
+        notice.set(`Bindings not saved: ${String(e)}`);
+    }
 }
 
 // ------------------------------------------------------------------------------------ assets
@@ -924,6 +985,36 @@ function Bottom() {
         body = logs().map((l) => <Label key={l.seq} text={`${l.tick !== undefined ? `[${l.tick}] ` : ""}${l.level} ${l.cat}: ${l.msg}`} size={12} color={l.level === "error" ? theme.danger : l.level === "warn" ? "#f0c060" : theme.text} />);
     } else if (t === "events") {
         body = recentEvents().map((e) => <Label key={e.seq} text={`#${e.seq} t${e.tick} ${e.type}${e.subject ? ` @${e.subject}` : ""}${e.cause ? ` <- #${e.cause}` : ""} ${e.data ? JSON.stringify(e.data) : ""}`} size={12} />);
+    } else if (t === "input") {
+        const map = actions();
+        const names = Object.keys(map).sort();
+        const field = (name: string, part: "positive" | "negative" | "axis") => (
+            <TextInput value={(map[name]?.[part] ?? []).join(", ")} width={150} name={`action:${name}:${part}`} onChange={(v) => rebind(name, part, v)} />
+        );
+        body = [
+            <Row key="head" gap={8}>
+                <box width={110}><Label text="action" muted size={12} /></box>
+                <box width={150}><Label text="positive" muted size={12} /></box>
+                <box width={150}><Label text="negative" muted size={12} /></box>
+                <box width={150}><Label text="axis" muted size={12} /></box>
+            </Row>,
+            ...names.map((name) => (
+                <Row key={name} gap={8} name={`action:${name}`}>
+                    <box width={110}><Label text={name} size={12} /></box>
+                    {field(name, "positive")}
+                    {field(name, "negative")}
+                    {field(name, "axis")}
+                    <Button label="Remove" small name={`action:${name}:remove`} onClick={() => removeAction(name)} />
+                </Row>
+            )),
+            <Row key="new" gap={8}>
+                <TextInput value={newAction()} placeholder="new action" width={110} name="action:new" onInput={(v) => newAction.set(v)} onChange={(v) => newAction.set(v)} />
+                <TextInput value={newKeys()} placeholder="its keys" width={150} name="action:new:keys" onInput={(v) => newKeys.set(v)} onChange={(v) => { newKeys.set(v); addAction(newAction(), v); }} />
+                <Button label="Add" small name="action:add" onClick={() => addAction(newAction(), newKeys())} />
+                <Button label="Save bindings" small name="save_bindings" onClick={saveBindings} />
+                <Label text="Keys are SDL names (Space, Left, A), pad:a, pad:leftx, mouse:x; commas between them. Saved to input.json in the project." muted size={12} wrap flex={1} />
+            </Row>,
+        ];
     } else if (t === "assets") {
         const list = assetRows();
         const picked = assetPick();
@@ -931,6 +1022,7 @@ function Bottom() {
             <Label key="hint" text={list.length === 0 ? "No files under assets/." : picked ? `${picked}: ${assetInfo()}` : "Click a file to describe it; drag one onto the scene to place it."} muted size={12} name="asset-info" wrap />,
             ...list.map((r) => (
                 <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" padding={[2, 6]} gap={8} radius={3} background={picked === r.path ? theme.accent : null} onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)}>
+                    {r.kind === "image" ? <box width={16} height={16} image={r.path} name={`thumb:${r.path}`} /> : null}
                     <Label text={r.path} size={12} color={picked === r.path ? theme.accentText : theme.text} />
                     <Label text={r.kind} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
                     <Label text={r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
@@ -948,6 +1040,7 @@ function Bottom() {
                 {tabButton("events", "Events")}
                 {tabButton("transcript", "Transcript")}
                 {tabButton("assets", "Assets")}
+                {tabButton("input", "Input")}
                 <box flex={1} />
                 <Label text={notice()} muted size={12} name="notice" />
             </Row>

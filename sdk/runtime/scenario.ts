@@ -3,7 +3,7 @@
 // sees. The runtime loads a scenario bundle next to the project (--scenario), one scenario runs
 // per session (--scenario-name selects it), and `pocket scenario <project>` runs every scenario
 // at many seeds and reports. The bundle exposes `__scenario` (the run) and `__scenarios` (names).
-import { command } from "./world";
+import { command, render } from "./world";
 import { input } from "./input";
 import { events } from "./events";
 import { registry, own } from "./registry";
@@ -117,6 +117,13 @@ export interface ScenarioTools {
     until(predicate: () => boolean, options?: { timeout?: number; label?: string }): void;
     /** Run code now (spawn, set, assert with expect). A thrown ExpectationError fails the scenario. */
     check(fn: () => void, label?: string): void;
+    /**
+     * The last frame against a reference PNG in the project (render.compare): the scenario fails
+     * when more than `tolerance` (0.01) of the pixels differ by more than `threshold` (16 of 255).
+     * A missing reference is written by the first run (delete it to record again); `diff` names
+     * a PNG of the differences to write when they exceed the tolerance.
+     */
+    match(path: string, options?: { tolerance?: number; threshold?: number; diff?: string }): void;
     /** The project's exposed state right now (its expose() getters), or one value. */
     state(): Record<string, unknown>;
     state<T = unknown>(name: string): T;
@@ -216,6 +223,19 @@ function tools(steps: Step[]): ScenarioTools {
         wait(seconds) { steps.push({ kind: "wait", seconds, label: `wait ${seconds}s` }); },
         until(predicate, options = {}) { steps.push({ kind: "until", predicate, timeout: options.timeout ?? 5, label: options.label ?? "until condition" }); },
         check(fn, label = "check") { steps.push({ kind: "do", fn, label }); },
+        match(path, options = {}) {
+            steps.push({
+                kind: "do",
+                label: `match ${path}`,
+                fn: () => {
+                    const r = render.compare(path, options);
+                    if (r.match) return;
+                    const where = r.bounds ? ` in x ${r.bounds.x0}..${r.bounds.x1}, y ${r.bounds.y0}..${r.bounds.y1}` : "";
+                    const diff = r.diff ? `; the differences are in ${r.diff}` : "";
+                    throw new ExpectationError(r.reason === "size" ? `frame is ${r.width}x${r.height}, the reference ${path} is another size` : `frame differs from ${path}: ${(r.fraction * 100).toFixed(2)}% of the pixels (tolerance ${(r.tolerance * 100).toFixed(2)}%)${where}${diff}`);
+                },
+            });
+        },
         state(name?: string): any {
             const s = readState();
             return name === undefined ? s : s[name];

@@ -1361,6 +1361,18 @@ std::uint32_t tile_layers_parts(const Draws& sprites) {
 }
 }  // namespace
 
+Renderer::ImageView Renderer::image_view(const std::string& path) {
+    Impl& im = *impl_;
+    if (path.empty() || !im.assets) return {};
+    if (im.failed.contains(path)) { im.note_missing(path); return {}; }
+    auto img = im.assets->image(path);
+    if (!img) {
+        im.report_missing(path, img.error().message);
+        return {};
+    }
+    return {im.view_for(path, im.white), (*img)->width, (*img)->height};
+}
+
 Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug) {
     Impl& im = *impl_;
     if (im.msaa != im.msaa_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa));
@@ -1630,6 +1642,11 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 int kx0 = 0, kx1 = 0, ky0 = 0, ky1 = 0;   // copies along each axis, inclusive
                 if (il.repeat_x) { kx0 = static_cast<int>(std::floor(-il.offset_x / iw)); kx1 = std::min(static_cast<int>(std::ceil((extent.x - il.offset_x) / iw)) - 1, kx0 + 255); }
                 if (il.repeat_y) { ky0 = static_cast<int>(std::floor(-il.offset_y / ih)); ky1 = std::min(static_cast<int>(std::ceil((extent.y - il.offset_y) / ih)) - 1, ky0 + 255); }
+                // Parallax: a picture with a factor under 1 keeps part of the camera's motion, so a far
+                // sky (0) stays with the camera and a near hill (0.8) drifts slowly. In the map's plane,
+                // in world units, from where the camera stands relative to the map's origin.
+                const float shift_x = (im.camera.position.x - t.position.x) * (1.0f - il.parallax_x);
+                const float shift_y = (im.camera.position.y - t.position.y) * (1.0f - il.parallax_y);
                 ObjectUniforms iu = ou;
                 iu.id[0] = 0;   // a picture is backdrop: render.pick sees through it, so an empty cell still picks nothing
                 iu.color[0] = tmc.color.r * il.tint.x; iu.color[1] = tmc.color.g * il.tint.y; iu.color[2] = tmc.color.b * il.tint.z; iu.color[3] = tmc.color.a * il.tint.w * il.opacity;
@@ -1638,7 +1655,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 for (int ky = ky0; ky <= ky1; ++ky) {
                     for (int kx = kx0; kx <= kx1; ++kx) {
                         if (count + sprites.size() >= kMaxObjects) return;
-                        const float left = (il.offset_x + static_cast<float>(kx) * iw) * sx, top = -(il.offset_y + static_cast<float>(ky) * ih) * sy;
+                        const float left = (il.offset_x + static_cast<float>(kx) * iw) * sx + shift_x, top = -(il.offset_y + static_cast<float>(ky) * ih) * sy + shift_y;
                         const Mat4 quad = model * Mat4::translation({left + iw * sx * 0.5f, top - ih * sy * 0.5f, 0}) * Mat4::scale({iw * sx, ih * sy, 1});
                         to_array(quad, iu.model);
                         to_array(transpose(quad.inverse_affine()), iu.normal);

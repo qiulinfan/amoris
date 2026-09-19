@@ -291,3 +291,59 @@ TEST_CASE("document paints boxes and text", "[ui]") {
     std::filesystem::create_directories(root() / "build" / "test-out");
     (void)fs::write_bytes(root() / "build" / "test-out" / "document.raw", img->rgba.data(), img->rgba.size());
 }
+
+TEST_CASE("tab walks the focus through inputs and buttons, and Return presses the focused button", "[ui][focus]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 40, "input"], ["set", 40, {"position": "absolute", "left": 10, "top": 10, "width": 100, "name": "first"}], ["append", 1, 40],
+        ["create", 41, "box"], ["set", 41, {"position": "absolute", "left": 10, "top": 50, "width": 60, "height": 20, "name": "ok", "on": ["click", "focus"]}], ["append", 1, 41],
+        ["create", 42, "box"], ["set", 42, {"position": "absolute", "left": 10, "top": 80, "width": 60, "height": 20, "name": "plain"}], ["append", 1, 42],
+        ["create", 43, "input"], ["set", 43, {"position": "absolute", "left": 10, "top": 110, "width": 100, "name": "last"}], ["append", 1, 43]
+    ])"));
+    f.layout();
+    bool text_wanted = false;
+    platform::Event tab;
+    tab.type = platform::EventType::KeyDown;
+    tab.key_name = "Tab";
+    // From nothing, Tab lands on the first input; then the button (a plain box is skipped); then the last input; then round again.
+    auto events = f.doc->handle_events({tab}, text_wanted);
+    REQUIRE(f.doc->focused() == 40);
+    REQUIRE(text_wanted);
+    events = f.doc->handle_events({tab}, text_wanted);
+    REQUIRE(f.doc->focused() == 41);
+    REQUIRE_FALSE(text_wanted);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "focus");
+    REQUIRE(events[0]["name"] == "ok");
+    events = f.doc->handle_events({tab}, text_wanted);
+    REQUIRE(f.doc->focused() == 43);
+    events = f.doc->handle_events({tab}, text_wanted);
+    REQUIRE(f.doc->focused() == 40);
+    // Shift+Tab walks back, wrapping to the end.
+    platform::Event back = tab;
+    back.mods = platform::mods_from_json(Json::array({"shift"}));
+    events = f.doc->handle_events({back}, text_wanted);
+    REQUIRE(f.doc->focused() == 43);
+    events = f.doc->handle_events({back}, text_wanted);
+    REQUIRE(f.doc->focused() == 41);
+    // Return on the focused button is a click at its center; on an input it is a change, not a click.
+    platform::Event enter = tab;
+    enter.key_name = "Return";
+    events = f.doc->handle_events({enter}, text_wanted);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "click");
+    REQUIRE(events[0]["name"] == "ok");
+    REQUIRE(events[0]["keyboard"] == true);
+    REQUIRE(events[0]["x"].get<double>() == Catch::Approx(40).margin(1));
+    platform::Event space = enter;
+    space.key_name = "Space";
+    events = f.doc->handle_events({space}, text_wanted);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "click");
+    // A disabled button is skipped.
+    f.apply(Json::parse(R"([["set", 41, {"disabled": true}]])"));
+    f.layout();
+    f.doc->set_focus(40);
+    events = f.doc->handle_events({tab}, text_wanted);
+    REQUIRE(f.doc->focused() == 43);
+}

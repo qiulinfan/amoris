@@ -27,6 +27,7 @@ pocket scenario physics --seeds 20 --only goal --frames 600
 - `g.wait(seconds)` lets simulated time pass.
 - `g.until(predicate, { timeout, label })` polls every tick and fails after `timeout` seconds (5 by default).
 - `g.check(fn, label)` runs code now: `expect(...)` assertions (`toBe`, `toEqual`, `toBeCloseTo`, `toBeGreaterThan`, `toBeLessThan`, `toContain`, ...), spawns, writes, anything the SDK offers.
+- `g.match(path, { tolerance, threshold, diff })` holds the last frame against a reference PNG in the project (`render.compare`, `docs/design/rendering.md`, Comparing frames) and fails when more than `tolerance` (0.01) of the pixels differ; the first run writes the reference, so a scenario records the level's look and every later run checks it, and `diff` names a PNG of the differences to write when it fails.
 - `g.state()` is the project's exposed state right now (its `expose()` getters, called directly), `g.state("score")` one value; `g.count(type)` counts events of a type since the scenario started.
 - `g.bot(name, policy, options)` and `g.stopBot(name)` start and stop a bot (below); `g.report(key, value)` records a number or a structure for the run's report.
 
@@ -61,7 +62,7 @@ g.until(() => g.state<number>("player.x") > 8.5, { timeout: 15, label: "the east
 
 ## Limits
 
-Scenarios drive input and read state; they cannot pause the simulation or step it themselves (the engine owns the loop). A bot's policy is script: there is no learned or search-based player inside the runtime; a program that plays step by step uses the environment interface instead (`docs/design/environment.md`). Scenarios do not render checks (a capture in a `check` works, but nothing compares images).
+Scenarios drive input and read state; they cannot pause the simulation or step it themselves (the engine owns the loop). A bot's policy is script: there is no learned or search-based player inside the runtime; a program that plays step by step uses the environment interface instead (`docs/design/environment.md`). A frame check (`g.match`) compares whole frames at a pixel tolerance; there is no perceptual or region comparison, so a reference has to be recorded at the size the runner uses.
 
 ## Perception benchmarks
 

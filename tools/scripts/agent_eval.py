@@ -82,7 +82,14 @@ def tile_edit_check(env, answer):
 
 
 def clear_enemies_before(env):
-    n = len(env.command("world.query", {"name": "Enemy"})["entities"])
+    # Enemies come every three quarters of a second and go when they reach the player, so a
+    # fixed tick can land in a gap: step on, a little at a time, until some are about.
+    n = 0
+    for _ in range(60):
+        n = len(env.command("world.query", {"name": "Enemy"})["entities"])
+        if n >= 1:
+            break
+        env.command("step", {"ticks": 10})
     return n >= 1, f"{n} enemies about"
 
 
@@ -313,6 +320,117 @@ def coin_respawn_check(env, answer):
     return early == before - 1 and after == before, f"{before} coins, {taken} once taken, {early} after 1.7 s, {after} after 3.2 s"
 
 
+def jump_sound_solve(env, project_dir):
+    # A tone written as a WAV beside the art, played by the jump.
+    import math
+    import wave
+    os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
+    with wave.open(os.path.join(project_dir, "assets", "jump.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        frames = bytearray()
+        for i in range(int(22050 * 0.15)):
+            t = i / 22050
+            v = int(12000 * math.sin(2 * math.pi * (440 + 600 * t) * t) * (1 - t / 0.15))
+            frames += v.to_bytes(2, "little", signed=True)
+        w.writeframes(bytes(frames))
+
+    def transform(t):
+        head = "import { Label, events,"
+        jump = "        events.emit(\"player.jumped\", { x: Number(p.x.toFixed(2)) }, { subject: player });"
+        if head not in t or jump not in t:
+            raise RuntimeError("the sprites script changed shape")
+        t = t.replace(head, "import { Label, audio, events,", 1)
+        return t.replace(jump, jump + "\n        audio.play(\"assets/jump.wav\");", 1)
+    edit_main(project_dir, transform)
+
+
+def jump_sound_check(env, answer):
+    # A sound file under assets/, silent until the player jumps, heard right after, and again on the next jump.
+    st = lambda: env.command("state", {})["state"]  # noqa: E731
+    wavs = {f["path"] for f in env.command("assets.list", {}) if f.get("kind") == "audio"}
+    if not wavs:
+        return False, "no sound file under assets/"
+    voices = lambda: [v["clip"] for v in env.command("audio.list", {}) if v["clip"] in wavs]  # noqa: E731
+
+    def landed():
+        for _ in range(240):
+            if state_key(st(), "player.grounded"):
+                return True
+            env.command("step", {"ticks": 1})
+        return False
+
+    if not landed():
+        return False, "the player never landed"
+    env.command("step", {"ticks": 30})
+    if voices():
+        return False, "the sound plays before any jump"
+    env.command("input.press", {"action": "jump"})
+    env.command("step", {"ticks": 3})
+    first = voices()
+    if not first:
+        return False, f"nothing from {sorted(wavs)} plays after a jump ({len(env.command('audio.list', {}))} voices)"
+    if not landed():
+        return False, "the player never landed after the jump"
+    env.command("step", {"ticks": 30})
+    env.command("input.press", {"action": "jump"})
+    env.command("step", {"ticks": 3})
+    again = voices()
+    return bool(again), f"{first[0]} plays after a jump and again after the next"
+
+
+def lamp_prefab_solve(env, project_dir):
+    # A prefab file beside the script, instantiated three times on start.
+    os.makedirs(os.path.join(project_dir, "prefabs"), exist_ok=True)
+    lamp = {
+        "format": "pocket-scene", "version": 1,
+        "entities": [{
+            "name": "Lamp",
+            "components": {"Transform": {"position": {"x": 0, "y": 1, "z": 0}}, "MeshRenderer": {"mesh": "sphere", "color": {"r": 1, "g": 0.9, "b": 0.2, "a": 1}}},
+            "children": [{"name": "Glow", "components": {"Transform": {}, "Light": {"kind": 1, "intensity": 2}}}],
+        }],
+    }
+    with open(os.path.join(project_dir, "prefabs", "lamp.json"), "w") as f:
+        json.dump(lamp, f, indent=2)
+
+    def transform(t):
+        cam = "    world.spawn(\"Camera\", { components: { Transform: { position: { x: 0, y: 2.5, z: 7 }, rotation: { x: -0.13, y: 0, z: 0, w: 0.99 } }, Camera: { fov_degrees: 50 } } });"
+        if cam not in t:
+            raise RuntimeError("the hello script changed shape")
+        return t.replace(cam, cam + "\n    for (let i = 0; i < 3; i++) world.instantiate(\"prefabs/lamp.json\", { name: `Lamp${i}`, components: { Transform: { position: { x: -2 + 2 * i, y: 1, z: 0 } } } });", 1)
+    edit_main(project_dir, transform)
+
+
+def lamp_prefab_check(env, answer):
+    # The file is a scene fragment, and three lamps stand where asked with their glow underneath.
+    try:
+        text = env.command("project.read", {"path": "prefabs/lamp.json"})["text"]
+        doc = json.loads(text)
+    except Exception as e:  # noqa: BLE001
+        return False, f"prefabs/lamp.json unreadable: {e}"
+    if doc.get("format") != "pocket-scene" or not isinstance(doc.get("entities"), list):
+        return False, "prefabs/lamp.json is not a pocket-scene fragment"
+    for i in range(3):
+        lamp = env.command("world.find", {"path": f"Lamp{i}"})
+        if not isinstance(lamp, int):
+            return False, f"no entity named Lamp{i}"
+        mr = env.command("world.get", {"entity": lamp, "component": "MeshRenderer"})
+        if not mr or mr.get("mesh") != "sphere" or not color_is(mr["color"], 1, 0.9, 0.2):
+            return False, f"Lamp{i} does not draw a yellow sphere"
+        pos = env.command("world.get", {"entity": lamp, "component": "Transform"})["position"]
+        if not (near(pos["x"], -2 + 2 * i) and near(pos["y"], 1) and near(pos["z"], 0)):
+            return False, f"Lamp{i} at {pos}"
+        kids = env.command("world.describe", {"entity": lamp}).get("children", [])
+        glow = next((k for k in kids if k["name"] == "Glow"), None)
+        if glow is None:
+            return False, f"Lamp{i} has no child named Glow"
+        light = env.command("world.get", {"entity": glow["id"], "component": "Light"})
+        if not light or light.get("kind") != 1 or not near(light.get("intensity", 0), 2):
+            return False, f"Lamp{i}'s Glow is not a point light of intensity 2"
+    return True, "three lamps from the prefab, yellow spheres with a point light under each"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -340,6 +458,10 @@ TASKS = [
      "task": "Edit scripts/main.tsx in the project directory to give the player a double jump: pressing the jump action while in the air, once per time off the ground, gives the same upward speed again (a jump from the ground rises 2.3 units today; with a second jump pressed a fifth of a second later it must rise more than 3)."},
     {"name": "coin_respawn", "project": "sprites", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "solve": coin_respawn_solve, "check": coin_respawn_check,
      "task": "Edit scripts/main.tsx in the project directory so that a collected coin comes back where it was three seconds of game time after it was collected (drawn and collectable again, counted in the exposed \"coins\" state), and not before."},
+    {"name": "jump_sound", "project": "sprites", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "solve": jump_sound_solve, "check": jump_sound_check,
+     "task": "Give the jump a sound: write a short WAV file (mono 16-bit PCM, at least a tenth of a second, any tone) under assets/ in the project directory, and edit scripts/main.tsx so that it plays through the SDK's audio.play each time the player jumps from the ground, and at no other time."},
+    {"name": "lamp_prefab", "project": "hello", "ticks": 0, "script": True, "solve": lamp_prefab_solve, "check": lamp_prefab_check,
+     "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
 ]
 
 

@@ -1362,6 +1362,24 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const AudioListener& v) {
+    j = Json::object();
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, AudioListener& v) {
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const AudioListener& v) {
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(AudioListener& v, std::string_view path, float** out) {
+    (void)v;
+    return 0;
+}
+
 void to_json(Json& j, const NavObstacle& v) {
     j = Json::object();
     j["radius"] = v.radius;
@@ -1732,11 +1750,14 @@ constexpr std::array<FieldInfo, 10> kAudioSourceFields = {{
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
     FieldInfo{"loop", "bool", "Restart when the clip ends."},
     FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
-    FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
+    FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
     FieldInfo{"near", "f32", "Distance within which a spatial source plays at its full volume."},
     FieldInfo{"range", "f32", "Distance at which a spatial source is silent."},
     FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
+}};
+constexpr std::array<FieldInfo, 1> kAudioListenerFields = {{
+    FieldInfo{"enabled", "bool", "Whether this listener is the one; disabled, the camera listens again."},
 }};
 constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane."},
@@ -1765,7 +1786,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 24> kComponents = {{
+constexpr std::array<ComponentInfo, 25> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1787,6 +1808,7 @@ constexpr std::array<ComponentInfo, 24> kComponents = {{
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
+    ComponentInfo{"AudioListener", "Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera.", true, kAudioListenerFields},
     ComponentInfo{"NavObstacle", "A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.", true, kNavObstacleFields},
     ComponentInfo{"NavAgent", "A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.", true, kNavAgentFields},
     ComponentInfo{"Morph", "Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name.", true, kMorphFields},

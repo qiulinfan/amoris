@@ -32,6 +32,7 @@ function cmd<T>(name: string, params?: unknown): T {
     return __pocket.command(name, params) as T;
 }
 
+/** The AudioListener component (docs/design/audio.md, Where a sound is): spatial sounds are heard from its entity instead of the camera while it is enabled. */
 export const audio = {
     /** Start a clip (project-relative WAV path); returns the voice id. */
     play(clip: string, options: PlayOptions = {}): number {

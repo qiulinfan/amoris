@@ -44,6 +44,9 @@ class Painter {
     void begin(float width_points, float height_points, float scale);
     void rect(const Rect& r, Color color, float radius = 0);
     void border(const Rect& r, Color color, float thickness, float radius = 0);
+    // Draw an image: a texture view (RGBA, sampled linearly) stretched over the rect, u0..u1 and
+    // v0..v1 (0..1, v down) picking the part of it shown, tinted by color, corners rounded by radius.
+    void image(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, Color tint, float radius = 0);
     // Draw one line of text with its baseline placed so the text box starts at (x, y).
     // Returns the advance width in points.
     float text(float x, float y, std::string_view text, float size_points, Color color);

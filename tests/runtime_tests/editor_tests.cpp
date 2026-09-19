@@ -423,6 +423,81 @@ TEST_CASE("editor lists the project's assets and places one dropped on the scene
     std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");   // the layout file the tab click wrote
 }
 
+TEST_CASE("editor's Input tab rebinds actions live, undoably, and saves them to input.json", "[editor][input]") {
+    const std::filesystem::path saved = root() / "samples" / "sprites" / "input.json";
+    std::filesystem::remove(saved);
+    {
+        app::Session s(editor_options("sprites"));
+        ok(s.start());
+        s.set_paused(true);
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+        ok(s.command("ui.click", Json{{"id", find_named(s, "tab:input")}}));
+        ok(s.idle_frame());
+        Json jump = ok(s.command("ui.query", Json{{"name", "action:jump:positive"}}));
+        REQUIRE(jump.size() == 1);
+        REQUIRE(ok(s.command("ui.describe", Json{{"id", jump[0]["id"]}}))["value"] == "Space, W, Up, pad:a");
+        // A key added at the end of the field binds at once.
+        ok(s.command("ui.click", Json{{"id", jump[0]["id"]}}));
+        ok(s.command("ui.key", Json{{"key", "End"}}));
+        ok(s.command("ui.type", Json{{"text", ", Q"}}));
+        ok(s.command("ui.key", Json{{"key", "Return"}}));
+        ok(s.idle_frame());
+        Json d = ok(s.command("input.describe", Json::object()));
+        INFO(d.dump());
+        REQUIRE(d["jump"]["positive"].size() == 5);
+        REQUIRE(d["jump"]["positive"][4] == "Q");
+        ok(s.command("input.hold", Json{{"key", "Q"}, {"ticks", 3}}));
+        ok(s.frame());
+        REQUIRE(ok(s.command("input.actions", Json::object()))["jump"]["down"] == true);
+        // Undo takes it back; redo binds it again (Escape first: shortcuts wait while a field has focus).
+        ok(s.command("ui.key", Json{{"key", "Escape"}}));
+        ok(s.idle_frame());
+        ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+        ok(s.idle_frame());
+        REQUIRE(ok(s.command("input.describe", Json::object()))["jump"]["positive"].size() == 4);
+        ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+        ok(s.idle_frame());
+        REQUIRE(ok(s.command("input.describe", Json::object()))["jump"]["positive"].size() == 5);
+        // A new action from its name and keys (an action without keys is refused); Save writes input.json.
+        ok(s.command("ui.click", Json{{"id", find_named(s, "action:new")}}));
+        ok(s.command("ui.type", Json{{"text", "dash"}}));
+        ok(s.command("ui.key", Json{{"key", "Return"}}));
+        ok(s.idle_frame());
+        ok(s.command("ui.click", Json{{"id", find_named(s, "action:add")}}));
+        ok(s.idle_frame());
+        REQUIRE_FALSE(ok(s.command("input.describe", Json::object())).contains("dash"));
+        ok(s.command("ui.click", Json{{"id", find_named(s, "action:new:keys")}}));
+        ok(s.command("ui.type", Json{{"text", "LShift pad:b"}}));
+        ok(s.command("ui.key", Json{{"key", "Return"}}));
+        ok(s.idle_frame());
+        REQUIRE(ok(s.command("input.describe", Json::object()))["dash"]["positive"] == Json::array({"LShift", "pad:b"}));
+        REQUIRE(ok(s.command("ui.query", Json{{"name", "action:dash:positive"}})).size() == 1);
+        ok(s.command("ui.click", Json{{"id", find_named(s, "save_bindings")}}));
+        ok(s.idle_frame());
+        REQUIRE(std::filesystem::exists(saved));
+        Json file = Json::parse(ok(s.command("project.read", Json{{"path", "input.json"}}))["text"].get<std::string>());
+        REQUIRE(file["actions"]["dash"]["positive"] == Json::array({"LShift", "pad:b"}));
+        REQUIRE(file["actions"]["jump"]["positive"].size() == 5);
+        // Remove takes an action out.
+        ok(s.command("ui.click", Json{{"id", find_named(s, "action:dash:remove")}}));
+        ok(s.idle_frame());
+        REQUIRE_FALSE(ok(s.command("input.describe", Json::object())).contains("dash"));
+        ok(s.finish());
+    }
+    // The saved file is the map of the next run, in place of project.toml's.
+    {
+        app::Session s(editor_options("sprites"));
+        ok(s.start());
+        Json d = ok(s.command("input.describe", Json::object()));
+        INFO(d.dump());
+        REQUIRE(d.contains("dash"));
+        REQUIRE(d["jump"]["positive"].size() == 5);
+        ok(s.finish());
+    }
+    std::filesystem::remove(saved);
+    std::filesystem::remove_all(root() / "samples" / "sprites" / ".pocket");
+}
+
 TEST_CASE("editor snaps gizmo moves, turns and scales to the grid", "[editor][snap]") {
     app::Session s(editor_options("physics"));
     ok(s.start());

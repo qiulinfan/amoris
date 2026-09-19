@@ -48,6 +48,38 @@ fn newest_source(dir: &Path) -> SystemTime {
     newest
 }
 
+/// The newest file under the project's assets/ (pictures, maps, sounds, meshes): a change there
+/// needs no bundle, only the runtime forgetting what it decoded.
+fn newest_asset(project: &Path) -> SystemTime {
+    let mut newest = SystemTime::UNIX_EPOCH;
+    fn visit(dir: &Path, newest: &mut SystemTime, depth: usize) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                visit(&path, newest, depth + 1);
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "glb" | "gltf" | "bin") {
+                if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
+                    if m > *newest {
+                        *newest = m;
+                    }
+                }
+            }
+        }
+    }
+    visit(&project.join("assets"), &mut newest, 0);
+    newest
+}
+
 fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
     let resp = crate::mcp::http_post(url, "/rpc", &body)?;
@@ -107,6 +139,7 @@ pub fn watch(ws: &Workspace, config: &str, target: &str, args: &[String], editor
     let sdk_dir = ws.root.join("sdk").join("runtime");
     let editor_dir = ws.root.join("editor");
     let mut last = newest_source(&project).max(newest_source(&sdk_dir)).max(if editor { newest_source(&editor_dir) } else { SystemTime::UNIX_EPOCH });
+    let mut last_asset = newest_asset(&project);
     let mut reloads = 0u32;
     let mut failures = 0u32;
     let exit_code = loop {
@@ -114,6 +147,22 @@ pub fn watch(ws: &Workspace, config: &str, target: &str, args: &[String], editor
             break status.code();
         }
         std::thread::sleep(Duration::from_millis(250));
+        // A changed asset: the runtime forgets its decoded copy and draws the file as it is now,
+        // without a bundle or a reload of the scripts.
+        let now_asset = newest_asset(&project);
+        if now_asset > last_asset {
+            last_asset = now_asset;
+            match rpc(&url, "assets.reload", json!({})) {
+                Ok(_) => {
+                    reloads += 1;
+                    eprintln!("[watch] assets reloaded");
+                }
+                Err(e) => {
+                    failures += 1;
+                    eprintln!("[watch] assets reload failed: {e:#}");
+                }
+            }
+        }
         let now = newest_source(&project).max(newest_source(&sdk_dir)).max(if editor { newest_source(&editor_dir) } else { SystemTime::UNIX_EPOCH });
         if now <= last {
             continue;

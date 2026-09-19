@@ -183,6 +183,7 @@ struct ImageLayer {
     float opacity = 1;
     bool visible = true;
     bool repeat_x = false, repeat_y = false;
+    float parallax_x = 1, parallax_y = 1;   // Tiled's parallax factors: 1 moves with the map, 0 stays with the camera
     Vec4 tint{1, 1, 1, 1};             // Tiled's tintcolor, multiplied in
     Json properties;
     int before = 0;                    // tile layers that precede it in the file: it draws after them, under the rest

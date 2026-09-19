@@ -171,6 +171,12 @@ export interface StyleProps {
     overflow?: "visible" | "hidden" | "scroll";
     display?: "flex" | "none";
     background?: ColorValue;
+    /** A project-relative picture (PNG, JPG) drawn inside the box over its background, under its children. */
+    image?: string;
+    /** How the picture meets the box: "contain" (inside it, proportions kept, centered; the default), "cover" (filling it, the excess cropped) or "fill" (stretched). */
+    fit?: "contain" | "cover" | "fill";
+    /** The part of the picture shown, as u0, v0, u1, v1 in 0..1 with v down, for sheets. */
+    uv?: [number, number, number, number];
     borderColor?: ColorValue;
     border?: number;
     radius?: number;

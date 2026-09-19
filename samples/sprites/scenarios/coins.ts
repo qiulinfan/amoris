@@ -19,6 +19,13 @@ scenario("walking left for two seconds collects the three coins on the left", (g
     g.check(() => expect(g.state("player.clip")).toBe("idle"), "idle after the hold");
 });
 
+scenario("the level's first frame looks like the reference", (g) => {
+    // scenarios/level.png was written by the first run of this scenario (docs/design/scenarios.md,
+    // Steps): delete it to record again after a deliberate change to the level or the art.
+    g.wait(0.1);
+    g.match("scenarios/level.png", { tolerance: 0.02, diff: ".pocket/level-diff.png" });
+});
+
 scenario("the player stands on the ground and the level's edges hold", (g) => {
     g.wait(0.1);                                                // the first physics step grounds the body
     g.check(() => expect(g.state("player.grounded")).toBe(true));

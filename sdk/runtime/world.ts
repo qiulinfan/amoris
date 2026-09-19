@@ -184,6 +184,23 @@ export interface VisibleEntity {
 }
 
 /** Rendering queries: what is on screen, and where. */
+export interface FrameComparison {
+    match: boolean;
+    /** The reference was missing (or `update` was asked) and this frame was written as it. */
+    written: boolean;
+    differing: number;
+    fraction: number;
+    tolerance: number;
+    threshold: number;
+    width: number;
+    height: number;
+    /** "size" when the reference has other dimensions. */
+    reason?: string;
+    /** The pixel rectangle holding every differing pixel (x1, y1 exclusive). */
+    bounds?: { x0: number; y0: number; x1: number; y1: number };
+    diff?: string;
+}
+
 export const render = {
     stats(): { draw_calls: number; shadow_draws: number; shadows: boolean; instances: number; sprites: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity; msaa: number; id_draws: number } {
         return command("render.stats");
@@ -203,6 +220,16 @@ export const render = {
      */
     unproject(x: number, y: number, plane: "xy" | "xz" | "yz" = "xy", at = 0): { origin: Vec3; direction: Vec3; hit: boolean; point?: Vec3; distance?: number } {
         return command("render.unproject", { x, y, plane, at }) as { origin: Vec3; direction: Vec3; hit: boolean; point?: Vec3; distance?: number };
+    },
+    /**
+     * The last frame against a reference PNG in the project (docs/design/rendering.md, Comparing
+     * frames): a pixel differs when a channel is off by more than `threshold` (16 of 255), and
+     * the frame matches when at most `tolerance` (0.01) of the pixels differ. A missing reference
+     * is written from this frame (`written`); `update` rewrites it; `diff` names a PNG to write
+     * with the differing pixels in red over the dimmed reference.
+     */
+    compare(path: string, options: { tolerance?: number; threshold?: number; diff?: string; update?: boolean } = {}): FrameComparison {
+        return command<FrameComparison>("render.compare", { path, ...options });
     },
     /** Multisampling of the color pass: 1 (off) or 4; project.toml [render] msaa = 4 sets the default. Ids keep one sample per pixel. */
     msaa(samples?: number): number {

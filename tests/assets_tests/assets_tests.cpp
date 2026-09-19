@@ -442,7 +442,7 @@ TEST_CASE("image layers are read with their place among the tile layers and foll
         "tilesets":[{"firstgid":1,"name":"t","image":"t.png","imagewidth":16,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":1,"tilecount":1}],
         "layers":[
             {"id":1,"type":"tilelayer","name":"a","width":2,"height":2,"x":0,"y":0,"opacity":1,"visible":true,"data":[0,0,0,0]},
-            {"id":2,"type":"imagelayer","name":"bg","image":"art/bg.png","x":0,"y":0,"offsetx":8,"offsety":4,"opacity":0.5,"visible":true,"repeatx":true,"repeaty":false,"tintcolor":"#80ff0000"},
+            {"id":2,"type":"imagelayer","name":"bg","image":"art/bg.png","x":0,"y":0,"offsetx":8,"offsety":4,"opacity":0.5,"visible":true,"repeatx":true,"repeaty":false,"parallaxx":0.5,"parallaxy":0.25,"tintcolor":"#80ff0000"},
             {"id":3,"type":"tilelayer","name":"b","width":2,"height":2,"x":0,"y":0,"opacity":1,"visible":true,"data":[0,0,0,0]}
         ]})";
     auto parsed = assets::parse_tilemap(text, "maps/x.tmj");
@@ -461,6 +461,8 @@ TEST_CASE("image layers are read with their place among the tile layers and foll
     REQUIRE(bg.tint.x == Catch::Approx(1.0));
     REQUIRE(bg.tint.y == Catch::Approx(0.0));
     REQUIRE(bg.tint.w == Catch::Approx(128.0 / 255.0));
+    REQUIRE(bg.parallax_x == Catch::Approx(0.5));
+    REQUIRE(bg.parallax_y == Catch::Approx(0.25));
     REQUIRE(bg.before == 1);                  // after "a", under "b"
     Json d = map.describe();
     REQUIRE(d["image_layers"].size() == 1);
@@ -492,5 +494,6 @@ TEST_CASE("image layers are read with their place among the tile layers and foll
     REQUIRE((*level)->image_layers[0].image == "assets/sky.png");
     REQUIRE((*level)->image_layers[0].before == 0);
     REQUIRE((*level)->image_layers[0].repeat_x);
+    REQUIRE((*level)->image_layers[0].parallax_x == Catch::Approx(1.0));   // none asked: it moves with the map
     REQUIRE(store.describe("assets/level.tmj")["image_layers"][0]["name"] == "sky");
 }
