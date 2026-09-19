@@ -28,6 +28,11 @@ onStart(() => {
     // and is carried (docs/design/tilemaps.md, 2D physics). One-way, so it passes the walking
     // player from below instead of shoving it.
     lift = world.spawn("Lift", { components: { Transform: { position: { x: -8.5, y: -3.2, z: 0 } }, Sprite: { texture: "assets/tiles.png", size: { x: 1.5, y: 0.3 }, uv: { x: 0.4, y: 0, z: 0.6, w: 0.375 }, layer: 1, filter: "nearest" }, Body2D: { kinematic: true, one_way: true, size: { x: 0.75, y: 0.15 }, velocity: { x: 0, y: 1 } } } });
+    // A ball that bounces (restitution 0.7) and a puck that slides to a stop (friction 5), both
+    // ghosts to the other bodies so they never get in the player's way (docs/design/tilemaps.md,
+    // Friction and restitution).
+    world.spawn("Ball", { components: { Transform: { position: { x: 0.3, y: 0.5, z: 0 } }, Sprite: { texture: "assets/tiles.png", size: { x: 0.4, y: 0.4 }, uv: { x: 0.6, y: 0, z: 0.8, w: 1 }, layer: 1, filter: "nearest" }, Body2D: { size: { x: 0.2, y: 0.2 }, restitution: 0.7, collide_bodies: false } } });
+    world.spawn("Puck", { components: { Transform: { position: { x: 2.4, y: -3.3, z: 0 } }, Sprite: { texture: "assets/tiles.png", size: { x: 0.4, y: 0.4 }, uv: { x: 0.2, y: 0, z: 0.4, w: 1 }, layer: 1, filter: "nearest" }, Body2D: { size: { x: 0.2, y: 0.2 }, friction: 5, collide_bodies: false, grounded: true, velocity: { x: -2.5, y: 0 } } } });
     let i = 0;
     for (const o of spawns.filter((o) => o.type === "coin")) {
         const id = world.spawn(`Coin${i}`, { components: { Transform: { position: { x: o.x, y: o.y, z: 0 } }, Sprite: { texture: "assets/coin.png", size: { x: 0.5, y: 0.5 }, layer: 1, filter: "nearest" } } });
@@ -85,6 +90,19 @@ onTick((t) => {
 
 expose("score", () => score());
 expose("coins", () => coins.size);
+let ballBounces = 0;
+let bounceSeq = events.lastSeq();   // count from this run's start: the log runs on across an env.reset
+onTick(() => {
+    for (const e of events.since(bounceSeq, { type: "body2d.bounced", limit: 50 })) {
+        bounceSeq = e.seq;
+        if ((e.data as { path?: string }).path === "/Ball") ballBounces++;
+    }
+});
+expose("ball.bounces", () => ballBounces);
+expose("ball.y", () => Number((world.get(world.find("Ball") ?? 0, "Transform")?.position.y ?? 0).toFixed(3)));
+expose("ball.grounded", () => world.get(world.find("Ball") ?? 0, "Body2D")?.grounded ?? false);
+expose("puck.x", () => Number((world.get(world.find("Puck") ?? 0, "Transform")?.position.x ?? 0).toFixed(3)));
+expose("puck.vx", () => Number((world.get(world.find("Puck") ?? 0, "Body2D")?.velocity.x ?? 0).toFixed(3)));
 expose("done", () => coins.size === 0);   // the environment interface ends an episode here (docs/design/environment.md)
 expose("player.x", () => Number(world.get(player, "Transform")?.position.x.toFixed(2) ?? 0));
 expose("player.clip", () => world.get(player, "SpriteAnimation")?.clip ?? "");

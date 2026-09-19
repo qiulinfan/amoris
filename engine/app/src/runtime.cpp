@@ -161,6 +161,10 @@ EMSCRIPTEN_KEEPALIVE char* pocket_command(const char* name, const char* params) 
     std::memcpy(buf, text.c_str(), text.size() + 1);
     return buf;
 }
+// The same entry for commands that wait on the GPU (capture): the page awaits it. Under Asyncify
+// any export may unwind; under JSPI only the exports listed at link time may suspend, and this is
+// the one listed (pocket_command stays synchronous for everything else).
+EMSCRIPTEN_KEEPALIVE char* pocket_command_async(const char* name, const char* params) { return pocket_command(name, params); }
 }
 
 Result<Json> run(const Options& options) {

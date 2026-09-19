@@ -64,6 +64,11 @@ export const physics = {
         const r = command<RayHit | null>("physics.raycast", { origin, direction, ...options });
         return r === null ? undefined : r;
     },
+    /** A sphere of `radius` cast along a direction: the nearest collider it would touch (the distance its center can travel, the touching point, the normal), or undefined. Exact against boxes, capsules, spheres and mesh triangles. */
+    sweep(origin: Vec3 | [number, number, number], direction: Vec3 | [number, number, number], radius: number, options: { max_distance?: number; include_triggers?: boolean; mask?: number | Array<string | number> } = {}): (RayHit & { radius: number }) | undefined {
+        const r = command<(RayHit & { radius: number }) | null>("physics.sweep", { origin, direction, radius, ...options });
+        return r === null ? undefined : r;
+    },
     /** Colliders overlapping a sphere, on the layers of `mask` (all by default). */
     overlap(center: Vec3 | [number, number, number], radius: number, options: { mask?: number | Array<string | number> } = {}): Array<{ id: Entity; path: string }> {
         return command("physics.overlap", { center, radius, ...options });
@@ -86,7 +91,7 @@ export const physics = {
     contacts(): Array<{ a: string; b: string; point: Vec3; normal: Vec3; depth: number; trigger: boolean }> {
         return command("physics.contacts");
     },
-    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; ccd_hits: number; ignored: number; exceptions: number; gravity: Vec3; layers: string[] } {
+    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; ccd_hits: number; ccd_dynamic: number; ignored: number; exceptions: number; gravity: Vec3; layers: string[] } {
         return command("physics.stats");
     },
     /** Keep one pair of bodies from ever colliding (or let them again with ignore = false); the exception lasts until one of them is gone. */

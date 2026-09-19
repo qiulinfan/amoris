@@ -68,7 +68,7 @@ TEST_CASE("a skinned glb keeps joints, weights, the skeleton and its clips", "[a
     REQUIRE(mesh.skins[0].inverse_bind[1].at(3, 1) == Catch::Approx(-1.0f));   // tip bind pose is 1 up
     REQUIRE(mesh.submeshes.size() == 1);
     REQUIRE(mesh.submeshes[0].skin == 0);
-    REQUIRE(mesh.animations.size() == 4);
+    REQUIRE(mesh.animations.size() == 5);
     // Morph targets: two named targets with deltas parallel to the vertices, a weights track on
     // the pulse clip (two values per key) and the walk clip's root translation track.
     REQUIRE(mesh.morph_targets.size() == 2);
@@ -116,7 +116,7 @@ TEST_CASE("a skinned glb keeps joints, weights, the skeleton and its clips", "[a
     REQUIRE(mesh.aabb_max.y == Catch::Approx(2.0f));
     Json d = mesh.describe();
     REQUIRE(d["skinned"] == true);
-    REQUIRE(d["animations"].size() == 4);
+    REQUIRE(d["animations"].size() == 5);
     REQUIRE(d["targets"] == Json::array({"bulge", "lean"}));
 }
 

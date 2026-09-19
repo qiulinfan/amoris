@@ -312,6 +312,14 @@ def skinned_arm():
     pulse_w = [(0.0,), (0.0,), (1.0,), (0.0,), (0.0,), (0.0,)]   # per key: bulge, lean
     walk_t = [0.0, 1.0]
     walk_v = [(0.0, 0.0, 0.0), (0.0, 0.0, 1.0)]
+    # 'turn': the root walks a quarter circle of radius one over a second, turning 90 degrees about
+    # Y as it goes (root motion with rotation); the tip waves along.
+    turn_t = [0.0, 0.25, 0.5, 0.75, 1.0]
+    turn_v = [(1.0 - math.cos(math.radians(90 * t)), 0.0, math.sin(math.radians(90 * t))) for t in turn_t]
+    def quat_y(deg):
+        h = math.radians(deg) / 2
+        return (0.0, math.sin(h), 0.0, math.cos(h))
+    turn_q = [quat_y(90 * t) for t in turn_t]
     blobs = [
         ("POS", pack("<fff", positions), 34962), ("NRM", pack("<fff", normals), 34962), ("UV", pack("<ff", uvs), 34962),
         ("JNT", pack("<HHHH", joints), 34962), ("WGT", pack("<ffff", weights), 34962),
@@ -321,6 +329,7 @@ def skinned_arm():
         ("MT0", pack("<fff", bulge), 34962), ("MT1", pack("<fff", lean), 34962),
         ("PT", pack("<f", [(t,) for t in pulse_t]), None), ("PW", pack("<f", pulse_w), None),
         ("WKT", pack("<f", [(t,) for t in walk_t]), None), ("WKV", pack("<fff", walk_v), None),
+        ("TT", pack("<f", [(t,) for t in turn_t]), None), ("TV", pack("<fff", turn_v), None), ("TQ", pack("<ffff", turn_q), None),
     ]
     buf, views, index_of = b"", [], {}
     for name, data, target in blobs:
@@ -354,6 +363,9 @@ def skinned_arm():
         {"bufferView": index_of["PW"], "componentType": 5126, "count": len(pulse_w), "type": "SCALAR"},
         {"bufferView": index_of["WKT"], "componentType": 5126, "count": len(walk_t), "type": "SCALAR", "min": [walk_t[0]], "max": [walk_t[-1]]},
         {"bufferView": index_of["WKV"], "componentType": 5126, "count": len(walk_v), "type": "VEC3"},
+        {"bufferView": index_of["TT"], "componentType": 5126, "count": len(turn_t), "type": "SCALAR", "min": [turn_t[0]], "max": [turn_t[-1]]},
+        {"bufferView": index_of["TV"], "componentType": 5126, "count": len(turn_v), "type": "VEC3"},
+        {"bufferView": index_of["TQ"], "componentType": 5126, "count": len(turn_q), "type": "VEC4"},
     ]
     doc = {
         "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
@@ -374,6 +386,8 @@ def skinned_arm():
             {"name": "pulse", "samplers": [{"input": 13, "output": 14, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 0, "path": "weights"}}]},
             {"name": "walk", "samplers": [{"input": 15, "output": 16, "interpolation": "LINEAR"}, {"input": 7, "output": 8, "interpolation": "LINEAR"}],
              "channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}}, {"sampler": 1, "target": {"node": 2, "path": "rotation"}}]},
+            {"name": "turn", "samplers": [{"input": 17, "output": 18, "interpolation": "LINEAR"}, {"input": 17, "output": 19, "interpolation": "LINEAR"}, {"input": 7, "output": 8, "interpolation": "LINEAR"}],
+             "channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}}, {"sampler": 1, "target": {"node": 1, "path": "rotation"}}, {"sampler": 2, "target": {"node": 2, "path": "rotation"}}]},
         ],
         "buffers": [{"byteLength": len(buf)}],
         "bufferViews": views,

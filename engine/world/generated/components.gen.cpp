@@ -582,6 +582,8 @@ void to_json(Json& j, const Animator& v) {
     j["root_motion"] = v.root_motion;
     j["root"] = v.root;
     vec_to_json(j["root_delta"], v.root_delta);
+    j["root_rotation"] = v.root_rotation;
+    j["root_delta_yaw"] = v.root_delta_yaw;
 }
 
 void from_json(const Json& j, Animator& v) {
@@ -602,6 +604,8 @@ void from_json(const Json& j, Animator& v) {
     scalar_from_json(j, "root_motion", v.root_motion);
     scalar_from_json(j, "root", v.root);
     if (j.is_object() && j.contains("root_delta")) vec_from_json(j["root_delta"], v.root_delta);
+    scalar_from_json(j, "root_rotation", v.root_rotation);
+    scalar_from_json(j, "root_delta_yaw", v.root_delta_yaw);
 }
 
 void hash_component(StateHasherRef& h, const Animator& v) {
@@ -622,6 +626,8 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.root_delta.x);
     h.f32(v.root_delta.y);
     h.f32(v.root_delta.z);
+    h.u8(v.root_rotation ? 1 : 0);
+    h.f32(v.root_delta_yaw);
 }
 
 std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
@@ -640,6 +646,121 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
     if (path == "root_delta.x") { *out = &v.root_delta.x; return 1; }
     if (path == "root_delta.y") { *out = &v.root_delta.y; return 1; }
     if (path == "root_delta.z") { *out = &v.root_delta.z; return 1; }
+    if (path == "root_delta_yaw") { *out = &v.root_delta_yaw; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const IK& v) {
+    j = Json::object();
+    j["end"] = v.end;
+    j["bones"] = v.bones;
+    vec_to_json(j["tip"], v.tip);
+    vec_to_json(j["target"], v.target);
+    j["target_entity"] = v.target_entity;
+    j["pole_entity"] = v.pole_entity;
+    j["weight"] = v.weight;
+    j["iterations"] = v.iterations;
+    j["tolerance"] = v.tolerance;
+    j["error"] = v.error;
+    j["reached"] = v.reached;
+}
+
+void from_json(const Json& j, IK& v) {
+    scalar_from_json(j, "end", v.end);
+    scalar_from_json(j, "bones", v.bones);
+    if (j.is_object() && j.contains("tip")) vec_from_json(j["tip"], v.tip);
+    if (j.is_object() && j.contains("target")) vec_from_json(j["target"], v.target);
+    scalar_from_json(j, "target_entity", v.target_entity);
+    scalar_from_json(j, "pole_entity", v.pole_entity);
+    scalar_from_json(j, "weight", v.weight);
+    scalar_from_json(j, "iterations", v.iterations);
+    scalar_from_json(j, "tolerance", v.tolerance);
+    scalar_from_json(j, "error", v.error);
+    scalar_from_json(j, "reached", v.reached);
+}
+
+void hash_component(StateHasherRef& h, const IK& v) {
+    h.str(v.end);
+    h.i64(static_cast<std::int64_t>(v.bones));
+    h.f32(v.tip.x);
+    h.f32(v.tip.y);
+    h.f32(v.tip.z);
+    h.f32(v.target.x);
+    h.f32(v.target.y);
+    h.f32(v.target.z);
+    h.str(v.target_entity);
+    h.str(v.pole_entity);
+    h.f32(v.weight);
+    h.i64(static_cast<std::int64_t>(v.iterations));
+    h.f32(v.tolerance);
+    h.f32(v.error);
+    h.u8(v.reached ? 1 : 0);
+}
+
+std::size_t numeric_span(IK& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "tip") { *out = &v.tip.x; return 3; }
+    if (path == "tip.x") { *out = &v.tip.x; return 1; }
+    if (path == "tip.y") { *out = &v.tip.y; return 1; }
+    if (path == "tip.z") { *out = &v.tip.z; return 1; }
+    if (path == "target") { *out = &v.target.x; return 3; }
+    if (path == "target.x") { *out = &v.target.x; return 1; }
+    if (path == "target.y") { *out = &v.target.y; return 1; }
+    if (path == "target.z") { *out = &v.target.z; return 1; }
+    if (path == "weight") { *out = &v.weight; return 1; }
+    if (path == "tolerance") { *out = &v.tolerance; return 1; }
+    if (path == "error") { *out = &v.error; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const LookAt& v) {
+    j = Json::object();
+    j["node"] = v.node;
+    vec_to_json(j["forward"], v.forward);
+    vec_to_json(j["target"], v.target);
+    j["target_entity"] = v.target_entity;
+    j["weight"] = v.weight;
+    j["max_angle"] = v.max_angle;
+    j["angle"] = v.angle;
+}
+
+void from_json(const Json& j, LookAt& v) {
+    scalar_from_json(j, "node", v.node);
+    if (j.is_object() && j.contains("forward")) vec_from_json(j["forward"], v.forward);
+    if (j.is_object() && j.contains("target")) vec_from_json(j["target"], v.target);
+    scalar_from_json(j, "target_entity", v.target_entity);
+    scalar_from_json(j, "weight", v.weight);
+    scalar_from_json(j, "max_angle", v.max_angle);
+    scalar_from_json(j, "angle", v.angle);
+}
+
+void hash_component(StateHasherRef& h, const LookAt& v) {
+    h.str(v.node);
+    h.f32(v.forward.x);
+    h.f32(v.forward.y);
+    h.f32(v.forward.z);
+    h.f32(v.target.x);
+    h.f32(v.target.y);
+    h.f32(v.target.z);
+    h.str(v.target_entity);
+    h.f32(v.weight);
+    h.f32(v.max_angle);
+    h.f32(v.angle);
+}
+
+std::size_t numeric_span(LookAt& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "forward") { *out = &v.forward.x; return 3; }
+    if (path == "forward.x") { *out = &v.forward.x; return 1; }
+    if (path == "forward.y") { *out = &v.forward.y; return 1; }
+    if (path == "forward.z") { *out = &v.forward.z; return 1; }
+    if (path == "target") { *out = &v.target.x; return 3; }
+    if (path == "target.x") { *out = &v.target.x; return 1; }
+    if (path == "target.y") { *out = &v.target.y; return 1; }
+    if (path == "target.z") { *out = &v.target.z; return 1; }
+    if (path == "weight") { *out = &v.weight; return 1; }
+    if (path == "max_angle") { *out = &v.max_angle; return 1; }
+    if (path == "angle") { *out = &v.angle; return 1; }
     return 0;
 }
 
@@ -981,6 +1102,8 @@ void to_json(Json& j, const Body2D& v) {
     j["on_slope"] = v.on_slope;
     j["mass"] = v.mass;
     j["collide_bodies"] = v.collide_bodies;
+    j["restitution"] = v.restitution;
+    j["friction"] = v.friction;
 }
 
 void from_json(const Json& j, Body2D& v) {
@@ -1000,6 +1123,8 @@ void from_json(const Json& j, Body2D& v) {
     scalar_from_json(j, "on_slope", v.on_slope);
     scalar_from_json(j, "mass", v.mass);
     scalar_from_json(j, "collide_bodies", v.collide_bodies);
+    scalar_from_json(j, "restitution", v.restitution);
+    scalar_from_json(j, "friction", v.friction);
 }
 
 void hash_component(StateHasherRef& h, const Body2D& v) {
@@ -1022,6 +1147,8 @@ void hash_component(StateHasherRef& h, const Body2D& v) {
     h.i64(static_cast<std::int64_t>(v.on_slope));
     h.f32(v.mass);
     h.u8(v.collide_bodies ? 1 : 0);
+    h.f32(v.restitution);
+    h.f32(v.friction);
 }
 
 std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
@@ -1039,6 +1166,8 @@ std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
     if (path == "offset.y") { *out = &v.offset.y; return 1; }
     if (path == "step") { *out = &v.step; return 1; }
     if (path == "mass") { *out = &v.mass; return 1; }
+    if (path == "restitution") { *out = &v.restitution; return 1; }
+    if (path == "friction") { *out = &v.friction; return 1; }
     return 0;
 }
 
@@ -1335,7 +1464,7 @@ constexpr std::array<FieldInfo, 6> kTileMapFields = {{
     FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this."},
     FieldInfo{"visible", "bool", "Whether the map is drawn."},
 }};
-constexpr std::array<FieldInfo, 14> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 16> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)."},
     FieldInfo{"playing", "bool", "Whether time advances."},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished)."},
@@ -1349,7 +1478,31 @@ constexpr std::array<FieldInfo, 14> kAnimatorFields = {{
     FieldInfo{"layers", "list:AnimationLayer", "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them)."},
     FieldInfo{"root_motion", "i32", "0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion)."},
     FieldInfo{"root", "string", "The node whose translation is the root motion; empty picks the clip's topmost node with a translation track."},
-    FieldInfo{"root_delta", "vec3", "The root's translation change this tick in the asset's space while root_motion is on (written by the engine)."},
+    FieldInfo{"root_delta", "vec3", "The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine)."},
+    FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion)."},
+    FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine)."},
+}};
+constexpr std::array<FieldInfo, 11> kIKFields = {{
+    FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints)."},
+    FieldInfo{"bones", "i32", "How many bones the chain has, counted up from `end` (2 for a limb: upper and lower)."},
+    FieldInfo{"tip", "vec3", "The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y."},
+    FieldInfo{"target", "vec3", "Where the effector should be, in world space (used when target_entity is empty)."},
+    FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
+    FieldInfo{"pole_entity", "string", "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has."},
+    FieldInfo{"weight", "f32", "How much of the solve applies: 0 the posed chain, 1 the solved one."},
+    FieldInfo{"iterations", "i32", "FABRIK passes per tick (each is a backward and a forward sweep)."},
+    FieldInfo{"tolerance", "f32", "The solve stops once the effector is this close to the target, in meters."},
+    FieldInfo{"error", "f32", "Distance from the effector to the target after the solve, in meters (written by the engine)."},
+    FieldInfo{"reached", "bool", "Whether the effector ended within tolerance (written by the engine)."},
+}};
+constexpr std::array<FieldInfo, 7> kLookAtFields = {{
+    FieldInfo{"node", "string", "The node that turns: a joint, or any node of the asset."},
+    FieldInfo{"forward", "vec3", "The node's aiming axis in its own space."},
+    FieldInfo{"target", "vec3", "The point to aim at, in world space (used when target_entity is empty)."},
+    FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
+    FieldInfo{"weight", "f32", "How much of the turn applies: 0 none, 1 the full aim."},
+    FieldInfo{"max_angle", "f32", "The most the node may turn away from its posed direction, in degrees."},
+    FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine)."},
 }};
 constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
@@ -1384,7 +1537,7 @@ constexpr std::array<FieldInfo, 10> kRigidBodyFields = {{
     FieldInfo{"gravity_scale", "f32", "Multiplier on world gravity."},
     FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched."},
     FieldInfo{"lock_rotation", "bool", "Never rotate (characters on capsules stay upright)."},
-    FieldInfo{"ccd", "bool", "Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision)."},
+    FieldInfo{"ccd", "bool", "Continuous collision: each step the body is swept along its motion, relative to every shape it may touch (static, kinematic, and dynamic bodies moving too), and stops a skin short of the first impact, so thin walls hold and fast bodies do not cross each other at any speed. A sphere is cast exactly against the other shape; a box or capsule is swept by samples (docs/design/physics.md, Continuous collision). Bodies moving less than half their size per step are not swept."},
 }};
 constexpr std::array<FieldInfo, 23> kJointFields = {{
     FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target)."},
@@ -1411,7 +1564,7 @@ constexpr std::array<FieldInfo, 23> kJointFields = {{
     FieldInfo{"speed", "f32", "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's."},
     FieldInfo{"collide_connected", "bool", "Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them."},
 }};
-constexpr std::array<FieldInfo, 16> kBody2DFields = {{
+constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
     FieldInfo{"max_fall", "f32", "Fastest downward speed."},
@@ -1428,6 +1581,8 @@ constexpr std::array<FieldInfo, 16> kBody2DFields = {{
     FieldInfo{"on_slope", "i32", "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)."},
     FieldInfo{"mass", "f32", "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies)."},
     FieldInfo{"collide_bodies", "bool", "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body)."},
+    FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
+    FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed."},
 }};
 constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)."},
@@ -1471,7 +1626,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 22> kComponents = {{
+constexpr std::array<ComponentInfo, 24> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1484,6 +1639,8 @@ constexpr std::array<ComponentInfo, 22> kComponents = {{
     ComponentInfo{"SpriteAnimation", "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.", true, kSpriteAnimationFields},
     ComponentInfo{"TileMap", "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back.", true, kTileMapFields},
     ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
+    ComponentInfo{"IK", "Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.", true, kIKFields},
+    ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},
     ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.", true, kParticleEmitterFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},

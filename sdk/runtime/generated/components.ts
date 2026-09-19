@@ -212,8 +212,56 @@ export interface Animator {
     root_motion: number;
     /** The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. */
     root: string;
-    /** The root's translation change this tick in the asset's space while root_motion is on (written by the engine). */
+    /** The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine). */
     root_delta: Vec3;
+    /** With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion). */
+    root_rotation: boolean;
+    /** The root's yaw change this tick in radians while root_rotation is on (written by the engine). */
+    root_delta_yaw: number;
+}
+
+/** Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector. */
+export interface IK {
+    /** The chain's last node, a joint name (animation.clips lists the skins' joints). */
+    end: string;
+    /** How many bones the chain has, counted up from `end` (2 for a limb: upper and lower). */
+    bones: number;
+    /** The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y. */
+    tip: Vec3;
+    /** Where the effector should be, in world space (used when target_entity is empty). */
+    target: Vec3;
+    /** An entity (name or path) whose world position is the target; empty uses target. */
+    target_entity: string;
+    /** An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has. */
+    pole_entity: string;
+    /** How much of the solve applies: 0 the posed chain, 1 the solved one. */
+    weight: number;
+    /** FABRIK passes per tick (each is a backward and a forward sweep). */
+    iterations: number;
+    /** The solve stops once the effector is this close to the target, in meters. */
+    tolerance: number;
+    /** Distance from the effector to the target after the solve, in meters (written by the engine). */
+    error: number;
+    /** Whether the effector ended within tolerance (written by the engine). */
+    reached: boolean;
+}
+
+/** Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick. */
+export interface LookAt {
+    /** The node that turns: a joint, or any node of the asset. */
+    node: string;
+    /** The node's aiming axis in its own space. */
+    forward: Vec3;
+    /** The point to aim at, in world space (used when target_entity is empty). */
+    target: Vec3;
+    /** An entity (name or path) whose world position is the target; empty uses target. */
+    target_entity: string;
+    /** How much of the turn applies: 0 none, 1 the full aim. */
+    weight: number;
+    /** The most the node may turn away from its posed direction, in degrees. */
+    max_angle: number;
+    /** The turn applied this tick in degrees, after the limit and the weight (written by the engine). */
+    angle: number;
 }
 
 /** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once. */
@@ -282,7 +330,7 @@ export interface RigidBody {
     sleeping: boolean;
     /** Never rotate (characters on capsules stay upright). */
     lock_rotation: boolean;
-    /** Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision). */
+    /** Continuous collision: each step the body is swept along its motion, relative to every shape it may touch (static, kinematic, and dynamic bodies moving too), and stops a skin short of the first impact, so thin walls hold and fast bodies do not cross each other at any speed. A sphere is cast exactly against the other shape; a box or capsule is swept by samples (docs/design/physics.md, Continuous collision). Bodies moving less than half their size per step are not swept. */
     ccd: boolean;
 }
 
@@ -370,6 +418,10 @@ export interface Body2D {
     mass: number;
     /** Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). */
     collide_bodies: boolean;
+    /** Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). */
+    restitution: number;
+    /** Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed. */
+    friction: number;
 }
 
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
@@ -467,6 +519,8 @@ export interface Components {
     SpriteAnimation: SpriteAnimation;
     TileMap: TileMap;
     Animator: Animator;
+    IK: IK;
+    LookAt: LookAt;
     ParticleEmitter: ParticleEmitter;
     Bounds: Bounds;
     RigidBody: RigidBody;
@@ -481,7 +535,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -496,12 +550,14 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 } },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
+    IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false },
+    LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, angle: 0 },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
-    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true },
+    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
     NavObstacle: { radius: 0.5, enabled: true },

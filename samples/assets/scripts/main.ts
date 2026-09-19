@@ -49,5 +49,21 @@ onTick(({ tick }) => {
 });
 expose("walker.z", () => Number((world.get(world.find("Walker") ?? 0, "Transform")?.position.z ?? 0).toFixed(3)));
 expose("walker.turns", () => walkerTurns);
+// IK, look-at and root rotation (docs/design/animation.md): the Orb circles, the Reacher's arm
+// reaches for it (IK on its two bones), the Gazer's tip aims at it (LookAt, 70 degrees at most),
+// and the Turner walks its "turn" clip, whose root motion carries rotation, in a circle.
+onTick(({ tick }) => {
+    const orb = world.find("Orb");
+    if (orb === undefined) return;
+    const a = (tick / 60) * 0.8;
+    world.set(orb, "Transform", { position: { x: 4.0 + Math.cos(a), y: 1.1 + 0.4 * Math.sin(2 * a), z: 0.6 + Math.sin(a) } });
+});
+expose("reacher.error", () => Number((world.get(world.find("Reacher") ?? 0, "IK")?.error ?? 0).toFixed(3)));
+expose("reacher.reached", () => world.get(world.find("Reacher") ?? 0, "IK")?.reached ?? false);
+expose("gazer.angle", () => Number((world.get(world.find("Gazer") ?? 0, "LookAt")?.angle ?? 0).toFixed(1)));
+expose("turner.yaw", () => {
+    const q = world.get(world.find("Turner") ?? 0, "Transform")?.rotation;
+    return q ? Number(((2 * Math.atan2(q.y, q.w) * 180) / Math.PI).toFixed(1)) : 0;
+});
 expose("pulse.bulge", () => { const p = world.find("Pulse"); return p === undefined ? 0 : Number((animation.pose(p).weights?.[0]?.weight ?? 0).toFixed(3)); });
 expose("missing", () => (command<{ assets?: { missing?: string[] } }>("render.stats").assets?.missing ?? []).length);

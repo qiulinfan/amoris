@@ -121,7 +121,8 @@ export interface ScenarioTools {
     state(): Record<string, unknown>;
     state<T = unknown>(name: string): T;
     /** How many events of a type happened since the scenario started. */
-    count(type: string): number;
+    /** Events of a type since the scenario started; `subject` (an entity path, or an id as a string) counts only that entity's. */
+    count(type: string, subject?: string): number;
     /** Start a bot: from this step on its policy runs every `every` ticks (1) until the scenario ends, `seconds` pass, or it stops itself. */
     bot(name: string, policy: BotPolicy, options?: { every?: number; seconds?: number }): void;
     /** Stop a bot started earlier. */
@@ -219,7 +220,10 @@ function tools(steps: Step[]): ScenarioTools {
             const s = readState();
             return name === undefined ? s : s[name];
         },
-        count(type) { return events.since(eventBase, { type, limit: 100000 }).length; },
+        count(type, subject) {
+            const list = events.since(eventBase, { type, limit: 100000 });
+            return subject === undefined ? list.length : list.filter((e) => (e.data as { path?: string } | undefined)?.path === subject || String(e.subject) === subject).length;
+        },
         bot(name, policy, options = {}) {
             steps.push({
                 kind: "do",

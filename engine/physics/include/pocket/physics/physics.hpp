@@ -73,6 +73,7 @@ struct StepStats {
     std::uint32_t meshes = 0;     // mesh colliders with triangles this step
     std::uint32_t triangles = 0;  // their triangles, summed
     std::uint32_t ccd_hits = 0;   // bodies stopped by a continuous-collision sweep this step
+    std::uint32_t ccd_dynamic = 0; // of those, impacts with another dynamic body (both stopped)
     std::uint32_t ignored = 0;    // overlapping pairs kept apart by groups, exceptions or joints this step
 };
 
@@ -99,6 +100,10 @@ class Physics {
     using Filter = std::function<bool(world::EntityId, const world::RigidBody&, const world::Collider&)>;
     [[nodiscard]] Result<RayHit> raycast(const world::World& world, Vec3 origin, Vec3 direction, float max_distance, const Filter& accept) const;
     [[nodiscard]] std::vector<world::EntityId> overlap_sphere(const world::World& world, Vec3 center, float radius, const Filter& accept) const;
+    // A sphere of `radius` cast from `origin` along `direction`: the nearest shape it would touch
+    // within `max_distance` (the distance its center can travel, the point where it touches, the
+    // surface normal there), against exact shapes: rounded boxes, capsules, spheres and mesh triangles.
+    [[nodiscard]] Result<RayHit> sweep(const world::World& world, Vec3 origin, Vec3 direction, float radius, float max_distance, const Filter& accept) const;
     // An exception for one pair: they never collide (or collide again when ignore is false).
     // Kept until one of them is gone (docs/design/physics.md, Groups and exceptions).
     void ignore(world::EntityId a, world::EntityId b, bool ignore = true);

@@ -96,6 +96,19 @@ onStart(() => {
             },
         });
     }
+    // Two more pellets fired at each other along a lane above the arena: swept against dynamic
+    // bodies too, they meet in the middle and stop instead of crossing.
+    for (const [name, x, vx] of [["ClashA", 2, 80], ["ClashB", 8, -80]] as const) {
+        world.spawn(name, {
+            components: {
+                Transform: { position: { x, y: 3.5, z: 2.5 }, scale: { x: 0.12, y: 0.12, z: 0.12 } },
+                MeshRenderer: { mesh: "sphere", color: { r: 0.95, g: 0.85, b: 0.2, a: 1 } },
+                RigidBody: { kind: 0, mass: 0.05, ccd: true, gravity_scale: 0, restitution: 0 },
+                Collider: { shape: 1, size: { x: 0.06, y: 0.06, z: 0.06 } },
+                Velocity: { linear: { x: vx, y: 0, z: 0 } },
+            },
+        });
+    }
     log("physics sample", { bodies: physics.stats().bodies, meshes: physics.stats().meshes });
 });
 
@@ -145,13 +158,21 @@ expose("dropped", () => dropped);
 expose("pelletX", () => Number((world.get(world.find("Pellet") ?? 0, "Transform")?.position.x ?? 0).toFixed(3)));
 expose("dudX", () => Number((world.get(world.find("Dud") ?? 0, "Transform")?.position.x ?? 0).toFixed(3)));
 let ccdHits = 0;        // sweeps that stopped a body, summed over the run (physics.stats counts one step)
+let ccdDynamic = 0;     // of those, impacts between two dynamic bodies
 let dudCrossed = false; // the dud was seen beyond the pane (it comes back off the east wall later)
 onTick(() => {
     ccdHits += physics.stats().ccd_hits;
+    ccdDynamic += physics.stats().ccd_dynamic;
     const dud = world.find("Dud");
     if (dud !== undefined && (world.get(dud, "Transform")?.position.x ?? 0) > 9.1) dudCrossed = true;
 });
 expose("ccdHits", () => ccdHits);
+expose("ccdDynamic", () => ccdDynamic);
+expose("clashGap", () => {
+    const a = world.get(world.find("ClashA") ?? 0, "Transform")?.position.x ?? 0;
+    const b = world.get(world.find("ClashB") ?? 0, "Transform")?.position.x ?? 0;
+    return Number(Math.abs(b - a).toFixed(3));
+});
 expose("dudCrossed", () => dudCrossed);
 expose("joints", () => physics.joints().length);
 expose("chainTension", () => Math.round(Math.max(0, ...physics.joints().filter((j) => j.path.startsWith("/Link")).map((j) => j.force)) * 10) / 10);

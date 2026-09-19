@@ -687,11 +687,8 @@ bool ray_sphere(Vec3 o, Vec3 dir, Vec3 c, float r, float& t) {
     return false;
 }
 
-// Ray vs capsule: the cylinder around the segment, then the two end spheres.
-bool ray_capsule(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
-    Vec3 p0, p1;
-    capsule_segment(b, p0, p1);
-    const float r = b.half.x;
+// Ray vs the capsule of radius r around a segment: the cylinder, then the two end spheres.
+bool ray_segment_capsule(Vec3 o, Vec3 dir, Vec3 p0, Vec3 p1, float r, float& t, Vec3& normal) {
     bool found = false;
     float best = 0;
     Vec3 axis = p1 - p0;
@@ -730,7 +727,11 @@ bool ray_capsule(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
     return found;
 }
 
-bool ray_body(Vec3 o, Vec3 dir, const Body& b, float reach, float& t, Vec3& normal);
+bool ray_capsule(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
+    Vec3 p0, p1;
+    capsule_segment(b, p0, p1);
+    return ray_segment_capsule(o, dir, p0, p1, b.half.x, t, normal);
+}
 
 bool ray_box(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
     Mat4 rot = Mat4::rotation(b.rotation);
@@ -870,49 +871,198 @@ Physics::Physics(Settings settings) : impl_(std::make_unique<Impl>()) { impl_->s
 Physics::~Physics() = default;
 namespace {
 
-// A ray against one body's shape, whatever it is: the nearest hit under `reach`, with the normal
-// facing the ray (mesh triangles: both faces, down the tree).
-bool ray_body(Vec3 o, Vec3 dir, const Body& b, float reach, float& t, Vec3& normal) {
+float bounding_radius(const Body& b) {
+    if (b.shape == 1) return b.half.x;
+    if (b.shape == 2) return b.half.x + b.half.y;
+    return length(b.half);
+}
+
+// The shortest way across a shape: the extent a sweep must not skip in one sample.
+float thinnest_extent(const Body& b) {
+    if (b.shape == 1 || b.shape == 2) return 2.0f * b.half.x;
+    return 2.0f * std::min({b.half.x, b.half.y, b.half.z});
+}
+
+// A sphere of radius r cast along a ray against a box: the box grown by r has flat faces where the
+// hit lands within the box's own extent, and rounded edges and corners elsewhere (the twelve edge
+// capsules, whose caps are the corner spheres).
+bool sphere_cast_box(Vec3 o, Vec3 dir, float r, const Body& box, float& t, Vec3& normal) {
+    Body big = box;
+    big.half = box.half + Vec3{r, r, r};
+    float t0 = 0;
+    Vec3 n0;
+    if (!ray_box(o, dir, big, t0, n0)) return false;
+    const Mat4 rot = Mat4::rotation(box.rotation);
+    const Vec3 local = rot.inverse_affine().transform_dir(o + dir * t0 - box.position);
+    int outside = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs((&local.x)[i]) > (&box.half.x)[i] + 1e-6f) ++outside;
+    }
+    if (outside <= 1) {
+        t = t0;
+        normal = n0;
+        return true;
+    }
+    Vec3 corners[8];
+    for (int i = 0; i < 8; ++i) corners[i] = box.position + rot.transform_dir({(i & 1) ? box.half.x : -box.half.x, (i & 2) ? box.half.y : -box.half.y, (i & 4) ? box.half.z : -box.half.z});
+    static const int edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    bool found = false;
+    float best = 0;
+    Vec3 bn;
+    for (const auto& e : edges) {
+        float tt = 0;
+        Vec3 n;
+        if (ray_segment_capsule(o, dir, corners[e[0]], corners[e[1]], r, tt, n) && (!found || tt < best)) {
+            found = true;
+            best = tt;
+            bn = n;
+        }
+    }
+    if (found) {
+        t = best;
+        normal = bn;
+    }
+    return found;
+}
+
+// A sphere cast against one triangle: its face offset by r toward the sphere, then its edges as
+// capsules (their caps are the corner spheres). `n` is the triangle's normal.
+bool sphere_cast_triangle(Vec3 o, Vec3 dir, float r, Vec3 a, Vec3 b, Vec3 c, Vec3 n, float& t, Vec3& normal) {
+    bool found = false;
+    float best = 0;
+    Vec3 bn;
+    const Vec3 nn = dot(o - a, n) >= 0 ? n : -n;
+    const float denom = dot(dir, nn);
+    if (denom < -1e-8f) {
+        const float tt = dot(a + nn * r - o, nn) / denom;
+        if (tt >= 0 && inside_prism(o + dir * tt - nn * r, a, b, c, n)) {
+            found = true;
+            best = tt;
+            bn = nn;
+        }
+    }
+    const Vec3 ends[3][2] = {{a, b}, {b, c}, {c, a}};
+    for (const auto& e : ends) {
+        float tt = 0;
+        Vec3 en;
+        if (ray_segment_capsule(o, dir, e[0], e[1], r, tt, en) && (!found || tt < best)) {
+            found = true;
+            best = tt;
+            bn = en;
+        }
+    }
+    if (found) {
+        t = best;
+        normal = bn;
+    }
+    return found;
+}
+
+// A sphere of radius r cast against one body's exact shape: the nearest hit under `reach`, the
+// normal facing the sphere.
+bool sphere_cast_body(Vec3 o, Vec3 dir, float r, const Body& b, float reach, float& t, Vec3& normal) {
     if (b.shape == 3) {
         const MeshShape* ms = b.mesh;
         if (!ms) return false;
         bool hit = false;
+        const Vec3 grow{r, r, r};
         std::vector<std::uint32_t> stack{0};
         while (!stack.empty()) {
             const MeshShape::Node& node = ms->nodes[stack.back()];
             stack.pop_back();
-            if (!ray_aabb(o, dir, node.min, node.max, reach)) continue;
+            if (!ray_aabb(o, dir, node.min - grow, node.max + grow, reach)) continue;
             if (node.count == 0) {
                 stack.push_back(node.left);
                 stack.push_back(node.right);
                 continue;
             }
             for (std::uint32_t k = node.first; k < node.first + node.count; ++k) {
-                std::uint32_t tri = ms->order[k];
+                const std::uint32_t tri = ms->order[k];
                 float th = 0;
-                if (!ray_triangle(o, dir, ms->v[ms->tri[tri][0]], ms->v[ms->tri[tri][1]], ms->v[ms->tri[tri][2]], th)) continue;
+                Vec3 n;
+                if (!sphere_cast_triangle(o, dir, r, ms->v[ms->tri[tri][0]], ms->v[ms->tri[tri][1]], ms->v[ms->tri[tri][2]], ms->n[tri], th, n)) continue;
                 if (th >= reach) continue;
                 reach = th;
                 hit = true;
                 t = th;
-                normal = dot(ms->n[tri], dir) > 0 ? -ms->n[tri] : ms->n[tri];
+                normal = n;
             }
         }
         return hit;
     }
-    if (b.shape == 2) return ray_capsule(o, dir, b, t, normal) && t < reach;
+    if (b.shape == 2) {
+        Body big = b;
+        big.half.x += r;
+        return ray_capsule(o, dir, big, t, normal) && t < reach;
+    }
     if (b.shape == 1) {
-        if (!ray_sphere(o, dir, b.position, b.half.x, t) || t >= reach) return false;
+        if (!ray_sphere(o, dir, b.position, b.half.x + r, t) || t >= reach) return false;
         normal = normalize(o + dir * t - b.position);
         return true;
     }
-    return ray_box(o, dir, b, t, normal) && t < reach;
+    return sphere_cast_box(o, dir, r, b, t, normal) && t < reach;
 }
 
-float bounding_radius(const Body& b) {
-    if (b.shape == 1) return b.half.x;
-    if (b.shape == 2) return b.half.x + b.half.y;
-    return length(b.half);
+// Whether two bodies' shapes overlap, and the normal from `b` into `a` when they do.
+bool overlap_pair(const Body& a, const Body& b, Vec3& normal) {
+    Manifold m;
+    bool hit = false;
+    if (a.shape == 3 && b.shape == 3) hit = false;
+    else if (b.shape == 3) hit = collide_mesh(a, b, m, false);
+    else if (a.shape == 3) hit = collide_mesh(b, a, m, true);
+    else if (a.shape == 1 && b.shape == 1) hit = collide_ss(a, b, m);
+    else if (a.shape == 1 && b.shape == 0) hit = collide_sb(a, b, m, false);
+    else if (a.shape == 0 && b.shape == 1) hit = collide_sb(b, a, m, true);
+    else if (a.shape == 2 && b.shape == 1) hit = collide_cs(a, b, m, false);
+    else if (a.shape == 1 && b.shape == 2) hit = collide_cs(b, a, m, true);
+    else if (a.shape == 2 && b.shape == 2) hit = collide_cc(a, b, m);
+    else if (a.shape == 2 && b.shape == 0) hit = collide_cb(a, b, m, false);
+    else if (a.shape == 0 && b.shape == 2) hit = collide_cb(b, a, m, true);
+    else hit = collide_bb(a, b, m);
+    if (hit) normal = -m.normal;   // the manifold's normal runs from a to b
+    return hit;
+}
+
+// The sweep of a box or capsule `a` along `motion` against `b`, by samples: no sample skips more
+// than half of a's thinnest extent, the first overlapping sample is bisected back to the last free
+// one, and the fraction of the motion reached is the time of impact. `limit` bounds the search.
+bool stepped_sweep(const Body& a, Vec3 motion, const Body& b, float limit, float& fraction, Vec3& normal) {
+    const float dist = length(motion);
+    if (dist <= 1e-6f) return false;
+    const int samples = std::clamp(static_cast<int>(std::ceil(dist / std::max(thinnest_extent(a) * 0.5f, 1e-3f))), 1, 256);
+    Body moved = a;
+    Vec3 n;
+    if (overlap_pair(a, b, n)) {   // already touching: the impact is now
+        fraction = 0;
+        normal = n;
+        return true;
+    }
+    float lo = 0, hi = 0;
+    bool found = false;
+    for (int i = 1; i <= samples; ++i) {
+        const float f = static_cast<float>(i) / static_cast<float>(samples);
+        if (f > limit) break;
+        moved.position = a.position + motion * f;
+        update_aabb(moved);
+        if (overlap_pair(moved, b, n)) {
+            hi = f;
+            found = true;
+            break;
+        }
+        lo = f;
+    }
+    if (!found) return false;
+    for (int k = 0; k < 6; ++k) {
+        const float mid = 0.5f * (lo + hi);
+        moved.position = a.position + motion * mid;
+        update_aabb(moved);
+        Vec3 nm;
+        if (overlap_pair(moved, b, nm)) { hi = mid; n = nm; }
+        else lo = mid;
+    }
+    fraction = lo;
+    normal = n;
+    return true;
 }
 
 std::pair<EntityId, EntityId> ordered(EntityId a, EntityId b) { return a < b ? std::pair{a, b} : std::pair{b, a}; }
@@ -1521,43 +1671,78 @@ void Physics::step(world::World& w, double dt_d) {
         else if (info.kind == 3) (void)w.set(info.entity, "Joint", Json{{"force", info.force}, {"translation", info.translation}, {"speed", info.speed}});
         else (void)w.set(info.entity, "Joint", Json{{"force", info.force}});
     }
-    // Continuous collision: a body that asked for it sweeps its bounding sphere along this step's
-    // motion, against the static and kinematic shapes it may touch, and stops a skin short of the
-    // first one it would cross, its velocity into the surface reflected by its restitution; the
-    // rest of the step's motion is dropped and the contact solver takes over next step.
-    for (Body& b : im.bodies) {
-        b.swept = false;
-        if (!b.ccd || b.kind != 0 || b.sleeping || b.trigger) continue;
+    // Continuous collision: a body that asked for it is swept along this step's motion, relative
+    // to each shape it may touch (static, kinematic, or dynamic and moving too), and stops a skin
+    // short of the first impact; the impact exchanges an impulse along the normal with the
+    // restitution, the rest of the step's motion is dropped for both, and the contact solver takes
+    // over next step. A sphere is cast exactly against the other's shape (a rounded box, a grown
+    // capsule or sphere, the triangles' offset faces and edges); a box or capsule is swept by
+    // samples finer than half its thinnest extent, bisected back to the impact.
+    for (Body& b : im.bodies) b.swept = false;
+    for (std::size_t bi = 0; bi < im.bodies.size(); ++bi) {
+        Body& b = im.bodies[bi];
+        if (!b.ccd || b.kind != 0 || b.sleeping || b.trigger || b.swept) continue;
         const Vec3 motion = b.velocity * dt;
         const float dist = length(motion);
         const float radius = bounding_radius(b);
         if (dist <= radius * 0.5f) continue;  // slow for its size: the discrete step is enough
-        const Vec3 dir = motion * (1.0f / dist);
         const Vec3 swept_min{std::min(b.aabb_min.x, b.aabb_min.x + motion.x), std::min(b.aabb_min.y, b.aabb_min.y + motion.y), std::min(b.aabb_min.z, b.aabb_min.z + motion.z)};
         const Vec3 swept_max{std::max(b.aabb_max.x, b.aabb_max.x + motion.x), std::max(b.aabb_max.y, b.aabb_max.y + motion.y), std::max(b.aabb_max.z, b.aabb_max.z + motion.z)};
-        float best = dist + radius;
+        float best_f = 1.0f;   // the fraction of the step at the first impact
         Vec3 best_n;
-        EntityId hit_id = 0;
-        for (const Body& o : im.bodies) {
-            if (&o == &b || o.kind == 0 || o.trigger) continue;
-            if (o.aabb_min.x > swept_max.x || o.aabb_max.x < swept_min.x || o.aabb_min.y > swept_max.y || o.aabb_max.y < swept_min.y || o.aabb_min.z > swept_max.z || o.aabb_max.z < swept_min.z) continue;
+        std::size_t hit_i = im.bodies.size();
+        for (std::size_t oi = 0; oi < im.bodies.size(); ++oi) {
+            const Body& o = im.bodies[oi];
+            if (oi == bi || o.trigger || o.swept) continue;
+            const Vec3 o_motion = (o.kind == 0 && !o.sleeping) || o.kind == 2 ? o.velocity * dt : Vec3{0, 0, 0};
+            const Vec3 o_min{std::min(o.aabb_min.x, o.aabb_min.x + o_motion.x), std::min(o.aabb_min.y, o.aabb_min.y + o_motion.y), std::min(o.aabb_min.z, o.aabb_min.z + o_motion.z)};
+            const Vec3 o_max{std::max(o.aabb_max.x, o.aabb_max.x + o_motion.x), std::max(o.aabb_max.y, o.aabb_max.y + o_motion.y), std::max(o.aabb_max.z, o.aabb_max.z + o_motion.z)};
+            if (o_min.x > swept_max.x || o_max.x < swept_min.x || o_min.y > swept_max.y || o_max.y < swept_min.y || o_min.z > swept_max.z || o_max.z < swept_min.z) continue;
             if (!allowed(b, o)) continue;
-            float t = 0;
+            // The other is held still and the body moves by the motion between them.
+            const Vec3 rel = motion - o_motion;
+            const float rel_len = length(rel);
+            if (rel_len <= 1e-6f) continue;
+            float f = 1.0f;
             Vec3 n;
-            if (!ray_body(b.position, dir, o, best, t, n)) continue;
-            best = t;
+            if (b.shape == 1) {
+                float t = 0;
+                if (!sphere_cast_body(b.position, rel * (1.0f / rel_len), b.half.x, o, rel_len * best_f, t, n)) continue;
+                f = t / rel_len;
+            } else if (!stepped_sweep(b, rel, o, best_f, f, n)) {
+                continue;
+            }
+            if (f >= best_f) continue;
+            best_f = f;
             best_n = n;
-            hit_id = o.id;
+            hit_i = oi;
         }
-        if (hit_id == 0 || best - radius >= dist) continue;
-        const float travel = std::max(best - radius - s.slop, 0.0f);
-        b.position += dir * travel;
-        const float vn = dot(b.velocity, best_n);
-        if (vn < 0) b.velocity -= best_n * (vn * (1.0f + b.restitution));
+        if (hit_i >= im.bodies.size()) continue;
+        Body& o = im.bodies[hit_i];
+        const bool dynamic = o.kind == 0 && !o.sleeping;
+        const Vec3 o_motion = dynamic || o.kind == 2 ? o.velocity * dt : Vec3{0, 0, 0};
+        const float rel_len = length(motion - o_motion);
+        const float stop = std::max(best_f - s.slop / std::max(rel_len, 1e-6f), 0.0f);   // a skin short
+        b.position += motion * stop;
         b.swept = true;
         b.touched = true;
+        if (dynamic) {
+            o.position += o_motion * stop;
+            o.swept = true;
+            o.touched = true;
+        }
+        const Vec3 o_vel = dynamic || o.kind == 2 ? o.velocity : Vec3{0, 0, 0};
+        const float vn = dot(b.velocity - o_vel, best_n);
+        if (vn < 0) {
+            const float e = b.restitution;   // the swept body's: a pellet with none stays where it stopped
+            const float j = -(1.0f + e) * vn / (b.inv_mass + (dynamic ? o.inv_mass : 0.0f));
+            b.velocity += best_n * (j * b.inv_mass);
+            if (dynamic) o.velocity -= best_n * (j * o.inv_mass);
+        }
         im.stats.ccd_hits++;
-        w.events().emit(w.tick_index(), "physics.ccd", b.id, Json{{"path", w.path(b.id)}, {"other", w.path(hit_id)}, {"point", {{"x", (b.position + dir * (best - travel)).x}, {"y", (b.position + dir * (best - travel)).y}, {"z", (b.position + dir * (best - travel)).z}}}, {"normal", {{"x", best_n.x}, {"y", best_n.y}, {"z", best_n.z}}}, {"speed", -vn}});
+        if (dynamic) im.stats.ccd_dynamic++;
+        const Vec3 point = b.position - best_n * (b.shape == 1 ? b.half.x : 0.0f);
+        w.events().emit(w.tick_index(), "physics.ccd", b.id, Json{{"path", w.path(b.id)}, {"other", w.path(o.id)}, {"dynamic", dynamic}, {"exact", b.shape == 1}, {"point", {{"x", point.x}, {"y", point.y}, {"z", point.z}}}, {"normal", {{"x", best_n.x}, {"y", best_n.y}, {"z", best_n.z}}}, {"speed", -vn}, {"fraction", best_f}});
     }
     // 4. Integrate, project out remaining penetration, sleep.
     for (Body& b : im.bodies) {
@@ -1854,6 +2039,39 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
     return best;
 }
 
+Result<RayHit> Physics::sweep(const world::World& w, Vec3 origin, Vec3 direction, float radius, float max_distance, const Filter& accept) const {
+    Vec3 dir = normalize(direction);
+    if (length(dir) == 0) return fail("bad_args", "direction must be non-zero");
+    if (radius <= 0) return fail("bad_args", "radius must be positive");
+    RayHit best;
+    best.distance = max_distance;
+    bool found = false;
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+        if (!accept(e.id(), rb, col)) return;
+        Body b;
+        b.position = t.position + t.rotation.rotate(col.offset);
+        b.rotation = t.rotation;
+        b.shape = col.shape;
+        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+        if (b.shape == 3) {
+            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>());
+            if (!b.mesh) return;
+        }
+        float tt = 0;
+        Vec3 n;
+        if (!sphere_cast_body(origin, dir, radius, b, best.distance, tt, n)) return;
+        if (tt < best.distance || (tt == best.distance && (!found || e.id() < best.entity))) {
+            found = true;
+            best.entity = e.id();
+            best.distance = tt;
+            best.point = origin + dir * tt - n * radius;   // where the sphere touches
+            best.normal = n;
+        }
+    });
+    if (!found) return fail("no_hit", "nothing within {} units", max_distance);
+    return best;
+}
+
 std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3 center, float radius) const {
     return overlap_sphere(w, center, radius, [](world::EntityId, const world::RigidBody&, const world::Collider&) { return true; });
 }
@@ -1900,6 +2118,7 @@ Json Physics::describe() const {
     j["meshes"] = s.meshes;
     j["triangles"] = s.triangles;
     j["ccd_hits"] = s.ccd_hits;
+    j["ccd_dynamic"] = s.ccd_dynamic;
     j["ignored"] = s.ignored;
     j["exceptions"] = impl_->ignored.size();
     j["gravity"] = Json{{"x", impl_->settings.gravity.x}, {"y", impl_->settings.gravity.y}, {"z", impl_->settings.gravity.z}};

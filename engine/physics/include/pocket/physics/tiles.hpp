@@ -25,6 +25,7 @@ struct Stats2D {
     std::uint32_t pairs = 0;      // overlapping pairs of dynamic bodies resolved this step
     std::uint32_t stacked = 0;    // bodies standing on other dynamic bodies this step
     std::uint32_t pushed = 0;     // sideways pushes between bodies this step
+    std::uint32_t bounces = 0;    // impacts a body's restitution turned into a bounce this step
 };
 
 class Physics2D {

@@ -194,6 +194,209 @@ void apply_layer(const assets::Mesh& mesh, Locals& base, const assets::Animation
     }
 }
 
+int node_index(const assets::Mesh& mesh, std::string_view name) {
+    if (name.empty()) return -1;
+    for (std::size_t i = 0; i < mesh.nodes.size(); ++i) {
+        if (mesh.nodes[i].name == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+Vec3 safe_dir(Vec3 v) {
+    const float l = length(v);
+    return l > 1e-8f ? v * (1.0f / l) : Vec3{0, 0, 0};
+}
+
+// The shortest rotation taking unit vector `a` onto unit vector `b`.
+Quat from_to(Vec3 a, Vec3 b) {
+    const float d = dot(a, b);
+    if (d < -0.999999f) {
+        Vec3 axis = cross({1, 0, 0}, a);
+        if (length(axis) < 1e-6f) axis = cross({0, 1, 0}, a);
+        return Quat::from_axis_angle(normalize(axis), 3.14159265f);
+    }
+    const Vec3 c = cross(a, b);
+    return normalize(Quat{c.x, c.y, c.z, 1.0f + d});
+}
+
+// A node's rotation in the asset's space from the locals: its ancestors' rotations composed root first.
+Quat global_rotation(const assets::Mesh& mesh, const Locals& l, int node) {
+    std::vector<std::size_t> lineage;
+    for (int n = node, guard = 0; n >= 0 && static_cast<std::size_t>(n) < mesh.nodes.size() && guard < 256; n = mesh.nodes[static_cast<std::size_t>(n)].parent, ++guard) lineage.push_back(static_cast<std::size_t>(n));
+    Quat g{};
+    for (auto it = lineage.rbegin(); it != lineage.rend(); ++it) g = g * l.rot[*it];
+    return normalize(g);
+}
+
+// Turn a node by `delta`, a rotation in the asset's space, blended by `w` into its local rotation:
+// with G = P * L (the parent's global rotation and the node's local one), G' = delta * G gives
+// L' = P^-1 * delta * P * L.
+void turn_node(const assets::Mesh& mesh, Locals& l, std::size_t node, Quat delta, float w) {
+    const Quat pg = global_rotation(mesh, l, mesh.nodes[node].parent);
+    const Quat local = normalize(conj(pg) * delta * pg * l.rot[node]);
+    l.rot[node] = w >= 1.0f ? local : nlerp(l.rot[node], local, w);
+    l.animated[node] = true;
+}
+
+// A world point, or an entity's world position, in the asset's space of `self`.
+bool asset_point(const world::World& world, world::EntityId self, const std::string& entity, Vec3 point, Vec3& out) {
+    if (!entity.empty()) {
+        const world::EntityId id = world.find(entity);
+        const auto* wt = id != 0 ? world.try_get<world::WorldTransform>(id) : nullptr;
+        if (!wt) return false;
+        point = wt->position;
+    }
+    Mat4 model;
+    if (const auto* wt = world.try_get<world::WorldTransform>(self)) model = Mat4::trs(wt->position, wt->rotation, wt->scale);
+    out = model.inverse_affine().transform_point(point);
+    return true;
+}
+
+// Swing a middle joint about the line through its neighbours toward the pole, keeping its distance
+// from both neighbours (its foot on the line and its radius stay).
+void toward_pole(Vec3 prev, Vec3& cur, Vec3 next, Vec3 pole) {
+    Vec3 axis = next - prev;
+    const float al = length(axis);
+    if (al < 1e-6f) return;
+    axis = axis * (1.0f / al);
+    const Vec3 v = cur - prev;
+    const float along = dot(v, axis);
+    const float r = length(v - axis * along);
+    Vec3 pv = pole - prev;
+    pv = pv - axis * dot(pv, axis);
+    const float pl = length(pv);
+    if (pl < 1e-6f || r < 1e-6f) return;
+    cur = prev + axis * along + pv * (r / pl);
+}
+
+// FABRIK on the chain of `bones` joints ending at `end`: joint positions are moved to reach the
+// target (backward from the effector, forward from the base, the pole applied to the middle
+// joints), then every joint is turned so its bone points along the solved positions.
+void solve_ik(const world::World& world, world::EntityId self, const assets::Mesh& mesh, Locals& l, world::IK& ik) {
+    ik.error = 0.0f;
+    ik.reached = false;
+    const int end = node_index(mesh, ik.end);
+    if (end < 0) return;
+    const int bones = std::clamp(ik.bones, 1, 64);
+    std::vector<std::size_t> chain;   // the top joint first, `end` last
+    for (int n = end, i = 0; n >= 0 && static_cast<std::size_t>(n) < mesh.nodes.size() && i < bones; n = mesh.nodes[static_cast<std::size_t>(n)].parent, ++i) chain.insert(chain.begin(), static_cast<std::size_t>(n));
+    Vec3 target;
+    if (!asset_point(world, self, ik.target_entity, ik.target, target)) return;
+    Vec3 pole;
+    const bool has_pole = !ik.pole_entity.empty() && asset_point(world, self, ik.pole_entity, {0, 0, 0}, pole);
+    const std::size_t n = chain.size();
+    const auto ei = static_cast<std::size_t>(end);
+    Pose cur;
+    compose(mesh, l, cur);
+    std::vector<Vec3> p(n + 1);
+    for (std::size_t i = 0; i < n; ++i) p[i] = cur.globals[chain[i]].transform_point({0, 0, 0});
+    p[n] = cur.globals[ei].transform_point(ik.tip);
+    std::vector<float> d(n);
+    float total = 0;
+    for (std::size_t i = 0; i < n; ++i) { d[i] = length(p[i + 1] - p[i]); total += d[i]; }
+    if (total <= 1e-6f) return;
+    std::vector<Vec3> q = p;
+    const Vec3 base = p[0];
+    const float tol = std::max(ik.tolerance, 0.0f);
+    if (length(target - base) >= total) {
+        // Out of reach: the chain stretches straight toward the target.
+        const Vec3 dir = safe_dir(target - base);
+        for (std::size_t i = 0; i < n; ++i) q[i + 1] = q[i] + dir * d[i];
+    } else {
+        // A chain lying straight along the line to its target cannot bend by the passes alone (every
+        // pass leaves it on the line), so its middle joint is placed first, where two bones of the
+        // chain's halves meet (the two-bone solution), toward the pole or, without one, across the
+        // line; the passes then settle the other joints and the lengths.
+        const float dist = length(target - base);
+        float sag = 0.0f;
+        if (dist > 1e-6f) {
+            const Vec3 axis = (target - base) * (1.0f / dist);
+            for (std::size_t i = 1; i < n; ++i) {
+                const Vec3 v = q[i] - base;
+                sag = std::max(sag, length(v - axis * dot(v, axis)));
+            }
+        }
+        if (n >= 2 && dist > 1e-6f && sag < 1e-3f * total) {
+            const Vec3 axis = (target - base) * (1.0f / dist);
+            const std::size_t k = (n + 1) / 2;
+            float a = 0.0f, b = 0.0f;
+            for (std::size_t i = 0; i < k; ++i) a += d[i];
+            for (std::size_t i = k; i < n; ++i) b += d[i];
+            const float along = std::clamp((dist * dist + a * a - b * b) / (2.0f * dist), -a, a);
+            const float r = std::sqrt(std::max(a * a - along * along, 0.0f));
+            Vec3 side{0, 0, 0};
+            if (has_pole) side = (pole - base) - axis * dot(pole - base, axis);
+            if (length(side) < 1e-6f) side = cross(axis, {0, 0, 1});
+            if (length(side) < 1e-6f) side = cross(axis, {1, 0, 0});
+            side = normalize(side);
+            const Vec3 mid = base + axis * along + side * r;
+            float acc = 0.0f;
+            for (std::size_t i = 1; i < k; ++i) { acc += d[i - 1]; q[i] = base + (mid - base) * (a > 0 ? acc / a : 0.0f); }
+            q[k] = mid;
+            acc = 0.0f;
+            for (std::size_t i = k + 1; i < n; ++i) { acc += d[i - 1]; q[i] = mid + (target - mid) * (b > 0 ? acc / b : 0.0f); }
+        }
+        for (int it = 0; it < std::clamp(ik.iterations, 1, 64); ++it) {
+            if (length(q[n] - target) <= tol) break;
+            q[n] = target;
+            for (std::size_t i = n; i-- > 0;) q[i] = q[i + 1] + safe_dir(q[i] - q[i + 1]) * d[i];
+            q[0] = base;
+            for (std::size_t i = 0; i < n; ++i) q[i + 1] = q[i] + safe_dir(q[i + 1] - q[i]) * d[i];
+            if (has_pole) {
+                for (std::size_t i = 1; i < n; ++i) toward_pole(q[i - 1], q[i], q[i + 1], pole);
+            }
+        }
+    }
+    const float w = std::clamp(ik.weight, 0.0f, 1.0f);
+    for (std::size_t i = 0; i < n; ++i) {
+        compose(mesh, l, cur);   // the joints above moved this one
+        const Vec3 a = cur.globals[chain[i]].transform_point({0, 0, 0});
+        const Vec3 b = i + 1 < n ? cur.globals[chain[i + 1]].transform_point({0, 0, 0}) : cur.globals[ei].transform_point(ik.tip);
+        const Vec3 from = b - a, to = q[i + 1] - a;
+        if (length(from) < 1e-6f || length(to) < 1e-6f) continue;
+        turn_node(mesh, l, chain[i], from_to(normalize(from), normalize(to)), w);
+    }
+    compose(mesh, l, cur);
+    ik.error = length(cur.globals[ei].transform_point(ik.tip) - target);
+    ik.reached = ik.error <= std::max(tol, 1e-4f);
+}
+
+// Turn one node so its forward axis points at the target, at most max_angle away from where the
+// pose points it, scaled by the weight.
+void solve_look_at(const world::World& world, world::EntityId self, const assets::Mesh& mesh, Locals& l, world::LookAt& la) {
+    la.angle = 0.0f;
+    const int node = node_index(mesh, la.node);
+    if (node < 0) return;
+    Vec3 target;
+    if (!asset_point(world, self, la.target_entity, la.target, target)) return;
+    Pose cur;
+    compose(mesh, l, cur);
+    const Mat4& g = cur.globals[static_cast<std::size_t>(node)];
+    const Vec3 origin = g.transform_point({0, 0, 0});
+    Vec3 fwd = g.transform_dir(la.forward), want = target - origin;
+    if (length(fwd) < 1e-6f || length(want) < 1e-6f) return;
+    fwd = normalize(fwd);
+    want = normalize(want);
+    const float angle = std::acos(std::clamp(dot(fwd, want), -1.0f, 1.0f));
+    const float limit = std::max(la.max_angle, 0.0f) * 3.14159265f / 180.0f;
+    const float applied = std::min(angle, limit) * std::clamp(la.weight, 0.0f, 1.0f);
+    if (applied <= 1e-6f) return;
+    Vec3 axis = cross(fwd, want);
+    if (length(axis) < 1e-6f) {   // straight behind: any axis across the forward one
+        axis = cross(fwd, {0, 1, 0});
+        if (length(axis) < 1e-6f) axis = cross(fwd, {1, 0, 0});
+    }
+    turn_node(mesh, l, static_cast<std::size_t>(node), Quat::from_axis_angle(normalize(axis), applied), 1.0f);
+    la.angle = applied * 180.0f / 3.14159265f;
+}
+
+float wrap_angle(float a) {
+    const float two_pi = 6.2831853f;
+    while (a > 3.14159265f) a -= two_pi;
+    while (a <= -3.14159265f) a += two_pi;
+    return a;
+}
+
 }  // namespace
 
 void Animation::blend(const assets::Mesh& mesh, const assets::AnimationClip* a, float time_a, const assets::AnimationClip* b, float time_b, float weight, Pose& out) {
@@ -250,12 +453,38 @@ Vec3 Animation::root_translation(const assets::Mesh& mesh, const assets::Animati
     return mesh.nodes[static_cast<std::size_t>(node)].translation;
 }
 
+Quat Animation::root_rotation(const assets::Mesh& mesh, const assets::AnimationClip* clip, int node, float time) {
+    if (node < 0 || static_cast<std::size_t>(node) >= mesh.nodes.size()) return {};
+    if (clip) {
+        for (const assets::AnimationChannel& c : clip->channels) {
+            if (c.node != node || c.path != 1 || c.times.empty()) continue;
+            std::size_t i0, i1;
+            float t;
+            locate(c.times, time, i0, i1, t);
+            if (c.step) { i1 = i0; t = 0; }
+            Quat a{c.values[i0 * 4], c.values[i0 * 4 + 1], c.values[i0 * 4 + 2], c.values[i0 * 4 + 3]};
+            Quat b{c.values[i1 * 4], c.values[i1 * 4 + 1], c.values[i1 * 4 + 2], c.values[i1 * 4 + 3]};
+            return i0 == i1 ? normalize(a) : nlerp(a, b, t);
+        }
+    }
+    return mesh.nodes[static_cast<std::size_t>(node)].rotation;
+}
+
+float Animation::yaw_of(Quat q) {
+    const Vec3 f = Mat4::rotation(q).transform_dir({0, 0, 1});
+    return std::atan2(f.x, f.z);
+}
+
 void Animation::step(world::World& world, assets::AssetStore& assets, float dt) {
     std::map<world::EntityId, Pose> next;
     struct Finish { world::EntityId id; std::string clip; int layer = -1; };
     std::vector<Finish> finished;
-    struct Move { world::EntityId id; Vec3 delta; };
+    struct Move { world::EntityId id; Vec3 delta; float yaw = 0; };
     std::vector<Move> moves;  // root motion to apply to transforms after the query
+    // The locals of every posed entity: the clips land first, then IK and look-at turn joints,
+    // then each is composed into its pose.
+    struct Work { std::string path; const assets::Mesh* mesh; Locals locals; };
+    std::map<world::EntityId, Work> work;
     world.ecs().each([&](flecs::entity e, world::Animator& a, const world::MeshRenderer& mr) {
         auto m = assets.mesh(mr.mesh);
         if (!m) return;
@@ -335,27 +564,66 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         // Root motion: the root's translation stays at the clip's first frame in the pose, and its
         // change over this tick (across a loop's wrap too) goes to the entity, or to the script.
         a.root_delta = {0, 0, 0};
+        a.root_delta_yaw = 0.0f;
         if (a.root_motion != 0 && clip) {
             const int root = root_node(mesh, clip, a.root);
             if (root >= 0) {
                 const auto ri = static_cast<std::size_t>(root);
                 const Vec3 t_old = root_translation(mesh, clip, root, old_time), t_new = root_translation(mesh, clip, root, a.time);
+                const Vec3 t_end = root_translation(mesh, clip, root, clip->duration), t_start = root_translation(mesh, clip, root, 0.0f);
+                const bool across = wrapped && clip->duration > 0;
                 Vec3 delta = t_new - t_old;
-                if (wrapped && clip->duration > 0) {
-                    const Vec3 t_end = root_translation(mesh, clip, root, clip->duration), t_start = root_translation(mesh, clip, root, 0.0f);
+                float dyaw = 0.0f;
+                if (a.root_rotation) {
+                    // The heading turns too: each piece of the translation is taken relative to the
+                    // heading it was walked at, so the entity's own heading carries it along the arc.
+                    const float y_old = yaw_of(root_rotation(mesh, clip, root, old_time)), y_new = yaw_of(root_rotation(mesh, clip, root, a.time));
+                    const float y_first = yaw_of(root_rotation(mesh, clip, root, 0.0f)), y_end = yaw_of(root_rotation(mesh, clip, root, clip->duration));
+                    auto heading = [](float yaw, Vec3 v) { return Mat4::rotation(Quat::from_axis_angle({0, 1, 0}, -yaw)).transform_dir(v); };
+                    if (across) {
+                        delta = a.speed >= 0 ? heading(y_old, t_end - t_old) + heading(y_first, t_new - t_start) : heading(y_old, t_start - t_old) + heading(y_end, t_new - t_end);
+                        dyaw = a.speed >= 0 ? wrap_angle(y_end - y_old) + wrap_angle(y_new - y_first) : wrap_angle(y_first - y_old) + wrap_angle(y_new - y_end);
+                    } else {
+                        delta = heading(y_old, delta);
+                        dyaw = wrap_angle(y_new - y_old);
+                    }
+                    // The pose keeps the first frame's heading: the yaw walked since then comes off.
+                    locals.rot[ri] = normalize(Quat::from_axis_angle({0, 1, 0}, -wrap_angle(y_new - y_first)) * locals.rot[ri]);
+                } else if (across) {
                     delta = a.speed >= 0 ? (t_end - t_old) + (t_new - t_start) : (t_new - t_end) + (t_start - t_old);
                 }
-                if (a.playing || a.time != old_time) a.root_delta = delta;
-                locals.tr[ri] = root_translation(mesh, clip, root, 0.0f);
+                if (a.playing || a.time != old_time) {
+                    a.root_delta = delta;
+                    a.root_delta_yaw = dyaw;
+                }
+                locals.tr[ri] = t_start;
                 locals.animated[ri] = true;
-                if (a.root_motion == 1 && (a.root_delta.x != 0 || a.root_delta.y != 0 || a.root_delta.z != 0)) moves.push_back({e.id(), a.root_delta});
+                if (a.root_motion == 1 && (a.root_delta.x != 0 || a.root_delta.y != 0 || a.root_delta.z != 0 || a.root_delta_yaw != 0)) moves.push_back({e.id(), a.root_delta, a.root_delta_yaw});
             }
         }
-        Pose pose;
-        pose.mesh = mr.mesh;
-        compose(mesh, locals, pose);
-        next.emplace(e.id(), std::move(pose));
+        work.emplace(e.id(), Work{mr.mesh, &mesh, std::move(locals)});
     });
+    // IK and look-at: over the clips' locals, or over the rest pose for an entity without an Animator.
+    auto work_for = [&](flecs::entity e, const world::MeshRenderer& mr) -> Work* {
+        auto it = work.find(e.id());
+        if (it != work.end()) return &it->second;
+        auto m = assets.mesh(mr.mesh);
+        if (!m || (*m)->nodes.empty()) return nullptr;
+        const assets::Mesh& mesh = **m;
+        return &work.emplace(e.id(), Work{mr.mesh, &mesh, sample_locals(mesh, nullptr, 0.0f)}).first->second;
+    };
+    world.ecs().each([&](flecs::entity e, world::IK& ik, const world::MeshRenderer& mr) {
+        if (Work* w = work_for(e, mr)) solve_ik(world, e.id(), *w->mesh, w->locals, ik);
+    });
+    world.ecs().each([&](flecs::entity e, world::LookAt& la, const world::MeshRenderer& mr) {
+        if (Work* w = work_for(e, mr)) solve_look_at(world, e.id(), *w->mesh, w->locals, la);
+    });
+    for (auto& [id, w] : work) {
+        Pose pose;
+        pose.mesh = w.path;
+        compose(*w.mesh, w.locals, pose);
+        next.emplace(id, std::move(pose));
+    }
     // Script-set morph weights: over the clip's, for entities with or without an Animator.
     world.ecs().each([&](flecs::entity e, const world::Morph& morph, const world::MeshRenderer& mr) {
         auto m = assets.mesh(mr.mesh);
@@ -380,6 +648,7 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         if (!t) continue;
         world::Transform moved = *t;
         moved.position = moved.position + Mat4::trs({0, 0, 0}, moved.rotation, moved.scale).transform_dir(mv.delta);
+        if (mv.yaw != 0) moved.rotation = normalize(moved.rotation * Quat::from_axis_angle({0, 1, 0}, mv.yaw));
         world.set_typed<world::Transform>(mv.id, moved);
     }
     for (const Finish& f : finished) {
@@ -427,6 +696,7 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
             const int root = root_node(mesh, a->clip.empty() ? nullptr : mesh.clip(a->clip), a->root);
             if (root >= 0) j["root"] = mesh.nodes[static_cast<std::size_t>(root)].name;
             j["root_delta"] = Json{{"x", a->root_delta.x}, {"y", a->root_delta.y}, {"z", a->root_delta.z}};
+            if (a->root_rotation) j["root_delta_yaw"] = a->root_delta_yaw;
         }
         if (a->fade > 0 && !a->from_clip.empty()) {
             float t = std::clamp(a->fade_time / a->fade, 0.0f, 1.0f);
@@ -441,6 +711,18 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
             j["layers"] = layers;
         }
     }
+    if (const auto* ik = world.try_get<world::IK>(id)) {
+        Json k{{"end", ik->end}, {"bones", ik->bones}, {"weight", ik->weight}, {"error", ik->error}, {"reached", ik->reached}};
+        const int end = node_index(mesh, ik->end);
+        if (end >= 0) {
+            const auto ei = static_cast<std::size_t>(end);
+            const Mat4 g = p && ei < p->globals.size() ? p->globals[ei] : mesh.nodes[ei].rest;
+            const Vec3 eff = (model * g).transform_point(ik->tip);
+            k["effector"] = Json{{"x", eff.x}, {"y", eff.y}, {"z", eff.z}};
+        }
+        j["ik"] = k;
+    }
+    if (const auto* la = world.try_get<world::LookAt>(id)) j["look_at"] = Json{{"node", la->node}, {"angle", la->angle}, {"weight", la->weight}, {"max_angle", la->max_angle}};
     return j;
 }
 

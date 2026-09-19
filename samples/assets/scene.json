@@ -130,6 +130,94 @@
       }
     },
     {
+      "name": "Reacher",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 4.6,
+            "y": 0,
+            "z": 1.8
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/arm.glb",
+          "color": {
+            "r": 0.6,
+            "g": 0.9,
+            "b": 0.6,
+            "a": 1
+          }
+        },
+        "IK": {
+          "end": "tip",
+          "bones": 2,
+          "tip": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "target_entity": "Orb"
+        }
+      }
+    },
+    {
+      "name": "Gazer",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 4.6,
+            "y": 0,
+            "z": -0.6
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/arm.glb",
+          "color": {
+            "r": 0.95,
+            "g": 0.85,
+            "b": 0.45,
+            "a": 1
+          }
+        },
+        "LookAt": {
+          "node": "tip",
+          "forward": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "target_entity": "Orb",
+          "max_angle": 70
+        }
+      }
+    },
+    {
+      "name": "Turner",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": -4.6,
+            "y": 0,
+            "z": -2.4
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/arm.glb",
+          "color": {
+            "r": 0.75,
+            "g": 0.6,
+            "b": 0.95,
+            "a": 1
+          }
+        },
+        "Animator": {
+          "clip": "turn",
+          "root_motion": 1,
+          "root_rotation": true
+        }
+      }
+    },
+    {
       "name": "Missing",
       "components": {
         "Transform": {
@@ -175,9 +263,9 @@
       "components": {
         "Transform": {
           "position": {
-            "x": 2.4,
-            "y": 0.45,
-            "z": 2.2
+            "x": 5.0,
+            "y": 1.1,
+            "z": 0.6
           },
           "scale": {
             "x": 0.9,

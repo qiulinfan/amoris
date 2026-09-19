@@ -14,6 +14,8 @@
     X(SpriteAnimation) \
     X(TileMap) \
     X(Animator) \
+    X(IK) \
+    X(LookAt) \
     X(ParticleEmitter) \
     X(Bounds) \
     X(RigidBody) \

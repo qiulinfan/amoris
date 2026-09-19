@@ -19,6 +19,10 @@ export const events = {
     since(seq: number, options: { limit?: number; type?: string } = {}): WorldEvent[] {
         return command<{ events: WorldEvent[] }>("events.since", { seq, ...options }).events;
     },
+    /** The newest event's seq (0 when none): where a script that counts events from its own start begins, since the log runs on across a reload or an env.reset. */
+    lastSeq(): number {
+        return command<{ seq: number }>("events.last_seq").seq;
+    },
     recent(n = 50): WorldEvent[] {
         return command<WorldEvent[]>("events.recent", { n });
     },

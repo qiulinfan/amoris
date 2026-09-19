@@ -292,6 +292,14 @@ fn stage_project(ws: &Workspace, project: &Path, staging: &Path, config: &str, w
 
 const WEB_SHELL: &str = include_str!("web_shell.html");
 
+/// The page for a project: the shell with its placeholders filled (the name, the configuration,
+/// the extra runtime arguments and the editor flag that shows the page's download button).
+fn render_shell(name: &str, config: &str, editor: bool) -> String {
+    let title = serde_json::to_string(name).unwrap_or_else(|_| format!("\"{name}\""));
+    let extra_args = if editor { r#", "--editor", "/game/editor.js", "--paused""# } else { "" };
+    WEB_SHELL.replace("__POCKET_NAME__", name).replace("__POCKET_TITLE__", &title).replace("__POCKET_CONFIG__", config).replace("__POCKET_EXTRA_ARGS__", extra_args).replace("__POCKET_EDITOR__", if editor { "true" } else { "false" })
+}
+
 pub fn pack_web(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make_zip: bool, editor: bool) -> Result<Report> {
     let t0 = Instant::now();
     if ws.target_of(config)? != "wasm" {
@@ -339,10 +347,8 @@ pub fn pack_web(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, 
     total += std::fs::metadata(&data)?.len() + std::fs::metadata(&data_js)?.len();
     // The page.
     let title = serde_json::to_string(&name)?;
-    let extra_args = if editor { r#", "--editor", "/game/editor.js", "--paused""# } else { "" };
-    let shell = WEB_SHELL.replace("__POCKET_NAME__", &name).replace("__POCKET_TITLE__", &title).replace("__POCKET_CONFIG__", config).replace("__POCKET_EXTRA_ARGS__", extra_args);
-    std::fs::write(dist.join("index.html"), shell)?;
-    std::fs::write(dist.join("README.txt"), format!("{name} for the web (packed by pocket, {config} configuration)\n\nServe this folder from any static web server and open index.html; file:// does not work because the\nbrowser must fetch the wasm module. For a quick look: python3 -m http.server --directory . 8080\n\nContents: index.html (the page), pocket_runtime.js + pocket_runtime.wasm (the engine), {name}.data + {name}.data.js\n(the project: scripts bundled, settings, scene, assets, UI font). The page exposes window.pocket for tests and agents\n(pocket.command(name, params) runs any runtime command; docs/web.md in the repository has the details).\n"))?;
+    std::fs::write(dist.join("index.html"), render_shell(&name, config, editor))?;
+    std::fs::write(dist.join("README.txt"), format!("{name} for the web (packed by pocket, {config} configuration)\n\nServe this folder from any static web server and open index.html; file:// does not work because the\nbrowser must fetch the wasm module. For a quick look: python3 -m http.server --directory . 8080\n\nContents: index.html (the page), pocket_runtime.js + pocket_runtime.wasm (the engine), {name}.data + {name}.data.js\n(the project: scripts bundled, settings, scene, assets, UI font). The page exposes window.pocket for tests and agents\n(pocket.command(name, params) runs any runtime command, pocket.download(path) saves a file of the page's file system,\nsuch as the scene the editor saved or a save slot, to the visitor's downloads; docs/web.md in the repository has the details).\n"))?;
     let mut rep_data = json!({ "project": project, "dist": dist, "config": config, "bytes": total, "staged_bytes": staged.bytes, "font": staged.font, "editor": editor, "index": dist.join("index.html") });
     if make_zip {
         let zip_path = dist.with_extension("zip");
@@ -365,6 +371,18 @@ fn chrono_free_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_shell_fills_every_placeholder() {
+        for editor in [false, true] {
+            let page = render_shell("my game", "wasm", editor);
+            assert!(!page.contains("__POCKET_"), "a placeholder was left in the page");
+            assert!(page.contains("<title>my game</title>"));
+            assert!(page.contains("pocket_command_async"));
+            assert_eq!(page.contains("\"--editor\""), editor);
+            assert!(page.contains(if editor { "const editor = true;" } else { "const editor = false;" }));
+        }
+    }
 
     #[test]
     fn font_text_covers_ascii_punctuation_and_the_project_sources() {

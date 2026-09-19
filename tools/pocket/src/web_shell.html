@@ -11,6 +11,11 @@
   canvas { display: block; outline: none; width: 100vw; height: 100vh; }
   #status { position: fixed; left: 12px; bottom: 10px; opacity: 0.8; pointer-events: none; }
   #status:empty { display: none; }
+  /* The page's own controls (shown with the editor): what the editor saves lives in the page's file
+     system, and a download is the way to take it home. */
+  #tools { position: fixed; right: 12px; bottom: 10px; display: none; gap: 6px; }
+  #tools button { background: #2a2c36; color: #e6e8f0; border: 1px solid #4a4d5c; border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer; }
+  #tools button:hover { background: #363948; }
 </style>
 </head>
 <body>
@@ -20,6 +25,7 @@
 <input id="pocket-text" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
        style="position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0.01; border: 0; padding: 0; font-size: 16px;">
 <div id="status">loading…</div>
+<div id="tools"><button id="download-scene" title="Save the scene file the editor writes to your downloads">Download scene</button></div>
 <script>
 // The runtime is started by pocket_runtime.js with these arguments; the project lives in the
 // virtual file system under /game (see __POCKET_NAME__.data.js). Everything a native run accepts
@@ -85,11 +91,28 @@ window.pocket = (() => {
       return unpack(ptr);
     },
     async commandAsync(name, params) {
-      const ptr = await Module.ccall("pocket_command", "number", ["string", "string"], [name, JSON.stringify(params || {})], { async: true });
+      const ptr = await Module.ccall("pocket_command_async", "number", ["string", "string"], [name, JSON.stringify(params || {})], { async: true });
       return unpack(ptr);
     },
     // A PNG of the canvas as the browser shows it, as a data URL (no GPU readback needed).
     snapshot() { return Module.canvas.toDataURL("image/png"); },
+    // The page's file system: the project under /game, saves under /saves/<name> (IndexedDB), and
+    // whatever the runtime wrote (captures, the scene the editor saved).
+    files(dir) { return Module.FS.readdir(dir).filter((n) => n !== "." && n !== ".."); },
+    read(path) { return Module.FS.readFile(path); },
+    // Save a file of the page's file system to the visitor's downloads; returns its size.
+    download(path, filename) {
+      const bytes = Module.FS.readFile(path);
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || path.split("/").pop();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return bytes.length;
+    },
   };
   const wait = () => {
     try {
@@ -100,6 +123,15 @@ window.pocket = (() => {
   wait();
   return api;
 })();
+const editor = __POCKET_EDITOR__;
+if (editor) {
+  document.getElementById("tools").style.display = "flex";
+  document.getElementById("download-scene").addEventListener("click", () => {
+    const info = window.pocket.command("project.info", {});
+    if (!info.scene) { document.getElementById("status").textContent = "the project has no scene file"; return; }
+    window.pocket.download(info.dir + "/" + info.scene, info.name + "-" + info.scene.split("/").pop());
+  });
+}
 </script>
 <script src="__POCKET_NAME__.data.js"></script>
 <script src="pocket_runtime.js"></script>

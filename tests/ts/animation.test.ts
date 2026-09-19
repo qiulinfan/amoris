@@ -6,7 +6,7 @@ test("clips, play, stop and pose through the SDK", () => {
     const arm = world.spawn("Arm", { components: { Transform: {}, MeshRenderer: { mesh: "samples/assets/assets/arm.glb" } } });
     const info = animation.clips(arm);
     expect(info.skinned).toBe(true);
-    expect(info.clips.map((c) => c.name)).toEqual(["wave", "nod", "pulse", "walk"]);
+    expect(info.clips.map((c) => c.name)).toEqual(["wave", "nod", "pulse", "walk", "turn"]);
     expect(info.targets).toEqual(["bulge", "lean"]);
     const state = animation.play(arm, "nod", { speed: 2, loop: false });
     expect(state.clip).toBe("nod");

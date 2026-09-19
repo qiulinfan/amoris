@@ -12,6 +12,7 @@
 #pragma clang diagnostic pop
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <thread>
@@ -222,7 +223,7 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     Json clips = s.command("animation.clips", Json{{"entity", "Arm"}}).value();
     INFO(clips.dump());
     REQUIRE(clips["skinned"] == true);
-    REQUIRE(clips["clips"].size() == 4);
+    REQUIRE(clips["clips"].size() == 5);
     REQUIRE(clips["skins"][0]["joints"] == Json::array({"root", "tip"}));
     REQUIRE(s.frame().has_value());
     // Frame 1 sampled time 1/60: the tip joint leans about -45 degrees around Z (axis toward +X).
@@ -234,7 +235,7 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     REQUIRE(pose0["joints"][1]["position"]["y"].get<double>() == Catch::Approx(1.0).margin(0.01));
     REQUIRE(pose0["joints"][1]["axis_y"]["x"].get<double>() > 0.6);
     Json rs = s.command("render.stats", Json::object()).value();
-    REQUIRE(rs["skinned"].get<int>() == 3);  // the Arm, the Walker and the Pulse arm
+    REQUIRE(rs["skinned"].get<int>() == 6);  // the Arm, the Walker and the Pulse arm
     // Half a second later the swing has reached +45 degrees: the axis points toward -X.
     for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
     Json pose1 = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
@@ -611,7 +612,7 @@ TEST_CASE("a scenario bundle plays the game and reports its verdict", "[runtime]
     REQUIRE(s.frame().has_value());  // exposed state is sampled at the end of a tick
     Json state = s.command("state", Json::object()).value()["state"];
     INFO(state.dump());
-    REQUIRE(state["__scenarios"].size() == 8);
+    REQUIRE(state["__scenarios"].size() == 9);
     REQUIRE(state["__scenario"]["status"] == "running");
     REQUIRE_FALSE(s.quit_requested());
     int frames = 1;
@@ -674,8 +675,8 @@ TEST_CASE("Body2D falls onto tiles, is stopped by walls and passes one-way plank
     Json hist = s.command("events.histogram", Json::object()).value();
     REQUIRE(hist["body2d.landed"].get<int>() >= 1);
     Json stats = s.command("physics.stats", Json::object()).value();
-    REQUIRE(stats["tiles"]["bodies"].get<int>() == 3);  // the player, the crate and the lift
-    REQUIRE(stats["tiles"]["grounded"].get<int>() == 2);
+    REQUIRE(stats["tiles"]["bodies"].get<int>() == 5);   // the player, the crate, the lift, and the sample's ball and puck
+    REQUIRE(stats["tiles"]["grounded"].get<int>() >= 3);   // the player, the crate, the sample's puck (its ball may be in the air)
     // Pushed right along the ground, it stops at the ledge (cells 13-14: x from 3 to 5).
     REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1.0}, {"y", -3.2}}}}}}).has_value());
     for (int i = 0; i < 60; ++i) {
@@ -783,7 +784,7 @@ TEST_CASE("sprites draw unlit through an orthographic camera and are picked by s
     REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
-    REQUIRE(stats["sprites"].get<int>() == 8);  // the player, six coins and the lift             // player + 6 coins; the ground is a tile map
+    REQUIRE(stats["sprites"].get<int>() == 10);  // the player, six coins, the lift, the ball and the puck; the ground is a tile map
     REQUIRE(stats["tile_layers"].get<int>() == 3);         // ground, deco and platforms layers of level.tmj
     REQUIRE(stats["draw_calls"].get<int>() <= 6);           // runs per texture, split by layer
     // The map answers what is where: solid ground under the player, air above, the ledge at (13,6).
@@ -1257,7 +1258,7 @@ TEST_CASE("morph targets weigh vertices from a clip's weights track and from the
     Json clips = s.command("animation.clips", Json{{"entity", "Pulse"}}).value();
     INFO(clips.dump());
     REQUIRE(clips["targets"] == Json::array({"bulge", "lean"}));
-    REQUIRE(clips["clips"].size() == 4);
+    REQUIRE(clips["clips"].size() == 5);
     Json described = s.command("assets.describe", Json{{"path", "assets/arm.glb"}}).value();
     REQUIRE(described["targets"] == Json::array({"bulge", "lean"}));
     // Half a second into the pulse clip the bulge weight is at its peak.
@@ -1346,6 +1347,261 @@ TEST_CASE("root motion carries the entity by the clip's root translation and pin
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("inverse kinematics bends a chain to its target, with a pole, a weight and out of reach", "[runtime][animation][ik]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // An arm at the origin: two unit bones along +Y (root at 0, tip joint at 1, the effector at 2).
+    Json spawn = Json{{"name", "Reach"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"IK", Json{{"end", "tip"}, {"bones", 2}, {"tip", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"target", {{"x", 1.0}, {"y", 1.2}, {"z", 0.3}}}}}}}};
+    REQUIRE(s.command("world.spawn", spawn).has_value());
+    REQUIRE(s.frame().has_value());
+    auto pose = [&]() { return s.command("animation.pose", Json{{"entity", "Reach"}}).value(); };
+    auto v = [](const Json& j) { return Vec3{j["x"].get<float>(), j["y"].get<float>(), j["z"].get<float>()}; };
+    Json p = pose();
+    INFO(p.dump());
+    REQUIRE(p["posed"] == true);
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(p["ik"]["error"].get<double>() < 0.01);
+    REQUIRE(length(v(p["ik"]["effector"]) - Vec3{1.0f, 1.2f, 0.3f}) < 0.01f);
+    // The bones keep their lengths: the tip joint is one unit from the root and from the effector.
+    Vec3 root_pos = v(p["joints"][0]["position"]), tip_pos = v(p["joints"][1]["position"]);
+    REQUIRE(length(root_pos) < 1e-4f);
+    REQUIRE(length(tip_pos) == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(length(v(p["ik"]["effector"]) - tip_pos) == Catch::Approx(1.0).margin(0.01));
+    // Out of reach: the chain points straight at the target and the error is the shortfall.
+    REQUIRE(s.command("world.set", Json{{"entity", "Reach"}, {"component", "IK"}, {"value", Json{{"target", {{"x", 3.0}, {"y", 0.0}, {"z", 0.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    REQUIRE(p["ik"]["reached"] == false);
+    REQUIRE(p["ik"]["error"].get<double>() == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(length(v(p["joints"][1]["position"]) - Vec3{1, 0, 0}) < 0.01f);
+    REQUIRE(length(v(p["ik"]["effector"]) - Vec3{2, 0, 0}) < 0.01f);
+    // A pole entity decides which way the elbow bends.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Pole"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 1}, {"z", 2}}}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Reach"}, {"component", "IK"}, {"value", Json{{"target", {{"x", 0.0}, {"y", 1.5}, {"z", 0.0}}}, {"pole_entity", "Pole"}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(v(p["joints"][1]["position"]).z > 0.3f);
+    REQUIRE(s.command("world.set", Json{{"entity", "Pole"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 1}, {"z", -2}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());   // the pole's world transform lands a tick later
+    p = pose();
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(v(p["joints"][1]["position"]).z < -0.3f);
+    // Weight 0 leaves the pose alone and reports the error the pose has.
+    REQUIRE(s.command("world.set", Json{{"entity", "Reach"}, {"component", "IK"}, {"value", Json{{"weight", 0.0}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    REQUIRE(length(v(p["joints"][1]["position"]) - Vec3{0, 1, 0}) < 0.01f);
+    REQUIRE(p["ik"]["error"].get<double>() == Catch::Approx(0.5).margin(0.01));
+    // A target entity is followed, in the entity's own space: the arm moved and rotated still reaches it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Reach"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 2}, {"y", 0}, {"z", -1}}}, {"rotation", {{"x", 0}, {"y", 0.7071068}, {"z", 0}, {"w", 0.7071068}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Reach"}, {"component", "IK"}, {"value", Json{{"weight", 1.0}, {"target_entity", "Pole"}, {"pole_entity", ""}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Pole"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 2.8}, {"y", 1.0}, {"z", 0.2}}}}}}).has_value());
+    for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(length(v(p["ik"]["effector"]) - Vec3{2.8f, 1.0f, 0.2f}) < 0.01f);
+    // The sample's Reacher follows the circling Orb: within reach most of the time.
+    int reached = 0;
+    for (int i = 0; i < 120; ++i) {
+        REQUIRE(s.frame().has_value());
+        if (s.command("world.get", Json{{"entity", "Reacher"}, {"component", "IK"}}).value()["reached"] == true) ++reached;
+    }
+    REQUIRE(reached > 60);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("look-at turns a node toward its target within its limit", "[runtime][animation][lookat]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The arm's tip node sits at (0, 1, 0) pointing +Y; the target lies straight to its +X.
+    Json spawn = Json{{"name", "Gaze"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"LookAt", Json{{"node", "tip"}, {"forward", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"target", {{"x", 2.0}, {"y", 1.0}, {"z", 0.0}}}}}}}};
+    REQUIRE(s.command("world.spawn", spawn).has_value());
+    REQUIRE(s.frame().has_value());
+    auto v = [](const Json& j) { return Vec3{j["x"].get<float>(), j["y"].get<float>(), j["z"].get<float>()}; };
+    Json p = s.command("animation.pose", Json{{"entity", "Gaze"}}).value();
+    INFO(p.dump());
+    REQUIRE(p["look_at"]["angle"].get<double>() == Catch::Approx(90.0).margin(0.1));
+    REQUIRE(length(v(p["joints"][1]["axis_y"]) - Vec3{1, 0, 0}) < 0.01f);
+    REQUIRE(length(v(p["joints"][1]["position"]) - Vec3{0, 1, 0}) < 1e-3f);   // the node turns in place
+    // A limit: 30 degrees toward the target, no more.
+    REQUIRE(s.command("world.set", Json{{"entity", "Gaze"}, {"component", "LookAt"}, {"value", Json{{"max_angle", 30.0}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = s.command("animation.pose", Json{{"entity", "Gaze"}}).value();
+    REQUIRE(p["look_at"]["angle"].get<double>() == Catch::Approx(30.0).margin(0.1));
+    REQUIRE(length(v(p["joints"][1]["axis_y"]) - Vec3{0.5f, 0.8660254f, 0}) < 0.01f);
+    // Half the weight: half the turn.
+    REQUIRE(s.command("world.set", Json{{"entity", "Gaze"}, {"component", "LookAt"}, {"value", Json{{"max_angle", 90.0}, {"weight", 0.5}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = s.command("animation.pose", Json{{"entity", "Gaze"}}).value();
+    REQUIRE(p["look_at"]["angle"].get<double>() == Catch::Approx(45.0).margin(0.1));
+    // The sample's Gazer aims at the circling Orb and reports the turn it makes.
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    Json gazer = s.command("world.get", Json{{"entity", "Gazer"}, {"component", "LookAt"}}).value();
+    REQUIRE(gazer["angle"].get<double>() > 5.0);
+    REQUIRE(gazer["angle"].get<double>() <= 70.0 + 1e-3);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("root rotation turns the entity with the clip's heading and follows the arc", "[runtime][animation][root][rotation]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The "turn" clip walks a quarter circle of radius one, turning 90 degrees, each second.
+    Json spawn = Json{{"name", "Turn"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"Animator", Json{{"clip", "turn"}, {"root_motion", 1}, {"root_rotation", true}}}}}};
+    REQUIRE(s.command("world.spawn", spawn).has_value());
+    auto transform = [&]() { return s.command("world.get", Json{{"entity", "Turn"}, {"component", "Transform"}}).value(); };
+    auto yaw = [&](const Json& t) { return 2.0 * std::atan2(t["rotation"]["y"].get<double>(), t["rotation"]["w"].get<double>()) * 180.0 / 3.14159265; };
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json t = transform();
+    INFO(t.dump());
+    REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(1.0).margin(0.03));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(1.0).margin(0.03));
+    REQUIRE(yaw(t) == Catch::Approx(90.0).margin(1.0));
+    // The pose's root keeps the first frame's heading and place: the root joint stays with the entity.
+    Json pose = s.command("animation.pose", Json{{"entity", "Turn"}}).value();
+    INFO(pose.dump());
+    // (the pose is reported through the world transform of the tick before, one step behind)
+    REQUIRE(pose["joints"][0]["position"]["x"].get<double>() == Catch::Approx(t["position"]["x"].get<double>()).margin(0.05));
+    REQUIRE(pose["joints"][0]["position"]["z"].get<double>() == Catch::Approx(t["position"]["z"].get<double>()).margin(0.05));
+    // Across the wrap the arc continues: a second quarter lands at (2, 0, 0) facing -Z, a full circle at the start.
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    t = transform();
+    REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(2.0).margin(0.05));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(0.0).margin(0.05));
+    REQUIRE(std::abs(yaw(t)) == Catch::Approx(180.0).margin(1.5));
+    for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
+    t = transform();
+    REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(0.0).margin(0.08));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(0.0).margin(0.08));
+    Json anim = s.command("world.get", Json{{"entity", "Turn"}, {"component", "Animator"}}).value();
+    REQUIRE(anim["root_delta_yaw"].get<double>() == Catch::Approx(3.14159265 / 2.0 / 60.0).margin(1e-3));
+    // Mode 2 reports the yaw without turning the entity.
+    REQUIRE(s.command("world.set", Json{{"entity", "Turn"}, {"component", "Animator"}, {"value", Json{{"root_motion", 2}}}}).has_value());
+    const double before = yaw(transform());
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(yaw(transform()) == Catch::Approx(before).margin(1e-6));
+    anim = s.command("world.get", Json{{"entity", "Turn"}, {"component", "Animator"}}).value();
+    REQUIRE(anim["root_delta_yaw"].get<double>() == Catch::Approx(3.14159265 / 2.0 / 60.0).margin(1e-3));
+    // The sample's Turner has walked its circle too.
+    REQUIRE(s.command("state", Json::object()).value()["state"].contains("turner.yaw"));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("2D bodies bounce by their restitution and slide to a stop by friction", "[runtime][body2d][bounce]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto spawn = [&](const char* name, double x, double y, Json body) {
+        Json b = Json{{"size", Json{{"x", 0.2}, {"y", 0.2}}}, {"collide_bodies", false}};
+        for (auto& [k, v] : body.items()) b[k] = v;
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", 0}}}}}, {"Body2D", b}}}}).has_value());
+    };
+    auto body = [&](const char* path) { return s.command("world.get", Json{{"entity", path}, {"component", "Body2D"}}).value(); };
+    auto pos = [&](const char* path) { Json t = s.command("world.get", Json{{"entity", path}, {"component", "Transform"}}).value(); return Vec3{t["position"]["x"].get<float>(), t["position"]["y"].get<float>(), 0}; };
+    auto bounces = [&](const char* path) {
+        int n = 0;
+        for (const Json& ev : s.command("events.since", Json{{"seq", 0}, {"type", "body2d.bounced"}, {"limit", 200}}).value()["events"]) if (ev["data"]["path"] == path) ++n;
+        return n;
+    };
+    // A ball dropped from 2.8 units above the ground (top at -3.5) with restitution 0.7.
+    spawn("Bouncer", 0.9, -0.5, Json{{"restitution", 0.7}});
+    // A puck shoved at 4 units per second with friction 5: it slides 1.6 units and stops.
+    spawn("Slider", -2.0, -3.3, Json{{"friction", 5.0}, {"velocity", Json{{"x", 4.0}, {"y", 0.0}}}});
+    // A stone with no restitution lands and stays; a dead-slow bounce lands too.
+    spawn("Pebble", 1.4, -0.5, Json::object());
+    bool bounced_up = false;
+    float apex = -10;
+    for (int i = 0; i < 60; ++i) {
+        REQUIRE(s.frame().has_value());
+        Json b = body("Bouncer");
+        if (bounces("/Bouncer") >= 1 && b["velocity"]["y"].get<double>() > 0 && b["grounded"] == false) bounced_up = true;
+        if (bounces("/Bouncer") >= 1) apex = std::max(apex, pos("Bouncer").y);   // the first bounce's top
+    }
+    REQUIRE(bounced_up);
+    INFO(body("Bouncer").dump() << " at " << pos("Bouncer").y << " apex " << apex);
+    REQUIRE(bounces("/Bouncer") >= 1);
+    Json first;
+    for (const Json& ev : s.command("events.since", Json{{"seq", 0}, {"type", "body2d.bounced"}, {"limit", 200}}).value()["events"]) { if (ev["data"]["path"] == "/Bouncer") { first = ev["data"]; break; } }
+    REQUIRE(first["path"] == "/Bouncer");
+    REQUIRE(first["side"] == "floor");
+    REQUIRE(first["speed"].get<double>() > 10.0);   // sqrt(2 g h) with g 24 and h 2.8 is 11.6
+    // The first bounce rises to about half the drop (0.49 of it): well above the ground, well below the start.
+    REQUIRE(apex > -2.6f);
+    REQUIRE(apex < -1.4f);
+    for (int i = 0; i < 180; ++i) REQUIRE(s.frame().has_value());
+    Json ball = body("Bouncer");
+    INFO(ball.dump());
+    REQUIRE(ball["grounded"] == true);                       // settled after the bounces died out
+    REQUIRE(bounces("/Bouncer") >= 5);
+    REQUIRE(pos("Bouncer").y == Catch::Approx(-3.3f).margin(0.01f));
+    REQUIRE(bounces("/Pebble") == 0);
+    REQUIRE(body("Pebble")["grounded"] == true);
+    // The puck slid and stopped: v*v / (2 a) = 16 / 10 = 1.6 units, grounded all along.
+    Json puck = body("Slider");
+    INFO(puck.dump() << " at " << pos("Slider").x);
+    REQUIRE(puck["velocity"]["x"].get<double>() == 0.0);
+    REQUIRE(puck["grounded"] == true);
+    REQUIRE(pos("Slider").x == Catch::Approx(-0.4f).margin(0.08f));
+    // A wall: a ball thrown at a kinematic block comes back with 0.7 of its speed, and the
+    // block's top bounces a ball dropped on it (a platform is a floor).
+    REQUIRE(s.command("world.spawn", Json{{"name", "Block"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 2.0}, {"y", -3.0}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.5}}}, {"kinematic", true}}}}}}).has_value());
+    spawn("Shot", 0.6, -3.3, Json{{"restitution", 0.7}, {"velocity", Json{{"x", 6.0}, {"y", 0.0}}}});
+    for (int i = 0; i < 15; ++i) REQUIRE(s.frame().has_value());
+    Json shot = body("Shot");
+    INFO(shot.dump() << " at " << pos("Shot").x);
+    REQUIRE(bounces("/Shot") >= 1);
+    REQUIRE(shot["velocity"]["x"].get<double>() == Catch::Approx(-4.2).margin(0.05));
+    REQUIRE(pos("Shot").x < 1.5f);
+    // A bounce off another body: a ball dropped onto a crate that collides with bodies.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -0.3}, {"y", -3.2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Drop"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -0.3}, {"y", -1.0}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.2}, {"y", 0.2}}}, {"restitution", 0.6}}}}}}).has_value());
+    int body_bounces = 0;
+    for (int i = 0; i < 60; ++i) {
+        REQUIRE(s.frame().has_value());
+        for (const Json& ev : s.command("events.since", Json{{"seq", 0}, {"type", "body2d.bounced"}, {"limit", 400}}).value()["events"]) if (ev["data"]["path"] == "/Drop" && ev["data"]["side"] == "body") body_bounces = std::max(body_bounces, 1);
+    }
+    REQUIRE(body_bounces == 1);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["tiles"].contains("bounces"));
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("physics exceptions are commands and the pellet with ccd is held by the pane", "[runtime][physics][ccd]") {
     app::Options o;
     o.project_dir = root() / "samples" / "physics";
@@ -1374,10 +1630,27 @@ TEST_CASE("physics exceptions are commands and the pellet with ccd is held by th
     REQUIRE(st["pelletX"].get<double>() < 9.0);
     REQUIRE(st["pelletX"].get<double>() > 8.5);
     REQUIRE(st["dudCrossed"] == true);
-    REQUIRE(st["ccdHits"] == 1);
+    REQUIRE(st["ccdHits"] == 2);   // the pellet at the pane, and the clash pair meeting
+    REQUIRE(st["ccdDynamic"] == 1);
+    REQUIRE(st["clashGap"].get<double>() < 0.2);
+    REQUIRE(st["clashGap"].get<double>() > 0.05);
     Json hits = s.command("events.since", Json{{"seq", 0}, {"type", "physics.ccd"}, {"limit", 10}}).value()["events"];
-    REQUIRE(hits.size() == 1);
-    REQUIRE(hits[0]["data"]["other"] == "/Pane");
+    REQUIRE(hits.size() == 2);
+    int pane = 0, pair = 0;
+    for (const Json& h : hits) {
+        if (h["data"]["other"] == "/Pane") ++pane;
+        if (h["data"]["dynamic"] == true) ++pair;
+    }
+    REQUIRE(pane == 1);
+    REQUIRE(pair == 1);
+    // The sweep query through the command: a sphere cast along the pellet's lane meets the pane.
+    Json sw = s.command("physics.sweep", Json{{"origin", {{"x", 5}, {"y", 1.2}, {"z", 5}}}, {"direction", {{"x", 1}, {"y", 0}, {"z", 0}}}, {"radius", 0.1}}).value();
+    INFO(sw.dump());
+    REQUIRE(sw["path"].get<std::string>().ends_with("Pane"));
+    REQUIRE(sw["distance"].get<double>() == Catch::Approx(3.89).margin(0.01));
+    REQUIRE(sw["normal"]["x"].get<double>() == Catch::Approx(-1.0));
+    REQUIRE(sw["radius"].get<double>() == Catch::Approx(0.1));
+    REQUIRE(s.command("physics.sweep", Json{{"origin", {{"x", 5}, {"y", 4}, {"z", 5}}}, {"direction", {{"x", 1}, {"y", 0}, {"z", 0}}}, {"radius", 0.1}, {"max_distance", 3.0}}).value().is_null());
     REQUIRE(s.finish().has_value());
 }
 

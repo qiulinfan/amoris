@@ -217,12 +217,50 @@ struct Animator {
     std::int32_t root_motion = 0;
     std::string root = "";
     Vec3 root_delta{0.0f, 0.0f, 0.0f};
+    bool root_rotation = false;
+    float root_delta_yaw = 0.0f;
     constexpr bool operator==(const Animator&) const = default;
 };
 void to_json(Json& j, const Animator& v);
 void from_json(const Json& j, Animator& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Animator& v, std::string_view path, float** out);
+
+/// Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.
+struct IK {
+    std::string end = "";
+    std::int32_t bones = 2;
+    Vec3 tip{0.0f, 0.0f, 0.0f};
+    Vec3 target{0.0f, 0.0f, 0.0f};
+    std::string target_entity = "";
+    std::string pole_entity = "";
+    float weight = 1.0f;
+    std::int32_t iterations = 8;
+    float tolerance = 0.001f;
+    float error = 0.0f;
+    bool reached = false;
+    constexpr bool operator==(const IK&) const = default;
+};
+void to_json(Json& j, const IK& v);
+void from_json(const Json& j, IK& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(IK& v, std::string_view path, float** out);
+
+/// Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.
+struct LookAt {
+    std::string node = "";
+    Vec3 forward{0.0f, 1.0f, 0.0f};
+    Vec3 target{0.0f, 0.0f, 0.0f};
+    std::string target_entity = "";
+    float weight = 1.0f;
+    float max_angle = 90.0f;
+    float angle = 0.0f;
+    constexpr bool operator==(const LookAt&) const = default;
+};
+void to_json(Json& j, const LookAt& v);
+void from_json(const Json& j, LookAt& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(LookAt& v, std::string_view path, float** out);
 
 /// Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.
 struct ParticleEmitter {
@@ -330,6 +368,8 @@ struct Body2D {
     std::int32_t on_slope = 0;
     float mass = 1.0f;
     bool collide_bodies = true;
+    float restitution = 0.0f;
+    float friction = 0.0f;
     constexpr bool operator==(const Body2D&) const = default;
 };
 void to_json(Json& j, const Body2D& v);
@@ -442,6 +482,8 @@ void hash_component(struct StateHasherRef& h, const Sprite& v);
 void hash_component(struct StateHasherRef& h, const SpriteAnimation& v);
 void hash_component(struct StateHasherRef& h, const TileMap& v);
 void hash_component(struct StateHasherRef& h, const Animator& v);
+void hash_component(struct StateHasherRef& h, const IK& v);
+void hash_component(struct StateHasherRef& h, const LookAt& v);
 void hash_component(struct StateHasherRef& h, const ParticleEmitter& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);

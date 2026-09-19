@@ -151,7 +151,41 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `layers` | list:AnimationLayer | [] | Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). |
 | `root_motion` | i32 | 0 | 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). |
 | `root` | string | "" | The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. |
-| `root_delta` | vec3 | [0.0, 0.0, 0.0] | The root's translation change this tick in the asset's space while root_motion is on (written by the engine). |
+| `root_delta` | vec3 | [0.0, 0.0, 0.0] | The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine). |
+| `root_rotation` | bool | false | With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion). |
+| `root_delta_yaw` | f32 | 0.0 | The root's yaw change this tick in radians while root_rotation is on (written by the engine). |
+
+## IK
+
+Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `end` | string | "" | The chain's last node, a joint name (animation.clips lists the skins' joints). |
+| `bones` | i32 | 2 | How many bones the chain has, counted up from `end` (2 for a limb: upper and lower). |
+| `tip` | vec3 | [0.0, 0.0, 0.0] | The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y. |
+| `target` | vec3 | [0.0, 0.0, 0.0] | Where the effector should be, in world space (used when target_entity is empty). |
+| `target_entity` | string | "" | An entity (name or path) whose world position is the target; empty uses target. |
+| `pole_entity` | string | "" | An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has. |
+| `weight` | f32 | 1.0 | How much of the solve applies: 0 the posed chain, 1 the solved one. |
+| `iterations` | i32 | 8 | FABRIK passes per tick (each is a backward and a forward sweep). |
+| `tolerance` | f32 | 0.001 | The solve stops once the effector is this close to the target, in meters. |
+| `error` | f32 | 0.0 | Distance from the effector to the target after the solve, in meters (written by the engine). |
+| `reached` | bool | false | Whether the effector ended within tolerance (written by the engine). |
+
+## LookAt
+
+Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `node` | string | "" | The node that turns: a joint, or any node of the asset. |
+| `forward` | vec3 | [0.0, 1.0, 0.0] | The node's aiming axis in its own space. |
+| `target` | vec3 | [0.0, 0.0, 0.0] | The point to aim at, in world space (used when target_entity is empty). |
+| `target_entity` | string | "" | An entity (name or path) whose world position is the target; empty uses target. |
+| `weight` | f32 | 1.0 | How much of the turn applies: 0 none, 1 the full aim. |
+| `max_angle` | f32 | 90.0 | The most the node may turn away from its posed direction, in degrees. |
+| `angle` | f32 | 0.0 | The turn applied this tick in degrees, after the limit and the weight (written by the engine). |
 
 ## ParticleEmitter
 
@@ -201,7 +235,7 @@ Physics body. Dynamic bodies fall and collide; static bodies never move; kinemat
 | `gravity_scale` | f32 | 1.0 | Multiplier on world gravity. |
 | `sleeping` | bool | false | Set by the engine when the body came to rest; cleared when touched. |
 | `lock_rotation` | bool | false | Never rotate (characters on capsules stay upright). |
-| `ccd` | bool | false | Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision). |
+| `ccd` | bool | false | Continuous collision: each step the body is swept along its motion, relative to every shape it may touch (static, kinematic, and dynamic bodies moving too), and stops a skin short of the first impact, so thin walls hold and fast bodies do not cross each other at any speed. A sphere is cast exactly against the other shape; a box or capsule is swept by samples (docs/design/physics.md, Continuous collision). Bodies moving less than half their size per step are not swept. |
 
 ## Joint
 
@@ -255,6 +289,8 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 | `on_slope` | i32 | 0 | 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). |
 | `mass` | f32 | 1.0 | Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies). |
 | `collide_bodies` | bool | true | Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). |
+| `restitution` | f32 | 0.0 | Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). |
+| `friction` | f32 | 0.0 | Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed. |
 
 ## Collider
 

@@ -3,6 +3,35 @@
 import { command, world, type EntityRef, type Vec3 } from "./world";
 import type { AnimationLayer, Components, MorphWeight } from "./generated/components";
 
+/** An IK chain (docs/design/animation.md, Inverse kinematics): every field but `end` is optional (see the IK component for the meanings). */
+export interface IKOptions {
+    /** The chain's last joint. */
+    end: string;
+    /** Bones in the chain, counted up from `end` (default 2). */
+    bones?: number;
+    /** The effector in the end joint's space: the far end of the last bone. */
+    tip?: Vec3;
+    /** A world point, or an entity (name or path) to follow. */
+    target?: Vec3 | string;
+    /** An entity the middle joints bend toward (the knee or elbow hint). */
+    pole?: string;
+    weight?: number;
+    iterations?: number;
+    tolerance?: number;
+}
+
+/** A look-at (docs/design/animation.md, Look-at): the node turns its `forward` axis toward the target. */
+export interface LookAtOptions {
+    node: string;
+    /** A world point, or an entity (name or path) to follow. */
+    target: Vec3 | string;
+    /** The node's aiming axis in its own space (default +Y). */
+    forward?: Vec3;
+    weight?: number;
+    /** Degrees the node may turn away from its posed direction (default 90). */
+    maxAngle?: number;
+}
+
 export interface ClipInfo {
     name: string;
     duration: number;
@@ -54,6 +83,11 @@ export interface PoseInfo {
     root_motion?: number;
     root?: string;
     root_delta?: Vec3;
+    /** The root's yaw change this tick in radians, when root rotation is on. */
+    root_delta_yaw?: number;
+    /** The IK chain's state, when the entity has an IK component: the effector in world space and its distance to the target. */
+    ik?: { end: string; bones: number; weight: number; error: number; reached: boolean; effector?: Vec3 };
+    look_at?: { node: string; angle: number; weight: number; max_angle: number };
 }
 
 export const animation = {
@@ -73,10 +107,38 @@ export const animation = {
         world.set(entity, "Morph", { weights: list });
         return world.get(entity, "Morph")!;
     },
-    /** Root motion: 0 off; 1 the clip's root translation moves the Transform; 2 the root is pinned and root_delta reported for the script to apply. `root` names the node (empty: the clip's topmost translated node). */
-    rootMotion(entity: EntityRef, mode: 0 | 1 | 2, root = ""): Components["Animator"] {
-        world.set(entity, "Animator", { root_motion: mode, root });
+    /** Root motion: 0 off; 1 the clip's root translation moves the Transform; 2 the root is pinned and root_delta reported for the script to apply. `root` names the node (empty: the clip's topmost translated node); `rotation` takes the root's yaw as root motion too (root_delta_yaw). */
+    rootMotion(entity: EntityRef, mode: 0 | 1 | 2, root = "", rotation = false): Components["Animator"] {
+        world.set(entity, "Animator", { root_motion: mode, root, root_rotation: rotation });
         return world.get(entity, "Animator")!;
+    },
+    /** Solve an IK chain on the entity's skinned mesh every tick (sets its IK component); the pose reports the effector and the error. */
+    ik(entity: EntityRef, options: IKOptions): Components["IK"] {
+        const { target, pole, ...rest } = options;
+        const value: Partial<Components["IK"]> = { ...rest };
+        if (typeof target === "string") value.target_entity = target;
+        else if (target) { value.target = target; value.target_entity = ""; }
+        if (pole !== undefined) value.pole_entity = pole;
+        world.set(entity, "IK", value);
+        return world.get(entity, "IK")!;
+    },
+    /** Stop solving IK on the entity (removes its IK component). */
+    clearIk(entity: EntityRef): void {
+        world.remove(entity, "IK");
+    },
+    /** Aim a node of the entity's skinned mesh at a point or an entity every tick (sets its LookAt component). */
+    lookAt(entity: EntityRef, options: LookAtOptions): Components["LookAt"] {
+        const { target, maxAngle, ...rest } = options;
+        const value: Partial<Components["LookAt"]> = { ...rest };
+        if (typeof target === "string") value.target_entity = target;
+        else { value.target = target; value.target_entity = ""; }
+        if (maxAngle !== undefined) value.max_angle = maxAngle;
+        world.set(entity, "LookAt", value);
+        return world.get(entity, "LookAt")!;
+    },
+    /** Stop aiming (removes the LookAt component). */
+    clearLookAt(entity: EntityRef): void {
+        world.remove(entity, "LookAt");
     },
     /** Play a clip (default: the asset's first) on an entity with a MeshRenderer; returns the Animator. */
     play(entity: EntityRef, clip?: string, options: PlayAnimationOptions = {}): Components["Animator"] {

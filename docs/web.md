@@ -7,6 +7,7 @@ A Pocket project runs in a browser: the engine compiled to WebAssembly with Emsc
 ./.pocket/pocket build --config wasm      # build/wasm/bin/pocket_runtime.js + .wasm
 ./.pocket/pocket pack hello --web         # dist/web/hello/: index.html, the runtime, hello.data(.js)
 ./.pocket/pocket pack hello --web --editor   # the same page opens the project in the editor, paused
+./.pocket/pocket pack hello --web --config wasm-jspi   # the JSPI runtime: 31% smaller, for browsers that have it
 python3 tools/scripts/web_evidence.py     # serves dist/web on http://127.0.0.1:4718/ (file:// cannot fetch wasm)
 ```
 
@@ -24,7 +25,7 @@ dist/web/<name>/
   README.txt
 ```
 
-The runtime starts with `--project /game/project --bundle /game/project.js --project-config /game/project.json`, exactly the arguments a native run uses, and `Module.arguments` in `index.html` is where a page adds more (`--paused`, `--seed`, `--log-level`, `--size`). With `--editor` the pack also holds `editor.js` and the page adds `--editor /game/editor.js --paused`: the editor (`docs/editor.md`) runs in the browser with its toolbar, hierarchy, inspector, scene pane and console, and the editor's own strings count toward the font subset. What it saves lands in the page's virtual file system; taking a scene home means downloading it (`project.read` from the page), so the browser editor is for looking and trying, not the place a project lives.
+The runtime starts with `--project /game/project --bundle /game/project.js --project-config /game/project.json`, exactly the arguments a native run uses, and `Module.arguments` in `index.html` is where a page adds more (`--paused`, `--seed`, `--log-level`, `--size`). With `--editor` the pack also holds `editor.js` and the page adds `--editor /game/editor.js --paused`: the editor (`docs/editor.md`) runs in the browser with its toolbar, hierarchy, inspector, scene pane and console, and the editor's own strings count toward the font subset. What it saves lands in the page's virtual file system, and the page's **Download scene** button (shown with `--editor`) saves that scene file to the visitor's downloads; `pocket.download` below does the same for any file. The browser editor is for looking and trying, and for taking a scene home, not the place a project lives.
 
 ### The font is subset
 
@@ -45,11 +46,14 @@ await pocket.ready;                                   // resolves once the runti
 pocket.command("world.tree", {});                     // any runtime command, same names as docs/mcp.md
 pocket.command("input.hold", {action: "move_x", value: 1, ticks: 30});
 await pocket.commandAsync("capture", {path: "/shot.png"});   // commands that wait on the GPU
-Module.FS.readFile("/shot.png");                      // the PNG the runtime wrote, as bytes
+pocket.read("/shot.png");                             // the PNG the runtime wrote, as bytes (Module.FS.readFile)
+pocket.files("/saves/hello");                          // the page's file system: the project under /game, saves under /saves/<name>
+pocket.download("/game/project/scene.json");          // save a file of the page's file system to the visitor's downloads
+pocket.download(pocket.command("save.dir", {}).path + "/slot1.json", "slot1.json");   // a save slot, for example
 pocket.snapshot();                                    // the canvas as the browser shows it (data URL)
 ```
 
-`pocket.command` calls the exported `pocket_command(name, params_json)` and returns the result or throws an `Error` with the runtime's `code`. A command that waits on the GPU (`capture`) yields to the browser's event loop through Asyncify, so it must go through `commandAsync`; while such a command is in flight the frame callback is skipped (`g_web_busy` in `engine/app/src/runtime.cpp`), so the world does not move underneath it.
+`pocket.command` calls the exported `pocket_command(name, params_json)` and returns the result or throws an `Error` with the runtime's `code`. A command that waits on the GPU (`capture`) yields to the browser's event loop, so it must go through `commandAsync`, which awaits the exported `pocket_command_async` (the same function, exported separately because under JSPI only the exports listed at link time may suspend); while such a command is in flight the frame callback is skipped (`g_web_busy` in `engine/app/src/runtime.cpp`), so the world does not move underneath it.
 
 The runtime logs (JSONL on stderr natively) arrive in the console; the `state`, `perf`, `report` and `transcript` commands are the same as everywhere else.
 
@@ -72,11 +76,17 @@ Shader note: Tint (the browser's WGSL compiler) enforces uniform control flow ar
 
 ## Evidence
 
-`tests/evidence/web/` holds `hello.png`, `sprites.png`, `ui.png` and `editor.png`, PNGs the runtime wrote with its own `capture` command inside Chromium 152 and posted back to `web_evidence.py`, and `web.json` with the measurements: canvas and capture sizes, the render stats, a keyboard-driven move of the sprites player (input.state and the Transform before and after), the viewport resize, the UI sample's Chinese, Japanese, Korean and accented text drawn from the 44 KB subset font, text typed into its name field (accented and CJK characters through the hidden field), a save slot that survived a reload, and the physics project open in the editor.
+`tests/evidence/web/` holds `hello.png`, `sprites.png`, `ui.png` and `editor.png`, PNGs the runtime wrote with its own `capture` command inside Chromium 152 and posted back to `web_evidence.py`, `variants.json` with the four runtime builds measured (sizes, 600 ticks of the physics sample, a capture, and the editor page's download button exercised: the scene the editor saved read back and handed to `pocket.download`), and `web.json` with the measurements: canvas and capture sizes, the render stats, a keyboard-driven move of the sprites player (input.state and the Transform before and after), the viewport resize, the UI sample's Chinese, Japanese, Korean and accented text drawn from the 44 KB subset font, text typed into its name field (accented and CJK characters through the hidden field), a save slot that survived a reload, and the physics project open in the editor.
+
+## Two runtimes: Asyncify and JSPI
+
+The engine waits on the browser in a few places (the adapter and device requests and the IndexedDB mount at start, buffer maps in `capture`), and a wasm module cannot wait: it must suspend and let the event loop run. `[configs.wasm]` does that with Asyncify, which instruments the module so it can unwind and rewind its own stack and works in every browser with WebGPU. `[configs.wasm-jspi]` uses JavaScript Promise Integration instead, where the browser suspends the module itself: no instrumentation, so the module is 31% smaller (4.9 MB against 7.1 MB) and runs the same speed, but only where the browser has JSPI (`WebAssembly.Suspending` is defined; Chromium has shipped it). The two runtimes are built from the same sources; a page picks one when it is packed (`--config wasm-jspi`), and a site that serves both can pick per visitor with that one check. Under JSPI only the exports named at link time may suspend (`main`, `pocket_command_async`), which is why the page's `commandAsync` has its own export.
+
+`tests/evidence/web/variants.json` holds the measurements behind the choice of `-O2` for both: `-Oz` shrinks the Asyncify runtime by 16% and the JSPI one by 19%, but 600 ticks of the physics sample take 35% and 18% longer, so the smaller size was not worth the slower simulation.
 
 ## Costs and what is next
 
-- `pocket_runtime.wasm` is 6.2 MB at `-O2` with Asyncify and the packaged `ui` sample 97 KB, so the runtime is the download now. `-Oz`, dropping unused modules (the physics or audio module for a project that has none) and JSPI instead of Asyncify (Chrome ships it; Safari does not yet) are the next size and speed wins.
+- `pocket_runtime.wasm` is 7.1 MB with Asyncify and 4.9 MB with JSPI, at `-O2`; the packaged `ui` sample is 97 KB, so the runtime is the download. Leaving out the modules a project does not use (the physics or audio module for a project that has none) is the next size win.
 - Audio starts after the first user gesture, as browsers require; SDL handles the resume.
 - A hidden tab gets no animation frames, so the runtime pauses with it (the simulation clock stops; nothing is lost).
 - The CI job `web` (Ubuntu, Emscripten from a cached emsdk) packs `hello` for the web to keep the port compiling; running it in a headless browser is not automated.

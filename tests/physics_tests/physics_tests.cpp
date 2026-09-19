@@ -577,6 +577,76 @@ TEST_CASE("continuous collision holds a fast small sphere at a thin wall that a 
     REQUIRE(w.events().since(0, 100, "physics.ccd").size() == 2);
 }
 
+TEST_CASE("continuous collision casts exact shapes, sweeps boxes and capsules by samples and stops dynamic pairs", "[physics][ccd][sweep]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // The pane: 4 cm thick at x 5, from y 0 to 2 and z -2 to 2.
+    w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 2}}}}}});
+    auto fire = [&](const char* name, Vec3 pos, Json collider, Vec3 vel) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", true}, {"gravity_scale", 0.0}, {"restitution", 0.0}}}, {"Collider", collider}, {"Velocity", {{"linear", {{"x", vel.x}, {"y", vel.y}, {"z", vel.z}}}}}}).value();
+    };
+    const Json sphere{{"shape", 1}, {"size", {{"x", 0.05}, {"y", 0.05}, {"z", 0.05}}}};
+    // A pellet skimming the pane's top edge: its center passes 3 cm above the top face, where a ray
+    // from the center misses the pane; the exact cast meets the edge, rounded by the radius.
+    EntityId edge = fire("Edge", {2, 2.03f, 0.5f}, sphere, {80, 0, 0});
+    // A box and a capsule pellet, swept by samples and bisected to the impact.
+    EntityId box = fire("Box", {2, 1, -0.5f}, Json{{"shape", 0}, {"size", {{"x", 0.05}, {"y", 0.05}, {"z", 0.05}}}}, {80, 0, 0});
+    EntityId cap = fire("Cap", {2, 1, -1.5f}, Json{{"shape", 2}, {"size", {{"x", 0.05}, {"y", 0.1}, {"z", 0.05}}}}, {80, 0, 0});
+    // Two pellets fired at each other past the pane's end, 160 m/s between them: both dynamic, both stop.
+    EntityId a = fire("A", {2, 1, 3.0f}, sphere, {80, 0, 0});
+    EntityId b = fire("B", {8, 1, 3.0f}, sphere, {-80, 0, 0});
+    auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+    std::uint32_t dynamic_hits = 0;
+    for (int i = 0; i < 30; ++i) {
+        run(p, w, 1);
+        dynamic_hits += p.stats().ccd_dynamic;
+    }
+    INFO("edge " << pos(edge).x << "," << pos(edge).y << " box " << pos(box).x << " cap " << pos(cap).x << " a " << pos(a).x << " b " << pos(b).x);
+    REQUIRE(pos(box).x < 4.98f);
+    REQUIRE(pos(box).x > 4.85f);
+    REQUIRE(pos(cap).x < 4.98f);
+    REQUIRE(pos(cap).x > 4.85f);
+    // The edge pellet was deflected up over the pane by the edge's normal, not passed through nor stopped flat.
+    auto hits = w.events().since(0, 100, "physics.ccd");
+    auto find = [&](EntityId id) { for (const auto& h : hits) if (h.subject == id) return h.data; return Json(nullptr); };
+    Json e = find(edge);
+    REQUIRE(!e.is_null());
+    REQUIRE(e["exact"] == true);
+    REQUIRE(e["normal"]["y"].get<double>() > 0.5);
+    REQUIRE(e["normal"]["x"].get<double>() < -0.5);
+    REQUIRE(pos(edge).y > 2.1f);
+    REQUIRE(find(box)["exact"] == false);
+    REQUIRE(find(box)["normal"]["x"].get<double>() == Catch::Approx(-1.0).margin(0.01));
+    REQUIRE(find(cap)["normal"]["x"].get<double>() == Catch::Approx(-1.0).margin(0.01));
+    // The pair met a skin apart and lost their speed into each other (no restitution).
+    REQUIRE(dynamic_hits >= 1);
+    Json pair = find(a).is_null() ? find(b) : find(a);
+    REQUIRE(!pair.is_null());
+    REQUIRE(pair["dynamic"] == true);
+    REQUIRE(pos(a).x < 5.0f);
+    REQUIRE(pos(b).x > 5.0f);
+    REQUIRE(pos(b).x - pos(a).x == Catch::Approx(0.1).margin(0.02));
+    REQUIRE(std::fabs(w.try_get<Velocity>(a)->linear.x) < 1.0f);
+    REQUIRE(std::fabs(w.try_get<Velocity>(b)->linear.x) < 1.0f);
+    // The sweep query: a sphere cast to the pane's face, its edge (rounded), and from above onto its edge.
+    auto all = [](EntityId, const RigidBody&, const Collider&) { return true; };
+    auto face = p.sweep(w, {2, 1, 0}, {1, 0, 0}, 0.05f, 10.0f, all);
+    REQUIRE(face.has_value());
+    REQUIRE(face->distance == Catch::Approx(2.93).margin(1e-3));
+    REQUIRE(face->point.x == Catch::Approx(4.98).margin(1e-3));
+    REQUIRE(face->normal.x == Catch::Approx(-1.0));
+    auto rim = p.sweep(w, {2, 2.03f, 0}, {1, 0, 0}, 0.05f, 10.0f, all);
+    REQUIRE(rim.has_value());
+    REQUIRE(rim->distance == Catch::Approx(2.94).margin(2e-3));
+    REQUIRE(rim->normal.y == Catch::Approx(0.6).margin(0.02));
+    auto down = p.sweep(w, {4.95f, 5, 0}, {0, -1, 0}, 0.5f, 10.0f, all);
+    REQUIRE(down.has_value());
+    REQUIRE(down->distance == Catch::Approx(2.501).margin(2e-3));   // the corner is rounded: a little past the flat 2.5
+    REQUIRE(p.sweep(w, {2, 4, 0}, {1, 0, 0}, 0.05f, 10.0f, all).has_value() == false);   // over the pane, nothing (the ground is below)
+    REQUIRE(p.sweep(w, {2, 1, 0}, {1, 0, 0}, 0.05f, 2.0f, all).has_value() == false);    // out of range
+}
+
 TEST_CASE("groups, exceptions and joints keep chosen pairs apart", "[physics][groups]") {
     World w;
     physics::Physics p;

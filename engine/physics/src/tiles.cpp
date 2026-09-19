@@ -52,6 +52,9 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     });
     struct Landing { world::EntityId id; float speed; };
     std::vector<Landing> landings;
+    struct Bounce { world::EntityId id; float speed; const char* side; };
+    std::vector<Bounce> bounces;
+    constexpr float kBounceMin = 0.5f;   // slower impacts land or stop instead of bouncing
     std::vector<std::pair<world::EntityId, world::Body2D>> writes;
     std::vector<std::pair<world::EntityId, Vec3>> positions;
     std::vector<std::pair<world::EntityId, bool>> dyn_was_grounded;  // per dynamic body: grounded before this step
@@ -200,7 +203,12 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
             if (blocked) {
                 nx = block_x;
                 b.on_wall = dx > 0 ? 1 : -1;
-                b.velocity.x = 0;
+                if (b.restitution > 0 && std::fabs(b.velocity.x) > kBounceMin) {
+                    bounces.push_back({e.id(), std::fabs(b.velocity.x), "wall"});
+                    b.velocity.x = -b.velocity.x * std::min(b.restitution, 1.0f);
+                } else {
+                    b.velocity.x = 0;
+                }
                 stats_.blocked++;
             }
             cx = nx;
@@ -281,8 +289,18 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                 }
             }
             if (hit) {
-                if (b.grounded && !was_grounded) landings.push_back({e.id(), -b.velocity.y});
-                b.velocity.y = 0;
+                if (b.restitution > 0 && std::fabs(b.velocity.y) > kBounceMin) {
+                    // A bounce: the speed comes back reversed and scaled, and the body is in the air again.
+                    bounces.push_back({e.id(), std::fabs(b.velocity.y), b.grounded ? "floor" : "ceiling"});
+                    b.velocity.y = -b.velocity.y * std::min(b.restitution, 1.0f);
+                    b.grounded = false;
+                    b.on_ceiling = false;
+                    b.on_slope = 0;
+                    riding = 0;
+                } else {
+                    if (b.grounded && !was_grounded) landings.push_back({e.id(), -b.velocity.y});
+                    b.velocity.y = 0;
+                }
                 stats_.blocked++;
             }
             cy = ny;
@@ -340,11 +358,19 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                         if (lb.velocity.y > 0) lb.velocity.y = 0;
                     } else {
                         up.cy += oy + kSkin;
-                        if (!up.was_grounded && !ub.grounded && ub.velocity.y < 0) landings.push_back({writes[up.i].first, -ub.velocity.y});
-                        if (ub.velocity.y < 0) ub.velocity.y = 0;
-                        ub.grounded = true;
-                        ub.on_slope = 0;
-                        ub.riding = writes[low.i].first;
+                        if (ub.restitution > 0 && ub.velocity.y < -kBounceMin) {
+                            bounces.push_back({writes[up.i].first, -ub.velocity.y, "body"});
+                            ub.velocity.y = -ub.velocity.y * std::min(ub.restitution, 1.0f);
+                            ub.grounded = false;
+                            ub.on_slope = 0;
+                            ub.riding = 0;
+                        } else {
+                            if (!up.was_grounded && !ub.grounded && ub.velocity.y < 0) landings.push_back({writes[up.i].first, -ub.velocity.y});
+                            if (ub.velocity.y < 0) ub.velocity.y = 0;
+                            ub.grounded = true;
+                            ub.on_slope = 0;
+                            ub.riding = writes[low.i].first;
+                        }
                         if (pass == 0) stats_.stacked++;
                     }
                 } else {
@@ -356,8 +382,18 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                     const float total = ox + kSkin;
                     A.cx += static_cast<float>(dir) * total * sa / (sa + sb);
                     B.cx -= static_cast<float>(dir) * total * sb / (sa + sb);
-                    if (a.velocity.x * static_cast<float>(-dir) > 0) a.velocity.x = 0;  // no more speed into the other
-                    if (b.velocity.x * static_cast<float>(dir) > 0) b.velocity.x = 0;
+                    // No more speed into the other, or that speed back out scaled by the body's restitution.
+                    auto into = [&](world::Body2D& body, world::EntityId id, float sign) {
+                        if (body.velocity.x * sign <= 0) return;
+                        if (body.restitution > 0 && std::fabs(body.velocity.x) > kBounceMin) {
+                            bounces.push_back({id, std::fabs(body.velocity.x), "body"});
+                            body.velocity.x = -body.velocity.x * std::min(body.restitution, 1.0f);
+                        } else {
+                            body.velocity.x = 0;
+                        }
+                    };
+                    into(a, writes[A.i].first, static_cast<float>(-dir));
+                    into(b, writes[B.i].first, static_cast<float>(dir));
                     if (pass == 0) stats_.pushed++;
                 }
             }
@@ -386,6 +422,20 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         positions[d.i].second.x = d.cx - writes[d.i].second.offset.x;
         positions[d.i].second.y = d.cy - writes[d.i].second.offset.y;
     }
+    // Ground friction: a grounded body's sideways speed, relative to what carries it, falls toward
+    // zero by `friction` per second, after the move, so what a script drives each tick is untouched.
+    for (auto& [id, b] : writes) {
+        if (b.kinematic || !b.grounded || b.friction <= 0) continue;
+        float carrier = 0;
+        if (b.riding != 0) {
+            bool found = false;
+            for (const Rect& rc : rects) if (rc.id == b.riding) { carrier = rc.dx / dt; found = true; }
+            if (!found) for (const auto& [oid, ob] : writes) if (oid == b.riding) carrier = ob.velocity.x;
+        }
+        const float rel = b.velocity.x - carrier;
+        const float decel = b.friction * dt;
+        b.velocity.x = carrier + (std::fabs(rel) <= decel ? 0.0f : rel - (rel > 0 ? decel : -decel));
+    }
     for (const auto& [id, b] : writes) if (!b.kinematic && b.grounded) stats_.grounded++;
     for (auto& [id, b] : writes) w.set_typed<world::Body2D>(id, b);
     for (auto& [id, pos] : positions) {
@@ -397,10 +447,14 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         stats_.landings++;
         w.events().emit(w.tick_index(), "body2d.landed", l.id, Json{{"path", w.path(l.id)}, {"speed", l.speed}});
     }
+    for (const Bounce& bn : bounces) {
+        stats_.bounces++;
+        w.events().emit(w.tick_index(), "body2d.bounced", bn.id, Json{{"path", w.path(bn.id)}, {"speed", bn.speed}, {"side", bn.side}});
+    }
 }
 
 Json Physics2D::describe() const {
-    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}, {"pairs", stats_.pairs}, {"stacked", stats_.stacked}, {"pushed", stats_.pushed}};
+    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}, {"pairs", stats_.pairs}, {"stacked", stats_.stacked}, {"pushed", stats_.pushed}, {"bounces", stats_.bounces}};
 }
 
 }  // namespace pocket::physics

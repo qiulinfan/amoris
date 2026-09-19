@@ -54,13 +54,13 @@ scenario("walking right over the hill keeps the player on the ground, up and dow
     g.check(() => {
         expect(g.state("player.grounded")).toBe(true);
         expect(g.state<number>("player.y")).toBeGreaterThan(-2.1);    // standing on the block (its top at -2.5)
-        expect(g.count("body2d.landed")).toBe(1);                      // only the spawn's landing: no hop up the slope
+        expect(g.count("body2d.landed", "/Player")).toBe(1);           // only the spawn's landing: no hop up the slope
     }, "up the slope without leaving the ground");
     g.until(() => g.state<number>("player.x") > 8.9, { timeout: 2.0, label: "down the far slope" });
     g.check(() => {
         expect(g.state("player.grounded")).toBe(true);
         expect(g.state<number>("player.y")).toBeLessThan(-2.6);
-        expect(g.count("body2d.landed")).toBe(1);                      // walked down, never fell
+        expect(g.count("body2d.landed", "/Player")).toBe(1);           // walked down, never fell
     }, "down the slope without leaving the ground");
 });
 
@@ -96,3 +96,14 @@ scenario("two crates stack and the player pushes the stack along", (g) => {
     }, "pushed along, the top crate riding");
 });
 
+scenario("the ball bounces lower each time and settles, the puck slides to a stop", (g) => {
+    g.wait(3.5);
+    g.check(() => {
+        expect(g.state<number>("ball.bounces")).toBeGreaterThan(4);   // 0.7 of the speed back each time
+        expect(g.state<boolean>("ball.grounded")).toBe(true);         // and at rest after about three seconds
+        expect(g.count("body2d.bounced", "/Ball")).toBe(g.state<number>("ball.bounces"));
+        expect(g.state<number>("puck.vx")).toBe(0);                   // friction 5 stops 2.5 u/s in half a second
+        expect(g.state<number>("puck.x")).toBeLessThan(2.0);
+        expect(g.state<number>("puck.x")).toBeGreaterThan(1.6);       // after 0.625 units
+    }, "ball settled, puck stopped");
+});

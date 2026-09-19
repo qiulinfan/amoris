@@ -57,8 +57,17 @@ scenario("the pellet with continuous collision stops at the pane and the dud cro
         expect(g.state<number>("pelletX")).toBeLessThan(9);          // held on the near face (the pane is at x 9)
         expect(g.state<number>("pelletX")).toBeGreaterThan(8.5);
         expect(g.state<boolean>("dudCrossed")).toBe(true);           // through the pane between two steps
-        expect(g.state<number>("ccdHits")).toBe(1);
-        expect(g.count("physics.ccd")).toBe(1);
+        expect(g.state<number>("ccdHits")).toBe(2);                   // the pellet, and the clash pair below
+        expect(g.count("physics.ccd")).toBe(2);
     }, "pellet held, dud through");
+});
+
+scenario("two pellets fired at each other meet in the middle instead of crossing", (g) => {
+    g.wait(1);
+    g.check(() => {
+        expect(g.state<number>("clashGap")).toBeLessThan(0.2);        // a skin apart, radius to radius
+        expect(g.state<number>("clashGap")).toBeGreaterThan(0.05);
+        expect(g.state<number>("ccdDynamic")).toBe(1);
+    }, "the pair met");
 });
 

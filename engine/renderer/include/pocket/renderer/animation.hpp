@@ -39,6 +39,10 @@ class Animation {
     static int root_node(const assets::Mesh& mesh, const assets::AnimationClip* clip, std::string_view name);
     // The root node's translation at `time` from the clip (its rest translation without a track).
     static Vec3 root_translation(const assets::Mesh& mesh, const assets::AnimationClip* clip, int node, float time);
+    // The root node's rotation at `time` from the clip (its rest rotation without a track).
+    static Quat root_rotation(const assets::Mesh& mesh, const assets::AnimationClip* clip, int node, float time);
+    // A rotation's heading: the angle of its +Z about +Y, in radians (-pi, pi].
+    static float yaw_of(Quat q);
 
    private:
     std::map<world::EntityId, Pose> poses_;
