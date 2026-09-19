@@ -94,6 +94,8 @@ class World {
     // Simulation -----------------------------------------------------------------------------
     // Runs the built-in systems (motion, lifetime, transform propagation) for one tick.
     void tick(double dt);
+    // Local bounds of an asset mesh (by MeshRenderer.mesh path) so Bounds can be computed for it.
+    void set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max);
     [[nodiscard]] std::int64_t tick_index() const;
     void set_tick_index(std::int64_t tick);
     // Deterministic hash of every entity path and component value in tree order.

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace pocket::world {
@@ -84,10 +85,11 @@ struct Light {
 void to_json(Json& j, const Light& v);
 void from_json(const Json& j, Light& v);
 
-/// Draws a built-in primitive mesh with a flat material.
+/// Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.
 struct MeshRenderer {
-    std::int32_t mesh = 0;
+    std::string mesh = "cube";
     Color4 color{0.8f, 0.8f, 0.8f, 1.0f};
+    std::string texture = "";
     bool visible = true;
     constexpr bool operator==(const MeshRenderer&) const = default;
 };

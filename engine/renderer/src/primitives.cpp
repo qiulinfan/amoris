@@ -26,7 +26,7 @@ MeshData make_cube() {
         for (int i = 0; i < 4; ++i) {
             float u = (i == 1 || i == 2) ? 0.5f : -0.5f;
             float v = (i >= 2) ? 0.5f : -0.5f;
-            m.vertices.push_back({n * 0.5f + t * u + b * v, n});
+            m.vertices.push_back({n * 0.5f + t * u + b * v, n, {u + 0.5f, 0.5f - v}});
         }
         m.indices.insert(m.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     }
@@ -42,7 +42,7 @@ MeshData make_sphere(int segments, int rings) {
             float u = static_cast<float>(s) / static_cast<float>(segments);
             float theta = u * 2.0f * kPi;
             Vec3 n{std::sin(phi) * std::cos(theta), std::cos(phi), std::sin(phi) * std::sin(theta)};
-            m.vertices.push_back({n * 0.5f, n});
+            m.vertices.push_back({n * 0.5f, n, {u, v}});
         }
     }
     auto stride = static_cast<std::uint32_t>(segments + 1);
@@ -58,7 +58,7 @@ MeshData make_sphere(int segments, int rings) {
 
 MeshData make_plane() {
     MeshData m;
-    m.vertices = {{{-0.5f, 0, 0.5f}, {0, 1, 0}}, {{0.5f, 0, 0.5f}, {0, 1, 0}}, {{0.5f, 0, -0.5f}, {0, 1, 0}}, {{-0.5f, 0, -0.5f}, {0, 1, 0}}};
+    m.vertices = {{{-0.5f, 0, 0.5f}, {0, 1, 0}, {0, 1}}, {{0.5f, 0, 0.5f}, {0, 1, 0}, {1, 1}}, {{0.5f, 0, -0.5f}, {0, 1, 0}, {1, 0}}, {{-0.5f, 0, -0.5f}, {0, 1, 0}, {0, 0}}};
     m.indices = {0, 1, 2, 0, 2, 3};
     m.aabb_min = {-0.5f, 0, -0.5f};
     m.aabb_max = {0.5f, 0, 0.5f};
@@ -72,8 +72,8 @@ MeshData make_cylinder(int segments) {
         float u = static_cast<float>(s) / static_cast<float>(segments);
         float theta = u * 2.0f * kPi;
         Vec3 n{std::cos(theta), 0, std::sin(theta)};
-        m.vertices.push_back({{n.x * 0.5f, -0.5f, n.z * 0.5f}, n});
-        m.vertices.push_back({{n.x * 0.5f, 0.5f, n.z * 0.5f}, n});
+        m.vertices.push_back({{n.x * 0.5f, -0.5f, n.z * 0.5f}, n, {u, 1}});
+        m.vertices.push_back({{n.x * 0.5f, 0.5f, n.z * 0.5f}, n, {u, 0}});
     }
     for (int s = 0; s < segments; ++s) {
         auto a = static_cast<std::uint32_t>(s) * 2;
@@ -84,10 +84,10 @@ MeshData make_cylinder(int segments) {
         float y = cap == 0 ? -0.5f : 0.5f;
         Vec3 n{0, cap == 0 ? -1.0f : 1.0f, 0};
         auto center = static_cast<std::uint32_t>(m.vertices.size());
-        m.vertices.push_back({{0, y, 0}, n});
+        m.vertices.push_back({{0, y, 0}, n, {0.5f, 0.5f}});
         for (int s = 0; s <= segments; ++s) {
             float theta = static_cast<float>(s) / static_cast<float>(segments) * 2.0f * kPi;
-            m.vertices.push_back({{std::cos(theta) * 0.5f, y, std::sin(theta) * 0.5f}, n});
+            m.vertices.push_back({{std::cos(theta) * 0.5f, y, std::sin(theta) * 0.5f}, n, {0.5f + std::cos(theta) * 0.5f, 0.5f + std::sin(theta) * 0.5f}});
         }
         for (int s = 0; s < segments; ++s) {
             auto a = center + 1 + static_cast<std::uint32_t>(s);

@@ -132,6 +132,8 @@ Status Session::start() {
     // ui_unavailable and everything else works.
     std::string font = project_.contains("font") && project_["font"].is_string() ? project_["font"].get<std::string>() : "";
     if (const char* env = std::getenv("POCKET_FONT"); env && *env) font = env;
+    // A relative font path is relative to the project config (packed games ship the font next to it).
+    if (!font.empty() && std::filesystem::path(font).is_relative() && !options_.project_config.empty()) font = (options_.project_config.parent_path() / font).string();
     if (!font.empty() && std::filesystem::exists(font)) {
         POCKET_TRY(loaded_font, ui::Font::load(*device_, font));
         font_ = std::move(loaded_font);
@@ -145,6 +147,8 @@ Status Session::start() {
 
     world_ = std::make_unique<world::World>();
     physics_ = std::make_unique<physics::Physics>();
+    assets_ = std::make_unique<assets::AssetStore>(options_.project_dir);
+    renderer_->set_assets(assets_.get());
     if (project_.contains("physics") && project_["physics"].is_object()) {
         const Json& ph = project_["physics"];
         if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
@@ -154,16 +158,7 @@ Status Session::start() {
     rng_.reseed(options_.seed);
     clock_.tick_seconds = 1.0 / options_.tick_rate;
 
-    // Scene from project.toml `scene = "..."` (relative to the project directory).
-    std::string scene_rel = project_.contains("scene") && project_["scene"].is_string() ? project_["scene"].get<std::string>() : "";
-    if (!scene_rel.empty()) {
-        std::filesystem::path scene_path = options_.project_dir / scene_rel;
-        POCKET_TRY(text, fs::read_text(scene_path));
-        Json scene = Json::parse(text, nullptr, false);
-        if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON", scene_path.string());
-        POCKET_TRY_VOID(world_->load(scene));
-        log::info("runtime", "loaded scene {} ({} entities)", scene_rel, world_->entity_count());
-    }
+    POCKET_TRY_VOID(load_scene_file());
 
     bind_natives();
     started_ = true;
@@ -176,7 +171,10 @@ Status Session::start() {
     if (auto r = load_bundle(options_.bundle, "project"); !r) record_error(r.error());
     has_dispatch_ = host_->has_function("__pocket_dispatch");
     if (!has_dispatch_) log::warn("runtime", "bundle does not define __pocket_dispatch; scripts will not receive ticks");
-    dispatch("start", Json::object());
+    // With an editor, the project stays dormant (its bundle registered handlers, nothing ran)
+    // until the editor starts it with script.start; the editor itself starts now.
+    if (!options_.editor_bundle.empty()) dispatch("start", Json::object(), "editor");
+    else dispatch("start", Json::object());
     return {};
 }
 
@@ -213,6 +211,25 @@ void Session::bind_natives() {
         if (params.is_string()) params = Json::parse(params.get<std::string>(), nullptr, false);
         return command(args[0].get<std::string>(), params, "script");
     });
+}
+
+// Scene from project.toml `scene = "..."` (relative to the project directory).
+Status Session::load_scene_file() {
+    std::string scene_rel = project_.contains("scene") && project_["scene"].is_string() ? project_["scene"].get<std::string>() : "";
+    if (scene_rel.empty()) return {};
+    std::filesystem::path scene_path = options_.project_dir / scene_rel;
+    POCKET_TRY(text, fs::read_text(scene_path));
+    Json scene = Json::parse(text, nullptr, false);
+    if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON", scene_path.string());
+    POCKET_TRY_VOID(world_->load(scene));
+    log::info("runtime", "loaded scene {} ({} entities)", scene_rel, world_->entity_count());
+    return {};
+}
+
+bool Session::context_active(const std::string& name) {
+    if (!has_dispatch_) return false;
+    auto r = host_->call("__pocket_dispatch", Json::array({"active", name}));
+    return r && r->is_boolean() && r->get<bool>();
 }
 
 Status Session::load_bundle(const std::filesystem::path& path, const std::string& name) {
@@ -294,6 +311,7 @@ Status Session::render_frame() {
         (void)device_->end_frame(*frame);
         return fail(r.error());
     }
+    for (const auto& [path, box] : renderer_->take_new_bounds()) world_->set_mesh_bounds(path, box.first, box.second);
     if (ui_ && painter_ && ui_->node_count() > 1) {
         float w = 0, h = 0, scale = 1;
         ui_size(w, h, scale);
@@ -428,6 +446,7 @@ Status Session::idle_frame() {
             return fail(r.error());
         }
     }
+    frames_++;
     // Nothing else throttles a paused window: pace it at the tick rate.
     double spent = pace_timer_.seconds();
     double budget = clock_.tick_seconds;
@@ -603,6 +622,25 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown render command '{}'", op);
 }
 
+Result<Json> Session::assets_command(std::string_view op, const Json& p) {
+    if (op == "list") return assets_->list();
+    if (op == "describe") return assets_->describe(opt<std::string>(p, "path", ""));
+    if (op == "stats") {
+        Json j = assets_->stats();
+        j["render"] = renderer_->describe().value("assets", Json::object());
+        return j;
+    }
+    if (op == "reload") {
+        // Forget decoded data (one path or everything); the renderer re-uploads on the next frame.
+        std::string path = opt<std::string>(p, "path", "");
+        if (path.empty()) assets_->invalidate_all();
+        else assets_->invalidate(path);
+        renderer_->drop_asset_cache();
+        return Json{{"ok", true}, {"version", assets_->version()}};
+    }
+    return fail("unknown_command", "unknown assets command '{}'", op);
+}
+
 Result<Json> Session::ui_command(std::string_view op, const Json& p) {
     if (!ui_) return fail("ui_unavailable", "Pocket UI is disabled: no font was found (run `pocket setup`)");
     ui::Document& d = *ui_;
@@ -660,6 +698,29 @@ Result<Json> Session::ui_command(std::string_view op, const Json& p) {
         platform::Event up = down; up.type = platform::EventType::MouseUp;
         return inject_events({move, down, up});
     }
+    if (op == "drag") {
+        // Press at the element (or point), move by dx/dy in a few steps, release.
+        float x = 0, y = 0;
+        POCKET_TRY_VOID(point(x, y));
+        float dx = static_cast<float>(opt<double>(p, "dx", 0)), dy = static_cast<float>(opt<double>(p, "dy", 0));
+        int steps = std::clamp(opt<int>(p, "steps", 4), 1, 64);
+        std::vector<platform::Event> evs;
+        platform::Event move; move.type = platform::EventType::MouseMove; move.x = x; move.y = y;
+        evs.push_back(move);
+        platform::Event down; down.type = platform::EventType::MouseDown; down.x = x; down.y = y; down.button = opt<int>(p, "button", 1);
+        evs.push_back(down);
+        for (int i = 1; i <= steps; ++i) {
+            platform::Event m; m.type = platform::EventType::MouseMove;
+            m.x = x + dx * static_cast<float>(i) / static_cast<float>(steps);
+            m.y = y + dy * static_cast<float>(i) / static_cast<float>(steps);
+            m.dx = dx / static_cast<float>(steps);
+            m.dy = dy / static_cast<float>(steps);
+            evs.push_back(m);
+        }
+        platform::Event up = down; up.type = platform::EventType::MouseUp; up.x = x + dx; up.y = y + dy;
+        evs.push_back(up);
+        return inject_events(std::move(evs));
+    }
     if (op == "wheel") {
         float x = 0, y = 0;
         POCKET_TRY_VOID(point(x, y));
@@ -685,10 +746,19 @@ Result<Json> Session::ui_command(std::string_view op, const Json& p) {
 
 Result<Json> Session::script_command(std::string_view op, const Json& p) {
     if (op == "contexts") return Json(bundle_names_);
-    if (op == "reload") {
-        // Drop the context's handlers, re-evaluate its bundle from disk and start it again. The
-        // world is untouched: callers reload a scene first when they want a fresh start.
+    if (op == "start") {
         std::string name = opt<std::string>(p, "name", "project");
+        if (std::find(bundle_names_.begin(), bundle_names_.end(), name) == bundle_names_.end()) return fail("bad_args", "unknown script context '{}'", name);
+        dispatch("start", Json::object(), name);
+        host_->drain_microtasks();
+        return Json{{"name", name}, {"ok", errors_.empty()}};
+    }
+    if (op == "reload") {
+        // Drop the context's handlers, re-evaluate its bundle from disk and (unless start is
+        // false) start it again. The world is untouched: callers reload a scene first when they
+        // want a fresh start.
+        std::string name = opt<std::string>(p, "name", "project");
+        bool start = opt<bool>(p, "start", true);
         std::filesystem::path path = name == "editor" ? options_.editor_bundle : options_.bundle;
         if (name != "editor" && name != "project") return fail("bad_args", "unknown script context '{}'", name);
         if (path.empty()) return fail("bad_args", "no bundle for context '{}'", name);
@@ -696,10 +766,12 @@ Result<Json> Session::script_command(std::string_view op, const Json& p) {
         errors_.clear();
         if (auto r = load_bundle(path, name); !r) { record_error(r.error()); return fail(r.error()); }
         has_dispatch_ = host_->has_function("__pocket_dispatch");
-        dispatch("start", Json::object(), name);
+        if (start) dispatch("start", Json::object(), name);
+        host_->drain_microtasks();
         Json j;
         j["name"] = name;
         j["bundle"] = path.string();
+        j["started"] = start;
         j["ok"] = errors_.empty();
         return j;
     }
@@ -734,6 +806,37 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         j["contexts"] = bundle_names_;
         j["headless"] = options_.headless;
         j["window"] = Json{{"width", device_->width()}, {"height", device_->height()}};
+        return j;
+    }
+    if (op == "reload") {
+        // Hot reload: the scene from disk and/or the project's scripts. A running project starts
+        // again; one the editor holds dormant stays dormant. `pocket run --watch` calls this.
+        bool scene = opt<bool>(p, "scene", true);
+        bool scripts = opt<bool>(p, "scripts", true);
+        bool was_active = context_active("project");
+        Json j;
+        if (scripts) {
+            dispatch("unload", "project", "project");
+            errors_.clear();
+            if (auto r = load_bundle(options_.bundle, "project"); !r) { record_error(r.error()); return fail(r.error()); }
+            has_dispatch_ = host_->has_function("__pocket_dispatch");
+        }
+        if (scene) {
+            // A fresh world: the scene file when there is one, otherwise empty, so a restarted
+            // project spawns into what it expects instead of on top of its previous run.
+            world_->clear();
+            if (auto r = load_scene_file(); !r) { record_error(r.error()); return fail(r.error()); }
+            j["entities"] = world_->entity_count();
+        }
+        bool start = scripts && (was_active || options_.editor_bundle.empty());
+        if (start) dispatch("start", Json::object(), "project");
+        host_->drain_microtasks();
+        world_->events().emit(clock_.tick, "project.reloaded", 0, Json{{"scene", scene}, {"scripts", scripts}, {"started", start}}, 0, "runtime");
+        log::info("runtime", "project reloaded (scene {}, scripts {}, started {})", scene, scripts, start);
+        j["scene"] = scene;
+        j["scripts"] = scripts;
+        j["started"] = start;
+        j["ok"] = errors_.empty();
         return j;
     }
     if (op == "save_scene") {
@@ -991,6 +1094,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
+    if (name.starts_with("assets.")) return assets_command(name.substr(7), p);
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
@@ -1059,7 +1163,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.reload", "script.contexts", "script.eval", "project.info", "project.save_scene", "project.write", "project.read", "render.viewport", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

@@ -69,10 +69,11 @@ fields = [
 
 [[component]]
 name = "MeshRenderer"
-doc = "Draws a built-in primitive mesh with a flat material."
+doc = "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured."
 fields = [
-    { name = "mesh", type = "i32", default = 0, doc = "0 cube, 1 sphere, 2 plane, 3 cylinder." },
-    { name = "color", type = "color", default = [0.8, 0.8, 0.8, 1.0], doc = "Base color, linear RGB." },
+    { name = "mesh", type = "string", default = "cube", doc = "cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)." },
+    { name = "color", type = "color", default = [0.8, 0.8, 0.8, 1.0], doc = "Base color, linear RGB; multiplies the asset's material color." },
+    { name = "texture", type = "string", default = "", doc = "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none." },
     { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
 ]
 

@@ -111,10 +111,12 @@ Result<Json> run(const Options& options) {
             // Paused: a window keeps polling input, running UI scripts and drawing (the editor
             // lives here); headless sessions only serve commands, and without a controller a
             // paused headless run would hang forever.
-            if (options.headless) {
+            if (options.headless && options.editor_bundle.empty()) {
                 if (!server) break;
                 continue;
             }
+            // A headless editor session still runs idle frames so the editor's scripts (and an
+            // agent driving them) see a live interface.
             if (auto r = session.idle_frame(); !r) break;
             continue;
         }

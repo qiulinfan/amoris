@@ -23,7 +23,7 @@ export type { RayHit, Contact } from "./physics";
 import { dispatchContacts } from "./physics";
 import { dispatchUiEvents, flushUi, unmountContext } from "./ui";
 import type { UiEvent } from "./ui";
-export { ui, signal, invalidate, mount, h, createElement, Fragment, theme, Button, Label, Panel, TextInput, Row, Column } from "./ui";
+export { ui, signal, invalidate, mount, setProjectRoot, h, createElement, Fragment, theme, Button, Label, Panel, TextInput, Row, Column } from "./ui";
 export type { UiEvent, UiOp, UiRect, UiNodeInfo, VNode, VProps, Component, Signal, StyleProps, BoxProps, TextProps, InputProps, Dim, Edge, ColorValue } from "./ui";
 import type { Contact as ContactT } from "./physics";
 
@@ -81,12 +81,14 @@ interface Handlers {
 
 interface Registry {
     contexts: Map<string, Handlers>;
+    /** Contexts that received "start"; only they get ticks, frames, input and contacts. */
+    active: Set<string>;
     keysDown: Set<string>;
 }
 
 const registry: Registry = (() => {
     const g = globalThis as unknown as { __pocket_registry?: Registry };
-    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), keysDown: new Set() };
+    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set() };
     return g.__pocket_registry;
 })();
 
@@ -202,26 +204,37 @@ export function hsvToRgb(h: number, s: number, v: number): [number, number, numb
 
 function collectState(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    for (const h of registry.contexts.values()) {
+    for (const [ctx, h] of registry.contexts) {
+        if (!registry.active.has(ctx)) continue;
         for (const [name, getter] of h.exposed) out[name] = getter();
     }
     return out;
 }
 
-function selected(context: unknown): Handlers[] {
+function selected(context: unknown, activeOnly = true): Handlers[] {
     if (typeof context === "string") {
         const h = registry.contexts.get(context);
         return h ? [h] : [];
     }
-    return [...registry.contexts.values()];
+    const out: Handlers[] = [];
+    for (const [name, h] of registry.contexts) if (!activeOnly || registry.active.has(name)) out.push(h);
+    return out;
+}
+
+/** Whether this bundle's context has been started (the editor starts a project on Play). */
+export function isActive(): boolean {
+    return registry.active.has(contextName);
 }
 
 (globalThis as Record<string, unknown>).__pocket_dispatch = function (kind: string, arg: unknown, context?: unknown): unknown {
     switch (kind) {
-        case "start":
+        case "start": {
+            if (typeof context === "string") registry.active.add(context);
+            else for (const name of registry.contexts.keys()) registry.active.add(name);
             for (const h of selected(context)) for (const f of h.start) f();
             flushUi();
             return undefined;
+        }
         case "tick":
             for (const h of selected(context)) for (const f of h.tick) f(arg as Tick);
             return undefined;
@@ -248,12 +261,17 @@ function selected(context: unknown): Handlers[] {
             return undefined;
         case "stop":
             for (const h of selected(context)) for (const f of h.stop) f();
+            if (typeof context === "string") registry.active.delete(context);
+            else registry.active.clear();
             return undefined;
+        case "active":
+            return typeof arg === "string" ? registry.active.has(arg) : registry.active.size > 0;
         case "unload": {
             // Drop a context's handlers and the interface it mounted; its bundle is evaluated again.
             const name = typeof arg === "string" ? arg : contextName;
             const h = registry.contexts.get(name);
-            if (h) for (const f of h.stop) f();
+            if (h && registry.active.has(name)) for (const f of h.stop) f();
+            registry.active.delete(name);
             registry.contexts.delete(name);
             if (name === "project" || name === "main") unmountContext(name);
             return undefined;

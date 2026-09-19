@@ -14,7 +14,9 @@ mod mcp;
 mod ninja;
 mod report;
 mod toolchain;
+mod pack;
 mod ts;
+mod watch;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -58,6 +60,9 @@ enum Command {
         target: String,
         #[arg(long, default_value = "debug")]
         config: String,
+        /// Keep running; rebundle and hot reload the project when its sources change.
+        #[arg(long)]
+        watch: bool,
         /// Arguments passed to the executable after `--`.
         #[arg(last = true)]
         args: Vec<String>,
@@ -84,11 +89,27 @@ enum Command {
     Graph,
     /// Serve the Model Context Protocol over stdio: build, test, run and drive live sessions.
     Mcp,
+    /// Pack a project into a self-contained folder (dist/<name>) that runs without the repository.
+    Pack {
+        target: String,
+        /// Build configuration for the runtime inside the pack.
+        #[arg(long, default_value = "release")]
+        config: String,
+        /// Output directory (default dist/<name>).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Also write dist/<name>.zip.
+        #[arg(long)]
+        zip: bool,
+    },
     /// Open a project in the Pocket editor (a window with the scene, hierarchy, inspector and console).
     Editor {
         target: String,
         #[arg(long, default_value = "debug")]
         config: String,
+        /// Rebundle and hot reload the project (and the editor) when sources change.
+        #[arg(long)]
+        watch: bool,
         /// Arguments passed to the runtime after `--` (for example --serve 7777 or --size 1600x1000).
         #[arg(last = true)]
         args: Vec<String>,
@@ -138,13 +159,14 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Setup { force } => commands::setup(&ws, force),
         Command::Doctor => commands::doctor(&ws),
         Command::Build { targets, config, generate_only } => commands::build(&ws, &config, &targets, generate_only),
-        Command::Run { target, config, args } => commands::run(&ws, &config, &target, &args),
+        Command::Run { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, false) } else { commands::run(&ws, &config, &target, &args) },
         Command::Test { config, filter } => commands::test(&ws, &config, filter.as_deref()),
         Command::Ts { project, out } => commands::ts_bundle(&ws, &project, out.as_deref()),
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),
-        Command::Editor { target, config, args } => commands::editor(&ws, &config, &target, &args),
+        Command::Pack { target, config, out, zip } => pack::pack(&ws, &config, &target, out.as_deref(), zip),
+        Command::Editor { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, true) } else { commands::editor(&ws, &config, &target, &args) },
         Command::Mcp => {
             mcp::serve(&ws)?;
             Ok(report::Report::success("mcp", "stdio session ended"))

@@ -1,0 +1,5 @@
+name = "assets_tests"
+kind = "test"
+description = "Asset tests: the glTF reader on the generated sample files (.glb with a texture reference and two nodes, .gltf with an embedded buffer and no normals), image decoding, error reporting, and the AssetStore's path rules and caching."
+sources = ["*.cpp"]
+private_deps = ["pocket_assets", "catch2"]

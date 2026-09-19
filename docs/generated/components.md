@@ -72,12 +72,13 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
 
 ## MeshRenderer
 
-Draws a built-in primitive mesh with a flat material.
+Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mesh` | i32 | 0 | 0 cube, 1 sphere, 2 plane, 3 cylinder. |
-| `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color, linear RGB. |
+| `mesh` | string | "cube" | cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
+| `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color, linear RGB; multiplies the asset's material color. |
+| `texture` | string | "" | Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 
 ## Bounds

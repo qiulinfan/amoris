@@ -1,0 +1,166 @@
+//! `pocket run --watch` / `pocket editor --watch`: keep the runtime open, rebundle the project's
+//! TypeScript when a source file changes, and hot reload it through the control server. This is
+//! the loop an agent (or a person) iterates in: edit a script, see the result, no restart.
+use crate::commands::{build_targets, bundle_project, exe_path, find_project};
+use crate::manifest::Workspace;
+use crate::report::{parse_compiler_diagnostics, Report};
+use crate::toolchain;
+use anyhow::{anyhow, bail, Context, Result};
+use serde_json::{json, Value};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+
+fn free_port() -> Result<u16> {
+    let l = TcpListener::bind("127.0.0.1:0")?;
+    Ok(l.local_addr()?.port())
+}
+
+/// Newest modification time under `dir` for the file kinds the bundler reads.
+fn newest_source(dir: &Path) -> SystemTime {
+    let mut newest = SystemTime::UNIX_EPOCH;
+    fn visit(dir: &Path, newest: &mut SystemTime, depth: usize) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "node_modules" || name == "build" {
+                continue;
+            }
+            if path.is_dir() {
+                visit(&path, newest, depth + 1);
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if matches!(ext, "ts" | "tsx" | "json" | "toml") {
+                if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
+                    if m > *newest {
+                        *newest = m;
+                    }
+                }
+            }
+        }
+    }
+    visit(dir, &mut newest, 0);
+    newest
+}
+
+fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
+    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
+    let resp = crate::mcp::http_post(url, "/rpc", &body)?;
+    let v: Value = serde_json::from_str(&resp).context("runtime returned invalid JSON")?;
+    if let Some(err) = v.get("error") {
+        bail!("{}", err.get("message").and_then(|m| m.as_str()).unwrap_or("runtime error"));
+    }
+    Ok(v.get("result").cloned().unwrap_or(Value::Null))
+}
+
+pub fn watch(ws: &Workspace, config: &str, target: &str, args: &[String], editor: bool) -> Result<Report> {
+    let t0 = Instant::now();
+    let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is not a project with project.toml"))?;
+    let runtime = "pocket_runtime";
+    let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
+    if !outcome.ok {
+        let mut rep = Report::failure("watch", "runtime build failed");
+        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
+        return Ok(rep);
+    }
+    let bundle = bundle_project(ws, &project, None)?;
+    let editor_bundle: Option<PathBuf> = if editor {
+        let dir = ws.root.join("editor");
+        if !dir.join("project.toml").exists() {
+            bail!("editor/project.toml is missing");
+        }
+        Some(bundle_project(ws, &dir, None)?.out)
+    } else {
+        None
+    };
+    let port = free_port()?;
+    let exe = exe_path(ws, config, runtime)?;
+    let mut cmd = toolchain::command(exe.to_str().unwrap());
+    cmd.arg("--project").arg(&project).arg("--bundle").arg(&bundle.out).arg("--serve").arg(port.to_string());
+    if let Some(eb) = &editor_bundle {
+        cmd.arg("--editor").arg(eb).arg("--paused").arg("--title").arg(format!("Pocket Editor - {target}"));
+    }
+    cmd.args(args).current_dir(&ws.root);
+    let mut child = cmd.spawn().context("spawning pocket_runtime")?;
+    let url = format!("http://127.0.0.1:{port}");
+    // Wait for the control server.
+    let started = Instant::now();
+    loop {
+        if rpc(&url, "state", json!({})).is_ok() {
+            break;
+        }
+        if let Some(status) = child.try_wait()? {
+            bail!("runtime exited before serving ({status})");
+        }
+        if started.elapsed() > Duration::from_secs(20) {
+            let _ = child.kill();
+            bail!("runtime did not start serving within 20s");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    eprintln!("[watch] {target} running at {url}; editing {} reloads it", project.display());
+    let sdk_dir = ws.root.join("sdk").join("runtime");
+    let editor_dir = ws.root.join("editor");
+    let mut last = newest_source(&project).max(newest_source(&sdk_dir)).max(if editor { newest_source(&editor_dir) } else { SystemTime::UNIX_EPOCH });
+    let mut reloads = 0u32;
+    let mut failures = 0u32;
+    let exit_code = loop {
+        if let Some(status) = child.try_wait()? {
+            break status.code();
+        }
+        std::thread::sleep(Duration::from_millis(250));
+        let now = newest_source(&project).max(newest_source(&sdk_dir)).max(if editor { newest_source(&editor_dir) } else { SystemTime::UNIX_EPOCH });
+        if now <= last {
+            continue;
+        }
+        // Debounce: editors write files in bursts.
+        std::thread::sleep(Duration::from_millis(150));
+        last = newest_source(&project).max(newest_source(&sdk_dir)).max(if editor { newest_source(&editor_dir) } else { SystemTime::UNIX_EPOCH });
+        let t = Instant::now();
+        match bundle_project(ws, &project, None) {
+            Ok(b) => {
+                let editor_ok = if editor {
+                    match bundle_project(ws, &editor_dir, None) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            failures += 1;
+                            eprintln!("[watch] editor bundle failed: {e:#}");
+                            false
+                        }
+                    }
+                } else {
+                    true
+                };
+                if editor && editor_ok {
+                    match rpc(&url, "script.reload", json!({ "name": "editor" })) {
+                        Ok(_) => eprintln!("[watch] editor reloaded"),
+                        Err(e) => eprintln!("[watch] editor reload failed: {e:#}"),
+                    }
+                }
+                match rpc(&url, "project.reload", json!({ "scene": !editor, "scripts": true })) {
+                    Ok(v) => {
+                        reloads += 1;
+                        eprintln!("[watch] reloaded {} modules in {} ms (started: {})", b.modules.len(), t.elapsed().as_millis(), v.get("started").and_then(|s| s.as_bool()).unwrap_or(false));
+                    }
+                    Err(e) => {
+                        failures += 1;
+                        eprintln!("[watch] reload failed: {e:#}");
+                    }
+                }
+            }
+            Err(e) => {
+                failures += 1;
+                eprintln!("[watch] bundle failed, keeping the previous scripts:\n{e:#}");
+            }
+        }
+    };
+    let mut rep = if exit_code == Some(0) { Report::success("watch", format!("{target} exited 0 after {reloads} reloads")) } else { Report::failure("watch", format!("{target} exited {}", exit_code.unwrap_or(-1))) };
+    rep.data = json!({ "project": project, "reloads": reloads, "failures": failures, "exit_code": exit_code });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
+}

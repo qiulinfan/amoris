@@ -3,6 +3,7 @@
 #pragma once
 
 #include <pocket/app/runtime.hpp>
+#include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
 #include <pocket/physics/physics.hpp>
 #include <pocket/platform/platform.hpp>
@@ -46,6 +47,7 @@ class Session {
     [[nodiscard]] rhi::Device& device() { return *device_; }
     [[nodiscard]] renderer::Renderer& renderer() { return *renderer_; }
     [[nodiscard]] physics::Physics& physics() { return *physics_; }
+    [[nodiscard]] assets::AssetStore& assets() { return *assets_; }
     [[nodiscard]] ui::Document* ui() { return ui_.get(); }
     [[nodiscard]] std::int64_t tick() const { return clock_.tick; }
     Status finish();                      // dispatch "stop", capture, close journal
@@ -53,6 +55,8 @@ class Session {
    private:
     Json dispatch(const char* kind, Json arg, std::string_view context = "");
     Status load_bundle(const std::filesystem::path& path, const std::string& name);
+    Status load_scene_file();             // the project's scene from disk (no-op without one)
+    bool context_active(const std::string& name);
     Result<bool> poll_input(Json& input_events, int& ticks, bool simulating);  // false: replay exhausted
     Json frame_info() const;
     void ui_size(float& width, float& height, float& scale) const;
@@ -67,6 +71,7 @@ class Session {
     Result<Json> events_command(std::string_view op, const Json& p, std::string_view source);
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
+    Result<Json> assets_command(std::string_view op, const Json& p);
     Status render_frame();
 
     Options options_;
@@ -76,6 +81,7 @@ class Session {
     std::unique_ptr<world::World> world_;
     std::unique_ptr<renderer::Renderer> renderer_;
     std::unique_ptr<physics::Physics> physics_;
+    std::unique_ptr<assets::AssetStore> assets_;
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
     std::unique_ptr<ui::Painter> painter_;

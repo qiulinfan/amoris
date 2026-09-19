@@ -42,6 +42,11 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket mcp                   # MCP server over stdio (see docs/mcp.md)
 ./.pocket/pocket run physics -- --headless --frames 600 --json   # physics sample report
 ./.pocket/pocket run ui -- --headless --serve 4711 --paused --json   # UI sample; ui.snapshot / ui.click over /rpc
+./.pocket/pocket editor physics                                      # the editor window (docs/editor.md)
+./.pocket/pocket run hello --watch                                   # window + hot reload when scripts change
+./.pocket/pocket run assets -- --headless --frames 20 --json          # glTF meshes and textures (docs/design/assets.md)
+./.pocket/pocket pack assets --zip                                   # dist/assets/ + dist/assets.zip (docs/packaging.md)
+./.pocket/pocket editor physics --watch                              # the same inside the editor
 ./.pocket/pocket graph                 # module graph
 ```
 

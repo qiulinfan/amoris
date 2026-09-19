@@ -7,7 +7,7 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | flecs | 4.1.6 | MIT | vendored amalgamation (`third_party/flecs`) |
 | nlohmann/json | 3.12.0 | MIT | vendored single header |
 | cpp-httplib | 0.56.0 | MIT | vendored single header |
-| stb_image, stb_image_write | master (2026-09) | public domain / MIT | vendored headers |
+| stb_image, stb_image_write | master (2026-09) | public domain / MIT | vendored headers; stb_image decodes project images, stb_image_write writes captures |
 | Catch2 | 3.16.0 | BSL-1.0 | vendored amalgamation |
 | Yoga | 3.2.1 | MIT | vendored sources |
 | SDL3 | 3.4.16 | Zlib | fetched source, built with CMake by `pocket setup` |

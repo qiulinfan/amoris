@@ -25,7 +25,7 @@ onTick(({ time, tick, dt }) => {
         const id = world.spawn(sphere ? "Ball" : "Crate", {
             components: {
                 Transform: { position: { x, y: 6 + random() * 2, z }, rotation: sphere ? undefined : { x: 0.1, y: 0.2, z: 0.05, w: 0.97 } },
-                MeshRenderer: { mesh: sphere ? 1 : 0, color: sphere ? { r: 0.9, g: 0.55, b: 0.2, a: 1 } : { r: 0.3, g: 0.6, b: 0.9, a: 1 } },
+                MeshRenderer: { mesh: sphere ? "sphere" : "cube", color: sphere ? { r: 0.9, g: 0.55, b: 0.2, a: 1 } : { r: 0.3, g: 0.6, b: 0.9, a: 1 } },
                 RigidBody: { kind: 0, mass: sphere ? 0.5 : 1, restitution: sphere ? 0.5 : 0.1, friction: sphere ? 0.3 : 0.6 },
                 Collider: { shape: sphere ? 1 : 0, size: sphere ? { x: 0.35, y: 0.35, z: 0.35 } : { x: 0.4, y: 0.4, z: 0.4 } },
             },

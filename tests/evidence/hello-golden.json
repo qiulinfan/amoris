@@ -1,7 +1,7 @@
 {
-  "note": "state hash of samples/hello after 120 headless ticks at 60 Hz; regenerate deliberately when the sample or the hash contract changes",
+  "note": "state hash of samples/hello after 120 headless ticks at 60 Hz; regenerate deliberately when the sample or the hash contract changes (2026-09-18: MeshRenderer.mesh became a string and gained texture, both hashed)",
   "frames": 120,
-  "state_hash": "0e6682521de13616",
+  "state_hash": "223a127b51c9cb0c",
   "state": {
     "hue": 0.1,
     "ball.y": 0.3913,

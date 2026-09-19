@@ -314,7 +314,11 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
         rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
         return Ok(rep);
     }
-    let bundles = bundle_all_samples(ws)?;
+    let mut bundles = bundle_all_samples(ws)?;
+    // The editor is a TypeScript project too; runtime tests open it headless.
+    if ws.root.join("editor").join("project.toml").exists() {
+        bundles.push(bundle_project(ws, &ws.root.join("editor"), None)?.out);
+    }
     let mut results = vec![];
     let mut failed = 0;
     for t in &tests {

@@ -72,12 +72,14 @@ export interface Light {
     range: number;
 }
 
-/** Draws a built-in primitive mesh with a flat material. */
+/** Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured. */
 export interface MeshRenderer {
-    /** 0 cube, 1 sphere, 2 plane, 3 cylinder. */
-    mesh: number;
-    /** Base color, linear RGB. */
+    /** cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). */
+    mesh: string;
+    /** Base color, linear RGB; multiplies the asset's material color. */
     color: Color;
+    /** Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. */
+    texture: string;
     /** Whether the mesh is drawn. */
     visible: boolean;
 }
@@ -149,7 +151,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
-    MeshRenderer: { mesh: 0, color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, visible: true },
+    MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", visible: true },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },

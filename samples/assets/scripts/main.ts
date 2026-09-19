@@ -1,0 +1,25 @@
+// Meshes and textures from the project's assets folder: a glTF crate with two baked nodes and a
+// checker texture, a pyramid from a .gltf with an embedded buffer, a textured ground, and a
+// deliberately missing asset (drawn as a magenta cube, reported in render.stats).
+import { command, expose, log, onStart, onTick, world } from "pocket";
+
+interface AssetFile { path: string; kind: string; bytes: number; loaded: boolean }
+
+let crate = 0;
+let yaw = 0;
+
+onStart(() => {
+    const files = command<AssetFile[]>("assets.list");
+    log("assets in the project", { files: files.map((f) => `${f.path} (${f.kind}, ${f.bytes} B)`) });
+    const crateInfo = command<{ vertices: number; triangles: number; materials: unknown[]; nodes: number }>("assets.describe", { path: "assets/crate.glb" });
+    log("crate.glb", { vertices: crateInfo.vertices, triangles: crateInfo.triangles, nodes: crateInfo.nodes });
+    crate = world.find("Crate") ?? 0;
+});
+
+onTick((t) => {
+    yaw += t.dt * 0.6;
+    if (crate) world.set(crate, "Transform", { rotation: { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } });
+});
+
+expose("yaw", () => Number(yaw.toFixed(3)));
+expose("missing", () => (command<{ assets?: { missing?: string[] } }>("render.stats").assets?.missing ?? []).length);

@@ -11,6 +11,7 @@ namespace pocket::renderer {
 struct Vertex {
     Vec3 position;
     Vec3 normal;
+    Vec2 uv;
 };
 
 struct MeshData {

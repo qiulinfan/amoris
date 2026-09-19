@@ -34,6 +34,7 @@ void scalar_from_json(const Json& j, const char* key, T& v) {
     if (!j.is_object() || !j.contains(key)) return;
     const Json& x = j[key];
     if constexpr (std::is_same_v<T, bool>) { if (x.is_boolean()) v = x.get<bool>(); else if (x.is_number()) v = x.get<double>() != 0; }
+    else if constexpr (std::is_same_v<T, std::string>) { if (x.is_string()) v = x.get<std::string>(); else if (x.is_number()) v = std::to_string(x.get<long long>()); }
     else { if (x.is_number()) v = x.get<T>(); else if (x.is_boolean()) v = static_cast<T>(x.get<bool>()); }
 }
 
@@ -191,21 +192,24 @@ void to_json(Json& j, const MeshRenderer& v) {
     j = Json::object();
     j["mesh"] = v.mesh;
     vec_to_json(j["color"], v.color);
+    j["texture"] = v.texture;
     j["visible"] = v.visible;
 }
 
 void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "mesh", v.mesh);
     if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    scalar_from_json(j, "texture", v.texture);
     scalar_from_json(j, "visible", v.visible);
 }
 
 void hash_component(StateHasherRef& h, const MeshRenderer& v) {
-    h.i64(static_cast<std::int64_t>(v.mesh));
+    h.str(v.mesh);
     h.f32(v.color.r);
     h.f32(v.color.g);
     h.f32(v.color.b);
     h.f32(v.color.a);
+    h.str(v.texture);
     h.u8(v.visible ? 1 : 0);
 }
 
@@ -324,9 +328,10 @@ constexpr std::array<FieldInfo, 4> kLightFields = {{
     FieldInfo{"intensity", "f32", "Multiplier applied to color."},
     FieldInfo{"range", "f32", "Point light range in meters."},
 }};
-constexpr std::array<FieldInfo, 3> kMeshRendererFields = {{
-    FieldInfo{"mesh", "i32", "0 cube, 1 sphere, 2 plane, 3 cylinder."},
-    FieldInfo{"color", "color", "Base color, linear RGB."},
+constexpr std::array<FieldInfo, 4> kMeshRendererFields = {{
+    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
+    FieldInfo{"color", "color", "Base color, linear RGB; multiplies the asset's material color."},
+    FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
@@ -358,7 +363,7 @@ constexpr std::array<ComponentInfo, 11> kComponents = {{
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "Perspective camera. The renderer uses the first active camera.", true, kCameraFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
-    ComponentInfo{"MeshRenderer", "Draws a built-in primitive mesh with a flat material.", true, kMeshRendererFields},
+    ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},

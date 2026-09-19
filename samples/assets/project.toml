@@ -1,0 +1,8 @@
+name = "assets"
+entry = "scripts/main.ts"
+scene = "scene.json"
+
+[window]
+width = 960
+height = 540
+title = "Pocket assets sample"

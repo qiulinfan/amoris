@@ -28,7 +28,7 @@ onTick(({ tick, dt, time }) => {
             parent: "/Level",
             components: {
                 Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist } },
-                MeshRenderer: { mesh: 1, color: { r: 0.9, g: 0.25, b: 0.2, a: 1 } },
+                MeshRenderer: { mesh: "sphere", color: { r: 0.9, g: 0.25, b: 0.2, a: 1 } },
                 Health: { current: 30, max: 30 },
             },
         });

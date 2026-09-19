@@ -102,11 +102,13 @@ interface SharedState {
     handlers: Map<number, Record<string, (e: UiEvent) => void>>;
     mounts: Mount[];
     seen: number;
+    /** Where project interfaces mount by default (the editor points this at its scene pane). */
+    projectRoot: number;
 }
 
 const shared: SharedState = (() => {
     const g = globalThis as unknown as { __pocket_ui?: SharedState };
-    if (g.__pocket_ui === undefined) g.__pocket_ui = { nextId: 2, version: 1, handlers: new Map(), mounts: [], seen: 0 };
+    if (g.__pocket_ui === undefined) g.__pocket_ui = { nextId: 2, version: 1, handlers: new Map(), mounts: [], seen: 0, projectRoot: ROOT };
     return g.__pocket_ui;
 })();
 
@@ -337,9 +339,19 @@ class Mount {
     current: VNode[] = [];
     version = 0;
     context = contextName;
-    constructor(public render: () => unknown, public parent: number) {}
+    parent: number;
+    constructor(public render: () => unknown, public explicitParent: number | undefined) {
+        this.parent = explicitParent ?? (contextName === "editor" ? ROOT : shared.projectRoot);
+    }
 
     update(ops: UiOp[]): void {
+        // Project interfaces follow the project root (the editor's scene pane) even when they
+        // mounted before the editor existed.
+        const desired = this.explicitParent ?? (contextName === "editor" ? ROOT : shared.projectRoot);
+        if (desired !== this.parent) {
+            this.parent = desired;
+            for (const c of this.current) if (c.id !== undefined) ops.push(["append", desired, c.id]);
+        }
         const root = createElement(Fragment, null, this.render());
         const next = expand(root);
         patchChildren(this.parent, this.current, next, ops);
@@ -437,7 +449,7 @@ function patchChildren(parent: number, prev: VNode[], next: VNode[], ops: UiOp[]
  * Mount a render function under an element (the root by default). The function runs now and
  * again after any signal changes; only the differences reach the engine.
  */
-export function mount(render: () => unknown, parent = ROOT): { unmount(): void; update(): void } {
+export function mount(render: () => unknown, parent?: number): { unmount(): void; update(): void } {
     const m = new Mount(render, parent);
     shared.mounts.push(m);
     const ops: UiOp[] = [];
@@ -497,6 +509,13 @@ export function dispatchUiEvents(events: UiEvent[]): void {
         }
     }
     flushUi();
+}
+
+/** Make project interfaces mount under an element (the editor's scene pane) instead of the root. */
+export function setProjectRoot(id: number): void {
+    if (shared.projectRoot === id) return;
+    shared.projectRoot = id;
+    shared.version++;
 }
 
 /** Unmount everything a script context mounted (used when a bundle is reloaded). */

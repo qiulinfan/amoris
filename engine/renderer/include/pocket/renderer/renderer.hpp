@@ -1,12 +1,15 @@
 // Renders the world into the device's offscreen target and an entity id buffer.
 #pragma once
 
+#include <pocket/assets/assets.hpp>
 #include <pocket/core/json.hpp>
 #include <pocket/core/result.hpp>
 #include <pocket/rhi/device.hpp>
 #include <pocket/world/world.hpp>
 
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace pocket::renderer {
@@ -18,6 +21,9 @@ struct RenderStats {
     bool has_camera = false;
     bool has_sun = false;
     world::EntityId camera = 0;
+    std::uint32_t asset_meshes = 0;   // distinct glTF meshes on the GPU
+    std::uint32_t textures = 0;       // distinct images on the GPU
+    std::vector<std::string> missing; // asset paths that failed to load this frame (drawn as magenta cubes)
 };
 
 struct IdImage {
@@ -58,6 +64,12 @@ class Renderer {
     // Project a world point to pixel coordinates using the last frame's camera; false if behind.
     [[nodiscard]] bool project(Vec3 world_pos, float& out_x, float& out_y) const;
     void set_viewport(Viewport v);
+    // Where glTF meshes and images come from (MeshRenderer.mesh / .texture paths). Optional.
+    void set_assets(assets::AssetStore* store);
+    // Local bounds of asset meshes first uploaded since the last call (path -> min/max).
+    std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> take_new_bounds();
+    // Release GPU copies of assets so they reload from the store.
+    void drop_asset_cache();
     [[nodiscard]] Viewport viewport() const;
     // The viewport actually used by the last frame (clamped to the frame).
     [[nodiscard]] Viewport applied_viewport() const;

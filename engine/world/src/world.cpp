@@ -1,5 +1,7 @@
 #include <pocket/world/world.hpp>
 
+#include <map>
+
 #include <pocket/core/log.hpp>
 #include <pocket/world/component_list.gen.hpp>
 #include <pocket/world/hashing.hpp>
@@ -143,6 +145,7 @@ std::string format_component_compact(std::string_view component, const Json& val
 }
 
 struct World::Impl {
+    std::map<std::string, std::pair<Vec3, Vec3>> mesh_bounds;  // local AABB per asset mesh path
     flecs::world ecs;
     EventLog events;
     std::vector<EntityId> roots;  // creation order
@@ -607,6 +610,8 @@ Json World::schema() {
     return j;
 }
 
+void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
+
 void World::tick(double dt) {
     auto fdt = static_cast<float>(dt);
     // Motion: integrate velocity into the local transform.
@@ -631,9 +636,10 @@ void World::tick(double dt) {
     // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives).
     // Adding Bounds is a structural change, so the writes are deferred until the query ends.
     impl_->ecs.defer_begin();
-    impl_->bounds.each([](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
+    impl_->bounds.each([this](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
         Vec3 lo{-0.5f, -0.5f, -0.5f}, hi{0.5f, 0.5f, 0.5f};
-        if (mr.mesh == 2) { lo.y = 0; hi.y = 0; }  // plane
+        if (mr.mesh == "plane") { lo.y = 0; hi.y = 0; }
+        else if (auto it = impl_->mesh_bounds.find(mr.mesh); it != impl_->mesh_bounds.end()) { lo = it->second.first; hi = it->second.second; }
         Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
         Bounds b;
         bool first = true;

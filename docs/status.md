@@ -12,12 +12,16 @@ What exists on the `agent-first` branch, how to verify it, and what is next. Eve
 | RHI: wgpu-native device, offscreen target, blit present, captures | `engine/rhi` | `renderer_tests`, captures in evidence |
 | Script host: JavaScriptCore backend behind `ScriptHost` (ADR 0005), JSON dispatch, typed-array sharing | `engine/script` | every sample and TypeScript test |
 | World: flecs entities with ordered hierarchy, generated components (`pocket gen`), JSON access with merge, tree/describe/query/summary/schema, deterministic hash, scenes, motion/lifetime/transform/bounds systems, causal event log, gameplay transcript | `engine/world` | `world_tests`, `tests/ts/world.test.ts` |
-| Renderer: primitive meshes, lights, camera, entity id buffer, pick/project/ids | `engine/renderer` | `renderer_tests` |
+| Renderer: primitive meshes with texture coordinates, glTF meshes with per-material draws, base color textures, lights, camera, entity id buffer, pick/project/ids, scene viewport | `engine/renderer` | `renderer_tests` |
+| Assets: glTF 2.0 reader (.glb/.gltf, baked nodes, materials), stb_image decoding, AssetStore with project-relative paths, `assets.list/describe/reload/stats`, missing assets drawn magenta and reported | `engine/assets`, `docs/design/assets.md` | `assets_tests`, `renderer_tests` (`[assets]`) |
 | Physics: boxes and spheres, sequential impulses, sleeping, triggers, raycast, contact events | `engine/physics` | `physics_tests` |
 | Runtime: session with one command surface for scripts, HTTP JSON-RPC (`--serve`, `--paused`, `step`), input journal record/replay, reports with state hash, transcript, captures | `engine/app`, `engine/runtime` | `runtime_tests`, evidence transcripts |
 | SDK: `pocket` module (lifecycle, expose, log), `world`, `events`, `render`, `physics`, `transcript`, in-engine `test` | `sdk/runtime` | `tests/ts` |
 | Pocket UI: FreeType text (Noto Sans CJK), batched 2D painter, retained element tree with Yoga flexbox, hit testing, focus and text input, scrolling, text snapshots and synthetic input for agents, scene viewport; TSX with signals and a diffing reconciler; script contexts for editor + project | `engine/ui`, `sdk/runtime/ui.ts`, `docs/design/pocket-ui.md` | `ui_tests`, `tests/ts/ui.test.tsx`, `tests/evidence/ui/` |
-| Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal), ui (HUD, buttons, pause menu in TSX) | `samples/` | headless runs in evidence |
+| Hot reload: `pocket run <project> --watch` and `pocket editor <project> --watch` rebundle on source changes and call `project.reload` over the control server; a bundle error keeps the previous scripts | `tools/pocket/src/watch.rs`, `project.reload` in `engine/app` | manual session in `tests/evidence/editor/watch.txt` |
+| Editor: `pocket editor <project>`; a TSX program in its own script context with toolbar (play/pause/step/stop, save, spawn, delete), hierarchy, scene pane (pick, orbit, zoom), schema-driven inspector, console/events/transcript; operable headless by agents | `editor/`, `docs/editor.md` | `runtime_tests` (`[editor]`), `tests/evidence/editor/` |
+| Packaging: `pocket pack <project> [--zip]` builds a self-contained folder (runtime, bundle, config, scene, assets, font, launcher) that runs and serves agents without the repository | `tools/pocket/src/pack.rs`, `docs/packaging.md` | CI packs `assets` and runs it headless |
+| Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal), ui (HUD, buttons, pause menu in TSX), assets (glTF crate and pyramid, checker texture, a missing asset) | `samples/` | headless runs in evidence |
 | Agent interface: `pocket mcp` with build/test/run tools and live sessions | `tools/pocket/src/mcp.rs`, `docs/mcp.md` | `tests/evidence/m3/mcp-session.txt` |
 
 ## Verify
@@ -41,7 +45,7 @@ The `transcript` field of any report, `GET /tree` on a served runtime, and the `
 
 ## Next
 
-1. The editor shell on Pocket UI (`pocket editor <project>`): hierarchy, scene pane, inspector from `world.schema`, play/pause/step, console and transcript, save scene.
+1. Editor depth: undo/redo, gizmos, multi-selection, layout persistence; HarfBuzz shaping for the UI.
 2. Typed-array component views for hot loops (scripts pay one JSON round trip per call today).
 3. Agent eval suite and the perception-efficiency benchmark from `docs/design/agent-perception.md`.
-4. Assets and packaging (M5), web export (M6).
+4. Web export (M6). Asset loading and packaging are done; skins, animations and PBR maps are not.

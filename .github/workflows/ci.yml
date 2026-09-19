@@ -34,6 +34,14 @@ jobs:
           ./.pocket/pocket run hello -- --headless --frames 120 --json --capture hello.png > hello.json
           ./.pocket/pocket run playground -- --headless --frames 240 --json --capture playground.png > playground.json
           ./.pocket/pocket run physics -- --headless --frames 300 --json --capture physics.png > physics.json
+          ./.pocket/pocket run ui -- --headless --frames 60 --json --capture ui.png > ui.json
+          ./.pocket/pocket run assets -- --headless --frames 60 --json --capture assets.png > assets.json
+      - name: Pack runs standalone
+        run: |
+          ./.pocket/pocket pack assets --config debug --zip --json > pack.json
+          python3 -c "import json;d=json.load(open('pack.json'));print(d['summary']);raise SystemExit(0 if d['ok'] else 1)"
+          ./dist/assets/assets --headless --frames 30 --json --capture packed.png > packed.json
+          python3 -c "import json;d=json.load(open('packed.json'));print('packed run ok', d['ok'], d['render']);raise SystemExit(0 if d['ok'] and d['render']['assets']['meshes'] == 2 else 1)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -44,4 +52,8 @@ jobs:
             hello.json
             playground.json
             physics.json
+            ui.json
+            assets.json
+            pack.json
+            packed.json
             *.png

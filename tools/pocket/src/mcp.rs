@@ -58,6 +58,7 @@ fn tools_list() -> Value {
         tool("runtime_start", "Start a project in a paused runtime with the control server, so it can be stepped and inspected. One session at a time.", obj_schema(json!({
             "project": { "type": "string" },
             "headless": { "type": "boolean", "default": true, "description": "false opens a window" },
+            "editor": { "type": "boolean", "default": false, "description": "open the project in the Pocket editor (hierarchy, inspector, play/stop) and operate it through ui_* tools" },
             "seed": { "type": "integer" },
             "size": { "type": "string", "description": "WxH render target size" }
         }), &["project"])),
@@ -146,6 +147,16 @@ impl<'a> McpServer<'a> {
         let exe = crate::commands::exe_path(self.ws, "debug", "pocket_runtime")?;
         let mut cmd = crate::toolchain::command(exe.to_str().unwrap());
         cmd.arg("--project").arg(&dir).arg("--bundle").arg(&bundle.out).args(["--serve", "0", "--paused", "--json", "--log-level", "warn"]);
+        if args.get("editor").and_then(|e| e.as_bool()).unwrap_or(false) {
+            // The editor beside the project: its panes show up in ui_snapshot and its buttons
+            // answer ui_click, so an agent can operate it exactly like a person.
+            let editor_dir = self.ws.root.join("editor");
+            if !editor_dir.join("project.toml").exists() {
+                bail!("editor/project.toml is missing");
+            }
+            let editor_bundle = crate::commands::bundle_project(self.ws, &editor_dir, None)?;
+            cmd.arg("--editor").arg(&editor_bundle.out);
+        }
         if args.get("headless").and_then(|h| h.as_bool()).unwrap_or(true) {
             cmd.arg("--headless");
         }
@@ -282,7 +293,7 @@ impl<'a> McpServer<'a> {
     }
 }
 
-fn http_post(base: &str, path: &str, body: &str) -> Result<String> {
+pub(crate) fn http_post(base: &str, path: &str, body: &str) -> Result<String> {
     let host = base.trim_start_matches("http://").trim_end_matches('/');
     let mut stream = TcpStream::connect(host).with_context(|| format!("connecting to {host}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(600)))?;

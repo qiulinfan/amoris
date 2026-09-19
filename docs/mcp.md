@@ -31,7 +31,7 @@ The binary comes from `scripts/bootstrap.sh`. On a machine where Xcode itself is
 | `world_tree`, `world_query`, `world_describe`, `world_schema` | The observable world as text and JSON. |
 | `events_since` | The causal event log after a sequence number, with `cause` links. |
 | `capture`, `render_pick` | The last frame as PNG, the entity id buffer, the entity under a pixel. |
-| `ui_snapshot`, `ui_query`, `ui_click`, `ui_type`, `ui_key` | The interface as text, element lookup by name/text/type, and synthetic input through the same path a player's input takes (see `docs/design/pocket-ui.md`). |
+| `ui_snapshot`, `ui_query`, `ui_click`, `ui_type`, `ui_key` | The interface as text, element lookup by name/text/type, and synthetic input through the same path a player's input takes (see `docs/design/pocket-ui.md`). With `runtime_start {editor: true}` the same tools operate the editor (`docs/editor.md`). |
 | `runtime_command` | Any other command (`world.spawn`, `world.set`, `events.emit`, `world.save`, `log.tail`, ...); `runtime_commands` lists them. |
 | `runtime_stop` | Quit the session and return its final report. |
 

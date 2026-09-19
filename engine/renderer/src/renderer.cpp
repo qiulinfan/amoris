@@ -5,8 +5,11 @@
 
 #include <webgpu/wgpu.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
+#include <map>
+#include <set>
 
 namespace pocket::renderer {
 
@@ -53,19 +56,23 @@ struct Object {
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<uniform> object: Object;
+@group(2) @binding(0) var base_tex: texture_2d<f32>;
+@group(2) @binding(1) var base_samp: sampler;
 
 struct VsOut {
     @builtin(position) clip: vec4f,
     @location(0) world_pos: vec3f,
     @location(1) normal: vec3f,
+    @location(2) uv: vec2f,
 };
 
-@vertex fn vs(@location(0) position: vec3f, @location(1) normal: vec3f) -> VsOut {
+@vertex fn vs(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
     var out: VsOut;
     let world = object.model * vec4f(position, 1.0);
     out.clip = frame.view_proj * world;
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(normal, 0.0)).xyz);
+    out.uv = uv;
     return out;
 }
 
@@ -94,8 +101,9 @@ struct FsOut {
         let pndl = max(dot(n, pl), 0.0);
         light += frame.point_color[i].rgb * pndl * att * att;
     }
+    let base = textureSample(base_tex, base_samp, in.uv) * object.color;
     var out: FsOut;
-    out.color = vec4f(object.color.rgb * light, object.color.a);
+    out.color = vec4f(base.rgb * light, base.a);
     out.id = object.id.x;
     return out;
 }
@@ -134,6 +142,25 @@ struct Renderer::Impl {
     WGPUTextureView id_view = nullptr;
     std::uint32_t id_width = 0, id_height = 0;
     std::array<GpuMesh, 4> meshes{};
+    // Assets: glTF meshes and images uploaded on first use.
+    assets::AssetStore* assets = nullptr;
+    WGPUBindGroupLayout material_bgl = nullptr;
+    WGPUSampler sampler = nullptr;
+    struct GpuTexture {
+        WGPUTexture texture = nullptr;
+        WGPUTextureView view = nullptr;
+        WGPUBindGroup bind_group = nullptr;
+    };
+    GpuTexture white;
+    std::map<std::string, GpuTexture> textures;
+    struct AssetMesh {
+        GpuMesh gpu;
+        std::vector<assets::Submesh> submeshes;
+        std::vector<assets::Material> materials;
+    };
+    std::map<std::string, AssetMesh> asset_meshes;
+    std::set<std::string> failed;  // asset paths reported once
+    std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> new_bounds;
     RenderStats stats;
     CameraView camera;
     Viewport viewport;   // requested
@@ -141,7 +168,29 @@ struct Renderer::Impl {
     std::uint32_t last_width = 0, last_height = 0;
     std::vector<std::uint8_t> object_staging;
 
+    void release_texture(GpuTexture& t) {
+        if (t.bind_group) wgpuBindGroupRelease(t.bind_group);
+        if (t.view) wgpuTextureViewRelease(t.view);
+        if (t.texture) wgpuTextureRelease(t.texture);
+        t = GpuTexture{};
+    }
+
+    void release_assets() {
+        for (auto& [path, am] : asset_meshes) {
+            if (am.gpu.vertices) wgpuBufferRelease(am.gpu.vertices);
+            if (am.gpu.indices) wgpuBufferRelease(am.gpu.indices);
+        }
+        asset_meshes.clear();
+        for (auto& [path, t] : textures) release_texture(t);
+        textures.clear();
+        failed.clear();
+    }
+
     ~Impl() {
+        release_assets();
+        release_texture(white);
+        if (sampler) wgpuSamplerRelease(sampler);
+        if (material_bgl) wgpuBindGroupLayoutRelease(material_bgl);
         for (auto& m : meshes) {
             if (m.vertices) wgpuBufferRelease(m.vertices);
             if (m.indices) wgpuBufferRelease(m.indices);
@@ -213,24 +262,41 @@ struct Renderer::Impl {
         od.entries = &oe;
         object_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &od);
 
-        WGPUBindGroupLayout bgls[2] = {frame_bgl, object_bgl};
+        WGPUBindGroupLayoutEntry me[2]{};
+        me[0].binding = 0;
+        me[0].visibility = WGPUShaderStage_Fragment;
+        me[0].texture.sampleType = WGPUTextureSampleType_Float;
+        me[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+        me[1].binding = 1;
+        me[1].visibility = WGPUShaderStage_Fragment;
+        me[1].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor md{};
+        md.label = rhi::str("pocket.material");
+        md.entryCount = 2;
+        md.entries = me;
+        material_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &md);
+
+        WGPUBindGroupLayout bgls[3] = {frame_bgl, object_bgl, material_bgl};
         WGPUPipelineLayoutDescriptor pld{};
         pld.label = rhi::str("pocket.mesh");
-        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayoutCount = 3;
         pld.bindGroupLayouts = bgls;
         layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
 
-        WGPUVertexAttribute attrs[2]{};
+        WGPUVertexAttribute attrs[3]{};
         attrs[0].format = WGPUVertexFormat_Float32x3;
         attrs[0].offset = 0;
         attrs[0].shaderLocation = 0;
         attrs[1].format = WGPUVertexFormat_Float32x3;
         attrs[1].offset = sizeof(float) * 3;
         attrs[1].shaderLocation = 1;
+        attrs[2].format = WGPUVertexFormat_Float32x2;
+        attrs[2].offset = sizeof(float) * 6;
+        attrs[2].shaderLocation = 2;
         WGPUVertexBufferLayout vbl{};
         vbl.stepMode = WGPUVertexStepMode_Vertex;
         vbl.arrayStride = sizeof(Vertex);
-        vbl.attributeCount = 2;
+        vbl.attributeCount = 3;
         vbl.attributes = attrs;
 
         WGPUColorTargetState targets[2]{};
@@ -294,6 +360,22 @@ struct Renderer::Impl {
         obd.entries = &obe;
         object_bg = wgpuDeviceCreateBindGroup(device->device(), &obd);
 
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.material");
+        sd.addressModeU = WGPUAddressMode_Repeat;
+        sd.addressModeV = WGPUAddressMode_Repeat;
+        sd.addressModeW = WGPUAddressMode_Repeat;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Linear;
+        sd.lodMinClamp = 0;
+        sd.lodMaxClamp = 32;
+        sd.maxAnisotropy = 1;
+        sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        const std::uint8_t white_px[4] = {255, 255, 255, 255};
+        POCKET_TRY(w, upload_texture("pocket.white", 1, 1, white_px));
+        white = w;
+
         for (int k = 0; k < 4; ++k) {
             MeshData data = make_primitive(k);
             GpuMesh& gm = meshes[static_cast<std::size_t>(k)];
@@ -304,6 +386,114 @@ struct Renderer::Impl {
             gm.aabb_max = data.aabb_max;
         }
         return {};
+    }
+
+    Result<GpuTexture> upload_texture(const char* label, std::uint32_t w, std::uint32_t h, const std::uint8_t* rgba) {
+        GpuTexture t;
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str(label);
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {w, h, 1};
+        td.format = WGPUTextureFormat_RGBA8Unorm;
+        td.mipLevelCount = 1;
+        td.sampleCount = 1;
+        t.texture = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!t.texture) return fail("gpu_texture_failed", "cannot create texture {} ({}x{})", label, w, h);
+        WGPUTextureViewDescriptor vd{};
+        vd.format = td.format;
+        vd.dimension = WGPUTextureViewDimension_2D;
+        vd.mipLevelCount = 1;
+        vd.arrayLayerCount = 1;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = td.usage;
+        t.view = wgpuTextureCreateView(t.texture, &vd);
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = t.texture;
+        dst.origin = {0, 0, 0};
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout layout{};
+        layout.offset = 0;
+        layout.bytesPerRow = w * 4;
+        layout.rowsPerImage = h;
+        WGPUExtent3D ext{w, h, 1};
+        wgpuQueueWriteTexture(device->queue(), &dst, rgba, static_cast<std::size_t>(w) * h * 4, &layout, &ext);
+        WGPUBindGroupEntry entries[2]{};
+        entries[0].binding = 0;
+        entries[0].textureView = t.view;
+        entries[1].binding = 1;
+        entries[1].sampler = sampler;
+        WGPUBindGroupDescriptor bd{};
+        bd.label = rhi::str(label);
+        bd.layout = material_bgl;
+        bd.entryCount = 2;
+        bd.entries = entries;
+        t.bind_group = wgpuDeviceCreateBindGroup(device->device(), &bd);
+        return t;
+    }
+
+    // Logged once per path; listed in the stats of every frame that wanted it.
+    void note_missing(const std::string& path) {
+        if (std::find(stats.missing.begin(), stats.missing.end(), path) == stats.missing.end()) stats.missing.push_back(path);
+    }
+    void report_missing(const std::string& path, const std::string& why) {
+        if (failed.insert(path).second) log::warn("renderer", "asset {}: {}", path, why);
+        note_missing(path);
+    }
+
+    // The bind group for an image path (the white texture when empty or unavailable).
+    WGPUBindGroup texture_for(const std::string& path) {
+        if (path.empty()) return white.bind_group;
+        if (auto it = textures.find(path); it != textures.end()) return it->second.bind_group;
+        if (!assets) { report_missing(path, "no asset store"); return white.bind_group; }
+        if (failed.contains(path)) { note_missing(path); return white.bind_group; }
+        auto img = assets->image(path);
+        if (!img) {
+            report_missing(path, img.error().message);
+            return white.bind_group;
+        }
+        auto t = upload_texture(path.c_str(), (*img)->width, (*img)->height, (*img)->rgba.data());
+        if (!t) {
+            report_missing(path, t.error().message);
+            return white.bind_group;
+        }
+        textures[path] = *t;
+        return t->bind_group;
+    }
+
+    // A glTF mesh by project path, uploaded on first use; null when unavailable.
+    AssetMesh* asset_mesh(const std::string& path) {
+        if (auto it = asset_meshes.find(path); it != asset_meshes.end()) return &it->second;
+        if (!assets) { report_missing(path, "no asset store"); return nullptr; }
+        if (failed.contains(path)) { note_missing(path); return nullptr; }
+        auto m = assets->mesh(path);
+        if (!m) {
+            report_missing(path, m.error().message);
+            return nullptr;
+        }
+        const assets::Mesh& src = **m;
+        std::vector<Vertex> verts;
+        verts.reserve(src.vertices.size());
+        for (const auto& v : src.vertices) verts.push_back({v.position, v.normal, v.uv});
+        AssetMesh am;
+        am.gpu.vertices = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
+        am.gpu.indices = device->create_buffer(path.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, src.indices.size() * sizeof(std::uint32_t), src.indices.data());
+        am.gpu.index_count = static_cast<std::uint32_t>(src.indices.size());
+        am.gpu.aabb_min = src.aabb_min;
+        am.gpu.aabb_max = src.aabb_max;
+        am.submeshes = src.submeshes;
+        am.materials = src.materials;
+        new_bounds.emplace_back(path, std::make_pair(src.aabb_min, src.aabb_max));
+        auto [it, inserted] = asset_meshes.emplace(path, std::move(am));
+        return &it->second;
+    }
+
+    static int primitive_index(const std::string& name) {
+        if (name == "cube" || name == "0" || name.empty()) return 0;
+        if (name == "sphere" || name == "1") return 1;
+        if (name == "plane" || name == "2") return 2;
+        if (name == "cylinder" || name == "3") return 3;
+        return -1;
     }
 
     CameraView find_camera(const world::World& w, float aspect) {
@@ -404,25 +594,57 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.point_lights = points;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
-    // Gather draws.
-    struct Draw { std::uint32_t mesh; std::uint32_t offset; };
+    // Gather draws: one per primitive entity, one per material of a glTF entity. Sorted by
+    // texture then mesh so bind changes are rare and the order is deterministic.
+    struct Draw {
+        std::string texture;
+        std::string mesh;
+        const GpuMesh* gpu;
+        std::uint32_t first, count, offset;
+        WGPUBindGroup material;
+    };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
+    std::uint32_t entities = 0;
     world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr, const world::WorldTransform& t) {
         if (!mr.visible || count >= kMaxObjects) return;
-        ObjectUniforms ou{};
+        ++entities;
         Mat4 model = Mat4::trs(t.position, t.rotation, t.scale);
+        ObjectUniforms ou{};
         to_array(model, ou.model);
         to_array(transpose(model.inverse_affine()), ou.normal);
-        ou.color[0] = mr.color.r; ou.color[1] = mr.color.g; ou.color[2] = mr.color.b; ou.color[3] = mr.color.a;
         ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
-        std::memcpy(im.object_staging.data() + static_cast<std::size_t>(count) * kObjectStride, &ou, sizeof ou);
-        int kind = mr.mesh < 0 || mr.mesh > 3 ? 0 : mr.mesh;
-        draws.push_back({static_cast<std::uint32_t>(kind), count * kObjectStride});
-        ++count;
+        auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key) {
+            if (count >= kMaxObjects) return;
+            ou.color[0] = color.x; ou.color[1] = color.y; ou.color[2] = color.z; ou.color[3] = color.w;
+            std::memcpy(im.object_staging.data() + static_cast<std::size_t>(count) * kObjectStride, &ou, sizeof ou);
+            draws.push_back({tex, mesh_key, gpu, first, n, count * kObjectStride, im.texture_for(tex)});
+            ++count;
+        };
+        int kind = Impl::primitive_index(mr.mesh);
+        if (kind >= 0) {
+            const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
+            push(&gm, 0, gm.index_count, mr.texture, {mr.color.r, mr.color.g, mr.color.b, mr.color.a}, mr.mesh);
+            return;
+        }
+        Impl::AssetMesh* am = im.asset_mesh(mr.mesh);
+        if (!am) {
+            // Missing asset: a magenta cube marks the spot instead of hiding the problem.
+            const GpuMesh& gm = im.meshes[0];
+            push(&gm, 0, gm.index_count, "", {1, 0, 1, 1}, "cube");
+            return;
+        }
+        for (const assets::Submesh& sm : am->submeshes) {
+            const assets::Material& mat = am->materials[std::min<std::size_t>(sm.material, am->materials.size() - 1)];
+            Vec4 color{mr.color.r * mat.base_color.x, mr.color.g * mat.base_color.y, mr.color.b * mat.base_color.z, mr.color.a * mat.base_color.w};
+            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh);
+        }
     });
+    std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) { return a.texture != b.texture ? a.texture < b.texture : a.mesh < b.mesh; });
     if (count > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(count) * kObjectStride);
-    im.stats.meshes = count;
+    im.stats.meshes = entities;
+    im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
+    im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
 
     WGPURenderPassColorAttachment ca[2]{};
     ca[0].view = frame.color;
@@ -456,16 +678,20 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetPipeline(pass, im.pipeline);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
-        std::uint32_t current_mesh = 0xFFFFFFFFu;
+        const GpuMesh* current_mesh = nullptr;
+        WGPUBindGroup current_material = nullptr;
         for (const Draw& d : draws) {
-            if (d.mesh != current_mesh) {
-                const GpuMesh& gm = im.meshes[d.mesh];
-                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, gm.vertices, 0, WGPU_WHOLE_SIZE);
-                wgpuRenderPassEncoderSetIndexBuffer(pass, gm.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-                current_mesh = d.mesh;
+            if (d.gpu != current_mesh) {
+                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
+                wgpuRenderPassEncoderSetIndexBuffer(pass, d.gpu->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                current_mesh = d.gpu;
+            }
+            if (d.material != current_material) {
+                wgpuRenderPassEncoderSetBindGroup(pass, 2, d.material, 0, nullptr);
+                current_material = d.material;
             }
             wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 1, &d.offset);
-            wgpuRenderPassEncoderDrawIndexed(pass, im.meshes[d.mesh].index_count, 1, 0, 0, 0);
+            wgpuRenderPassEncoderDrawIndexed(pass, d.count, 1, d.first, 0, 0);
             im.stats.draw_calls++;
         }
     }
@@ -551,6 +777,9 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
 }
 
 void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
+void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
+std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> Renderer::take_new_bounds() { return std::exchange(impl_->new_bounds, {}); }
+void Renderer::drop_asset_cache() { impl_->release_assets(); }
 Viewport Renderer::viewport() const { return impl_->viewport; }
 Viewport Renderer::applied_viewport() const { return impl_->applied; }
 
@@ -565,6 +794,11 @@ Json Renderer::describe() const {
     if (s.camera) j["camera"] = s.camera;
     const Viewport& v = impl_->applied;
     if (v.w != impl_->last_width || v.h != impl_->last_height) j["viewport"] = Json{{"x", v.x}, {"y", v.y}, {"w", v.w}, {"h", v.h}};
+    Json a;
+    a["meshes"] = s.asset_meshes;
+    a["textures"] = s.textures;
+    if (!s.missing.empty()) a["missing"] = s.missing;
+    j["assets"] = a;
     return j;
 }
 
