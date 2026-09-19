@@ -16,8 +16,9 @@ using world::EntityId;
 struct Body {
     EntityId id = 0;
     int kind = 0;  // 0 dynamic, 1 static, 2 kinematic
-    int shape = 0; // 0 box, 1 sphere
+    int shape = 0; // 0 box, 1 sphere, 2 capsule (half.x radius, half.y half length of the segment)
     bool trigger = false;
+    bool lock_rotation = false;
     bool sleeping = false;
     float inv_mass = 0;
     float restitution = 0, friction = 0;
@@ -41,15 +42,62 @@ struct Manifold {
 
 Vec3 mul3(const Mat4& m, Vec3 v) { return m.transform_dir(v); }
 
+// The capsule's segment end points in world space.
+void capsule_segment(const Body& b, Vec3& p0, Vec3& p1) {
+    Vec3 axis = b.rotation.rotate(Vec3{0, 1, 0}) * b.half.y;
+    p0 = b.position - axis;
+    p1 = b.position + axis;
+}
+
+Vec3 closest_on_segment(Vec3 p, Vec3 a, Vec3 b) {
+    Vec3 ab = b - a;
+    float len2 = dot(ab, ab);
+    if (len2 <= 1e-12f) return a;
+    float t = std::clamp(dot(p - a, ab) / len2, 0.0f, 1.0f);
+    return a + ab * t;
+}
+
+// Closest points between two segments (Ericson, Real-Time Collision Detection 5.1.9).
+void closest_segments(Vec3 p1, Vec3 q1, Vec3 p2, Vec3 q2, Vec3& c1, Vec3& c2) {
+    Vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    float a = dot(d1, d1), e = dot(d2, d2), f = dot(d2, r);
+    float s = 0, t = 0;
+    const float eps = 1e-8f;
+    if (a <= eps && e <= eps) { c1 = p1; c2 = p2; return; }
+    if (a <= eps) {
+        t = std::clamp(f / e, 0.0f, 1.0f);
+    } else {
+        float c = dot(d1, r);
+        if (e <= eps) {
+            s = std::clamp(-c / a, 0.0f, 1.0f);
+        } else {
+            float b = dot(d1, d2);
+            float denom = a * e - b * b;
+            s = denom != 0 ? std::clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0) { t = 0; s = std::clamp(-c / a, 0.0f, 1.0f); }
+            else if (t > 1) { t = 1; s = std::clamp((b - c) / a, 0.0f, 1.0f); }
+        }
+    }
+    c1 = p1 + d1 * s;
+    c2 = p2 + d2 * t;
+}
+
 Mat4 inertia_inverse(const Body& b) {
     Mat4 r;
     for (float& v : r.m) v = 0;
-    if (b.inv_mass == 0) return r;
+    if (b.inv_mass == 0 || b.lock_rotation) return r;
     float mass = 1.0f / b.inv_mass;
     float ix, iy, iz;
     if (b.shape == 1) {
         float rr = b.half.x * b.half.x;
         ix = iy = iz = 0.4f * mass * rr;
+    } else if (b.shape == 2) {
+        // A solid cylinder of the capsule's full height is close enough.
+        float rr = b.half.x * b.half.x;
+        float hh = 2 * (b.half.y + b.half.x);
+        ix = iz = mass * (3 * rr + hh * hh) / 12.0f;
+        iy = mass * rr / 2.0f;
     } else {
         float w = 2 * b.half.x, h = 2 * b.half.y, d = 2 * b.half.z;
         ix = mass * (h * h + d * d) / 12.0f;
@@ -73,6 +121,14 @@ void update_aabb(Body& b) {
         float r = b.half.x;
         b.aabb_min = b.position - Vec3{r, r, r};
         b.aabb_max = b.position + Vec3{r, r, r};
+        return;
+    }
+    if (b.shape == 2) {
+        Vec3 p0, p1;
+        capsule_segment(b, p0, p1);
+        float r = b.half.x;
+        b.aabb_min = Vec3{std::min(p0.x, p1.x) - r, std::min(p0.y, p1.y) - r, std::min(p0.z, p1.z) - r};
+        b.aabb_max = Vec3{std::max(p0.x, p1.x) + r, std::max(p0.y, p1.y) + r, std::max(p0.z, p1.z) + r};
         return;
     }
     Mat4 rot = Mat4::rotation(b.rotation);
@@ -99,6 +155,92 @@ bool collide_ss(const Body& a, const Body& b, Manifold& m) {
     m.normal = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
     m.points.push_back(a.position + m.normal * a.half.x);
     m.depths.push_back(r - dist);
+    return true;
+}
+
+// A sphere (center, radius r) against box b: the normal points from the box toward the sphere.
+bool sphere_box(Vec3 center, float r, const Body& b, Vec3& normal_world, Vec3& point, float& depth) {
+    Mat4 rot = Mat4::rotation(b.rotation);
+    Mat4 inv = rot.inverse_affine();
+    Vec3 local = inv.transform_dir(center - b.position);
+    Vec3 clamped{std::clamp(local.x, -b.half.x, b.half.x), std::clamp(local.y, -b.half.y, b.half.y), std::clamp(local.z, -b.half.z, b.half.z)};
+    Vec3 diff = local - clamped;
+    float dist2 = dot(diff, diff);
+    Vec3 normal_local;
+    if (dist2 > r * r) return false;
+    if (dist2 > 1e-8f) {
+        float dist = std::sqrt(dist2);
+        normal_local = diff * (1.0f / dist);
+        depth = r - dist;
+    } else {
+        float dx = b.half.x - std::fabs(local.x), dy = b.half.y - std::fabs(local.y), dz = b.half.z - std::fabs(local.z);
+        if (dx <= dy && dx <= dz) { normal_local = {local.x < 0 ? -1.0f : 1.0f, 0, 0}; depth = dx + r; }
+        else if (dy <= dz) { normal_local = {0, local.y < 0 ? -1.0f : 1.0f, 0}; depth = dy + r; }
+        else { normal_local = {0, 0, local.z < 0 ? -1.0f : 1.0f}; depth = dz + r; }
+    }
+    normal_world = normalize(rot.transform_dir(normal_local));
+    point = b.position + rot.transform_dir(clamped);
+    return true;
+}
+
+// Capsule (a) vs sphere (b).
+bool collide_cs(const Body& a, const Body& b, Manifold& m, bool flip) {
+    Vec3 p0, p1;
+    capsule_segment(a, p0, p1);
+    Vec3 c = closest_on_segment(b.position, p0, p1);
+    Vec3 d = b.position - c;
+    float dist = length(d);
+    float r = a.half.x + b.half.x;
+    if (dist >= r) return false;
+    Vec3 n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};  // from capsule toward sphere
+    m.normal = flip ? -n : n;
+    m.points.push_back(c + n * a.half.x);
+    m.depths.push_back(r - dist);
+    return true;
+}
+
+// Capsule vs capsule.
+bool collide_cc(const Body& a, const Body& b, Manifold& m) {
+    Vec3 a0, a1, b0, b1, ca, cb;
+    capsule_segment(a, a0, a1);
+    capsule_segment(b, b0, b1);
+    closest_segments(a0, a1, b0, b1, ca, cb);
+    Vec3 d = cb - ca;
+    float dist = length(d);
+    float r = a.half.x + b.half.x;
+    if (dist >= r) return false;
+    m.normal = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
+    m.points.push_back(ca + m.normal * a.half.x);
+    m.depths.push_back(r - dist);
+    return true;
+}
+
+// Capsule (a) vs box (b): the segment's ends and its point nearest the box center, each as a
+// sphere; points that agree with the deepest normal make the manifold (two when it lies flat).
+bool collide_cb(const Body& a, const Body& b, Manifold& m, bool flip) {
+    Vec3 p0, p1;
+    capsule_segment(a, p0, p1);
+    Vec3 candidates[3] = {p0, p1, closest_on_segment(b.position, p0, p1)};
+    struct Hit { Vec3 n, p; float depth; };
+    std::vector<Hit> hits;
+    for (const Vec3& c : candidates) {
+        Vec3 n, p;
+        float depth;
+        if (sphere_box(c, a.half.x, b, n, p, depth)) hits.push_back({n, p, depth});
+    }
+    if (hits.empty()) return false;
+    std::size_t deepest = 0;
+    for (std::size_t i = 1; i < hits.size(); ++i) if (hits[i].depth > hits[deepest].depth) deepest = i;
+    Vec3 n = hits[deepest].n;  // from box toward capsule
+    m.normal = flip ? n : -n;
+    for (std::size_t i = 0; i < hits.size(); ++i) {
+        if (i != deepest && dot(hits[i].n, n) < 0.95f) continue;
+        bool duplicate = false;
+        for (const Vec3& q : m.points) if (length(q - hits[i].p) < 1e-4f) duplicate = true;
+        if (duplicate) continue;
+        m.points.push_back(hits[i].p);
+        m.depths.push_back(hits[i].depth);
+    }
     return true;
 }
 
@@ -216,6 +358,49 @@ bool ray_sphere(Vec3 o, Vec3 dir, Vec3 c, float r, float& t) {
     return false;
 }
 
+// Ray vs capsule: the cylinder around the segment, then the two end spheres.
+bool ray_capsule(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
+    Vec3 p0, p1;
+    capsule_segment(b, p0, p1);
+    const float r = b.half.x;
+    bool found = false;
+    float best = 0;
+    Vec3 axis = p1 - p0;
+    float len2 = dot(axis, axis);
+    if (len2 > 1e-10f) {
+        Vec3 u = axis * (1.0f / std::sqrt(len2));
+        Vec3 w = o - p0;
+        Vec3 dperp = dir - u * dot(dir, u);
+        Vec3 wperp = w - u * dot(w, u);
+        float A = dot(dperp, dperp), B = 2 * dot(dperp, wperp), C = dot(wperp, wperp) - r * r;
+        if (A > 1e-10f) {
+            float disc = B * B - 4 * A * C;
+            if (disc >= 0) {
+                float tt = (-B - std::sqrt(disc)) / (2 * A);
+                if (tt >= 0) {
+                    Vec3 hit = o + dir * tt;
+                    float along = dot(hit - p0, u);
+                    if (along >= 0 && along * along <= len2) {
+                        found = true;
+                        best = tt;
+                        normal = normalize(hit - (p0 + u * along));
+                    }
+                }
+            }
+        }
+    }
+    for (const Vec3& c : {p0, p1}) {
+        float tt;
+        if (ray_sphere(o, dir, c, r, tt) && (!found || tt < best)) {
+            found = true;
+            best = tt;
+            normal = normalize(o + dir * tt - c);
+        }
+    }
+    if (found) t = best;
+    return found;
+}
+
 bool ray_box(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
     Mat4 rot = Mat4::rotation(b.rotation);
     Mat4 inv = rot.inverse_affine();
@@ -251,6 +436,7 @@ struct Physics::Impl {
     Settings settings;
     std::vector<Body> bodies;
     std::vector<Contact> contacts;
+    std::vector<JointInfo> joint_infos;
     std::set<std::pair<EntityId, EntityId>> touching;  // pairs in contact last step
     std::map<EntityId, float> sleep_timers;             // persists across steps (bodies are regathered)
     std::map<std::pair<EntityId, EntityId>, std::uint64_t> pair_cause;  // begin event seq per pair
@@ -271,9 +457,10 @@ struct Physics::Impl {
             b.linear_damping = rb.linear_damping;
             b.angular_damping = rb.angular_damping;
             b.gravity_scale = rb.gravity_scale;
+            b.lock_rotation = rb.lock_rotation;
             b.position = t.position + t.rotation.rotate(col.offset);
             b.rotation = t.rotation;
-            b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.size;
+            b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
             if (const world::Velocity* v = e.try_get<world::Velocity>()) {
                 b.velocity = v->linear;
                 b.angular = v->angular;
@@ -311,6 +498,7 @@ Physics::Physics(Settings settings) : impl_(std::make_unique<Impl>()) { impl_->s
 Physics::~Physics() = default;
 Settings& Physics::settings() { return impl_->settings; }
 const std::vector<Contact>& Physics::contacts() const { return impl_->contacts; }
+const std::vector<JointInfo>& Physics::joints() const { return impl_->joint_infos; }
 const StepStats& Physics::stats() const { return impl_->stats; }
 
 void Physics::step(world::World& w, double dt_d) {
@@ -362,7 +550,12 @@ void Physics::step(world::World& w, double dt_d) {
             bool hit = false;
             if (ba.shape == 1 && bb.shape == 1) hit = collide_ss(ba, bb, m);
             else if (ba.shape == 1 && bb.shape == 0) hit = collide_sb(ba, bb, m, false);
-            else if (ba.shape == 0 && bb.shape == 1) { hit = collide_sb(bb, ba, m, true); }
+            else if (ba.shape == 0 && bb.shape == 1) hit = collide_sb(bb, ba, m, true);
+            else if (ba.shape == 2 && bb.shape == 1) hit = collide_cs(ba, bb, m, false);
+            else if (ba.shape == 1 && bb.shape == 2) hit = collide_cs(bb, ba, m, true);
+            else if (ba.shape == 2 && bb.shape == 2) hit = collide_cc(ba, bb, m);
+            else if (ba.shape == 2 && bb.shape == 0) hit = collide_cb(ba, bb, m, false);
+            else if (ba.shape == 0 && bb.shape == 2) hit = collide_cb(bb, ba, m, true);
             else hit = collide_bb(ba, bb, m);
             if (hit) manifolds.push_back(std::move(m));
         }
@@ -376,6 +569,131 @@ void Physics::step(world::World& w, double dt_d) {
         if (a.sleeping && a.kind == 0 && pushes(b)) { a.sleeping = false; a.sleep_timer = 0; }
         if (b.sleeping && b.kind == 0 && pushes(a)) { b.sleeping = false; b.sleep_timer = 0; }
     }
+    // Joints: gathered from Joint components on bodies; the other side is a body, any entity as a
+    // fixed point, or a world point.
+    struct JointState {
+        EntityId entity = 0, target = 0;
+        int kind = 0;
+        std::size_t a = 0;                 // body index
+        bool b_is_body = false;
+        std::size_t b = 0;
+        Vec3 anchor_a, anchor_b;           // local anchors
+        Vec3 ra, rb;                       // anchor offsets from the body centers
+        Vec3 pa, pb;                       // anchor world positions
+        float length = 0;
+        bool rope = false;
+        float break_force = 0;
+        Vec3 impulse;                      // accumulated this step
+        float k = 0;                       // effective mass (distance joints)
+        Vec3 n;                            // constraint direction (distance joints)
+        float bias = 0;
+        Mat4 k_inv;                        // effective mass inverse (ball joints), 3x3 in a Mat4
+        bool broken = false;
+    };
+    std::vector<JointState> joints;
+    std::vector<std::pair<EntityId, float>> lengths_to_write;
+    auto body_index = [&](EntityId id) -> std::size_t {
+        auto it = std::lower_bound(im.bodies.begin(), im.bodies.end(), id, [](const Body& b, EntityId v) { return b.id < v; });
+        return (it != im.bodies.end() && it->id == id) ? static_cast<std::size_t>(it - im.bodies.begin()) : static_cast<std::size_t>(-1);
+    };
+    w.ecs().each([&](flecs::entity e, const world::Joint& j) {
+        std::size_t ia = body_index(e.id());
+        if (ia == static_cast<std::size_t>(-1)) return;
+        JointState js;
+        js.entity = e.id();
+        js.kind = j.kind;
+        js.a = ia;
+        js.rope = j.rope;
+        js.break_force = j.break_force;
+        js.anchor_a = j.anchor;
+        js.anchor_b = j.target_anchor;
+        const Body& a = im.bodies[ia];
+        js.pa = a.position + a.rotation.rotate(j.anchor);
+        js.ra = js.pa - a.position;
+        if (!j.target.empty()) {
+            EntityId t = w.find(j.target);
+            if (!t) return;  // target gone: the joint waits
+            js.target = t;
+            std::size_t ib = body_index(t);
+            if (ib != static_cast<std::size_t>(-1)) {
+                js.b_is_body = true;
+                js.b = ib;
+                const Body& b = im.bodies[ib];
+                js.pb = b.position + b.rotation.rotate(j.target_anchor);
+                js.rb = js.pb - b.position;
+            } else {
+                Vec3 tp{0, 0, 0};
+                Quat tr;
+                if (const auto* wt = w.try_get<world::WorldTransform>(t)) { tp = wt->position; tr = wt->rotation; }
+                else if (const auto* tt = w.try_get<world::Transform>(t)) { tp = tt->position; tr = tt->rotation; }
+                js.pb = tp + tr.rotate(j.target_anchor);
+            }
+        } else {
+            js.pb = j.target_anchor;
+        }
+        float current = length(js.pb - js.pa);
+        js.length = j.distance < 0 ? current : j.distance;
+        if (j.distance < 0) lengths_to_write.push_back({e.id(), current});
+        joints.push_back(js);
+    });
+    std::sort(joints.begin(), joints.end(), [](const JointState& x, const JointState& y) { return x.entity < y.entity; });
+    // A joint wakes what it holds: when the other side moves, or when the joint is violated
+    // (an anchor moved, a length changed).
+    for (JointState& js : joints) {
+        Body& a = im.bodies[js.a];
+        float error = js.kind == 1 ? length(js.pb - js.pa) : length(js.pb - js.pa) - js.length;
+        bool violated = js.rope ? error > s.slop : std::fabs(error) > s.slop;
+        bool other_moving = js.b_is_body && ((im.bodies[js.b].kind == 0 && !im.bodies[js.b].sleeping) || im.bodies[js.b].kind == 2);
+        if (a.sleeping && a.kind == 0 && (other_moving || violated)) { a.sleeping = false; a.sleep_timer = 0; }
+        if (js.b_is_body) {
+            Body& b = im.bodies[js.b];
+            if (b.sleeping && b.kind == 0 && ((a.kind == 0 && !a.sleeping) || a.kind == 2 || violated)) { b.sleeping = false; b.sleep_timer = 0; }
+        }
+    }
+    for (JointState& js : joints) {
+        Body& a = im.bodies[js.a];
+        float inv_a = a.kind == 0 && !a.sleeping ? a.inv_mass : 0.0f;
+        float inv_b = js.b_is_body && im.bodies[js.b].kind == 0 && !im.bodies[js.b].sleeping ? im.bodies[js.b].inv_mass : 0.0f;
+        const Mat4 zero = [] { Mat4 z; for (float& v : z.m) v = 0; return z; }();
+        const Mat4& ia_w = inv_a > 0 ? a.inv_inertia_world : zero;
+        const Mat4& ib_w = inv_b > 0 ? im.bodies[js.b].inv_inertia_world : zero;
+        Vec3 d = js.pb - js.pa;
+        float dist = length(d);
+        if (js.kind == 1) {
+            // Ball joint: K = (1/ma + 1/mb) I - [ra]x Ia^-1 [ra]x - [rb]x Ib^-1 [rb]x, inverted.
+            Mat4 K = zero;
+            for (int i = 0; i < 3; ++i) K.at(i, i) = inv_a + inv_b;
+            auto skew_term = [&](Vec3 r, const Mat4& iw, Mat4& out) {
+                // -[r]x * iw * [r]x
+                float rx[3][3] = {{0, -r.z, r.y}, {r.z, 0, -r.x}, {-r.y, r.x, 0}};
+                float t1[3][3] = {};
+                for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) t1[i][j] += iw.at(k, i) * rx[k][j];
+                for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { float s = 0; for (int k = 0; k < 3; ++k) s += rx[k][i] * t1[k][j]; out.at(j, i) += s; }
+            };
+            if (inv_a > 0) skew_term(js.ra, ia_w, K);
+            if (inv_b > 0) skew_term(js.rb, ib_w, K);
+            // 3x3 inverse.
+            float m00 = K.at(0, 0), m01 = K.at(1, 0), m02 = K.at(2, 0), m10 = K.at(0, 1), m11 = K.at(1, 1), m12 = K.at(2, 1), m20 = K.at(0, 2), m21 = K.at(1, 2), m22 = K.at(2, 2);
+            float det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
+            js.k_inv = zero;
+            if (std::fabs(det) > 1e-12f) {
+                float inv = 1.0f / det;
+                js.k_inv.at(0, 0) = (m11 * m22 - m12 * m21) * inv; js.k_inv.at(1, 0) = (m02 * m21 - m01 * m22) * inv; js.k_inv.at(2, 0) = (m01 * m12 - m02 * m11) * inv;
+                js.k_inv.at(0, 1) = (m12 * m20 - m10 * m22) * inv; js.k_inv.at(1, 1) = (m00 * m22 - m02 * m20) * inv; js.k_inv.at(2, 1) = (m02 * m10 - m00 * m12) * inv;
+                js.k_inv.at(0, 2) = (m10 * m21 - m11 * m20) * inv; js.k_inv.at(1, 2) = (m01 * m20 - m00 * m21) * inv; js.k_inv.at(2, 2) = (m00 * m11 - m01 * m10) * inv;
+            }
+            js.n = {};  // no velocity bias: the position pass below removes drift
+        } else {
+            js.n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
+            Vec3 ra_n = cross(js.ra, js.n), rb_n = cross(js.rb, js.n);
+            js.k = inv_a + inv_b + (inv_a > 0 ? dot(js.n, cross(mul3(ia_w, ra_n), js.ra)) : 0.0f) + (inv_b > 0 ? dot(js.n, cross(mul3(ib_w, rb_n), js.rb)) : 0.0f);
+            float c = dist - js.length;
+            // A slack rope only acts when the anchors would pass its length within this step;
+            // drift of taut joints is removed by the position pass below, not by a velocity bias.
+            js.bias = js.rope && c < 0 ? c / dt : 0.0f;
+        }
+    }
+    im.stats.joints = static_cast<std::uint32_t>(joints.size());
     // 3. Solve (non-trigger manifolds) with accumulated, clamped impulses (sequential impulses).
     struct PointState { float jn = 0; float jt1 = 0; float jt2 = 0; float vn0 = 0; float bias = 0; float k_n = 0; Vec3 ra, rb, t1, t2; float k_t1 = 0, k_t2 = 0; };
     std::vector<std::vector<PointState>> states(manifolds.size());
@@ -416,6 +734,36 @@ void Physics::step(world::World& w, double dt_d) {
         }
     }
     for (int iter = 0; iter < s.solver_iterations; ++iter) {
+        for (JointState& js : joints) {
+            Body& a = im.bodies[js.a];
+            Body* bp = js.b_is_body ? &im.bodies[js.b] : nullptr;
+            bool a_dyn = a.kind == 0 && !a.sleeping, b_dyn = bp && bp->kind == 0 && !bp->sleeping;
+            if (!a_dyn && !b_dyn) continue;
+            Vec3 va = a_dyn || a.kind == 2 ? a.velocity + cross(a.angular, js.ra) : Vec3{0, 0, 0};
+            Vec3 vb = bp ? (bp->kind != 1 ? bp->velocity + cross(bp->angular, js.rb) : Vec3{0, 0, 0}) : Vec3{0, 0, 0};
+            Vec3 rel = vb - va;
+            auto apply = [&](Vec3 impulse) {
+                // Positive impulse pulls a toward b (applied +impulse to a, -impulse to b).
+                if (a_dyn) { a.velocity += impulse * a.inv_mass; a.angular += mul3(a.inv_inertia_world, cross(js.ra, impulse)); }
+                if (b_dyn) { bp->velocity -= impulse * bp->inv_mass; bp->angular -= mul3(bp->inv_inertia_world, cross(js.rb, impulse)); }
+            };
+            if (js.kind == 1) {
+                // Want rel + bias = 0: impulse = K^-1 (rel + bias).
+                Vec3 target = rel + js.n;
+                Vec3 imp = mul3(js.k_inv, target);
+                apply(imp);
+                js.impulse += imp;
+            } else {
+                if (js.k <= 0) continue;
+                float vn = dot(rel, js.n);   // separating speed along the rod
+                float dj = (vn + js.bias) / js.k;
+                float next = dot(js.impulse, js.n) + dj;
+                if (js.rope && next < 0) next = 0;  // a rope only pulls
+                dj = next - dot(js.impulse, js.n);
+                apply(js.n * dj);
+                js.impulse += js.n * dj;
+            }
+        }
         for (std::size_t mi = 0; mi < manifolds.size(); ++mi) {
             Manifold& m = manifolds[mi];
             if (m.trigger || states[mi].empty()) continue;
@@ -466,10 +814,39 @@ void Physics::step(world::World& w, double dt_d) {
             }
         }
     }
+    // Joint forces and breaking.
+    im.joint_infos.clear();
+    std::vector<EntityId> broken;
+    for (JointState& js : joints) {
+        float force = length(js.impulse) / dt;
+        JointInfo info;
+        info.entity = js.entity;
+        info.target = js.target;
+        info.kind = js.kind;
+        info.length = js.length;
+        info.current = length(js.pb - js.pa);
+        info.force = force;
+        im.joint_infos.push_back(info);
+        if (js.break_force > 0 && force > js.break_force) broken.push_back(js.entity);
+    }
+    for (EntityId id : broken) {
+        Json data;
+        data["path"] = w.path(id);
+        std::uint64_t seq = w.events().emit(w.tick_index(), "joint.broken", id, data);
+        (void)w.remove(id, "Joint", seq);
+        im.stats.broken++;
+    }
+    for (const auto& [id, len] : lengths_to_write) {
+        if (w.has(id, "Joint")) (void)w.set(id, "Joint", Json{{"distance", len}});
+    }
+    for (const JointInfo& info : im.joint_infos) {
+        if (w.has(info.entity, "Joint")) (void)w.set(info.entity, "Joint", Json{{"force", info.force}});
+    }
     // 4. Integrate, project out remaining penetration, sleep.
     for (Body& b : im.bodies) {
         if (b.kind == 1) continue;
         if (b.kind == 0 && b.sleeping) continue;
+        if (b.lock_rotation) b.angular = {};
         b.position += b.velocity * dt;
         float w_len = length(b.angular);
         if (w_len > 1e-6f) b.rotation = normalize(Quat::from_axis_angle(b.angular, w_len * dt) * b.rotation);
@@ -504,6 +881,65 @@ void Physics::step(world::World& w, double dt_d) {
         Vec3 shift = m.normal * (correction / inv_mass_sum);
         if (a.kind == 0 && !a.sleeping) a.position -= shift * a.inv_mass;
         if (b.kind == 0 && !b.sleeping) b.position += shift * b.inv_mass;
+    }
+    // Joint position projection (Box2D's position solver): after integration, move the bodies so
+    // the anchors meet again, splitting the correction by the same effective mass the velocity
+    // pass used, so a fast pendulum neither stretches nor gains energy from a velocity bias.
+    const float max_correction = 0.2f;
+    for (int iter = 0; iter < 3 && !joints.empty(); ++iter) {
+        for (JointState& js : joints) {
+            Body& a = im.bodies[js.a];
+            Body* bp = js.b_is_body ? &im.bodies[js.b] : nullptr;
+            bool a_dyn = a.kind == 0 && !a.sleeping, b_dyn = bp && bp->kind == 0 && !bp->sleeping;
+            if (!a_dyn && !b_dyn) continue;
+            float inv_a = a_dyn ? a.inv_mass : 0.0f, inv_b = b_dyn ? bp->inv_mass : 0.0f;
+            Vec3 ra = a.rotation.rotate(js.anchor_a);
+            Vec3 pa = a.position + ra;
+            Vec3 rb = bp ? bp->rotation.rotate(js.anchor_b) : Vec3{};
+            Vec3 pb = bp ? bp->position + rb : js.pb;
+            Vec3 d = pb - pa;
+            Vec3 P;
+            if (js.kind == 1) {
+                if (length(d) < s.slop) continue;
+                Mat4 K;
+                for (float& v : K.m) v = 0;
+                for (int i = 0; i < 3; ++i) K.at(i, i) = inv_a + inv_b;
+                auto add_term = [&](Vec3 r, const Mat4& iw) {
+                    float rx[3][3] = {{0, -r.z, r.y}, {r.z, 0, -r.x}, {-r.y, r.x, 0}};
+                    float t1[3][3] = {};
+                    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) t1[i][j] += iw.at(k, i) * rx[k][j];
+                    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { float acc = 0; for (int k = 0; k < 3; ++k) acc += rx[k][i] * t1[k][j]; K.at(j, i) += acc; }
+                };
+                if (a_dyn) add_term(ra, a.inv_inertia_world);
+                if (b_dyn) add_term(rb, bp->inv_inertia_world);
+                float m00 = K.at(0, 0), m01 = K.at(1, 0), m02 = K.at(2, 0), m10 = K.at(0, 1), m11 = K.at(1, 1), m12 = K.at(2, 1), m20 = K.at(0, 2), m21 = K.at(1, 2), m22 = K.at(2, 2);
+                float det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
+                if (std::fabs(det) <= 1e-12f) continue;
+                float inv = 1.0f / det;
+                Vec3 c0{(m11 * m22 - m12 * m21) * inv, (m12 * m20 - m10 * m22) * inv, (m10 * m21 - m11 * m20) * inv};
+                Vec3 c1{(m02 * m21 - m01 * m22) * inv, (m00 * m22 - m02 * m20) * inv, (m01 * m20 - m00 * m21) * inv};
+                Vec3 c2{(m01 * m12 - m02 * m11) * inv, (m02 * m10 - m00 * m12) * inv, (m00 * m11 - m01 * m10) * inv};
+                P = c0 * d.x + c1 * d.y + c2 * d.z;
+            } else {
+                float dist = length(d);
+                float c = dist - js.length;
+                if (js.rope && c < 0) continue;
+                if (std::fabs(c) < s.slop) continue;
+                c = std::clamp(c, -max_correction, max_correction);
+                Vec3 n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
+                float k = inv_a + inv_b;
+                if (a_dyn) k += dot(n, cross(mul3(a.inv_inertia_world, cross(ra, n)), ra));
+                if (b_dyn) k += dot(n, cross(mul3(bp->inv_inertia_world, cross(rb, n)), rb));
+                if (k <= 0) continue;
+                P = n * (c / k);
+            }
+            auto turn = [](Body& b, Vec3 w_disp) {
+                float len = length(w_disp);
+                if (len > 1e-7f) b.rotation = normalize(Quat::from_axis_angle(w_disp, len) * b.rotation);
+            };
+            if (a_dyn) { a.position += P * inv_a; turn(a, mul3(a.inv_inertia_world, cross(ra, P))); }
+            if (b_dyn) { bp->position -= P * inv_b; turn(*bp, mul3(bp->inv_inertia_world, cross(rb, P)) * -1.0f); }
+        }
     }
     // 5. Contacts and events.
     std::set<std::pair<EntityId, EntityId>> now;
@@ -571,11 +1007,13 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
         b.position = t.position + t.rotation.rotate(col.offset);
         b.rotation = t.rotation;
         b.shape = col.shape;
-        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.size;
+        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
         float tt = 0;
         Vec3 n;
         bool hit = false;
-        if (b.shape == 1) {
+        if (b.shape == 2) {
+            hit = ray_capsule(origin, dir, b, tt, n);
+        } else if (b.shape == 1) {
             hit = ray_sphere(origin, dir, b.position, b.half.x, tt);
             if (hit) n = normalize(origin + dir * tt - b.position);
         } else {
@@ -604,9 +1042,9 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
         b.position = t.position + t.rotation.rotate(col.offset);
         b.rotation = t.rotation;
         b.shape = col.shape;
-        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.size;
+        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
         Manifold m;
-        bool hit = b.shape == 1 ? collide_ss(probe, b, m) : collide_sb(probe, b, m, false);
+        bool hit = b.shape == 1 ? collide_ss(probe, b, m) : b.shape == 2 ? collide_cs(b, probe, m, true) : collide_sb(probe, b, m, false);
         if (hit) out.push_back(e.id());
     });
     std::sort(out.begin(), out.end());
@@ -622,6 +1060,8 @@ Json Physics::describe() const {
     j["contacts"] = s.contacts;
     j["begins"] = s.begins;
     j["ends"] = s.ends;
+    j["joints"] = s.joints;
+    j["broken"] = s.broken;
     j["gravity"] = Json{{"x", impl_->settings.gravity.x}, {"y", impl_->settings.gravity.y}, {"z", impl_->settings.gravity.z}};
     return j;
 }

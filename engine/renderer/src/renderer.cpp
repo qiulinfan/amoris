@@ -70,6 +70,7 @@ struct Object {
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
+@group(1) @binding(1) var<storage, read> joints: array<mat4x4f>;
 @group(2) @binding(0) var base_tex: texture_2d<f32>;
 @group(2) @binding(1) var base_samp: sampler;
 
@@ -99,6 +100,31 @@ struct VsOut {
 @vertex fn vs_shadow(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
     let object = objects[instance];
     return frame.light_view_proj * (object.model * vec4f(position, 1.0));
+}
+
+// Skinned meshes: the joint matrices of this instance start at object.id.z in the joints array.
+fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
+    return joints[base + j.x] * w.x + joints[base + j.y] * w.y + joints[base + j.z] * w.z + joints[base + j.w] * w.w;
+}
+
+@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> VsOut {
+    let object = objects[instance];
+    let model = object.model * skin_matrix(object.id.z, j, w);
+    var out: VsOut;
+    let world = model * vec4f(position, 1.0);
+    out.clip = frame.view_proj * world;
+    out.world_pos = world.xyz;
+    out.normal = normalize((model * vec4f(normal, 0.0)).xyz);
+    out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
+    out.color = object.color;
+    out.id = object.id.x;
+    return out;
+}
+
+@vertex fn vs_shadow_skinned(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> @builtin(position) vec4f {
+    let object = objects[instance];
+    let model = object.model * skin_matrix(object.id.z, j, w);
+    return frame.light_view_proj * (model * vec4f(position, 1.0));
 }
 
 struct FsOut {
@@ -164,9 +190,11 @@ struct FsOut {
 struct GpuMesh {
     WGPUBuffer vertices = nullptr;
     WGPUBuffer indices = nullptr;
+    WGPUBuffer skin = nullptr;      // joints and weights per vertex, skinned assets only
     std::uint32_t index_count = 0;
     Vec3 aabb_min, aabb_max;
 };
+constexpr std::uint32_t kMaxJoints = 16384;  // joint matrices per frame across every skinned instance
 
 void to_array(const Mat4& m, float* out) { std::memcpy(out, m.m, sizeof(float) * 16); }
 
@@ -186,6 +214,12 @@ struct Renderer::Impl {
     WGPUBindGroupLayout object_bgl = nullptr;
     WGPUPipelineLayout layout = nullptr;
     WGPURenderPipeline pipeline = nullptr;
+    WGPURenderPipeline skinned_pipeline = nullptr;
+    WGPURenderPipeline shadow_skinned_pipeline = nullptr;
+    WGPUBuffer joint_buffer = nullptr;
+    std::vector<float> joint_staging;  // 16 floats per matrix
+    std::uint32_t joint_count = 0;
+    const Animation* animation = nullptr;  // poses for the frame being drawn
     WGPURenderPipeline sprite_pipeline = nullptr;
     WGPURenderPipeline shadow_pipeline = nullptr;
     WGPUPipelineLayout shadow_layout = nullptr;
@@ -222,6 +256,14 @@ struct Renderer::Impl {
         std::vector<assets::Material> materials;
     };
     std::map<std::string, AssetMesh> asset_meshes;
+    // Tile layers as static meshes: key "map|layer|tile_size" -> submeshes per tileset texture.
+    struct TileLayerMesh {
+        GpuMesh gpu;
+        struct Part { std::uint32_t first, count; std::string texture; };
+        std::vector<Part> parts;
+        std::int32_t index;  // position of the layer in the map's file order
+    };
+    std::map<std::string, TileLayerMesh> tile_meshes;
     std::set<std::string> failed;  // asset paths reported once
     std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> new_bounds;
     RenderStats stats;
@@ -243,7 +285,13 @@ struct Renderer::Impl {
         for (auto& [path, am] : asset_meshes) {
             if (am.gpu.vertices) wgpuBufferRelease(am.gpu.vertices);
             if (am.gpu.indices) wgpuBufferRelease(am.gpu.indices);
+            if (am.gpu.skin) wgpuBufferRelease(am.gpu.skin);
         }
+        for (auto& [key, tm] : tile_meshes) {
+            if (tm.gpu.vertices) wgpuBufferRelease(tm.gpu.vertices);
+            if (tm.gpu.indices) wgpuBufferRelease(tm.gpu.indices);
+        }
+        tile_meshes.clear();
         asset_meshes.clear();
         for (auto& [path, t] : textures) release_texture(t);
         textures.clear();
@@ -275,6 +323,9 @@ struct Renderer::Impl {
         if (shadow_sampler) wgpuSamplerRelease(shadow_sampler);
         if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
+        if (skinned_pipeline) wgpuRenderPipelineRelease(skinned_pipeline);
+        if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
+        if (joint_buffer) wgpuBufferRelease(joint_buffer);
         if (layout) wgpuPipelineLayoutRelease(layout);
         if (object_bgl) wgpuBindGroupLayoutRelease(object_bgl);
         if (frame_bgl) wgpuBindGroupLayoutRelease(frame_bgl);
@@ -337,16 +388,21 @@ struct Renderer::Impl {
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
-        WGPUBindGroupLayoutEntry oe{};
-        oe.binding = 0;
-        oe.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-        oe.buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
-        oe.buffer.hasDynamicOffset = false;
-        oe.buffer.minBindingSize = sizeof(ObjectUniforms);
+        WGPUBindGroupLayoutEntry oe[2]{};
+        oe[0].binding = 0;
+        oe[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        oe[0].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        oe[0].buffer.hasDynamicOffset = false;
+        oe[0].buffer.minBindingSize = sizeof(ObjectUniforms);
+        oe[1].binding = 1;
+        oe[1].visibility = WGPUShaderStage_Vertex;
+        oe[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        oe[1].buffer.hasDynamicOffset = false;
+        oe[1].buffer.minBindingSize = sizeof(float) * 16;
         WGPUBindGroupLayoutDescriptor od{};
         od.label = rhi::str("pocket.object");
-        od.entryCount = 1;
-        od.entries = &oe;
+        od.entryCount = 2;
+        od.entries = oe;
         object_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &od);
 
         WGPUBindGroupLayoutEntry me[2]{};
@@ -391,6 +447,18 @@ struct Renderer::Impl {
         vbl.arrayStride = sizeof(Vertex);
         vbl.attributeCount = 3;
         vbl.attributes = attrs;
+        WGPUVertexAttribute skin_attrs[2]{};
+        skin_attrs[0].format = WGPUVertexFormat_Uint16x4;
+        skin_attrs[0].offset = 0;
+        skin_attrs[0].shaderLocation = 3;
+        skin_attrs[1].format = WGPUVertexFormat_Float32x4;
+        skin_attrs[1].offset = sizeof(std::uint16_t) * 4;
+        skin_attrs[1].shaderLocation = 4;
+        WGPUVertexBufferLayout vbls[2] = {vbl, {}};
+        vbls[1].stepMode = WGPUVertexStepMode_Vertex;
+        vbls[1].arrayStride = sizeof(assets::SkinVertex);
+        vbls[1].attributeCount = 2;
+        vbls[1].attributes = skin_attrs;
 
         WGPUColorTargetState targets[2]{};
         targets[0].format = device->color_format();
@@ -426,6 +494,16 @@ struct Renderer::Impl {
         rpd.fragment = &fs;
         pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!pipeline) return fail("gpu_pipeline_failed", "mesh pipeline creation failed");
+        // Skinned meshes: the same lit fragment, a vertex stage that blends joint matrices.
+        rpd.label = rhi::str("pocket.mesh.skinned");
+        rpd.vertex.entryPoint = rhi::str("vs_skinned");
+        rpd.vertex.bufferCount = 2;
+        rpd.vertex.buffers = vbls;
+        skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!skinned_pipeline) return fail("gpu_pipeline_failed", "skinned pipeline creation failed");
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
         // Sprites: same layout and vertex path, unlit fragment, alpha blend, no depth writes,
         // both faces (a sprite seen from behind is still a sprite).
         WGPUBlendState blend{};
@@ -453,6 +531,14 @@ struct Renderer::Impl {
         rpd.primitive.cullMode = WGPUCullMode_None;
         shadow_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!shadow_pipeline) return fail("gpu_pipeline_failed", "shadow pipeline creation failed");
+        rpd.label = rhi::str("pocket.shadow.skinned");
+        rpd.vertex.entryPoint = rhi::str("vs_shadow_skinned");
+        rpd.vertex.bufferCount = 2;
+        rpd.vertex.buffers = vbls;
+        shadow_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!shadow_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned shadow pipeline creation failed");
+        joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16);
+        joint_staging.resize(static_cast<std::size_t>(kMaxJoints) * 16);
 
         frame_buffer = device->create_buffer("pocket.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
         object_buffer = device->create_buffer("pocket.objects", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kObjectStride) * kMaxObjects);
@@ -513,15 +599,18 @@ struct Renderer::Impl {
         sbd.entries = sbe;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
 
-        WGPUBindGroupEntry obe{};
-        obe.binding = 0;
-        obe.buffer = object_buffer;
-        obe.size = static_cast<std::uint64_t>(kObjectStride) * kMaxObjects;
+        WGPUBindGroupEntry obe[2]{};
+        obe[0].binding = 0;
+        obe[0].buffer = object_buffer;
+        obe[0].size = static_cast<std::uint64_t>(kObjectStride) * kMaxObjects;
+        obe[1].binding = 1;
+        obe[1].buffer = joint_buffer;
+        obe[1].size = static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16;
         WGPUBindGroupDescriptor obd{};
         obd.label = rhi::str("pocket.object");
         obd.layout = object_bgl;
-        obd.entryCount = 1;
-        obd.entries = &obe;
+        obd.entryCount = 2;
+        obd.entries = obe;
         object_bg = wgpuDeviceCreateBindGroup(device->device(), &obd);
 
         WGPUSamplerDescriptor sd{};
@@ -652,6 +741,7 @@ struct Renderer::Impl {
         AssetMesh am;
         am.gpu.vertices = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
         am.gpu.indices = device->create_buffer(path.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, src.indices.size() * sizeof(std::uint32_t), src.indices.data());
+        if (src.skinned()) am.gpu.skin = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, src.skin_vertices.size() * sizeof(assets::SkinVertex), src.skin_vertices.data());
         am.gpu.index_count = static_cast<std::uint32_t>(src.indices.size());
         am.gpu.aabb_min = src.aabb_min;
         am.gpu.aabb_max = src.aabb_max;
@@ -659,6 +749,67 @@ struct Renderer::Impl {
         am.materials = src.materials;
         new_bounds.emplace_back(path, std::make_pair(src.aabb_min, src.aabb_max));
         auto [it, inserted] = asset_meshes.emplace(path, std::move(am));
+        return &it->second;
+    }
+
+    // One tile layer of a map as a mesh of textured quads in the entity's XY plane, built once.
+    const TileLayerMesh* tile_layer_mesh(const assets::TileMap& map, const assets::TileLayer& layer, std::int32_t layer_index, float tile_size) {
+        const std::string key = map.path + "|" + layer.name + "|" + std::to_string(layer_index) + "|" + std::to_string(tile_size);
+        if (auto it = tile_meshes.find(key); it != tile_meshes.end()) return &it->second;
+        std::vector<Vertex> verts;
+        std::vector<std::uint32_t> indices;
+        TileLayerMesh tm;
+        tm.index = layer_index;
+        // Group quads per tileset so each texture is one draw.
+        std::map<const assets::TileSet*, std::vector<std::pair<int, int>>> by_set;
+        for (int y = 0; y < layer.height; ++y) {
+            for (int x = 0; x < layer.width; ++x) {
+                std::uint32_t gid = layer.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(layer.width) + static_cast<std::size_t>(x)];
+                if (gid == 0) continue;
+                if (const assets::TileSet* ts = map.tileset_for(gid)) by_set[ts].push_back({x, y});
+            }
+        }
+        const float ox = layer.offset_x / static_cast<float>(map.tile_width) * tile_size;
+        const float oy = -layer.offset_y / static_cast<float>(map.tile_height) * tile_size;
+        for (auto& [ts, cells] : by_set) {
+            TileLayerMesh::Part part{static_cast<std::uint32_t>(indices.size()), 0, ts->image};
+            const float iw = ts->image_width > 0 ? static_cast<float>(ts->image_width) : static_cast<float>(ts->columns * (ts->tile_width + ts->spacing) - ts->spacing + 2 * ts->margin);
+            const int rows = ts->columns > 0 ? std::max(1, (ts->tile_count + ts->columns - 1) / ts->columns) : 1;
+            const float ih = ts->image_height > 0 ? static_cast<float>(ts->image_height) : static_cast<float>(rows * (ts->tile_height + ts->spacing) - ts->spacing + 2 * ts->margin);
+            for (auto [x, y] : cells) {
+                std::uint32_t gid = layer.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(layer.width) + static_cast<std::size_t>(x)];
+                const std::uint32_t local = (gid & assets::TileMap::kIdMask) - ts->first_gid;
+                const int col = static_cast<int>(local % static_cast<std::uint32_t>(ts->columns));
+                const int row = static_cast<int>(local / static_cast<std::uint32_t>(ts->columns));
+                float u0 = (static_cast<float>(ts->margin + col * (ts->tile_width + ts->spacing))) / iw;
+                float v0 = (static_cast<float>(ts->margin + row * (ts->tile_height + ts->spacing))) / ih;
+                float u1 = u0 + static_cast<float>(ts->tile_width) / iw;
+                float v1 = v0 + static_cast<float>(ts->tile_height) / ih;
+                // Tiled flips: horizontal and vertical swap the edges; diagonal swaps the axes.
+                Vec2 uv[4] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};  // bottom-left, bottom-right, top-right, top-left
+                if (gid & assets::TileMap::kFlipD) { std::swap(uv[0], uv[2]); }
+                if (gid & assets::TileMap::kFlipH) { std::swap(uv[0], uv[1]); std::swap(uv[2], uv[3]); }
+                if (gid & assets::TileMap::kFlipV) { std::swap(uv[0], uv[3]); std::swap(uv[1], uv[2]); }
+                const float wx0 = ox + static_cast<float>(x) * tile_size, wx1 = wx0 + tile_size;
+                const float wy1 = oy - static_cast<float>(y) * tile_size, wy0 = wy1 - tile_size;
+                auto base = static_cast<std::uint32_t>(verts.size());
+                verts.push_back({{wx0, wy0, 0}, {0, 0, 1}, uv[0]});
+                verts.push_back({{wx1, wy0, 0}, {0, 0, 1}, uv[1]});
+                verts.push_back({{wx1, wy1, 0}, {0, 0, 1}, uv[2]});
+                verts.push_back({{wx0, wy1, 0}, {0, 0, 1}, uv[3]});
+                indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+            }
+            part.count = static_cast<std::uint32_t>(indices.size()) - part.first;
+            tm.parts.push_back(part);
+        }
+        if (verts.empty()) {
+            verts.push_back({});
+            indices.push_back(0);
+        }
+        tm.gpu.vertices = device->create_buffer(key.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
+        tm.gpu.indices = device->create_buffer(key.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, indices.size() * sizeof(std::uint32_t), indices.data());
+        tm.gpu.index_count = static_cast<std::uint32_t>(indices.size());
+        auto [it, inserted] = tile_meshes.emplace(key, std::move(tm));
         return &it->second;
     }
 
@@ -720,7 +871,16 @@ Result<std::unique_ptr<Renderer>> Renderer::create(rhi::Device& device) {
     return r;
 }
 
-Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear) {
+namespace {
+template <class Draws>
+std::uint32_t tile_layers_parts(const Draws& sprites) {
+    std::uint32_t n = 0;
+    for (const auto& s : sprites) n += s.mesh != nullptr;
+    return n;
+}
+}  // namespace
+
+Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation) {
     Impl& im = *impl_;
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
     im.last_width = frame.width;
@@ -812,10 +972,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         std::uint32_t first, count;
         WGPUBindGroup material;
         ObjectUniforms object;
+        bool skinned = false;
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
     std::uint32_t entities = 0;
+    std::uint32_t skinned_instances = 0;
+    im.animation = animation;
+    im.joint_count = 0;
     world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr, const world::WorldTransform& t) {
         if (!mr.visible || count >= kMaxObjects) return;
         ++entities;
@@ -824,10 +988,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         to_array(model, ou.model);
         to_array(transpose(model.inverse_affine()), ou.normal);
         ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
-        auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key) {
+        auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, bool skinned = false) {
             if (count >= kMaxObjects) return;
             ou.color[0] = color.x; ou.color[1] = color.y; ou.color[2] = color.z; ou.color[3] = color.w;
-            draws.push_back({tex, mesh_key, gpu, first, n, im.texture_for(tex), ou});
+            draws.push_back({tex, mesh_key, gpu, first, n, im.texture_for(tex), ou, skinned});
             ++count;
         };
         ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
@@ -844,17 +1008,37 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             push(&gm, 0, gm.index_count, "", {1, 0, 1, 1}, "cube");
             return;
         }
+        // A posed skin: its joint matrices go into the joint buffer once per entity and skin.
+        const Pose* pose = animation ? animation->pose(e.id()) : nullptr;
+        std::vector<std::uint32_t> joint_base(pose ? pose->joints.size() : 0, kMaxJoints);
+        if (pose && am->gpu.skin) {
+            for (std::size_t s = 0; s < pose->joints.size(); ++s) {
+                const auto& jm = pose->joints[s];
+                if (im.joint_count + jm.size() > kMaxJoints) break;
+                joint_base[s] = im.joint_count;
+                for (const Mat4& m : jm) {
+                    std::memcpy(im.joint_staging.data() + static_cast<std::size_t>(im.joint_count) * 16, m.m, sizeof(float) * 16);
+                    ++im.joint_count;
+                }
+            }
+        }
         for (const assets::Submesh& sm : am->submeshes) {
             const assets::Material& mat = am->materials[std::min<std::size_t>(sm.material, am->materials.size() - 1)];
             Vec4 color{mr.color.r * mat.base_color.x, mr.color.g * mat.base_color.y, mr.color.b * mat.base_color.z, mr.color.a * mat.base_color.w};
-            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh);
+            const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
+            ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
+            if (skinned) ++skinned_instances;
+            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, skinned);
         }
+        ou.id[2] = 0;
     });
     std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
+        if (a.skinned != b.skinned) return !a.skinned;
         if (a.texture != b.texture) return a.texture < b.texture;
         if (a.mesh != b.mesh) return a.mesh < b.mesh;
         return a.first < b.first;
     });
+    if (im.joint_count > 0) im.device->write_buffer(im.joint_buffer, 0, im.joint_staging.data(), static_cast<std::uint64_t>(im.joint_count) * sizeof(float) * 16);
     for (std::size_t i = 0; i < draws.size(); ++i) std::memcpy(im.object_staging.data() + i * kObjectStride, &draws[i].object, sizeof(ObjectUniforms));
     // Sprites: unlit quads after every mesh, by layer then far to near, in runs per texture.
     struct SpriteDraw {
@@ -863,8 +1047,40 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         std::int32_t layer;
         float depth;
         ObjectUniforms object;
+        const GpuMesh* mesh = nullptr;   // a tile layer mesh instead of the unit quad
+        std::uint32_t first = 0, count = 0;
+        std::int32_t sub = 0;            // file order of the layer within its map
     };
     std::vector<SpriteDraw> sprites;
+    std::uint32_t tile_layers = 0;
+    // Tile maps: every visible layer of the map is one mesh (per tileset texture), drawn unlit.
+    world.ecs().each([&](flecs::entity e, const world::TileMap& tmc, const world::WorldTransform& t) {
+        if (!tmc.visible || tmc.map.empty() || !im.assets) return;
+        auto map = im.assets->tilemap(tmc.map);
+        if (!map) { im.report_missing(tmc.map, map.error().message); return; }
+        Mat4 model = Mat4::trs(t.position, t.rotation, t.scale);
+        ObjectUniforms ou{};
+        to_array(model, ou.model);
+        to_array(transpose(model.inverse_affine()), ou.normal);
+        ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
+        ou.id[1] = 1;
+        ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
+        Vec3 d = t.position - im.camera.position;
+        float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
+        std::int32_t index = 0;
+        for (const assets::TileLayer& layer : (*map)->layers) {
+            const std::int32_t this_index = index++;
+            if (!layer.visible || (!tmc.layer.empty() && layer.name != tmc.layer)) continue;
+            const Impl::TileLayerMesh* lm = im.tile_layer_mesh(**map, layer, this_index, tmc.tile_size > 0 ? tmc.tile_size : 1.0f);
+            if (!lm) continue;
+            ou.color[0] = tmc.color.r; ou.color[1] = tmc.color.g; ou.color[2] = tmc.color.b; ou.color[3] = tmc.color.a * layer.opacity;
+            for (const auto& part : lm->parts) {
+                if (count + sprites.size() >= kMaxObjects) return;
+                sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->gpu, part.first, part.count, this_index});
+            }
+            ++tile_layers;
+        }
+    });
     world.ecs().each([&](flecs::entity e, const world::Sprite& sp, const world::WorldTransform& t) {
         if (!sp.visible || count + sprites.size() >= kMaxObjects) return;
         Mat4 model = Mat4::trs(t.position, t.rotation, t.scale) * Mat4::translation({(0.5f - sp.anchor.x) * sp.size.x, (0.5f - sp.anchor.y) * sp.size.y, 0}) * Mat4::scale({sp.size.x, sp.size.y, 1});
@@ -882,9 +1098,55 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
         sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, depth, ou});
     });
+    // Particles: one unlit quad each, facing the camera (or flat in XY), sized and tinted by age.
+    std::uint32_t particle_count = 0;
+    if (particles) {
+        const Mat4& view = im.camera.view;
+        const Vec3 right{view.at(0, 0), view.at(1, 0), view.at(2, 0)};
+        const Vec3 up{view.at(0, 1), view.at(1, 1), view.at(2, 1)};
+        for (const auto& [id, pool] : particles->pools()) {
+            const auto* e = world.try_get<world::ParticleEmitter>(id);
+            if (!e || pool.alive.empty()) continue;
+            const auto* wt = world.try_get<world::WorldTransform>(id);
+            const Vec3 origin = (!e->world_space && wt) ? wt->position : Vec3{0, 0, 0};
+            WGPUBindGroup material = im.texture_for(e->texture, false);
+            for (const Particle& p : pool.alive) {
+                if (count + sprites.size() >= kMaxObjects) break;
+                const float k = std::clamp(p.age / p.life, 0.0f, 1.0f);
+                const float size = e->size.x + (e->size.y - e->size.x) * k;
+                const Vec3 pos = origin + p.position;
+                Mat4 model;
+                if (e->billboard) {
+                    const Vec3 r = right * size, u = up * size;
+                    model.m[0] = r.x; model.m[1] = r.y; model.m[2] = r.z;
+                    model.m[4] = u.x; model.m[5] = u.y; model.m[6] = u.z;
+                    const Vec3 f = cross(right, up);
+                    model.m[8] = f.x; model.m[9] = f.y; model.m[10] = f.z;
+                } else {
+                    model.m[0] = size; model.m[5] = size;
+                }
+                model.m[12] = pos.x; model.m[13] = pos.y; model.m[14] = pos.z;
+                ObjectUniforms ou{};
+                to_array(model, ou.model);
+                to_array(Mat4::identity(), ou.normal);
+                ou.color[0] = e->color.r + (e->color_end.r - e->color.r) * k;
+                ou.color[1] = e->color.g + (e->color_end.g - e->color.g) * k;
+                ou.color[2] = e->color.b + (e->color_end.b - e->color.b) * k;
+                ou.color[3] = e->color.a + (e->color_end.a - e->color.a) * k;
+                ou.id[0] = static_cast<std::uint32_t>(id & 0xFFFFFFFFu);
+                ou.id[1] = 1;
+                ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
+                Vec3 d = pos - im.camera.position;
+                float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
+                sprites.push_back({e->texture, material, e->layer, depth, ou});
+                ++particle_count;
+            }
+        }
+    }
     std::stable_sort(sprites.begin(), sprites.end(), [](const SpriteDraw& a, const SpriteDraw& b) {
         if (a.layer != b.layer) return a.layer < b.layer;
         if (a.depth != b.depth) return a.depth > b.depth;
+        if (a.sub != b.sub) return a.sub < b.sub;
         return a.texture < b.texture;
     });
     for (std::size_t i = 0; i < sprites.size(); ++i) std::memcpy(im.object_staging.data() + (static_cast<std::size_t>(count) + i) * kObjectStride, &sprites[i].object, sizeof(ObjectUniforms));
@@ -892,7 +1154,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (total > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(total) * kObjectStride);
     im.stats.meshes = entities;
     im.stats.instances = total;
-    im.stats.sprites = static_cast<std::uint32_t>(sprites.size());
+    im.stats.sprites = static_cast<std::uint32_t>(sprites.size()) - particle_count - tile_layers_parts(sprites);
+    im.stats.particles = particle_count;
+    im.stats.tile_layers = tile_layers;
+    im.stats.skinned = skinned_instances;
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
 
@@ -916,20 +1181,28 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     ds.stencilStoreOp = WGPUStoreOp_Undefined;
     ds.stencilReadOnly = true;
     // Instanced runs of equal mesh, submesh and material; the same loop serves both passes.
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter) {
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned) {
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
+        bool current_skinned = false;
+        wgpuRenderPassEncoderSetPipeline(pass, plain);
         std::size_t i = 0;
         while (i < draws.size()) {
             const Draw& d = draws[i];
             std::size_t run = 1;
             while (i + run < draws.size()) {
                 const Draw& n = draws[i + run];
-                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material) break;
+                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned) break;
                 ++run;
+            }
+            if (d.skinned != current_skinned) {
+                wgpuRenderPassEncoderSetPipeline(pass, d.skinned ? skinned : plain);
+                current_skinned = d.skinned;
+                current_mesh = nullptr;
             }
             if (d.gpu != current_mesh) {
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
+                if (d.skinned) wgpuRenderPassEncoderSetVertexBuffer(pass, 1, d.gpu->skin, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, d.gpu->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 current_mesh = d.gpu;
             }
@@ -956,10 +1229,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         srp.colorAttachmentCount = 0;
         srp.depthStencilAttachment = &sds;
         WGPURenderPassEncoder spass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &srp);
-        wgpuRenderPassEncoderSetPipeline(spass, im.shadow_pipeline);
         wgpuRenderPassEncoderSetBindGroup(spass, 0, im.frame_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
-        draw_runs(spass, false, im.stats.shadow_draws);
+        draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline);
         wgpuRenderPassEncoderEnd(spass);
         wgpuRenderPassEncoderRelease(spass);
     }
@@ -974,10 +1246,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderSetScissorRect(pass, static_cast<std::uint32_t>(im.applied.x), static_cast<std::uint32_t>(im.applied.y), im.applied.w, im.applied.h);
     }
     if (!draws.empty()) {
-        wgpuRenderPassEncoderSetPipeline(pass, im.pipeline);
+
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline);
     }
     if (!sprites.empty()) {
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
@@ -986,10 +1258,28 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quad.vertices, 0, WGPU_WHOLE_SIZE);
         wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+        const GpuMesh* bound = &quad;
         std::size_t i = 0;
         while (i < sprites.size()) {
+            const SpriteDraw& s = sprites[i];
+            if (s.mesh) {
+                // A tile layer: its own buffers, one draw, then back to the quad for sprites.
+                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s.mesh->vertices, 0, WGPU_WHOLE_SIZE);
+                wgpuRenderPassEncoderSetIndexBuffer(pass, s.mesh->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                bound = s.mesh;
+                wgpuRenderPassEncoderSetBindGroup(pass, 2, s.material, 0, nullptr);
+                wgpuRenderPassEncoderDrawIndexed(pass, s.count, 1, s.first, 0, count + static_cast<std::uint32_t>(i));
+                im.stats.draw_calls++;
+                ++i;
+                continue;
+            }
+            if (bound != &quad) {
+                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quad.vertices, 0, WGPU_WHOLE_SIZE);
+                wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                bound = &quad;
+            }
             std::size_t run = 1;
-            while (i + run < sprites.size() && sprites[i + run].material == sprites[i].material) ++run;
+            while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material) ++run;
             wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
             wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
             im.stats.draw_calls++;
@@ -1094,6 +1384,9 @@ Json Renderer::describe() const {
     j["shadows"] = s.shadows;
     j["instances"] = s.instances;
     j["sprites"] = s.sprites;
+    j["particles"] = s.particles;
+    j["skinned"] = s.skinned;
+    j["tile_layers"] = s.tile_layers;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;
     j["has_camera"] = s.has_camera;

@@ -61,7 +61,7 @@ TEST_CASE("editor opens a project paused and shows its world", "[editor]") {
     s.set_paused(true);
     for (int i = 0; i < 3; ++i) ok(s.idle_frame());
     REQUIRE(s.tick() == 0);  // the project has not started: no ticks, no crates
-    REQUIRE(s.world().entity_count() == 9);
+    REQUIRE(s.world().entity_count() == 19);
     std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 3}}))["text"].get<std::string>();
     INFO(snap);
     REQUIRE(snap.find("toolbar") != std::string::npos);
@@ -109,7 +109,7 @@ TEST_CASE("editor inspector edits components and play/stop restores the scene", 
     ok(s.idle_frame());
     ok(s.command("ui.click", Json{{"id", find_named(s, "stop")}}));
     ok(s.idle_frame());
-    REQUIRE(s.world().entity_count() == 9);
+    REQUIRE(s.world().entity_count() == 19);
     t = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
     REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(1.25));
     Json contexts = ok(s.command("script.contexts", Json::object()));
@@ -118,7 +118,7 @@ TEST_CASE("editor inspector edits components and play/stop restores the scene", 
     ok(s.command("step", Json{{"ticks", 1}}));
     st = ok(s.command("state", Json::object()));
     REQUIRE_FALSE(st["state"].contains("dropped"));
-    REQUIRE(s.world().entity_count() == 9);  // stepping without the project spawns nothing
+    REQUIRE(s.world().entity_count() == 19);  // stepping without the project spawns nothing
     ok(s.finish());
 }
 

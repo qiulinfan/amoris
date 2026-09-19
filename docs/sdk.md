@@ -61,9 +61,21 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 `sprites.defineClip(name, { texture, columns, rows, frames | first + count, fps, loop })`, `sprites.play(entity, name, { speed, loop, fps, restart })`, `sprites.stop(entity, reset)`, `sprites.clips()`; the engine plays clips through the `SpriteAnimation` component every tick (`docs/design/sprites.md`).
 
+## Tile maps
+
+`tilemap.info(entity)`, `tilemap.cell(entity, x, y)`, `tilemap.tile(entity, at, layer?)`, `tilemap.solid(entity, at)`, `tilemap.objects(entity, layer?)` for Tiled maps drawn by the `TileMap` component (`docs/design/tilemaps.md`).
+
+## Animation
+
+`animation.play(entity, clip?, { loop, speed, restart, time })`, `animation.stop(entity, reset)`, `animation.clips(entity | { mesh })`, `animation.pose(entity)` for glTF skins and clips through the `Animator` component (`docs/design/animation.md`).
+
+## Particles
+
+`ParticleEmitter` on an entity does the work (`docs/design/particles.md`); `particles.burst(entity, count)`, `particles.stats()`, `particles.clear()` reach the simulation.
+
 ## Physics, audio, interface
 
-`physics.raycast`, `physics.overlap`, `onContacts` (`docs/roadmap.md` M4); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
+`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component (`docs/design/physics.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
 
 ## Tests
 

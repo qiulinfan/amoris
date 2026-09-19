@@ -133,3 +133,179 @@ TEST_CASE("simulation is deterministic", "[physics]") {
     REQUIRE(a.hash() == b.hash());
     REQUIRE(a.events().total() == b.events().total());
 }
+
+// ---- capsules, rotation locks and joints ----------------------------------------------------
+
+namespace {
+
+EntityId capsule(World& w, const char* name, Vec3 pos, float radius, float half, Quat rot = {}, Json extra = Json::object(), int kind = 0) {
+    Json rb = Json{{"kind", kind}};
+    for (auto& [k, v] : extra.items()) rb[k] = v;
+    return w.spawn(name, 0,
+                   Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}, {"rotation", {{"x", rot.x}, {"y", rot.y}, {"z", rot.z}, {"w", rot.w}}}}},
+                        {"RigidBody", rb},
+                        {"Collider", {{"shape", 2}, {"size", {{"x", radius}, {"y", half}, {"z", radius}}}}}})
+        .value();
+}
+
+EntityId point(World& w, const char* name, Vec3 pos) {
+    return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}}).value();
+}
+
+}  // namespace
+
+TEST_CASE("capsules rest on the ground upright and lying", "[physics][capsule]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    EntityId upright = capsule(w, "Upright", {0, 3, 0}, 0.3f, 0.5f, {}, Json{{"lock_rotation", true}, {"restitution", 0.0}});
+    Quat lying_rot = Quat::from_axis_angle({0, 0, 1}, kPi / 2);
+    EntityId lying = capsule(w, "Lying", {3, 3, 0}, 0.3f, 0.5f, lying_rot, Json{{"restitution", 0.0}});
+    run(p, w, 360);
+    REQUIRE(w.try_get<Transform>(upright)->position.y == Catch::Approx(0.8f).margin(0.03f));  // half + radius
+    REQUIRE(w.try_get<Transform>(lying)->position.y == Catch::Approx(0.3f).margin(0.03f));    // radius
+    const Quat& q = w.try_get<Transform>(lying)->rotation;
+    REQUIRE(std::fabs(q.x * lying_rot.x + q.y * lying_rot.y + q.z * lying_rot.z + q.w * lying_rot.w) > 0.999f);  // still flat
+    REQUIRE(w.try_get<RigidBody>(upright)->sleeping);
+    REQUIRE(w.try_get<RigidBody>(lying)->sleeping);
+}
+
+TEST_CASE("spheres and capsules rest on capsules", "[physics][capsule]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    Quat along_x = Quat::from_axis_angle({0, 0, 1}, kPi / 2);
+    capsule(w, "Log", {0, 1, 0}, 0.3f, 1.0f, along_x, {}, 1);  // static, from x=-1.3 to 1.3
+    EntityId ball = body(w, "Ball", 1, {0.5f, 3, 0}, 0.25f, Json{{"restitution", 0.0}});
+    Quat along_z = Quat::from_axis_angle({1, 0, 0}, kPi / 2);
+    EntityId cross = capsule(w, "Cross", {-0.5f, 3, 0}, 0.2f, 0.5f, along_z, Json{{"lock_rotation", true}, {"restitution", 0.0}});
+    run(p, w, 360);
+    REQUIRE(w.try_get<Transform>(ball)->position.y == Catch::Approx(1.55f).margin(0.03f));
+    REQUIRE(w.try_get<Transform>(cross)->position.y == Catch::Approx(1.5f).margin(0.03f));
+    REQUIRE(w.try_get<Transform>(cross)->position.x == Catch::Approx(-0.5f).margin(0.05f));
+}
+
+TEST_CASE("lock_rotation keeps a body's orientation", "[physics]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    Quat tilt = Quat::from_axis_angle({0, 0, 1}, 0.4f);
+    EntityId box = w.spawn("Box", 0,
+                           Json{{"Transform", {{"position", {{"x", 0}, {"y", 3}, {"z", 0}}}, {"rotation", {{"x", tilt.x}, {"y", tilt.y}, {"z", tilt.z}, {"w", tilt.w}}}}},
+                                {"RigidBody", {{"kind", 0}, {"lock_rotation", true}, {"restitution", 0.0}}},
+                                {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}})
+                       .value();
+    run(p, w, 300);
+    const Transform* t = w.try_get<Transform>(box);
+    REQUIRE(t->rotation.z == Catch::Approx(tilt.z).margin(1e-4f));
+    REQUIRE(t->rotation.w == Catch::Approx(tilt.w).margin(1e-4f));
+    // Resting on its lowest edge, higher than a flat box would.
+    REQUIRE(t->position.y == Catch::Approx(0.5f * (std::cos(0.4f) + std::sin(0.4f))).margin(0.03f));
+    REQUIRE(w.try_get<Velocity>(box)->angular.z == 0.0f);
+}
+
+TEST_CASE("a distance joint swings a pendulum at its rod length", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    point(w, "Hook", {0, 5, 0});
+    EntityId bob = body(w, "Bob", 1, {2, 5, 0}, 0.2f);
+    REQUIRE(w.set(bob, "Joint", Json{{"target", "/Hook"}}).has_value());
+    float worst = 0, min_y = 5;
+    for (int i = 0; i < 180; ++i) {
+        run(p, w, 1);
+        Vec3 pos = w.try_get<Transform>(bob)->position;
+        worst = std::max(worst, std::fabs(length(pos - Vec3{0, 5, 0}) - 2.0f));
+        min_y = std::min(min_y, pos.y);
+    }
+    REQUIRE(worst < 0.05f);
+    REQUIRE(min_y < 3.2f);  // swung through the bottom
+    REQUIRE(p.stats().joints == 1);
+    REQUIRE(p.joints().size() == 1);
+    REQUIRE(p.joints()[0].force > 0.0f);
+    REQUIRE(p.joints()[0].length == Catch::Approx(2.0f).margin(1e-4f));
+    REQUIRE(w.get(bob, "Joint").value()["distance"].get<float>() == Catch::Approx(2.0f).margin(1e-4f));  // auto length written back
+    REQUIRE(w.get(bob, "Joint").value()["force"].get<float>() > 0.0f);
+}
+
+TEST_CASE("a rope pulls only when taut", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    point(w, "Hook", {0, 6, 0});
+    EntityId ball = body(w, "Ball", 1, {0, 5, 0}, 0.2f, Json{{"restitution", 0.0}});
+    REQUIRE(w.set(ball, "Joint", Json{{"target", "/Hook"}, {"rope", true}, {"distance", 3.0}}).has_value());
+    run(p, w, 30);  // half a second of free fall while the rope is slack
+    float y = w.try_get<Transform>(ball)->position.y;
+    REQUIRE(y < 4.0f);
+    REQUIRE(y > 3.5f);
+    REQUIRE(p.joints()[0].force == Catch::Approx(0.0f).margin(1e-3f));
+    run(p, w, 300);
+    REQUIRE(w.try_get<Transform>(ball)->position.y == Catch::Approx(3.0f).margin(0.05f));  // hangs at the rope's length
+}
+
+TEST_CASE("a ball joint pins two bodies at their anchors", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    w.spawn("Post", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 4}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.25}, {"y", 0.25}, {"z", 0.25}}}}}}).value();
+    EntityId arm = w.spawn("Arm", 0, Json{{"Transform", {{"position", {{"x", 1.5}, {"y", 4}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1.0}, {"y", 0.1}, {"z", 0.1}}}}}}).value();
+    REQUIRE(w.set(arm, "Joint", Json{{"kind", 1}, {"target", "/Post"}, {"anchor", {{"x", -1}, {"y", 0}, {"z", 0}}}, {"target_anchor", {{"x", 0.5}, {"y", 0}, {"z", 0}}}}).has_value());
+    const Vec3 pin{0.5f, 4, 0};
+    float worst = 0, min_y = 4, max_turn = 0;
+    for (int i = 0; i < 240; ++i) {
+        run(p, w, 1);
+        const Transform* t = w.try_get<Transform>(arm);
+        Vec3 anchor = t->position + t->rotation.rotate(Vec3{-1, 0, 0});
+        worst = std::max(worst, length(anchor - pin));
+        min_y = std::min(min_y, t->position.y);
+        max_turn = std::max(max_turn, std::fabs(t->rotation.z));
+    }
+    REQUIRE(worst < 0.05f);
+    REQUIRE(min_y < 3.2f);     // the arm swung down around the pin
+    REQUIRE(max_turn > 0.5f);  // by rotating, not by sliding
+    REQUIRE(p.joints()[0].kind == 1);
+}
+
+TEST_CASE("a joint breaks above its break force", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    point(w, "Hook", {0, 5, 0});
+    EntityId heavy = body(w, "Heavy", 1, {0, 4, 0}, 0.3f, Json{{"mass", 100.0}, {"restitution", 0.0}});
+    REQUIRE(w.set(heavy, "Joint", Json{{"target", "/Hook"}, {"distance", 1.0}, {"break_force", 500.0}}).has_value());
+    EntityId light = body(w, "Light", 1, {3, 4, 0}, 0.3f, Json{{"restitution", 0.0}});
+    REQUIRE(w.set(light, "Joint", Json{{"target", "/Hook"}, {"break_force", 500.0}}).has_value());
+    run(p, w, 120);
+    REQUIRE_FALSE(w.has(heavy, "Joint"));
+    REQUIRE(w.has(light, "Joint"));
+    REQUIRE(w.events().histogram()["joint.broken"].get<int>() == 1);
+    REQUIRE(w.try_get<Transform>(heavy)->position.y < 1.0f);  // fell once the joint gave
+    bool seen = false;
+    for (const auto& e : w.events().recent(200)) {
+        if (e.type == "joint.broken") {
+            seen = true;
+            REQUIRE(e.subject == heavy);
+            REQUIRE(e.data["path"] == "/Heavy");
+        }
+    }
+    REQUIRE(seen);
+}
+
+TEST_CASE("rays and overlaps see capsules", "[physics][capsule]") {
+    World w;
+    physics::Physics p;
+    capsule(w, "Post", {0, 1, 0}, 0.3f, 0.5f, {}, {}, 1);
+    auto side = p.raycast(w, {5, 1, 0}, {-1, 0, 0});
+    REQUIRE(side.has_value());
+    REQUIRE(side->distance == Catch::Approx(4.7f).margin(1e-3f));
+    REQUIRE(side->normal.x == Catch::Approx(1.0f).margin(1e-3f));
+    auto top = p.raycast(w, {0, 5, 0}, {0, -1, 0});
+    REQUIRE(top.has_value());
+    REQUIRE(top->distance == Catch::Approx(3.2f).margin(1e-3f));
+    REQUIRE(top->normal.y == Catch::Approx(1.0f).margin(1e-3f));
+    auto cap = p.raycast(w, {0.2f, 5, 0}, {0, -1, 0});  // through the rounded top, off center
+    REQUIRE(cap.has_value());
+    REQUIRE(cap->point.y == Catch::Approx(1.5f + std::sqrt(0.09f - 0.04f)).margin(1e-3f));
+    REQUIRE_FALSE(p.raycast(w, {0.5f, 5, 0}, {0, -1, 0}).has_value());
+    REQUIRE(p.overlap_sphere(w, {0, 2.0f, 0}, 0.3f).size() == 1);
+    REQUIRE(p.overlap_sphere(w, {0, 2.5f, 0}, 0.3f).empty());
+}

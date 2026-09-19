@@ -18,7 +18,7 @@ Sprites go through the instanced path: every sprite with the same texture in a r
 
 ## The sample
 
-`samples/sprites`: an orthographic camera, a ground row cut from a two-tile sheet, a player moved by the `move_x` / `move_y` actions with a four-frame walk cycle while moving, spinning coins that bob on a tween and are collected on contact, a score in the HUD and in the exposed state.
+`samples/sprites`: an orthographic camera, a level from a Tiled map (ground, a ledge, the player and coin spawns), a player moved by the `move_x` / `move_y` actions with a four-frame walk cycle while moving and stopped by solid tiles, spinning coins that bob on a tween and are collected on contact, a score in the HUD and in the exposed state.
 
 ```bash
 ./.pocket/pocket run sprites
@@ -35,6 +35,10 @@ sprites.play(coin, "coin", { speed: 1.3 });
 sprites.defineClip("pop", { texture: "assets/fx.png", columns: 4, rows: 1, fps: 24, loop: false });
 ```
 
+## Tile maps
+
+Levels come from Tiled maps drawn by the `TileMap` component and questioned through `tilemap.*`: [tile maps](tilemaps.md).
+
 ## Not yet
 
-2D physics and tile map files. Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).
+2D physics. Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).

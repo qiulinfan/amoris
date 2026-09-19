@@ -132,6 +132,76 @@ export interface SpriteAnimation {
     finished: boolean;
 }
 
+/** Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where. */
+export interface TileMap {
+    /** Project-relative Tiled JSON map (.tmj). */
+    map: string;
+    /** Draw only this tile layer; empty draws every visible one. */
+    layer: string;
+    /** World units per tile. */
+    tile_size: number;
+    /** Tint and opacity over the whole map. */
+    color: Color;
+    /** Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this. */
+    order: number;
+    /** Whether the map is drawn. */
+    visible: boolean;
+}
+
+/** Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly. */
+export interface Animator {
+    /** Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose). */
+    clip: string;
+    /** Whether time advances. */
+    playing: boolean;
+    /** Wrap at the end (else stop on the last frame and emit animation.finished). */
+    loop: boolean;
+    /** Playback rate multiplier. */
+    speed: number;
+    /** Seconds into the clip; advanced by the engine, writable to seek. */
+    time: number;
+    /** Set when a non-looping clip reached its end; cleared by play. */
+    finished: boolean;
+}
+
+/** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once. */
+export interface ParticleEmitter {
+    /** Project-relative image; empty draws soft solid quads. */
+    texture: string;
+    /** Whether particles spawn continuously at rate. */
+    emitting: boolean;
+    /** Particles per second while emitting. */
+    rate: number;
+    /** Most particles alive at once from this emitter (older ones are not replaced; spawning waits). */
+    max: number;
+    /** Seconds a particle lives: min and max, drawn uniformly. */
+    lifetime: Vec2;
+    /** Initial speed: min and max. */
+    speed: Vec2;
+    /** Center of the emission cone, in the emitter's local frame. */
+    direction: Vec3;
+    /** Half-angle of the cone in degrees (0 is a beam, 180 is every direction). */
+    spread: number;
+    /** Acceleration applied to every particle, world units per second squared. */
+    gravity: Vec3;
+    /** Fraction of velocity lost per second. */
+    drag: number;
+    /** Quad size in world units at birth and at death. */
+    size: Vec2;
+    /** Tint at birth. */
+    color: Color;
+    /** Tint at death; alpha 0 fades out. */
+    color_end: Color;
+    /** Draw order among sprites and particles. */
+    layer: number;
+    /** Face the camera (3D); false keeps quads in the XY plane for 2D scenes. */
+    billboard: boolean;
+    /** Particles keep their world position when the emitter moves; false moves them with it. */
+    world_space: boolean;
+    /** Extra seed for the emitter's random stream (the entity id seeds it too). */
+    seed: number;
+}
+
 /** Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. */
 export interface Bounds {
     /** Minimum corner. */
@@ -158,13 +228,35 @@ export interface RigidBody {
     gravity_scale: number;
     /** Set by the engine when the body came to rest; cleared when touched. */
     sleeping: boolean;
+    /** Never rotate (characters on capsules stay upright). */
+    lock_rotation: boolean;
+}
+
+/** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
+export interface Joint {
+    /** 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together). */
+    kind: number;
+    /** Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. */
+    target: string;
+    /** Attachment point on this body, in its local frame. */
+    anchor: Vec3;
+    /** Attachment point on the target in its local frame, or a world point when there is no target. */
+    target_anchor: Vec3;
+    /** Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here. */
+    distance: number;
+    /** Distance joints only: pull when the anchors are farther than distance, never push. */
+    rope: boolean;
+    /** Force (newtons) above which the joint breaks; 0 never breaks. */
+    break_force: number;
+    /** Force the joint carried in the last step, written by the engine. */
+    force: number;
 }
 
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
 export interface Collider {
-    /** 0 box, 1 sphere. */
+    /** 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends). */
     shape: number;
-    /** Box half extents, or radius in x for spheres. */
+    /** Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules. */
     size: Vec3;
     /** Local offset of the shape center. */
     offset: Vec3;
@@ -201,15 +293,19 @@ export interface Components {
     MeshRenderer: MeshRenderer;
     Sprite: Sprite;
     SpriteAnimation: SpriteAnimation;
+    TileMap: TileMap;
+    Animator: Animator;
+    ParticleEmitter: ParticleEmitter;
     Bounds: Bounds;
     RigidBody: RigidBody;
+    Joint: Joint;
     Collider: Collider;
     AudioSource: AudioSource;
 }
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "Bounds", "RigidBody", "Collider", "AudioSource"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Collider", "AudioSource"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -223,8 +319,12 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
+    TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false },
+    ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
-    RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false },
+    RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false },
+    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, break_force: 0, force: 0 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
 };

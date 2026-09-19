@@ -110,6 +110,53 @@ fields = [
 ]
 
 [[component]]
+name = "TileMap"
+doc = "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where."
+fields = [
+    { name = "map", type = "string", default = "", doc = "Project-relative Tiled JSON map (.tmj)." },
+    { name = "layer", type = "string", default = "", doc = "Draw only this tile layer; empty draws every visible one." },
+    { name = "tile_size", type = "f32", default = 1.0, doc = "World units per tile." },
+    { name = "color", type = "color", default = [1.0, 1.0, 1.0, 1.0], doc = "Tint and opacity over the whole map." },
+    { name = "order", type = "i32", default = -10, doc = "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this." },
+    { name = "visible", type = "bool", default = true, doc = "Whether the map is drawn." },
+]
+
+[[component]]
+name = "Animator"
+doc = "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly."
+fields = [
+    { name = "clip", type = "string", default = "", doc = "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)." },
+    { name = "playing", type = "bool", default = true, doc = "Whether time advances." },
+    { name = "loop", type = "bool", default = true, doc = "Wrap at the end (else stop on the last frame and emit animation.finished)." },
+    { name = "speed", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
+    { name = "time", type = "f32", default = 0.0, doc = "Seconds into the clip; advanced by the engine, writable to seek." },
+    { name = "finished", type = "bool", default = false, doc = "Set when a non-looping clip reached its end; cleared by play." },
+]
+
+[[component]]
+name = "ParticleEmitter"
+doc = "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once."
+fields = [
+    { name = "texture", type = "string", default = "", doc = "Project-relative image; empty draws soft solid quads." },
+    { name = "emitting", type = "bool", default = true, doc = "Whether particles spawn continuously at rate." },
+    { name = "rate", type = "f32", default = 20.0, doc = "Particles per second while emitting." },
+    { name = "max", type = "i32", default = 256, doc = "Most particles alive at once from this emitter (older ones are not replaced; spawning waits)." },
+    { name = "lifetime", type = "vec2", default = [1.0, 2.0], doc = "Seconds a particle lives: min and max, drawn uniformly." },
+    { name = "speed", type = "vec2", default = [1.0, 2.0], doc = "Initial speed: min and max." },
+    { name = "direction", type = "vec3", default = [0.0, 1.0, 0.0], doc = "Center of the emission cone, in the emitter's local frame." },
+    { name = "spread", type = "f32", default = 30.0, doc = "Half-angle of the cone in degrees (0 is a beam, 180 is every direction)." },
+    { name = "gravity", type = "vec3", default = [0.0, -3.0, 0.0], doc = "Acceleration applied to every particle, world units per second squared." },
+    { name = "drag", type = "f32", default = 0.0, doc = "Fraction of velocity lost per second." },
+    { name = "size", type = "vec2", default = [0.2, 0.05], doc = "Quad size in world units at birth and at death." },
+    { name = "color", type = "color", default = [1.0, 1.0, 1.0, 1.0], doc = "Tint at birth." },
+    { name = "color_end", type = "color", default = [1.0, 1.0, 1.0, 0.0], doc = "Tint at death; alpha 0 fades out." },
+    { name = "layer", type = "i32", default = 10, doc = "Draw order among sprites and particles." },
+    { name = "billboard", type = "bool", default = true, doc = "Face the camera (3D); false keeps quads in the XY plane for 2D scenes." },
+    { name = "world_space", type = "bool", default = true, doc = "Particles keep their world position when the emitter moves; false moves them with it." },
+    { name = "seed", type = "i32", default = 0, doc = "Extra seed for the emitter's random stream (the entity id seeds it too)." },
+]
+
+[[component]]
 name = "Bounds"
 doc = "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only."
 serialized = false
@@ -130,14 +177,29 @@ fields = [
     { name = "angular_damping", type = "f32", default = 0.05, doc = "Angular velocity lost per second (fraction)." },
     { name = "gravity_scale", type = "f32", default = 1.0, doc = "Multiplier on world gravity." },
     { name = "sleeping", type = "bool", default = false, doc = "Set by the engine when the body came to rest; cleared when touched." },
+    { name = "lock_rotation", type = "bool", default = false, doc = "Never rotate (characters on capsules stay upright)." },
+]
+
+[[component]]
+name = "Joint"
+doc = "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed)."
+fields = [
+    { name = "kind", type = "i32", default = 0, doc = "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together)." },
+    { name = "target", type = "string", default = "", doc = "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor." },
+    { name = "anchor", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Attachment point on this body, in its local frame." },
+    { name = "target_anchor", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Attachment point on the target in its local frame, or a world point when there is no target." },
+    { name = "distance", type = "f32", default = -1.0, doc = "Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here." },
+    { name = "rope", type = "bool", default = false, doc = "Distance joints only: pull when the anchors are farther than distance, never push." },
+    { name = "break_force", type = "f32", default = 0.0, doc = "Force (newtons) above which the joint breaks; 0 never breaks." },
+    { name = "force", type = "f32", default = 0.0, doc = "Force the joint carried in the last step, written by the engine." },
 ]
 
 [[component]]
 name = "Collider"
 doc = "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push."
 fields = [
-    { name = "shape", type = "i32", default = 0, doc = "0 box, 1 sphere." },
-    { name = "size", type = "vec3", default = [0.5, 0.5, 0.5], doc = "Box half extents, or radius in x for spheres." },
+    { name = "shape", type = "i32", default = 0, doc = "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends)." },
+    { name = "size", type = "vec3", default = [0.5, 0.5, 0.5], doc = "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules." },
     { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Local offset of the shape center." },
     { name = "is_trigger", type = "bool", default = false, doc = "Overlap events only, no collision response." },
 ]

@@ -115,6 +115,56 @@ Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips
 | `time` | f32 | 0.0 | Seconds into the current frame; advanced by the engine. |
 | `finished` | bool | false | Set when a non-looping clip reached its end; cleared by play. |
 
+## TileMap
+
+Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `map` | string | "" | Project-relative Tiled JSON map (.tmj). |
+| `layer` | string | "" | Draw only this tile layer; empty draws every visible one. |
+| `tile_size` | f32 | 1.0 | World units per tile. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Tint and opacity over the whole map. |
+| `order` | i32 | -10 | Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this. |
+| `visible` | bool | true | Whether the map is drawn. |
+
+## Animator
+
+Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `clip` | string | "" | Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose). |
+| `playing` | bool | true | Whether time advances. |
+| `loop` | bool | true | Wrap at the end (else stop on the last frame and emit animation.finished). |
+| `speed` | f32 | 1.0 | Playback rate multiplier. |
+| `time` | f32 | 0.0 | Seconds into the clip; advanced by the engine, writable to seek. |
+| `finished` | bool | false | Set when a non-looping clip reached its end; cleared by play. |
+
+## ParticleEmitter
+
+Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `texture` | string | "" | Project-relative image; empty draws soft solid quads. |
+| `emitting` | bool | true | Whether particles spawn continuously at rate. |
+| `rate` | f32 | 20.0 | Particles per second while emitting. |
+| `max` | i32 | 256 | Most particles alive at once from this emitter (older ones are not replaced; spawning waits). |
+| `lifetime` | vec2 | [1.0, 2.0] | Seconds a particle lives: min and max, drawn uniformly. |
+| `speed` | vec2 | [1.0, 2.0] | Initial speed: min and max. |
+| `direction` | vec3 | [0.0, 1.0, 0.0] | Center of the emission cone, in the emitter's local frame. |
+| `spread` | f32 | 30.0 | Half-angle of the cone in degrees (0 is a beam, 180 is every direction). |
+| `gravity` | vec3 | [0.0, -3.0, 0.0] | Acceleration applied to every particle, world units per second squared. |
+| `drag` | f32 | 0.0 | Fraction of velocity lost per second. |
+| `size` | vec2 | [0.2, 0.05] | Quad size in world units at birth and at death. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Tint at birth. |
+| `color_end` | color | [1.0, 1.0, 1.0, 0.0] | Tint at death; alpha 0 fades out. |
+| `layer` | i32 | 10 | Draw order among sprites and particles. |
+| `billboard` | bool | true | Face the camera (3D); false keeps quads in the XY plane for 2D scenes. |
+| `world_space` | bool | true | Particles keep their world position when the emitter moves; false moves them with it. |
+| `seed` | i32 | 0 | Extra seed for the emitter's random stream (the entity id seeds it too). |
+
 ## Bounds
 
 Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. Derived: computed by the engine, not stored in scenes.
@@ -138,6 +188,22 @@ Physics body. Dynamic bodies fall and collide; static bodies never move; kinemat
 | `angular_damping` | f32 | 0.05 | Angular velocity lost per second (fraction). |
 | `gravity_scale` | f32 | 1.0 | Multiplier on world gravity. |
 | `sleeping` | bool | false | Set by the engine when the body came to rest; cleared when touched. |
+| `lock_rotation` | bool | false | Never rotate (characters on capsules stay upright). |
+
+## Joint
+
+Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `kind` | i32 | 0 | 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together). |
+| `target` | string | "" | Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. |
+| `anchor` | vec3 | [0.0, 0.0, 0.0] | Attachment point on this body, in its local frame. |
+| `target_anchor` | vec3 | [0.0, 0.0, 0.0] | Attachment point on the target in its local frame, or a world point when there is no target. |
+| `distance` | f32 | -1.0 | Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here. |
+| `rope` | bool | false | Distance joints only: pull when the anchors are farther than distance, never push. |
+| `break_force` | f32 | 0.0 | Force (newtons) above which the joint breaks; 0 never breaks. |
+| `force` | f32 | 0.0 | Force the joint carried in the last step, written by the engine. |
 
 ## Collider
 
@@ -145,8 +211,8 @@ Collision shape centered on the entity (plus offset). Box half extents come from
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `shape` | i32 | 0 | 0 box, 1 sphere. |
-| `size` | vec3 | [0.5, 0.5, 0.5] | Box half extents, or radius in x for spheres. |
+| `shape` | i32 | 0 | 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends). |
+| `size` | vec3 | [0.5, 0.5, 0.5] | Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules. |
 | `offset` | vec3 | [0.0, 0.0, 0.0] | Local offset of the shape center. |
 | `is_trigger` | bool | false | Overlap events only, no collision response. |
 

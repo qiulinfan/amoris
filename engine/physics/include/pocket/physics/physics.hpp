@@ -44,8 +44,18 @@ struct RayHit {
     float distance = 0;
 };
 
+struct JointInfo {
+    world::EntityId entity = 0, target = 0;
+    int kind = 0;
+    float length = 0;     // rest length (distance joints)
+    float current = 0;    // anchor distance now
+    float force = 0;      // carried in the last step
+};
+
 struct StepStats {
     std::uint32_t bodies = 0;
+    std::uint32_t joints = 0;
+    std::uint32_t broken = 0;
     std::uint32_t awake = 0;
     std::uint32_t pairs = 0;
     std::uint32_t contacts = 0;
@@ -63,6 +73,7 @@ class Physics {
     // Advance all bodies by dt. Emits events into world.events(). Call before World::tick.
     void step(world::World& world, double dt);
     [[nodiscard]] const std::vector<Contact>& contacts() const;  // of the last step
+    [[nodiscard]] const std::vector<JointInfo>& joints() const;  // solved in the last step
     [[nodiscard]] const StepStats& stats() const;
     [[nodiscard]] Json describe() const;
     // Closest hit along a ray against every collider (triggers included when include_triggers).

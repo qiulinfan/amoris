@@ -1,35 +1,35 @@
-// A 2D game on sprites (docs/design/sprites.md): an orthographic camera, a ground row cut from a
-// two-tile sheet, a player moved by actions with a walk cycle from a sheet clip, spinning coins
-// that bob on a tween and are collected on contact, a score in the HUD and in the exposed state.
+// A 2D game on sprites (docs/design/sprites.md): an orthographic camera, a level from a Tiled map
+// (ground and ledges drawn by the TileMap component, the player and the coins placed as map
+// objects), a player moved by actions with a walk cycle from a sheet clip, spinning coins that bob
+// on a tween and are collected on contact, a score in the HUD and in the exposed state.
 //   pocket run sprites
 //   pocket run sprites -- --headless --frames 120 --json
-import { Label, events, expose, input, log, mount, onStart, onTick, setClearColor, signal, sprites, tween, world } from "pocket";
+import { Label, events, expose, input, log, mount, onStart, onTick, setClearColor, signal, sprites, tilemap, tween, world } from "pocket";
 
 const score = signal(0);
 const coins = new Set<number>();
 let player = 0;
+let level = 0;
 let facingLeft = false;
 let walking = false;
 
 onStart(() => {
     setClearColor(0.45, 0.7, 0.95, 1);
     world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 0, z: 10 } }, Camera: { orthographic: true, ortho_size: 5, near: 0.1, far: 50 } } });
-    // Ground: 20 tiles from a 32x16 sheet (grass is the left half, dirt the right).
-    const ground = world.spawn("Ground");
-    for (let i = 0; i < 20; i++) {
-        const x = i - 9.5;
-        world.spawn(`tile${i}`, { parent: ground, components: { Transform: { position: { x, y: -4, z: 0 } }, Sprite: { texture: "assets/tiles.png", uv: { x: 0, y: 0, z: 0.5, w: 1 }, filter: "nearest" } } });
-        world.spawn(`dirt${i}`, { parent: ground, components: { Transform: { position: { x, y: -5, z: 0 } }, Sprite: { texture: "assets/tiles.png", uv: { x: 0.5, y: 0, z: 1, w: 1 }, filter: "nearest" } } });
-    }
-    player = world.spawn("Player", { components: { Transform: { position: { x: 0, y: -3, z: 0 } }, Sprite: { texture: "assets/player.png", layer: 2, filter: "nearest" } } });
+    // The level is a Tiled map: 20x10 tiles, the entity at its top-left corner (docs/design/tilemaps.md).
+    level = world.spawn("Level", { components: { Transform: { position: { x: -10, y: 4.5, z: 0 } }, TileMap: { map: "assets/level.tmj" } } });
+    const spawns = tilemap.objects(level, "spawns");
+    const start = spawns.find((o) => o.name === "player") ?? { x: 0, y: -3 };
+    player = world.spawn("Player", { components: { Transform: { position: { x: start.x, y: start.y, z: 0 } }, Sprite: { texture: "assets/player.png", layer: 2, filter: "nearest" } } });
     sprites.play(player, "idle");
-    for (let i = 0; i < 6; i++) {
-        // Along the ground where the player walks, bobbing a little; the last two float higher.
-        const y = i < 4 ? -3 : -1.5;
-        const id = world.spawn(`Coin${i}`, { components: { Transform: { position: { x: -6 + i * 2.4, y, z: 0 } }, Sprite: { texture: "assets/coin.png", size: { x: 0.5, y: 0.5 }, layer: 1, filter: "nearest" } } });
+    let i = 0;
+    for (const o of spawns.filter((o) => o.type === "coin")) {
+        const id = world.spawn(`Coin${i}`, { components: { Transform: { position: { x: o.x, y: o.y, z: 0 } }, Sprite: { texture: "assets/coin.png", size: { x: 0.5, y: 0.5 }, layer: 1, filter: "nearest" } } });
         sprites.play(id, "coin", { speed: 1 + i * 0.15 });
         coins.add(id);
-        tween.to(id, "Transform", { position: { y: y + 0.3 } }, { duration: 0.8, ease: "sineInOut", repeat: Infinity, yoyo: true, delay: i * 0.1 });
+        const bob = Number(o.properties.bob ?? 0.3);
+        tween.to(id, "Transform", { position: { y: o.y + bob } }, { duration: 0.8, ease: "sineInOut", repeat: Infinity, yoyo: true, delay: i * 0.1 });
+        i++;
     }
     mount(() => (
         <box position="absolute" left={12} top={12} padding={[6, 10]} radius={6} background="#00000080" name="hud">
@@ -44,9 +44,12 @@ onTick((t) => {
     const dx = input.axis("move_x") * speed * t.dt;
     const dy = input.axis("move_y") * speed * t.dt;
     const p = world.get(player, "Transform")!.position;
-    const x = Math.max(-9.5, Math.min(9.5, p.x + dx));
-    const y = Math.max(-3.4, Math.min(4.5, p.y + dy));
-    if (dx !== 0 || dy !== 0) world.set(player, "Transform", { position: { x, y } });
+    let x = Math.max(-9.5, Math.min(9.5, p.x + dx));
+    let y = Math.max(-3.4, Math.min(4.5, p.y + dy));
+    // Solid tiles block: the map says what is solid, so the ledge and the ground stop the player.
+    if (dx !== 0 && tilemap.solid(level, { x: x + Math.sign(dx) * 0.45, y: p.y })) x = p.x;
+    if (dy !== 0 && tilemap.solid(level, { x, y: y + Math.sign(dy) * 0.45 })) y = p.y;
+    if (x !== p.x || y !== p.y) world.set(player, "Transform", { position: { x, y } });
     const moving = dx !== 0 || dy !== 0;
     if (moving !== walking) { walking = moving; sprites.play(player, walking ? "walk" : "idle"); }
     if (dx < 0 && !facingLeft) { facingLeft = true; world.set(player, "Sprite", { flip_x: true }); }
@@ -69,3 +72,4 @@ expose("score", () => score());
 expose("coins", () => coins.size);
 expose("player.x", () => Number(world.get(player, "Transform")?.position.x.toFixed(2) ?? 0));
 expose("player.clip", () => world.get(player, "SpriteAnimation")?.clip ?? "");
+expose("level.solid_below", () => tilemap.solid(level, { x: world.get(player, "Transform")?.position.x ?? 0, y: (world.get(player, "Transform")?.position.y ?? 0) - 0.6 }));

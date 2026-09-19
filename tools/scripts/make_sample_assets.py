@@ -197,6 +197,107 @@ def glb(positions, normals, uvs, indices, material, nodes, texture_uri=None):
     return doc, buf
 
 
+def skinned_arm():
+    """A two-joint arm: a square column from y=0 to y=2 weighted between a root joint at the base
+    and a tip joint at y=1, with a 'wave' clip that swings the tip joint about Z (-45 to +45
+    degrees over a second) and a 'nod' clip that tilts the root."""
+    levels = [0.0, 0.5, 1.0, 1.5, 2.0]
+    half = 0.15
+    ring = [(-half, -half), (half, -half), (half, half), (-half, half)]
+    positions, normals, uvs, joints, weights, indices = [], [], [], [], [], []
+    for y in levels:
+        w1 = min(max((y - 0.5) / 1.0, 0.0), 1.0)   # the tip joint takes over between y=0.5 and y=1.5
+        for (x, z) in ring:
+            positions.append((x, y, z))
+            n = (x, 0.0, z)
+            l = (n[0] ** 2 + n[2] ** 2) ** 0.5
+            normals.append((n[0] / l, 0.0, n[2] / l))
+            uvs.append((0.0, y / 2.0))
+            joints.append((0, 1, 0, 0))
+            weights.append((1.0 - w1, w1, 0.0, 0.0))
+    for lv in range(len(levels) - 1):
+        b = lv * 4
+        for k in range(4):
+            a, c = b + k, b + (k + 1) % 4
+            d, e = a + 4, c + 4
+            indices += [a, c, e, a, e, d]
+    # caps (weighted like their ring)
+    for base, flip in ((0, True), ((len(levels) - 1) * 4, False)):
+        tri1, tri2 = [base, base + 1, base + 2], [base, base + 2, base + 3]
+        if flip:
+            tri1.reverse(); tri2.reverse()
+        indices += tri1 + tri2
+    def pack(fmt, items):
+        return b"".join(struct.pack(fmt, *i) for i in items)
+    import math
+    def quat_z(deg):
+        h = math.radians(deg) / 2
+        return (0.0, 0.0, math.sin(h), math.cos(h))
+    def quat_x(deg):
+        h = math.radians(deg) / 2
+        return (math.sin(h), 0.0, 0.0, math.cos(h))
+    ibm = [(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1), (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1)]
+    wave_t = [0.0, 0.5, 1.0]
+    wave_q = [quat_z(-45), quat_z(45), quat_z(-45)]
+    nod_t = [0.0, 0.75, 1.5]
+    nod_q = [quat_x(0), quat_x(30), quat_x(0)]
+    blobs = [
+        ("POS", pack("<fff", positions), 34962), ("NRM", pack("<fff", normals), 34962), ("UV", pack("<ff", uvs), 34962),
+        ("JNT", pack("<HHHH", joints), 34962), ("WGT", pack("<ffff", weights), 34962),
+        ("IDX", b"".join(struct.pack("<H", i) for i in indices), 34963),
+        ("IBM", pack("<16f", ibm), None), ("WT", pack("<f", [(t,) for t in wave_t]), None), ("WQ", pack("<ffff", wave_q), None),
+        ("NT", pack("<f", [(t,) for t in nod_t]), None), ("NQ", pack("<ffff", nod_q), None),
+    ]
+    buf, views, index_of = b"", [], {}
+    for name, data, target in blobs:
+        while len(buf) % 4:
+            buf += b"\x00"
+        v = {"buffer": 0, "byteOffset": len(buf), "byteLength": len(data)}
+        if target:
+            v["target"] = target
+        index_of[name] = len(views)
+        views.append(v)
+        buf += data
+    while len(buf) % 4:
+        buf += b"\x00"
+    mins = [min(p[i] for p in positions) for i in range(3)]
+    maxs = [max(p[i] for p in positions) for i in range(3)]
+    accessors = [
+        {"bufferView": index_of["POS"], "componentType": 5126, "count": len(positions), "type": "VEC3", "min": mins, "max": maxs},
+        {"bufferView": index_of["NRM"], "componentType": 5126, "count": len(normals), "type": "VEC3"},
+        {"bufferView": index_of["UV"], "componentType": 5126, "count": len(uvs), "type": "VEC2"},
+        {"bufferView": index_of["JNT"], "componentType": 5123, "count": len(joints), "type": "VEC4"},
+        {"bufferView": index_of["WGT"], "componentType": 5126, "count": len(weights), "type": "VEC4"},
+        {"bufferView": index_of["IDX"], "componentType": 5123, "count": len(indices), "type": "SCALAR"},
+        {"bufferView": index_of["IBM"], "componentType": 5126, "count": 2, "type": "MAT4"},
+        {"bufferView": index_of["WT"], "componentType": 5126, "count": len(wave_t), "type": "SCALAR", "min": [wave_t[0]], "max": [wave_t[-1]]},
+        {"bufferView": index_of["WQ"], "componentType": 5126, "count": len(wave_q), "type": "VEC4"},
+        {"bufferView": index_of["NT"], "componentType": 5126, "count": len(nod_t), "type": "SCALAR", "min": [nod_t[0]], "max": [nod_t[-1]]},
+        {"bufferView": index_of["NQ"], "componentType": 5126, "count": len(nod_q), "type": "VEC4"},
+    ]
+    doc = {
+        "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0, 1]}],
+        "nodes": [
+            {"name": "Arm", "mesh": 0, "skin": 0},
+            {"name": "root", "translation": [0, 0, 0], "children": [2]},
+            {"name": "tip", "translation": [0, 1, 0]},
+        ],
+        "meshes": [{"name": "arm", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 5, "material": 0}]}],
+        "materials": [{"name": "arm", "pbrMetallicRoughness": {"baseColorFactor": [0.9, 0.55, 0.3, 1], "metallicFactor": 0, "roughnessFactor": 0.7}}],
+        "skins": [{"name": "arm", "joints": [1, 2], "inverseBindMatrices": 6}],
+        "animations": [
+            {"name": "wave", "samplers": [{"input": 7, "output": 8, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 2, "path": "rotation"}}]},
+            {"name": "nod", "samplers": [{"input": 9, "output": 10, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]},
+        ],
+        "buffers": [{"byteLength": len(buf)}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    return doc, buf
+
+
 def write_glb(path, doc, buf):
     js = json.dumps(doc, separators=(",", ":")).encode()
     while len(js) % 4:
@@ -246,12 +347,52 @@ def make_sounds(out):
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
 
 
+def sprites_level():
+    """A Tiled map (JSON) for the sprites sample: 20x10 tiles of 16 px; a 'ground' layer with a
+    grass row over a dirt row (both solid through a tile property), a 'deco' layer with a few
+    flipped grass tiles as ledges, and an object layer placing the player and the coins."""
+    w, h = 20, 10
+    grass, dirt = 1, 2
+    flip_h = 0x80000000
+    ground = [0] * (w * h)
+    for x in range(w):
+        ground[8 * w + x] = grass
+        ground[9 * w + x] = dirt
+    deco = [0] * (w * h)
+    for x in (13, 14):          # a ledge the last coins float over
+        deco[6 * w + x] = grass | flip_h
+    objects = [{"id": 1, "name": "player", "type": "spawn", "point": True, "x": 160, "y": 120, "width": 0, "height": 0, "rotation": 0, "visible": True}]
+    for i in range(6):
+        x = (-6 + i * 2.4 + 10) * 16
+        y = 120 if i < 4 else 96
+        objects.append({"id": 2 + i, "name": "coin%d" % i, "type": "coin", "point": True, "x": round(x, 2), "y": y, "width": 0, "height": 0, "rotation": 0, "visible": True,
+                        "properties": [{"name": "bob", "type": "float", "value": 0.3}]})
+    return {
+        "type": "map", "version": "1.10", "tiledversion": "1.11.0", "orientation": "orthogonal", "renderorder": "right-down",
+        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 4, "nextobjectid": 8,
+        "properties": [{"name": "title", "type": "string", "value": "coins"}],
+        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 32, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
+                      "columns": 2, "tilecount": 2, "spacing": 0, "margin": 0,
+                      "tiles": [{"id": 0, "properties": [{"name": "solid", "type": "bool", "value": True}]},
+                                {"id": 1, "properties": [{"name": "solid", "type": "bool", "value": True}]}]}],
+        "layers": [
+            {"id": 1, "type": "tilelayer", "name": "ground", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": ground},
+            {"id": 2, "type": "tilelayer", "name": "deco", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": deco,
+             "properties": [{"name": "solid", "type": "bool", "value": True}]},
+            {"id": 3, "type": "objectgroup", "name": "spawns", "objects": objects, "opacity": 1, "visible": True, "x": 0, "y": 0},
+        ],
+    }
+
+
 def make_sprites(out):
     os.makedirs(out, exist_ok=True)
     for name, data in (("player.png", sprite_player_sheet()), ("coin.png", sprite_coin_sheet()), ("tiles.png", sprite_tiles())):
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
+    with open(os.path.join(out, "level.tmj"), "w") as f:
+        json.dump(sprites_level(), f, separators=(",", ":"))
+    print("level.tmj", os.path.getsize(os.path.join(out, "level.tmj")), "bytes")
 
 
 def main():
@@ -266,6 +407,9 @@ def main():
     with open(os.path.join(out, "checker.png"), "wb") as f:
         f.write(checker())
     p, n, u, i = cube()
+    arm_doc, arm_buf = skinned_arm()
+    write_glb(os.path.join(out, "arm.glb"), arm_doc, arm_buf)
+    print("arm.glb", os.path.getsize(os.path.join(out, "arm.glb")), "bytes")
     crate_material = {"name": "crate", "pbrMetallicRoughness": {"baseColorFactor": [1, 0.9, 0.7, 1], "baseColorTexture": {"index": 0}, "metallicFactor": 0, "roughnessFactor": 0.8}}
     nodes = [{"name": "crate"}, {"name": "crate_small", "translation": [1.5, 0, 0], "scale": [0.5, 0.5, 0.5]}]
     doc, buf = glb(p, n, u, i, crate_material, nodes, texture_uri="checker.png")

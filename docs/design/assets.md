@@ -46,4 +46,12 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 ## Not yet
 
-Skins and animations, morph targets, KHR extensions (texture transform, materials variants, draco), mipmaps and anisotropic filtering, normal/metallic-roughness/emissive maps, sRGB-correct shading, instantiating a glTF node tree as entities (today one file is one drawable), hot reload driven by file watching (assets change only through `assets.reload`), and audio or font assets through the same store.
+Morph targets, animation blending, KHR extensions (texture transform, materials variants, draco), mipmaps and anisotropic filtering, normal/metallic-roughness/emissive maps, sRGB-correct shading, instantiating a glTF node tree as entities (today one file is one drawable), hot reload driven by file watching (assets change only through `assets.reload`), and audio or font assets through the same store.
+
+## Tile maps
+
+Tiled JSON maps (`.tmj`) load through `AssetStore::tilemap` with their tile layers, embedded tilesets, object layers and properties; the `TileMap` component draws them (`tilemaps.md`).
+
+## Skins and animations
+
+A file's node hierarchy, skins (joints, inverse bind matrices) and animation clips are kept next to the baked geometry; skinned primitives keep their bind-space vertices with joints and weights and are posed at runtime by the `Animator` component (`animation.md`). `assets.describe` lists `skins` and `animations` with their durations.

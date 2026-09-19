@@ -423,6 +423,192 @@ std::size_t numeric_span(SpriteAnimation& v, std::string_view path, float** out)
     return 0;
 }
 
+void to_json(Json& j, const TileMap& v) {
+    j = Json::object();
+    j["map"] = v.map;
+    j["layer"] = v.layer;
+    j["tile_size"] = v.tile_size;
+    vec_to_json(j["color"], v.color);
+    j["order"] = v.order;
+    j["visible"] = v.visible;
+}
+
+void from_json(const Json& j, TileMap& v) {
+    scalar_from_json(j, "map", v.map);
+    scalar_from_json(j, "layer", v.layer);
+    scalar_from_json(j, "tile_size", v.tile_size);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    scalar_from_json(j, "order", v.order);
+    scalar_from_json(j, "visible", v.visible);
+}
+
+void hash_component(StateHasherRef& h, const TileMap& v) {
+    h.str(v.map);
+    h.str(v.layer);
+    h.f32(v.tile_size);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.i64(static_cast<std::int64_t>(v.order));
+    h.u8(v.visible ? 1 : 0);
+}
+
+std::size_t numeric_span(TileMap& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "tile_size") { *out = &v.tile_size; return 1; }
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Animator& v) {
+    j = Json::object();
+    j["clip"] = v.clip;
+    j["playing"] = v.playing;
+    j["loop"] = v.loop;
+    j["speed"] = v.speed;
+    j["time"] = v.time;
+    j["finished"] = v.finished;
+}
+
+void from_json(const Json& j, Animator& v) {
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "playing", v.playing);
+    scalar_from_json(j, "loop", v.loop);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "time", v.time);
+    scalar_from_json(j, "finished", v.finished);
+}
+
+void hash_component(StateHasherRef& h, const Animator& v) {
+    h.str(v.clip);
+    h.u8(v.playing ? 1 : 0);
+    h.u8(v.loop ? 1 : 0);
+    h.f32(v.speed);
+    h.f32(v.time);
+    h.u8(v.finished ? 1 : 0);
+}
+
+std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "speed") { *out = &v.speed; return 1; }
+    if (path == "time") { *out = &v.time; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const ParticleEmitter& v) {
+    j = Json::object();
+    j["texture"] = v.texture;
+    j["emitting"] = v.emitting;
+    j["rate"] = v.rate;
+    j["max"] = v.max;
+    vec_to_json(j["lifetime"], v.lifetime);
+    vec_to_json(j["speed"], v.speed);
+    vec_to_json(j["direction"], v.direction);
+    j["spread"] = v.spread;
+    vec_to_json(j["gravity"], v.gravity);
+    j["drag"] = v.drag;
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["color"], v.color);
+    vec_to_json(j["color_end"], v.color_end);
+    j["layer"] = v.layer;
+    j["billboard"] = v.billboard;
+    j["world_space"] = v.world_space;
+    j["seed"] = v.seed;
+}
+
+void from_json(const Json& j, ParticleEmitter& v) {
+    scalar_from_json(j, "texture", v.texture);
+    scalar_from_json(j, "emitting", v.emitting);
+    scalar_from_json(j, "rate", v.rate);
+    scalar_from_json(j, "max", v.max);
+    if (j.is_object() && j.contains("lifetime")) vec_from_json(j["lifetime"], v.lifetime);
+    if (j.is_object() && j.contains("speed")) vec_from_json(j["speed"], v.speed);
+    if (j.is_object() && j.contains("direction")) vec_from_json(j["direction"], v.direction);
+    scalar_from_json(j, "spread", v.spread);
+    if (j.is_object() && j.contains("gravity")) vec_from_json(j["gravity"], v.gravity);
+    scalar_from_json(j, "drag", v.drag);
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    if (j.is_object() && j.contains("color_end")) vec_from_json(j["color_end"], v.color_end);
+    scalar_from_json(j, "layer", v.layer);
+    scalar_from_json(j, "billboard", v.billboard);
+    scalar_from_json(j, "world_space", v.world_space);
+    scalar_from_json(j, "seed", v.seed);
+}
+
+void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
+    h.str(v.texture);
+    h.u8(v.emitting ? 1 : 0);
+    h.f32(v.rate);
+    h.i64(static_cast<std::int64_t>(v.max));
+    h.f32(v.lifetime.x);
+    h.f32(v.lifetime.y);
+    h.f32(v.speed.x);
+    h.f32(v.speed.y);
+    h.f32(v.direction.x);
+    h.f32(v.direction.y);
+    h.f32(v.direction.z);
+    h.f32(v.spread);
+    h.f32(v.gravity.x);
+    h.f32(v.gravity.y);
+    h.f32(v.gravity.z);
+    h.f32(v.drag);
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.color_end.r);
+    h.f32(v.color_end.g);
+    h.f32(v.color_end.b);
+    h.f32(v.color_end.a);
+    h.i64(static_cast<std::int64_t>(v.layer));
+    h.u8(v.billboard ? 1 : 0);
+    h.u8(v.world_space ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.seed));
+}
+
+std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "rate") { *out = &v.rate; return 1; }
+    if (path == "lifetime") { *out = &v.lifetime.x; return 2; }
+    if (path == "lifetime.x") { *out = &v.lifetime.x; return 1; }
+    if (path == "lifetime.y") { *out = &v.lifetime.y; return 1; }
+    if (path == "speed") { *out = &v.speed.x; return 2; }
+    if (path == "speed.x") { *out = &v.speed.x; return 1; }
+    if (path == "speed.y") { *out = &v.speed.y; return 1; }
+    if (path == "direction") { *out = &v.direction.x; return 3; }
+    if (path == "direction.x") { *out = &v.direction.x; return 1; }
+    if (path == "direction.y") { *out = &v.direction.y; return 1; }
+    if (path == "direction.z") { *out = &v.direction.z; return 1; }
+    if (path == "spread") { *out = &v.spread; return 1; }
+    if (path == "gravity") { *out = &v.gravity.x; return 3; }
+    if (path == "gravity.x") { *out = &v.gravity.x; return 1; }
+    if (path == "gravity.y") { *out = &v.gravity.y; return 1; }
+    if (path == "gravity.z") { *out = &v.gravity.z; return 1; }
+    if (path == "drag") { *out = &v.drag; return 1; }
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "color_end") { *out = &v.color_end.r; return 4; }
+    if (path == "color_end.r") { *out = &v.color_end.r; return 1; }
+    if (path == "color_end.g") { *out = &v.color_end.g; return 1; }
+    if (path == "color_end.b") { *out = &v.color_end.b; return 1; }
+    if (path == "color_end.a") { *out = &v.color_end.a; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Bounds& v) {
     j = Json::object();
     vec_to_json(j["min"], v.min);
@@ -466,6 +652,7 @@ void to_json(Json& j, const RigidBody& v) {
     j["angular_damping"] = v.angular_damping;
     j["gravity_scale"] = v.gravity_scale;
     j["sleeping"] = v.sleeping;
+    j["lock_rotation"] = v.lock_rotation;
 }
 
 void from_json(const Json& j, RigidBody& v) {
@@ -477,6 +664,7 @@ void from_json(const Json& j, RigidBody& v) {
     scalar_from_json(j, "angular_damping", v.angular_damping);
     scalar_from_json(j, "gravity_scale", v.gravity_scale);
     scalar_from_json(j, "sleeping", v.sleeping);
+    scalar_from_json(j, "lock_rotation", v.lock_rotation);
 }
 
 void hash_component(StateHasherRef& h, const RigidBody& v) {
@@ -488,6 +676,7 @@ void hash_component(StateHasherRef& h, const RigidBody& v) {
     h.f32(v.angular_damping);
     h.f32(v.gravity_scale);
     h.u8(v.sleeping ? 1 : 0);
+    h.u8(v.lock_rotation ? 1 : 0);
 }
 
 std::size_t numeric_span(RigidBody& v, std::string_view path, float** out) {
@@ -498,6 +687,60 @@ std::size_t numeric_span(RigidBody& v, std::string_view path, float** out) {
     if (path == "linear_damping") { *out = &v.linear_damping; return 1; }
     if (path == "angular_damping") { *out = &v.angular_damping; return 1; }
     if (path == "gravity_scale") { *out = &v.gravity_scale; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Joint& v) {
+    j = Json::object();
+    j["kind"] = v.kind;
+    j["target"] = v.target;
+    vec_to_json(j["anchor"], v.anchor);
+    vec_to_json(j["target_anchor"], v.target_anchor);
+    j["distance"] = v.distance;
+    j["rope"] = v.rope;
+    j["break_force"] = v.break_force;
+    j["force"] = v.force;
+}
+
+void from_json(const Json& j, Joint& v) {
+    scalar_from_json(j, "kind", v.kind);
+    scalar_from_json(j, "target", v.target);
+    if (j.is_object() && j.contains("anchor")) vec_from_json(j["anchor"], v.anchor);
+    if (j.is_object() && j.contains("target_anchor")) vec_from_json(j["target_anchor"], v.target_anchor);
+    scalar_from_json(j, "distance", v.distance);
+    scalar_from_json(j, "rope", v.rope);
+    scalar_from_json(j, "break_force", v.break_force);
+    scalar_from_json(j, "force", v.force);
+}
+
+void hash_component(StateHasherRef& h, const Joint& v) {
+    h.i64(static_cast<std::int64_t>(v.kind));
+    h.str(v.target);
+    h.f32(v.anchor.x);
+    h.f32(v.anchor.y);
+    h.f32(v.anchor.z);
+    h.f32(v.target_anchor.x);
+    h.f32(v.target_anchor.y);
+    h.f32(v.target_anchor.z);
+    h.f32(v.distance);
+    h.u8(v.rope ? 1 : 0);
+    h.f32(v.break_force);
+    h.f32(v.force);
+}
+
+std::size_t numeric_span(Joint& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "anchor") { *out = &v.anchor.x; return 3; }
+    if (path == "anchor.x") { *out = &v.anchor.x; return 1; }
+    if (path == "anchor.y") { *out = &v.anchor.y; return 1; }
+    if (path == "anchor.z") { *out = &v.anchor.z; return 1; }
+    if (path == "target_anchor") { *out = &v.target_anchor.x; return 3; }
+    if (path == "target_anchor.x") { *out = &v.target_anchor.x; return 1; }
+    if (path == "target_anchor.y") { *out = &v.target_anchor.y; return 1; }
+    if (path == "target_anchor.z") { *out = &v.target_anchor.z; return 1; }
+    if (path == "distance") { *out = &v.distance; return 1; }
+    if (path == "break_force") { *out = &v.break_force; return 1; }
+    if (path == "force") { *out = &v.force; return 1; }
     return 0;
 }
 
@@ -643,11 +886,46 @@ constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
     FieldInfo{"time", "f32", "Seconds into the current frame; advanced by the engine."},
     FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
 }};
+constexpr std::array<FieldInfo, 6> kTileMapFields = {{
+    FieldInfo{"map", "string", "Project-relative Tiled JSON map (.tmj)."},
+    FieldInfo{"layer", "string", "Draw only this tile layer; empty draws every visible one."},
+    FieldInfo{"tile_size", "f32", "World units per tile."},
+    FieldInfo{"color", "color", "Tint and opacity over the whole map."},
+    FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this."},
+    FieldInfo{"visible", "bool", "Whether the map is drawn."},
+}};
+constexpr std::array<FieldInfo, 6> kAnimatorFields = {{
+    FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)."},
+    FieldInfo{"playing", "bool", "Whether time advances."},
+    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished)."},
+    FieldInfo{"speed", "f32", "Playback rate multiplier."},
+    FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek."},
+    FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
+}};
+constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
+    FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
+    FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate."},
+    FieldInfo{"rate", "f32", "Particles per second while emitting."},
+    FieldInfo{"max", "i32", "Most particles alive at once from this emitter (older ones are not replaced; spawning waits)."},
+    FieldInfo{"lifetime", "vec2", "Seconds a particle lives: min and max, drawn uniformly."},
+    FieldInfo{"speed", "vec2", "Initial speed: min and max."},
+    FieldInfo{"direction", "vec3", "Center of the emission cone, in the emitter's local frame."},
+    FieldInfo{"spread", "f32", "Half-angle of the cone in degrees (0 is a beam, 180 is every direction)."},
+    FieldInfo{"gravity", "vec3", "Acceleration applied to every particle, world units per second squared."},
+    FieldInfo{"drag", "f32", "Fraction of velocity lost per second."},
+    FieldInfo{"size", "vec2", "Quad size in world units at birth and at death."},
+    FieldInfo{"color", "color", "Tint at birth."},
+    FieldInfo{"color_end", "color", "Tint at death; alpha 0 fades out."},
+    FieldInfo{"layer", "i32", "Draw order among sprites and particles."},
+    FieldInfo{"billboard", "bool", "Face the camera (3D); false keeps quads in the XY plane for 2D scenes."},
+    FieldInfo{"world_space", "bool", "Particles keep their world position when the emitter moves; false moves them with it."},
+    FieldInfo{"seed", "i32", "Extra seed for the emitter's random stream (the entity id seeds it too)."},
+}};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},
     FieldInfo{"max", "vec3", "Maximum corner."},
 }};
-constexpr std::array<FieldInfo, 8> kRigidBodyFields = {{
+constexpr std::array<FieldInfo, 9> kRigidBodyFields = {{
     FieldInfo{"kind", "i32", "0 dynamic, 1 static, 2 kinematic."},
     FieldInfo{"mass", "f32", "Kilograms; ignored for static bodies."},
     FieldInfo{"restitution", "f32", "Bounciness 0..1."},
@@ -656,10 +934,21 @@ constexpr std::array<FieldInfo, 8> kRigidBodyFields = {{
     FieldInfo{"angular_damping", "f32", "Angular velocity lost per second (fraction)."},
     FieldInfo{"gravity_scale", "f32", "Multiplier on world gravity."},
     FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched."},
+    FieldInfo{"lock_rotation", "bool", "Never rotate (characters on capsules stay upright)."},
+}};
+constexpr std::array<FieldInfo, 8> kJointFields = {{
+    FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together)."},
+    FieldInfo{"target", "string", "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor."},
+    FieldInfo{"anchor", "vec3", "Attachment point on this body, in its local frame."},
+    FieldInfo{"target_anchor", "vec3", "Attachment point on the target in its local frame, or a world point when there is no target."},
+    FieldInfo{"distance", "f32", "Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here."},
+    FieldInfo{"rope", "bool", "Distance joints only: pull when the anchors are farther than distance, never push."},
+    FieldInfo{"break_force", "f32", "Force (newtons) above which the joint breaks; 0 never breaks."},
+    FieldInfo{"force", "f32", "Force the joint carried in the last step, written by the engine."},
 }};
 constexpr std::array<FieldInfo, 4> kColliderFields = {{
-    FieldInfo{"shape", "i32", "0 box, 1 sphere."},
-    FieldInfo{"size", "vec3", "Box half extents, or radius in x for spheres."},
+    FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends)."},
+    FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules."},
     FieldInfo{"offset", "vec3", "Local offset of the shape center."},
     FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response."},
 }};
@@ -673,7 +962,7 @@ constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};
 
-constexpr std::array<ComponentInfo, 14> kComponents = {{
+constexpr std::array<ComponentInfo, 18> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -684,8 +973,12 @@ constexpr std::array<ComponentInfo, 14> kComponents = {{
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
     ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},
     ComponentInfo{"SpriteAnimation", "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.", true, kSpriteAnimationFields},
+    ComponentInfo{"TileMap", "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where.", true, kTileMapFields},
+    ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
+    ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.", true, kParticleEmitterFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
+    ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
 }};

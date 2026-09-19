@@ -150,6 +150,62 @@ void from_json(const Json& j, SpriteAnimation& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(SpriteAnimation& v, std::string_view path, float** out);
 
+/// Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where.
+struct TileMap {
+    std::string map = "";
+    std::string layer = "";
+    float tile_size = 1.0f;
+    Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    std::int32_t order = -10;
+    bool visible = true;
+    constexpr bool operator==(const TileMap&) const = default;
+};
+void to_json(Json& j, const TileMap& v);
+void from_json(const Json& j, TileMap& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(TileMap& v, std::string_view path, float** out);
+
+/// Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.
+struct Animator {
+    std::string clip = "";
+    bool playing = true;
+    bool loop = true;
+    float speed = 1.0f;
+    float time = 0.0f;
+    bool finished = false;
+    constexpr bool operator==(const Animator&) const = default;
+};
+void to_json(Json& j, const Animator& v);
+void from_json(const Json& j, Animator& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Animator& v, std::string_view path, float** out);
+
+/// Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.
+struct ParticleEmitter {
+    std::string texture = "";
+    bool emitting = true;
+    float rate = 20.0f;
+    std::int32_t max = 256;
+    Vec2 lifetime{1.0f, 2.0f};
+    Vec2 speed{1.0f, 2.0f};
+    Vec3 direction{0.0f, 1.0f, 0.0f};
+    float spread = 30.0f;
+    Vec3 gravity{0.0f, -3.0f, 0.0f};
+    float drag = 0.0f;
+    Vec2 size{0.2f, 0.05f};
+    Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    Color4 color_end{1.0f, 1.0f, 1.0f, 0.0f};
+    std::int32_t layer = 10;
+    bool billboard = true;
+    bool world_space = true;
+    std::int32_t seed = 0;
+    constexpr bool operator==(const ParticleEmitter&) const = default;
+};
+void to_json(Json& j, const ParticleEmitter& v);
+void from_json(const Json& j, ParticleEmitter& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out);
+
 /// Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.
 struct Bounds {
     Vec3 min{0.0f, 0.0f, 0.0f};
@@ -171,12 +227,30 @@ struct RigidBody {
     float angular_damping = 0.05f;
     float gravity_scale = 1.0f;
     bool sleeping = false;
+    bool lock_rotation = false;
     constexpr bool operator==(const RigidBody&) const = default;
 };
 void to_json(Json& j, const RigidBody& v);
 void from_json(const Json& j, RigidBody& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(RigidBody& v, std::string_view path, float** out);
+
+/// Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
+struct Joint {
+    std::int32_t kind = 0;
+    std::string target = "";
+    Vec3 anchor{0.0f, 0.0f, 0.0f};
+    Vec3 target_anchor{0.0f, 0.0f, 0.0f};
+    float distance = -1.0f;
+    bool rope = false;
+    float break_force = 0.0f;
+    float force = 0.0f;
+    constexpr bool operator==(const Joint&) const = default;
+};
+void to_json(Json& j, const Joint& v);
+void from_json(const Json& j, Joint& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Joint& v, std::string_view path, float** out);
 
 /// Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
 struct Collider {
@@ -234,8 +308,12 @@ void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
 void hash_component(struct StateHasherRef& h, const Sprite& v);
 void hash_component(struct StateHasherRef& h, const SpriteAnimation& v);
+void hash_component(struct StateHasherRef& h, const TileMap& v);
+void hash_component(struct StateHasherRef& h, const Animator& v);
+void hash_component(struct StateHasherRef& h, const ParticleEmitter& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
+void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
 

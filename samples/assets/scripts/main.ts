@@ -1,7 +1,8 @@
 // Meshes and textures from the project's assets folder: a glTF crate with two baked nodes and a
-// checker texture, a pyramid from a .gltf with an embedded buffer, a textured ground, and a
-// deliberately missing asset (drawn as a magenta cube, reported in render.stats).
-import { command, expose, log, onStart, onTick, world } from "pocket";
+// checker texture, a pyramid from a .gltf with an embedded buffer, a skinned arm waving through
+// its glTF animation, a textured ground, and a deliberately missing asset (drawn as a magenta
+// cube, reported in render.stats).
+import { animation, command, expose, log, onStart, onTick, world } from "pocket";
 
 interface AssetFile { path: string; kind: string; bytes: number; loaded: boolean }
 
@@ -14,6 +15,8 @@ onStart(() => {
     const crateInfo = command<{ vertices: number; triangles: number; materials: unknown[]; nodes: number }>("assets.describe", { path: "assets/crate.glb" });
     log("crate.glb", { vertices: crateInfo.vertices, triangles: crateInfo.triangles, nodes: crateInfo.nodes });
     crate = world.find("Crate") ?? 0;
+    const arm = world.find("Arm");
+    if (arm !== undefined) log("arm.glb", animation.clips(arm));
 });
 
 onTick((t) => {
@@ -22,4 +25,5 @@ onTick((t) => {
 });
 
 expose("yaw", () => Number(yaw.toFixed(3)));
+expose("arm.time", () => Number((world.get(world.find("Arm") ?? 0, "Animator")?.time ?? 0).toFixed(3)));
 expose("missing", () => (command<{ assets?: { missing?: string[] } }>("render.stats").assets?.missing ?? []).length);

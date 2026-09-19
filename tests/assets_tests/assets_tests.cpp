@@ -53,6 +53,82 @@ TEST_CASE("glb with two nodes, normals, uvs and a texture", "[assets]") {
     REQUIRE(store.version() == version);
 }
 
+TEST_CASE("a skinned glb keeps joints, weights, the skeleton and its clips", "[assets][animation]") {
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/arm.glb");
+    REQUIRE(m.has_value());
+    const assets::Mesh& mesh = **m;
+    REQUIRE(mesh.skinned());
+    REQUIRE(mesh.skin_vertices.size() == mesh.vertices.size());
+    REQUIRE(mesh.nodes.size() == 3);
+    REQUIRE(mesh.nodes[2].parent == 1);
+    REQUIRE(mesh.nodes[2].translation.y == Catch::Approx(1.0f));
+    REQUIRE(mesh.skins.size() == 1);
+    REQUIRE(mesh.skins[0].joints == std::vector<int>{1, 2});
+    REQUIRE(mesh.skins[0].inverse_bind[1].at(3, 1) == Catch::Approx(-1.0f));   // tip bind pose is 1 up
+    REQUIRE(mesh.submeshes.size() == 1);
+    REQUIRE(mesh.submeshes[0].skin == 0);
+    REQUIRE(mesh.animations.size() == 2);
+    REQUIRE(mesh.clip("wave") != nullptr);
+    REQUIRE(mesh.clip("wave")->duration == Catch::Approx(1.0f));
+    REQUIRE(mesh.clip("wave")->channels[0].path == 1);
+    REQUIRE(mesh.clip("wave")->channels[0].times.size() == 3);
+    REQUIRE(mesh.clip("nod")->duration == Catch::Approx(1.5f));
+    // Weights are normalized and the top ring belongs to the tip joint, the bottom to the root.
+    for (const auto& sv : mesh.skin_vertices) {
+        float sum = sv.weights.x + sv.weights.y + sv.weights.z + sv.weights.w;
+        REQUIRE(sum == Catch::Approx(1.0f).margin(1e-5));
+    }
+    REQUIRE(mesh.skin_vertices.front().weights.x == Catch::Approx(1.0f));
+    REQUIRE(mesh.skin_vertices.back().weights.y == Catch::Approx(1.0f));
+    // The skinned node's own transform is not baked: vertices stay in bind space (y from 0 to 2).
+    REQUIRE(mesh.aabb_min.y == Catch::Approx(0.0f));
+    REQUIRE(mesh.aabb_max.y == Catch::Approx(2.0f));
+    Json d = mesh.describe();
+    REQUIRE(d["skinned"] == true);
+    REQUIRE(d["animations"].size() == 2);
+}
+
+TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", "[assets][tilemap]") {
+    assets::AssetStore store(root() / "samples" / "sprites");
+    auto m = store.tilemap("assets/level.tmj");
+    REQUIRE(m.has_value());
+    const assets::TileMap& map = **m;
+    REQUIRE(map.width == 20);
+    REQUIRE(map.height == 10);
+    REQUIRE(map.tile_width == 16);
+    REQUIRE(map.layers.size() == 2);
+    REQUIRE(map.layers[0].name == "ground");
+    REQUIRE(map.layers[0].gids[8 * 20 + 3] == 1);
+    REQUIRE(map.layers[0].gids[9 * 20 + 3] == 2);
+    REQUIRE(map.layers[0].gids[0] == 0);
+    REQUIRE(map.tilesets.size() == 1);
+    REQUIRE(map.tilesets[0].image == "assets/tiles.png");   // resolved next to the map
+    REQUIRE(map.tilesets[0].columns == 2);
+    REQUIRE(map.tilesets[0].solid(0));
+    REQUIRE(map.tileset_for(2) == &map.tilesets[0]);
+    // The deco layer flips its tiles horizontally and is solid as a whole.
+    std::uint32_t deco = map.layers[1].gids[6 * 20 + 13];
+    REQUIRE((deco & assets::TileMap::kFlipH) != 0);
+    REQUIRE((deco & assets::TileMap::kIdMask) == 1);
+    REQUIRE(map.layers[1].solid_layer());
+    REQUIRE(map.solid_at(13, 6));
+    REQUIRE(map.solid_at(3, 8));
+    REQUIRE_FALSE(map.solid_at(3, 7));
+    REQUIRE_FALSE(map.solid_at(-1, 8));
+    REQUIRE(map.object_layers.size() == 1);
+    REQUIRE(map.object_layers[0].objects.size() == 7);
+    REQUIRE(map.object_layers[0].objects[0].name == "player");
+    REQUIRE(map.object_layers[0].objects[1].properties["bob"] == 0.3);
+    REQUIRE(map.properties["title"] == "coins");
+    Json d = map.describe();
+    REQUIRE(d["layers"][0]["tiles"] == 40);
+    REQUIRE(store.describe("assets/level.tmj")["kind"] == "tilemap");
+    // Bad maps say why.
+    REQUIRE(assets::parse_tilemap("{\"orientation\":\"isometric\",\"width\":1,\"height\":1,\"tilewidth\":1,\"tileheight\":1}", "x.tmj").has_value() == false);
+    REQUIRE(assets::parse_tilemap("{\"width\":2,\"height\":2,\"tilewidth\":16,\"tileheight\":16,\"tilesets\":[],\"layers\":[{\"type\":\"tilelayer\",\"name\":\"a\",\"width\":2,\"height\":2,\"data\":[0,0,0,5]}]}", "x.tmj").has_value() == false);
+}
+
 TEST_CASE("gltf with an embedded buffer and no normals gets flat normals", "[assets]") {
     assets::AssetStore store(project());
     auto m = store.mesh("assets/pyramid.gltf");

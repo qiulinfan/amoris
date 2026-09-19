@@ -198,6 +198,172 @@ TEST_CASE("input actions carry edges across frames and release held keys", "[run
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[runtime][animation]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json clips = s.command("animation.clips", Json{{"entity", "Arm"}}).value();
+    INFO(clips.dump());
+    REQUIRE(clips["skinned"] == true);
+    REQUIRE(clips["clips"].size() == 2);
+    REQUIRE(clips["skins"][0]["joints"] == Json::array({"root", "tip"}));
+    REQUIRE(s.frame().has_value());
+    // Frame 1 sampled time 1/60: the tip joint leans about -45 degrees around Z (axis toward +X).
+    Json pose0 = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
+    INFO(pose0.dump());
+    REQUIRE(pose0["posed"] == true);
+    REQUIRE(pose0["joints"].size() == 2);
+    REQUIRE(pose0["joints"][1]["name"] == "tip");
+    REQUIRE(pose0["joints"][1]["position"]["y"].get<double>() == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(pose0["joints"][1]["axis_y"]["x"].get<double>() > 0.6);
+    Json rs = s.command("render.stats", Json::object()).value();
+    REQUIRE(rs["skinned"].get<int>() == 1);
+    // Half a second later the swing has reached +45 degrees: the axis points toward -X.
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    Json pose1 = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
+    REQUIRE(pose1["joints"][1]["axis_y"]["x"].get<double>() < -0.6);
+    Json anim = s.command("world.get", Json{{"entity", "Arm"}, {"component", "Animator"}}).value();
+    REQUIRE(anim["time"].get<double>() == Catch::Approx(31.0 / 60.0).margin(1e-4));
+    // The mesh really bends: the top of the arm (bind space (0,2,0)) is now near (-0.7, 1.7, 0) in
+    // model space, and picking there hits the Arm while the bind-space top is empty.
+    Json proj_bent = s.command("render.project", Json{{"point", {{"x", 0.2 - 0.68}, {"y", 1.68}, {"z", 1.6}}}}).value();
+    REQUIRE(proj_bent["visible"] == true);
+    Json pick_bent = s.command("render.pick", Json{{"x", proj_bent["x"]}, {"y", proj_bent["y"]}}).value();
+    INFO(pick_bent.dump());
+    REQUIRE(pick_bent["name"] == "Arm");
+    Json proj_straight = s.command("render.project", Json{{"point", {{"x", 0.2}, {"y", 1.95}, {"z", 1.6}}}}).value();
+    Json pick_straight = s.command("render.pick", Json{{"x", proj_straight["x"]}, {"y", proj_straight["y"]}}).value();
+    REQUIRE(pick_straight["name"] != "Arm");
+    // A one-shot clip stops at its end and says so; play with a bad name fails.
+    REQUIRE(s.command("animation.play", Json{{"entity", "Arm"}, {"clip", "nod"}, {"loop", false}, {"speed", 4.0}}).has_value());
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    Json done = s.command("world.get", Json{{"entity", "Arm"}, {"component", "Animator"}}).value();
+    REQUIRE(done["finished"] == true);
+    REQUIRE(done["time"].get<double>() == Catch::Approx(1.5));
+    Json ev = s.command("events.recent", Json{{"limit", 50}, {"type", "animation.finished"}}).value();
+    REQUIRE(ev.size() >= 1);
+    REQUIRE(s.command("animation.play", Json{{"entity", "Arm"}, {"clip", "sprint"}}).has_value() == false);
+    REQUIRE(s.command("animation.play", Json{{"entity", "Crate"}, {"clip", "wave"}}).has_value() == false);
+}
+
+TEST_CASE("particles spawn, draw, burst and hash deterministically", "[runtime][particles]") {
+    auto make = [](std::uint64_t seed) {
+        app::Options o;
+        o.project_dir = root() / "samples" / "playground";
+        o.bundle = root() / "build" / "ts" / "playground.js";
+        o.project_config = o.bundle.string() + ".project.json";
+        o.headless = true;
+        o.frames = 1000;
+        o.width = 320;
+        o.height = 180;
+        o.seed = seed;
+        o.log_level = "warn";
+        return o;
+    };
+    app::Session s(make(7));
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json stats = s.command("particles.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["emitters"].get<int>() >= 1);
+    REQUIRE(stats["alive"].get<int>() >= 30);                 // 40/s for a second, lives of 1.2 s and more
+    Json rs = s.command("render.stats", Json::object()).value();
+    REQUIRE(rs["particles"].get<int>() == stats["alive"].get<int>());
+    REQUIRE(rs["draw_calls"].get<int>() >= 2);
+    // The particles are drawn where the fountain rises: a pick above the emitter finds it.
+    Json fountain = s.command("world.describe", Json{{"entity", "/Level/Fountain"}}).value();
+    REQUIRE(fountain["components"].contains("ParticleEmitter"));
+    bool found = false;
+    for (float y = 0.4f; y <= 2.4f && !found; y += 0.2f) {
+        Json pr = s.command("render.project", Json{{"point", {{"x", -4.0}, {"y", y}, {"z", -4.0}}}}).value();
+        if (pr["visible"] != true) continue;
+        for (int dx = -3; dx <= 3 && !found; ++dx) {
+            for (int dy = -3; dy <= 3 && !found; ++dy) {
+                Json pick = s.command("render.pick", Json{{"x", pr["x"].get<double>() + dx}, {"y", pr["y"].get<double>() + dy}}).value();
+                if (pick["name"] == "Fountain") found = true;
+            }
+        }
+    }
+    REQUIRE(found);
+    // A burst adds at once, capped by max; clear removes everything.
+    Json burst = s.command("particles.burst", Json{{"entity", "/Level/Fountain"}, {"count", 500}}).value();
+    REQUIRE(burst["alive"].get<int>() == 200);
+    REQUIRE(s.command("particles.burst", Json{{"entity", "/Level/Player"}, {"count", 5}}).has_value() == false);
+    Json cleared = s.command("particles.clear", Json::object()).value();
+    REQUIRE(cleared["cleared"].get<int>() == 200);
+    // Same seed, same particles: the state hash covers them.
+    app::Session a(make(11)), b(make(11));
+    REQUIRE(a.start().has_value());
+    REQUIRE(b.start().has_value());
+    for (int i = 0; i < 45; ++i) {
+        REQUIRE(a.frame().has_value());
+        REQUIRE(b.frame().has_value());
+    }
+    REQUIRE(a.command("state", Json::object()).value()["state_hash"] == b.command("state", Json::object()).value()["state_hash"]);
+    REQUIRE(a.command("particles.stats", Json::object()).value()["alive"].get<int>() > 0);
+}
+
+TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime][joints]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "physics";
+    o.bundle = root() / "build" / "ts" / "physics.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.seed = 3;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto position = [&](const char* path) {
+        Json t = s.command("world.get", Json{{"entity", path}, {"component", "Transform"}}).value();
+        return Vec3{t["position"]["x"].get<float>(), t["position"]["y"].get<float>(), t["position"]["z"].get<float>()};
+    };
+    float worst = 0;
+    for (int i = 0; i < 200; ++i) {
+        REQUIRE(s.frame().has_value());
+        worst = std::max(worst, std::fabs(length(position("/Link1") - position("/Hook")) - 1.0f));
+        worst = std::max(worst, std::fabs(length(position("/Link2") - position("/Link1")) - 1.0f));
+        worst = std::max(worst, std::fabs(length(position("/Link3") - position("/Link2")) - 1.0f));
+    }
+    REQUIRE(worst < 0.06f);
+    Json joints = s.command("physics.joints", Json::object()).value();
+    INFO(joints.dump());
+    REQUIRE(joints.size() == 4);  // three links and the lantern's rope
+    bool chain_loaded = false;
+    for (const auto& j : joints) {
+        if (j["path"] == "/Link1") {
+            chain_loaded = j["force"].get<float>() > 5.0f;  // carries the two links below (about 1 kg)
+            REQUIRE(j["target"] == "/Hook");
+            REQUIRE(j["length"].get<float>() == Catch::Approx(1.0f));
+        }
+    }
+    REQUIRE(chain_loaded);
+    REQUIRE(s.command("world.has", Json{{"entity", "/Lantern"}, {"component", "Joint"}}).value() == true);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["joints"].get<int>() == 4);
+    // The kick at tick 240 snaps the rope: the joint is gone, the event says so, the lantern falls.
+    for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("world.has", Json{{"entity", "/Lantern"}, {"component", "Joint"}}).value() == false);
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["joint.broken"].get<int>() == 1);
+    REQUIRE(s.command("physics.joints", Json::object()).value().size() == 3);
+    REQUIRE(length(position("/Lantern") - position("/Beam")) > 2.0f);  // flew off, no longer tethered at 1.5
+    Json state = s.command("state", Json::object()).value()["state"];
+    REQUIRE(state["ropeIntact"] == false);
+    REQUIRE(state["joints"].get<int>() == 3);
+    // The capsule log came to rest on its side.
+    REQUIRE(position("/Log").y == Catch::Approx(0.35f).margin(0.05f));
+}
+
 TEST_CASE("sprite clips from project.toml play through commands", "[runtime][sprites]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
@@ -257,8 +423,28 @@ TEST_CASE("sprites draw unlit through an orthographic camera and are picked by s
     REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
-    REQUIRE(stats["sprites"].get<int>() == 47);            // 40 tiles + player + 6 coins
+    REQUIRE(stats["sprites"].get<int>() == 7);             // player + 6 coins; the ground is a tile map
+    REQUIRE(stats["tile_layers"].get<int>() == 2);         // ground and deco layers of level.tmj
     REQUIRE(stats["draw_calls"].get<int>() <= 6);           // runs per texture, split by layer
+    // The map answers what is where: solid ground under the player, air above, the ledge at (13,6).
+    Json below = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", 0.0}, {"y", -3.6}}).value();
+    REQUIRE(below["solid"] == true);
+    REQUIRE(below["tile_y"] == 8);
+    Json above = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", 0.0}, {"y", -2.0}}).value();
+    REQUIRE(above["solid"] == false);
+    Json ledge = s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", 13}, {"tile_y", 6}}).value();
+    REQUIRE(ledge["solid"] == true);
+    REQUIRE(ledge["layers"][1]["flip_h"] == true);
+    REQUIRE(ledge["layers"][1]["properties"]["solid"] == true);
+    Json objects = s.command("tilemap.objects", Json{{"entity", "Level"}, {"layer", "spawns"}}).value();
+    REQUIRE(objects.size() == 7);
+    REQUIRE(objects[0]["name"] == "player");
+    REQUIRE(objects[0]["x"].get<double>() == Catch::Approx(0.0));
+    REQUIRE(objects[0]["y"].get<double>() == Catch::Approx(-3.0));
+    // Picking the ground finds the map entity.
+    Json gp = s.command("render.project", Json{{"point", {{"x", 0.0}, {"y", -4.0}, {"z", 0.0}}}}).value();
+    Json gpick = s.command("render.pick", Json{{"x", gp["x"]}, {"y", gp["y"]}}).value();
+    REQUIRE(gpick["name"] == "Level");
     // The player sits at (0,-3); with ortho_size 5 over 180 px that is 90 + 3/5*90 = 144 px down.
     Json pr = s.command("render.project", Json{{"entity", "Player"}}).value();
     REQUIRE(pr["visible"] == true);

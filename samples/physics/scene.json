@@ -260,6 +260,346 @@
       }
     },
     {
+      "name": "Hook",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 7,
+            "y": 6,
+            "z": -5
+          },
+          "scale": {
+            "x": 0.3,
+            "y": 0.3,
+            "z": 0.3
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "cube",
+          "color": {
+            "r": 0.25,
+            "g": 0.25,
+            "b": 0.28,
+            "a": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Link1",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 7,
+            "y": 5,
+            "z": -5
+          },
+          "scale": {
+            "x": 0.4,
+            "y": 0.4,
+            "z": 0.4
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "sphere",
+          "color": {
+            "r": 0.85,
+            "g": 0.75,
+            "b": 0.3,
+            "a": 1
+          }
+        },
+        "RigidBody": {
+          "kind": 0,
+          "mass": 0.5,
+          "restitution": 0.1,
+          "friction": 0.4
+        },
+        "Collider": {
+          "shape": 1,
+          "size": {
+            "x": 0.2,
+            "y": 0.2,
+            "z": 0.2
+          }
+        },
+        "Joint": {
+          "kind": 0,
+          "target": "/Hook",
+          "distance": 1.0
+        }
+      }
+    },
+    {
+      "name": "Link2",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 7,
+            "y": 4,
+            "z": -5
+          },
+          "scale": {
+            "x": 0.4,
+            "y": 0.4,
+            "z": 0.4
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "sphere",
+          "color": {
+            "r": 0.85,
+            "g": 0.75,
+            "b": 0.3,
+            "a": 1
+          }
+        },
+        "RigidBody": {
+          "kind": 0,
+          "mass": 0.5,
+          "restitution": 0.1,
+          "friction": 0.4
+        },
+        "Collider": {
+          "shape": 1,
+          "size": {
+            "x": 0.2,
+            "y": 0.2,
+            "z": 0.2
+          }
+        },
+        "Joint": {
+          "kind": 0,
+          "target": "/Link1",
+          "distance": 1.0
+        }
+      }
+    },
+    {
+      "name": "Link3",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 7,
+            "y": 3,
+            "z": -5
+          },
+          "scale": {
+            "x": 0.4,
+            "y": 0.4,
+            "z": 0.4
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "sphere",
+          "color": {
+            "r": 0.85,
+            "g": 0.75,
+            "b": 0.3,
+            "a": 1
+          }
+        },
+        "RigidBody": {
+          "kind": 0,
+          "mass": 0.5,
+          "restitution": 0.1,
+          "friction": 0.4
+        },
+        "Collider": {
+          "shape": 1,
+          "size": {
+            "x": 0.2,
+            "y": 0.2,
+            "z": 0.2
+          }
+        },
+        "Joint": {
+          "kind": 0,
+          "target": "/Link2",
+          "distance": 1.0
+        }
+      }
+    },
+    {
+      "name": "Beam",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": -7,
+            "y": 5,
+            "z": 5
+          },
+          "scale": {
+            "x": 0.3,
+            "y": 0.3,
+            "z": 0.3
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "cube",
+          "color": {
+            "r": 0.25,
+            "g": 0.25,
+            "b": 0.28,
+            "a": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Lantern",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": -7,
+            "y": 3.5,
+            "z": 5
+          },
+          "scale": {
+            "x": 0.5,
+            "y": 0.5,
+            "z": 0.5
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "cube",
+          "color": {
+            "r": 0.9,
+            "g": 0.4,
+            "b": 0.25,
+            "a": 1
+          }
+        },
+        "RigidBody": {
+          "kind": 0,
+          "mass": 1,
+          "restitution": 0.1
+        },
+        "Collider": {
+          "shape": 0,
+          "size": {
+            "x": 0.25,
+            "y": 0.25,
+            "z": 0.25
+          }
+        },
+        "Joint": {
+          "kind": 0,
+          "target": "/Beam",
+          "rope": true,
+          "distance": 1.5,
+          "break_force": 30.0
+        }
+      }
+    },
+    {
+      "name": "Log",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 4,
+            "y": 3,
+            "z": 5
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0.7071,
+            "w": 0.7071
+          }
+        },
+        "RigidBody": {
+          "kind": 0,
+          "mass": 2,
+          "restitution": 0.1,
+          "friction": 0.6
+        },
+        "Collider": {
+          "shape": 2,
+          "size": {
+            "x": 0.35,
+            "y": 0.8,
+            "z": 0.35
+          }
+        }
+      },
+      "children": [
+        {
+          "name": "Barrel",
+          "components": {
+            "Transform": {
+              "scale": {
+                "x": 0.7,
+                "y": 1.6,
+                "z": 0.7
+              }
+            },
+            "MeshRenderer": {
+              "mesh": "cylinder",
+              "color": {
+                "r": 0.55,
+                "g": 0.38,
+                "b": 0.22,
+                "a": 1
+              }
+            }
+          }
+        },
+        {
+          "name": "CapA",
+          "components": {
+            "Transform": {
+              "position": {
+                "x": 0,
+                "y": 0.8,
+                "z": 0
+              },
+              "scale": {
+                "x": 0.7,
+                "y": 0.7,
+                "z": 0.7
+              }
+            },
+            "MeshRenderer": {
+              "mesh": "sphere",
+              "color": {
+                "r": 0.55,
+                "g": 0.38,
+                "b": 0.22,
+                "a": 1
+              }
+            }
+          }
+        },
+        {
+          "name": "CapB",
+          "components": {
+            "Transform": {
+              "position": {
+                "x": 0,
+                "y": -0.8,
+                "z": 0
+              },
+              "scale": {
+                "x": 0.7,
+                "y": 0.7,
+                "z": 0.7
+              }
+            },
+            "MeshRenderer": {
+              "mesh": "sphere",
+              "color": {
+                "r": 0.55,
+                "g": 0.38,
+                "b": 0.22,
+                "a": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Sun",
       "components": {
         "Transform": {

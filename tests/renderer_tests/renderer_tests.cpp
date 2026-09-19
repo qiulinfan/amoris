@@ -113,9 +113,10 @@ TEST_CASE("glTF meshes and textures render; missing assets are marked", "[render
     for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
-    REQUIRE(stats["meshes"] == 4);                 // ground, crate, pyramid, missing
-    REQUIRE(stats["draw_calls"].get<int>() == 5);  // crate has two submeshes (two nodes share one material -> still two draws)
-    REQUIRE(stats["assets"]["meshes"] == 2);
+    REQUIRE(stats["meshes"] == 5);                 // ground, crate, pyramid, the skinned arm, the missing one
+    REQUIRE(stats["draw_calls"].get<int>() == 6);  // crate has two submeshes (two nodes share one material -> still two draws); the arm is one skinned draw
+    REQUIRE(stats["skinned"] == 1);
+    REQUIRE(stats["assets"]["meshes"] == 3);
     REQUIRE(stats["assets"]["textures"] == 1);
     REQUIRE(stats["assets"]["missing"].size() == 1);
     REQUIRE(stats["assets"]["missing"][0] == "assets/does-not-exist.glb");
@@ -147,7 +148,7 @@ TEST_CASE("glTF meshes and textures render; missing assets are marked", "[render
     REQUIRE(reloaded["ok"] == true);
     REQUIRE(s.frame().has_value());
     stats = s.command("render.stats", Json::object()).value();
-    REQUIRE(stats["assets"]["meshes"] == 2);  // re-uploaded after the reload
+    REQUIRE(stats["assets"]["meshes"] == 3);  // re-uploaded after the reload
     REQUIRE(s.finish().has_value());
 }
 

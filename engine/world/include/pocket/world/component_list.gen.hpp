@@ -12,7 +12,11 @@
     X(MeshRenderer) \
     X(Sprite) \
     X(SpriteAnimation) \
+    X(TileMap) \
+    X(Animator) \
+    X(ParticleEmitter) \
     X(Bounds) \
     X(RigidBody) \
+    X(Joint) \
     X(Collider) \
     X(AudioSource)

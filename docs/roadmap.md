@@ -34,7 +34,7 @@ Pocket UI (ADR 0004): element tree with a DOM-like API, Yoga flexbox layout, CSS
 
 ## M4: physics
 
-Status: done as a new implementation rather than a port (2026-09-18), evidence in `tests/evidence/m4/`. `engine/physics`: boxes and spheres, static/dynamic/kinematic bodies from `RigidBody` + `Collider` metadata, gravity, sort-and-sweep broadphase ordered by entity id, SAT and sphere tests, sequential impulses with accumulated clamped normal and friction impulses, Baumgarte correction, restitution, sleeping, triggers, `collision.begin/end` and `trigger.enter/exit` events with causes, raycast and sphere overlap, `physics.*` commands and the `onContacts` SDK hook. Not yet: capsules and meshes, joints, continuous collision, per-body layers.
+Status: done as a new implementation rather than a port (2026-09-18), evidence in `tests/evidence/m4/`. `engine/physics`: boxes and spheres, static/dynamic/kinematic bodies from `RigidBody` + `Collider` metadata, gravity, sort-and-sweep broadphase ordered by entity id, SAT and sphere tests, sequential impulses with accumulated clamped normal and friction impulses, Baumgarte correction, restitution, sleeping, triggers, `collision.begin/end` and `trigger.enter/exit` events with causes, raycast and sphere overlap, `physics.*` commands and the `onContacts` SDK hook. Capsules, rotation locks and joints (distance, rope, ball, break forces, `physics.joints`) followed on 2026-09-19 (`docs/design/physics.md`). Not yet: mesh colliders, hinge limits and motors, continuous collision, per-body layers.
 
 The original plan was a port of the aipocket `Physics3D` engine (bodies, shapes, SAT manifolds, sequential impulses, sleeping, triggers, raycasts) with its unit tests, bridged to the ECS and TypeScript.
 

@@ -18,6 +18,21 @@ export interface Contact {
     trigger: boolean;
 }
 
+export interface JointState {
+    entity: Entity;
+    path: string;
+    /** Path of the other body or fixed entity; empty for a world point. */
+    target: string;
+    /** 0 distance (rod or rope), 1 ball. */
+    kind: number;
+    /** Rest length of a distance joint. */
+    length: number;
+    /** Distance between the anchors at the start of the last step. */
+    current: number;
+    /** Force the joint carried in the last step (newtons). */
+    force: number;
+}
+
 const contactHandlers: Array<(contacts: Contact[]) => void> = [];
 
 /** Receive every contact of the tick (after the physics step, before the world systems). */
@@ -42,8 +57,12 @@ export const physics = {
     contacts(): Array<{ a: string; b: string; point: Vec3; normal: Vec3; depth: number; trigger: boolean }> {
         return command("physics.contacts");
     },
-    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; gravity: Vec3 } {
+    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; gravity: Vec3 } {
         return command("physics.stats");
+    },
+    /** Every joint solved in the last step, with the force it carried. */
+    joints(): JointState[] {
+        return command("physics.joints");
     },
     setGravity(gravity: Vec3 | [number, number, number]): void {
         command("physics.gravity", { gravity });

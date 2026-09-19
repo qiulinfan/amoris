@@ -1,6 +1,8 @@
 // Physics sample: boxes and spheres dropped onto a ground and a ramp, a trigger volume as the
-// goal, contacts reported as events. Everything an agent needs to know is in the exposed state
-// and the event log: how many bodies rest, which reached the goal, what collided with what.
+// goal, contacts reported as events, a pendulum chain of distance joints, a lantern on a rope
+// that snaps when kicked, and a capsule log. Everything an agent needs to know is in the exposed
+// state and the event log: how many bodies rest, which reached the goal, what collided with
+// what, what each joint carries.
 import { events, expose, log, onContacts, onStart, onTick, physics, random, setClearColor, world } from "pocket";
 
 const spawned: number[] = [];
@@ -36,6 +38,8 @@ onTick(({ time, tick, dt }) => {
         const hit = physics.raycast([0, 5, 0], [0, -1, 0]);
         lastRayHit = hit ? `${hit.path} at ${hit.distance.toFixed(2)}` : "nothing";
     }
+    if (tick === 60) physics.setVelocity("/Link3", { x: 0, y: 0, z: 5 });      // start the chain swinging
+    if (tick === 240) physics.setVelocity("/Lantern", { x: 0, y: 0, z: -7 });  // more than the rope holds
     void dt;
 });
 
@@ -55,6 +59,9 @@ onContacts((contacts) => {
 });
 
 expose("dropped", () => dropped);
+expose("joints", () => physics.joints().length);
+expose("chainTension", () => Math.round(Math.max(0, ...physics.joints().filter((j) => j.path.startsWith("/Link")).map((j) => j.force)) * 10) / 10);
+expose("ropeIntact", () => world.has("/Lantern", "Joint"));
 expose("resting", () => world.query({ with: ["RigidBody"], fields: ["RigidBody"] }).filter((r) => r.RigidBody!.kind === 0 && r.RigidBody!.sleeping).length);
 expose("inGoal", () => inGoal.size);
 expose("contacts", () => contactsThisTick);

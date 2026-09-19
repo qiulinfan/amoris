@@ -33,7 +33,198 @@ Json Mesh::describe() const {
     }
     j["materials"] = mats;
     j["aabb"] = Json{{"min", Json::array({aabb_min.x, aabb_min.y, aabb_min.z})}, {"max", Json::array({aabb_max.x, aabb_max.y, aabb_max.z})}};
+    j["skinned"] = skinned();
+    Json sk = Json::array();
+    for (const auto& s : skins) sk.push_back(Json{{"name", s.name}, {"joints", s.joints.size()}});
+    j["skins"] = sk;
+    Json an = Json::array();
+    for (const auto& a : animations) an.push_back(Json{{"name", a.name}, {"duration", a.duration}, {"channels", a.channels.size()}});
+    j["animations"] = an;
     return j;
+}
+
+const AnimationClip* Mesh::clip(std::string_view name) const {
+    for (const auto& a : animations) {
+        if (a.name == name) return &a;
+    }
+    return nullptr;
+}
+
+namespace {
+
+Json properties_of(const Json& j) {
+    // Tiled writes properties as [{name, type, value}]; keep them as {name: value}.
+    Json out = Json::object();
+    if (j.contains("properties") && j["properties"].is_array()) {
+        for (const Json& p : j["properties"]) {
+            if (p.is_object() && p.contains("name")) out[p["name"].get<std::string>()] = p.value("value", Json(nullptr));
+        }
+    }
+    return out;
+}
+
+bool truthy(const Json& props, const char* key) {
+    if (!props.is_object() || !props.contains(key)) return false;
+    const Json& v = props[key];
+    return (v.is_boolean() && v.get<bool>()) || (v.is_number() && v.get<double>() != 0) || (v.is_string() && (v == "true" || v == "1"));
+}
+
+}  // namespace
+
+bool TileSet::solid(int local_id) const {
+    auto it = tile_properties.find(local_id);
+    return it != tile_properties.end() && truthy(it->second, "solid");
+}
+
+bool TileLayer::solid_layer() const { return truthy(properties, "solid"); }
+
+const TileSet* TileMap::tileset_for(std::uint32_t gid) const {
+    const std::uint32_t id = gid & kIdMask;
+    const TileSet* best = nullptr;
+    for (const TileSet& ts : tilesets) {
+        if (id >= ts.first_gid && (!best || ts.first_gid > best->first_gid)) best = &ts;
+    }
+    return best;
+}
+
+const TileLayer* TileMap::layer(std::string_view name) const {
+    for (const TileLayer& l : layers) {
+        if (l.name == name) return &l;
+    }
+    return nullptr;
+}
+
+bool TileMap::solid_at(int x, int y) const {
+    for (const TileLayer& l : layers) {
+        if (!l.visible || x < 0 || y < 0 || x >= l.width || y >= l.height) continue;
+        const std::uint32_t gid = l.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(x)];
+        if (gid == 0) continue;
+        if (l.solid_layer()) return true;
+        if (const TileSet* ts = tileset_for(gid); ts && ts->solid(static_cast<int>((gid & kIdMask) - ts->first_gid))) return true;
+    }
+    return false;
+}
+
+Json TileMap::describe() const {
+    Json j;
+    j["path"] = path;
+    j["kind"] = "tilemap";
+    j["width"] = width;
+    j["height"] = height;
+    j["tile_width"] = tile_width;
+    j["tile_height"] = tile_height;
+    Json ls = Json::array();
+    for (const TileLayer& l : layers) {
+        std::size_t filled = 0;
+        for (std::uint32_t g : l.gids) filled += g != 0;
+        ls.push_back(Json{{"name", l.name}, {"width", l.width}, {"height", l.height}, {"tiles", filled}, {"visible", l.visible}, {"solid", l.solid_layer()}, {"properties", l.properties}});
+    }
+    j["layers"] = ls;
+    Json ts = Json::array();
+    for (const TileSet& t : tilesets) {
+        std::size_t solid = 0;
+        for (const auto& [id, p] : t.tile_properties) solid += t.solid(id);
+        ts.push_back(Json{{"name", t.name}, {"first_gid", t.first_gid}, {"image", t.image}, {"tile_width", t.tile_width}, {"tile_height", t.tile_height}, {"columns", t.columns}, {"tile_count", t.tile_count}, {"solid_tiles", solid}});
+    }
+    j["tilesets"] = ts;
+    Json os = Json::array();
+    for (const ObjectLayer& o : object_layers) os.push_back(Json{{"name", o.name}, {"objects", o.objects.size()}});
+    j["object_layers"] = os;
+    j["properties"] = properties;
+    return j;
+}
+
+Result<TileMap> parse_tilemap(const std::string& text, const std::string& display_path) {
+    Json doc = Json::parse(text, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) return fail("bad_tilemap", "{}: not a JSON object", display_path);
+    if (doc.value("orientation", "orthogonal") != "orthogonal") return fail("bad_tilemap", "{}: only orthogonal maps are supported", display_path);
+    TileMap map;
+    map.path = display_path;
+    map.width = doc.value("width", 0);
+    map.height = doc.value("height", 0);
+    map.tile_width = doc.value("tilewidth", 0);
+    map.tile_height = doc.value("tileheight", 0);
+    map.properties = properties_of(doc);
+    if (map.width <= 0 || map.height <= 0 || map.tile_width <= 0 || map.tile_height <= 0) return fail("bad_tilemap", "{}: width, height, tilewidth and tileheight must be positive", display_path);
+    std::filesystem::path base = std::filesystem::path(display_path).parent_path();
+    for (const Json& t : doc.value("tilesets", Json::array())) {
+        if (!t.is_object()) continue;
+        if (t.contains("source")) return fail("bad_tilemap", "{}: external tilesets (.tsx / .tsj) are not supported; embed the tileset in the map", display_path);
+        TileSet ts;
+        ts.name = t.value("name", "");
+        ts.first_gid = t.value("firstgid", 1u);
+        ts.image = (base / t.value("image", "")).lexically_normal().generic_string();
+        ts.tile_width = t.value("tilewidth", map.tile_width);
+        ts.tile_height = t.value("tileheight", map.tile_height);
+        ts.columns = t.value("columns", 0);
+        ts.tile_count = t.value("tilecount", 0);
+        ts.image_width = t.value("imagewidth", 0);
+        ts.image_height = t.value("imageheight", 0);
+        ts.spacing = t.value("spacing", 0);
+        ts.margin = t.value("margin", 0);
+        if (ts.columns <= 0 && ts.image_width > 0 && ts.tile_width > 0) ts.columns = (ts.image_width - 2 * ts.margin + ts.spacing) / (ts.tile_width + ts.spacing);
+        if (ts.columns <= 0) return fail("bad_tilemap", "{}: tileset '{}' has no columns", display_path, ts.name);
+        if (ts.tile_count <= 0 && ts.image_height > 0) ts.tile_count = ts.columns * ((ts.image_height - 2 * ts.margin + ts.spacing) / (ts.tile_height + ts.spacing));
+        for (const Json& tile : t.value("tiles", Json::array())) {
+            if (tile.is_object() && tile.contains("id")) ts.tile_properties[tile["id"].get<int>()] = properties_of(tile);
+        }
+        map.tilesets.push_back(std::move(ts));
+    }
+    std::function<Status(const Json&)> read_layer = [&](const Json& l) -> Status {
+        std::string type = l.value("type", "tilelayer");
+        if (type == "group") {
+            for (const Json& c : l.value("layers", Json::array())) POCKET_TRY_VOID(read_layer(c));
+            return {};
+        }
+        if (type == "tilelayer") {
+            TileLayer layer;
+            layer.name = l.value("name", "");
+            layer.width = l.value("width", map.width);
+            layer.height = l.value("height", map.height);
+            layer.visible = l.value("visible", true);
+            layer.opacity = l.value("opacity", 1.0f);
+            layer.offset_x = l.value("offsetx", 0.0f);
+            layer.offset_y = l.value("offsety", 0.0f);
+            layer.properties = properties_of(l);
+            if (l.value("encoding", "csv") != "csv" || l.contains("compression")) return fail("bad_tilemap", "{}: layer '{}' must use csv encoding (base64 and compression are not supported)", display_path, layer.name);
+            const Json& data = l.value("data", Json::array());
+            if (!data.is_array() || data.size() != static_cast<std::size_t>(layer.width) * static_cast<std::size_t>(layer.height)) return fail("bad_tilemap", "{}: layer '{}' data does not match {}x{}", display_path, layer.name, layer.width, layer.height);
+            layer.gids.reserve(data.size());
+            for (const Json& g : data) {
+                if (!g.is_number()) return fail("bad_tilemap", "{}: layer '{}' has a non-numeric tile", display_path, layer.name);
+                layer.gids.push_back(static_cast<std::uint32_t>(g.get<double>()));
+            }
+            for (std::uint32_t g : layer.gids) {
+                if (g != 0 && !map.tileset_for(g)) return fail("bad_tilemap", "{}: layer '{}' uses gid {} that no tileset covers", display_path, layer.name, g & TileMap::kIdMask);
+            }
+            map.layers.push_back(std::move(layer));
+            return {};
+        }
+        if (type == "objectgroup") {
+            ObjectLayer ol;
+            ol.name = l.value("name", "");
+            ol.properties = properties_of(l);
+            for (const Json& o : l.value("objects", Json::array())) {
+                if (!o.is_object()) continue;
+                MapObject mo;
+                mo.name = o.value("name", "");
+                mo.type = o.contains("type") ? o.value("type", "") : o.value("class", "");
+                mo.x = o.value("x", 0.0f);
+                mo.y = o.value("y", 0.0f);
+                mo.width = o.value("width", 0.0f);
+                mo.height = o.value("height", 0.0f);
+                mo.gid = o.value("gid", 0u);
+                mo.point = o.value("point", false);
+                mo.properties = properties_of(o);
+                ol.objects.push_back(std::move(mo));
+            }
+            map.object_layers.push_back(std::move(ol));
+            return {};
+        }
+        return {};  // image layers and unknown kinds are ignored
+    };
+    for (const Json& l : doc.value("layers", Json::array())) POCKET_TRY_VOID(read_layer(l));
+    return map;
 }
 
 Json Image::describe() const {
@@ -268,6 +459,89 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         for (const Json& n : nodes) for (const Json& c : n.value("children", Json::array())) if (c.get<std::size_t>() < is_child.size()) is_child[c.get<std::size_t>()] = true;
         for (std::size_t i = 0; i < nodes.size(); ++i) if (!is_child[i]) roots.push_back(static_cast<int>(i));
     }
+    // The node hierarchy as authored (skeletons live here), before any baking.
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const Json& n = nodes[i];
+        Node out;
+        out.name = n.value("name", "node" + std::to_string(i));
+        out.rest = node_matrix(n);
+        if (n.contains("translation") && n["translation"].size() == 3) out.translation = {n["translation"][0].get<float>(), n["translation"][1].get<float>(), n["translation"][2].get<float>()};
+        if (n.contains("scale") && n["scale"].size() == 3) out.scale = {n["scale"][0].get<float>(), n["scale"][1].get<float>(), n["scale"][2].get<float>()};
+        if (n.contains("rotation") && n["rotation"].size() == 4) out.rotation = {n["rotation"][0].get<float>(), n["rotation"][1].get<float>(), n["rotation"][2].get<float>(), n["rotation"][3].get<float>()};
+        for (const Json& c : n.value("children", Json::array())) {
+            int ci = c.get<int>();
+            if (ci >= 0 && ci < static_cast<int>(nodes.size())) out.children.push_back(ci);
+        }
+        mesh.nodes.push_back(std::move(out));
+    }
+    for (std::size_t i = 0; i < mesh.nodes.size(); ++i) {
+        for (int c : mesh.nodes[i].children) mesh.nodes[static_cast<std::size_t>(c)].parent = static_cast<int>(i);
+    }
+    // Skins: joints and their inverse bind matrices.
+    for (const Json& sj : g.doc.value("skins", Json::array())) {
+        Skin skin;
+        skin.name = sj.value("name", "skin" + std::to_string(mesh.skins.size()));
+        for (const Json& j : sj.value("joints", Json::array())) {
+            int ji = j.get<int>();
+            if (ji < 0 || ji >= static_cast<int>(mesh.nodes.size())) return fail("bad_gltf", "{}: skin joint {} out of range", display_path, ji);
+            skin.joints.push_back(ji);
+        }
+        if (skin.joints.empty()) return fail("bad_gltf", "{}: a skin without joints", display_path);
+        if (sj.contains("inverseBindMatrices")) {
+            POCKET_TRY(ibm, g.accessor(sj["inverseBindMatrices"].get<int>()));
+            if (ibm.components != 16 || ibm.count < skin.joints.size()) return fail("bad_gltf", "{}: inverseBindMatrices must hold one MAT4 per joint", display_path);
+            std::size_t cs = component_size(ibm.component_type);
+            for (std::size_t j = 0; j < skin.joints.size(); ++j) {
+                Mat4 m;
+                const std::uint8_t* mp = ibm.data + j * ibm.stride;
+                for (int k = 0; k < 16; ++k) m.m[k] = read_float(mp + static_cast<std::size_t>(k) * cs, ibm.component_type, ibm.normalized);
+                skin.inverse_bind.push_back(m);
+            }
+        } else {
+            skin.inverse_bind.assign(skin.joints.size(), Mat4::identity());
+        }
+        mesh.skins.push_back(std::move(skin));
+    }
+    // Animations: keyframe channels on node translation, rotation and scale.
+    for (const Json& aj : g.doc.value("animations", Json::array())) {
+        AnimationClip clip;
+        clip.name = aj.value("name", "animation" + std::to_string(mesh.animations.size()));
+        const Json& samplers = aj.value("samplers", Json::array());
+        for (const Json& ch : aj.value("channels", Json::array())) {
+            const Json& target = ch.value("target", Json::object());
+            std::string path = target.value("path", "");
+            int node = target.value("node", -1);
+            int si = ch.value("sampler", -1);
+            if (node < 0 || node >= static_cast<int>(mesh.nodes.size()) || si < 0 || si >= static_cast<int>(samplers.size())) continue;
+            AnimationChannel c;
+            c.node = node;
+            if (path == "translation") c.path = 0;
+            else if (path == "rotation") c.path = 1;
+            else if (path == "scale") c.path = 2;
+            else continue;  // morph target weights are not supported
+            const Json& sampler = samplers[static_cast<std::size_t>(si)];
+            std::string interp = sampler.value("interpolation", "LINEAR");
+            c.step = interp == "STEP";
+            const bool cubic = interp == "CUBICSPLINE";
+            POCKET_TRY(in, g.accessor(sampler.value("input", -1)));
+            POCKET_TRY(out, g.accessor(sampler.value("output", -1)));
+            const int width = c.path == 1 ? 4 : 3;
+            if (out.components != width) return fail("bad_gltf", "{}: animation '{}' output has {} components for {}", display_path, clip.name, out.components, path);
+            const std::size_t per_key = cubic ? 3 : 1;
+            if (out.count < in.count * per_key) return fail("bad_gltf", "{}: animation '{}' has fewer outputs than keys", display_path, clip.name);
+            std::size_t ics = component_size(in.component_type), ocs = component_size(out.component_type);
+            for (std::size_t k = 0; k < in.count; ++k) {
+                float t = read_float(in.data + k * in.stride, in.component_type, in.normalized);
+                c.times.push_back(t);
+                clip.duration = std::max(clip.duration, t);
+                const std::uint8_t* vp = out.data + (k * per_key + (cubic ? 1 : 0)) * out.stride;
+                for (int w = 0; w < width; ++w) c.values.push_back(read_float(vp + static_cast<std::size_t>(w) * ocs, out.component_type, out.normalized));
+            }
+            (void)ics;
+            if (!c.times.empty()) clip.channels.push_back(std::move(c));
+        }
+        mesh.animations.push_back(std::move(clip));
+    }
     bool any_geometry = false;
     std::function<Status(int, const Mat4&, int)> visit = [&](int ni, const Mat4& parent, int depth) -> Status {
         if (depth > 64 || ni < 0 || ni >= static_cast<int>(nodes.size())) return {};
@@ -277,23 +551,51 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             int mi = node["mesh"].get<int>();
             if (mi < 0 || mi >= static_cast<int>(meshes.size())) return fail("bad_gltf", "{}: mesh {} out of range", display_path, mi);
             mesh.node_count++;
-            Mat4 normal_m = transpose_of(world.inverse_affine());
+            // A skinned mesh stays in its bind space: the joints place it, not the node (glTF 2.0).
+            const int skin_index = node.value("skin", -1);
+            if (skin_index >= static_cast<int>(mesh.skins.size())) return fail("bad_gltf", "{}: node skin {} out of range", display_path, skin_index);
+            const Mat4 bake = skin_index >= 0 ? Mat4::identity() : world;
+            Mat4 normal_m = transpose_of(bake.inverse_affine());
             for (const Json& prim : meshes[static_cast<std::size_t>(mi)].value("primitives", Json::array())) {
                 int mode = prim.value("mode", 4);
                 if (mode != 4) continue;  // triangles only
                 const Json& attrs = prim.value("attributes", Json::object());
                 if (!attrs.contains("POSITION")) continue;
                 POCKET_TRY(pos, g.accessor(attrs["POSITION"].get<int>()));
-                std::optional<Accessor> nrm, uv;
+                std::optional<Accessor> nrm, uv, jnt, wgt;
                 if (attrs.contains("NORMAL")) { POCKET_TRY(a, g.accessor(attrs["NORMAL"].get<int>())); nrm = a; }
                 if (attrs.contains("TEXCOORD_0")) { POCKET_TRY(a, g.accessor(attrs["TEXCOORD_0"].get<int>())); uv = a; }
+                if (skin_index >= 0 && attrs.contains("JOINTS_0") && attrs.contains("WEIGHTS_0")) {
+                    POCKET_TRY(a, g.accessor(attrs["JOINTS_0"].get<int>())); jnt = a;
+                    POCKET_TRY(b, g.accessor(attrs["WEIGHTS_0"].get<int>())); wgt = b;
+                    if (jnt->components != 4 || wgt->components != 4) return fail("bad_gltf", "{}: JOINTS_0 and WEIGHTS_0 must be VEC4", display_path);
+                }
                 std::uint32_t base = static_cast<std::uint32_t>(mesh.vertices.size());
+                if (jnt) mesh.skin_vertices.resize(base);  // zeros for any unskinned geometry before this
                 for (std::size_t v = 0; v < pos.count; ++v) {
                     MeshVertex mv;
                     const std::uint8_t* pp = pos.data + v * pos.stride;
                     std::size_t cs = component_size(pos.component_type);
                     Vec3 p{read_float(pp, pos.component_type, pos.normalized), read_float(pp + cs, pos.component_type, pos.normalized), read_float(pp + 2 * cs, pos.component_type, pos.normalized)};
-                    mv.position = world.transform_point(p);
+                    mv.position = bake.transform_point(p);
+                    if (jnt && v < jnt->count && v < wgt->count) {
+                        SkinVertex sv;
+                        std::size_t jcs = component_size(jnt->component_type), wcs = component_size(wgt->component_type);
+                        const std::uint8_t* jp = jnt->data + v * jnt->stride;
+                        const std::uint8_t* wp = wgt->data + v * wgt->stride;
+                        float sum = 0;
+                        float w[4];
+                        for (int k = 0; k < 4; ++k) {
+                            sv.joints[k] = static_cast<std::uint16_t>(read_index(jp + static_cast<std::size_t>(k) * jcs, jnt->component_type));
+                            w[k] = read_float(wp + static_cast<std::size_t>(k) * wcs, wgt->component_type, wgt->normalized);
+                            sum += w[k];
+                        }
+                        if (sum <= 0) { w[0] = 1; w[1] = w[2] = w[3] = 0; sum = 1; }
+                        sv.weights = {w[0] / sum, w[1] / sum, w[2] / sum, w[3] / sum};
+                        mesh.skin_vertices.push_back(sv);
+                    } else if (!mesh.skin_vertices.empty()) {
+                        mesh.skin_vertices.push_back(SkinVertex{});
+                    }
                     if (nrm && v < nrm->count) {
                         const std::uint8_t* np = nrm->data + v * nrm->stride;
                         std::size_t ncs = component_size(nrm->component_type);
@@ -311,6 +613,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                     mesh.vertices.push_back(mv);
                 }
                 Submesh sm;
+                sm.skin = jnt ? skin_index : -1;
                 sm.first_index = static_cast<std::uint32_t>(mesh.indices.size());
                 if (prim.contains("indices")) {
                     POCKET_TRY(idx, g.accessor(prim["indices"].get<int>()));
@@ -345,6 +648,14 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
     Mat4 identity;
     for (int r : roots) POCKET_TRY_VOID(visit(r, identity, 0));
     if (!any_geometry) return fail("bad_gltf", "{}: no triangle geometry", display_path);
+    if (!mesh.skin_vertices.empty()) mesh.skin_vertices.resize(mesh.vertices.size());
+    for (const Skin& s : mesh.skins) {
+        for (const SkinVertex& sv : mesh.skin_vertices) {
+            for (std::uint16_t j : sv.joints) {
+                if (j >= s.joints.size() && mesh.skins.size() == 1) return fail("bad_gltf", "{}: a vertex refers to joint {} of a {}-joint skin", display_path, j, s.joints.size());
+            }
+        }
+    }
     // Merge submeshes that share a material so each material is one draw.
     bool first = true;
     for (const auto& v : mesh.vertices) {
@@ -397,6 +708,24 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
     meshes_[path] = std::move(owned);
     version_++;
     log::info("assets", "loaded mesh {} ({} vertices, {} triangles, {} materials)", path, raw->vertices.size(), raw->indices.size() / 3, raw->materials.size());
+    return raw;
+}
+
+Result<const TileMap*> AssetStore::tilemap(const std::string& path) {
+    if (auto it = tilemaps_.find(path); it != tilemaps_.end()) return it->second.get();
+    if (auto f = failures_.find("tilemap:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);
+    POCKET_TRY(full, resolve(path));
+    POCKET_TRY(text, fs::read_text(full));
+    auto parsed = parse_tilemap(text, path);
+    if (!parsed) {
+        failures_["tilemap:" + path] = parsed.error().message;
+        return fail(parsed.error());
+    }
+    auto owned = std::make_unique<TileMap>(std::move(*parsed));
+    const TileMap* raw = owned.get();
+    tilemaps_[path] = std::move(owned);
+    version_++;
+    log::info("assets", "loaded tile map {} ({}x{} tiles, {} layers, {} tilesets)", path, raw->width, raw->height, raw->layers.size(), raw->tilesets.size());
     return raw;
 }
 
@@ -460,14 +789,17 @@ Result<const Image*> AssetStore::image(const std::string& path) {
 void AssetStore::invalidate(const std::string& path) {
     meshes_.erase(path);
     images_.erase(path);
+    tilemaps_.erase(path);
     failures_.erase("mesh:" + path);
     failures_.erase("image:" + path);
+    failures_.erase("tilemap:" + path);
     version_++;
 }
 
 void AssetStore::invalidate_all() {
     meshes_.clear();
     images_.clear();
+    tilemaps_.clear();
     failures_.clear();
     version_++;
 }
@@ -482,12 +814,12 @@ Json AssetStore::list() const {
         for (const auto& p : paths) {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : "other";
+            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : ext == ".tmj" ? "tilemap" : "other";
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
             f["kind"] = kind;
             f["bytes"] = std::filesystem::file_size(p);
-            f["loaded"] = kind == "mesh" ? meshes_.contains(f["path"].get<std::string>()) : kind == "image" ? images_.contains(f["path"].get<std::string>()) : false;
+            f["loaded"] = kind == "mesh" ? meshes_.contains(f["path"].get<std::string>()) : kind == "image" ? images_.contains(f["path"].get<std::string>()) : kind == "tilemap" ? tilemaps_.contains(f["path"].get<std::string>()) : false;
             files.push_back(f);
         }
     }
@@ -504,6 +836,10 @@ Json AssetStore::describe(const std::string& path) {
         if (!m) { j["error"] = m.error().to_string(); return j; }
         j = (*m)->describe();
         j["kind"] = "mesh";
+    } else if (ext == ".tmj") {
+        auto t = tilemap(path);
+        if (!t) { j["error"] = t.error().to_string(); return j; }
+        j = (*t)->describe();
     } else {
         auto i = image(path);
         if (!i) { j["error"] = i.error().to_string(); return j; }

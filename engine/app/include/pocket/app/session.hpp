@@ -76,6 +76,9 @@ class Session {
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
     Result<Json> sprite_command(std::string_view op, const Json& p);
+    Result<Json> particles_command(std::string_view op, const Json& p);
+    Result<Json> animation_command(std::string_view op, const Json& p);
+    Result<Json> tilemap_command(std::string_view op, const Json& p);
     Result<Json> assets_command(std::string_view op, const Json& p);
     Result<Json> audio_command(std::string_view op, const Json& p);
     Result<Json> input_command(std::string_view op, const Json& p);
@@ -93,6 +96,8 @@ class Session {
     std::unique_ptr<script::ScriptHost> host_;
     std::unique_ptr<world::World> world_;
     std::unique_ptr<renderer::Renderer> renderer_;
+    std::unique_ptr<renderer::Particles> particles_;
+    std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<assets::AssetStore> assets_;
     std::unique_ptr<audio::Audio> audio_;

@@ -137,6 +137,8 @@ Status Session::start() {
 
     POCKET_TRY(renderer, renderer::Renderer::create(*device_));
     renderer_ = std::move(renderer);
+    particles_ = std::make_unique<renderer::Particles>();
+    animation_ = std::make_unique<renderer::Animation>();
 
     // Pocket UI needs a font. `pocket` records the path of the bundled Noto Sans CJK in the
     // project config; POCKET_FONT overrides it. Without a font the ui.* commands report
@@ -324,6 +326,8 @@ void Session::run_tick() {
     perf_physics_.add(sw.ms());
     sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
+    particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
+    if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
     if (audio_) tick_audio(clock_.tick_seconds);
     perf_world_.add(sw.ms());
     sw = Stopwatch{};
@@ -335,6 +339,7 @@ void Session::run_tick() {
         hasher_.i64(tick);
         hasher_.str(s.dump());
         hasher_.u64(world_->hash());
+        hasher_.u64(particles_->hash());
         hasher_.f32(clear_.r);
         hasher_.f32(clear_.g);
         hasher_.f32(clear_.b);
@@ -382,7 +387,7 @@ Status Session::render_frame() {
     if (audio_) audio_->pump();
     auto frame = device_->begin_frame();
     if (!frame) return fail(frame.error());
-    if (auto r = renderer_->render(*frame, *world_, clear_); !r) {
+    if (auto r = renderer_->render(*frame, *world_, clear_, particles_.get(), animation_.get()); !r) {
         // Still submit the encoder so the device stays consistent, then report.
         (void)device_->end_frame(*frame);
         return fail(r.error());
@@ -643,6 +648,195 @@ Result<Json> Session::sprite_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown sprite command '{}'", op);
 }
 
+Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
+    // Tile maps (docs/design/tilemaps.md): what is where, in tiles and in world units.
+    auto& w = *world_;
+    if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
+    world::EntityId id = resolve_entity(p["entity"]);
+    if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+    const auto* tmc = w.try_get<world::TileMap>(id);
+    if (!tmc) return fail("no_tilemap", "entity {} has no TileMap", id);
+    if (!assets_) return fail("no_assets", "no asset store");
+    POCKET_TRY(map, assets_->tilemap(tmc->map));
+    const float ts = tmc->tile_size > 0 ? tmc->tile_size : 1.0f;
+    Vec3 origin{0, 0, 0};
+    if (const auto* wt = w.try_get<world::WorldTransform>(id)) origin = wt->position;
+    else if (const auto* t = w.try_get<world::Transform>(id)) origin = t->position;
+    // World <-> tile: the entity sits at the map's top-left corner; rows go down (-Y).
+    auto to_cell = [&](double wx, double wy, int& cx, int& cy) {
+        cx = static_cast<int>(std::floor((wx - origin.x) / ts));
+        cy = static_cast<int>(std::floor((origin.y - wy) / ts));
+    };
+    auto cell_center = [&](int cx, int cy) { return Json{{"x", origin.x + (cx + 0.5) * ts}, {"y", origin.y - (cy + 0.5) * ts}}; };
+    if (op == "info") {
+        Json j = map->describe();
+        j["entity"] = id;
+        j["tile_size"] = ts;
+        j["origin"] = Json{{"x", origin.x}, {"y", origin.y}};
+        j["bounds"] = Json{{"min", {{"x", origin.x}, {"y", origin.y - map->height * ts}}}, {"max", {{"x", origin.x + map->width * ts}, {"y", origin.y}}}};
+        return j;
+    }
+    if (op == "cell") {
+        int cx, cy;
+        to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
+        Json j = Json{{"tile_x", cx}, {"tile_y", cy}, {"inside", cx >= 0 && cy >= 0 && cx < map->width && cy < map->height}};
+        j["center"] = cell_center(cx, cy);
+        return j;
+    }
+    if (op == "tile") {
+        int cx, cy;
+        if (p.contains("tile_x") || p.contains("tile_y")) {
+            cx = opt<int>(p, "tile_x", 0);
+            cy = opt<int>(p, "tile_y", 0);
+        } else {
+            to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
+        }
+        std::string layer_name = opt<std::string>(p, "layer", "");
+        Json layers = Json::array();
+        for (const assets::TileLayer& l : map->layers) {
+            if (!layer_name.empty() && l.name != layer_name) continue;
+            Json lj{{"layer", l.name}, {"gid", 0}, {"id", nullptr}, {"tileset", nullptr}, {"solid", false}, {"properties", Json::object()}};
+            if (cx >= 0 && cy >= 0 && cx < l.width && cy < l.height) {
+                std::uint32_t gid = l.gids[static_cast<std::size_t>(cy) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(cx)];
+                lj["gid"] = gid & assets::TileMap::kIdMask;
+                lj["flip_h"] = (gid & assets::TileMap::kFlipH) != 0;
+                lj["flip_v"] = (gid & assets::TileMap::kFlipV) != 0;
+                if (const assets::TileSet* set = gid ? map->tileset_for(gid) : nullptr) {
+                    int local = static_cast<int>((gid & assets::TileMap::kIdMask) - set->first_gid);
+                    lj["id"] = local;
+                    lj["tileset"] = set->name;
+                    lj["solid"] = l.solid_layer() || set->solid(local);
+                    if (auto it = set->tile_properties.find(local); it != set->tile_properties.end()) lj["properties"] = it->second;
+                }
+            }
+            layers.push_back(lj);
+        }
+        Json j{{"tile_x", cx}, {"tile_y", cy}, {"solid", map->solid_at(cx, cy)}, {"layers", layers}};
+        j["center"] = cell_center(cx, cy);
+        return j;
+    }
+    if (op == "solid") {
+        int cx, cy;
+        if (p.contains("tile_x") || p.contains("tile_y")) {
+            cx = opt<int>(p, "tile_x", 0);
+            cy = opt<int>(p, "tile_y", 0);
+        } else {
+            to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
+        }
+        return Json{{"solid", map->solid_at(cx, cy)}, {"tile_x", cx}, {"tile_y", cy}};
+    }
+    if (op == "objects") {
+        std::string layer_name = opt<std::string>(p, "layer", "");
+        Json out = Json::array();
+        for (const assets::ObjectLayer& ol : map->object_layers) {
+            if (!layer_name.empty() && ol.name != layer_name) continue;
+            for (const assets::MapObject& o : ol.objects) {
+                // Tiled objects are in pixels from the top-left; tile objects (gid) anchor bottom-left.
+                double wx = origin.x + o.x / map->tile_width * ts;
+                double wy = origin.y - o.y / map->tile_height * ts;
+                double ww = o.width / map->tile_width * ts, wh = o.height / map->tile_height * ts;
+                Json oj{{"layer", ol.name}, {"name", o.name}, {"type", o.type}, {"properties", o.properties}, {"point", o.point}};
+                oj["x"] = wx;
+                oj["y"] = wy;
+                oj["width"] = ww;
+                oj["height"] = wh;
+                oj["center"] = Json{{"x", wx + ww / 2}, {"y", o.gid ? wy + wh / 2 : wy - wh / 2}};
+                if (o.gid) oj["gid"] = o.gid & assets::TileMap::kIdMask;
+                out.push_back(oj);
+            }
+        }
+        return out;
+    }
+    return fail("unknown_command", "unknown tilemap command '{}'", op);
+}
+
+Result<Json> Session::animation_command(std::string_view op, const Json& p) {
+    // Skeletal animation of glTF assets (docs/design/animation.md).
+    auto& w = *world_;
+    auto mesh_of = [&](world::EntityId id) -> Result<const assets::Mesh*> {
+        const auto* mr = w.try_get<world::MeshRenderer>(id);
+        if (!mr) return fail("no_mesh", "entity {} has no MeshRenderer", id);
+        if (!assets_) return fail("no_assets", "no asset store");
+        POCKET_TRY(m, assets_->mesh(mr->mesh));
+        return m;
+    };
+    if (op == "clips") {
+        std::string path = opt<std::string>(p, "mesh", "");
+        const assets::Mesh* mesh = nullptr;
+        if (!path.empty()) {
+            if (!assets_) return fail("no_assets", "no asset store");
+            POCKET_TRY(m, assets_->mesh(path));
+            mesh = m;
+        } else {
+            if (!p.contains("entity")) return fail("bad_args", "clips needs 'entity' or 'mesh'");
+            world::EntityId id = resolve_entity(p["entity"]);
+            if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+            POCKET_TRY(m, mesh_of(id));
+            mesh = m;
+        }
+        Json clips = Json::array();
+        for (const auto& c : mesh->animations) clips.push_back(Json{{"name", c.name}, {"duration", c.duration}, {"channels", c.channels.size()}});
+        Json skins = Json::array();
+        for (const auto& s : mesh->skins) {
+            Json joints = Json::array();
+            for (int j : s.joints) joints.push_back(mesh->nodes[static_cast<std::size_t>(j)].name);
+            skins.push_back(Json{{"name", s.name}, {"joints", joints}});
+        }
+        return Json{{"mesh", mesh->path}, {"clips", clips}, {"skins", skins}, {"skinned", mesh->skinned()}};
+    }
+    if (op == "play" || op == "stop" || op == "pose") {
+        if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
+        world::EntityId id = resolve_entity(p["entity"]);
+        if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+        POCKET_TRY(mesh, mesh_of(id));
+        if (op == "pose") return animation_->describe_pose(w, id, *mesh);
+        std::uint64_t cause = opt<std::uint64_t>(p, "cause", 0);
+        Json patch = Json::object();
+        if (op == "play") {
+            std::string clip = opt<std::string>(p, "clip", "");
+            if (!clip.empty()) {
+                if (!mesh->clip(clip)) return fail("no_such_clip", "'{}' has no animation named '{}' (animation.clips lists them)", mesh->path, clip);
+                patch["clip"] = clip;
+            } else if (!w.has(id, "Animator")) {
+                if (mesh->animations.empty()) return fail("no_such_clip", "'{}' has no animations", mesh->path);
+                patch["clip"] = mesh->animations.front().name;
+            }
+            patch["playing"] = true;
+            patch["finished"] = false;
+            if (opt<bool>(p, "restart", true)) patch["time"] = 0.0;
+            for (const char* k : {"loop", "speed", "time"}) {
+                if (p.contains(k)) patch[k] = p[k];
+            }
+        } else {
+            patch["playing"] = false;
+            if (opt<bool>(p, "reset", false)) patch["time"] = 0.0;
+        }
+        POCKET_TRY_VOID(w.set(id, "Animator", patch, cause));
+        return w.get(id, "Animator");
+    }
+    return fail("unknown_command", "unknown animation command '{}'", op);
+}
+
+Result<Json> Session::particles_command(std::string_view op, const Json& p) {
+    if (op == "stats") return particles_->stats();
+    if (op == "clear") {
+        std::size_t n = particles_->alive();
+        particles_->clear();
+        return Json{{"cleared", n}};
+    }
+    if (op == "burst") {
+        if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
+        world::EntityId id = resolve_entity(p["entity"]);
+        if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+        int count = opt<int>(p, "count", 10);
+        POCKET_TRY_VOID(particles_->burst(*world_, id, count));
+        std::size_t alive = 0;
+        if (auto it = particles_->pools().find(id); it != particles_->pools().end()) alive = it->second.alive.size();
+        return Json{{"entity", id}, {"count", count}, {"alive", alive}};
+    }
+    return fail("unknown_command", "unknown particles command '{}'", op);
+}
+
 Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     if (op == "stats") return physics_->describe();
     if (op == "raycast") {
@@ -685,6 +879,21 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     if (op == "gravity") {
         if (p.contains("gravity")) physics_->settings().gravity = vec3_of(p["gravity"], physics_->settings().gravity);
         return json_of(physics_->settings().gravity);
+    }
+    if (op == "joints") {
+        Json arr = Json::array();
+        for (const auto& j : physics_->joints()) {
+            Json jj;
+            jj["entity"] = j.entity;
+            jj["path"] = world_->path(j.entity);
+            jj["target"] = j.target ? world_->path(j.target) : "";
+            jj["kind"] = j.kind;
+            jj["length"] = j.length;
+            jj["current"] = j.current;
+            jj["force"] = j.force;
+            arr.push_back(jj);
+        }
+        return arr;
     }
     return fail("unknown_command", "unknown physics command '{}'", op);
 }
@@ -1674,6 +1883,9 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("sprite.")) return sprite_command(name.substr(7), p);
+    if (name.starts_with("particles.")) return particles_command(name.substr(10), p);
+    if (name.starts_with("animation.")) return animation_command(name.substr(10), p);
+    if (name.starts_with("tilemap.")) return tilemap_command(name.substr(8), p);
     if (name.starts_with("assets.")) return assets_command(name.substr(7), p);
     if (name.starts_with("audio.")) return audio_command(name.substr(6), p);
     if (name.starts_with("input.")) return input_command(name.substr(6), p);
@@ -1747,7 +1959,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

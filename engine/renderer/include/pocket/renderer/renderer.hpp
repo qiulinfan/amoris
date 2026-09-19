@@ -4,6 +4,8 @@
 #include <pocket/assets/assets.hpp>
 #include <pocket/core/json.hpp>
 #include <pocket/core/result.hpp>
+#include <pocket/renderer/animation.hpp>
+#include <pocket/renderer/particles.hpp>
 #include <pocket/rhi/device.hpp>
 #include <pocket/world/world.hpp>
 
@@ -26,6 +28,9 @@ struct RenderStats {
     bool shadows = false;             // whether a shadow map was rendered this frame
     std::uint32_t instances = 0;      // objects drawn (one per entity, or per glTF material)
     std::uint32_t sprites = 0;        // of which sprites
+    std::uint32_t particles = 0;      // of which particles (drawn as sprites)
+    std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
+    std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;
     bool has_camera = false;
@@ -63,7 +68,7 @@ class Renderer {
 
     // Draw the world into the frame (color + depth from the frame, ids into the renderer's own
     // target). Must be called between Device::begin_frame and Device::end_frame.
-    Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear);
+    Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr);
     // Read back the id buffer of the last rendered frame.
     Result<IdImage> read_ids();
     // Entity under a pixel (0 when background). Reads back the whole id buffer.
