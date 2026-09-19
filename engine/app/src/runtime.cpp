@@ -38,6 +38,8 @@ std::string usage() {
   --save-dir <dir>      where save slots are written and read (default: the user data directory)
   --font <file>         UI font file (overrides the project config and POCKET_FONT)
   --history N           keep the last N ticks for the recorder.* time-travel commands
+  --scenario <bundle>   load a gameplay scenario bundle (script context "scenario") after the project
+  --scenario-name NAME  which scenario of that bundle runs (default: the first)
 )";
 }
 
@@ -73,6 +75,8 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--inspectable") o.inspectable = true;
         else if (a == "--no-tick-hash") o.hash_every_tick = false;
         else if (a == "--history") { POCKET_TRY(v, need(i, "--history")); o.history = std::stoi(v); ++i; }
+        else if (a == "--scenario") { POCKET_TRY(v, need(i, "--scenario")); o.scenario_bundle = v; ++i; }
+        else if (a == "--scenario-name") { POCKET_TRY(v, need(i, "--scenario-name")); o.scenario = v; ++i; }
         else if (a == "--serve") {
             o.serve = 0;
             if (i + 1 < args.size() && !args[i + 1].empty() && std::isdigit(static_cast<unsigned char>(args[i + 1][0]))) { o.serve = std::stoi(args[i + 1]); ++i; }

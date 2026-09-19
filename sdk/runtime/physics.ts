@@ -1,5 +1,6 @@
 // Physics queries and contact callbacks.
 import { command, type Entity, type EntityRef, type Vec3 } from "./world";
+import { registry, own } from "./registry";
 
 export interface RayHit {
     entity: Entity;
@@ -23,7 +24,7 @@ export interface JointState {
     path: string;
     /** Path of the other body or fixed entity; empty for a world point. */
     target: string;
-    /** 0 distance (rod or rope), 1 ball. */
+    /** 0 distance (rod or rope), 1 ball, 2 hinge. */
     kind: number;
     /** Rest length of a distance joint. */
     length: number;
@@ -31,17 +32,26 @@ export interface JointState {
     current: number;
     /** Force the joint carried in the last step (newtons). */
     force: number;
+    /** Hinges: the body's rotation about the axis relative to the target (radians). */
+    angle?: number;
+    /** Hinges: angular speed about the axis relative to the target (radians per second). */
+    speed?: number;
+    /** Hinges: what the motor applied in the last step. */
+    torque?: number;
+    /** Hinges: -1 at the lower limit, 1 at the upper, 2 locked, 0 free. */
+    at_limit?: number;
 }
-
-const contactHandlers: Array<(contacts: Contact[]) => void> = [];
 
 /** Receive every contact of the tick (after the physics step, before the world systems). */
 export function onContacts(handler: (contacts: Contact[]) => void): void {
-    contactHandlers.push(handler);
+    own.contacts.push(handler as (contacts: unknown[]) => void);  // on the shared registry: any bundle's dispatch reaches it
 }
 
 export function dispatchContacts(contacts: Contact[]): void {
-    for (const h of contactHandlers) h(contacts);
+    for (const [name, h] of registry.contexts) {
+        if (!registry.active.has(name)) continue;
+        for (const fn of h.contacts) fn(contacts);
+    }
 }
 
 export const physics = {

@@ -20,6 +20,11 @@ export { componentNames, componentDefaults, derivedComponents } from "./generate
 export { events } from "./events";
 export type { WorldEvent } from "./events";
 export { recorder } from "./recorder";
+export { scenario } from "./scenario";
+export type { ScenarioTools } from "./scenario";
+export { bench, imageTokens } from "./bench";
+export type { BenchTools, BenchRecord } from "./bench";
+export { expect, ExpectationError } from "./expect";
 export { debug } from "./debug";
 export type { DebugColor, DebugOptions } from "./debug";
 export type { RecorderStatus, RecordedEntity, RecordedDiff, Comparison } from "./recorder";
@@ -28,7 +33,7 @@ export { sprites } from "./sprites";
 export { particles } from "./particles";
 export { animation } from "./animation";
 export { tilemap } from "./tilemap";
-export type { TileInfo, MapObjectInfo } from "./tilemap";
+export type { TileInfo, MapObjectInfo, TileSpec, TileEdit, TileFill } from "./tilemap";
 export type { ClipInfo, PoseJoint, PlayAnimationOptions } from "./animation";
 export type { ParticleStats } from "./particles";
 export type { SpriteClip, PlayClipOptions } from "./sprites";
@@ -58,6 +63,8 @@ export interface RuntimeInfo {
     seed: number;
     project: string;
     version: string;
+    /** The scenario selected with --scenario-name (empty: none or the first). */
+    scenario: string;
 }
 
 export interface Tick {

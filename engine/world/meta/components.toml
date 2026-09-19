@@ -115,7 +115,7 @@ fields = [
 
 [[component]]
 name = "TileMap"
-doc = "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where."
+doc = "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back."
 fields = [
     { name = "map", type = "string", default = "", doc = "Project-relative Tiled JSON map (.tmj)." },
     { name = "layer", type = "string", default = "", doc = "Draw only this tile layer; empty draws every visible one." },
@@ -190,9 +190,9 @@ fields = [
 
 [[component]]
 name = "Joint"
-doc = "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed)."
+doc = "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed)."
 fields = [
-    { name = "kind", type = "i32", default = 0, doc = "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together)." },
+    { name = "kind", type = "i32", default = 0, doc = "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only)." },
     { name = "target", type = "string", default = "", doc = "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor." },
     { name = "anchor", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Attachment point on this body, in its local frame." },
     { name = "target_anchor", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Attachment point on the target in its local frame, or a world point when there is no target." },
@@ -200,6 +200,31 @@ fields = [
     { name = "rope", type = "bool", default = false, doc = "Distance joints only: pull when the anchors are farther than distance, never push." },
     { name = "break_force", type = "f32", default = 0.0, doc = "Force (newtons) above which the joint breaks; 0 never breaks." },
     { name = "force", type = "f32", default = 0.0, doc = "Force the joint carried in the last step, written by the engine." },
+    { name = "axis", type = "vec3", default = [0.0, 0.0, 1.0], doc = "Hinge: the axis of rotation in this body's local frame." },
+    { name = "target_axis", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Hinge: the axis in the target's frame; zero takes the body's axis at the first step and writes it here." },
+    { name = "reference", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Hinge: a direction across the axis in the target's frame from which angle is measured; zero takes it at the first step and writes it here." },
+    { name = "limit", type = "bool", default = false, doc = "Hinge: keep angle between lower and upper (equal values lock the hinge)." },
+    { name = "lower", type = "f32", default = -1.5708, doc = "Hinge: lower angle limit in radians, when limit is set." },
+    { name = "upper", type = "f32", default = 1.5708, doc = "Hinge: upper angle limit in radians, when limit is set." },
+    { name = "motor_speed", type = "f32", default = 0.0, doc = "Hinge: the angular speed (radians per second) the motor drives the body to about the axis, relative to the target." },
+    { name = "motor_torque", type = "f32", default = 0.0, doc = "Hinge: the most torque the motor applies; 0 turns the motor off." },
+    { name = "angle", type = "f32", default = 0.0, doc = "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step." },
+    { name = "speed", type = "f32", default = 0.0, doc = "Hinge: the body's angular speed about the axis relative to the target, written by the engine every step." },
+]
+
+[[component]]
+name = "Body2D"
+doc = "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity."
+fields = [
+    { name = "velocity", type = "vec2", default = [0.0, 0.0], doc = "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops." },
+    { name = "gravity", type = "f32", default = -24.0, doc = "Units per second squared along Y (negative is down)." },
+    { name = "max_fall", type = "f32", default = 30.0, doc = "Fastest downward speed." },
+    { name = "size", type = "vec2", default = [0.4, 0.5], doc = "Half extents of the box." },
+    { name = "offset", type = "vec2", default = [0.0, 0.0], doc = "Box center relative to the entity's position." },
+    { name = "map", type = "string", default = "", doc = "Path or name of the TileMap entity to collide with; empty takes the first one." },
+    { name = "grounded", type = "bool", default = false, doc = "Standing on a solid tile (written by the engine)." },
+    { name = "on_wall", type = "i32", default = 0, doc = "-1 touching a wall on the left, 1 on the right, 0 none (written by the engine)." },
+    { name = "on_ceiling", type = "bool", default = false, doc = "Head against a tile (written by the engine)." },
 ]
 
 [[component]]

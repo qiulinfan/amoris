@@ -110,3 +110,18 @@ TEST_CASE("Filesystem helpers", "[core]") {
     REQUIRE_FALSE(fs::read_text(dir / "missing").has_value());
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("Mat4 inverse undoes projections", "[core]") {
+    Mat4 p = Mat4::perspective(radians(60.0f), 1.5f, 0.1f, 100.0f) * Mat4::look_at({1, 2, 3}, {0, 0, 0}, {0, 1, 0});
+    Mat4 id = p * p.inverse();
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r) REQUIRE(id.at(c, r) == Catch::Approx(c == r ? 1.0f : 0.0f).margin(1e-4));
+    Mat4 o = Mat4::orthographic(-2, 2, -1, 1, 0.1f, 10.0f);
+    Vec4 v = o.inverse() * (o * Vec4{0.5f, -0.25f, -3.0f, 1.0f});
+    REQUIRE(v.x == Catch::Approx(0.5f));
+    REQUIRE(v.y == Catch::Approx(-0.25f));
+    REQUIRE(v.z == Catch::Approx(-3.0f));
+    Mat4 singular;
+    for (float& f : singular.m) f = 0;
+    REQUIRE(singular.inverse().at(0, 0) == 1.0f);  // identity when there is no inverse
+}

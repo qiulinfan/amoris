@@ -63,7 +63,7 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Tile maps
 
-`tilemap.info(entity)`, `tilemap.cell(entity, x, y)`, `tilemap.tile(entity, at, layer?)`, `tilemap.solid(entity, at)`, `tilemap.objects(entity, layer?)` for Tiled maps drawn by the `TileMap` component (`docs/design/tilemaps.md`).
+`tilemap.info(entity)`, `tilemap.cell(entity, x, y)`, `tilemap.tile(entity, at, layer?)`, `tilemap.solid(entity, at)`, `tilemap.objects(entity, layer?)` for Tiled maps drawn by the `TileMap` component; `tilemap.set(entity, at, tile, layer?)`, `tilemap.fill(entity, rect, tile, layer?)` and `tilemap.save(entity, path?)` edit the map at runtime and write it back (`docs/design/tilemaps.md`). `render.unproject(x, y, plane?, at?)` gives the world ray under a pixel and where it meets an axis plane.
 
 ## Animation
 
@@ -75,7 +75,11 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Physics, audio, interface
 
-`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component (`docs/design/physics.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
+`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component (`docs/design/physics.md`); the `Body2D` component for platformers against tile maps (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
+
+## Scenarios
+
+`scenario("walking right collects a coin", (g) => { g.holdWhile("move_x", 1); g.until(() => g.state("score") >= 1, { timeout: 1 }); g.check(() => expect(g.count("coin.collected")).toBe(1)); })` in `<project>/scenarios/*.ts`; `pocket scenario <project> --seeds 20` runs them (`docs/design/scenarios.md`).
 
 ## Tests
 

@@ -111,10 +111,13 @@ struct TileSet {
     int spacing = 0, margin = 0;
     std::map<int, Json> tile_properties;  // local id -> {name: value}
     [[nodiscard]] bool solid(int local_id) const;
+    [[nodiscard]] bool one_way(int local_id) const;  // solid only from above (a platform to jump through)
 };
 
 struct TileLayer {
     std::string name;
+    int id = 0;  // Tiled's layer id (0 when the file has none)
+    std::uint64_t revision = 0;  // bumped by every edit of this layer (renderers rebuild its mesh)
     int width = 0, height = 0;
     std::vector<std::uint32_t> gids;  // row-major, 0 = empty; flip flags in the top bits
     bool visible = true;
@@ -147,10 +150,21 @@ struct TileMap {
     std::vector<TileLayer> layers;
     std::vector<ObjectLayer> object_layers;
     Json properties;
+    Json source;                 // the parsed Tiled document, kept so edits can be written back
+    std::uint64_t revision = 0;  // bumped by every edit; renderers rebuild a layer whose revision moved
     [[nodiscard]] const TileSet* tileset_for(std::uint32_t gid) const;
     [[nodiscard]] const TileLayer* layer(std::string_view name) const;
+    [[nodiscard]] TileLayer* layer_mut(std::string_view name);
+    // Put a gid (0 clears; flip flags allowed) into a cell of a tile layer; returns what was there.
+    // Errors name an unknown layer, a cell outside the layer or a gid no tileset covers.
+    Result<std::uint32_t> set(std::string_view layer_name, int x, int y, std::uint32_t gid);
+    // The map as Tiled JSON: the source document with every tile layer's data replaced by the
+    // current cells (a map built in memory gets a minimal document).
+    [[nodiscard]] Json to_json() const;
     // Is the tile at (x, y) of any visible layer solid (its tile or its layer says so)?
     [[nodiscard]] bool solid_at(int x, int y) const;
+    // 0 empty, 1 solid, 2 one-way (solid from above only); looks through every visible layer.
+    [[nodiscard]] int solidity_at(int x, int y) const;
     [[nodiscard]] Json describe() const;
 };
 
@@ -177,6 +191,8 @@ class AssetStore {
     Result<const Mesh*> mesh(const std::string& path);
     Result<const Image*> image(const std::string& path);
     Result<const TileMap*> tilemap(const std::string& path);
+    // The same map for editing (docs/design/tilemaps.md, Editing); every entity drawing it sees the change.
+    Result<TileMap*> tilemap_mut(const std::string& path);
     [[nodiscard]] bool has_mesh(const std::string& path) const;
     // Forget cached data so the next access reloads from disk.
     void invalidate(const std::string& path);

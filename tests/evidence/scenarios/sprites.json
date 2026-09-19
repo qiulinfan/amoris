@@ -1,0 +1,489 @@
+{
+ "command": "scenario",
+ "ok": true,
+ "summary": "15 of 15 scenario runs passed (5 scenarios, 3 seeds each)\n  ok  walking right collects the coin ahead within a second: 3/3 passed, ticks to pass 8..8 (avg 8)\n  ok  walking left for two seconds collects the three coins on the left: 3/3 passed, ticks to pass 133..133 (avg 133)\n  ok  the player stands on the ground and the level's edges hold: 3/3 passed, ticks to pass 248..248 (avg 248)\n  ok  a jump from below the ledge lands on it and the coins over it are collected: 3/3 passed, ticks to pass 66..66 (avg 66)\n  ok  the one-way plank is passed from below and landed on from above: 3/3 passed, ticks to pass 84..84 (avg 84)",
+ "data": {
+  "config": "debug",
+  "frames": 900,
+  "project": "/Users/qiulinfan/Desktop/aipocket/samples/sprites",
+  "results": [
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/sprites/scenarios/coins.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 290,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "still walking",
+        "name": "walking right collects the coin ahead within a second",
+        "seconds": 0.11666666666666668,
+        "status": "passed",
+        "step": 5,
+        "steps": 5,
+        "ticks": 8
+       },
+       "coins": 5,
+       "level.solid_below": true,
+       "player.clip": "walk",
+       "player.grounded": true,
+       "player.x": 0.7,
+       "player.y": -3,
+       "score": 1
+      },
+      "status": "passed",
+      "step": "still walking",
+      "ticks": 8
+     },
+     {
+      "elapsed_ms": 298,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "still walking",
+        "name": "walking right collects the coin ahead within a second",
+        "seconds": 0.11666666666666668,
+        "status": "passed",
+        "step": 5,
+        "steps": 5,
+        "ticks": 8
+       },
+       "coins": 5,
+       "level.solid_below": true,
+       "player.clip": "walk",
+       "player.grounded": true,
+       "player.x": 0.7,
+       "player.y": -3,
+       "score": 1
+      },
+      "status": "passed",
+      "step": "still walking",
+      "ticks": 8
+     },
+     {
+      "elapsed_ms": 284,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "still walking",
+        "name": "walking right collects the coin ahead within a second",
+        "seconds": 0.11666666666666668,
+        "status": "passed",
+        "step": 5,
+        "steps": 5,
+        "ticks": 8
+       },
+       "coins": 5,
+       "level.solid_below": true,
+       "player.clip": "walk",
+       "player.grounded": true,
+       "player.x": 0.7,
+       "player.y": -3,
+       "score": 1
+      },
+      "status": "passed",
+      "step": "still walking",
+      "ticks": 8
+     }
+    ],
+    "scenario": "walking right collects the coin ahead within a second",
+    "seeds": 3,
+    "ticks": {
+     "avg": 8.0,
+     "max": 8,
+     "min": 8
+    }
+   },
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/sprites/scenarios/coins.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 529,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "idle after the hold",
+        "name": "walking left for two seconds collects the three coins on the left",
+        "seconds": 2.2,
+        "status": "passed",
+        "step": 4,
+        "steps": 4,
+        "ticks": 133
+       },
+       "coins": 3,
+       "level.solid_below": true,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -9.5,
+       "player.y": -3,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "idle after the hold",
+      "ticks": 133
+     },
+     {
+      "elapsed_ms": 522,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "idle after the hold",
+        "name": "walking left for two seconds collects the three coins on the left",
+        "seconds": 2.2,
+        "status": "passed",
+        "step": 4,
+        "steps": 4,
+        "ticks": 133
+       },
+       "coins": 3,
+       "level.solid_below": true,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -9.5,
+       "player.y": -3,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "idle after the hold",
+      "ticks": 133
+     },
+     {
+      "elapsed_ms": 523,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "idle after the hold",
+        "name": "walking left for two seconds collects the three coins on the left",
+        "seconds": 2.2,
+        "status": "passed",
+        "step": 4,
+        "steps": 4,
+        "ticks": 133
+       },
+       "coins": 3,
+       "level.solid_below": true,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -9.5,
+       "player.y": -3,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "idle after the hold",
+      "ticks": 133
+     }
+    ],
+    "scenario": "walking left for two seconds collects the three coins on the left",
+    "seeds": 3,
+    "ticks": {
+     "avg": 133.0,
+     "max": 133,
+     "min": 133
+    }
+   },
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/sprites/scenarios/coins.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 732,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "stopped at the west edge",
+        "name": "the player stands on the ground and the level's edges hold",
+        "seconds": 4.116666666666666,
+        "status": "passed",
+        "step": 4,
+        "steps": 4,
+        "ticks": 248
+       },
+       "coins": 3,
+       "level.solid_below": true,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -9.5,
+       "player.y": -3,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "stopped at the west edge",
+      "ticks": 248
+     },
+     {
+      "elapsed_ms": 733,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "stopped at the west edge",
+        "name": "the player stands on the ground and the level's edges hold",
+        "seconds": 4.116666666666666,
+        "status": "passed",
+        "step": 4,
+        "steps": 4,
+        "ticks": 248
+       },
+       "coins": 3,
+       "level.solid_below": true,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -9.5,
+       "player.y": -3,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "stopped at the west edge",
+      "ticks": 248
+     },
+     {
+      "elapsed_ms": 735,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "stopped at the west edge",
+        "name": "the player stands on the ground and the level's edges hold",
+        "seconds": 4.116666666666666,
+        "status": "passed",
+        "step": 4,
+        "steps": 4,
+        "ticks": 248
+       },
+       "coins": 3,
+       "level.solid_below": true,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -9.5,
+       "player.y": -3,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "stopped at the west edge",
+      "ticks": 248
+     }
+    ],
+    "scenario": "the player stands on the ground and the level's edges hold",
+    "seeds": 3,
+    "ticks": {
+     "avg": 248.0,
+     "max": 248,
+     "min": 248
+    }
+   },
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/sprites/scenarios/coins.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 451,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "check",
+        "name": "a jump from below the ledge lands on it and the coins over it are collected",
+        "seconds": 1.0833333333333333,
+        "status": "passed",
+        "step": 6,
+        "steps": 6,
+        "ticks": 66
+       },
+       "coins": 3,
+       "level.solid_below": false,
+       "player.clip": "walk",
+       "player.grounded": false,
+       "player.x": 5.5,
+       "player.y": -1.01,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "check",
+      "ticks": 66
+     },
+     {
+      "elapsed_ms": 449,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "check",
+        "name": "a jump from below the ledge lands on it and the coins over it are collected",
+        "seconds": 1.0833333333333333,
+        "status": "passed",
+        "step": 6,
+        "steps": 6,
+        "ticks": 66
+       },
+       "coins": 3,
+       "level.solid_below": false,
+       "player.clip": "walk",
+       "player.grounded": false,
+       "player.x": 5.5,
+       "player.y": -1.01,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "check",
+      "ticks": 66
+     },
+     {
+      "elapsed_ms": 449,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "check",
+        "name": "a jump from below the ledge lands on it and the coins over it are collected",
+        "seconds": 1.0833333333333333,
+        "status": "passed",
+        "step": 6,
+        "steps": 6,
+        "ticks": 66
+       },
+       "coins": 3,
+       "level.solid_below": false,
+       "player.clip": "walk",
+       "player.grounded": false,
+       "player.x": 5.5,
+       "player.y": -1.01,
+       "score": 3
+      },
+      "status": "passed",
+      "step": "check",
+      "ticks": 66
+     }
+    ],
+    "scenario": "a jump from below the ledge lands on it and the coins over it are collected",
+    "seeds": 3,
+    "ticks": {
+     "avg": 66.0,
+     "max": 66,
+     "min": 66
+    }
+   },
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/sprites/scenarios/coins.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 454,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "landed on the plank",
+        "name": "the one-way plank is passed from below and landed on from above",
+        "seconds": 1.3833333333333333,
+        "status": "passed",
+        "step": 5,
+        "steps": 5,
+        "ticks": 84
+       },
+       "coins": 4,
+       "level.solid_below": false,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -4.8,
+       "player.y": -1,
+       "score": 2
+      },
+      "status": "passed",
+      "step": "landed on the plank",
+      "ticks": 84
+     },
+     {
+      "elapsed_ms": 457,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "landed on the plank",
+        "name": "the one-way plank is passed from below and landed on from above",
+        "seconds": 1.3833333333333333,
+        "status": "passed",
+        "step": 5,
+        "steps": 5,
+        "ticks": 84
+       },
+       "coins": 4,
+       "level.solid_below": false,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -4.8,
+       "player.y": -1,
+       "score": 2
+      },
+      "status": "passed",
+      "step": "landed on the plank",
+      "ticks": 84
+     },
+     {
+      "elapsed_ms": 457,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "landed on the plank",
+        "name": "the one-way plank is passed from below and landed on from above",
+        "seconds": 1.3833333333333333,
+        "status": "passed",
+        "step": 5,
+        "steps": 5,
+        "ticks": 84
+       },
+       "coins": 4,
+       "level.solid_below": false,
+       "player.clip": "idle",
+       "player.grounded": true,
+       "player.x": -4.8,
+       "player.y": -1,
+       "score": 2
+      },
+      "status": "passed",
+      "step": "landed on the plank",
+      "ticks": 84
+     }
+    ],
+    "scenario": "the one-way plank is passed from below and landed on from above",
+    "seeds": 3,
+    "ticks": {
+     "avg": 84.0,
+     "max": 84,
+     "min": 84
+    }
+   }
+  ],
+  "seeds": 3
+ },
+ "elapsed_ms": 7771
+}

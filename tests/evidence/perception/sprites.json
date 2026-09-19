@@ -1,0 +1,121 @@
+{
+ "command": "bench",
+ "ok": true,
+ "summary": "4 of 4 perception benchmarks answered correctly; 766 tokens through the instruments against 179228 for frame-by-frame vision (234x)\n  ok   how high does the player jump: 312 tokens over recorder.start, recorder.track (86 frames of play would cost 59512 as images, 190.7x)\n  ok   is the player grounded after landing: 56 tokens over world.get (104 frames of play would cost 71968 as images, 1285.1x)\n  ok   what does the camera see: 352 tokens over render.visible (8 frames of play would cost 5536 as images, 15.7x)\n  ok   where is the player after a second of walking: 46 tokens over world.get (61 frames of play would cost 42212 as images, 917.7x)",
+ "project": "/Users/qiulinfan/Desktop/aipocket/samples/sprites",
+ "config": "debug",
+ "frames": 1800,
+ "totals": {
+  "answered": 4,
+  "correct": 4,
+  "frame_tokens": 179228,
+  "tokens": 766
+ },
+ "benches": [
+  {
+   "answer": 2.21,
+   "bytes_in": 1131,
+   "bytes_out": 115,
+   "commands": [
+    "recorder.start",
+    "recorder.track"
+   ],
+   "correct": true,
+   "error": null,
+   "frame_tokens": 59512,
+   "image": {
+    "height": 540,
+    "tokens_per_frame": 692,
+    "width": 960
+   },
+   "ok": true,
+   "question": "how high does the player jump",
+   "ratio": 190.7,
+   "step": "verify the answer",
+   "ticks": 86,
+   "tokens": 312,
+   "truth": 2.296875
+  },
+  {
+   "answer": true,
+   "bytes_in": 173,
+   "bytes_out": 49,
+   "commands": [
+    "world.get"
+   ],
+   "correct": true,
+   "error": null,
+   "frame_tokens": 71968,
+   "image": {
+    "height": 540,
+    "tokens_per_frame": 692,
+    "width": 960
+   },
+   "ok": true,
+   "question": "is the player grounded after landing",
+   "ratio": 1285.1,
+   "step": "verify the answer",
+   "ticks": 104,
+   "tokens": 56,
+   "truth": true
+  },
+  {
+   "answer": [
+    "Coin0",
+    "Coin1",
+    "Coin2",
+    "Coin3",
+    "Coin4",
+    "Coin5",
+    "Level",
+    "Player"
+   ],
+   "bytes_in": 1382,
+   "bytes_out": 26,
+   "commands": [
+    "render.visible"
+   ],
+   "correct": true,
+   "error": null,
+   "frame_tokens": 5536,
+   "image": {
+    "height": 540,
+    "tokens_per_frame": 692,
+    "width": 960
+   },
+   "ok": true,
+   "question": "what does the camera see",
+   "ratio": 15.7,
+   "step": "verify the answer",
+   "ticks": 8,
+   "tokens": 352,
+   "truth": [
+    "Level",
+    "Player"
+   ]
+  },
+  {
+   "answer": 5.9,
+   "bytes_in": 130,
+   "bytes_out": 52,
+   "commands": [
+    "world.get"
+   ],
+   "correct": true,
+   "error": null,
+   "frame_tokens": 42212,
+   "image": {
+    "height": 540,
+    "tokens_per_frame": 692,
+    "width": 960
+   },
+   "ok": true,
+   "question": "where is the player after a second of walking",
+   "ratio": 917.7,
+   "step": "verify the answer",
+   "ticks": 61,
+   "tokens": 46,
+   "truth": 5.9
+  }
+ ]
+}

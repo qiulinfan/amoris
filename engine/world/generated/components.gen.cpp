@@ -737,6 +737,16 @@ void to_json(Json& j, const Joint& v) {
     j["rope"] = v.rope;
     j["break_force"] = v.break_force;
     j["force"] = v.force;
+    vec_to_json(j["axis"], v.axis);
+    vec_to_json(j["target_axis"], v.target_axis);
+    vec_to_json(j["reference"], v.reference);
+    j["limit"] = v.limit;
+    j["lower"] = v.lower;
+    j["upper"] = v.upper;
+    j["motor_speed"] = v.motor_speed;
+    j["motor_torque"] = v.motor_torque;
+    j["angle"] = v.angle;
+    j["speed"] = v.speed;
 }
 
 void from_json(const Json& j, Joint& v) {
@@ -748,6 +758,16 @@ void from_json(const Json& j, Joint& v) {
     scalar_from_json(j, "rope", v.rope);
     scalar_from_json(j, "break_force", v.break_force);
     scalar_from_json(j, "force", v.force);
+    if (j.is_object() && j.contains("axis")) vec_from_json(j["axis"], v.axis);
+    if (j.is_object() && j.contains("target_axis")) vec_from_json(j["target_axis"], v.target_axis);
+    if (j.is_object() && j.contains("reference")) vec_from_json(j["reference"], v.reference);
+    scalar_from_json(j, "limit", v.limit);
+    scalar_from_json(j, "lower", v.lower);
+    scalar_from_json(j, "upper", v.upper);
+    scalar_from_json(j, "motor_speed", v.motor_speed);
+    scalar_from_json(j, "motor_torque", v.motor_torque);
+    scalar_from_json(j, "angle", v.angle);
+    scalar_from_json(j, "speed", v.speed);
 }
 
 void hash_component(StateHasherRef& h, const Joint& v) {
@@ -763,6 +783,22 @@ void hash_component(StateHasherRef& h, const Joint& v) {
     h.u8(v.rope ? 1 : 0);
     h.f32(v.break_force);
     h.f32(v.force);
+    h.f32(v.axis.x);
+    h.f32(v.axis.y);
+    h.f32(v.axis.z);
+    h.f32(v.target_axis.x);
+    h.f32(v.target_axis.y);
+    h.f32(v.target_axis.z);
+    h.f32(v.reference.x);
+    h.f32(v.reference.y);
+    h.f32(v.reference.z);
+    h.u8(v.limit ? 1 : 0);
+    h.f32(v.lower);
+    h.f32(v.upper);
+    h.f32(v.motor_speed);
+    h.f32(v.motor_torque);
+    h.f32(v.angle);
+    h.f32(v.speed);
 }
 
 std::size_t numeric_span(Joint& v, std::string_view path, float** out) {
@@ -778,6 +814,80 @@ std::size_t numeric_span(Joint& v, std::string_view path, float** out) {
     if (path == "distance") { *out = &v.distance; return 1; }
     if (path == "break_force") { *out = &v.break_force; return 1; }
     if (path == "force") { *out = &v.force; return 1; }
+    if (path == "axis") { *out = &v.axis.x; return 3; }
+    if (path == "axis.x") { *out = &v.axis.x; return 1; }
+    if (path == "axis.y") { *out = &v.axis.y; return 1; }
+    if (path == "axis.z") { *out = &v.axis.z; return 1; }
+    if (path == "target_axis") { *out = &v.target_axis.x; return 3; }
+    if (path == "target_axis.x") { *out = &v.target_axis.x; return 1; }
+    if (path == "target_axis.y") { *out = &v.target_axis.y; return 1; }
+    if (path == "target_axis.z") { *out = &v.target_axis.z; return 1; }
+    if (path == "reference") { *out = &v.reference.x; return 3; }
+    if (path == "reference.x") { *out = &v.reference.x; return 1; }
+    if (path == "reference.y") { *out = &v.reference.y; return 1; }
+    if (path == "reference.z") { *out = &v.reference.z; return 1; }
+    if (path == "lower") { *out = &v.lower; return 1; }
+    if (path == "upper") { *out = &v.upper; return 1; }
+    if (path == "motor_speed") { *out = &v.motor_speed; return 1; }
+    if (path == "motor_torque") { *out = &v.motor_torque; return 1; }
+    if (path == "angle") { *out = &v.angle; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Body2D& v) {
+    j = Json::object();
+    vec_to_json(j["velocity"], v.velocity);
+    j["gravity"] = v.gravity;
+    j["max_fall"] = v.max_fall;
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["offset"], v.offset);
+    j["map"] = v.map;
+    j["grounded"] = v.grounded;
+    j["on_wall"] = v.on_wall;
+    j["on_ceiling"] = v.on_ceiling;
+}
+
+void from_json(const Json& j, Body2D& v) {
+    if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
+    scalar_from_json(j, "gravity", v.gravity);
+    scalar_from_json(j, "max_fall", v.max_fall);
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "map", v.map);
+    scalar_from_json(j, "grounded", v.grounded);
+    scalar_from_json(j, "on_wall", v.on_wall);
+    scalar_from_json(j, "on_ceiling", v.on_ceiling);
+}
+
+void hash_component(StateHasherRef& h, const Body2D& v) {
+    h.f32(v.velocity.x);
+    h.f32(v.velocity.y);
+    h.f32(v.gravity);
+    h.f32(v.max_fall);
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.str(v.map);
+    h.u8(v.grounded ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.on_wall));
+    h.u8(v.on_ceiling ? 1 : 0);
+}
+
+std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "velocity") { *out = &v.velocity.x; return 2; }
+    if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
+    if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
+    if (path == "gravity") { *out = &v.gravity; return 1; }
+    if (path == "max_fall") { *out = &v.max_fall; return 1; }
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 2; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
     return 0;
 }
 
@@ -981,8 +1091,8 @@ constexpr std::array<FieldInfo, 9> kRigidBodyFields = {{
     FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched."},
     FieldInfo{"lock_rotation", "bool", "Never rotate (characters on capsules stay upright)."},
 }};
-constexpr std::array<FieldInfo, 8> kJointFields = {{
-    FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together)."},
+constexpr std::array<FieldInfo, 18> kJointFields = {{
+    FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only)."},
     FieldInfo{"target", "string", "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor."},
     FieldInfo{"anchor", "vec3", "Attachment point on this body, in its local frame."},
     FieldInfo{"target_anchor", "vec3", "Attachment point on the target in its local frame, or a world point when there is no target."},
@@ -990,6 +1100,27 @@ constexpr std::array<FieldInfo, 8> kJointFields = {{
     FieldInfo{"rope", "bool", "Distance joints only: pull when the anchors are farther than distance, never push."},
     FieldInfo{"break_force", "f32", "Force (newtons) above which the joint breaks; 0 never breaks."},
     FieldInfo{"force", "f32", "Force the joint carried in the last step, written by the engine."},
+    FieldInfo{"axis", "vec3", "Hinge: the axis of rotation in this body's local frame."},
+    FieldInfo{"target_axis", "vec3", "Hinge: the axis in the target's frame; zero takes the body's axis at the first step and writes it here."},
+    FieldInfo{"reference", "vec3", "Hinge: a direction across the axis in the target's frame from which angle is measured; zero takes it at the first step and writes it here."},
+    FieldInfo{"limit", "bool", "Hinge: keep angle between lower and upper (equal values lock the hinge)."},
+    FieldInfo{"lower", "f32", "Hinge: lower angle limit in radians, when limit is set."},
+    FieldInfo{"upper", "f32", "Hinge: upper angle limit in radians, when limit is set."},
+    FieldInfo{"motor_speed", "f32", "Hinge: the angular speed (radians per second) the motor drives the body to about the axis, relative to the target."},
+    FieldInfo{"motor_torque", "f32", "Hinge: the most torque the motor applies; 0 turns the motor off."},
+    FieldInfo{"angle", "f32", "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step."},
+    FieldInfo{"speed", "f32", "Hinge: the body's angular speed about the axis relative to the target, written by the engine every step."},
+}};
+constexpr std::array<FieldInfo, 9> kBody2DFields = {{
+    FieldInfo{"velocity", "vec2", "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
+    FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
+    FieldInfo{"max_fall", "f32", "Fastest downward speed."},
+    FieldInfo{"size", "vec2", "Half extents of the box."},
+    FieldInfo{"offset", "vec2", "Box center relative to the entity's position."},
+    FieldInfo{"map", "string", "Path or name of the TileMap entity to collide with; empty takes the first one."},
+    FieldInfo{"grounded", "bool", "Standing on a solid tile (written by the engine)."},
+    FieldInfo{"on_wall", "i32", "-1 touching a wall on the left, 1 on the right, 0 none (written by the engine)."},
+    FieldInfo{"on_ceiling", "bool", "Head against a tile (written by the engine)."},
 }};
 constexpr std::array<FieldInfo, 4> kColliderFields = {{
     FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends)."},
@@ -1007,7 +1138,7 @@ constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};
 
-constexpr std::array<ComponentInfo, 18> kComponents = {{
+constexpr std::array<ComponentInfo, 19> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1018,12 +1149,13 @@ constexpr std::array<ComponentInfo, 18> kComponents = {{
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
     ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},
     ComponentInfo{"SpriteAnimation", "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.", true, kSpriteAnimationFields},
-    ComponentInfo{"TileMap", "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where.", true, kTileMapFields},
+    ComponentInfo{"TileMap", "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back.", true, kTileMapFields},
     ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
     ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.", true, kParticleEmitterFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
-    ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
+    ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
+    ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
 }};

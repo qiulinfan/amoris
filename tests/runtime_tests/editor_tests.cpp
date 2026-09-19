@@ -49,6 +49,7 @@ void ok(Status r) {
 
 int find_named(app::Session& s, const char* name) {
     Json q = ok(s.command("ui.query", Json{{"name", name}}));
+    INFO("looking for " << name << ": " << q.dump());
     REQUIRE(q.size() == 1);
     return q[0]["id"].get<int>();
 }
@@ -319,4 +320,61 @@ TEST_CASE("editor remembers its layout in the project", "[editor]") {
         ok(s.finish());
     }
     std::filesystem::remove(saved);
+}
+
+TEST_CASE("editor paints tiles in the scene pane and undoes the stroke", "[editor]") {
+    app::Session s(editor_options("sprites"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    // The sprites sample builds its world in its script: Play, let it settle, Pause, then edit.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "play")}}));
+    for (int i = 0; i < 10; ++i) ok(s.frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "pause")}}));
+    REQUIRE(s.paused());
+    // The hierarchy refreshes every 15 frames; wait for the spawned Level to show up.
+    for (int i = 0; i < 40 && ok(s.command("ui.query", Json{{"name", "entity:Level"}})).empty(); ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Level")}}));
+    ok(s.idle_frame());
+    // Picking the ground layer and the ground tile (gid 1) turns the brush on.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "layer:ground")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tile:1")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.snapshot", Json{{"depth", 12}}))["text"].get<std::string>().find("Stop painting") != std::string::npos);
+    auto gid_at = [&](int x, int y) { return ok(s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", x}, {"tile_y", y}, {"layer", "ground"}}))["layers"][0]["gid"].get<int>(); };
+    REQUIRE(gid_at(10, 5) == 0);
+    // A click in the sky where world (0.5, -1) projects paints cell (10, 5); undo clears it.
+    Json pr = ok(s.command("render.project", Json{{"point", {{"x", 0.5}, {"y", -1.0}, {"z", 0.0}}}}));
+    REQUIRE(pr["visible"] == true);
+    Json root = ok(s.command("ui.describe", Json{{"id", 1}}));
+    double scale = root["rect"]["w"].get<double>() > 0 ? 1024.0 / root["rect"]["w"].get<double>() : 1.0;
+    double px = pr["x"].get<double>() / scale, py = pr["y"].get<double>() / scale;
+    ok(s.command("ui.click", Json{{"x", px}, {"y", py}}));
+    REQUIRE(gid_at(10, 5) == 1);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(gid_at(10, 5) == 0);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "redo")}}));
+    REQUIRE(gid_at(10, 5) == 1);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(gid_at(10, 5) == 0);
+    // A drag paints every cell it crosses as one stroke: one undo step takes all of them back.
+    ok(s.idle_frame());
+    ok(s.command("ui.drag", Json{{"x", px}, {"y", py}, {"dx", 70.0 / scale}, {"dy", 0}, {"steps", 6}}));
+    REQUIRE(gid_at(10, 5) == 1);
+    REQUIRE(gid_at(11, 5) == 1);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(gid_at(10, 5) == 0);
+    REQUIRE(gid_at(11, 5) == 0);
+    // Stop painting: the same click selects again instead of painting.
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "paint")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"x", px}, {"y", py}}));
+    REQUIRE(gid_at(10, 5) == 0);
+    ok(s.finish());
 }

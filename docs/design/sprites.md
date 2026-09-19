@@ -39,6 +39,10 @@ sprites.defineClip("pop", { texture: "assets/fx.png", columns: 4, rows: 1, fps: 
 
 Levels come from Tiled maps drawn by the `TileMap` component and questioned through `tilemap.*`: [tile maps](tilemaps.md).
 
+## Physics
+
+`Body2D` gives a sprite a box that falls, lands, is stopped by walls and passes one-way planks from below, against a `TileMap` (`docs/design/tilemaps.md`). Bodies do not collide with each other; scripts check distances for pickups and hits.
+
 ## Not yet
 
-2D physics. Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).
+Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).

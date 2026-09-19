@@ -70,6 +70,41 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Run a project's perception benchmarks (benches/*.ts): what each answer costs through the instruments.
+    Bench {
+        /// Project name under samples/ or a directory with project.toml.
+        target: String,
+        #[arg(long, default_value = "debug")]
+        config: String,
+        /// One benchmark file instead of every file under <project>/benches/.
+        #[arg(long)]
+        file: Option<String>,
+        /// Frame budget per run; a benchmark still running at the end fails.
+        #[arg(long, default_value_t = 1800)]
+        frames: i64,
+        /// Substring filter on questions.
+        #[arg(long)]
+        only: Option<String>,
+    },
+    /// Run a project's gameplay scenarios (scenarios/*.ts) at several seeds and summarise.
+    Scenario {
+        /// Project name under samples/ or a directory with project.toml.
+        target: String,
+        #[arg(long, default_value = "debug")]
+        config: String,
+        /// One scenario file instead of every file under <project>/scenarios/.
+        #[arg(long)]
+        file: Option<String>,
+        /// How many seeds to run each scenario with (1..N).
+        #[arg(long, default_value_t = 5)]
+        seeds: u64,
+        /// Frame budget per run; a scenario still running at the end fails.
+        #[arg(long, default_value_t = 1800)]
+        frames: i64,
+        /// Substring filter on scenario names.
+        #[arg(long)]
+        only: Option<String>,
+    },
     /// Build and run every test module, then summarise.
     Test {
         #[arg(long, default_value = "debug")]
@@ -177,6 +212,8 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Build { targets, config, generate_only } => commands::build(&ws, &config, &targets, generate_only),
         Command::Run { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, false) } else { commands::run(&ws, &config, &target, &args) },
         Command::Test { config, filter } => commands::test(&ws, &config, filter.as_deref()),
+        Command::Scenario { target, config, file, seeds, frames, only } => commands::scenario(&ws, &config, &target, file.as_deref(), seeds, frames, only.as_deref()),
+        Command::Bench { target, config, file, frames, only } => commands::bench(&ws, &config, &target, file.as_deref(), frames, only.as_deref()),
         Command::Ts { project, out } => commands::ts_bundle(&ws, &project, out.as_deref()),
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),

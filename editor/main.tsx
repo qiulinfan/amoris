@@ -3,7 +3,7 @@
 // (hierarchy, inspector, console, transcript) is also reachable by `ui_snapshot`, and every
 // button is reachable by `ui_click`. Every edit is undoable (editor/history.ts) and the scene
 // pane has a translate gizmo (editor/gizmo.ts) that agents drag with `ui.drag`.
-import { Button, Label, Panel, Row, TextInput, command, mount, onFrame, onInput, render, setProjectRoot, signal, theme, ui, world } from "pocket";
+import { Button, Label, Panel, Row, TextInput, command, mount, onFrame, onInput, render, setProjectRoot, signal, theme, tilemap, ui, world } from "pocket";
 import type { ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } from "pocket";
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
@@ -41,6 +41,7 @@ const addingComponent = signal(false);
 const layout = signal<Layout>({ ...DEFAULT_LAYOUT });
 const gizmo = signal<GizmoView | null>(null);
 const historyVersion = signal(0);
+const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
 
 let editScene: unknown = null;
 let orbit: Orbit | undefined;
@@ -49,6 +50,7 @@ let viewportRect = { x: 0, y: 0, w: 0, h: 0 };
 let mainRect = { x: 0, y: 0, w: 0, h: 0 };
 let frame = 0;
 let dragState: { ids: number[]; before: Map<number, Transform>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number } | null = null;
+let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
 
 /** JSON copy (structuredClone is not in the script host). */
 function clone<T>(v: T): T {
@@ -105,6 +107,7 @@ function select(id: number, mode: "replace" | "toggle" = "replace"): void {
     else if (id !== 0) s = s.includes(id) ? s.filter((x) => x !== id) : [...s, id];
     selection.set(s);
     addingComponent.set(false);
+    if (brush() !== null && (s.length === 0 || !world.has(s[s.length - 1], "TileMap"))) brush.set(null);
     refreshSelected();
 }
 
@@ -338,7 +341,97 @@ function pixelScale(): number {
     return root.rect.w > 0 ? win.width / root.rect.w : 1;
 }
 
+// ------------------------------------------------------------------------------------ tile brush
+function tileMapSelected(): number {
+    const id = selected();
+    return id !== 0 && world.has(id, "TileMap") ? id : 0;
+}
+
+/** Paint the brush tile under a scene-pane point (in points), once per cell per stroke. */
+function paintAt(x: number, y: number): void {
+    const b = brush();
+    if (!b || !stroke) return;
+    const s = pixelScale();
+    const z = world.get(stroke.entity, "Transform")?.position.z ?? 0;
+    const ray = render.unproject(x * s, y * s, "xy", z);
+    if (!ray.hit || !ray.point) return;
+    const cell = tilemap.cell(stroke.entity, ray.point.x, ray.point.y);
+    if (!cell.inside) return;
+    const key = `${cell.tile_x},${cell.tile_y}`;
+    if (stroke.cells.has(key)) return;
+    try {
+        const r = tilemap.set(stroke.entity, { tile_x: cell.tile_x, tile_y: cell.tile_y }, { gid: b.gid }, b.layer);
+        stroke.cells.set(key, { tile_x: cell.tile_x, tile_y: cell.tile_y, was: r.was, gid: b.gid });
+    } catch (err) {
+        notice.set(`Paint failed: ${String(err)}`);
+    }
+}
+
+/** One stroke is one undo step: every cell goes back to what it held before. */
+function endStroke(): void {
+    const st = stroke;
+    stroke = null;
+    if (!st) return;
+    const cells = [...st.cells.values()].filter((c) => c.was !== c.gid);
+    if (cells.length === 0) return;
+    const apply = (use: "gid" | "was") => {
+        for (const c of cells) tilemap.set(st.entity, { tile_x: c.tile_x, tile_y: c.tile_y }, { gid: c[use] }, st.layer);
+    };
+    history.record({ label: `paint ${cells.length} tile${cells.length === 1 ? "" : "s"}`, redo: () => apply("gid"), undo: () => apply("was") });
+    historyVersion.update((v) => v + 1);
+}
+
+function saveMap(id: number): void {
+    try {
+        const r = tilemap.save(id);
+        notice.set(`Saved ${r.path} (${r.bytes} bytes).`);
+    } catch (err) {
+        notice.set(`Save failed: ${String(err)}`);
+    }
+}
+
+function TileBrush(props: { id: number }) {
+    let mapInfo: { layers: Array<{ name: string; tiles: number }>; tilesets: Array<{ name: string; first_gid: number; tile_count: number }>; revision: number };
+    try {
+        mapInfo = tilemap.info(props.id) as typeof mapInfo;
+    } catch (err) {
+        return <Label text={`Map: ${String(err)}`} muted wrap />;
+    }
+    const b = brush();
+    const layer = b?.layer ?? mapInfo.layers[0]?.name ?? "";
+    const gid = b?.gid ?? mapInfo.tilesets[0]?.first_gid ?? 1;
+    const tiles: number[] = [];
+    for (const t of mapInfo.tilesets) for (let i = 0; i < Math.min(t.tile_count, 32); ++i) tiles.push(t.first_gid + i);
+    return (
+        <box gap={4} padding={[4, 0]} name="tiles">
+            <Row>
+                <Label text="Tiles" size={13} />
+                <box flex={1} />
+                <Button label={b ? "Stop painting" : "Paint"} small primary={b !== null} name="paint" onClick={() => brush.set(b ? null : { layer, gid })} />
+            </Row>
+            <Row wrap gap={4}>
+                {mapInfo.layers.map((l) => <Button key={l.name} label={`${l.name} (${l.tiles})`} small primary={l.name === layer} name={`layer:${l.name}`} onClick={() => brush.set({ layer: l.name, gid })} />)}
+            </Row>
+            <Row wrap gap={4}>
+                <Button label="erase" small primary={gid === 0} name="tile:0" onClick={() => brush.set({ layer, gid: 0 })} />
+                {tiles.map((g) => <Button key={g} label={String(g)} small primary={g === gid} name={`tile:${g}`} onClick={() => brush.set({ layer, gid: g })} />)}
+            </Row>
+            <Row gap={4}>
+                <Label text={b ? `Click or drag in the scene: gid ${gid} on ${layer}. Revision ${mapInfo.revision}.` : `Revision ${mapInfo.revision}. Pick a layer and a tile to paint under the mouse.`} muted size={11} wrap flex={1} />
+                <Button label="Save map" small name="save-map" onClick={() => saveMap(props.id)} />
+            </Row>
+        </box>
+    );
+}
+
 function onViewportDown(e: UiEvent): void {
+    endStroke();
+    const painting = tileMapSelected();
+    if (brush() !== null && painting !== 0) {
+        stroke = { entity: painting, layer: brush()!.layer, pos: { x: e.x ?? 0, y: e.y ?? 0 }, cells: new Map() };
+        paintAt(stroke.pos.x, stroke.pos.y);
+        return;
+    }
     const s = pixelScale();
     const hit = render.pick(Math.floor((e.x ?? 0) * s), Math.floor((e.y ?? 0) * s));
     const toggle = e.mods?.includes("shift") || e.mods?.includes("meta") || e.mods?.includes("ctrl");
@@ -347,7 +440,17 @@ function onViewportDown(e: UiEvent): void {
     orbit = orbitFromCamera();
 }
 
+function onViewportUp(): void {
+    endStroke();
+}
+
 function onViewportDrag(e: UiEvent): void {
+    if (stroke) {
+        stroke.pos.x += e.dx ?? 0;
+        stroke.pos.y += e.dy ?? 0;
+        paintAt(stroke.pos.x, stroke.pos.y);
+        return;
+    }
     if (!orbit) orbit = orbitFromCamera();
     if (!orbit) return;
     orbit.yaw -= (e.dx ?? 0) * 0.01;
@@ -602,6 +705,7 @@ function Inspector() {
                 <TextInput value={d.name} flex={1} name="entity-name" onChange={(v) => { if (v.length > 0) renameEntity(d.id, v); }} />
             </Row>
             <Label text={`${d.path}  #${d.id}`} muted size={11} />
+            {present.includes("TileMap") ? <TileBrush id={d.id} /> : null}
             {schema.filter((c) => present.includes(c.name)).map((c) => (
                 <box key={c.name} gap={4} padding={[4, 0]} borderColor={theme.border} border={0}>
                     <Row>
@@ -687,7 +791,7 @@ function Editor() {
             <Row flex={1} gap={0} align="stretch" name="main">
                 <Hierarchy />
                 <Splitter name="split:hierarchy" onDrag={(e) => layout.update((l) => ({ ...l, hierarchy: clamp(l.hierarchy + (e.dx ?? 0), 120, 600) }))} />
-                <box flex={1} name="viewport" onMouseDown={onViewportDown} onDrag={onViewportDrag} onWheel={onViewportWheel} overflow="hidden" />
+                <box flex={1} name="viewport" onMouseDown={onViewportDown} onMouseUp={onViewportUp} onDrag={onViewportDrag} onDragEnd={onViewportUp} onWheel={onViewportWheel} overflow="hidden" />
                 <Splitter name="split:inspector" onDrag={(e) => layout.update((l) => ({ ...l, inspector: clamp(l.inspector - (e.dx ?? 0), 160, 700) }))} />
                 <Inspector />
                 {GizmoHandles()}

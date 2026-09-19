@@ -309,3 +309,81 @@ TEST_CASE("rays and overlaps see capsules", "[physics][capsule]") {
     REQUIRE(p.overlap_sphere(w, {0, 2.0f, 0}, 0.3f).size() == 1);
     REQUIRE(p.overlap_sphere(w, {0, 2.5f, 0}, 0.3f).empty());
 }
+
+TEST_CASE("a hinge keeps its axis, stops at its limit and reports the angle", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    // A hatch hinged along its back edge to a world point; gravity swings the free edge down.
+    EntityId hatch = w.spawn("Hatch", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 3}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1.0}, {"y", 0.05}, {"z", 0.6}}}}}}).value();
+    REQUIRE(w.set(hatch, "Joint", Json{{"kind", 2}, {"anchor", {{"x", 0}, {"y", 0}, {"z", -0.6}}}, {"target_anchor", {{"x", 0}, {"y", 3}, {"z", -0.6}}}, {"axis", {{"x", 1}, {"y", 0}, {"z", 0}}}, {"limit", true}, {"lower", 0.0}, {"upper", 1.2}}).has_value());
+    float worst = 0, max_angle = 0, min_axis = 1;
+    for (int i = 0; i < 240; ++i) {
+        run(p, w, 1);
+        const Transform* t = w.try_get<Transform>(hatch);
+        Vec3 pin = t->position + t->rotation.rotate(Vec3{0, 0, -0.6f});
+        worst = std::max(worst, length(pin - Vec3{0, 3, -0.6f}));
+        min_axis = std::min(min_axis, t->rotation.rotate(Vec3{1, 0, 0}).x);  // the hinge axis stays world X
+        max_angle = std::max(max_angle, p.joints()[0].angle);
+    }
+    REQUIRE(worst < 0.05f);
+    REQUIRE(min_axis > 0.999f);
+    REQUIRE(max_angle < 1.25f);
+    const physics::JointInfo& j = p.joints()[0];
+    REQUIRE(j.kind == 2);
+    REQUIRE(j.angle == Catch::Approx(1.2f).margin(0.05f));
+    REQUIRE(j.limit_state == 1);
+    // The component carries the angle and the frame the engine took at the first step; the stop was an event.
+    const Joint* jc = w.try_get<Joint>(hatch);
+    REQUIRE(jc->angle == Catch::Approx(1.2f).margin(0.05f));
+    REQUIRE(jc->target_axis.x == Catch::Approx(1.0f).margin(1e-4f));
+    REQUIRE(length(jc->reference) == Catch::Approx(1.0f).margin(1e-4f));
+    bool limited = false;
+    for (const auto& e : w.events().recent(500)) limited = limited || e.type == "joint.limit";
+    REQUIRE(limited);
+}
+
+TEST_CASE("a hinge motor turns a wheel at its speed within its torque", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    EntityId wheel = w.spawn("Wheel", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 2}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}, {"gravity_scale", 0.0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.9}, {"y", 0.05}, {"z", 0.15}}}}}}).value();
+    REQUIRE(w.set(wheel, "Joint", Json{{"kind", 2}, {"target_anchor", {{"x", 0}, {"y", 2}, {"z", 0}}}, {"axis", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"motor_speed", 3.0}, {"motor_torque", 4.0}}).has_value());
+    run(p, w, 60);
+    REQUIRE(p.joints()[0].speed == Catch::Approx(3.0f).margin(0.1f));
+    const Transform* t = w.try_get<Transform>(wheel);
+    REQUIRE(length(t->position - Vec3{0, 2, 0}) < 0.02f);
+    REQUIRE(std::fabs(t->rotation.x) < 0.01f);  // turning about Y only
+    REQUIRE(std::fabs(t->rotation.z) < 0.01f);
+    // Reversing the motor reverses the wheel; a weak motor cannot reach its speed and reports what it applies.
+    REQUIRE(w.set(wheel, "Joint", Json{{"motor_speed", -3.0}}).has_value());
+    run(p, w, 60);
+    REQUIRE(p.joints()[0].speed == Catch::Approx(-3.0f).margin(0.1f));
+    REQUIRE(w.set(wheel, "Joint", Json{{"motor_torque", 0.01}, {"motor_speed", 30.0}}).has_value());
+    run(p, w, 60);
+    REQUIRE(p.joints()[0].speed < 10.0f);
+    REQUIRE(p.joints()[0].torque == Catch::Approx(0.01f).margin(0.002f));
+}
+
+TEST_CASE("a hinge between two dynamic bodies keeps their axes aligned through a swing", "[physics][joint]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // A heavy block on the ground with a bar hinged (axis Z) in front of it: the bar swings in the XY plane.
+    EntityId block = body(w, "Block", 0, {0, 0.5f, 0}, 0.5f, Json{{"mass", 50.0}});
+    EntityId bar = w.spawn("Bar", 0, Json{{"Transform", {{"position", {{"x", 0.4}, {"y", 1.0}, {"z", 0.6}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.4}, {"y", 0.05}, {"z", 0.05}}}}}}).value();
+    REQUIRE(w.set(bar, "Joint", Json{{"kind", 2}, {"target", "/Block"}, {"anchor", {{"x", -0.4}, {"y", 0}, {"z", 0}}}, {"target_anchor", {{"x", 0}, {"y", 0.5}, {"z", 0.6}}}, {"axis", {{"x", 0}, {"y", 0}, {"z", 1}}}}).has_value());
+    float worst = 0, min_align = 1, min_y = 1;
+    for (int i = 0; i < 240; ++i) {
+        run(p, w, 1);
+        const Transform* tb = w.try_get<Transform>(bar);
+        const Transform* tk = w.try_get<Transform>(block);
+        Vec3 pa = tb->position + tb->rotation.rotate(Vec3{-0.4f, 0, 0});
+        Vec3 pb = tk->position + tk->rotation.rotate(Vec3{0, 0.5f, 0.6f});
+        worst = std::max(worst, length(pa - pb));
+        min_align = std::min(min_align, dot(tb->rotation.rotate(Vec3{0, 0, 1}), tk->rotation.rotate(Vec3{0, 0, 1})));
+        min_y = std::min(min_y, tb->position.y);
+    }
+    REQUIRE(worst < 0.05f);
+    REQUIRE(min_align > 0.999f);
+    REQUIRE(min_y < 0.7f);  // it swung down
+    REQUIRE(p.joints()[0].target == block);
+}

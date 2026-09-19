@@ -1,0 +1,335 @@
+{
+ "command": "scenario",
+ "ok": true,
+ "summary": "9 of 9 scenario runs passed (3 scenarios, 3 seeds each)\n  ok  within eight seconds at least three bodies reach the goal: 3/3 passed, ticks to pass 173..203 (avg 190)\n  ok  nothing falls out of the arena and the chain holds: 3/3 passed, ticks to pass 362..362 (avg 362)\n  ok  the hatch drops to its stop and the paddle turns at its motor speed: 3/3 passed, ticks to pass 122..122 (avg 122)",
+ "data": {
+  "config": "debug",
+  "frames": 900,
+  "project": "/Users/qiulinfan/Desktop/aipocket/samples/physics",
+  "results": [
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/physics/scenarios/goal.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 2310,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "check",
+        "name": "within eight seconds at least three bodies reach the goal",
+        "seconds": 3.3666666666666667,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 203
+       },
+       "chainTension": 10.7,
+       "contacts": 5,
+       "dropped": 8,
+       "hatchAngle": 1.2,
+       "inGoal": 3,
+       "joints": 6,
+       "lowest": 0.349,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 3,
+       "ropeIntact": true
+      },
+      "status": "passed",
+      "step": "check",
+      "ticks": 203
+     },
+     {
+      "elapsed_ms": 2191,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "check",
+        "name": "within eight seconds at least three bodies reach the goal",
+        "seconds": 3.2,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 193
+       },
+       "chainTension": 14.2,
+       "contacts": 5,
+       "dropped": 8,
+       "hatchAngle": 1.2,
+       "inGoal": 3,
+       "joints": 6,
+       "lowest": 0.349,
+       "paddleSpeed": 3,
+       "ray": "/Crate_2 at 4.61",
+       "resting": 3,
+       "ropeIntact": true
+      },
+      "status": "passed",
+      "step": "check",
+      "ticks": 193
+     },
+     {
+      "elapsed_ms": 1943,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "check",
+        "name": "within eight seconds at least three bodies reach the goal",
+        "seconds": 2.8666666666666667,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 173
+       },
+       "chainTension": 15.9,
+       "contacts": 3,
+       "dropped": 7,
+       "hatchAngle": 1.2,
+       "inGoal": 3,
+       "joints": 6,
+       "lowest": 0.349,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 3,
+       "ropeIntact": true
+      },
+      "status": "passed",
+      "step": "check",
+      "ticks": 173
+     }
+    ],
+    "scenario": "within eight seconds at least three bodies reach the goal",
+    "seeds": 3,
+    "ticks": {
+     "avg": 189.66666666666666,
+     "max": 203,
+     "min": 173
+    }
+   },
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/physics/scenarios/goal.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 2752,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "bodies inside, links at length",
+        "name": "nothing falls out of the arena and the chain holds",
+        "seconds": 6.016666666666667,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 362
+       },
+       "chainTension": 18,
+       "contacts": 9,
+       "dropped": 12,
+       "hatchAngle": 1.2,
+       "inGoal": 8,
+       "joints": 5,
+       "lowest": 0.234,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 4,
+       "ropeIntact": false
+      },
+      "status": "passed",
+      "step": "bodies inside, links at length",
+      "ticks": 362
+     },
+     {
+      "elapsed_ms": 2826,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "bodies inside, links at length",
+        "name": "nothing falls out of the arena and the chain holds",
+        "seconds": 6.016666666666667,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 362
+       },
+       "chainTension": 18,
+       "contacts": 11,
+       "dropped": 12,
+       "hatchAngle": 1.2,
+       "inGoal": 8,
+       "joints": 5,
+       "lowest": 0.234,
+       "paddleSpeed": 3,
+       "ray": "/Ball_3 at 4.39",
+       "resting": 5,
+       "ropeIntact": false
+      },
+      "status": "passed",
+      "step": "bodies inside, links at length",
+      "ticks": 362
+     },
+     {
+      "elapsed_ms": 2781,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "bodies inside, links at length",
+        "name": "nothing falls out of the arena and the chain holds",
+        "seconds": 6.016666666666667,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 362
+       },
+       "chainTension": 18,
+       "contacts": 8,
+       "dropped": 12,
+       "hatchAngle": 1.2,
+       "inGoal": 7,
+       "joints": 5,
+       "lowest": 0.234,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 5,
+       "ropeIntact": false
+      },
+      "status": "passed",
+      "step": "bodies inside, links at length",
+      "ticks": 362
+     }
+    ],
+    "scenario": "nothing falls out of the arena and the chain holds",
+    "seeds": 3,
+    "ticks": {
+     "avg": 362.0,
+     "max": 362,
+     "min": 362
+    }
+   },
+   {
+    "failed": 0,
+    "file": "/Users/qiulinfan/Desktop/aipocket/samples/physics/scenarios/goal.ts",
+    "passed": 3,
+    "runs": [
+     {
+      "elapsed_ms": 986,
+      "error": null,
+      "ok": true,
+      "seed": 1,
+      "state": {
+       "__scenario": {
+        "label": "hatch at its stop, paddle at speed",
+        "name": "the hatch drops to its stop and the paddle turns at its motor speed",
+        "seconds": 2.0166666666666666,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 122
+       },
+       "chainTension": 12,
+       "contacts": 2,
+       "dropped": 5,
+       "hatchAngle": 1.2,
+       "inGoal": 1,
+       "joints": 6,
+       "lowest": 0.349,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 3,
+       "ropeIntact": true
+      },
+      "status": "passed",
+      "step": "hatch at its stop, paddle at speed",
+      "ticks": 122
+     },
+     {
+      "elapsed_ms": 1005,
+      "error": null,
+      "ok": true,
+      "seed": 2,
+      "state": {
+       "__scenario": {
+        "label": "hatch at its stop, paddle at speed",
+        "name": "the hatch drops to its stop and the paddle turns at its motor speed",
+        "seconds": 2.0166666666666666,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 122
+       },
+       "chainTension": 12,
+       "contacts": 1,
+       "dropped": 5,
+       "hatchAngle": 1.2,
+       "inGoal": 0,
+       "joints": 6,
+       "lowest": 0.349,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 3,
+       "ropeIntact": true
+      },
+      "status": "passed",
+      "step": "hatch at its stop, paddle at speed",
+      "ticks": 122
+     },
+     {
+      "elapsed_ms": 984,
+      "error": null,
+      "ok": true,
+      "seed": 3,
+      "state": {
+       "__scenario": {
+        "label": "hatch at its stop, paddle at speed",
+        "name": "the hatch drops to its stop and the paddle turns at its motor speed",
+        "seconds": 2.0166666666666666,
+        "status": "passed",
+        "step": 2,
+        "steps": 2,
+        "ticks": 122
+       },
+       "chainTension": 12,
+       "contacts": 1,
+       "dropped": 5,
+       "hatchAngle": 1.2,
+       "inGoal": 0,
+       "joints": 6,
+       "lowest": 0.349,
+       "paddleSpeed": 3,
+       "ray": "/Ground at 5.00",
+       "resting": 3,
+       "ropeIntact": true
+      },
+      "status": "passed",
+      "step": "hatch at its stop, paddle at speed",
+      "ticks": 122
+     }
+    ],
+    "scenario": "the hatch drops to its stop and the paddle turns at its motor speed",
+    "seeds": 3,
+    "ticks": {
+     "avg": 122.0,
+     "max": 122,
+     "min": 122
+    }
+   }
+  ],
+  "seeds": 3
+ },
+ "elapsed_ms": 18115
+}

@@ -103,17 +103,20 @@ def sprite_coin_sheet(size=16, frames=4):
 
 
 def sprite_tiles(tile=16):
-    """Two tiles side by side: grass (left) and dirt (right), each 16x16, for uv sub-rectangles."""
-    w, h = tile * 2, tile
+    """Three tiles side by side: grass, dirt and a thin wooden platform (one-way), each 16x16."""
+    w, h = tile * 3, tile
     px = bytearray()
     for y in range(h):
         for x in range(w):
             if x < tile:
                 shade = 20 if (x * 7 + y * 13) % 5 == 0 else 0
                 px += bytes((70 + shade, 160 + shade, 70, 255)) if y > 2 else bytes((120, 200, 90, 255))
-            else:
+            elif x < tile * 2:
                 shade = 15 if (x * 5 + y * 3) % 7 == 0 else 0
                 px += bytes((130 + shade, 90 + shade, 50, 255))
+            else:
+                # A plank across the top of the cell, transparent below it.
+                px += bytes((170, 120, 60, 255)) if y < 4 else (bytes((120, 80, 40, 255)) if y < 6 else bytes((0, 0, 0, 0)))
     return png(w, h, px)
 
 
@@ -398,7 +401,7 @@ def sprites_level():
     grass row over a dirt row (both solid through a tile property), a 'deco' layer with a few
     flipped grass tiles as ledges, and an object layer placing the player and the coins."""
     w, h = 20, 10
-    grass, dirt = 1, 2
+    grass, dirt, plank = 1, 2, 3
     flip_h = 0x80000000
     ground = [0] * (w * h)
     for x in range(w):
@@ -407,6 +410,9 @@ def sprites_level():
     deco = [0] * (w * h)
     for x in (13, 14):          # a ledge the last coins float over
         deco[6 * w + x] = grass | flip_h
+    platforms = [0] * (w * h)
+    for x in (4, 5, 6):         # a one-way plank the player jumps through from below and lands on
+        platforms[6 * w + x] = plank
     objects = [{"id": 1, "name": "player", "type": "spawn", "point": True, "x": 160, "y": 120, "width": 0, "height": 0, "rotation": 0, "visible": True}]
     for i in range(6):
         x = (-6 + i * 2.4 + 10) * 16
@@ -415,16 +421,18 @@ def sprites_level():
                         "properties": [{"name": "bob", "type": "float", "value": 0.3}]})
     return {
         "type": "map", "version": "1.10", "tiledversion": "1.11.0", "orientation": "orthogonal", "renderorder": "right-down",
-        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 4, "nextobjectid": 8,
+        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 5, "nextobjectid": 8,
         "properties": [{"name": "title", "type": "string", "value": "coins"}],
-        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 32, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
-                      "columns": 2, "tilecount": 2, "spacing": 0, "margin": 0,
+        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 48, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
+                      "columns": 3, "tilecount": 3, "spacing": 0, "margin": 0,
                       "tiles": [{"id": 0, "properties": [{"name": "solid", "type": "bool", "value": True}]},
-                                {"id": 1, "properties": [{"name": "solid", "type": "bool", "value": True}]}]}],
+                                {"id": 1, "properties": [{"name": "solid", "type": "bool", "value": True}]},
+                                {"id": 2, "properties": [{"name": "one_way", "type": "bool", "value": True}]}]}],
         "layers": [
             {"id": 1, "type": "tilelayer", "name": "ground", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": ground},
             {"id": 2, "type": "tilelayer", "name": "deco", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": deco,
              "properties": [{"name": "solid", "type": "bool", "value": True}]},
+            {"id": 4, "type": "tilelayer", "name": "platforms", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": platforms},
             {"id": 3, "type": "objectgroup", "name": "spawns", "objects": objects, "opacity": 1, "visible": True, "x": 0, "y": 0},
         ],
     }

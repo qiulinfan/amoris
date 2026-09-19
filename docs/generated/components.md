@@ -121,7 +121,7 @@ Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips
 
 ## TileMap
 
-Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where.
+Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -200,11 +200,11 @@ Physics body. Dynamic bodies fall and collide; static bodies never move; kinemat
 
 ## Joint
 
-Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
+Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `kind` | i32 | 0 | 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together). |
+| `kind` | i32 | 0 | 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only). |
 | `target` | string | "" | Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. |
 | `anchor` | vec3 | [0.0, 0.0, 0.0] | Attachment point on this body, in its local frame. |
 | `target_anchor` | vec3 | [0.0, 0.0, 0.0] | Attachment point on the target in its local frame, or a world point when there is no target. |
@@ -212,6 +212,32 @@ Connects this body to another body, to any entity as a fixed point, or to a poin
 | `rope` | bool | false | Distance joints only: pull when the anchors are farther than distance, never push. |
 | `break_force` | f32 | 0.0 | Force (newtons) above which the joint breaks; 0 never breaks. |
 | `force` | f32 | 0.0 | Force the joint carried in the last step, written by the engine. |
+| `axis` | vec3 | [0.0, 0.0, 1.0] | Hinge: the axis of rotation in this body's local frame. |
+| `target_axis` | vec3 | [0.0, 0.0, 0.0] | Hinge: the axis in the target's frame; zero takes the body's axis at the first step and writes it here. |
+| `reference` | vec3 | [0.0, 0.0, 0.0] | Hinge: a direction across the axis in the target's frame from which angle is measured; zero takes it at the first step and writes it here. |
+| `limit` | bool | false | Hinge: keep angle between lower and upper (equal values lock the hinge). |
+| `lower` | f32 | -1.5708 | Hinge: lower angle limit in radians, when limit is set. |
+| `upper` | f32 | 1.5708 | Hinge: upper angle limit in radians, when limit is set. |
+| `motor_speed` | f32 | 0.0 | Hinge: the angular speed (radians per second) the motor drives the body to about the axis, relative to the target. |
+| `motor_torque` | f32 | 0.0 | Hinge: the most torque the motor applies; 0 turns the motor off. |
+| `angle` | f32 | 0.0 | Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step. |
+| `speed` | f32 | 0.0 | Hinge: the body's angular speed about the axis relative to the target, written by the engine every step. |
+
+## Body2D
+
+A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `velocity` | vec2 | [0.0, 0.0] | Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. |
+| `gravity` | f32 | -24.0 | Units per second squared along Y (negative is down). |
+| `max_fall` | f32 | 30.0 | Fastest downward speed. |
+| `size` | vec2 | [0.4, 0.5] | Half extents of the box. |
+| `offset` | vec2 | [0.0, 0.0] | Box center relative to the entity's position. |
+| `map` | string | "" | Path or name of the TileMap entity to collide with; empty takes the first one. |
+| `grounded` | bool | false | Standing on a solid tile (written by the engine). |
+| `on_wall` | i32 | 0 | -1 touching a wall on the left, 1 on the right, 0 none (written by the engine). |
+| `on_ceiling` | bool | false | Head against a tile (written by the engine). |
 
 ## Collider
 

@@ -8,6 +8,7 @@
 #include <pocket/audio/audio.hpp>
 #include <pocket/core/core.hpp>
 #include <pocket/physics/physics.hpp>
+#include <pocket/physics/tiles.hpp>
 #include <pocket/platform/platform.hpp>
 #include <pocket/renderer/renderer.hpp>
 #include <pocket/rhi/device.hpp>
@@ -44,6 +45,7 @@ class Session {
     [[nodiscard]] bool paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
     void request_quit() { quit_ = true; }
+    [[nodiscard]] bool quit_requested() const { return quit_; }  // set by the quit command or request_quit
     [[nodiscard]] bool ok() const { return errors_.empty(); }
     void record_error(const Error& e);
     [[nodiscard]] const Options& options() const { return options_; }
@@ -103,6 +105,7 @@ class Session {
     std::unique_ptr<renderer::Particles> particles_;
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
+    std::unique_ptr<physics::Physics2D> physics2d_;
     world::Recorder recorder_;
     struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false; } debug_flags_;
     struct DebugShape {
@@ -125,6 +128,8 @@ class Session {
     std::map<std::string, Json> prefab_cache_;  // parsed prefab files by project-relative path
     InputMap input_map_;
     std::map<std::string, std::int64_t> held_keys_;  // synthetic holds: key name -> tick at which it releases
+    std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
+    bool in_tick_ = false;
     // Typed-array packing buffers shared with scripts (never freed while a script may hold them).
     std::vector<float> pack_data_;
     std::vector<double> pack_ids_;

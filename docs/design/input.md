@@ -20,7 +20,7 @@ The platform layer turns SDL keyboard and gamepad events into the normalized eve
 
 ## Agents
 
-`input.hold {key | action, ticks, sign}` presses a key (or an action's first positive key; `sign: -1` for the negative direction) now and releases it after N ticks, through the same path as real input and into the journal; `input.press` is a one-tick hold. `input.actions`, `input.describe` and `input.state` show what is bound, what is down and what is held. So "walk right for a second" is `input.hold {action: "move_x", ticks: 60}` followed by `step {ticks: 60}` and a transcript.
+`input.hold {key | action, ticks, sign}` presses a key (or an action's first positive key; `sign: -1` for the negative direction) now and releases it after N ticks, through the same path as real input and into the journal; `input.press` is a one-tick hold. A hold asked for by a script during a tick (a scenario, a bot) presses at the start of the next tick, so its pressed edge is what that tick's scripts see; a hold from outside (an agent between frames) presses at once. `input.actions`, `input.describe` and `input.state` show what is bound, what is down and what is held. So "walk right for a second" is `input.hold {action: "move_x", ticks: 60}` followed by `step {ticks: 60}` and a transcript.
 
 ## Not yet
 

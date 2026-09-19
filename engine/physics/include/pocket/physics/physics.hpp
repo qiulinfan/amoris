@@ -50,6 +50,10 @@ struct JointInfo {
     float length = 0;     // rest length (distance joints)
     float current = 0;    // anchor distance now
     float force = 0;      // carried in the last step
+    float angle = 0;      // hinge: rotation about the axis relative to the target (radians)
+    float speed = 0;      // hinge: angular speed about the axis relative to the target
+    float torque = 0;     // hinge: what the motor applied in the last step
+    int limit_state = 0;  // hinge: -1 at the lower limit, 1 at the upper, 2 locked, 0 free
 };
 
 struct StepStats {

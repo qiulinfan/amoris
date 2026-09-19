@@ -6,6 +6,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace pocket::physics {
 
@@ -41,6 +42,8 @@ struct Manifold {
 };
 
 Vec3 mul3(const Mat4& m, Vec3 v) { return m.transform_dir(v); }
+Quat conj(Quat q) { return {-q.x, -q.y, -q.z, q.w}; }  // the inverse of a unit quaternion
+Vec3 any_perpendicular(Vec3 v) { return normalize(cross(v, std::fabs(v.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0})); }
 
 // The capsule's segment end points in world space.
 void capsule_segment(const Body& b, Vec3& p0, Vec3& p1) {
@@ -439,6 +442,7 @@ struct Physics::Impl {
     std::vector<JointInfo> joint_infos;
     std::set<std::pair<EntityId, EntityId>> touching;  // pairs in contact last step
     std::map<EntityId, float> sleep_timers;             // persists across steps (bodies are regathered)
+    std::map<EntityId, int> limit_states;               // hinge limit state per joint, for joint.limit events
     std::map<std::pair<EntityId, EntityId>, std::uint64_t> pair_cause;  // begin event seq per pair
     StepStats stats;
 
@@ -587,11 +591,30 @@ void Physics::step(world::World& w, double dt_d) {
         float k = 0;                       // effective mass (distance joints)
         Vec3 n;                            // constraint direction (distance joints)
         float bias = 0;
-        Mat4 k_inv;                        // effective mass inverse (ball joints), 3x3 in a Mat4
+        Mat4 k_inv;                        // effective mass inverse (ball and hinge joints), 3x3 in a Mat4
         bool broken = false;
+        // Hinges: the axis in each frame, a direction across it to measure the angle from, the
+        // world tangents the angular constraints act along, limits and motor.
+        Quat rot_b;                        // the target frame's rotation (identity for a world point)
+        Vec3 axis_a, axis_b, perp_a, ref_b;
+        Vec3 axis_w, t1, t2;
+        float k_t1 = 0, k_t2 = 0, k_axis = 0;
+        float angle = 0, speed = 0;
+        bool limit = false;
+        float lower = 0, upper = 0;
+        float motor_speed = 0, motor_torque = 0;
+        float motor_impulse = 0, limit_impulse = 0;
+        int limit_state = 0;
     };
     std::vector<JointState> joints;
     std::vector<std::pair<EntityId, float>> lengths_to_write;
+    std::vector<std::tuple<EntityId, Vec3, Vec3>> frames_to_write;
+    // The hinge angle: how far the body's frame has turned about the axis relative to the target's.
+    auto hinge_angle = [](const JointState& js, const Quat& rot_a, const Quat& rot_b) {
+        const Vec3 axis_w = rot_a.rotate(js.axis_a);
+        const Vec3 ua = rot_a.rotate(js.perp_a), ub = rot_b.rotate(js.ref_b);
+        return std::atan2(dot(cross(ub, ua), axis_w), dot(ub, ua));
+    };
     auto body_index = [&](EntityId id) -> std::size_t {
         auto it = std::lower_bound(im.bodies.begin(), im.bodies.end(), id, [](const Body& b, EntityId v) { return b.id < v; });
         return (it != im.bodies.end() && it->id == id) ? static_cast<std::size_t>(it - im.bodies.begin()) : static_cast<std::size_t>(-1);
@@ -621,12 +644,14 @@ void Physics::step(world::World& w, double dt_d) {
                 const Body& b = im.bodies[ib];
                 js.pb = b.position + b.rotation.rotate(j.target_anchor);
                 js.rb = js.pb - b.position;
+                js.rot_b = b.rotation;
             } else {
                 Vec3 tp{0, 0, 0};
                 Quat tr;
                 if (const auto* wt = w.try_get<world::WorldTransform>(t)) { tp = wt->position; tr = wt->rotation; }
                 else if (const auto* tt = w.try_get<world::Transform>(t)) { tp = tt->position; tr = tt->rotation; }
                 js.pb = tp + tr.rotate(j.target_anchor);
+                js.rot_b = tr;
             }
         } else {
             js.pb = j.target_anchor;
@@ -634,6 +659,22 @@ void Physics::step(world::World& w, double dt_d) {
         float current = length(js.pb - js.pa);
         js.length = j.distance < 0 ? current : j.distance;
         if (j.distance < 0) lengths_to_write.push_back({e.id(), current});
+        if (j.kind == 2) {
+            js.axis_a = length(j.axis) > 1e-6f ? normalize(j.axis) : Vec3{0, 0, 1};
+            js.perp_a = any_perpendicular(js.axis_a);
+            const Quat inv_b = conj(js.rot_b);
+            bool take_frame = false;
+            if (length(j.target_axis) > 1e-6f) js.axis_b = normalize(j.target_axis);
+            else { js.axis_b = normalize(inv_b.rotate(a.rotation.rotate(js.axis_a))); take_frame = true; }
+            if (length(j.reference) > 1e-6f) js.ref_b = normalize(j.reference);
+            else { js.ref_b = normalize(inv_b.rotate(a.rotation.rotate(js.perp_a))); take_frame = true; }
+            if (take_frame) frames_to_write.emplace_back(e.id(), js.axis_b, js.ref_b);
+            js.limit = j.limit;
+            js.lower = j.lower;
+            js.upper = j.upper;
+            js.motor_speed = j.motor_speed;
+            js.motor_torque = j.motor_torque;
+        }
         joints.push_back(js);
     });
     std::sort(joints.begin(), joints.end(), [](const JointState& x, const JointState& y) { return x.entity < y.entity; });
@@ -641,8 +682,14 @@ void Physics::step(world::World& w, double dt_d) {
     // (an anchor moved, a length changed).
     for (JointState& js : joints) {
         Body& a = im.bodies[js.a];
-        float error = js.kind == 1 ? length(js.pb - js.pa) : length(js.pb - js.pa) - js.length;
+        float error = js.kind == 0 ? length(js.pb - js.pa) - js.length : length(js.pb - js.pa);
         bool violated = js.rope ? error > s.slop : std::fabs(error) > s.slop;
+        if (js.kind == 2) {
+            // A running motor keeps its bodies awake; so does an axis that has drifted.
+            const Quat rb_rot = js.b_is_body ? im.bodies[js.b].rotation : js.rot_b;
+            if (js.motor_torque > 0 && js.motor_speed != 0) violated = true;
+            if (dot(a.rotation.rotate(js.axis_a), rb_rot.rotate(js.axis_b)) < 0.9999f) violated = true;
+        }
         bool other_moving = js.b_is_body && ((im.bodies[js.b].kind == 0 && !im.bodies[js.b].sleeping) || im.bodies[js.b].kind == 2);
         if (a.sleeping && a.kind == 0 && (other_moving || violated)) { a.sleeping = false; a.sleep_timer = 0; }
         if (js.b_is_body) {
@@ -659,8 +706,8 @@ void Physics::step(world::World& w, double dt_d) {
         const Mat4& ib_w = inv_b > 0 ? im.bodies[js.b].inv_inertia_world : zero;
         Vec3 d = js.pb - js.pa;
         float dist = length(d);
-        if (js.kind == 1) {
-            // Ball joint: K = (1/ma + 1/mb) I - [ra]x Ia^-1 [ra]x - [rb]x Ib^-1 [rb]x, inverted.
+        if (js.kind != 0) {
+            // Ball and hinge joints: K = (1/ma + 1/mb) I - [ra]x Ia^-1 [ra]x - [rb]x Ib^-1 [rb]x, inverted.
             Mat4 K = zero;
             for (int i = 0; i < 3; ++i) K.at(i, i) = inv_a + inv_b;
             auto skew_term = [&](Vec3 r, const Mat4& iw, Mat4& out) {
@@ -683,6 +730,24 @@ void Physics::step(world::World& w, double dt_d) {
                 js.k_inv.at(0, 2) = (m10 * m21 - m11 * m20) * inv; js.k_inv.at(1, 2) = (m01 * m20 - m00 * m21) * inv; js.k_inv.at(2, 2) = (m00 * m11 - m01 * m10) * inv;
             }
             js.n = {};  // no velocity bias: the position pass below removes drift
+            if (js.kind == 2) {
+                js.axis_w = a.rotation.rotate(js.axis_a);
+                js.t1 = any_perpendicular(js.axis_w);
+                js.t2 = cross(js.axis_w, js.t1);
+                auto ang_k = [&](Vec3 v) {
+                    float k = 0;
+                    if (inv_a > 0) k += dot(v, mul3(ia_w, v));
+                    if (inv_b > 0) k += dot(v, mul3(ib_w, v));
+                    return k;
+                };
+                js.k_t1 = ang_k(js.t1);
+                js.k_t2 = ang_k(js.t2);
+                js.k_axis = ang_k(js.axis_w);
+                const Quat rb_rot = js.b_is_body ? im.bodies[js.b].rotation : js.rot_b;
+                js.angle = hinge_angle(js, a.rotation, rb_rot);
+                js.speed = dot(js.axis_w, a.angular - (js.b_is_body ? im.bodies[js.b].angular : Vec3{}));
+                if (js.limit) js.limit_state = js.lower >= js.upper ? 2 : js.angle <= js.lower ? -1 : js.angle >= js.upper ? 1 : 0;
+            }
         } else {
             js.n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
             Vec3 ra_n = cross(js.ra, js.n), rb_n = cross(js.rb, js.n);
@@ -739,6 +804,35 @@ void Physics::step(world::World& w, double dt_d) {
             Body* bp = js.b_is_body ? &im.bodies[js.b] : nullptr;
             bool a_dyn = a.kind == 0 && !a.sleeping, b_dyn = bp && bp->kind == 0 && !bp->sleeping;
             if (!a_dyn && !b_dyn) continue;
+            if (js.kind == 2) {
+                // Hinge, angular part: the motor drives the speed about the axis within its torque,
+                // a limit only lets the angle come back inside, and the tangents across the axis
+                // carry no relative spin at all. Angular impulse L goes to a (+) and b (-).
+                auto rel_ang = [&]() { return a.angular - (bp ? bp->angular : Vec3{}); };
+                auto apply_ang = [&](Vec3 L) {
+                    if (a_dyn) a.angular += mul3(a.inv_inertia_world, L);
+                    if (b_dyn) bp->angular -= mul3(bp->inv_inertia_world, L);
+                };
+                if (js.motor_torque > 0 && js.k_axis > 0) {
+                    float dj = (js.motor_speed - dot(js.axis_w, rel_ang())) / js.k_axis;
+                    const float max_impulse = js.motor_torque * static_cast<float>(dt);
+                    float next = std::clamp(js.motor_impulse + dj, -max_impulse, max_impulse);
+                    dj = next - js.motor_impulse;
+                    js.motor_impulse = next;
+                    apply_ang(js.axis_w * dj);
+                }
+                if (js.limit_state != 0 && js.k_axis > 0) {
+                    float dj = -dot(js.axis_w, rel_ang()) / js.k_axis;
+                    float next = js.limit_impulse + dj;
+                    if (js.limit_state == -1) next = std::max(next, 0.0f);
+                    if (js.limit_state == 1) next = std::min(next, 0.0f);
+                    dj = next - js.limit_impulse;
+                    js.limit_impulse = next;
+                    apply_ang(js.axis_w * dj);
+                }
+                if (js.k_t1 > 0) apply_ang(js.t1 * (-dot(js.t1, rel_ang()) / js.k_t1));
+                if (js.k_t2 > 0) apply_ang(js.t2 * (-dot(js.t2, rel_ang()) / js.k_t2));
+            }
             Vec3 va = a_dyn || a.kind == 2 ? a.velocity + cross(a.angular, js.ra) : Vec3{0, 0, 0};
             Vec3 vb = bp ? (bp->kind != 1 ? bp->velocity + cross(bp->angular, js.rb) : Vec3{0, 0, 0}) : Vec3{0, 0, 0};
             Vec3 rel = vb - va;
@@ -747,7 +841,7 @@ void Physics::step(world::World& w, double dt_d) {
                 if (a_dyn) { a.velocity += impulse * a.inv_mass; a.angular += mul3(a.inv_inertia_world, cross(js.ra, impulse)); }
                 if (b_dyn) { bp->velocity -= impulse * bp->inv_mass; bp->angular -= mul3(bp->inv_inertia_world, cross(js.rb, impulse)); }
             };
-            if (js.kind == 1) {
+            if (js.kind != 0) {
                 // Want rel + bias = 0: impulse = K^-1 (rel + bias).
                 Vec3 target = rel + js.n;
                 Vec3 imp = mul3(js.k_inv, target);
@@ -826,8 +920,23 @@ void Physics::step(world::World& w, double dt_d) {
         info.length = js.length;
         info.current = length(js.pb - js.pa);
         info.force = force;
+        info.angle = js.angle;
+        info.speed = js.speed;
+        info.torque = js.motor_impulse / static_cast<float>(dt);
+        info.limit_state = js.limit_state;
         im.joint_infos.push_back(info);
         if (js.break_force > 0 && force > js.break_force) broken.push_back(js.entity);
+        if (js.kind == 2) {
+            int& last = im.limit_states[js.entity];
+            if (js.limit_state != 0 && js.limit_state != last) {
+                Json data;
+                data["path"] = w.path(js.entity);
+                data["angle"] = js.angle;
+                data["limit"] = js.limit_state == -1 ? "lower" : js.limit_state == 1 ? "upper" : "locked";
+                w.events().emit(w.tick_index(), "joint.limit", js.entity, data);
+            }
+            last = js.limit_state;
+        }
     }
     for (EntityId id : broken) {
         Json data;
@@ -839,8 +948,13 @@ void Physics::step(world::World& w, double dt_d) {
     for (const auto& [id, len] : lengths_to_write) {
         if (w.has(id, "Joint")) (void)w.set(id, "Joint", Json{{"distance", len}});
     }
+    for (const auto& [id, axis_b, ref_b] : frames_to_write) {
+        if (w.has(id, "Joint")) (void)w.set(id, "Joint", Json{{"target_axis", {{"x", axis_b.x}, {"y", axis_b.y}, {"z", axis_b.z}}}, {"reference", {{"x", ref_b.x}, {"y", ref_b.y}, {"z", ref_b.z}}}});
+    }
     for (const JointInfo& info : im.joint_infos) {
-        if (w.has(info.entity, "Joint")) (void)w.set(info.entity, "Joint", Json{{"force", info.force}});
+        if (!w.has(info.entity, "Joint")) continue;
+        if (info.kind == 2) (void)w.set(info.entity, "Joint", Json{{"force", info.force}, {"angle", info.angle}, {"speed", info.speed}});
+        else (void)w.set(info.entity, "Joint", Json{{"force", info.force}});
     }
     // 4. Integrate, project out remaining penetration, sleep.
     for (Body& b : im.bodies) {
@@ -886,6 +1000,10 @@ void Physics::step(world::World& w, double dt_d) {
     // the anchors meet again, splitting the correction by the same effective mass the velocity
     // pass used, so a fast pendulum neither stretches nor gains energy from a velocity bias.
     const float max_correction = 0.2f;
+    auto turn = [](Body& b, Vec3 w_disp) {
+        float len = length(w_disp);
+        if (len > 1e-7f) b.rotation = normalize(Quat::from_axis_angle(w_disp, len) * b.rotation);
+    };
     for (int iter = 0; iter < 3 && !joints.empty(); ++iter) {
         for (JointState& js : joints) {
             Body& a = im.bodies[js.a];
@@ -899,46 +1017,83 @@ void Physics::step(world::World& w, double dt_d) {
             Vec3 pb = bp ? bp->position + rb : js.pb;
             Vec3 d = pb - pa;
             Vec3 P;
-            if (js.kind == 1) {
-                if (length(d) < s.slop) continue;
-                Mat4 K;
-                for (float& v : K.m) v = 0;
-                for (int i = 0; i < 3; ++i) K.at(i, i) = inv_a + inv_b;
-                auto add_term = [&](Vec3 r, const Mat4& iw) {
-                    float rx[3][3] = {{0, -r.z, r.y}, {r.z, 0, -r.x}, {-r.y, r.x, 0}};
-                    float t1[3][3] = {};
-                    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) t1[i][j] += iw.at(k, i) * rx[k][j];
-                    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { float acc = 0; for (int k = 0; k < 3; ++k) acc += rx[k][i] * t1[k][j]; K.at(j, i) += acc; }
-                };
-                if (a_dyn) add_term(ra, a.inv_inertia_world);
-                if (b_dyn) add_term(rb, bp->inv_inertia_world);
-                float m00 = K.at(0, 0), m01 = K.at(1, 0), m02 = K.at(2, 0), m10 = K.at(0, 1), m11 = K.at(1, 1), m12 = K.at(2, 1), m20 = K.at(0, 2), m21 = K.at(1, 2), m22 = K.at(2, 2);
-                float det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
-                if (std::fabs(det) <= 1e-12f) continue;
-                float inv = 1.0f / det;
-                Vec3 c0{(m11 * m22 - m12 * m21) * inv, (m12 * m20 - m10 * m22) * inv, (m10 * m21 - m11 * m20) * inv};
-                Vec3 c1{(m02 * m21 - m01 * m22) * inv, (m00 * m22 - m02 * m20) * inv, (m01 * m20 - m00 * m21) * inv};
-                Vec3 c2{(m01 * m12 - m02 * m11) * inv, (m02 * m10 - m00 * m12) * inv, (m00 * m11 - m01 * m10) * inv};
-                P = c0 * d.x + c1 * d.y + c2 * d.z;
+            bool has_p = false;
+            if (js.kind != 0) {
+                if (length(d) >= s.slop) {
+                    Mat4 K;
+                    for (float& v : K.m) v = 0;
+                    for (int i = 0; i < 3; ++i) K.at(i, i) = inv_a + inv_b;
+                    auto add_term = [&](Vec3 r, const Mat4& iw) {
+                        float rx[3][3] = {{0, -r.z, r.y}, {r.z, 0, -r.x}, {-r.y, r.x, 0}};
+                        float t1[3][3] = {};
+                        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) t1[i][j] += iw.at(k, i) * rx[k][j];
+                        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { float acc = 0; for (int k = 0; k < 3; ++k) acc += rx[k][i] * t1[k][j]; K.at(j, i) += acc; }
+                    };
+                    if (a_dyn) add_term(ra, a.inv_inertia_world);
+                    if (b_dyn) add_term(rb, bp->inv_inertia_world);
+                    float m00 = K.at(0, 0), m01 = K.at(1, 0), m02 = K.at(2, 0), m10 = K.at(0, 1), m11 = K.at(1, 1), m12 = K.at(2, 1), m20 = K.at(0, 2), m21 = K.at(1, 2), m22 = K.at(2, 2);
+                    float det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
+                    if (std::fabs(det) > 1e-12f) {
+                        float inv = 1.0f / det;
+                        Vec3 c0{(m11 * m22 - m12 * m21) * inv, (m12 * m20 - m10 * m22) * inv, (m10 * m21 - m11 * m20) * inv};
+                        Vec3 c1{(m02 * m21 - m01 * m22) * inv, (m00 * m22 - m02 * m20) * inv, (m01 * m20 - m00 * m21) * inv};
+                        Vec3 c2{(m01 * m12 - m02 * m11) * inv, (m02 * m10 - m00 * m12) * inv, (m00 * m11 - m01 * m10) * inv};
+                        P = c0 * d.x + c1 * d.y + c2 * d.z;
+                        has_p = true;
+                    }
+                }
             } else {
                 float dist = length(d);
                 float c = dist - js.length;
-                if (js.rope && c < 0) continue;
-                if (std::fabs(c) < s.slop) continue;
-                c = std::clamp(c, -max_correction, max_correction);
-                Vec3 n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
-                float k = inv_a + inv_b;
-                if (a_dyn) k += dot(n, cross(mul3(a.inv_inertia_world, cross(ra, n)), ra));
-                if (b_dyn) k += dot(n, cross(mul3(bp->inv_inertia_world, cross(rb, n)), rb));
-                if (k <= 0) continue;
-                P = n * (c / k);
+                if (!(js.rope && c < 0) && std::fabs(c) >= s.slop) {
+                    c = std::clamp(c, -max_correction, max_correction);
+                    Vec3 n = dist > 1e-6f ? d * (1.0f / dist) : Vec3{0, 1, 0};
+                    float k = inv_a + inv_b;
+                    if (a_dyn) k += dot(n, cross(mul3(a.inv_inertia_world, cross(ra, n)), ra));
+                    if (b_dyn) k += dot(n, cross(mul3(bp->inv_inertia_world, cross(rb, n)), rb));
+                    if (k > 0) {
+                        P = n * (c / k);
+                        has_p = true;
+                    }
+                }
             }
-            auto turn = [](Body& b, Vec3 w_disp) {
-                float len = length(w_disp);
-                if (len > 1e-7f) b.rotation = normalize(Quat::from_axis_angle(w_disp, len) * b.rotation);
-            };
-            if (a_dyn) { a.position += P * inv_a; turn(a, mul3(a.inv_inertia_world, cross(ra, P))); }
-            if (b_dyn) { bp->position -= P * inv_b; turn(*bp, mul3(bp->inv_inertia_world, cross(rb, P)) * -1.0f); }
+            if (has_p) {
+                if (a_dyn) { a.position += P * inv_a; turn(a, mul3(a.inv_inertia_world, cross(ra, P))); }
+                if (b_dyn) { bp->position -= P * inv_b; turn(*bp, mul3(bp->inv_inertia_world, cross(rb, P)) * -1.0f); }
+            }
+            if (js.kind == 2) {
+                // Hinge: bring the axes back together, then the angle back inside its limits, turning
+                // each body by its share of the inverse inertia about the correction axis.
+                Quat rb_rot = bp ? bp->rotation : js.rot_b;
+                Vec3 axis_a_w = a.rotation.rotate(js.axis_a), axis_b_w = rb_rot.rotate(js.axis_b);
+                Vec3 c = cross(axis_a_w, axis_b_w);
+                float sin_err = length(c);
+                if (sin_err > 1e-5f) {
+                    float ang = std::asin(std::min(1.0f, sin_err));
+                    if (dot(axis_a_w, axis_b_w) < 0) ang = kPi - ang;
+                    Vec3 n = c * (1.0f / sin_err);
+                    float ka = a_dyn ? dot(n, mul3(a.inv_inertia_world, n)) : 0.0f, kb = b_dyn ? dot(n, mul3(bp->inv_inertia_world, n)) : 0.0f;
+                    if (ka + kb > 0) {
+                        if (a_dyn) turn(a, n * (ang * ka / (ka + kb)));
+                        if (b_dyn) turn(*bp, n * (-ang * kb / (ka + kb)));
+                    }
+                }
+                if (js.limit) {
+                    rb_rot = bp ? bp->rotation : js.rot_b;
+                    float angle = hinge_angle(js, a.rotation, rb_rot);
+                    float lo = js.lower, hi = std::max(js.upper, js.lower);
+                    float viol = angle < lo ? angle - lo : angle > hi ? angle - hi : 0.0f;
+                    if (std::fabs(viol) > 1e-4f) {
+                        viol = std::clamp(viol, -max_correction, max_correction);
+                        Vec3 ax = a.rotation.rotate(js.axis_a);
+                        float ka = a_dyn ? dot(ax, mul3(a.inv_inertia_world, ax)) : 0.0f, kb = b_dyn ? dot(ax, mul3(bp->inv_inertia_world, ax)) : 0.0f;
+                        if (ka + kb > 0) {
+                            if (a_dyn) turn(a, ax * (-viol * ka / (ka + kb)));
+                            if (b_dyn) turn(*bp, ax * (viol * kb / (ka + kb)));
+                        }
+                    }
+                }
+            }
         }
     }
     // 5. Contacts and events.

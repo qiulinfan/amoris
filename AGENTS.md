@@ -48,12 +48,14 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket run assets -- --headless --frames 20 --json          # glTF meshes and textures (docs/design/assets.md)
 ./.pocket/pocket pack assets --zip                                   # dist/assets/ + dist/assets.zip (docs/packaging.md)
 ./.pocket/pocket setup --target wasm && ./.pocket/pocket pack hello --web   # dist/web/hello/ for a browser (docs/web.md); --editor ships the editor too
-./.pocket/pocket run sprites -- --headless --frames 120 --json        # a 2D game: sprites, orthographic camera (docs/design/sprites.md)
+./.pocket/pocket run sprites -- --headless --frames 120 --json        # a 2D platformer: sprites, orthographic camera, tile map, Body2D (docs/design/sprites.md, docs/design/tilemaps.md)
 ./.pocket/pocket run audio -- --headless --frames 300 --json          # voices and audio events without a sound card (docs/design/audio.md)
 ./.pocket/pocket run swarm -- --headless --frames 120 --json          # 3000 entities per tick through typed arrays (tick.ms in state)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)
 # time travel: run with --history 600, then recorder.at {tick} / recorder.diff {from, to} / recorder.track {entity, component, field}; events.why {seq} explains an event
 # see the invisible: render.debug {colliders: true, joints: true} then capture; debug.line/box/sphere mark your own points
+./.pocket/pocket scenario sprites --seeds 10                          # gameplay scenarios: play through actions, check outcomes, many seeds (docs/design/scenarios.md)
+./.pocket/pocket bench physics                                        # perception benchmarks: what each gameplay answer costs in tokens against frame-by-frame vision
 # where the time goes: the perf command (script, physics, world, state, render ms per phase)
 ./.pocket/pocket editor physics --watch                              # the same inside the editor
 ./.pocket/pocket graph                 # module graph

@@ -1,7 +1,8 @@
-// A 2D game on sprites (docs/design/sprites.md): an orthographic camera, a level from a Tiled map
-// (ground and ledges drawn by the TileMap component, the player and the coins placed as map
-// objects), a player moved by actions with a walk cycle from a sheet clip, spinning coins that bob
-// on a tween and are collected on contact, a score in the HUD and in the exposed state.
+// A 2D platformer on sprites (docs/design/sprites.md): an orthographic camera, a level from a
+// Tiled map (ground, a ledge and a one-way plank drawn by the TileMap component, the player and
+// the coins placed as map objects), a player with a Body2D that gravity pulls onto the tiles and
+// actions push and jump, a walk cycle from a sheet clip, spinning coins that bob on a tween and
+// are collected on contact, a score in the HUD and in the exposed state.
 //   pocket run sprites
 //   pocket run sprites -- --headless --frames 120 --json
 import { Label, events, expose, input, log, mount, onStart, onTick, setClearColor, signal, sprites, tilemap, tween, world } from "pocket";
@@ -20,7 +21,7 @@ onStart(() => {
     level = world.spawn("Level", { components: { Transform: { position: { x: -10, y: 4.5, z: 0 } }, TileMap: { map: "assets/level.tmj" } } });
     const spawns = tilemap.objects(level, "spawns");
     const start = spawns.find((o) => o.name === "player") ?? { x: 0, y: -3 };
-    player = world.spawn("Player", { components: { Transform: { position: { x: start.x, y: start.y, z: 0 } }, Sprite: { texture: "assets/player.png", layer: 2, filter: "nearest" } } });
+    player = world.spawn("Player", { components: { Transform: { position: { x: start.x, y: start.y, z: 0 } }, Sprite: { texture: "assets/player.png", layer: 2, filter: "nearest" }, Body2D: { size: { x: 0.4, y: 0.5 } } } });
     sprites.play(player, "idle");
     let i = 0;
     for (const o of spawns.filter((o) => o.type === "coin")) {
@@ -41,19 +42,23 @@ onStart(() => {
 
 onTick((t) => {
     const speed = 6;
-    const dx = input.axis("move_x") * speed * t.dt;
-    const dy = input.axis("move_y") * speed * t.dt;
+    const body = world.get(player, "Body2D")!;
     const p = world.get(player, "Transform")!.position;
-    let x = Math.max(-9.5, Math.min(9.5, p.x + dx));
-    let y = Math.max(-3.4, Math.min(4.5, p.y + dy));
-    // Solid tiles block: the map says what is solid, so the ledge and the ground stop the player.
-    if (dx !== 0 && tilemap.solid(level, { x: x + Math.sign(dx) * 0.45, y: p.y })) x = p.x;
-    if (dy !== 0 && tilemap.solid(level, { x, y: y + Math.sign(dy) * 0.45 })) y = p.y;
-    if (x !== p.x || y !== p.y) world.set(player, "Transform", { position: { x, y } });
-    const moving = dx !== 0 || dy !== 0;
+    let vx = input.axis("move_x") * speed;
+    if ((p.x <= -9.5 && vx < 0) || (p.x >= 9.5 && vx > 0)) vx = 0;   // the level's edges
+    let vy = body.velocity.y;
+    if (input.pressed("jump") && body.grounded) {
+        vy = 10.5;                                                    // rises 2.3 units: onto the ledge and the plank (1.5 up) with room
+        events.emit("player.jumped", { x: Number(p.x.toFixed(2)) }, { subject: player });
+    }
+    // The engine moves the body: gravity, walls, floors and one-way planks (docs/design/tilemaps.md).
+    world.set(player, "Body2D", { velocity: { x: vx, y: vy } });
+    const moving = vx !== 0 && body.grounded;
     if (moving !== walking) { walking = moving; sprites.play(player, walking ? "walk" : "idle"); }
-    if (dx < 0 && !facingLeft) { facingLeft = true; world.set(player, "Sprite", { flip_x: true }); }
-    if (dx > 0 && facingLeft) { facingLeft = false; world.set(player, "Sprite", { flip_x: false }); }
+    if (vx < 0 && !facingLeft) { facingLeft = true; world.set(player, "Sprite", { flip_x: true }); }
+    if (vx > 0 && facingLeft) { facingLeft = false; world.set(player, "Sprite", { flip_x: false }); }
+    const x = p.x, y = p.y;
+    void t;
     for (const id of coins) {
         const c = world.get(id, "Transform");
         if (!c) { coins.delete(id); continue; }
@@ -72,4 +77,6 @@ expose("score", () => score());
 expose("coins", () => coins.size);
 expose("player.x", () => Number(world.get(player, "Transform")?.position.x.toFixed(2) ?? 0));
 expose("player.clip", () => world.get(player, "SpriteAnimation")?.clip ?? "");
+expose("player.y", () => Number(world.get(player, "Transform")?.position.y.toFixed(2) ?? 0));
+expose("player.grounded", () => world.get(player, "Body2D")?.grounded ?? false);
 expose("level.solid_below", () => tilemap.solid(level, { x: world.get(player, "Transform")?.position.x ?? 0, y: (world.get(player, "Transform")?.position.y ?? 0) - 0.6 }));

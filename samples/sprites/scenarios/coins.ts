@@ -1,0 +1,49 @@
+// Gameplay scenarios for the sprites sample (docs/design/scenarios.md): they play the game
+// through its actions and check what an agent or a player would check.
+//   pocket scenario sprites            # every scenario here, five seeds each
+//   pocket scenario sprites --only right
+import { expect, scenario, world } from "pocket";
+
+scenario("walking right collects the coin ahead within a second", (g) => {
+    g.check(() => expect(g.state("score")).toBe(0));
+    g.holdWhile("move_x", 1.0);                                 // the coin sits 1.2 units to the right
+    g.until(() => (g.state("score") as number) >= 1, { timeout: 1.0, label: "first coin" });
+    g.check(() => expect(g.count("coin.collected")).toBe(1), "one coin.collected event");
+    g.check(() => expect(g.state("player.clip")).toBe("walk"), "still walking");
+});
+
+scenario("walking left for two seconds collects the three coins on the left", (g) => {
+    g.hold("move_x", 2.0, -1);                                  // coins at -1.2, -3.6 and -6; 12 units of walking
+    g.check(() => expect(g.state("score")).toBe(3));
+    g.wait(0.2);                                                // the walk cycle stops once the key is up
+    g.check(() => expect(g.state("player.clip")).toBe("idle"), "idle after the hold");
+});
+
+scenario("the player stands on the ground and the level's edges hold", (g) => {
+    g.wait(0.1);                                                // the first physics step grounds the body
+    g.check(() => expect(g.state("player.grounded")).toBe(true));
+    g.hold("move_x", 4.0, -1);                                  // 24 units of walking into a 9.5 limit
+    g.check(() => {
+        const x = g.state<number>("player.x");
+        expect(x).toBeLessThan(-9.0);
+        expect(x).toBeGreaterThan(-10.0);
+        expect(world.get("Player", "Transform")!.position.y).toBeGreaterThan(-3.5);
+    }, "stopped at the west edge");
+});
+
+scenario("a jump from below the ledge lands on it and the coins over it are collected", (g) => {
+    g.holdWhile("move_x", 3.0);                                 // walk right the whole time
+    g.until(() => (g.state("player.x") as number) > 1.6, { timeout: 1.0, label: "near the ledge" });
+    g.press("jump");
+    g.until(() => (g.state("player.y") as number) > -2.0 && (g.state("player.grounded") as boolean), { timeout: 1.5, label: "standing on the ledge" });
+    g.until(() => (g.state("score") as number) >= 3, { timeout: 2.0, label: "coins past the ledge" });
+    g.check(() => expect(g.count("player.jumped")).toBe(1));
+});
+
+scenario("the one-way plank is passed from below and landed on from above", (g) => {
+    g.hold("move_x", 0.8, -1);                                  // walk to x = -4.8, under the plank (x from -6 to -3)
+    g.check(() => expect(g.state<number>("player.x")).toBeLessThan(-4.5), "under the plank");
+    g.press("jump");                                            // straight up: through the plank, then down onto it
+    g.until(() => (g.state("player.y") as number) > -0.9, { timeout: 1.0, label: "through the plank" });    // the plank's top is at y = -1.5: the body rises through it
+    g.until(() => (g.state("player.grounded") as boolean) && (g.state("player.y") as number) > -1.1, { timeout: 1.5, label: "landed on the plank" });
+});

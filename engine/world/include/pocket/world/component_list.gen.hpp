@@ -18,5 +18,6 @@
     X(Bounds) \
     X(RigidBody) \
     X(Joint) \
+    X(Body2D) \
     X(Collider) \
     X(AudioSource)

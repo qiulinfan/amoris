@@ -148,4 +148,7 @@ What this document asks for and where it now lives:
 - Vision: `capture` and `render.ids {path}` write PNGs of the frame and of the id buffer; `render.debug {colliders, joints, bounds, axes}` and `debug.line/box/sphere` draw the invisible (collision shapes, joints, bounds, a script's own markers) as lines into the same captures (`docs/design/rendering.md`).
 - Operability: everything above is the runtime's command set, served over HTTP and MCP (`docs/mcp.md`), from the SDK (`events.why`, `recorder.*`, `render.visible`) and in the editor's panels.
 
-Not built: observation tiers (player-knowable versus omniscient), physics explanation, gameplay analyzers beyond the transcript, executable scenarios with bots, the perception benchmark, and the agent eval suite.
+- Intent: executable gameplay scenarios (`docs/design/scenarios.md`): `scenario(name, g => ...)` plays through actions, waits and checks in simulated time; `pocket scenario <project> --seeds N` runs them at many seeds and reports.
+- The perception benchmark: `bench(question, b => ...)` answers a fixed gameplay question through metered runtime commands and verifies it against the omniscient truth; `pocket bench <project>` reports tokens against the frame-by-frame cost (`docs/design/scenarios.md`, Perception benchmarks; measured tables in `tests/evidence/perception/`). On the two samples the eight questions cost 46 to 1493 tokens each, 170 to 1600 times less than one image per tick would.
+
+Not built: observation tiers (player-knowable versus omniscient), physics explanation, gameplay analyzers beyond the transcript, scenario bots with policies, and the agent eval suite (models given only the SDK types and the docs, scored on the same questions).

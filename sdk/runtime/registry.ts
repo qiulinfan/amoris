@@ -12,6 +12,7 @@ export interface Handlers {
     input: Array<(events: InputEvent[]) => void>;
     save: Array<() => Record<string, unknown>>;
     load: Array<(data: Record<string, unknown>) => void>;
+    contacts: Array<(contacts: unknown[]) => void>;
     exposed: Map<string, () => unknown>;
 }
 
@@ -20,19 +21,24 @@ export interface Registry {
     /** Contexts that received "start"; only they get ticks, frames, input and contacts. */
     active: Set<string>;
     keysDown: Set<string>;
+    /** The tick's action snapshot, shared by every bundle (each has its own copy of the SDK's modules). */
+    actions: Record<string, unknown>;
 }
 
 export const registry: Registry = (() => {
     const g = globalThis as unknown as { __pocket_registry?: Registry };
-    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set() };
+    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set(), actions: {} };
+    if (g.__pocket_registry.actions === undefined) g.__pocket_registry.actions = {};
     return g.__pocket_registry;
 })();
 
 export function contextHandlers(name: string): Handlers {
     let h = registry.contexts.get(name);
     if (h === undefined) {
-        h = { start: [], stop: [], tick: [], frame: [], input: [], save: [], load: [], exposed: new Map() };
+        h = { start: [], stop: [], tick: [], frame: [], input: [], save: [], load: [], contacts: [], exposed: new Map() };
         registry.contexts.set(name, h);
+    } else if (h.contacts === undefined) {
+        h.contacts = [];  // a registry made by an older bundle of the SDK
     }
     return h;
 }

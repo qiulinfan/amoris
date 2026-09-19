@@ -83,6 +83,11 @@ bool TileSet::solid(int local_id) const {
     return it != tile_properties.end() && truthy(it->second, "solid");
 }
 
+bool TileSet::one_way(int local_id) const {
+    auto it = tile_properties.find(local_id);
+    return it != tile_properties.end() && truthy(it->second, "one_way");
+}
+
 bool TileLayer::solid_layer() const { return truthy(properties, "solid"); }
 
 const TileSet* TileMap::tileset_for(std::uint32_t gid) const {
@@ -101,15 +106,124 @@ const TileLayer* TileMap::layer(std::string_view name) const {
     return nullptr;
 }
 
-bool TileMap::solid_at(int x, int y) const {
+TileLayer* TileMap::layer_mut(std::string_view name) {
+    for (TileLayer& l : layers) if (l.name == name) return &l;
+    return nullptr;
+}
+
+Result<std::uint32_t> TileMap::set(std::string_view layer_name, int x, int y, std::uint32_t gid) {
+    TileLayer* l = layer_mut(layer_name);
+    if (!l) {
+        std::string names;
+        for (const TileLayer& other : layers) names += (names.empty() ? "" : ", ") + other.name;
+        return fail("unknown_layer", "{} has no tile layer '{}' (layers: {})", path, layer_name, names);
+    }
+    if (x < 0 || y < 0 || x >= l->width || y >= l->height) return fail("out_of_map", "tile ({}, {}) is outside layer '{}' ({}x{})", x, y, l->name, l->width, l->height);
+    if (gid != 0) {
+        const TileSet* ts = tileset_for(gid);
+        const std::uint32_t local = ts ? (gid & kIdMask) - ts->first_gid : 0;
+        if (!ts || (ts->tile_count > 0 && local >= static_cast<std::uint32_t>(ts->tile_count))) return fail("bad_gid", "gid {} is not a tile of any tileset of {}", gid & kIdMask, path);
+    }
+    std::uint32_t& cell = l->gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(l->width) + static_cast<std::size_t>(x)];
+    const std::uint32_t was = cell;
+    if (was != gid) {
+        cell = gid;
+        ++revision;
+        ++l->revision;
+    }
+    return was;
+}
+
+namespace {
+
+// {name: value} back to Tiled's property list.
+Json tiled_properties(const Json& props) {
+    Json out = Json::array();
+    if (!props.is_object()) return out;
+    for (auto it = props.begin(); it != props.end(); ++it) {
+        const Json& v = it.value();
+        const char* type = v.is_boolean() ? "bool" : v.is_number_integer() ? "int" : v.is_number() ? "float" : "string";
+        out.push_back(Json{{"name", it.key()}, {"type", type}, {"value", v.is_string() || v.is_number() || v.is_boolean() ? v : Json(v.dump())}});
+    }
+    return out;
+}
+
+}  // namespace
+
+Json TileMap::to_json() const {
+    Json doc = source.is_object() ? source : Json::object();
+    if (!source.is_object()) {
+        doc["type"] = "map";
+        doc["version"] = "1.10";
+        doc["orientation"] = "orthogonal";
+        doc["renderorder"] = "right-down";
+        doc["infinite"] = false;
+        doc["width"] = width;
+        doc["height"] = height;
+        doc["tilewidth"] = tile_width;
+        doc["tileheight"] = tile_height;
+        if (properties.is_object() && !properties.empty()) doc["properties"] = tiled_properties(properties);
+        Json sets = Json::array();
+        for (const TileSet& t : tilesets) {
+            Json tj{{"name", t.name}, {"firstgid", t.first_gid}, {"image", std::filesystem::path(t.image).filename().generic_string()}, {"tilewidth", t.tile_width}, {"tileheight", t.tile_height}, {"columns", t.columns}, {"tilecount", t.tile_count}, {"imagewidth", t.image_width}, {"imageheight", t.image_height}, {"spacing", t.spacing}, {"margin", t.margin}};
+            Json tiles = Json::array();
+            for (const auto& [id, props] : t.tile_properties) tiles.push_back(Json{{"id", id}, {"properties", tiled_properties(props)}});
+            if (!tiles.empty()) tj["tiles"] = tiles;
+            sets.push_back(tj);
+        }
+        doc["tilesets"] = sets;
+        Json ls = Json::array();
+        int next_id = 1;
+        for (const TileLayer& l : layers) {
+            Json lj{{"id", l.id > 0 ? l.id : next_id}, {"type", "tilelayer"}, {"name", l.name}, {"width", l.width}, {"height", l.height}, {"x", 0}, {"y", 0}, {"opacity", l.opacity}, {"visible", l.visible}, {"data", Json::array()}};
+            if (l.properties.is_object() && !l.properties.empty()) lj["properties"] = tiled_properties(l.properties);
+            ls.push_back(lj);
+            ++next_id;
+        }
+        doc["layers"] = ls;
+        doc["nextlayerid"] = next_id;
+        doc["nextobjectid"] = 1;
+    }
+    // Tile layers were read in document order (groups flattened), so the k-th tile layer of the
+    // document is layers[k].
+    std::size_t k = 0;
+    std::function<void(Json&)> patch_layer = [&](Json& l) {
+        if (!l.is_object()) return;
+        std::string type = l.value("type", "tilelayer");
+        if (type == "group") {
+            if (l.contains("layers") && l["layers"].is_array()) for (Json& c : l["layers"]) patch_layer(c);
+            return;
+        }
+        if (type != "tilelayer") return;
+        if (k < layers.size()) {
+            Json data = Json::array();
+            for (std::uint32_t g : layers[k].gids) data.push_back(g);
+            l["data"] = std::move(data);
+            l.erase("encoding");
+            l.erase("compression");
+        }
+        ++k;
+    };
+    if (doc.contains("layers") && doc["layers"].is_array()) for (Json& l : doc["layers"]) patch_layer(l);
+    return doc;
+}
+
+bool TileMap::solid_at(int x, int y) const { return solidity_at(x, y) == 1; }
+
+int TileMap::solidity_at(int x, int y) const {
+    int best = 0;
     for (const TileLayer& l : layers) {
         if (!l.visible || x < 0 || y < 0 || x >= l.width || y >= l.height) continue;
         const std::uint32_t gid = l.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(x)];
         if (gid == 0) continue;
-        if (l.solid_layer()) return true;
-        if (const TileSet* ts = tileset_for(gid); ts && ts->solid(static_cast<int>((gid & kIdMask) - ts->first_gid))) return true;
+        if (l.solid_layer()) return 1;
+        if (const TileSet* ts = tileset_for(gid)) {
+            int local = static_cast<int>((gid & kIdMask) - ts->first_gid);
+            if (ts->solid(local)) return 1;
+            if (ts->one_way(local)) best = 2;
+        }
     }
-    return false;
+    return best;
 }
 
 Json TileMap::describe() const {
@@ -124,9 +238,10 @@ Json TileMap::describe() const {
     for (const TileLayer& l : layers) {
         std::size_t filled = 0;
         for (std::uint32_t g : l.gids) filled += g != 0;
-        ls.push_back(Json{{"name", l.name}, {"width", l.width}, {"height", l.height}, {"tiles", filled}, {"visible", l.visible}, {"solid", l.solid_layer()}, {"properties", l.properties}});
+        ls.push_back(Json{{"name", l.name}, {"id", l.id}, {"width", l.width}, {"height", l.height}, {"tiles", filled}, {"visible", l.visible}, {"solid", l.solid_layer()}, {"properties", l.properties}});
     }
     j["layers"] = ls;
+    j["revision"] = revision;
     Json ts = Json::array();
     for (const TileSet& t : tilesets) {
         std::size_t solid = 0;
@@ -186,6 +301,7 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
         if (type == "tilelayer") {
             TileLayer layer;
             layer.name = l.value("name", "");
+            layer.id = l.value("id", 0);
             layer.width = l.value("width", map.width);
             layer.height = l.value("height", map.height);
             layer.visible = l.value("visible", true);
@@ -231,6 +347,7 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
         return {};  // image layers and unknown kinds are ignored
     };
     for (const Json& l : doc.value("layers", Json::array())) POCKET_TRY_VOID(read_layer(l));
+    map.source = std::move(doc);
     return map;
 }
 
@@ -743,6 +860,12 @@ Result<const TileMap*> AssetStore::tilemap(const std::string& path) {
     version_++;
     log::info("assets", "loaded tile map {} ({}x{} tiles, {} layers, {} tilesets)", path, raw->width, raw->height, raw->layers.size(), raw->tilesets.size());
     return raw;
+}
+
+Result<TileMap*> AssetStore::tilemap_mut(const std::string& path) {
+    POCKET_TRY(loaded, tilemap(path));
+    (void)loaded;
+    return tilemaps_.at(path).get();
 }
 
 Result<const Image*> AssetStore::image(const std::string& path) {

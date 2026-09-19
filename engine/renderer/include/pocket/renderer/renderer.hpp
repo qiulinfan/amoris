@@ -32,6 +32,7 @@ struct RenderStats {
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
+    std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after an edit, over the renderer's life
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;
@@ -82,6 +83,8 @@ class Renderer {
     [[nodiscard]] const CameraView& camera() const;
     // Project a world point to pixel coordinates using the last frame's camera; false if behind.
     [[nodiscard]] bool project(Vec3 world_pos, float& out_x, float& out_y) const;
+    // The world ray under a pixel of the last frame's viewport (false without a camera view).
+    [[nodiscard]] bool unproject(float px, float py, Vec3& origin, Vec3& direction) const;
     void set_viewport(Viewport v);
     void set_shadows(ShadowSettings s);
     [[nodiscard]] ShadowSettings shadows() const;

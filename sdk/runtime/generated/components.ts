@@ -140,7 +140,7 @@ export interface SpriteAnimation {
     finished: boolean;
 }
 
-/** Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where. */
+/** Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back. */
 export interface TileMap {
     /** Project-relative Tiled JSON map (.tmj). */
     map: string;
@@ -248,9 +248,9 @@ export interface RigidBody {
     lock_rotation: boolean;
 }
 
-/** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
+/** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
 export interface Joint {
-    /** 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together). */
+    /** 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only). */
     kind: number;
     /** Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. */
     target: string;
@@ -266,6 +266,48 @@ export interface Joint {
     break_force: number;
     /** Force the joint carried in the last step, written by the engine. */
     force: number;
+    /** Hinge: the axis of rotation in this body's local frame. */
+    axis: Vec3;
+    /** Hinge: the axis in the target's frame; zero takes the body's axis at the first step and writes it here. */
+    target_axis: Vec3;
+    /** Hinge: a direction across the axis in the target's frame from which angle is measured; zero takes it at the first step and writes it here. */
+    reference: Vec3;
+    /** Hinge: keep angle between lower and upper (equal values lock the hinge). */
+    limit: boolean;
+    /** Hinge: lower angle limit in radians, when limit is set. */
+    lower: number;
+    /** Hinge: upper angle limit in radians, when limit is set. */
+    upper: number;
+    /** Hinge: the angular speed (radians per second) the motor drives the body to about the axis, relative to the target. */
+    motor_speed: number;
+    /** Hinge: the most torque the motor applies; 0 turns the motor off. */
+    motor_torque: number;
+    /** Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step. */
+    angle: number;
+    /** Hinge: the body's angular speed about the axis relative to the target, written by the engine every step. */
+    speed: number;
+}
+
+/** A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity. */
+export interface Body2D {
+    /** Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. */
+    velocity: Vec2;
+    /** Units per second squared along Y (negative is down). */
+    gravity: number;
+    /** Fastest downward speed. */
+    max_fall: number;
+    /** Half extents of the box. */
+    size: Vec2;
+    /** Box center relative to the entity's position. */
+    offset: Vec2;
+    /** Path or name of the TileMap entity to collide with; empty takes the first one. */
+    map: string;
+    /** Standing on a solid tile (written by the engine). */
+    grounded: boolean;
+    /** -1 touching a wall on the left, 1 on the right, 0 none (written by the engine). */
+    on_wall: number;
+    /** Head against a tile (written by the engine). */
+    on_ceiling: boolean;
 }
 
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
@@ -315,13 +357,14 @@ export interface Components {
     Bounds: Bounds;
     RigidBody: RigidBody;
     Joint: Joint;
+    Body2D: Body2D;
     Collider: Collider;
     AudioSource: AudioSource;
 }
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Collider", "AudioSource"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -340,7 +383,8 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false },
-    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, break_force: 0, force: 0 },
+    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, angle: 0, speed: 0 },
+    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
 };

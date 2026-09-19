@@ -162,6 +162,7 @@ Status Session::start() {
 
     world_ = std::make_unique<world::World>();
     physics_ = std::make_unique<physics::Physics>();
+    physics2d_ = std::make_unique<physics::Physics2D>();
     assets_ = std::make_unique<assets::AssetStore>(options_.project_dir);
     renderer_->set_assets(assets_.get());
     audio::Config ac;
@@ -206,6 +207,9 @@ Status Session::start() {
         if (auto r = load_bundle(options_.editor_bundle, "editor"); !r) record_error(r.error());
     }
     if (auto r = load_bundle(options_.bundle, "project"); !r) record_error(r.error());
+    if (!options_.scenario_bundle.empty()) {
+        if (auto r = load_bundle(options_.scenario_bundle, "scenario"); !r) record_error(r.error());
+    }
     has_dispatch_ = host_->has_function("__pocket_dispatch");
     if (!has_dispatch_) log::warn("runtime", "bundle does not define __pocket_dispatch; scripts will not receive ticks");
     // With an editor, the project stays dormant (its bundle registered handlers, nothing ran)
@@ -242,6 +246,7 @@ void Session::bind_natives() {
         j["seed"] = options_.seed;
         j["project"] = name_;
         j["version"] = POCKET_VERSION;
+        j["scenario"] = options_.scenario;
         return j;
     });
     host_->bind("command", [this](const Json& args) -> Result<Json> {
@@ -298,6 +303,22 @@ void Session::run_tick() {
     std::int64_t tick = clock_.tick;
     log::global().set_tick(tick);
     world_->set_tick_index(tick);
+    // Holds a script asked for during the previous tick press now, so their edge is what this
+    // tick's scripts see and a one-tick press lasts through a whole tick.
+    if (!pending_holds_.empty()) {
+        std::vector<platform::Event> downs;
+        for (const auto& [k, ticks] : pending_holds_) {
+            if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], tick + ticks); continue; }
+            platform::Event down;
+            down.type = platform::EventType::KeyDown;
+            down.key_name = k;
+            downs.push_back(down);
+            held_keys_[k] = tick + ticks;
+        }
+        pending_holds_.clear();
+        if (!downs.empty()) inject_events(std::move(downs));
+    }
+    in_tick_ = true;
     Json t;
     t["tick"] = tick;
     t["dt"] = clock_.tick_seconds;
@@ -308,6 +329,7 @@ void Session::run_tick() {
     dispatch("tick", t);
     perf_script_.add(sw.ms());
     input_map_.consume_edges();
+    in_tick_ = false;
     sw = Stopwatch{};
     physics_->step(*world_, clock_.tick_seconds);
     if (!physics_->contacts().empty()) {
@@ -324,6 +346,7 @@ void Session::run_tick() {
         }
         dispatch("contacts", contacts);
     }
+    if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
     perf_physics_.add(sw.ms());
     sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
@@ -589,6 +612,16 @@ Vec3 vec3_of(const Json& j, Vec3 fallback) {
     return fallback;
 }
 Json json_of(Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; }
+
+// A project-relative path resolved under the project directory; escapes are refused.
+Result<std::filesystem::path> inside_dir(const std::filesystem::path& project_dir, const std::string& rel) {
+    if (rel.empty()) return fail("bad_args", "path is required");
+    std::filesystem::path base = std::filesystem::weakly_canonical(project_dir);
+    std::filesystem::path full = std::filesystem::weakly_canonical(base / rel);
+    auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
+    if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", rel);
+    return full;
+}
 }  // namespace
 
 Result<Json> Session::sprite_command(std::string_view op, const Json& p) {
@@ -660,7 +693,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
     const auto* tmc = w.try_get<world::TileMap>(id);
     if (!tmc) return fail("no_tilemap", "entity {} has no TileMap", id);
     if (!assets_) return fail("no_assets", "no asset store");
-    POCKET_TRY(map, assets_->tilemap(tmc->map));
+    POCKET_TRY(map, assets_->tilemap_mut(tmc->map));
     const float ts = tmc->tile_size > 0 ? tmc->tile_size : 1.0f;
     Vec3 origin{0, 0, 0};
     if (const auto* wt = w.try_get<world::WorldTransform>(id)) origin = wt->position;
@@ -709,12 +742,13 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
                     lj["id"] = local;
                     lj["tileset"] = set->name;
                     lj["solid"] = l.solid_layer() || set->solid(local);
+                    lj["one_way"] = set->one_way(local);
                     if (auto it = set->tile_properties.find(local); it != set->tile_properties.end()) lj["properties"] = it->second;
                 }
             }
             layers.push_back(lj);
         }
-        Json j{{"tile_x", cx}, {"tile_y", cy}, {"solid", map->solid_at(cx, cy)}, {"layers", layers}};
+        Json j{{"tile_x", cx}, {"tile_y", cy}, {"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"layers", layers}};
         j["center"] = cell_center(cx, cy);
         return j;
     }
@@ -726,7 +760,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         } else {
             to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
         }
-        return Json{{"solid", map->solid_at(cx, cy)}, {"tile_x", cx}, {"tile_y", cy}};
+        return Json{{"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"tile_x", cx}, {"tile_y", cy}};
     }
     if (op == "objects") {
         std::string layer_name = opt<std::string>(p, "layer", "");
@@ -749,6 +783,88 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
             }
         }
         return out;
+    }
+    // Editing (docs/design/tilemaps.md, Editing): the map asset changes for every entity that
+    // draws it, the layer mesh is rebuilt on the next frame, Body2D and tilemap.solid see it at once.
+    auto cell_of = [&](int& cx, int& cy) {
+        if (p.contains("tile_x") || p.contains("tile_y")) {
+            cx = opt<int>(p, "tile_x", 0);
+            cy = opt<int>(p, "tile_y", 0);
+        } else {
+            to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
+        }
+    };
+    auto layer_of = [&]() -> Result<std::string> {
+        std::string name = opt<std::string>(p, "layer", "");
+        if (name.empty()) name = tmc->layer;
+        if (name.empty() && !map->layers.empty()) name = map->layers.front().name;
+        if (name.empty()) return fail("no_layers", "{} has no tile layers", map->path);
+        return name;
+    };
+    // The tile to put: gid (global id, 0 clears), or id in a tileset (the first by default), or clear.
+    auto gid_of = [&]() -> Result<std::uint32_t> {
+        std::uint32_t gid = 0;
+        if (p.contains("gid")) {
+            gid = static_cast<std::uint32_t>(opt<double>(p, "gid", 0.0));
+        } else if (p.contains("id")) {
+            const int local = opt<int>(p, "id", 0);
+            const std::string set_name = opt<std::string>(p, "tileset", "");
+            const assets::TileSet* set = nullptr;
+            for (const assets::TileSet& t : map->tilesets) if (set_name.empty() || t.name == set_name) { set = &t; break; }
+            if (!set) return fail("unknown_tileset", "{} has no tileset '{}'", map->path, set_name);
+            if (local < 0 || (set->tile_count > 0 && local >= set->tile_count)) return fail("bad_tile", "tile id {} is outside tileset '{}' (0..{})", local, set->name, set->tile_count - 1);
+            gid = set->first_gid + static_cast<std::uint32_t>(local);
+        } else if (!opt<bool>(p, "clear", false)) {
+            return fail("bad_args", "give 'gid', 'id' (with an optional 'tileset') or 'clear': true");
+        }
+        if (gid != 0) {
+            if (!map->tileset_for(gid)) return fail("bad_gid", "gid {} is not covered by any tileset of {}", gid & assets::TileMap::kIdMask, map->path);
+            if (opt<bool>(p, "flip_h", false)) gid |= assets::TileMap::kFlipH;
+            if (opt<bool>(p, "flip_v", false)) gid |= assets::TileMap::kFlipV;
+        }
+        return gid;
+    };
+    if (op == "set") {
+        int cx, cy;
+        cell_of(cx, cy);
+        POCKET_TRY(layer, layer_of());
+        POCKET_TRY(gid, gid_of());
+        POCKET_TRY(was, map->set(layer, cx, cy, gid));
+        const bool changed = was != gid;
+        if (changed) world_->events().emit(clock_.tick, "tilemap.changed", id, Json{{"path", map->path}, {"layer", layer}, {"tile_x", cx}, {"tile_y", cy}, {"width", 1}, {"height", 1}, {"gid", gid}, {"was", was}, {"count", 1}}, 0, "tilemap");
+        Json j{{"tile_x", cx}, {"tile_y", cy}, {"layer", layer}, {"gid", gid}, {"was", was}, {"changed", changed}, {"revision", map->revision}};
+        j["center"] = cell_center(cx, cy);
+        return j;
+    }
+    if (op == "fill") {
+        POCKET_TRY(layer, layer_of());
+        POCKET_TRY(gid, gid_of());
+        int x0 = opt<int>(p, "tile_x", 0), y0 = opt<int>(p, "tile_y", 0);
+        const int fw = opt<int>(p, "width", 1), fh = opt<int>(p, "height", 1);
+        if (fw <= 0 || fh <= 0) return fail("bad_args", "width and height must be positive");
+        const int x1 = std::min(x0 + fw, map->width), y1 = std::min(y0 + fh, map->height);
+        x0 = std::max(x0, 0);
+        y0 = std::max(y0, 0);
+        int changed = 0;
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                POCKET_TRY(was, map->set(layer, x, y, gid));
+                changed += was != gid;
+            }
+        }
+        if (changed > 0) world_->events().emit(clock_.tick, "tilemap.changed", id, Json{{"path", map->path}, {"layer", layer}, {"tile_x", x0}, {"tile_y", y0}, {"width", std::max(0, x1 - x0)}, {"height", std::max(0, y1 - y0)}, {"gid", gid}, {"count", changed}}, 0, "tilemap");
+        return Json{{"layer", layer}, {"gid", gid}, {"changed", changed}, {"revision", map->revision}, {"tile_x", x0}, {"tile_y", y0}, {"width", std::max(0, x1 - x0)}, {"height", std::max(0, y1 - y0)}};
+    }
+    if (op == "save") {
+        // Write the map back as Tiled JSON, to its own file or another path in the project.
+        const std::string rel = opt<std::string>(p, "path", map->path);
+        POCKET_TRY(full, inside_dir(options_.project_dir, rel));
+        const std::string text = map->to_json().dump() + "\n";
+        std::error_code ec;
+        std::filesystem::create_directories(full.parent_path(), ec);
+        POCKET_TRY_VOID(fs::write_text(full, text));
+        world_->events().emit(clock_.tick, "tilemap.saved", id, Json{{"path", rel}, {"revision", map->revision}, {"bytes", text.size()}}, 0, "tilemap");
+        return Json{{"path", full.string()}, {"bytes", text.size()}, {"revision", map->revision}, {"layers", map->layers.size()}};
     }
     return fail("unknown_command", "unknown tilemap command '{}'", op);
 }
@@ -854,7 +970,11 @@ Result<Json> Session::particles_command(std::string_view op, const Json& p) {
 }
 
 Result<Json> Session::physics_command(std::string_view op, const Json& p) {
-    if (op == "stats") return physics_->describe();
+    if (op == "stats") {
+        Json j = physics_->describe();
+        if (physics2d_) j["tiles"] = physics2d_->describe();
+        return j;
+    }
     if (op == "raycast") {
         Vec3 origin = vec3_of(p.value("origin", Json(nullptr)), {0, 0, 0});
         Vec3 dir = vec3_of(p.value("direction", Json(nullptr)), {0, -1, 0});
@@ -907,6 +1027,12 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
             jj["length"] = j.length;
             jj["current"] = j.current;
             jj["force"] = j.force;
+            if (j.kind == 2) {
+                jj["angle"] = j.angle;
+                jj["speed"] = j.speed;
+                jj["torque"] = j.torque;
+                jj["at_limit"] = j.limit_state;
+            }
             arr.push_back(jj);
         }
         return arr;
@@ -952,6 +1078,33 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
             j["x"] = x;
             j["y"] = y;
             j["inside"] = x >= 0 && y >= 0 && x < static_cast<float>(device_->width()) && y < static_cast<float>(device_->height());
+        }
+        return j;
+    }
+    if (op == "unproject") {
+        // The world ray under a pixel, and where it meets an axis plane: "xy" at z = at (2D scenes),
+        // "xz" at y = at (a ground plane), "yz" at x = at.
+        Vec3 origin, dir;
+        if (!renderer_->unproject(opt<float>(p, "x", 0.0f), opt<float>(p, "y", 0.0f), origin, dir)) return fail("no_view", "nothing has been drawn yet, so there is no camera view to unproject with");
+        Json j;
+        j["origin"] = json_of(origin);
+        j["direction"] = json_of(dir);
+        const std::string plane = opt<std::string>(p, "plane", "xy");
+        if (plane != "xy" && plane != "xz" && plane != "yz") return fail("bad_args", "plane must be xy, xz or yz");
+        const float at = opt<float>(p, "at", 0.0f);
+        const int axis = plane == "yz" ? 0 : plane == "xz" ? 1 : 2;
+        const float o = axis == 0 ? origin.x : axis == 1 ? origin.y : origin.z;
+        const float d = axis == 0 ? dir.x : axis == 1 ? dir.y : dir.z;
+        j["plane"] = plane;
+        j["at"] = at;
+        j["hit"] = false;
+        if (std::abs(d) > 1e-8f) {
+            const float t = (at - o) / d;
+            if (t >= 0) {
+                j["hit"] = true;
+                j["point"] = json_of(origin + dir * t);
+                j["distance"] = t;
+            }
         }
         return j;
     }
@@ -1224,6 +1377,17 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         } else {
             return fail("bad_args", "hold needs a key name or an action");
         }
+        if (in_tick_) {
+            // Asked for by a script mid-tick: the press lands at the start of the next tick, where
+            // its pressed edge is seen by every script of that tick (this tick's edges are spent).
+            for (const auto& k : keys) pending_holds_.emplace_back(k, ticks);
+            Json j;
+            j["keys"] = keys;
+            j["from_tick"] = clock_.tick + 1;
+            j["until_tick"] = clock_.tick + 1 + ticks;
+            j["actions"] = input_map_.snapshot();
+            return j;
+        }
         std::vector<platform::Event> downs;
         for (const auto& k : keys) {
             if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], clock_.tick + ticks); continue; }
@@ -1458,8 +1622,8 @@ Result<Json> Session::script_command(std::string_view op, const Json& p) {
         // want a fresh start.
         std::string name = opt<std::string>(p, "name", "project");
         bool start = opt<bool>(p, "start", true);
-        std::filesystem::path path = name == "editor" ? options_.editor_bundle : options_.bundle;
-        if (name != "editor" && name != "project") return fail("bad_args", "unknown script context '{}'", name);
+        std::filesystem::path path = name == "editor" ? options_.editor_bundle : name == "scenario" ? options_.scenario_bundle : options_.bundle;
+        if (name != "editor" && name != "project" && name != "scenario") return fail("bad_args", "unknown script context '{}'", name);
         if (path.empty()) return fail("bad_args", "no bundle for context '{}'", name);
         dispatch("unload", name, name);
         errors_.clear();
@@ -1486,14 +1650,7 @@ Result<Json> Session::script_command(std::string_view op, const Json& p) {
 }
 
 Result<Json> Session::project_command(std::string_view op, const Json& p) {
-    auto inside_project = [&](const std::string& rel) -> Result<std::filesystem::path> {
-        if (rel.empty()) return fail("bad_args", "path is required");
-        std::filesystem::path base = std::filesystem::weakly_canonical(options_.project_dir);
-        std::filesystem::path full = std::filesystem::weakly_canonical(base / rel);
-        auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
-        if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", rel);
-        return full;
-    };
+    auto inside_project = [&](const std::string& rel) { return inside_dir(options_.project_dir, rel); };
     if (op == "info") {
         Json j;
         j["name"] = name_;
@@ -1975,10 +2132,15 @@ void Session::build_debug_draw() {
                 b = tt->position + tt->rotation.rotate(j.target_anchor);
             }
             (void)e;
-            rhi::Color color = j.kind == 1 ? rhi::Color{1.0f, 0.4f, 0.8f, 1} : rhi::Color{1.0f, 0.6f, 0.2f, 1};
+            rhi::Color color = j.kind == 2 ? rhi::Color{0.4f, 1.0f, 0.6f, 1} : j.kind == 1 ? rhi::Color{1.0f, 0.4f, 0.8f, 1} : rhi::Color{1.0f, 0.6f, 0.2f, 1};
             debug_draw_.line(a, b, color);
             debug_draw_.sphere(a, 0.05f, color, 8);
             debug_draw_.sphere(b, 0.05f, color, 8);
+            if (j.kind == 2) {
+                // The hinge axis through the anchor.
+                Vec3 axis = t.rotation.rotate(length(j.axis) > 1e-6f ? normalize(j.axis) : Vec3{0, 0, 1});
+                debug_draw_.line(a - axis * 0.4f, a + axis * 0.4f, color);
+            }
         });
     }
     if (debug_flags_.bounds) {
@@ -2172,7 +2334,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "render.stats", "render.pick", "render.project", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

@@ -97,15 +97,17 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(map.width == 20);
     REQUIRE(map.height == 10);
     REQUIRE(map.tile_width == 16);
-    REQUIRE(map.layers.size() == 2);
+    REQUIRE(map.layers.size() == 3);
     REQUIRE(map.layers[0].name == "ground");
     REQUIRE(map.layers[0].gids[8 * 20 + 3] == 1);
     REQUIRE(map.layers[0].gids[9 * 20 + 3] == 2);
     REQUIRE(map.layers[0].gids[0] == 0);
     REQUIRE(map.tilesets.size() == 1);
     REQUIRE(map.tilesets[0].image == "assets/tiles.png");   // resolved next to the map
-    REQUIRE(map.tilesets[0].columns == 2);
+    REQUIRE(map.tilesets[0].columns == 3);
     REQUIRE(map.tilesets[0].solid(0));
+    REQUIRE_FALSE(map.tilesets[0].one_way(0));
+    REQUIRE(map.tilesets[0].one_way(2));
     REQUIRE(map.tileset_for(2) == &map.tilesets[0]);
     // The deco layer flips its tiles horizontally and is solid as a whole.
     std::uint32_t deco = map.layers[1].gids[6 * 20 + 13];
@@ -116,6 +118,12 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(map.solid_at(3, 8));
     REQUIRE_FALSE(map.solid_at(3, 7));
     REQUIRE_FALSE(map.solid_at(-1, 8));
+    // The plank on the platforms layer is one-way: solidity 2, not solid for a wall test.
+    REQUIRE(map.layers[2].name == "platforms");
+    REQUIRE(map.solidity_at(5, 6) == 2);
+    REQUIRE_FALSE(map.solid_at(5, 6));
+    REQUIRE(map.solidity_at(3, 8) == 1);
+    REQUIRE(map.solidity_at(5, 5) == 0);
     REQUIRE(map.object_layers.size() == 1);
     REQUIRE(map.object_layers[0].objects.size() == 7);
     REQUIRE(map.object_layers[0].objects[0].name == "player");
@@ -127,6 +135,67 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     // Bad maps say why.
     REQUIRE(assets::parse_tilemap("{\"orientation\":\"isometric\",\"width\":1,\"height\":1,\"tilewidth\":1,\"tileheight\":1}", "x.tmj").has_value() == false);
     REQUIRE(assets::parse_tilemap("{\"width\":2,\"height\":2,\"tilewidth\":16,\"tileheight\":16,\"tilesets\":[],\"layers\":[{\"type\":\"tilelayer\",\"name\":\"a\",\"width\":2,\"height\":2,\"data\":[0,0,0,5]}]}", "x.tmj").has_value() == false);
+}
+
+TEST_CASE("a tile map is edited in memory and written back as Tiled JSON", "[assets][tilemap]") {
+    assets::AssetStore store(root() / "samples" / "sprites");
+    auto m = store.tilemap_mut("assets/level.tmj");
+    REQUIRE(m.has_value());
+    assets::TileMap& map = **m;
+    const assets::TileSet tileset = map.tilesets[0];
+    REQUIRE(map.revision == 0);
+    REQUIRE(map.layers[0].id == 1);
+    REQUIRE(map.layers[2].id == 4);
+    auto was = map.set("ground", 3, 7, 1);
+    REQUIRE(was.has_value());
+    REQUIRE(*was == 0);
+    REQUIRE(map.revision == 1);
+    REQUIRE(map.solid_at(3, 7));
+    REQUIRE(*map.set("ground", 3, 7, 1) == 1);  // the same tile again changes nothing
+    REQUIRE(map.revision == 1);
+    REQUIRE(map.set("nope", 0, 0, 1).error().code == "unknown_layer");
+    REQUIRE(map.set("ground", 20, 0, 1).error().code == "out_of_map");
+    REQUIRE(map.set("ground", 0, 0, 7).error().code == "bad_gid");
+    REQUIRE(*map.set("ground", 0, 0, 2u | assets::TileMap::kFlipH) == 0);
+    // The document keeps everything it had; only the layer data follows the edits.
+    Json doc = map.to_json();
+    REQUIRE(doc["nextlayerid"] == 5);
+    REQUIRE(doc["layers"][0]["data"][7 * 20 + 3] == 1);
+    REQUIRE(doc["layers"][0]["data"][0] == (2u | assets::TileMap::kFlipH));
+    auto again = assets::parse_tilemap(doc.dump(), "again.tmj");
+    REQUIRE(again.has_value());
+    REQUIRE(again->layers.size() == 3);
+    REQUIRE(again->layers[0].gids[7 * 20 + 3] == 1);
+    REQUIRE(again->object_layers[0].objects.size() == 7);
+    REQUIRE(again->properties["title"] == "coins");
+    REQUIRE(again->tilesets[0].one_way(2));
+    // Readers get the same object, so the world sees the edit; reloading the file forgets it.
+    REQUIRE((*store.tilemap("assets/level.tmj"))->solid_at(3, 7));
+    store.invalidate("assets/level.tmj");
+    REQUIRE_FALSE((*store.tilemap("assets/level.tmj"))->solid_at(3, 7));
+    // A map with a group keeps its structure: tile layers are patched in document order.
+    auto grouped = assets::parse_tilemap(R"({"width":2,"height":1,"tilewidth":16,"tileheight":16,"tilesets":[{"firstgid":1,"name":"t","image":"t.png","tilewidth":16,"tileheight":16,"columns":1,"tilecount":1}],"layers":[{"id":1,"type":"group","name":"g","layers":[{"id":2,"type":"tilelayer","name":"inner","width":2,"height":1,"data":[0,0]}]},{"id":3,"type":"tilelayer","name":"top","width":2,"height":1,"data":[1,0]}]})", "g.tmj");
+    REQUIRE(grouped.has_value());
+    REQUIRE(*grouped->set("inner", 1, 0, 1) == 0);
+    Json gd = grouped->to_json();
+    REQUIRE(gd["layers"][0]["layers"][0]["data"] == Json::array({0, 1}));
+    REQUIRE(gd["layers"][1]["data"] == Json::array({1, 0}));
+    // A map built in memory writes a minimal document that reads back.
+    assets::TileMap fresh;
+    fresh.width = 2;
+    fresh.height = 1;
+    fresh.tile_width = fresh.tile_height = 16;
+    fresh.tilesets.push_back(tileset);
+    assets::TileLayer l;
+    l.name = "a";
+    l.width = 2;
+    l.height = 1;
+    l.gids = {1, 0};
+    fresh.layers.push_back(l);
+    auto fd = assets::parse_tilemap(fresh.to_json().dump(), "fresh.tmj");
+    REQUIRE(fd.has_value());
+    REQUIRE(fd->layers[0].gids == std::vector<std::uint32_t>{1, 0});
+    REQUIRE(fd->tilesets[0].one_way(2));
 }
 
 TEST_CASE("gltf with an embedded buffer and no normals gets flat normals", "[assets]") {

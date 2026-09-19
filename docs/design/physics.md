@@ -1,6 +1,6 @@
 # Physics
 
-`engine/physics` simulates rigid bodies that scripts and agents describe with three components: `RigidBody` (static, dynamic or kinematic, mass, restitution, friction, damping, `lock_rotation`), `Collider` (a box, a sphere or a capsule with an offset, or a trigger volume) and `Joint` (a rod, a rope or a ball joint to another body, to any entity as a fixed point, or to a world point). Everything is data; there is no physics API a script has to learn beyond the components, four queries and the events.
+`engine/physics` simulates rigid bodies that scripts and agents describe with three components: `RigidBody` (static, dynamic or kinematic, mass, restitution, friction, damping, `lock_rotation`), `Collider` (a box, a sphere or a capsule with an offset, or a trigger volume) and `Joint` (a rod, a rope, a ball joint or a hinge with limits and a motor, to another body, to any entity as a fixed point, or to a world point). Everything is data; there is no physics API a script has to learn beyond the components, four queries and the events.
 
 ```ts
 world.spawn("Crate", { components: { Transform: { position: { x: 0, y: 4, z: 0 } }, MeshRenderer: { mesh: "cube" }, RigidBody: { mass: 2 }, Collider: {} } });
@@ -32,21 +32,22 @@ Bodies that stay slow for half a second sleep: they are skipped by the solver an
 A `Joint` on a body connects its `anchor` (a point in the body's local frame) to `target_anchor` on `target`: another body, any entity (its transform becomes an immovable point, so a script can drag a hook around), or, with no target, a point in the world.
 
 - `kind = 0`, a distance joint, keeps the anchors `distance` apart; the default of `-1` takes the distance at the first step and writes it into the component, so placing two bodies and adding the joint is enough. With `rope = true` it only pulls: slack ropes do nothing until the anchors would pass the length within a step.
-- `kind = 1`, a ball joint, pins the anchors together while both bodies rotate freely around the pin: a door, a pendulum arm, a ragdoll limb.
+- `kind = 1`, a ball joint, pins the anchors together while both bodies rotate freely around the pin: a pendulum arm, a ragdoll limb.
+- `kind = 2`, a hinge, pins the anchors and lets the body turn about `axis` (in its local frame) only: a door, a hatch, a lever, a wheel. `angle` and `speed` are written by the engine every step: how far and how fast the body has turned about the axis relative to the target (a right-hand rotation about the axis is positive), measured from where the two frames stood at the first step (the engine writes that frame into `target_axis` and `reference` then, so a saved scene keeps its angles). With `limit` the angle stays between `lower` and `upper` (equal values lock the hinge); reaching a stop emits `joint.limit` with the angle and which limit. With `motor_torque > 0` a motor drives the speed toward `motor_speed`, applying at most that torque: a paddle turns at three radians per second, a weak motor stalls under a load and reports what it applies (`torque` in `physics.joints`).
 - `force` is written by the engine every step: the impulse the joint carried divided by the step, in newtons, so a script can read what a rope holds. When it exceeds `break_force` (0 never breaks) the engine emits `joint.broken` with the body's path and removes the component; the bodies are free from then on.
 
-Joints are solved with the contacts (effective mass with the bodies' inverse inertia, a 3x3 system for ball joints) and corrected in position afterwards; three chained links of a pendulum hold their lengths within a few centimeters through a full swing, and a body hanging still eventually sleeps with the joint holding it.
+Joints are solved with the contacts (effective mass with the bodies' inverse inertia, a 3x3 system for ball and hinge anchors, two angular constraints across a hinge's axis plus the motor and the limit along it) and corrected in position afterwards (anchors pulled together, hinge axes turned back into line, angles pushed back inside their limits); three chained links of a pendulum hold their lengths within a few centimeters through a full swing, a hatch on a hinge keeps its axis within a thousandth through its drop, and a body hanging still eventually sleeps with the joint holding it. A running motor keeps its bodies awake.
 
 ## Queries and commands
 
 - `physics.raycast {origin, direction, max_distance, include_triggers}`: the nearest hit (entity, point, normal, distance), against boxes, spheres and capsules.
 - `physics.overlap {center, radius}`: the entities whose shapes overlap a sphere.
 - `physics.contacts`: every contact of the last step (pair, point, normal, depth, trigger flag); the SDK's `onContacts` receives the same list each tick.
-- `physics.joints`: every joint solved in the last step with its target, kind, rest length, current anchor distance and force.
+- `physics.joints`: every joint solved in the last step with its target, kind, rest length, current anchor distance and force; hinges add `angle`, `speed`, `torque` and `at_limit` (-1 lower, 1 upper, 2 locked).
 - `physics.stats`: body, awake, pair, contact and joint counts, begins and ends, broken joints, gravity; `physics.gravity {gravity}` sets it.
 
 The SDK's `physics` object wraps them (`raycast`, `overlap`, `contacts`, `joints`, `stats`, `setGravity`, `setVelocity`). Kinematic bodies (`kind = 2`) move by their `Velocity` and push dynamic bodies without being pushed back; scripts move platforms and doors that way.
 
 ## What is not there
 
-Mesh colliders, hinge limits and motors, continuous collision for very fast small bodies (they can pass through thin walls), collision layers and per-pair filtering, and 2D physics against tile maps. `samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that snaps when kicked, a capsule log) and `tests/physics_tests` are the reference for what works.
+Mesh colliders, prismatic (sliding) joints, springs, continuous collision for very fast small bodies (they can pass through thin walls), and collision layers and per-pair filtering. 2D platformer physics against tile maps is its own system (`docs/design/tilemaps.md`). `samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that snaps when kicked, a capsule log, a hatch on a limited hinge, a motor-driven paddle) and `tests/physics_tests` are the reference for what works.

@@ -1,5 +1,6 @@
 #include <pocket/app/runtime.hpp>
 #include <pocket/app/session.hpp>
+#include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
 
 #include <catch_amalgamated.hpp>
@@ -397,7 +398,7 @@ TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime]
     REQUIRE(worst < 0.06f);
     Json joints = s.command("physics.joints", Json::object()).value();
     INFO(joints.dump());
-    REQUIRE(joints.size() == 4);  // three links and the lantern's rope
+    REQUIRE(joints.size() == 6);  // three links, the lantern's rope, the hatch and the paddle
     bool chain_loaded = false;
     for (const auto& j : joints) {
         if (j["path"] == "/Link1") {
@@ -408,17 +409,17 @@ TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime]
     }
     REQUIRE(chain_loaded);
     REQUIRE(s.command("world.has", Json{{"entity", "/Lantern"}, {"component", "Joint"}}).value() == true);
-    REQUIRE(s.command("physics.stats", Json::object()).value()["joints"].get<int>() == 4);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["joints"].get<int>() == 6);
     // The kick at tick 240 snaps the rope: the joint is gone, the event says so, the lantern falls.
     for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
     REQUIRE(s.command("world.has", Json{{"entity", "/Lantern"}, {"component", "Joint"}}).value() == false);
     Json hist = s.command("events.histogram", Json::object()).value();
     REQUIRE(hist["joint.broken"].get<int>() == 1);
-    REQUIRE(s.command("physics.joints", Json::object()).value().size() == 3);
+    REQUIRE(s.command("physics.joints", Json::object()).value().size() == 5);  // the rope is gone; the hinges stay
     REQUIRE(length(position("/Lantern") - position("/Beam")) > 2.0f);  // flew off, no longer tethered at 1.5
     Json state = s.command("state", Json::object()).value()["state"];
     REQUIRE(state["ropeIntact"] == false);
-    REQUIRE(state["joints"].get<int>() == 3);
+    REQUIRE(state["joints"].get<int>() == 5);
     // The capsule log came to rest on its side.
     REQUIRE(position("/Log").y == Catch::Approx(0.35f).margin(0.05f));
 }
@@ -491,6 +492,139 @@ TEST_CASE("the recorder, events.why and render.visible explain a run", "[runtime
     REQUIRE_FALSE(s.command("recorder.at", Json{{"tick", 100}}).has_value());
 }
 
+TEST_CASE("a scenario bundle plays the game and reports its verdict", "[runtime][scenario]") {
+    auto make = [](const char* name) {
+        app::Options o;
+        o.project_dir = root() / "samples" / "sprites";
+        o.bundle = root() / "build" / "ts" / "sprites.js";
+        o.project_config = o.bundle.string() + ".project.json";
+        o.scenario_bundle = root() / "build" / "ts" / "sprites.scenarios.coins.js";
+        o.scenario = name;
+        o.headless = true;
+        o.frames = 1000;
+        o.width = 160;
+        o.height = 90;
+        o.seed = 2;
+        o.log_level = "warn";
+        return o;
+    };
+    app::Session s(make("walking right collects the coin ahead within a second"));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());  // exposed state is sampled at the end of a tick
+    Json state = s.command("state", Json::object()).value()["state"];
+    INFO(state.dump());
+    REQUIRE(state["__scenarios"].size() == 5);
+    REQUIRE(state["__scenario"]["status"] == "running");
+    REQUIRE_FALSE(s.quit_requested());
+    int frames = 1;
+    while (!s.quit_requested() && frames < 200) {
+        REQUIRE(s.frame().has_value());
+        ++frames;
+    }
+    Json done = s.command("state", Json::object()).value()["state"];
+    INFO(done.dump());
+    REQUIRE(done["__scenario"]["status"] == "passed");
+    REQUIRE(done["score"].get<int>() == 1);
+    REQUIRE(done["__scenario"]["ticks"].get<int>() < 60);
+    REQUIRE(s.quit_requested());  // the scenario quits the run when it decides
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["scenario.started"].get<int>() == 1);
+    REQUIRE(hist["scenario.finished"].get<int>() == 1);
+    // A scenario that cannot be satisfied fails at the step it was on, with a reason.
+    app::Session f(make("walking right collects the coin ahead within a second"));
+    REQUIRE(f.start().has_value());
+    REQUIRE(f.command("world.set", Json{{"entity", "Coin3"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 8.5}, {"y", -3}}}}}}).has_value());  // the coin ahead moved out of reach
+    frames = 0;
+    while (!f.quit_requested() && frames < 200) {
+        REQUIRE(f.frame().has_value());
+        ++frames;
+    }
+    Json failed = f.command("state", Json::object()).value()["state"]["__scenario"];
+    INFO(failed.dump());
+    REQUIRE(failed["status"] == "failed");
+    REQUIRE(failed["label"] == "first coin");
+    REQUIRE(failed["error"].get<std::string>().find("not within") != std::string::npos);
+    // An unknown name fails at once: the run quits before its first tick.
+    app::Session u(make("no such scenario"));
+    REQUIRE(u.start().has_value());
+    REQUIRE(u.quit_requested());
+}
+
+TEST_CASE("Body2D falls onto tiles, is stopped by walls and passes one-way planks from below", "[runtime][body2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto body = [&](const char* path) { return s.command("world.get", Json{{"entity", path}, {"component", "Body2D"}}).value(); };
+    auto pos = [&](const char* path) { Json t = s.command("world.get", Json{{"entity", path}, {"component", "Transform"}}).value(); return Vec3{t["position"]["x"].get<float>(), t["position"]["y"].get<float>(), 0}; };
+    // A crate dropped from the air lands on the ground row (top at y = -3.5) and reports it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -8}, {"y", 2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
+    for (int i = 0; i < 90; ++i) REQUIRE(s.frame().has_value());
+    Json crate = body("Crate");
+    INFO(crate.dump());
+    REQUIRE(crate["grounded"] == true);
+    REQUIRE(crate["velocity"]["y"].get<double>() == 0.0);
+    REQUIRE(pos("Crate").y == Catch::Approx(-3.2f).margin(0.01f));  // ground top + half size
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["body2d.landed"].get<int>() >= 1);
+    Json stats = s.command("physics.stats", Json::object()).value();
+    REQUIRE(stats["tiles"]["bodies"].get<int>() == 2);  // the player and the crate
+    REQUIRE(stats["tiles"]["grounded"].get<int>() == 2);
+    // Pushed right along the ground, it stops at the ledge (cells 13-14: x from 3 to 5).
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1.0}, {"y", -3.2}}}}}}).has_value());
+    for (int i = 0; i < 60; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", 6.0}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    }
+    // The ledge sits at rows 6 (y -2.5..-1.5): a crate on the ground (top at -3.5, so its box spans -3.5..-2.9) passes under it. Raise it onto the ledge's row first.
+    REQUIRE(pos("Crate").x > 4.0f);  // walked under the ledge
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1.0}, {"y", -2.0}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Body2D"}, {"value", Json{{"gravity", 0.0}, {"velocity", Json{{"x", 6.0}, {"y", 0.0}}}}}}).has_value());
+    for (int i = 0; i < 40; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", 6.0}, {"y", 0.0}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    }
+    crate = body("Crate");
+    INFO(crate.dump());
+    REQUIRE(crate["on_wall"].get<int>() == 1);
+    REQUIRE(pos("Crate").x == Catch::Approx(3.0f - 0.3f).margin(0.01f));
+    // The one-way plank (cells 4-6 of row 6: top at y = -1.5) lets a body rise through it and catches it falling.
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", -5.0}, {"y", -2.0}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Body2D"}, {"value", Json{{"gravity", -24.0}, {"velocity", Json{{"x", 0.0}, {"y", 12.0}}}}}}).has_value());
+    float top = -10;
+    bool ceiling = false;
+    for (int i = 0; i < 120; ++i) {
+        REQUIRE(s.frame().has_value());
+        top = std::max(top, pos("Crate").y);
+        if (body("Crate")["on_ceiling"] == true) ceiling = true;
+    }
+    REQUIRE_FALSE(ceiling);
+    REQUIRE(top > -0.7f);                                       // rose through the plank (its top is at -1.5)
+    crate = body("Crate");
+    INFO(crate.dump());
+    REQUIRE(crate["grounded"] == true);
+    REQUIRE(pos("Crate").y == Catch::Approx(-1.5f + 0.3f).margin(0.01f));  // resting on the plank
+    // From the side, a plank is nothing: the crate walks through it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", -7.0}, {"y", -2.0}}}}}}).has_value());
+    for (int i = 0; i < 30; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Body2D"}, {"value", Json{{"gravity", 0.0}, {"velocity", Json{{"x", 6.0}, {"y", 0.0}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    }
+    REQUIRE(body("Crate")["on_wall"].get<int>() == 0);
+    REQUIRE(pos("Crate").x > -4.5f);
+    // The player is a Body2D too: the sample's exposed state says it stands on the ground.
+    Json st = s.command("state", Json::object()).value()["state"];
+    REQUIRE(st["player.grounded"] == true);
+    REQUIRE(st["player.y"].get<double>() == Catch::Approx(-3.0).margin(0.01));
+}
+
 TEST_CASE("sprite clips from project.toml play through commands", "[runtime][sprites]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
@@ -551,7 +685,7 @@ TEST_CASE("sprites draw unlit through an orthographic camera and are picked by s
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
     REQUIRE(stats["sprites"].get<int>() == 7);             // player + 6 coins; the ground is a tile map
-    REQUIRE(stats["tile_layers"].get<int>() == 2);         // ground and deco layers of level.tmj
+    REQUIRE(stats["tile_layers"].get<int>() == 3);         // ground, deco and platforms layers of level.tmj
     REQUIRE(stats["draw_calls"].get<int>() <= 6);           // runs per texture, split by layer
     // The map answers what is where: solid ground under the player, air above, the ledge at (13,6).
     Json below = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", 0.0}, {"y", -3.6}}).value();
@@ -638,4 +772,119 @@ TEST_CASE("save slots hold the world and script state and load back exactly", "[
     REQUIRE(saw_written);
     REQUIRE(saw_loaded);
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("tiles are edited at runtime: drawn, solid, felt by bodies and saved", "[runtime][tilemap]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    const std::filesystem::path edited = o.project_dir / "assets" / "level-edited.tmj";
+    std::filesystem::remove(edited);
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // Tile (10, 5) is sky: world x 0..1, y -1.5..-0.5 with the map's corner at (-10, 4.5).
+    REQUIRE(s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", 10}, {"tile_y", 5}}).value()["solid"] == false);
+    Json pr = s.command("render.project", Json{{"point", {{"x", 0.5}, {"y", -1.0}, {"z", 0.0}}}}).value();
+    REQUIRE(pr["visible"] == true);
+    REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["id"] == 0);
+    // The pixel maps back to the point: render.unproject is the inverse of render.project.
+    Json un = s.command("render.unproject", Json{{"x", pr["x"]}, {"y", pr["y"]}, {"plane", "xy"}, {"at", 0.0}}).value();
+    INFO(un.dump());
+    REQUIRE(un["hit"] == true);
+    REQUIRE(un["point"]["x"].get<double>() == Catch::Approx(0.5).margin(0.05));
+    REQUIRE(un["point"]["y"].get<double>() == Catch::Approx(-1.0).margin(0.05));
+    REQUIRE(un["point"]["z"].get<double>() == Catch::Approx(0.0).margin(1e-3));
+    // Put the ground tile there: solid at once, drawn on the next frame, one event.
+    Json set = s.command("tilemap.set", Json{{"entity", "Level"}, {"tile_x", 10}, {"tile_y", 5}, {"id", 0}}).value();
+    INFO(set.dump());
+    REQUIRE(set["was"] == 0);
+    REQUIRE(set["gid"] == 1);
+    REQUIRE(set["changed"] == true);
+    REQUIRE(set["layer"] == "ground");
+    REQUIRE(set["revision"] == 1);
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", 0.5}, {"y", -1.0}}).value()["solid"] == true);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["name"] == "Level");
+    Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["tile_layers"].get<int>() == 3);
+    REQUIRE(stats["tile_rebuilds"].get<int>() == 1);
+    bool saw = false;
+    for (const Json& e : s.command("events.recent", Json{{"n", 50}}).value()) saw = saw || (e["type"] == "tilemap.changed" && e["data"]["tile_x"] == 10);
+    REQUIRE(saw);
+    // The same tile again changes nothing; bad layers, cells and gids are refused by name.
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Level"}, {"tile_x", 10}, {"tile_y", 5}, {"gid", 1}}).value()["changed"] == false);
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Level"}, {"tile_x", 10}, {"tile_y", 5}, {"gid", 1}, {"layer", "nope"}}).error().code == "unknown_layer");
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Level"}, {"tile_x", 50}, {"tile_y", 5}, {"gid", 1}}).error().code == "out_of_map");
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Level"}, {"tile_x", 1}, {"tile_y", 1}, {"gid", 99}}).error().code == "bad_gid");
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Level"}, {"tile_x", 1}, {"tile_y", 1}, {"id", 9}}).error().code == "bad_tile");
+    // Clearing the ground under the player drops it: Body2D reads the edited map.
+    Json fill = s.command("tilemap.fill", Json{{"entity", "Level"}, {"layer", "ground"}, {"tile_x", 9}, {"tile_y", 8}, {"width", 2}, {"height", 2}, {"clear", true}}).value();
+    REQUIRE(fill["changed"] == 4);
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    Json st = s.command("state", Json::object()).value();
+    INFO(st.dump());
+    REQUIRE(st["state"]["player.y"].get<double>() < -4.0);
+    REQUIRE(st["state"]["player.grounded"] == false);
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_rebuilds"].get<int>() == 2);
+    // Saved as Tiled JSON with the edits and everything else intact; escapes are refused.
+    Json saved = s.command("tilemap.save", Json{{"entity", "Level"}, {"path", "assets/level-edited.tmj"}}).value();
+    REQUIRE(saved["layers"] == 3);
+    REQUIRE(std::filesystem::exists(edited));
+    auto text = fs::read_text(edited);
+    REQUIRE(text.has_value());
+    auto again = assets::parse_tilemap(*text, "level-edited.tmj");
+    REQUIRE(again.has_value());
+    REQUIRE(again->layers.size() == 3);
+    REQUIRE(again->layers[0].gids[5 * 20 + 10] == 1);
+    REQUIRE(again->layers[0].gids[8 * 20 + 9] == 0);
+    REQUIRE(again->layers[0].gids[8 * 20 + 8] == 1);
+    REQUIRE(again->object_layers[0].objects.size() == 7);
+    REQUIRE(again->properties["title"] == "coins");
+    REQUIRE(again->tilesets[0].one_way(2));
+    REQUIRE(s.command("tilemap.save", Json{{"entity", "Level"}, {"path", "../outside.tmj"}}).error().code == "forbidden");
+    std::filesystem::remove(edited);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a perception benchmark answers through the instruments and meters what it cost", "[runtime][bench]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.scenario_bundle = root() / "build" / "ts" / "sprites.benches.perception.js";
+    o.scenario = "how high does the player jump";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.seed = 1;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    int frames = 0;
+    while (!s.quit_requested() && frames < 400) {
+        REQUIRE(s.frame().has_value());
+        ++frames;
+    }
+    Json st = s.command("state", Json::object()).value()["state"];
+    INFO(st.dump());
+    REQUIRE(st["__scenario"]["status"] == "passed");
+    REQUIRE(st["__benches"].size() == 4);
+    Json b = st["__bench"];
+    REQUIRE(b["correct"] == true);
+    REQUIRE(b["answer"].get<double>() == Catch::Approx(2.25).margin(0.15));   // v^2 / 2g, a step less
+    REQUIRE(b["commands"].size() == 2);   // recorder.start, recorder.track
+    REQUIRE(b["commands"][1]["method"] == "recorder.track");
+    REQUIRE(b["tokens"].get<int>() > 0);
+    REQUIRE(b["tokens"].get<int>() < 1500);
+    REQUIRE(b["ticks"].get<int>() > 60);
+    REQUIRE(b["frame_tokens"].get<int>() == b["ticks"].get<int>() * 692);   // 960x540 images at a token per 750 pixels
+    REQUIRE(b["ratio"].get<double>() > 10.0);
 }

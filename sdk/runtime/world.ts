@@ -196,6 +196,13 @@ export const render = {
     project(target: EntityRef | { x: number; y: number; z: number }): { visible: boolean; x?: number; y?: number; inside?: boolean } {
         return command("render.project", typeof target === "object" ? { point: target } : { entity: target });
     },
+    /**
+     * The world ray under a pixel of the last frame, and where it meets an axis plane: "xy" at
+     * z = at (2D scenes), "xz" at y = at (a ground plane), "yz" at x = at.
+     */
+    unproject(x: number, y: number, plane: "xy" | "xz" | "yz" = "xy", at = 0): { origin: Vec3; direction: Vec3; hit: boolean; point?: Vec3; distance?: number } {
+        return command("render.unproject", { x, y, plane, at }) as { origin: Vec3; direction: Vec3; hit: boolean; point?: Vec3; distance?: number };
+    },
     /** Shadow map settings (on by default when a sun exists; project.toml [render] shadows = false turns it off). */
     shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {
         return command("render.shadows", settings);

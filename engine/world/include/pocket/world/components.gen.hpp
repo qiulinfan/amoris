@@ -154,7 +154,7 @@ void from_json(const Json& j, SpriteAnimation& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(SpriteAnimation& v, std::string_view path, float** out);
 
-/// Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where.
+/// Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back.
 struct TileMap {
     std::string map = "";
     std::string layer = "";
@@ -243,7 +243,7 @@ void from_json(const Json& j, RigidBody& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(RigidBody& v, std::string_view path, float** out);
 
-/// Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely. Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
+/// Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
 struct Joint {
     std::int32_t kind = 0;
     std::string target = "";
@@ -253,12 +253,40 @@ struct Joint {
     bool rope = false;
     float break_force = 0.0f;
     float force = 0.0f;
+    Vec3 axis{0.0f, 0.0f, 1.0f};
+    Vec3 target_axis{0.0f, 0.0f, 0.0f};
+    Vec3 reference{0.0f, 0.0f, 0.0f};
+    bool limit = false;
+    float lower = -1.5708f;
+    float upper = 1.5708f;
+    float motor_speed = 0.0f;
+    float motor_torque = 0.0f;
+    float angle = 0.0f;
+    float speed = 0.0f;
     constexpr bool operator==(const Joint&) const = default;
 };
 void to_json(Json& j, const Joint& v);
 void from_json(const Json& j, Joint& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(Joint& v, std::string_view path, float** out);
+
+/// A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.
+struct Body2D {
+    Vec2 velocity{0.0f, 0.0f};
+    float gravity = -24.0f;
+    float max_fall = 30.0f;
+    Vec2 size{0.4f, 0.5f};
+    Vec2 offset{0.0f, 0.0f};
+    std::string map = "";
+    bool grounded = false;
+    std::int32_t on_wall = 0;
+    bool on_ceiling = false;
+    constexpr bool operator==(const Body2D&) const = default;
+};
+void to_json(Json& j, const Body2D& v);
+void from_json(const Json& j, Body2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Body2D& v, std::string_view path, float** out);
 
 /// Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
 struct Collider {
@@ -322,6 +350,7 @@ void hash_component(struct StateHasherRef& h, const ParticleEmitter& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Joint& v);
+void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
 

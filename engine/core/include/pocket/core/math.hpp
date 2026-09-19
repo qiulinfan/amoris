@@ -168,6 +168,7 @@ struct Mat4 {
         return {r.x, r.y, r.z};
     }
     Mat4 inverse_affine() const;  // for TRS matrices without projection
+    Mat4 inverse() const;         // any invertible matrix (projections included); identity when singular
 };
 
 constexpr float kPi = std::numbers::pi_v<float>;

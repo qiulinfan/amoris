@@ -7,7 +7,9 @@ export interface TileInfo {
     tile_y: number;
     solid: boolean;
     center: { x: number; y: number };
-    layers: Array<{ layer: string; gid: number; id: number | null; tileset: string | null; solid: boolean; properties: Record<string, unknown>; flip_h?: boolean; flip_v?: boolean }>;
+    /** A one-way platform tile on some visible layer (solid from above only; see Body2D). */
+    one_way: boolean;
+    layers: Array<{ layer: string; gid: number; id: number | null; tileset: string | null; solid: boolean; one_way?: boolean; properties: Record<string, unknown>; flip_h?: boolean; flip_v?: boolean }>;
 }
 
 export interface MapObjectInfo {
@@ -22,6 +24,35 @@ export interface MapObjectInfo {
     point: boolean;
     gid?: number;
     properties: Record<string, unknown>;
+}
+
+/** What to put in a cell: a local id in the map's first tileset, null to clear, or a full spec. */
+export type TileSpec = number | null | { gid?: number; id?: number; tileset?: string; flip_h?: boolean; flip_v?: boolean };
+
+export interface TileEdit {
+    tile_x: number;
+    tile_y: number;
+    layer: string;
+    gid: number;
+    was: number;
+    changed: boolean;
+    revision: number;
+    center: { x: number; y: number };
+}
+
+export interface TileFill {
+    layer: string;
+    gid: number;
+    changed: number;
+    revision: number;
+    tile_x: number;
+    tile_y: number;
+    width: number;
+    height: number;
+}
+
+function spec(tile: TileSpec): Record<string, unknown> {
+    return tile === null ? { clear: true } : typeof tile === "number" ? { id: tile } : tile;
 }
 
 export const tilemap = {
@@ -44,5 +75,21 @@ export const tilemap = {
     /** Objects placed in Tiled, in world units (all object layers or one). */
     objects(entity: EntityRef, layer?: string): MapObjectInfo[] {
         return command("tilemap.objects", { entity, layer }) as MapObjectInfo[];
+    },
+    /**
+     * Put a tile into a cell (world position or tile coordinates) of a layer (the component's
+     * layer, else the first). The map asset changes for every entity drawing it, the layer is
+     * redrawn next frame and Body2D and `solid` see it at once; the file changes only on `save`.
+     */
+    set(entity: EntityRef, at: { x: number; y: number } | { tile_x: number; tile_y: number }, tile: TileSpec, layer?: string): TileEdit {
+        return command("tilemap.set", { entity, ...at, ...spec(tile), layer }) as TileEdit;
+    },
+    /** Fill a rectangle of cells (clipped to the map) with one tile; returns how many changed. */
+    fill(entity: EntityRef, rect: { tile_x: number; tile_y: number; width?: number; height?: number }, tile: TileSpec, layer?: string): TileFill {
+        return command("tilemap.fill", { entity, ...rect, ...spec(tile), layer }) as TileFill;
+    },
+    /** Write the map back as Tiled JSON, to its own file or another path inside the project. */
+    save(entity: EntityRef, path?: string): { path: string; bytes: number; revision: number; layers: number } {
+        return command("tilemap.save", { entity, path }) as { path: string; bytes: number; revision: number; layers: number };
     },
 };

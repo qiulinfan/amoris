@@ -39,6 +39,8 @@ struct Options {
     std::filesystem::path record;          // write an input journal
     std::filesystem::path replay;          // replay an input journal (headless-exact)
     std::filesystem::path editor_bundle;   // evaluated before the project bundle as script context "editor"
+    std::filesystem::path scenario_bundle; // evaluated after the project bundle as script context "scenario"
+    std::string scenario;                  // which scenario of that bundle runs (empty: the first)
     std::filesystem::path save_dir;        // where save slots live (default: the OS user data directory for the project)
     std::filesystem::path font;            // UI font file; overrides the project config and POCKET_FONT
 };

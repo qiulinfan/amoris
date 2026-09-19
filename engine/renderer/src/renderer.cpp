@@ -346,8 +346,10 @@ struct Renderer::Impl {
         struct Part { std::uint32_t first, count; std::string texture; };
         std::vector<Part> parts;
         std::int32_t index;  // position of the layer in the map's file order
+        std::uint64_t revision = 0;  // the layer revision the mesh was built from
     };
     std::map<std::string, TileLayerMesh> tile_meshes;
+    std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after edits, over the renderer's life
     std::set<std::string> failed;  // asset paths reported once
     std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> new_bounds;
     RenderStats stats;
@@ -913,11 +915,19 @@ struct Renderer::Impl {
     // One tile layer of a map as a mesh of textured quads in the entity's XY plane, built once.
     const TileLayerMesh* tile_layer_mesh(const assets::TileMap& map, const assets::TileLayer& layer, std::int32_t layer_index, float tile_size) {
         const std::string key = map.path + "|" + layer.name + "|" + std::to_string(layer_index) + "|" + std::to_string(tile_size);
-        if (auto it = tile_meshes.find(key); it != tile_meshes.end()) return &it->second;
+        if (auto it = tile_meshes.find(key); it != tile_meshes.end()) {
+            if (it->second.revision == layer.revision) return &it->second;
+            // The map was edited (tilemap.set / fill): drop the stale mesh and build the layer again.
+            if (it->second.gpu.vertices) wgpuBufferRelease(it->second.gpu.vertices);
+            if (it->second.gpu.indices) wgpuBufferRelease(it->second.gpu.indices);
+            tile_meshes.erase(it);
+            ++tile_rebuilds;
+        }
         std::vector<Vertex> verts;
         std::vector<std::uint32_t> indices;
         TileLayerMesh tm;
         tm.index = layer_index;
+        tm.revision = layer.revision;
         // Group quads per tileset so each texture is one draw.
         std::map<const assets::TileSet*, std::vector<std::pair<int, int>>> by_set;
         for (int y = 0; y < layer.height; ++y) {
@@ -1330,6 +1340,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.sprites = static_cast<std::uint32_t>(sprites.size()) - particle_count - tile_layers_parts(sprites);
     im.stats.particles = particle_count;
     im.stats.tile_layers = tile_layers;
+    im.stats.tile_rebuilds = im.tile_rebuilds;
     im.stats.skinned = skinned_instances;
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
@@ -1546,6 +1557,25 @@ Result<world::EntityId> Renderer::pick(std::uint32_t x, std::uint32_t y) {
 const RenderStats& Renderer::stats() const { return impl_->stats; }
 const CameraView& Renderer::camera() const { return impl_->camera; }
 
+bool Renderer::unproject(float px, float py, Vec3& origin, Vec3& direction) const {
+    const Impl& im = *impl_;
+    if (im.applied.w == 0 || im.applied.h == 0) return false;
+    const float nx = ((px - static_cast<float>(im.applied.x)) / static_cast<float>(im.applied.w)) * 2.0f - 1.0f;
+    const float ny = 1.0f - ((py - static_cast<float>(im.applied.y)) / static_cast<float>(im.applied.h)) * 2.0f;
+    const Mat4 inv = (im.camera.proj * im.camera.view).inverse();
+    const Vec4 a = inv * Vec4{nx, ny, 0.0f, 1.0f};  // on the near plane (depth 0)
+    const Vec4 b = inv * Vec4{nx, ny, 1.0f, 1.0f};  // on the far plane (depth 1)
+    if (std::abs(a.w) < 1e-12f || std::abs(b.w) < 1e-12f) return false;
+    const Vec3 pa{a.x / a.w, a.y / a.w, a.z / a.w};
+    const Vec3 pb{b.x / b.w, b.y / b.w, b.z / b.w};
+    const Vec3 d = pb - pa;
+    const float len = length(d);
+    if (!(len > 0)) return false;
+    origin = pa;
+    direction = d * (1.0f / len);
+    return true;
+}
+
 bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
     const Impl& im = *impl_;
     Vec4 clip = (im.camera.proj * im.camera.view) * Vec4{world_pos.x, world_pos.y, world_pos.z, 1};
@@ -1576,6 +1606,7 @@ Json Renderer::describe() const {
     j["particles"] = s.particles;
     j["skinned"] = s.skinned;
     j["tile_layers"] = s.tile_layers;
+    j["tile_rebuilds"] = s.tile_rebuilds;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;

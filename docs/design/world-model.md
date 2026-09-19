@@ -43,7 +43,7 @@ Scripts call `command(name, params)`; external processes POST the same JSON-RPC 
 
 ## Pixels back to entities (M2)
 
-The renderer writes an entity id into a second render target for every fragment. `render.pick(x, y)` returns the entity under a pixel, `render.project(entity)` returns where an entity is on screen, and `render.ids()` lists every visible entity with its pixel count (optionally writing a false-color PNG). A screenshot is therefore never the only evidence: an agent can ask what it is looking at.
+The renderer writes an entity id into a second render target for every fragment. `render.pick(x, y)` returns the entity under a pixel, `render.project(entity)` returns where an entity is on screen, `render.unproject(x, y, plane, at)` goes the other way (the world ray under a pixel and where it meets an axis plane, which is how the editor's tile brush finds the cell under the mouse), and `render.ids()` lists every visible entity with its pixel count (optionally writing a false-color PNG). A screenshot is therefore never the only evidence: an agent can ask what it is looking at.
 
 ## Physics as events (M4)
 

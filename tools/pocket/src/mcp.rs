@@ -48,6 +48,19 @@ fn tools_list() -> Value {
             "config": { "type": "string", "enum": ["debug", "release"], "default": "debug" }
         }), &[])),
         tool("pocket_gen", "Regenerate code from component metadata (engine/*/meta/*.toml): C++, TypeScript, docs.", obj_schema(json!({ "check": { "type": "boolean", "default": false } }), &[])),
+        tool("pocket_scenario", "Run a project's gameplay scenarios (scenarios/*.ts: play through actions, wait for outcomes, check state) at several seeds and return pass counts, ticks to pass and each failure's reason.", obj_schema(json!({
+            "project": { "type": "string", "description": "Project name under samples/ or a directory with project.toml" },
+            "file": { "type": "string", "description": "One scenario file instead of every file under scenarios/" },
+            "seeds": { "type": "integer", "default": 5 },
+            "frames": { "type": "integer", "default": 1800, "description": "frame budget per run" },
+            "only": { "type": "string", "description": "substring filter on scenario names" }
+        }), &["project"])),
+        tool("pocket_bench", "Run a project's perception benchmarks (benches/*.ts: gameplay questions answered through the instruments) and return, per question, whether the answer was correct, the tokens it cost and what frame-by-frame vision would have cost.", obj_schema(json!({
+            "project": { "type": "string", "description": "Project name under samples/ or a directory with project.toml" },
+            "file": { "type": "string", "description": "One benchmark file instead of every file under benches/" },
+            "frames": { "type": "integer", "default": 1800, "description": "frame budget per run" },
+            "only": { "type": "string", "description": "substring filter on questions" }
+        }), &["project"])),
         tool("pocket_run_headless", "Run a project headless for N frames and return its JSON report (exposed state, state hash, world summary, events, optional capture).", obj_schema(json!({
             "project": { "type": "string", "description": "Project name under samples/ or a directory with project.toml" },
             "frames": { "type": "integer", "default": 120 },
@@ -64,7 +77,7 @@ fn tools_list() -> Value {
             "history": { "type": "integer", "description": "keep the last N ticks for recorder.at/diff/track/first (time travel)" }
         }), &["project"])),
         tool("runtime_stop", "Stop the running session and return its final JSON report.", obj_schema(json!({}), &[])),
-        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees) families plus state, step, capture, log.tail, report.", obj_schema(json!({
+        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back) families plus state, step, capture, log.tail, report.", obj_schema(json!({
             "method": { "type": "string" },
             "params": { "type": "object" }
         }), &["method"])),
@@ -228,6 +241,16 @@ impl<'a> McpServer<'a> {
             }
             "pocket_test" => Ok(Self::report_result(crate::commands::test(self.ws, s("config").as_deref().unwrap_or("debug"), s("filter").as_deref())?)),
             "pocket_gen" => Ok(Self::report_result(crate::commands::gen(self.ws, args.get("check").and_then(|c| c.as_bool()).unwrap_or(false))?)),
+            "pocket_scenario" => {
+                let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
+                let rep = crate::commands::scenario(self.ws, "debug", &project, s("file").as_deref(), args.get("seeds").and_then(|v| v.as_u64()).unwrap_or(5), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
+                Ok(Self::report_result(rep))
+            }
+            "pocket_bench" => {
+                let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
+                let rep = crate::commands::bench(self.ws, "debug", &project, s("file").as_deref(), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
+                Ok(Self::report_result(rep))
+            }
             "pocket_run_headless" => {
                 let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
                 let mut extra = vec!["--headless".to_string(), "--json".to_string(), "--frames".to_string(), args.get("frames").and_then(|f| f.as_i64()).unwrap_or(120).to_string(), "--log-level".to_string(), "warn".to_string()];
