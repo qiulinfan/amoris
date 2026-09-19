@@ -1,0 +1,11 @@
+world: 9 entities, 3 roots, tick 240
+- Level #493 [Transform pos=(0,0,0) | WorldTransform]
+  - Ground #494 [Transform pos=(0,-0.5,0) scl=(20,1,20) | WorldTransform | MeshRenderer color=(0.35,0.4,0.3,1)]
+  - Player #495 [Transform pos=(0,0.5,0) | WorldTransform | Health current=80 | MeshRenderer color=(0.2,0.6,0.9,1)]
+    - Lamp #496 [Transform pos=(0,1.5,0) | WorldTransform | Light kind=1 intensity=2 range=6]
+  - Enemy_3 #501 [Transform pos=(-0.727,0.5,-1.695) | WorldTransform | Velocity lin=(0.985,0,2.298) | Health current=30 max=30 | MeshRenderer mesh=1 color=(0.9,0.25,0.2,1)]
+  - Enemy #4294967795 [Transform pos=(1.562,0.5,3.79) | WorldTransform | Velocity lin=(-0.952,0,-2.311) | Health current=30 max=30 | MeshRenderer mesh=1 color=(0.9,0.25,0.2,1)]
+  - Enemy_4 #502 [Transform pos=(2.411,0.5,-5.362) | WorldTransform | Velocity lin=(-1.025,0,2.28) | Health current=30 max=30 | MeshRenderer mesh=1 color=(0.9,0.25,0.2,1)]
+- Sun #497 [Transform pos=(0,0,0) rot=(-0.383,0,0,0.924) | WorldTransform | Light]
+- Camera #498 [Transform pos=(0,4,10) | WorldTransform | Camera fov_degrees=50]
+

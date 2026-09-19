@@ -37,6 +37,8 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket run hello -- --headless --frames 120 --json --capture out.png
 ./.pocket/pocket test [--filter core] --json
 ./.pocket/pocket ts samples/hello      # bundle only
+./.pocket/pocket gen [--check]         # regenerate code from engine/*/meta/*.toml
+./.pocket/pocket run playground -- --headless --serve 4711 --paused --json   # agent-driven session
 ./.pocket/pocket graph                 # module graph
 ```
 
@@ -46,6 +48,8 @@ Rules that follow from the implementation:
 - Simulation code never reads the wall clock; use the tick's `dt`. Randomness comes from the seeded `Random` (C++) or `random()` (TypeScript).
 - Anything observable by an agent goes through `expose()` in scripts or the report; do not print to stdout from the engine (stdout is the JSON channel).
 - Golden values under `tests/evidence/` change only deliberately, with the reason in the commit message.
+- New components are declared in `engine/world/meta/components.toml`; never hand-edit a `*.gen.*` file or `sdk/runtime/generated/`.
+- Anything a script can ask the world is a command (`command(name, params)`), and every command is also reachable over `--serve`; do not add script-only or agent-only paths.
 
 ## Repository layout
 

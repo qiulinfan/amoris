@@ -1,0 +1,6 @@
+name = "pocket_world"
+kind = "static_library"
+description = "The world model: entities with names and hierarchy on flecs, components generated from metadata, JSON access, the AI-native tree, queries, a causal event log, deterministic state hashing, scene files and the built-in motion, lifetime and transform systems."
+sources = ["src/**/*.cpp", "generated/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core", "flecs"]

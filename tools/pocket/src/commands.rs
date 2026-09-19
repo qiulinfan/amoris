@@ -55,6 +55,7 @@ pub struct BuildOutcome {
 
 pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_only: bool) -> Result<BuildOutcome> {
     ensure_deps(ws)?;
+    crate::gen::generate(ws, false)?;
     let tc = toolchain::detect()?;
     let graph = Graph::resolve(ws)?;
     for t in targets {
@@ -258,8 +259,73 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             eprintln!("--- {t} failed ---\n{}", tail(&text, 60));
         }
     }
-    let mut rep = if failed == 0 { Report::success("test", format!("{} test modules passed", tests.len())) } else { Report::failure("test", format!("{failed} of {} test modules failed", tests.len())) };
-    rep.data = json!({ "config": config, "results": results, "bundles": bundles });
+    // TypeScript tests: every tests/ts/*.test.ts is bundled and run headless for one frame; the
+    // runner exposes its results as state.__tests.
+    let ts_dir = ws.root.join("tests").join("ts");
+    let mut ts_results = vec![];
+    if ts_dir.is_dir() && filter.map(|f| "ts".contains(f) || "typescript".contains(f) || f == "ts").unwrap_or(true) {
+        let runtime = "pocket_runtime";
+        let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
+        if !outcome.ok {
+            let mut rep = Report::failure("test", "runtime build failed");
+            rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
+            return Ok(rep);
+        }
+        let exe = exe_path(ws, config, runtime)?;
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&ts_dir)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.to_string_lossy().ends_with(".test.ts")).collect();
+        files.sort();
+        for f in files {
+            let stem = f.file_name().unwrap().to_string_lossy().replace(".test.ts", "");
+            let out = ws.root.join("build").join("ts").join("tests").join(format!("{stem}.js"));
+            let started = Instant::now();
+            let bundle = match bundle_project(ws, &f, Some(&out)) {
+                Ok(b) => b,
+                Err(e) => {
+                    failed += 1;
+                    ts_results.push(json!({ "file": f, "ok": false, "error": format!("{e:#}") }));
+                    eprintln!("--- {} failed to bundle ---\n{e:#}", f.display());
+                    continue;
+                }
+            };
+            let output = toolchain::command(exe.to_str().unwrap())
+                .args(["--headless", "--frames", "1", "--json", "--size", "64x64", "--log-level", "warn", "--bundle"])
+                .arg(&bundle.out)
+                .current_dir(&ws.root)
+                .env("POCKET_ROOT", &ws.root)
+                .output()?;
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            let report: serde_json::Value = serde_json::from_str(&text).unwrap_or(json!({}));
+            let tests_json = report.get("state").and_then(|s| s.get("__tests")).cloned().unwrap_or(json!(null));
+            let passed = tests_json.get("passed").and_then(|v| v.as_u64()).unwrap_or(0);
+            let failed_n = tests_json.get("failed").and_then(|v| v.as_u64()).unwrap_or(0);
+            let ok = output.status.success() && report.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) && !tests_json.is_null() && failed_n == 0;
+            if !ok {
+                failed += 1;
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                eprintln!("--- {} failed ---\n{}\n{}", f.display(), serde_json::to_string_pretty(&tests_json).unwrap_or_default(), tail(&stderr, 20));
+                if let Some(errs) = report.get("errors") {
+                    eprintln!("{}", serde_json::to_string_pretty(errs).unwrap_or_default());
+                }
+            }
+            ts_results.push(json!({ "file": f, "ok": ok, "passed": passed, "failed": failed_n, "elapsed_ms": started.elapsed().as_millis(), "results": tests_json.get("results").cloned().unwrap_or(json!([])) }));
+        }
+    }
+    let total = tests.len() + ts_results.len();
+    let mut rep = if failed == 0 { Report::success("test", format!("{total} test modules passed")) } else { Report::failure("test", format!("{failed} of {total} test modules failed")) };
+    rep.data = json!({ "config": config, "results": results, "ts": ts_results, "bundles": bundles });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
+}
+
+pub fn gen(ws: &Workspace, check: bool) -> Result<Report> {
+    let t0 = Instant::now();
+    let g = crate::gen::generate(ws, check)?;
+    let mut rep = if check && !g.changed.is_empty() {
+        Report::failure("gen", format!("{} generated files are out of date", g.changed.len()))
+    } else {
+        Report::success("gen", format!("{} components from {} metadata files; {} files {}", g.components, g.inputs.len(), g.changed.len(), if check { "would change" } else { "rewritten" }))
+    };
+    rep.data = json!({ "inputs": g.inputs, "outputs": g.outputs, "changed": g.changed, "components": g.components });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
 }

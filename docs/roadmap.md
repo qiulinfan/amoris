@@ -16,6 +16,8 @@ Goal: `pocket setup && pocket build && pocket run hello` opens an SDL3 window on
 
 ## M1: world model and metadata
 
+Status: core done on macOS (2026-09-18), evidence in `tests/evidence/m1/`, design in `docs/design/world-model.md`. Delivered: flecs world with ordered hierarchy, component metadata and `pocket gen`, generic JSON component access, tree/describe/query/summary/schema views, causal event log, scene files, input journal record/replay, HTTP JSON-RPC control server with paused stepping, in-engine TypeScript test runner. Not yet: zero-copy typed-array component views, the agent eval suite, ports of the PocketEngine Phase 1 specs.
+
 ECS decision (ADR 0003), component metadata DSL, code generation for bindings, `.d.ts` and serialization, the TypeScript component API with zero-copy typed-array views, the in-engine TypeScript test runner, the scene format (text, schema, stable order), and the first version of the agent eval suite (models given only the SDK types and docs must complete sample tasks). Ports the Phase 1 config and component specs from PocketEngine as tests.
 
 ## M2: graphics

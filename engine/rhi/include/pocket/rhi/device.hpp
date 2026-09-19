@@ -65,6 +65,8 @@ class Device {
     [[nodiscard]] std::uint32_t width() const;
     [[nodiscard]] std::uint32_t height() const;
     [[nodiscard]] bool had_error() const;
+    [[nodiscard]] std::uint64_t presented_frames() const;
+    [[nodiscard]] bool has_surface() const;
     [[nodiscard]] Json describe() const;
 
     // Helpers shared by renderers.

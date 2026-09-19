@@ -1,0 +1,264 @@
+{
+  "ok": true,
+  "project": "playground",
+  "bundle": "build/ts/playground.js",
+  "seed": 1,
+  "tick_rate": 60.0,
+  "platform": {
+    "headless": true,
+    "pixel_width": 320,
+    "pixel_height": 180
+  },
+  "gpu": {
+    "api": "webgpu",
+    "implementation": "wgpu-native",
+    "adapter": "Apple M5",
+    "driver": "",
+    "backend": "metal",
+    "width": 320,
+    "height": 180,
+    "surface": false,
+    "frames": 240,
+    "presented": 0,
+    "skipped_presents": 0
+  },
+  "script": {
+    "engine": "JavaScriptCore",
+    "jit": true
+  },
+  "frames": 240,
+  "ticks": 240,
+  "sim_seconds": 4.0,
+  "state": {
+    "enemies": 3,
+    "hits": 2,
+    "killed": 2,
+    "player.health": 80
+  },
+  "state_hash": "973f17bcbf636ea0",
+  "tick_hash_tail": [
+    "8e2e1d41ebb0bb20",
+    "5627369414141266",
+    "cd1d43c8e0cfadf3",
+    "721c6c32e056fff8",
+    "393028b7fd024bad",
+    "4fcc7c6173390697",
+    "fd7f80d5b34a9090",
+    "973f17bcbf636ea0"
+  ],
+  "world": {
+    "tick": 240,
+    "entities": 9,
+    "roots": 3,
+    "components": {
+      "Transform": 9,
+      "WorldTransform": 9,
+      "Velocity": 3,
+      "Health": 4,
+      "Camera": 1,
+      "Light": 2,
+      "MeshRenderer": 5
+    },
+    "events": 25,
+    "hash": "c2a60aef5cd60eb7"
+  },
+  "events": {
+    "total": 25,
+    "histogram": {
+      "component.added": 5,
+      "enemy.spawned": 5,
+      "entity.destroyed": 2,
+      "entity.spawned": 11,
+      "player.hit": 2
+    },
+    "tail": [
+      {
+        "seq": 16,
+        "tick": 161,
+        "type": "player.hit",
+        "subject": 495,
+        "data": {
+          "by": 499,
+          "damage": 10,
+          "health": 90
+        },
+        "cause": 7,
+        "source": "script"
+      },
+      {
+        "seq": 17,
+        "tick": 161,
+        "type": "entity.destroyed",
+        "subject": 499,
+        "data": {
+          "path": "/Level/Enemy"
+        },
+        "cause": 16,
+        "source": "engine"
+      },
+      {
+        "seq": 18,
+        "tick": 165,
+        "type": "entity.spawned",
+        "subject": 4294967795,
+        "data": {
+          "path": "/Level/Enemy",
+          "components": [
+            "Transform",
+            "MeshRenderer",
+            "Health"
+          ]
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 19,
+        "tick": 165,
+        "type": "enemy.spawned",
+        "subject": 4294967795,
+        "data": {
+          "id": 4294967795,
+          "angle": 1.18
+        },
+        "cause": 18,
+        "source": "script"
+      },
+      {
+        "seq": 20,
+        "tick": 165,
+        "type": "component.added",
+        "subject": 4294967795,
+        "data": {
+          "component": "Velocity"
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 21,
+        "tick": 210,
+        "type": "entity.spawned",
+        "subject": 502,
+        "data": {
+          "path": "/Level/Enemy_4",
+          "components": [
+            "Transform",
+            "MeshRenderer",
+            "Health"
+          ]
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 22,
+        "tick": 210,
+        "type": "enemy.spawned",
+        "subject": 502,
+        "data": {
+          "id": 502,
+          "angle": 5.135
+        },
+        "cause": 21,
+        "source": "script"
+      },
+      {
+        "seq": 23,
+        "tick": 210,
+        "type": "component.added",
+        "subject": 502,
+        "data": {
+          "component": "Velocity"
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 24,
+        "tick": 233,
+        "type": "player.hit",
+        "subject": 495,
+        "data": {
+          "by": 500,
+          "damage": 10,
+          "health": 80
+        },
+        "cause": 10,
+        "source": "script"
+      },
+      {
+        "seq": 25,
+        "tick": 233,
+        "type": "entity.destroyed",
+        "subject": 500,
+        "data": {
+          "path": "/Level/Enemy_2"
+        },
+        "cause": 24,
+        "source": "engine"
+      }
+    ]
+  },
+  "capture": {
+    "width": 320,
+    "height": 180,
+    "center_pixel": [
+      20,
+      23,
+      31,
+      255
+    ],
+    "path": "build/playground-240.png"
+  },
+  "clear_color": [
+    0.07999999821186066,
+    0.09000000357627869,
+    0.11999999731779099,
+    1.0
+  ],
+  "log_tail": [
+    {
+      "seq": 1,
+      "t_ms": 0.0,
+      "level": "info",
+      "cat": "rhi",
+      "msg": "adapter Apple M5 (), backend metal, target 320x180, surface no"
+    },
+    {
+      "seq": 2,
+      "t_ms": 13.262625,
+      "level": "info",
+      "cat": "runtime",
+      "msg": "loaded scene scene.json (6 entities)"
+    },
+    {
+      "seq": 3,
+      "t_ms": 14.425167,
+      "level": "info",
+      "cat": "script",
+      "msg": "playground start",
+      "fields": {
+        "entities": 6
+      }
+    },
+    {
+      "seq": 4,
+      "t_ms": 15.533125,
+      "level": "info",
+      "cat": "script",
+      "msg": "tree at start\nworld: 6 entities, 3 roots, tick 0\n- Level #493 [Transform pos=(0,0,0) | WorldTransform]\n  - Ground #494 [Transform pos=(0,-0.5,0) scl=(20,1,20) | WorldTransform | MeshRenderer color=(0.35,0.4,0.3,1)]\n  - Player #495 [Transform pos=(0,0.5,0) | WorldTransform | Health | MeshRenderer color=(0.2,0.6,0.9,1)]\n    - Lamp #496 [Transform pos=(0,1.5,0) | WorldTransform | Light kind=1 intensity=2 range=6]\n- Sun #497 [Transform pos=(0,0,0) rot=(-0.383,0,0,0.924) | WorldTransform | Light]\n- Camera #498 [Transform pos=(0,4,10) | WorldTransform | Camera fov_degrees=50]\n"
+    },
+    {
+      "seq": 5,
+      "t_ms": 73.85025,
+      "tick": 120,
+      "level": "info",
+      "cat": "script",
+      "msg": "status",
+      "fields": {
+        "tick": 120,
+        "enemies": 3,
+        "hits": 0,
+        "health": 100
+      }
+    }
+  ],
+  "elapsed_ms": 217.584583
+}

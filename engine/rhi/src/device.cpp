@@ -470,6 +470,8 @@ WGPUInstance Device::instance() const { return impl_->instance; }
 std::uint32_t Device::width() const { return impl_->width; }
 std::uint32_t Device::height() const { return impl_->height; }
 bool Device::had_error() const { return impl_->error; }
+std::uint64_t Device::presented_frames() const { return impl_->presented; }
+bool Device::has_surface() const { return impl_->surface != nullptr; }
 
 Json Device::describe() const {
     Json j;

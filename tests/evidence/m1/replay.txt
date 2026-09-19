@@ -1,0 +1,3 @@
+record (window, real-time ticks): {'ok': True, 'frames': 150, 'ticks': 165, 'state_hash': '8cd060894fdb61b2', 'state': {'enemies': 2, 'hits': 1, 'killed': 1, 'player.health': 90}} {'path': 'build/journal.json', 'mode': 'record', 'frames': 150} presented 0 elapsed_ms 3259
+replay (headless from journal):  {'ok': True, 'frames': 150, 'ticks': 165, 'state_hash': '8cd060894fdb61b2', 'state': {'enemies': 2, 'hits': 1, 'killed': 1, 'player.health': 90}} {'path': 'build/journal.json', 'mode': 'replay', 'frames': 150} elapsed_ms 118
+hash match: True world hash match: True

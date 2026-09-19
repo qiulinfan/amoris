@@ -1,7 +1,7 @@
 name = "pocket_app"
 kind = "static_library"
-description = "The runtime: command line, project loading, fixed-step loop, script dispatch, state hashing, capture and JSON reports. Everything pocket_runtime does is callable in-process (tests use it that way)."
+description = "The runtime: command line, project loading, fixed-step loop, script dispatch, the world, the command surface shared by scripts and the HTTP control server, input journaling, state hashing, capture and JSON reports. Everything pocket_runtime does is callable in-process (tests use it that way)."
 sources = ["src/**/*.cpp"]
 public_include = ["include"]
-public_deps = ["pocket_core", "pocket_platform", "pocket_rhi", "pocket_script"]
-private_deps = ["stb"]
+public_deps = ["pocket_core", "pocket_platform", "pocket_rhi", "pocket_script", "pocket_world"]
+private_deps = ["stb", "httplib"]

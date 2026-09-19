@@ -1,0 +1,86 @@
+# Component metadata: the single source for C++ structs, JSON conversion, TypeScript types,
+# component docs and the inspector. `pocket gen` regenerates the derived files; they are
+# committed so a checkout builds without running the generator first.
+#
+# Field types: f32 f64 i32 u32 i64 bool vec2 vec3 vec4 quat color entity
+# `serialized = false` marks derived data that is never written to scene files.
+
+[[component]]
+name = "Transform"
+doc = "Position, rotation and scale relative to the parent entity (or the world when there is no parent)."
+fields = [
+    { name = "position", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Local position in meters." },
+    { name = "rotation", type = "quat", default = [0.0, 0.0, 0.0, 1.0], doc = "Local rotation as a unit quaternion (x, y, z, w)." },
+    { name = "scale", type = "vec3", default = [1.0, 1.0, 1.0], doc = "Local scale." },
+]
+
+[[component]]
+name = "WorldTransform"
+doc = "World-space transform computed from the Transform hierarchy every tick. Read only."
+serialized = false
+fields = [
+    { name = "position", type = "vec3", default = [0.0, 0.0, 0.0], doc = "World position." },
+    { name = "rotation", type = "quat", default = [0.0, 0.0, 0.0, 1.0], doc = "World rotation." },
+    { name = "scale", type = "vec3", default = [1.0, 1.0, 1.0], doc = "World scale." },
+]
+
+[[component]]
+name = "Velocity"
+doc = "Linear and angular velocity. The built-in motion system integrates Transform from it every tick."
+fields = [
+    { name = "linear", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Meters per second, in the parent's space." },
+    { name = "angular", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Radians per second around local X, Y, Z." },
+]
+
+[[component]]
+name = "Health"
+doc = "Hit points. Gameplay decides what zero means; the engine only stores and reports it."
+fields = [
+    { name = "current", type = "f32", default = 100.0, doc = "Current hit points." },
+    { name = "max", type = "f32", default = 100.0, doc = "Maximum hit points." },
+]
+
+[[component]]
+name = "Lifetime"
+doc = "Seconds remaining before the entity is destroyed by the lifetime system."
+fields = [
+    { name = "seconds", type = "f32", default = 1.0, doc = "Remaining seconds; the entity is destroyed when it reaches zero." },
+]
+
+[[component]]
+name = "Camera"
+doc = "Perspective camera. The renderer uses the first active camera."
+fields = [
+    { name = "fov_degrees", type = "f32", default = 60.0, doc = "Vertical field of view in degrees." },
+    { name = "near", type = "f32", default = 0.1, doc = "Near clip distance." },
+    { name = "far", type = "f32", default = 1000.0, doc = "Far clip distance." },
+    { name = "active", type = "bool", default = true, doc = "Whether this camera renders." },
+]
+
+[[component]]
+name = "Light"
+doc = "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point."
+fields = [
+    { name = "kind", type = "i32", default = 0, doc = "0 directional, 1 point." },
+    { name = "color", type = "color", default = [1.0, 1.0, 1.0, 1.0], doc = "Linear RGB color; alpha unused." },
+    { name = "intensity", type = "f32", default = 1.0, doc = "Multiplier applied to color." },
+    { name = "range", type = "f32", default = 10.0, doc = "Point light range in meters." },
+]
+
+[[component]]
+name = "MeshRenderer"
+doc = "Draws a built-in primitive mesh with a flat material."
+fields = [
+    { name = "mesh", type = "i32", default = 0, doc = "0 cube, 1 sphere, 2 plane, 3 cylinder." },
+    { name = "color", type = "color", default = [0.8, 0.8, 0.8, 1.0], doc = "Base color, linear RGB." },
+    { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
+]
+
+[[component]]
+name = "Bounds"
+doc = "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only."
+serialized = false
+fields = [
+    { name = "min", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Minimum corner." },
+    { name = "max", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Maximum corner." },
+]

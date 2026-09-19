@@ -7,6 +7,7 @@
 
 mod commands;
 mod deps;
+mod gen;
 mod graph;
 mod manifest;
 mod ninja;
@@ -80,6 +81,12 @@ enum Command {
     Clean,
     /// Print the resolved module graph.
     Graph,
+    /// Regenerate code from component metadata (C++, TypeScript, docs).
+    Gen {
+        /// Fail if any generated file is out of date instead of writing it.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn main() {
@@ -124,5 +131,6 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Ts { project, out } => commands::ts_bundle(&ws, &project, out.as_deref()),
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
+        Command::Gen { check } => commands::gen(&ws, check),
     }
 }

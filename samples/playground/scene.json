@@ -1,0 +1,17 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Level",
+      "components": { "Transform": {} },
+      "children": [
+        { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 20, "y": 1, "z": 20 } }, "MeshRenderer": { "mesh": 0, "color": { "r": 0.35, "g": 0.4, "b": 0.3, "a": 1 } } } },
+        { "name": "Player", "components": { "Transform": { "position": { "x": 0, "y": 0.5, "z": 0 } }, "MeshRenderer": { "mesh": 0, "color": { "r": 0.2, "g": 0.6, "b": 0.9, "a": 1 } }, "Health": { "current": 100, "max": 100 } },
+          "children": [ { "name": "Lamp", "components": { "Transform": { "position": { "x": 0, "y": 1.5, "z": 0 } }, "Light": { "kind": 1, "intensity": 2, "range": 6 } } } ] }
+      ]
+    },
+    { "name": "Sun", "components": { "Transform": { "rotation": { "x": -0.3826834, "y": 0, "z": 0, "w": 0.9238795 } }, "Light": { "kind": 0, "intensity": 1 } } },
+    { "name": "Camera", "components": { "Transform": { "position": { "x": 0, "y": 4, "z": 10 } }, "Camera": { "fov_degrees": 50 } } }
+  ]
+}
