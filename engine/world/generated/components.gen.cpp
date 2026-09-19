@@ -658,11 +658,13 @@ void to_json(Json& j, const IK& v) {
     vec_to_json(j["target"], v.target);
     j["target_entity"] = v.target_entity;
     j["pole_entity"] = v.pole_entity;
+    j["max_bend"] = v.max_bend;
     j["weight"] = v.weight;
     j["iterations"] = v.iterations;
     j["tolerance"] = v.tolerance;
     j["error"] = v.error;
     j["reached"] = v.reached;
+    j["bend"] = v.bend;
 }
 
 void from_json(const Json& j, IK& v) {
@@ -672,11 +674,13 @@ void from_json(const Json& j, IK& v) {
     if (j.is_object() && j.contains("target")) vec_from_json(j["target"], v.target);
     scalar_from_json(j, "target_entity", v.target_entity);
     scalar_from_json(j, "pole_entity", v.pole_entity);
+    scalar_from_json(j, "max_bend", v.max_bend);
     scalar_from_json(j, "weight", v.weight);
     scalar_from_json(j, "iterations", v.iterations);
     scalar_from_json(j, "tolerance", v.tolerance);
     scalar_from_json(j, "error", v.error);
     scalar_from_json(j, "reached", v.reached);
+    scalar_from_json(j, "bend", v.bend);
 }
 
 void hash_component(StateHasherRef& h, const IK& v) {
@@ -690,11 +694,13 @@ void hash_component(StateHasherRef& h, const IK& v) {
     h.f32(v.target.z);
     h.str(v.target_entity);
     h.str(v.pole_entity);
+    h.f32(v.max_bend);
     h.f32(v.weight);
     h.i64(static_cast<std::int64_t>(v.iterations));
     h.f32(v.tolerance);
     h.f32(v.error);
     h.u8(v.reached ? 1 : 0);
+    h.f32(v.bend);
 }
 
 std::size_t numeric_span(IK& v, std::string_view path, float** out) {
@@ -707,9 +713,11 @@ std::size_t numeric_span(IK& v, std::string_view path, float** out) {
     if (path == "target.x") { *out = &v.target.x; return 1; }
     if (path == "target.y") { *out = &v.target.y; return 1; }
     if (path == "target.z") { *out = &v.target.z; return 1; }
+    if (path == "max_bend") { *out = &v.max_bend; return 1; }
     if (path == "weight") { *out = &v.weight; return 1; }
     if (path == "tolerance") { *out = &v.tolerance; return 1; }
     if (path == "error") { *out = &v.error; return 1; }
+    if (path == "bend") { *out = &v.bend; return 1; }
     return 0;
 }
 
@@ -721,7 +729,9 @@ void to_json(Json& j, const LookAt& v) {
     j["target_entity"] = v.target_entity;
     j["weight"] = v.weight;
     j["max_angle"] = v.max_angle;
+    j["speed"] = v.speed;
     j["angle"] = v.angle;
+    vec_to_json(j["aim"], v.aim);
 }
 
 void from_json(const Json& j, LookAt& v) {
@@ -731,7 +741,9 @@ void from_json(const Json& j, LookAt& v) {
     scalar_from_json(j, "target_entity", v.target_entity);
     scalar_from_json(j, "weight", v.weight);
     scalar_from_json(j, "max_angle", v.max_angle);
+    scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "angle", v.angle);
+    if (j.is_object() && j.contains("aim")) vec_from_json(j["aim"], v.aim);
 }
 
 void hash_component(StateHasherRef& h, const LookAt& v) {
@@ -745,7 +757,11 @@ void hash_component(StateHasherRef& h, const LookAt& v) {
     h.str(v.target_entity);
     h.f32(v.weight);
     h.f32(v.max_angle);
+    h.f32(v.speed);
     h.f32(v.angle);
+    h.f32(v.aim.x);
+    h.f32(v.aim.y);
+    h.f32(v.aim.z);
 }
 
 std::size_t numeric_span(LookAt& v, std::string_view path, float** out) {
@@ -760,7 +776,12 @@ std::size_t numeric_span(LookAt& v, std::string_view path, float** out) {
     if (path == "target.z") { *out = &v.target.z; return 1; }
     if (path == "weight") { *out = &v.weight; return 1; }
     if (path == "max_angle") { *out = &v.max_angle; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
     if (path == "angle") { *out = &v.angle; return 1; }
+    if (path == "aim") { *out = &v.aim.x; return 3; }
+    if (path == "aim.x") { *out = &v.aim.x; return 1; }
+    if (path == "aim.y") { *out = &v.aim.y; return 1; }
+    if (path == "aim.z") { *out = &v.aim.z; return 1; }
     return 0;
 }
 
@@ -1292,11 +1313,14 @@ void to_json(Json& j, const NavAgent& v) {
     j["arrive"] = v.arrive;
     j["replan"] = v.replan;
     j["avoidance"] = v.avoidance;
+    j["queue"] = v.queue;
+    j["priority"] = v.priority;
     j["state"] = v.state;
     vec_to_json(j["velocity"], v.velocity);
     vec_to_json(j["corner"], v.corner);
     j["distance"] = v.distance;
     j["neighbours"] = v.neighbours;
+    j["queued"] = v.queued;
 }
 
 void from_json(const Json& j, NavAgent& v) {
@@ -1308,11 +1332,14 @@ void from_json(const Json& j, NavAgent& v) {
     scalar_from_json(j, "arrive", v.arrive);
     scalar_from_json(j, "replan", v.replan);
     scalar_from_json(j, "avoidance", v.avoidance);
+    scalar_from_json(j, "queue", v.queue);
+    scalar_from_json(j, "priority", v.priority);
     scalar_from_json(j, "state", v.state);
     if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
     if (j.is_object() && j.contains("corner")) vec_from_json(j["corner"], v.corner);
     scalar_from_json(j, "distance", v.distance);
     scalar_from_json(j, "neighbours", v.neighbours);
+    scalar_from_json(j, "queued", v.queued);
 }
 
 void hash_component(StateHasherRef& h, const NavAgent& v) {
@@ -1326,6 +1353,8 @@ void hash_component(StateHasherRef& h, const NavAgent& v) {
     h.f32(v.arrive);
     h.i64(static_cast<std::int64_t>(v.replan));
     h.f32(v.avoidance);
+    h.f32(v.queue);
+    h.i64(static_cast<std::int64_t>(v.priority));
     h.i64(static_cast<std::int64_t>(v.state));
     h.f32(v.velocity.x);
     h.f32(v.velocity.y);
@@ -1335,6 +1364,7 @@ void hash_component(StateHasherRef& h, const NavAgent& v) {
     h.f32(v.corner.z);
     h.f32(v.distance);
     h.i64(static_cast<std::int64_t>(v.neighbours));
+    h.u8(v.queued ? 1 : 0);
 }
 
 std::size_t numeric_span(NavAgent& v, std::string_view path, float** out) {
@@ -1347,6 +1377,7 @@ std::size_t numeric_span(NavAgent& v, std::string_view path, float** out) {
     if (path == "radius") { *out = &v.radius; return 1; }
     if (path == "arrive") { *out = &v.arrive; return 1; }
     if (path == "avoidance") { *out = &v.avoidance; return 1; }
+    if (path == "queue") { *out = &v.queue; return 1; }
     if (path == "velocity") { *out = &v.velocity.x; return 3; }
     if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
     if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
@@ -1482,27 +1513,31 @@ constexpr std::array<FieldInfo, 16> kAnimatorFields = {{
     FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion)."},
     FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 11> kIKFields = {{
+constexpr std::array<FieldInfo, 13> kIKFields = {{
     FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints)."},
     FieldInfo{"bones", "i32", "How many bones the chain has, counted up from `end` (2 for a limb: upper and lower)."},
     FieldInfo{"tip", "vec3", "The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y."},
     FieldInfo{"target", "vec3", "Where the effector should be, in world space (used when target_entity is empty)."},
     FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
     FieldInfo{"pole_entity", "string", "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has."},
+    FieldInfo{"max_bend", "f32", "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false."},
     FieldInfo{"weight", "f32", "How much of the solve applies: 0 the posed chain, 1 the solved one."},
     FieldInfo{"iterations", "i32", "FABRIK passes per tick (each is a backward and a forward sweep)."},
     FieldInfo{"tolerance", "f32", "The solve stops once the effector is this close to the target, in meters."},
     FieldInfo{"error", "f32", "Distance from the effector to the target after the solve, in meters (written by the engine)."},
     FieldInfo{"reached", "bool", "Whether the effector ended within tolerance (written by the engine)."},
+    FieldInfo{"bend", "f32", "The largest bend among the chain's joints after the solve, in degrees (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 7> kLookAtFields = {{
+constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"node", "string", "The node that turns: a joint, or any node of the asset."},
     FieldInfo{"forward", "vec3", "The node's aiming axis in its own space."},
     FieldInfo{"target", "vec3", "The point to aim at, in world space (used when target_entity is empty)."},
     FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
     FieldInfo{"weight", "f32", "How much of the turn applies: 0 none, 1 the full aim."},
     FieldInfo{"max_angle", "f32", "The most the node may turn away from its posed direction, in degrees."},
+    FieldInfo{"speed", "f32", "How fast the aim may turn, in degrees per second: each tick the aim moves toward the target by at most this much, from where the pose points on the first tick, so a head follows smoothly; 0 aims at once."},
     FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine)."},
+    FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick)."},
 }};
 constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
@@ -1565,7 +1600,7 @@ constexpr std::array<FieldInfo, 23> kJointFields = {{
     FieldInfo{"collide_connected", "bool", "Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them."},
 }};
 constexpr std::array<FieldInfo, 18> kBody2DFields = {{
-    FieldInfo{"velocity", "vec2", "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
+    FieldInfo{"velocity", "vec2", "Units per second, relative to what carries the body (a platform or a body it rides); scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
     FieldInfo{"max_fall", "f32", "Fastest downward speed."},
     FieldInfo{"size", "vec2", "Half extents of the box."},
@@ -1579,9 +1614,9 @@ constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"step", "f32", "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope)."},
     FieldInfo{"riding", "entity", "The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine)."},
     FieldInfo{"on_slope", "i32", "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)."},
-    FieldInfo{"mass", "f32", "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies)."},
+    FieldInfo{"mass", "f32", "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies)."},
     FieldInfo{"collide_bodies", "bool", "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body)."},
-    FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
+    FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
     FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed."},
 }};
 constexpr std::array<FieldInfo, 8> kColliderFields = {{
@@ -1607,7 +1642,7 @@ constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane."},
     FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component."},
 }};
-constexpr std::array<FieldInfo, 13> kNavAgentFields = {{
+constexpr std::array<FieldInfo, 16> kNavAgentFields = {{
     FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target."},
     FieldInfo{"goal", "vec3", "The point to reach in mode 1."},
     FieldInfo{"target", "entity", "The entity to follow in mode 2."},
@@ -1616,11 +1651,14 @@ constexpr std::array<FieldInfo, 13> kNavAgentFields = {{
     FieldInfo{"arrive", "f32", "Distance from the goal at which the agent stops (state 2)."},
     FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once."},
     FieldInfo{"avoidance", "f32", "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others."},
+    FieldInfo{"queue", "f32", "How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning."},
+    FieldInfo{"priority", "i32", "Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it."},
     FieldInfo{"state", "i32", "0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine)."},
     FieldInfo{"velocity", "vec3", "The velocity chosen this tick (written by the engine)."},
     FieldInfo{"corner", "vec3", "The point the agent is heading for: the next corner of its path, or the goal (written by the engine)."},
     FieldInfo{"distance", "f32", "Length of the remaining path (written by the engine)."},
     FieldInfo{"neighbours", "i32", "Agents and obstacles the avoidance considered this tick (written by the engine)."},
+    FieldInfo{"queued", "bool", "Whether the agent slowed down behind an agent ahead this tick (written by the engine)."},
 }};
 constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},

@@ -11,8 +11,14 @@ export interface NavPath {
     partial: boolean;
     /** The start or the goal was off walkable ground and moved to the nearest cell. */
     snapped: boolean;
+    /** Nodes A* expanded: cells, or polygons on a navmesh path. */
     expanded: number;
+    /** Cells along the path before smoothing (0 on a navmesh path). */
     cells: number;
+    /** Found over the navmesh (else over the cells). */
+    mesh: boolean;
+    /** Polygons crossed on a navmesh path. */
+    polys: number;
 }
 
 export interface NavInfo {
@@ -29,6 +35,8 @@ export interface NavInfo {
     max_step?: number;
     source?: string;
     baked_tick?: number;
+    /** The navmesh over the grid: rectangles of cells and the edges they share (none on platformer grids). */
+    mesh?: { polygons: number; portals: number };
     /** The radius the grid was baked for; obstacles grow by it. */
     agent_radius?: number;
     /** NavObstacle entities applied this tick and the cells under them. */
@@ -41,6 +49,8 @@ export interface NavInfo {
     stuck: number;
     replans: number;
     avoiding: number;
+    /** Agents that slowed down behind another this tick (their `queue` preference). */
+    queuing: number;
 }
 
 export interface NavAgentInfo {
@@ -57,6 +67,10 @@ export interface NavAgentInfo {
     /** Length of the remaining path. */
     distance: number;
     neighbours: number;
+    queue: number;
+    priority: number;
+    /** Whether the agent slowed down behind another this tick. */
+    queued: boolean;
     /** Corners left on the planned path (absent when the agent has no plan). */
     corners?: number;
     partial?: boolean;
@@ -78,8 +92,12 @@ export const nav = {
         return command("nav.bake", { entity, ...options });
     },
     /** A* between two points or entities, string-pulled unless smooth is false. Throws when nothing is baked or a point is outside. */
-    path(from: NavPoint, to: NavPoint, options: { smooth?: boolean } = {}): NavPath {
+    path(from: NavPoint, to: NavPoint, options: { smooth?: boolean; mesh?: boolean } = {}): NavPath {
         return command("nav.path", { from, to, ...options });
+    },
+    /** The navmesh over the grid: its rectangles in world space with their neighbours (docs/design/navigation.md, Navmesh). */
+    mesh(): { count: number; portals: number; polygons: Array<{ id: number; cells: number; min: Vec3; max: Vec3; neighbours: number[] }> } {
+        return command("nav.mesh");
     },
     /** Both on walkable ground with a complete path between them. */
     reachable(from: NavPoint, to: NavPoint): boolean {

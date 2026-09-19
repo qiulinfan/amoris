@@ -179,11 +179,13 @@ fields = [
     { name = "target", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Where the effector should be, in world space (used when target_entity is empty)." },
     { name = "target_entity", type = "string", default = "", doc = "An entity (name or path) whose world position is the target; empty uses target." },
     { name = "pole_entity", type = "string", default = "", doc = "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has." },
+    { name = "max_bend", type = "f32", default = 180.0, doc = "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false." },
     { name = "weight", type = "f32", default = 1.0, doc = "How much of the solve applies: 0 the posed chain, 1 the solved one." },
     { name = "iterations", type = "i32", default = 8, doc = "FABRIK passes per tick (each is a backward and a forward sweep)." },
     { name = "tolerance", type = "f32", default = 0.001, doc = "The solve stops once the effector is this close to the target, in meters." },
     { name = "error", type = "f32", default = 0.0, doc = "Distance from the effector to the target after the solve, in meters (written by the engine)." },
     { name = "reached", type = "bool", default = false, doc = "Whether the effector ended within tolerance (written by the engine)." },
+    { name = "bend", type = "f32", default = 0.0, doc = "The largest bend among the chain's joints after the solve, in degrees (written by the engine)." },
 ]
 
 [[component]]
@@ -196,7 +198,9 @@ fields = [
     { name = "target_entity", type = "string", default = "", doc = "An entity (name or path) whose world position is the target; empty uses target." },
     { name = "weight", type = "f32", default = 1.0, doc = "How much of the turn applies: 0 none, 1 the full aim." },
     { name = "max_angle", type = "f32", default = 90.0, doc = "The most the node may turn away from its posed direction, in degrees." },
+    { name = "speed", type = "f32", default = 0.0, doc = "How fast the aim may turn, in degrees per second: each tick the aim moves toward the target by at most this much, from where the pose points on the first tick, so a head follows smoothly; 0 aims at once." },
     { name = "angle", type = "f32", default = 0.0, doc = "The turn applied this tick in degrees, after the limit and the weight (written by the engine)." },
+    { name = "aim", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick)." },
 ]
 
 [[component]]
@@ -280,7 +284,7 @@ fields = [
 name = "Body2D"
 doc = "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity."
 fields = [
-    { name = "velocity", type = "vec2", default = [0.0, 0.0], doc = "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops." },
+    { name = "velocity", type = "vec2", default = [0.0, 0.0], doc = "Units per second, relative to what carries the body (a platform or a body it rides); scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops." },
     { name = "gravity", type = "f32", default = -24.0, doc = "Units per second squared along Y (negative is down)." },
     { name = "max_fall", type = "f32", default = 30.0, doc = "Fastest downward speed." },
     { name = "size", type = "vec2", default = [0.4, 0.5], doc = "Half extents of the box." },
@@ -294,9 +298,9 @@ fields = [
     { name = "step", type = "f32", default = 0.5, doc = "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope)." },
     { name = "riding", type = "entity", default = 0, doc = "The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine)." },
     { name = "on_slope", type = "i32", default = 0, doc = "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)." },
-    { name = "mass", type = "f32", default = 1.0, doc = "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies)." },
+    { name = "mass", type = "f32", default = 1.0, doc = "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies)." },
     { name = "collide_bodies", type = "bool", default = true, doc = "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body)." },
-    { name = "restitution", type = "f32", default = 0.0, doc = "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)." },
+    { name = "restitution", type = "f32", default = 0.0, doc = "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)." },
     { name = "friction", type = "f32", default = 0.0, doc = "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed." },
 ]
 
@@ -347,11 +351,14 @@ fields = [
     { name = "arrive", type = "f32", default = 0.3, doc = "Distance from the goal at which the agent stops (state 2)." },
     { name = "replan", type = "i32", default = 10, doc = "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once." },
     { name = "avoidance", type = "f32", default = 1.0, doc = "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others." },
+    { name = "queue", type = "f32", default = 0.0, doc = "How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning." },
+    { name = "priority", type = "i32", default = 0, doc = "Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it." },
     { name = "state", type = "i32", default = 0, doc = "0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine)." },
     { name = "velocity", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The velocity chosen this tick (written by the engine)." },
     { name = "corner", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The point the agent is heading for: the next corner of its path, or the goal (written by the engine)." },
     { name = "distance", type = "f32", default = 0.0, doc = "Length of the remaining path (written by the engine)." },
     { name = "neighbours", type = "i32", default = 0, doc = "Agents and obstacles the avoidance considered this tick (written by the engine)." },
+    { name = "queued", type = "bool", default = false, doc = "Whether the agent slowed down behind an agent ahead this tick (written by the engine)." },
 ]
 
 [[component]]

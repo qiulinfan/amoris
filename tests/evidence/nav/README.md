@@ -12,3 +12,15 @@ Produced on 2026-09-19 with the debug (sanitized) build, headless, through the c
 
 `crowd.png` was captured on 2026-09-19 through the JSON-RPC server (`pocket_runtime --project samples/playground --headless --serve 0 --paused --size 960x540`; `step 200`, `render.debug {nav: true}`, `nav.path` from (-3, 0, 7.5) to the player, `step 1`, `capture`). The brown box in front is the cart, a `NavObstacle` rolling along the south half: the cells under it are drawn orange (`nav.info` says `blocked: 16` of the 1396 walkable), and the yellow path asked for from behind it bends around it on its way to the player. The red spheres are the enemies, `NavAgent`s following the player (`agents: 3, moving: 3`); the green line from the one on the right is its velocity and the green dot its next corner. At this tick the state reads `nav.detours 34` (enemy ticks spent heading for a corner rather than the player), `nav.min_gap 1.77` and `hits 1`. `playground.json` in `tests/evidence/scenarios` is the runner's report for the crowd scenario.
 
+
+## Navmesh
+
+`playground-navmesh.png` was captured on 2026-09-19 through the control server at tick 201 with `render.debug {nav: true}`: the violet outlines are the navmesh's rectangles over the baked grid, 12 of them (22 portals) covering the 1396 walkable cells, the largest 456 cells; the cyan crosses are the cells, orange under the cart. Three paths asked for over the control server, the same start and goal over the mesh and over the cells (`mesh: false`):
+
+| Path | Mesh: polygons, expanded, points, length | Cells: expanded, points, length |
+|---|---|---|
+| corner to corner, (-8, -8) to (8, 8) | 4, 6, 4, 22.882 | 248, 4, 22.972 |
+| edge to edge, (-8, 0) to (8, 0) | 5, 5, 2, 16.000 | 33, 2, 16.000 |
+| behind a pillar, (6, 6) to (0, 0) | 3, 4, 3, 8.956 | 69, 3, 9.230 |
+
+The mesh path expands a handful of polygons where the cells expand dozens or hundreds, and is never longer: the funnel turns exactly at the pillar's corner where the cells' path turns at a cell center. `nav_tests` (`[mesh]`) checks the one-rectangle open floor (a straight line, one node), the wall with a gap (through the gap, no longer than the cell path, fewer expansions), an obstacle in the gap handing the answer to the cells (a partial path), a ledge above the step splitting the mesh with no portal, height carried in the points, and platformer grids having no mesh; `runtime_tests` (`[nav]`) the playground's mesh and a path across it.

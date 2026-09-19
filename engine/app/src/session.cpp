@@ -739,6 +739,10 @@ Result<Json> Session::nav_command(std::string_view op, const Json& p) {
         return d;
     }
     if (op == "info") return nav_.describe();
+    if (op == "mesh") {
+        if (!nav_.baked()) return fail("not_baked", "no navigation grid yet: bake one with nav.bake");
+        return nav_.mesh_json();
+    }
     if (op == "agents") return nav_.agents(w);
     if (op == "clear") {
         nav_.clear();
@@ -749,12 +753,12 @@ Result<Json> Session::nav_command(std::string_view op, const Json& p) {
         if (!p.contains("from") || !p.contains("to")) return fail("bad_args", "'from' and 'to' are required (points or entities)");
         POCKET_TRY(from, point_of(p["from"], "from"));
         POCKET_TRY(to, point_of(p["to"], "to"));
-        POCKET_TRY(path, nav_.path(from, to, opt<bool>(p, "smooth", true)));
+        POCKET_TRY(path, nav_.path(from, to, opt<bool>(p, "smooth", true), opt<bool>(p, "mesh", true)));
         Json pts = Json::array();
         for (const Vec3& v : path.points) pts.push_back(json_of(v));
         if (nav_paths_.size() >= 16) nav_paths_.erase(nav_paths_.begin());
         nav_paths_.push_back(path.points);
-        return Json{{"points", pts}, {"length", path.length}, {"partial", path.partial}, {"snapped", path.snapped}, {"expanded", path.expanded}, {"cells", path.cells}};
+        return Json{{"points", pts}, {"length", path.length}, {"partial", path.partial}, {"snapped", path.snapped}, {"expanded", path.expanded}, {"cells", path.cells}, {"mesh", path.mesh}, {"polys", path.polys}};
     }
     if (op == "reachable") {
         if (!p.contains("from") || !p.contains("to")) return fail("bad_args", "'from' and 'to' are required (points or entities)");
@@ -2497,6 +2501,23 @@ void Session::build_debug_draw() {
                 }
             }
         }
+        // The navmesh's rectangles as outlines.
+        const rhi::Color poly_color{0.85f, 0.45f, 0.95f, 0.9f};
+        const nav::NavMesh& mesh = nav_.mesh();
+        for (const nav::NavMesh::Poly& p : mesh.polys) {
+            Vec3 c00 = g.center_of(p.x0, p.y0), c11 = g.center_of(p.x1, p.y1), c10 = g.center_of(p.x1, p.y0), c01 = g.center_of(p.x0, p.y1);
+            const float h = g.cell * 0.5f;
+            Vec3 a, b, c, d;
+            if (g.plane == 0) {
+                a = c00 + Vec3{-h, 0.03f, -h}; b = c10 + Vec3{h, 0.03f, -h}; c = c11 + Vec3{h, 0.03f, h}; d = c01 + Vec3{-h, 0.03f, h};
+            } else {
+                a = c00 + Vec3{-h, h, 0}; b = c10 + Vec3{h, h, 0}; c = c11 + Vec3{h, -h, 0}; d = c01 + Vec3{-h, -h, 0};
+            }
+            debug_draw_.line(a, b, poly_color);
+            debug_draw_.line(b, c, poly_color);
+            debug_draw_.line(c, d, poly_color);
+            debug_draw_.line(d, a, poly_color);
+        }
         // Each moving agent: its velocity as a line and the corner it heads for.
         const rhi::Color agent_color{0.4f, 1.0f, 0.4f, 1};
         const Vec3 lift = g.plane == 0 ? Vec3{0, 0.05f, 0} : Vec3{0, 0, 0};
@@ -2704,7 +2725,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

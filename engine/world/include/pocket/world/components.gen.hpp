@@ -234,11 +234,13 @@ struct IK {
     Vec3 target{0.0f, 0.0f, 0.0f};
     std::string target_entity = "";
     std::string pole_entity = "";
+    float max_bend = 180.0f;
     float weight = 1.0f;
     std::int32_t iterations = 8;
     float tolerance = 0.001f;
     float error = 0.0f;
     bool reached = false;
+    float bend = 0.0f;
     constexpr bool operator==(const IK&) const = default;
 };
 void to_json(Json& j, const IK& v);
@@ -254,7 +256,9 @@ struct LookAt {
     std::string target_entity = "";
     float weight = 1.0f;
     float max_angle = 90.0f;
+    float speed = 0.0f;
     float angle = 0.0f;
+    Vec3 aim{0.0f, 0.0f, 0.0f};
     constexpr bool operator==(const LookAt&) const = default;
 };
 void to_json(Json& j, const LookAt& v);
@@ -431,11 +435,14 @@ struct NavAgent {
     float arrive = 0.3f;
     std::int32_t replan = 10;
     float avoidance = 1.0f;
+    float queue = 0.0f;
+    std::int32_t priority = 0;
     std::int32_t state = 0;
     Vec3 velocity{0.0f, 0.0f, 0.0f};
     Vec3 corner{0.0f, 0.0f, 0.0f};
     float distance = 0.0f;
     std::int32_t neighbours = 0;
+    bool queued = false;
     constexpr bool operator==(const NavAgent&) const = default;
 };
 void to_json(Json& j, const NavAgent& v);

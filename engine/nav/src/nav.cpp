@@ -114,12 +114,15 @@ std::size_t Grid::blocked_count() const {
 }
 
 void Nav::set_grid(Grid grid) {
+    mesh_ = NavMesh{};
     grid_ = std::move(grid);
     runs_.clear();
+    build_mesh();
     reapply_obstacles();
 }
 
 void Nav::clear() {
+    mesh_ = NavMesh{};
     grid_ = Grid{};
     runs_.clear();
 }
@@ -163,6 +166,7 @@ Status Nav::bake_colliders(const world::World& w, const physics::Physics& ph, co
     g.baked_tick = tick;
     g.agent_radius = p.agent_radius;
     grid_ = std::move(g);
+    build_mesh();
     runs_.clear();
     reapply_obstacles();
     return {};
@@ -238,6 +242,7 @@ Status Nav::bake_tilemap(const world::World& w, assets::AssetStore& assets, Enti
     g.source = "tilemap:" + tmc->map + ":" + p.mode;
     g.baked_tick = tick;
     grid_ = std::move(g);
+    build_mesh();
     runs_.clear();
     reapply_obstacles();
     return {};
@@ -268,7 +273,7 @@ std::optional<Vec3> Nav::nearest(Vec3 p, float max_radius) const {
     return out;
 }
 
-Result<Path> Nav::path(Vec3 from, Vec3 to, bool smooth) const {
+Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
     if (!baked()) return fail("not_baked", "no navigation grid yet: bake one with nav.bake");
     const Grid& g = grid_;
     Path out;
@@ -381,6 +386,7 @@ Json Nav::describe() const {
     j["stuck"] = crowd_.stuck;
     j["replans"] = crowd_.replans;
     j["avoiding"] = crowd_.avoiding;
+    j["queuing"] = crowd_.queuing;
     if (!baked()) return j;
     const Grid& g = grid_;
     j["agent_radius"] = g.agent_radius;
@@ -396,6 +402,7 @@ Json Nav::describe() const {
     j["max_step"] = g.max_step;
     j["source"] = g.source;
     j["baked_tick"] = g.baked_tick;
+    j["mesh"] = Json{{"polygons", mesh_.polys.size()}, {"portals", mesh_.portal_count()}};
     return j;
 }
 
@@ -420,6 +427,7 @@ constexpr float kLookahead = 0.3f;        // seconds ahead a velocity must keep 
 constexpr float kWeightDesired = 2.0f;    // deviation from the desired velocity, per unit of top speed
 constexpr float kWeightCollision = 4.0f;  // a collision at the horizon's edge counts nothing, one now counts this: more than a right-angle turn
 constexpr float kWeightOffGrid = 3.0f;    // leaving walkable ground
+constexpr float kWeightAcross = 4.0f;     // at queue 1, sideways deviation costs this much more than slowing while someone ahead goes the agent's way
 constexpr int kMaxNeighbours = 8;
 
 // Seconds until two discs touch, given the other's position and velocity relative to this one;
@@ -529,6 +537,7 @@ void Nav::step(world::World& w, float dt) {
         Vec3 corner;
         float distance = 0;
         int neighbours = 0;
+        bool queued = false;
         bool has_goal = false;
         Vec3 goal;
     };
@@ -627,32 +636,54 @@ void Nav::step(world::World& w, float dt) {
         struct Near {
             P2 rel, vel;
             float radius, dist;
+            bool agent;
         };
         std::vector<Near> near;
         const float reach = a.radius + top * kHorizon + cell;
         for (std::size_t j = 0; j < items.size(); ++j) {
-            if (j == i) continue;
+            if (j == i || items[j].agent.mode == 0) continue;
+            if (items[j].agent.priority < a.priority) continue;   // it gets out of this one's way
             const P2 rel = sub(p2(plane, items[j].pos), p);
             const float dist = len2(rel);
             if (dist > reach + items[j].agent.radius) continue;
-            near.push_back({rel, items[j].vel_prev, a.radius + items[j].agent.radius, dist});
+            near.push_back({rel, items[j].vel_prev, a.radius + items[j].agent.radius, dist, true});
         }
         for (const Obstacle& o : obstacles_) {
             const P2 rel = sub(p2(plane, o.position), p);
             const float dist = len2(rel);
             if (dist > reach + o.radius) continue;
-            near.push_back({rel, P2{}, a.radius + o.radius, dist});
+            near.push_back({rel, P2{}, a.radius + o.radius, dist, false});
         }
         if (near.empty()) continue;
         std::sort(near.begin(), near.end(), [](const Near& x, const Near& y) { return x.dist < y.dist; });
         if (near.size() > kMaxNeighbours) near.resize(kMaxNeighbours);
         pl.neighbours = static_cast<int>(near.size());
-        // Candidates: the desired velocity, then turns in steps of 22.5 degrees either way at full
-        // and half speed, then standing still. Ties go to the earlier candidate, so every agent
-        // turns the same way first and two that meet head-on pass on the same side.
+        // Candidates: the desired velocity, for a queuing agent the same direction slowed, then turns
+        // in steps of 22.5 degrees either way at full and half speed, then standing still. Ties go
+        // to the earlier candidate, so every agent turns the same way first and two that meet
+        // head-on pass on the same side.
         std::vector<P2> candidates;
         candidates.push_back(pl.desired);
         const float dlen = len2(pl.desired);
+        const float queue = std::clamp(a.queue, 0.0f, 1.0f);
+        const P2 ddir = dlen > 1e-6f ? mul(pl.desired, 1.0f / dlen) : P2{};
+        // Someone ahead going this agent's way, or standing there, whom the desired velocity would
+        // run into: the queue applies to them, never to crossing or oncoming traffic.
+        bool line = false;
+        if (queue > 0 && dlen > 1e-6f) {
+            for (const Near& n : near) {
+                if (!n.agent || dot2(n.rel, ddir) <= 0) continue;
+                const float nl = len2(n.vel);
+                if (nl > 0.1f * top && dot2(n.vel, ddir) < 0.5f * nl) continue;
+                if (const auto t = time_to_collision(n.rel, sub(n.vel, pl.desired), n.radius); t && *t < kHorizon) {
+                    line = true;
+                    break;
+                }
+            }
+        }
+        if (dlen > 1e-6f && queue > 0) {
+            for (float f : {0.75f, 0.5f, 0.25f}) candidates.push_back(mul(pl.desired, f));
+        }
         if (dlen > 1e-6f) {
             for (int k = 1; k <= 8; ++k) {
                 for (int side : {1, -1}) {
@@ -669,7 +700,14 @@ void Nav::step(world::World& w, float dt) {
         P2 chosen = pl.desired;
         for (std::size_t c = 0; c < candidates.size(); ++c) {
             const P2 v = candidates[c];
-            float score = kWeightDesired * len2(sub(v, pl.desired)) / top + 0.001f * static_cast<float>(c);
+            float deviation = len2(sub(v, pl.desired));
+            if (line) {
+                // Behind someone going the same way, slowing is the cheap deviation and stepping aside the dear one.
+                const float along = dot2(v, ddir);
+                const float across = len2(sub(v, mul(ddir, along)));
+                deviation = std::fabs(along - dlen) + across * (1.0f + kWeightAcross * queue);
+            }
+            float score = kWeightDesired * deviation / top + 0.001f * static_cast<float>(c);
             for (const Near& n : near) {
                 const auto t = time_to_collision(n.rel, sub(n.vel, v), n.radius);
                 if (!t) continue;
@@ -697,6 +735,8 @@ void Nav::step(world::World& w, float dt) {
         }
         pl.chosen = chosen;
         if (len2(sub(chosen, pl.desired)) > 1e-4f) crowd_.avoiding++;
+        pl.queued = line && dot2(chosen, ddir) < dlen - 1e-4f;
+        if (pl.queued) crowd_.queuing++;
     }
     // 3. Overlapping agents are pushed apart, half each, from where they stood at the start of the tick.
     std::vector<P2> push(items.size());
@@ -720,10 +760,11 @@ void Nav::step(world::World& w, float dt) {
         world::NavAgent a = it.agent;
         const int old_state = a.state;
         if (a.mode == 0) {
-            if (a.state != 0 || a.velocity.x != 0 || a.velocity.y != 0 || a.velocity.z != 0 || a.neighbours != 0 || a.distance != 0) {
+            if (a.state != 0 || a.velocity.x != 0 || a.velocity.y != 0 || a.velocity.z != 0 || a.neighbours != 0 || a.distance != 0 || a.queued) {
                 a.state = 0;
                 a.velocity = {};
                 a.neighbours = 0;
+                a.queued = false;
                 a.distance = 0;
                 a.corner = it.pos;
                 w.set_typed<world::NavAgent>(it.id, a);
@@ -737,6 +778,7 @@ void Nav::step(world::World& w, float dt) {
         a.corner = pl.corner;
         a.distance = pl.state == 1 ? pl.distance : 0.0f;
         a.neighbours = pl.neighbours;
+        a.queued = pl.queued;
         if (pl.state == 1) crowd_.moving++;
         else if (pl.state == 2) crowd_.arrived++;
         else if (pl.state == 3) crowd_.stuck++;
@@ -780,6 +822,9 @@ Json Nav::agents(world::World& w) const {
         j["corner"] = json_of_vec(a.corner);
         j["distance"] = a.distance;
         j["neighbours"] = a.neighbours;
+        j["queue"] = a.queue;
+        j["priority"] = a.priority;
+        j["queued"] = a.queued;
         if (auto it = runs_.find(id); it != runs_.end() && !it->second.path.empty()) {
             j["corners"] = it->second.path.size() > it->second.next ? it->second.path.size() - it->second.next : 0;
             j["partial"] = it->second.partial;
@@ -788,6 +833,291 @@ Json Nav::agents(world::World& w) const {
         out.push_back(j);
     }
     return out;
+}
+
+
+// ---- Navmesh (docs/design/navigation.md, Navmesh) ----
+
+namespace {
+
+// The signed double area of a triangle in the plane: positive when c lies to the right of a->b
+// (the funnel below keeps left and right by this sign).
+float triarea2(P2 a, P2 b, P2 c) { return (c.u - a.u) * (b.v - a.v) - (b.u - a.u) * (c.v - a.v); }
+bool same2(P2 a, P2 b) { return std::fabs(a.u - b.u) < 1e-5f && std::fabs(a.v - b.v) < 1e-5f; }
+// The plane coordinate of a column's left edge, and of a row's near edge (rows run +Z on ground
+// grids and -Y on tile grids).
+float col_edge(const Grid& g, int c) { return g.origin.x + static_cast<float>(c) * g.cell; }
+float row_edge(const Grid& g, int r) { return g.plane == 0 ? g.origin.z + static_cast<float>(r) * g.cell : g.origin.y - static_cast<float>(r) * g.cell; }
+P2 poly_center(const Grid& g, const NavMesh::Poly& p) {
+    return {col_edge(g, p.x0) + (static_cast<float>(p.x1 - p.x0 + 1) * 0.5f) * g.cell, g.plane == 0 ? row_edge(g, p.y0) + (static_cast<float>(p.y1 - p.y0 + 1) * 0.5f) * g.cell : row_edge(g, p.y0) - (static_cast<float>(p.y1 - p.y0 + 1) * 0.5f) * g.cell};
+}
+// The cell under a plane point, clamped into the grid.
+std::size_t cell_under(const Grid& g, P2 q) {
+    int x = static_cast<int>(std::floor((q.u - g.origin.x) / g.cell));
+    int y = g.plane == 0 ? static_cast<int>(std::floor((q.v - g.origin.z) / g.cell)) : static_cast<int>(std::floor((g.origin.y - q.v) / g.cell));
+    x = std::clamp(x, 0, g.width - 1);
+    y = std::clamp(y, 0, g.height - 1);
+    return g.index(x, y);
+}
+// A plane point lifted into the world: the ground under it on ground grids, the map's depth otherwise.
+Vec3 lift(const Grid& g, P2 q) {
+    if (g.plane == 0) return {q.u, g.ground.empty() ? g.origin.y : g.ground[cell_under(g, q)], q.v};
+    return {q.u, q.v, g.depth};
+}
+
+// The simple stupid funnel: the shortest way through a sequence of portals (left, right) from the
+// start to the goal, corners only where the funnel closes.
+std::vector<P2> funnel(P2 start, P2 goal, const std::vector<std::pair<P2, P2>>& portals) {
+    std::vector<std::pair<P2, P2>> ports;
+    ports.reserve(portals.size() + 2);
+    ports.emplace_back(start, start);
+    for (const auto& p : portals) ports.push_back(p);
+    ports.emplace_back(goal, goal);
+    std::vector<P2> out{start};
+    P2 apex = start, left = start, right = start;
+    std::size_t apex_i = 0, left_i = 0, right_i = 0;
+    for (std::size_t i = 1; i < ports.size(); ++i) {
+        const P2 pl = ports[i].first, pr = ports[i].second;
+        if (triarea2(apex, right, pr) <= 0.0f) {
+            if (same2(apex, right) || triarea2(apex, left, pr) > 0.0f) {
+                right = pr;
+                right_i = i;
+            } else {
+                out.push_back(left);
+                apex = left;
+                apex_i = left_i;
+                left = right = apex;
+                left_i = right_i = apex_i;
+                i = apex_i;
+                continue;
+            }
+        }
+        if (triarea2(apex, left, pl) >= 0.0f) {
+            if (same2(apex, left) || triarea2(apex, right, pl) < 0.0f) {
+                left = pl;
+                left_i = i;
+            } else {
+                out.push_back(right);
+                apex = right;
+                apex_i = right_i;
+                left = right = apex;
+                left_i = right_i = apex_i;
+                i = apex_i;
+                continue;
+            }
+        }
+    }
+    if (!same2(out.back(), goal)) out.push_back(goal);
+    return out;
+}
+
+}  // namespace
+
+std::size_t NavMesh::portal_count() const {
+    std::size_t n = 0;
+    for (const auto& p : portals) n += p.size();
+    return n;
+}
+
+// Rectangles of walkable cells, greedy row by row (as wide as the row allows, then as tall as
+// every column allows), each cell within a step of its neighbours in the rectangle; then a portal
+// along every run of a rectangle's side that touches another rectangle within a step. Platformer
+// grids (jump links) get no mesh.
+void Nav::build_mesh() {
+    const Grid& g = grid_;
+    NavMesh m;
+    if (g.width <= 0 || g.height <= 0 || !g.links.empty()) { mesh_ = std::move(m); return; }
+    m.cell_poly.assign(g.walkable.size(), -1);
+    auto ok = [&](int x, int y) { return g.inside(x, y) && g.walkable[g.index(x, y)] != 0; };
+    for (int y = 0; y < g.height; ++y) {
+        for (int x = 0; x < g.width; ++x) {
+            if (!ok(x, y) || m.cell_poly[g.index(x, y)] >= 0) continue;
+            int x1 = x;
+            while (x1 + 1 < g.width && ok(x1 + 1, y) && m.cell_poly[g.index(x1 + 1, y)] < 0 && step_ok(g, g.index(x1, y), g.index(x1 + 1, y))) ++x1;
+            int y1 = y;
+            while (y1 + 1 < g.height) {
+                bool fits = true;
+                for (int xx = x; xx <= x1 && fits; ++xx) {
+                    const std::size_t below = g.index(xx, y1 + 1);
+                    if (!ok(xx, y1 + 1) || m.cell_poly[below] >= 0 || !step_ok(g, g.index(xx, y1), below)) fits = false;
+                    else if (xx > x && !step_ok(g, g.index(xx - 1, y1 + 1), below)) fits = false;
+                }
+                if (!fits) break;
+                ++y1;
+            }
+            const int id = static_cast<int>(m.polys.size());
+            m.polys.push_back({x, y, x1, y1});
+            for (int yy = y; yy <= y1; ++yy) for (int xx = x; xx <= x1; ++xx) m.cell_poly[g.index(xx, yy)] = id;
+        }
+    }
+    m.portals.assign(m.polys.size(), {});
+    for (int id = 0; id < static_cast<int>(m.polys.size()); ++id) {
+        const NavMesh::Poly& P = m.polys[static_cast<std::size_t>(id)];
+        // Each side: the cells along it, their neighbours across, the runs of one neighbour polygon.
+        auto side = [&](int dx, int dy) {
+            const int n = dx != 0 ? P.y1 - P.y0 + 1 : P.x1 - P.x0 + 1;
+            auto mine = [&](int t, int& cx, int& cy) {
+                if (dx != 0) { cx = dx > 0 ? P.x1 : P.x0; cy = P.y0 + t; }
+                else { cx = P.x0 + t; cy = dy > 0 ? P.y1 : P.y0; }
+            };
+            int run_start = -1, run_poly = -1;
+            auto flush = [&](int t_end) {
+                if (run_start < 0) return;
+                NavMesh::Portal pt;
+                pt.to = run_poly;
+                if (dx != 0) {
+                    const float u = col_edge(g, dx > 0 ? P.x1 + 1 : P.x0);
+                    pt.au = u; pt.av = row_edge(g, P.y0 + run_start);
+                    pt.bu = u; pt.bv = row_edge(g, P.y0 + t_end + 1);
+                } else {
+                    const float v = row_edge(g, dy > 0 ? P.y1 + 1 : P.y0);
+                    pt.au = col_edge(g, P.x0 + run_start); pt.av = v;
+                    pt.bu = col_edge(g, P.x0 + t_end + 1); pt.bv = v;
+                }
+                m.portals[static_cast<std::size_t>(id)].push_back(pt);
+                run_start = -1;
+                run_poly = -1;
+            };
+            for (int t = 0; t < n; ++t) {
+                int cx, cy;
+                mine(t, cx, cy);
+                const int nx = cx + dx, ny = cy + dy;
+                int other = -1;
+                if (ok(nx, ny) && step_ok(g, g.index(cx, cy), g.index(nx, ny))) other = m.cell_poly[g.index(nx, ny)];
+                if (other != run_poly) { flush(t - 1); if (other >= 0) { run_start = t; run_poly = other; } }
+            }
+            flush(n - 1);
+        };
+        side(1, 0);
+        side(-1, 0);
+        side(0, 1);
+        side(0, -1);
+    }
+    mesh_ = std::move(m);
+}
+
+Json Nav::mesh_json() const {
+    Json j;
+    j["polygons"] = Json::array();
+    const Grid& g = grid_;
+    for (std::size_t i = 0; i < mesh_.polys.size(); ++i) {
+        const NavMesh::Poly& p = mesh_.polys[i];
+        Json neighbours = Json::array();
+        for (const NavMesh::Portal& pt : mesh_.portals[i]) neighbours.push_back(pt.to);
+        const Vec3 lo = lift(g, {col_edge(g, p.x0), g.plane == 0 ? row_edge(g, p.y0) : row_edge(g, p.y1 + 1)});
+        const Vec3 hi = lift(g, {col_edge(g, p.x1 + 1), g.plane == 0 ? row_edge(g, p.y1 + 1) : row_edge(g, p.y0)});
+        j["polygons"].push_back(Json{{"id", i}, {"cells", (p.x1 - p.x0 + 1) * (p.y1 - p.y0 + 1)}, {"min", {{"x", lo.x}, {"y", lo.y}, {"z", lo.z}}}, {"max", {{"x", hi.x}, {"y", hi.y}, {"z", hi.z}}}, {"neighbours", neighbours}});
+    }
+    j["count"] = mesh_.polys.size();
+    j["portals"] = mesh_.portal_count();
+    return j;
+}
+
+std::optional<Path> Nav::mesh_path(Vec3 from, Vec3 to) const {
+    const Grid& g = grid_;
+    const NavMesh& m = mesh_;
+    if (m.empty()) return std::nullopt;
+    Path out;
+    out.mesh = true;
+    auto locate = [&](Vec3 p, P2& q, std::size_t& cell) -> bool {
+        int x, y;
+        if (g.cell_of(p, x, y) && g.walkable_at(x, y)) {
+            q = p2(g.plane, p);
+            cell = g.index(x, y);
+            return true;
+        }
+        auto near = nearest(p, g.cell * 2.0f);
+        if (!near) return false;
+        out.snapped = true;
+        (void)g.cell_of(*near, x, y);
+        q = p2(g.plane, *near);
+        cell = g.index(x, y);
+        return true;
+    };
+    P2 start, goal;
+    std::size_t start_cell, goal_cell;
+    if (!locate(from, start, start_cell) || !locate(to, goal, goal_cell)) return std::nullopt;
+    const int sp = m.cell_poly[start_cell], gp = m.cell_poly[goal_cell];
+    if (sp < 0 || gp < 0) return std::nullopt;
+    // A* over the polygons: the cost to a polygon is the distance walked to the middle of the
+    // portal it is entered by; ties break deterministically.
+    const std::size_t n = m.polys.size();
+    struct Node { float f, gcost; int poly; std::uint32_t order; };
+    struct Less { bool operator()(const Node& a, const Node& b) const { if (a.f != b.f) return a.f > b.f; if (a.gcost != b.gcost) return a.gcost < b.gcost; return a.order > b.order; } };
+    std::priority_queue<Node, std::vector<Node>, Less> open;
+    std::vector<float> cost(n, std::numeric_limits<float>::infinity());
+    std::vector<P2> entry(n, start);
+    std::vector<std::pair<int, int>> came(n, {-1, -1});   // previous polygon and the portal index into this one
+    std::vector<std::uint8_t> closed(n, 0);
+    std::uint32_t order = 0;
+    cost[static_cast<std::size_t>(sp)] = 0;
+    open.push({len2(sub(goal, start)), 0, sp, order++});
+    bool reached = false;
+    while (!open.empty()) {
+        const Node cur = open.top();
+        open.pop();
+        const auto ci = static_cast<std::size_t>(cur.poly);
+        if (closed[ci]) continue;
+        closed[ci] = 1;
+        ++out.expanded;
+        if (cur.poly == gp) { reached = true; break; }
+        const auto& ports = m.portals[ci];
+        for (std::size_t k = 0; k < ports.size(); ++k) {
+            const NavMesh::Portal& pt = ports[k];
+            const auto ti = static_cast<std::size_t>(pt.to);
+            if (closed[ti]) continue;
+            const P2 mid{(pt.au + pt.bu) * 0.5f, (pt.av + pt.bv) * 0.5f};
+            const float c = cost[ci] + len2(sub(mid, entry[ci]));
+            if (c < cost[ti]) {
+                cost[ti] = c;
+                entry[ti] = mid;
+                came[ti] = {cur.poly, static_cast<int>(k)};
+                open.push({c + len2(sub(goal, mid)), c, pt.to, order++});
+            }
+        }
+    }
+    if (!reached) return std::nullopt;
+    // The portals in travel order, each oriented left and right of the way through it.
+    std::vector<std::pair<int, int>> steps;   // (from polygon, portal index)
+    for (int p = gp; p != sp;) {
+        const auto [prev, k] = came[static_cast<std::size_t>(p)];
+        steps.emplace_back(prev, k);
+        p = prev;
+    }
+    std::reverse(steps.begin(), steps.end());
+    std::vector<std::pair<P2, P2>> lr;
+    for (const auto& [from_poly, k] : steps) {
+        const NavMesh::Portal& pt = m.portals[static_cast<std::size_t>(from_poly)][static_cast<std::size_t>(k)];
+        const P2 a{pt.au, pt.av}, b{pt.bu, pt.bv};
+        const P2 ca = poly_center(g, m.polys[static_cast<std::size_t>(from_poly)]), cb = poly_center(g, m.polys[static_cast<std::size_t>(pt.to)]);
+        if (triarea2(ca, cb, a) >= 0.0f) lr.emplace_back(b, a);   // a lies to the right of the way: right is a
+        else lr.emplace_back(a, b);
+    }
+    std::vector<P2> corners = funnel(start, goal, lr);
+    // An obstacle across the way: sampled every quarter cell, the cell path decides instead.
+    if (!g.blocked.empty()) {
+        for (std::size_t i = 1; i < corners.size(); ++i) {
+            const P2 a = corners[i - 1], b = corners[i];
+            const float d = len2(sub(b, a));
+            const int samples = std::max(1, static_cast<int>(std::ceil(d / (g.cell * 0.25f))));
+            for (int s = 0; s <= samples; ++s) {
+                const P2 q = add(a, mul(sub(b, a), static_cast<float>(s) / static_cast<float>(samples)));
+                if (g.blocked[cell_under(g, q)] != 0) return std::nullopt;
+            }
+        }
+    }
+    for (const P2& q : corners) out.points.push_back(lift(g, q));
+    for (std::size_t i = 1; i < out.points.size(); ++i) out.length += length(out.points[i] - out.points[i - 1]);
+    out.polys = static_cast<int>(steps.size()) + 1;
+    return out;
+}
+
+Result<Path> Nav::path(Vec3 from, Vec3 to, bool smooth, bool use_mesh) const {
+    if (!baked()) return fail("not_baked", "no navigation grid yet: bake one with nav.bake");
+    if (use_mesh && smooth && !mesh_.empty()) {
+        if (auto r = mesh_path(from, to)) return *r;
+    }
+    return grid_path(from, to, smooth);
 }
 
 }  // namespace pocket::nav

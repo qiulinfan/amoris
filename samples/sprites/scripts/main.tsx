@@ -108,6 +108,24 @@ expose("player.x", () => Number(world.get(player, "Transform")?.position.x.toFix
 expose("player.clip", () => world.get(player, "SpriteAnimation")?.clip ?? "");
 expose("player.y", () => Number(world.get(player, "Transform")?.position.y.toFixed(2) ?? 0));
 expose("player.grounded", () => world.get(player, "Body2D")?.grounded ?? false);
+expose("player.vx", () => Number((world.get(player, "Body2D")?.velocity.x ?? 0).toFixed(2)));
+expose("player.wall", () => world.get(player, "Body2D")?.on_wall ?? 0);
+// The nearest coin left, relative to the player: what a reactive player reads (docs/design/environment.md, Learning).
+const nearestCoin = () => {
+    const p = world.get(player, "Transform")?.position;
+    if (!p) return { dx: 0, dy: 0 };
+    let best: { dx: number; dy: number } | undefined;
+    let bestD = Infinity;
+    for (const id of coins) {
+        const c = world.get(id, "Transform")?.position;
+        if (!c) continue;
+        const d = Math.hypot(c.x - p.x, c.y - p.y);
+        if (d < bestD) { bestD = d; best = { dx: c.x - p.x, dy: c.y - p.y }; }
+    }
+    return best ?? { dx: 0, dy: 0 };
+};
+expose("coin.dx", () => Number(nearestCoin().dx.toFixed(2)));
+expose("coin.dy", () => Number(nearestCoin().dy.toFixed(2)));
 expose("player.riding", () => { const r = world.get(player, "Body2D")?.riding ?? 0; return r ? world.describe(r).path : ""; });
 expose("player.slope", () => world.get(player, "Body2D")?.on_slope ?? 0);
 expose("lift.y", () => Number(world.get(lift, "Transform")?.position.y.toFixed(2) ?? 0));

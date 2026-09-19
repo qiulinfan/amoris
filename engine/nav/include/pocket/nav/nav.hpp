@@ -71,16 +71,30 @@ struct Obstacle {
 
 // What the last step() did with the world's NavAgent and NavObstacle entities.
 struct CrowdStats {
-    int agents = 0, moving = 0, arrived = 0, stuck = 0, obstacles = 0, blocked = 0, replans = 0, avoiding = 0;
+    int agents = 0, moving = 0, arrived = 0, stuck = 0, obstacles = 0, blocked = 0, replans = 0, avoiding = 0, queuing = 0;
+};
+
+// The walkable cells covered by rectangles that share edges (docs/design/navigation.md, Navmesh):
+// long paths are searched over the rectangles and pulled through the shared edges.
+struct NavMesh {
+    struct Poly { int x0 = 0, y0 = 0, x1 = 0, y1 = 0; };      // cell ranges, inclusive
+    struct Portal { int to = -1; float au = 0, av = 0, bu = 0, bv = 0; };  // the shared edge in the grid's plane
+    std::vector<Poly> polys;
+    std::vector<std::vector<Portal>> portals;                 // per polygon
+    std::vector<int> cell_poly;                               // per cell: its polygon, -1 when not walkable
+    [[nodiscard]] bool empty() const { return polys.empty(); }
+    [[nodiscard]] std::size_t portal_count() const;
 };
 
 struct Path {
     std::vector<Vec3> points;  // from the start cell's center to the goal's
     float length = 0;
-    int expanded = 0;          // A* nodes expanded
-    int cells = 0;             // cells along the path before smoothing
+    int expanded = 0;          // A* nodes expanded (cells, or polygons on a navmesh path)
+    int cells = 0;             // cells along the path before smoothing (0 on a navmesh path)
+    int polys = 0;             // polygons crossed on a navmesh path
     bool partial = false;      // the goal was unreachable: the path ends at the closest cell A* reached
     bool snapped = false;      // the start or the goal was off walkable ground and moved to the nearest cell
+    bool mesh = false;         // found over the navmesh (else over the cells)
 };
 
 class Nav {
@@ -95,9 +109,12 @@ class Nav {
     void clear();
     [[nodiscard]] bool baked() const { return grid_.width > 0 && grid_.height > 0; }
     [[nodiscard]] const Grid& grid() const { return grid_; }
-    // A* between the cells under two points (each snapped to the nearest walkable cell within two
-    // cells), the result string-pulled when smooth. Unreachable goals give a partial path.
-    [[nodiscard]] Result<Path> path(Vec3 from, Vec3 to, bool smooth = true) const;
+    [[nodiscard]] const NavMesh& mesh() const { return mesh_; }
+    [[nodiscard]] Json mesh_json() const;
+    // The way between two points (each snapped to the nearest walkable cell within two cells): over
+    // the navmesh when there is one, the path is smooth and the mesh path crosses no obstacle, else
+    // A* over the cells, string-pulled when smooth. Unreachable goals give a partial cell path.
+    [[nodiscard]] Result<Path> path(Vec3 from, Vec3 to, bool smooth = true, bool use_mesh = true) const;
     // Strict: both points on walkable cells and a complete path between them.
     [[nodiscard]] bool reachable(Vec3 from, Vec3 to) const;
     // The nearest walkable cell center within max_radius of a point (on ground grids the height
@@ -125,7 +142,11 @@ class Nav {
         bool planned = false;
     };
     void reapply_obstacles();
+    void build_mesh();
+    [[nodiscard]] Result<Path> grid_path(Vec3 from, Vec3 to, bool smooth) const;
+    [[nodiscard]] std::optional<Path> mesh_path(Vec3 from, Vec3 to) const;
     Grid grid_;
+    NavMesh mesh_;
     std::vector<Obstacle> obstacles_;
     std::map<world::EntityId, AgentRun> runs_;
     CrowdStats crowd_;

@@ -234,6 +234,8 @@ export interface IK {
     target_entity: string;
     /** An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has. */
     pole_entity: string;
+    /** The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false. */
+    max_bend: number;
     /** How much of the solve applies: 0 the posed chain, 1 the solved one. */
     weight: number;
     /** FABRIK passes per tick (each is a backward and a forward sweep). */
@@ -244,6 +246,8 @@ export interface IK {
     error: number;
     /** Whether the effector ended within tolerance (written by the engine). */
     reached: boolean;
+    /** The largest bend among the chain's joints after the solve, in degrees (written by the engine). */
+    bend: number;
 }
 
 /** Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick. */
@@ -260,8 +264,12 @@ export interface LookAt {
     weight: number;
     /** The most the node may turn away from its posed direction, in degrees. */
     max_angle: number;
+    /** How fast the aim may turn, in degrees per second: each tick the aim moves toward the target by at most this much, from where the pose points on the first tick, so a head follows smoothly; 0 aims at once. */
+    speed: number;
     /** The turn applied this tick in degrees, after the limit and the weight (written by the engine). */
     angle: number;
+    /** The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick). */
+    aim: Vec3;
 }
 
 /** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once. */
@@ -386,7 +394,7 @@ export interface Joint {
 
 /** A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity. */
 export interface Body2D {
-    /** Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. */
+    /** Units per second, relative to what carries the body (a platform or a body it rides); scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. */
     velocity: Vec2;
     /** Units per second squared along Y (negative is down). */
     gravity: number;
@@ -414,11 +422,11 @@ export interface Body2D {
     riding: number;
     /** 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). */
     on_slope: number;
-    /** Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies). */
+    /** Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies). */
     mass: number;
     /** Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). */
     collide_bodies: boolean;
-    /** Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). */
+    /** Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). */
     restitution: number;
     /** Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed. */
     friction: number;
@@ -488,6 +496,10 @@ export interface NavAgent {
     replan: number;
     /** Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. */
     avoidance: number;
+    /** How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning. */
+    queue: number;
+    /** Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it. */
+    priority: number;
     /** 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). */
     state: number;
     /** The velocity chosen this tick (written by the engine). */
@@ -498,6 +510,8 @@ export interface NavAgent {
     distance: number;
     /** Agents and obstacles the avoidance considered this tick (written by the engine). */
     neighbours: number;
+    /** Whether the agent slowed down behind an agent ahead this tick (written by the engine). */
+    queued: boolean;
 }
 
 /** Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name. */
@@ -551,8 +565,8 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
     Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
-    IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false },
-    LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, angle: 0 },
+    IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
+    LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
@@ -561,7 +575,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
     NavObstacle: { radius: 0.5, enabled: true },
-    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0 },
+    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },
 };
 

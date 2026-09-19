@@ -220,6 +220,80 @@ TEST_CASE("obstacles block the cells under them until they move, and paths and n
     REQUIRE(n.grid().blocked_count() > 0);
 }
 
+TEST_CASE("a queuing agent falls in behind one going its way instead of passing", "[nav][agents][queue]") {
+    // Runs until one of the two arrives: the leader when the follower queues behind it, the follower
+    // when it passes (the goal is then taken, so the other cannot arrive).
+    auto scenario = [](float queue, bool& passed, bool& ever_queued, float& min_gap, float& follower_x, int& queuing_ticks, bool& leader_arrived) {
+        World w;
+        nav::Nav n;
+        n.set_grid(open_grid(12, 12));
+        // A slow leader and a fast follower one unit behind, both bound for the far end of the row.
+        const EntityId leader = w.spawn("Leader", 0, Json{{"Transform", {{"position", {{"x", 1.5f}, {"y", 0}, {"z", 8.5f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 10.5f}, {"y", 0}, {"z", 8.5f}}}, {"speed", 1.0}, {"radius", 0.4}}}}).value();
+        const EntityId follower = w.spawn("Follower", 0, Json{{"Transform", {{"position", {{"x", 0.5f}, {"y", 0}, {"z", 8.5f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 10.5f}, {"y", 0}, {"z", 8.5f}}}, {"speed", 2.0}, {"radius", 0.4}, {"queue", queue}}}}).value();
+        auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+        passed = false;
+        ever_queued = false;
+        min_gap = 1e9f;
+        queuing_ticks = 0;
+        for (int tick = 0; tick < 900 && w.try_get<NavAgent>(leader)->state != 2 && w.try_get<NavAgent>(follower)->state != 2; ++tick) {   // nine units at one per second, plus the arrival
+            w.set_tick_index(tick);
+            n.step(w, 1.0f / 60.0f);
+            if (pos(follower).x > pos(leader).x) passed = true;
+            if (w.try_get<NavAgent>(follower)->queued) ever_queued = true;
+            queuing_ticks += n.crowd_stats().queuing;
+            min_gap = std::min(min_gap, length(pos(follower) - pos(leader)));
+        }
+        follower_x = pos(follower).x;
+        leader_arrived = w.try_get<NavAgent>(leader)->state == 2;
+    };
+    bool passed = false, ever_queued = false, leader_arrived = false;
+    float min_gap = 0, follower_x = 0;
+    int queuing_ticks = 0;
+    // With queue 1 the follower matches the leader's pace, keeps its distance and never passes.
+    scenario(1.0f, passed, ever_queued, min_gap, follower_x, queuing_ticks, leader_arrived);
+    INFO("queue 1: passed " << passed << " queued " << ever_queued << " gap " << min_gap << " x " << follower_x << " queuing ticks " << queuing_ticks);
+    REQUIRE(leader_arrived);
+    REQUIRE_FALSE(passed);
+    REQUIRE(ever_queued);
+    REQUIRE(queuing_ticks > 100);
+    REQUIRE(min_gap > 0.7f);
+    REQUIRE(follower_x > 7.0f);   // it followed the leader down the row rather than standing
+    // Without queue the follower steps aside and passes.
+    scenario(0.0f, passed, ever_queued, min_gap, follower_x, queuing_ticks, leader_arrived);
+    INFO("queue 0: passed " << passed << " queued " << ever_queued << " gap " << min_gap << " x " << follower_x);
+    REQUIRE_FALSE(leader_arrived);   // the follower got there first
+    REQUIRE(passed);
+    REQUIRE_FALSE(ever_queued);
+    REQUIRE(queuing_ticks == 0);
+    REQUIRE(min_gap > 0.7f);
+}
+
+TEST_CASE("a higher-priority agent walks straight while the lower one yields", "[nav][agents][priority]") {
+    World w;
+    nav::Nav n;
+    n.set_grid(open_grid(12, 12));
+    const EntityId boss = w.spawn("Boss", 0, Json{{"Transform", {{"position", {{"x", 1.5f}, {"y", 0}, {"z", 5.5f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 10.5f}, {"y", 0}, {"z", 5.5f}}}, {"speed", 2.0}, {"radius", 0.4}, {"priority", 1}}}}).value();
+    const EntityId minion = w.spawn("Minion", 0, Json{{"Transform", {{"position", {{"x", 10.5f}, {"y", 0}, {"z", 5.5f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 1.5f}, {"y", 0}, {"z", 5.5f}}}, {"speed", 2.0}, {"radius", 0.4}}}}).value();
+    auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+    float boss_off = 0, minion_off = 0, min_gap = 1e9f;
+    int boss_neighbours = 0;
+    for (int tick = 0; tick < 600 && !(w.try_get<NavAgent>(boss)->state == 2 && w.try_get<NavAgent>(minion)->state == 2); ++tick) {
+        w.set_tick_index(tick);
+        n.step(w, 1.0f / 60.0f);
+        boss_off = std::max(boss_off, std::fabs(pos(boss).z - 5.5f));
+        minion_off = std::max(minion_off, std::fabs(pos(minion).z - 5.5f));
+        min_gap = std::min(min_gap, length(pos(boss) - pos(minion)));
+        boss_neighbours = std::max(boss_neighbours, w.try_get<NavAgent>(boss)->neighbours);
+    }
+    INFO("boss off " << boss_off << " minion off " << minion_off << " gap " << min_gap);
+    REQUIRE(w.try_get<NavAgent>(boss)->state == 2);
+    REQUIRE(w.try_get<NavAgent>(minion)->state == 2);
+    REQUIRE(boss_neighbours == 0);       // the boss's avoidance never considered the minion
+    REQUIRE(boss_off < 0.05f);           // and walked its line
+    REQUIRE(minion_off > 0.3f);          // the minion stepped aside
+    REQUIRE(min_gap > 0.7f);
+}
+
 TEST_CASE("agents walk to their goals, pass each other, go around obstacles and report arrival or stuck", "[nav][agents]") {
     World w;
     nav::Nav n;
@@ -304,3 +378,73 @@ TEST_CASE("agents walk to their goals, pass each other, go around obstacles and 
     REQUIRE(list[0]["state"].get<int>() == 2);
 }
 
+TEST_CASE("the navmesh covers open ground with one rectangle, routes through a gap and yields to obstacles and steps", "[nav][mesh]") {
+    // Open ground: one polygon, a straight path, one node expanded.
+    nav::Nav nav;
+    nav.set_grid(open_grid(30, 30));
+    REQUIRE(nav.mesh().polys.size() == 1);
+    REQUIRE(nav.mesh().portal_count() == 0);
+    auto straight = nav.path({0.5f, 0, 0.5f}, {29.5f, 0, 29.5f});
+    REQUIRE(straight.has_value());
+    REQUIRE(straight->mesh == true);
+    REQUIRE(straight->polys == 1);
+    REQUIRE(straight->expanded == 1);
+    REQUIRE(straight->points.size() == 2);
+    REQUIRE(straight->length == Catch::Approx(std::hypot(29.0f, 29.0f)).margin(1e-3));
+    // A wall down the middle with one gap: a few rectangles, a path through the gap that is no
+    // longer than the cell path's, the cell path still there on request.
+    nav::Grid g = open_grid(30, 30);
+    for (int y = 0; y < 30; ++y) if (y != 14) g.walkable[g.index(15, y)] = 0;
+    nav.set_grid(g);
+    INFO("polygons " << nav.mesh().polys.size() << " portals " << nav.mesh().portal_count());
+    REQUIRE(nav.mesh().polys.size() >= 3);
+    REQUIRE(nav.mesh().polys.size() <= 8);
+    REQUIRE(nav.mesh().portal_count() >= 4);
+    auto through = nav.path({2.5f, 0, 2.5f}, {27.5f, 0, 27.5f});
+    auto cells = nav.path({2.5f, 0, 2.5f}, {27.5f, 0, 27.5f}, true, false);
+    REQUIRE(through.has_value());
+    REQUIRE(cells.has_value());
+    REQUIRE(through->mesh == true);
+    REQUIRE(cells->mesh == false);
+    REQUIRE(through->partial == false);
+    REQUIRE(through->polys >= 2);
+    REQUIRE(through->length <= cells->length + 0.01f);
+    REQUIRE(through->length >= std::hypot(25.0f, 25.0f) - 1e-3f);
+    bool passes_gap = false;
+    for (const Vec3& pt : through->points) if (std::fabs(pt.x - 15.5f) < 1.01f && std::fabs(pt.z - 14.5f) < 1.01f) passes_gap = true;
+    REQUIRE(passes_gap);
+    REQUIRE(through->expanded < cells->expanded);
+    // An obstacle in the gap: the mesh path would cross it, so the cells decide (and find no way).
+    nav.set_obstacles({{1, {15.5f, 0, 14.5f}, 0.4f}});
+    auto blocked = nav.path({2.5f, 0, 2.5f}, {27.5f, 0, 27.5f});
+    REQUIRE(blocked.has_value());
+    REQUIRE(blocked->mesh == false);
+    REQUIRE(blocked->partial == true);
+    nav.set_obstacles({});
+    REQUIRE(nav.path({2.5f, 0, 2.5f}, {27.5f, 0, 27.5f})->mesh == true);
+    // A ledge above the step: two rectangles without a portal, so the way between them is the
+    // cells' partial path.
+    nav::Grid ledge = open_grid(10, 4);
+    for (int y = 0; y < 4; ++y) for (int x = 5; x < 10; ++x) ledge.ground[ledge.index(x, y)] = 1.0f;
+    nav.set_grid(ledge);
+    REQUIRE(nav.mesh().polys.size() == 2);
+    REQUIRE(nav.mesh().portal_count() == 0);
+    auto up = nav.path({1.5f, 0, 1.5f}, {8.5f, 1, 1.5f});
+    REQUIRE(up.has_value());
+    REQUIRE(up->mesh == false);
+    REQUIRE(up->partial == true);
+    // Along the ledge the mesh serves: one rectangle, height carried in the points.
+    auto along = nav.path({5.5f, 1, 0.5f}, {9.5f, 1, 3.5f});
+    REQUIRE(along->mesh == true);
+    REQUIRE(along->points.front().y == Catch::Approx(1.0f));
+    REQUIRE(along->points.back().y == Catch::Approx(1.0f));
+    // A platformer grid (links) has no mesh.
+    nav::Grid pf = open_grid(6, 3);
+    pf.plane = 1;
+    pf.links.assign(pf.walkable.size(), {});
+    pf.links[0].push_back(2);
+    nav.set_grid(pf);
+    REQUIRE(nav.mesh().empty());
+    REQUIRE(nav.path({0.5f, -0.5f, 0}, {5.5f, -2.5f, 0})->mesh == false);
+    REQUIRE(nav.describe()["mesh"]["polygons"] == 0);
+}

@@ -119,8 +119,22 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                 carried = true;
             }
             if (!carried) {
-                if (const auto* carrier = w.try_get<world::Body2D>(b.riding); carrier && !carrier->kinematic) {
-                    cx += carrier->velocity.x * dt;
+                // A dynamic carrier's velocity is relative to what carries it in turn, so the chain is summed.
+                float carrier_vx = 0;
+                bool found = false;
+                world::EntityId cid = b.riding;
+                for (int guard = 0; cid != 0 && guard < 8; ++guard) {
+                    bool on_rect = false;
+                    for (const Rect& rc : rects) if (rc.id == cid) { carrier_vx += rc.dx / dt; on_rect = true; break; }
+                    if (on_rect) break;
+                    const auto* c = w.try_get<world::Body2D>(cid);
+                    if (!c || c->kinematic) break;
+                    carrier_vx += c->velocity.x;
+                    found = true;
+                    cid = c->riding;
+                }
+                if (found) {
+                    cx += carrier_vx * dt;
                     carried = true;
                 }
             }
@@ -321,6 +335,7 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         float cx, cy, hx, hy;
         bool was_grounded;
         const MapView* mv;
+        world::EntityId prev_riding;   // what it rode last tick: this tick's riding is settled by the vertical pass below
     };
     std::vector<Dyn> dyn;
     for (std::size_t i = 0; i < writes.size(); ++i) {
@@ -335,9 +350,46 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         }
         bool wg = false;
         for (const auto& [id, g] : dyn_was_grounded) if (id == writes[i].first) wg = g;
-        dyn.push_back({i, positions[i].second.x + b.offset.x, positions[i].second.y + b.offset.y, std::max(b.size.x, 0.01f), std::max(b.size.y, 0.01f), wg, mv});
+        const auto* prev = w.try_get<world::Body2D>(writes[i].first);
+        dyn.push_back({i, positions[i].second.x + b.offset.x, positions[i].second.y + b.offset.y, std::max(b.size.x, 0.01f), std::max(b.size.y, 0.01f), wg, mv, prev ? prev->riding : 0});
     }
+    // For the sideways exchange of speeds a stack is one body (its riders move with it): the
+    // bottom body's velocity, the sum of the masses. A rider's own velocity is relative to its
+    // carrier and stays what it is.
+    std::vector<std::size_t> root(dyn.size());
+    std::vector<float> stack_mass(dyn.size()), absv(dyn.size());
+    auto dyn_index = [&](world::EntityId id) -> std::size_t {
+        for (std::size_t k = 0; k < dyn.size(); ++k) if (writes[dyn[k].i].first == id) return k;
+        return dyn.size();
+    };
+    // What a body rides: settled by this tick's vertical pass once it has run, else last tick's.
+    auto riding_of = [&](std::size_t k) {
+        const world::EntityId now = writes[dyn[k].i].second.riding;
+        return now != 0 ? now : dyn[k].prev_riding;
+    };
+    auto rect_vx = [&](world::EntityId id) {
+        for (const Rect& rc : rects) if (rc.id == id) return rc.dx / dt;
+        return 0.0f;
+    };
+    auto set_abs = [&](std::size_t r, float v) {
+        absv[r] = v;
+        writes[dyn[r].i].second.velocity.x = v - rect_vx(writes[dyn[r].i].second.riding);
+    };
     for (int pass = 0; pass < 2 && dyn.size() > 1; ++pass) {
+        std::fill(stack_mass.begin(), stack_mass.end(), 0.0f);
+        for (std::size_t k = 0; k < dyn.size(); ++k) {
+            std::size_t r = k;
+            for (int guard = 0; guard < 8; ++guard) {
+                const std::size_t next = dyn_index(riding_of(r));
+                if (next == dyn.size() || next == r) break;
+                r = next;
+            }
+            root[k] = r;
+        }
+        for (std::size_t k = 0; k < dyn.size(); ++k) stack_mass[root[k]] += std::max(writes[dyn[k].i].second.mass, 1e-3f);
+        for (std::size_t k = 0; k < dyn.size(); ++k) {
+            if (root[k] == k) absv[k] = writes[dyn[k].i].second.velocity.x + rect_vx(writes[dyn[k].i].second.riding);
+        }
         for (std::size_t p = 0; p < dyn.size(); ++p) {
             for (std::size_t q = p + 1; q < dyn.size(); ++q) {
                 Dyn& A = dyn[p];
@@ -382,18 +434,25 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                     const float total = ox + kSkin;
                     A.cx += static_cast<float>(dir) * total * sa / (sa + sb);
                     B.cx -= static_cast<float>(dir) * total * sb / (sa + sb);
-                    // No more speed into the other, or that speed back out scaled by the body's restitution.
-                    auto into = [&](world::Body2D& body, world::EntityId id, float sign) {
-                        if (body.velocity.x * sign <= 0) return;
-                        if (body.restitution > 0 && std::fabs(body.velocity.x) > kBounceMin) {
-                            bounces.push_back({id, std::fabs(body.velocity.x), "body"});
-                            body.velocity.x = -body.velocity.x * std::min(body.restitution, 1.0f);
-                        } else {
-                            body.velocity.x = 0;
+                    // The speeds into each other are exchanged as a collision of the two stacks (a
+                    // body held by a wall on its side counts as immovable): with no restitution both
+                    // leave at the mass-weighted mean, with restitution (the larger of the two) they
+                    // rebound, momentum kept either way.
+                    const std::size_t rA = root[p], rB = root[q];
+                    const float n = static_cast<float>(-dir);   // from A toward B
+                    const float closing = rA != rB ? (absv[rA] - absv[rB]) * n : 0.0f;
+                    if (closing > 0) {
+                        const float inv_a = sa > 0 ? 1.0f / stack_mass[rA] : 0.0f;
+                        const float inv_b = sb > 0 ? 1.0f / stack_mass[rB] : 0.0f;
+                        const float e = closing > kBounceMin ? std::min(std::max(a.restitution, b.restitution), 1.0f) : 0.0f;
+                        const float j = (1.0f + e) * closing / (inv_a + inv_b);
+                        set_abs(rA, absv[rA] - j * inv_a * n);
+                        set_abs(rB, absv[rB] + j * inv_b * n);
+                        if (e > 0) {
+                            if (a.restitution > 0) bounces.push_back({writes[A.i].first, closing, "body"});
+                            if (b.restitution > 0) bounces.push_back({writes[B.i].first, closing, "body"});
                         }
-                    };
-                    into(a, writes[A.i].first, static_cast<float>(-dir));
-                    into(b, writes[B.i].first, static_cast<float>(dir));
+                    }
                     if (pass == 0) stats_.pushed++;
                 }
             }
@@ -426,15 +485,9 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     // zero by `friction` per second, after the move, so what a script drives each tick is untouched.
     for (auto& [id, b] : writes) {
         if (b.kinematic || !b.grounded || b.friction <= 0) continue;
-        float carrier = 0;
-        if (b.riding != 0) {
-            bool found = false;
-            for (const Rect& rc : rects) if (rc.id == b.riding) { carrier = rc.dx / dt; found = true; }
-            if (!found) for (const auto& [oid, ob] : writes) if (oid == b.riding) carrier = ob.velocity.x;
-        }
-        const float rel = b.velocity.x - carrier;
+        const float rel = b.velocity.x;   // a rider's velocity is relative to its carrier already
         const float decel = b.friction * dt;
-        b.velocity.x = carrier + (std::fabs(rel) <= decel ? 0.0f : rel - (rel > 0 ? decel : -decel));
+        b.velocity.x = std::fabs(rel) <= decel ? 0.0f : rel - (rel > 0 ? decel : -decel);
     }
     for (const auto& [id, b] : writes) if (!b.kinematic && b.grounded) stats_.grounded++;
     for (auto& [id, b] : writes) w.set_typed<world::Body2D>(id, b);

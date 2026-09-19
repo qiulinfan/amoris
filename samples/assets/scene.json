@@ -187,7 +187,8 @@
             "z": 0
           },
           "target_entity": "Orb",
-          "max_angle": 70
+          "max_angle": 70,
+          "speed": 240
         }
       }
     },

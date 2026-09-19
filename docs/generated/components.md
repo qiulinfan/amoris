@@ -167,11 +167,13 @@ Inverse kinematics on a chain of the entity's skinned mesh: after the clips and 
 | `target` | vec3 | [0.0, 0.0, 0.0] | Where the effector should be, in world space (used when target_entity is empty). |
 | `target_entity` | string | "" | An entity (name or path) whose world position is the target; empty uses target. |
 | `pole_entity` | string | "" | An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has. |
+| `max_bend` | f32 | 180.0 | The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false. |
 | `weight` | f32 | 1.0 | How much of the solve applies: 0 the posed chain, 1 the solved one. |
 | `iterations` | i32 | 8 | FABRIK passes per tick (each is a backward and a forward sweep). |
 | `tolerance` | f32 | 0.001 | The solve stops once the effector is this close to the target, in meters. |
 | `error` | f32 | 0.0 | Distance from the effector to the target after the solve, in meters (written by the engine). |
 | `reached` | bool | false | Whether the effector ended within tolerance (written by the engine). |
+| `bend` | f32 | 0.0 | The largest bend among the chain's joints after the solve, in degrees (written by the engine). |
 
 ## LookAt
 
@@ -185,7 +187,9 @@ Aims one node of the entity's skinned mesh at a point after the clips, layers an
 | `target_entity` | string | "" | An entity (name or path) whose world position is the target; empty uses target. |
 | `weight` | f32 | 1.0 | How much of the turn applies: 0 none, 1 the full aim. |
 | `max_angle` | f32 | 90.0 | The most the node may turn away from its posed direction, in degrees. |
+| `speed` | f32 | 0.0 | How fast the aim may turn, in degrees per second: each tick the aim moves toward the target by at most this much, from where the pose points on the first tick, so a head follows smoothly; 0 aims at once. |
 | `angle` | f32 | 0.0 | The turn applied this tick in degrees, after the limit and the weight (written by the engine). |
+| `aim` | vec3 | [0.0, 0.0, 0.0] | The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick). |
 
 ## ParticleEmitter
 
@@ -273,7 +277,7 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `velocity` | vec2 | [0.0, 0.0] | Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. |
+| `velocity` | vec2 | [0.0, 0.0] | Units per second, relative to what carries the body (a platform or a body it rides); scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. |
 | `gravity` | f32 | -24.0 | Units per second squared along Y (negative is down). |
 | `max_fall` | f32 | 30.0 | Fastest downward speed. |
 | `size` | vec2 | [0.4, 0.5] | Half extents of the box. |
@@ -287,9 +291,9 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 | `step` | f32 | 0.5 | The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope). |
 | `riding` | entity | 0 | The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine). |
 | `on_slope` | i32 | 0 | 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). |
-| `mass` | f32 | 1.0 | Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies). |
+| `mass` | f32 | 1.0 | Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies). |
 | `collide_bodies` | bool | true | Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). |
-| `restitution` | f32 | 0.0 | Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). |
+| `restitution` | f32 | 0.0 | Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). |
 | `friction` | f32 | 0.0 | Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed. |
 
 ## Collider
@@ -344,11 +348,14 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 | `arrive` | f32 | 0.3 | Distance from the goal at which the agent stops (state 2). |
 | `replan` | i32 | 10 | Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once. |
 | `avoidance` | f32 | 1.0 | Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. |
+| `queue` | f32 | 0.0 | How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning. |
+| `priority` | i32 | 0 | Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it. |
 | `state` | i32 | 0 | 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). |
 | `velocity` | vec3 | [0.0, 0.0, 0.0] | The velocity chosen this tick (written by the engine). |
 | `corner` | vec3 | [0.0, 0.0, 0.0] | The point the agent is heading for: the next corner of its path, or the goal (written by the engine). |
 | `distance` | f32 | 0.0 | Length of the remaining path (written by the engine). |
 | `neighbours` | i32 | 0 | Agents and obstacles the avoidance considered this tick (written by the engine). |
+| `queued` | bool | false | Whether the agent slowed down behind an agent ahead this tick (written by the engine). |
 
 ## Morph
 

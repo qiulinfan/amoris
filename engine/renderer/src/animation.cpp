@@ -269,12 +269,32 @@ void toward_pole(Vec3 prev, Vec3& cur, Vec3 next, Vec3 pole) {
     cur = prev + axis * along + pv * (r / pl);
 }
 
+// A unit direction kept within `max_rad` of the unit `ref`: one further away is turned toward
+// ref until it is max_rad from it (the cone a joint's bone may point in).
+Vec3 clamp_cone(Vec3 dir, Vec3 ref, float max_rad) {
+    const float c = std::clamp(dot(dir, ref), -1.0f, 1.0f);
+    if (std::acos(c) <= max_rad) return dir;
+    Vec3 perp = dir - ref * c;
+    if (length(perp) < 1e-6f) {   // straight against ref: any direction across it
+        perp = cross(ref, {0, 0, 1});
+        if (length(perp) < 1e-6f) perp = cross(ref, {1, 0, 0});
+    }
+    perp = normalize(perp);
+    return normalize(ref * std::cos(max_rad) + perp * std::sin(max_rad));
+}
+
+float angle_between(Vec3 a, Vec3 b) {
+    return std::acos(std::clamp(dot(a, b), -1.0f, 1.0f));
+}
+
 // FABRIK on the chain of `bones` joints ending at `end`: joint positions are moved to reach the
 // target (backward from the effector, forward from the base, the pole applied to the middle
-// joints), then every joint is turned so its bone points along the solved positions.
+// joints, every bone kept within `max_bend` of the one above it), then every joint is turned so
+// its bone points along the solved positions.
 void solve_ik(const world::World& world, world::EntityId self, const assets::Mesh& mesh, Locals& l, world::IK& ik) {
     ik.error = 0.0f;
     ik.reached = false;
+    ik.bend = 0.0f;
     const int end = node_index(mesh, ik.end);
     if (end < 0) return;
     const int bones = std::clamp(ik.bones, 1, 64);
@@ -298,25 +318,35 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
     std::vector<Vec3> q = p;
     const Vec3 base = p[0];
     const float tol = std::max(ik.tolerance, 0.0f);
-    if (length(target - base) >= total) {
-        // Out of reach: the chain stretches straight toward the target.
-        const Vec3 dir = safe_dir(target - base);
-        for (std::size_t i = 0; i < n; ++i) q[i + 1] = q[i] + dir * d[i];
-    } else {
-        // A chain lying straight along the line to its target cannot bend by the passes alone (every
-        // pass leaves it on the line), so its middle joint is placed first, where two bones of the
-        // chain's halves meet (the two-bone solution), toward the pole or, without one, across the
-        // line; the passes then settle the other joints and the lengths.
-        const float dist = length(target - base);
-        float sag = 0.0f;
-        if (dist > 1e-6f) {
-            const Vec3 axis = (target - base) * (1.0f / dist);
-            for (std::size_t i = 1; i < n; ++i) {
-                const Vec3 v = q[i] - base;
-                sag = std::max(sag, length(v - axis * dot(v, axis)));
-            }
+    // The bend limit: each bone stays within max_bend of the one above it. Above the first joint
+    // is its parent's bone, or, without a parent (or one at the same point), the posed first bone.
+    const float max_bend = std::clamp(ik.max_bend, 0.0f, 180.0f) * 3.14159265f / 180.0f;
+    const bool limited = ik.max_bend < 180.0f;
+    Vec3 above = safe_dir(p[1] - p[0]);
+    if (const int parent = mesh.nodes[chain[0]].parent; parent >= 0 && static_cast<std::size_t>(parent) < cur.globals.size()) {
+        const Vec3 pp = cur.globals[static_cast<std::size_t>(parent)].transform_point({0, 0, 0});
+        if (length(p[0] - pp) > 1e-4f) above = safe_dir(p[0] - pp);
+    }
+    // The forward sweep: from the base down, each bone pointed along `want`, within the limit.
+    auto forward = [&](auto want) {
+        q[0] = base;
+        for (std::size_t i = 0; i < n; ++i) {
+            Vec3 dir = safe_dir(want(i));
+            if (limited) dir = clamp_cone(dir, i == 0 ? above : safe_dir(q[i] - q[i - 1]), max_bend);
+            q[i + 1] = q[i] + dir * d[i];
         }
-        if (n >= 2 && dist > 1e-6f && sag < 1e-3f * total) {
+    };
+    if (length(target - base) >= total) {
+        // Out of reach: the chain stretches toward the target, each bone as far as its limit lets it.
+        forward([&](std::size_t i) { return target - q[i]; });
+    } else {
+        // The middle joint is placed first, where the two halves of the chain meet as two bones would
+        // (the two-bone solution, exact for a limb), on the side of the pole, else the side the pose
+        // bends to, else, for a chain lying straight along the line to its target (which the passes
+        // alone cannot bend: every pass leaves it on the line), across the line; the passes then
+        // settle the other joints and the lengths in a sweep or two.
+        const float dist = length(target - base);
+        if (n >= 2 && dist > 1e-6f) {
             const Vec3 axis = (target - base) * (1.0f / dist);
             const std::size_t k = (n + 1) / 2;
             float a = 0.0f, b = 0.0f;
@@ -326,7 +356,8 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             const float r = std::sqrt(std::max(a * a - along * along, 0.0f));
             Vec3 side{0, 0, 0};
             if (has_pole) side = (pole - base) - axis * dot(pole - base, axis);
-            if (length(side) < 1e-6f) side = cross(axis, {0, 0, 1});
+            if (length(side) < 1e-6f) side = (q[k] - base) - axis * dot(q[k] - base, axis);
+            if (length(side) < 1e-3f * total) side = cross(axis, {0, 0, 1});
             if (length(side) < 1e-6f) side = cross(axis, {1, 0, 0});
             side = normalize(side);
             const Vec3 mid = base + axis * along + side * r;
@@ -337,14 +368,17 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             for (std::size_t i = k + 1; i < n; ++i) { acc += d[i - 1]; q[i] = mid + (target - mid) * (b > 0 ? acc / b : 0.0f); }
         }
         for (int it = 0; it < std::clamp(ik.iterations, 1, 64); ++it) {
-            if (length(q[n] - target) <= tol) break;
+            if ((it > 0 || !limited) && length(q[n] - target) <= tol) break;   // a limited chain gets at least one limited sweep
             q[n] = target;
-            for (std::size_t i = n; i-- > 0;) q[i] = q[i + 1] + safe_dir(q[i] - q[i + 1]) * d[i];
-            q[0] = base;
-            for (std::size_t i = 0; i < n; ++i) q[i + 1] = q[i] + safe_dir(q[i + 1] - q[i]) * d[i];
+            for (std::size_t i = n; i-- > 0;) {
+                Vec3 bone = safe_dir(q[i + 1] - q[i]);
+                if (limited && i + 1 < n) bone = clamp_cone(bone, safe_dir(q[i + 2] - q[i + 1]), max_bend);   // the bend at joint i+1
+                q[i] = q[i + 1] - bone * d[i];
+            }
             if (has_pole) {
                 for (std::size_t i = 1; i < n; ++i) toward_pole(q[i - 1], q[i], q[i + 1], pole);
             }
+            forward([&](std::size_t i) { return q[i + 1] - q[i]; });
         }
     }
     const float w = std::clamp(ik.weight, 0.0f, 1.0f);
@@ -359,11 +393,21 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
     compose(mesh, l, cur);
     ik.error = length(cur.globals[ei].transform_point(ik.tip) - target);
     ik.reached = ik.error <= std::max(tol, 1e-4f);
+    Vec3 prev = above;
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec3 a = cur.globals[chain[i]].transform_point({0, 0, 0});
+        const Vec3 b = i + 1 < n ? cur.globals[chain[i + 1]].transform_point({0, 0, 0}) : cur.globals[ei].transform_point(ik.tip);
+        if (length(b - a) < 1e-6f) continue;
+        const Vec3 bone = normalize(b - a);
+        ik.bend = std::max(ik.bend, angle_between(prev, bone) * 180.0f / 3.14159265f);
+        prev = bone;
+    }
 }
 
 // Turn one node so its forward axis points at the target, at most max_angle away from where the
-// pose points it, scaled by the weight.
-void solve_look_at(const world::World& world, world::EntityId self, const assets::Mesh& mesh, Locals& l, world::LookAt& la) {
+// pose points it, scaled by the weight; with a speed, the aim moves toward the target by at most
+// speed * dt per tick from where it pointed last tick (the posed direction on the first).
+void solve_look_at(const world::World& world, world::EntityId self, const assets::Mesh& mesh, Locals& l, world::LookAt& la, float dt) {
     la.angle = 0.0f;
     const int node = node_index(mesh, la.node);
     if (node < 0) return;
@@ -377,7 +421,15 @@ void solve_look_at(const world::World& world, world::EntityId self, const assets
     if (length(fwd) < 1e-6f || length(want) < 1e-6f) return;
     fwd = normalize(fwd);
     want = normalize(want);
-    const float angle = std::acos(std::clamp(dot(fwd, want), -1.0f, 1.0f));
+    if (la.speed > 0.0f) {
+        Vec3 prev = la.aim;
+        if (length(prev) < 1e-6f) prev = fwd;
+        prev = normalize(prev);
+        const float step = la.speed * dt * 3.14159265f / 180.0f;
+        if (angle_between(prev, want) > step) want = clamp_cone(want, prev, step);
+    }
+    la.aim = want;
+    const float angle = angle_between(fwd, want);
     const float limit = std::max(la.max_angle, 0.0f) * 3.14159265f / 180.0f;
     const float applied = std::min(angle, limit) * std::clamp(la.weight, 0.0f, 1.0f);
     if (applied <= 1e-6f) return;
@@ -616,7 +668,7 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         if (Work* w = work_for(e, mr)) solve_ik(world, e.id(), *w->mesh, w->locals, ik);
     });
     world.ecs().each([&](flecs::entity e, world::LookAt& la, const world::MeshRenderer& mr) {
-        if (Work* w = work_for(e, mr)) solve_look_at(world, e.id(), *w->mesh, w->locals, la);
+        if (Work* w = work_for(e, mr)) solve_look_at(world, e.id(), *w->mesh, w->locals, la, dt);
     });
     for (auto& [id, w] : work) {
         Pose pose;
@@ -712,7 +764,7 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
         }
     }
     if (const auto* ik = world.try_get<world::IK>(id)) {
-        Json k{{"end", ik->end}, {"bones", ik->bones}, {"weight", ik->weight}, {"error", ik->error}, {"reached", ik->reached}};
+        Json k{{"end", ik->end}, {"bones", ik->bones}, {"weight", ik->weight}, {"error", ik->error}, {"reached", ik->reached}, {"bend", ik->bend}, {"max_bend", ik->max_bend}};
         const int end = node_index(mesh, ik->end);
         if (end >= 0) {
             const auto ei = static_cast<std::size_t>(end);
@@ -722,7 +774,7 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
         }
         j["ik"] = k;
     }
-    if (const auto* la = world.try_get<world::LookAt>(id)) j["look_at"] = Json{{"node", la->node}, {"angle", la->angle}, {"weight", la->weight}, {"max_angle", la->max_angle}};
+    if (const auto* la = world.try_get<world::LookAt>(id)) j["look_at"] = Json{{"node", la->node}, {"angle", la->angle}, {"weight", la->weight}, {"max_angle", la->max_angle}, {"speed", la->speed}, {"aim", Json{{"x", la->aim.x}, {"y", la->aim.y}, {"z", la->aim.z}}}};
     return j;
 }
 

@@ -12,6 +12,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pocket_env import PocketEnv, PocketEnvPool, PocketError, play  # noqa: E402
 from train_example import train  # noqa: E402
+from policy_example import act, train as train_policy  # noqa: E402
 
 
 class SpritesEpisodes(unittest.TestCase):
@@ -69,6 +70,21 @@ class SpritesEpisodes(unittest.TestCase):
         self.assertEqual(len(hist), 2)
         self.assertGreaterEqual(max(h["best"] for h in hist), 1)     # some plan collects a coin
         self.assertGreaterEqual(hist[1]["mean"], hist[0]["mean"] - 1e-9)  # the elites pull the population up (or it stays)
+
+    def test_policy_reads_the_observation(self):
+        # A reactive policy: the weights decide from the state; a coin to the left with a leftward
+        # weight moves left, and the learning loop runs (two small generations over two starts).
+        obs = {"t": 0, "state": {"coin.dx": -2.0, "coin.dy": 0.0, "player.grounded": True, "player.vx": 0.0, "player.wall": 0}}
+        toward = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] + [0.0] * 6      # move by the coin's direction, never jump
+        self.assertEqual(act(toward, obs)["move_x"], -1)
+        self.assertNotIn("jump", act(toward, obs))
+        jumper = [0.0] * 6 + [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]      # always jump when standing
+        self.assertTrue(act(jumper, obs).get("jump"))
+        result = train_policy("sprites", generations=2, population=4, envs=2, spots=[-2.3, 2.0], hold=4, seed=1, max_ticks=120, log=lambda *_: None)
+        self.assertEqual(len(result["history"]), 2)
+        self.assertEqual(len(result["weights"]["move"]), 6)
+        self.assertGreaterEqual(result["best"], 0.0)
+        self.assertIn("-2.3", result["per_start"])
 
     def test_play_helper(self):
         rows = play("sprites", policy="right", episodes=1, ticks=240, step=4, seed=1)
