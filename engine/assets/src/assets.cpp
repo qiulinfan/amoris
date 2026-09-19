@@ -28,6 +28,13 @@ Json Mesh::describe() const {
         if (!m.texture.empty()) mj["texture"] = m.texture;
         mj["metallic"] = m.metallic;
         mj["roughness"] = m.roughness;
+        if (!m.metallic_roughness_texture.empty()) mj["metallic_roughness_texture"] = m.metallic_roughness_texture;
+        if (!m.normal_texture.empty()) {
+            mj["normal_texture"] = m.normal_texture;
+            mj["normal_scale"] = m.normal_scale;
+        }
+        if (!m.emissive_texture.empty()) mj["emissive_texture"] = m.emissive_texture;
+        if (m.emissive.x > 0 || m.emissive.y > 0 || m.emissive.z > 0) mj["emissive"] = Json{{"r", m.emissive.x}, {"g", m.emissive.y}, {"b", m.emissive.z}};
         if (m.double_sided) mj["double_sided"] = true;
         mats.push_back(mj);
     }
@@ -410,6 +417,24 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
     Mesh mesh;
     mesh.path = display_path;
     // Materials.
+    // A textureInfo object -> project-relative image path ("" when it cannot be resolved).
+    auto texture_path = [&](const Json& info) -> std::string {
+        if (!info.is_object() || !info.contains("index")) return "";
+        int ti = info["index"].get<int>();
+        const Json& textures = g.doc.value("textures", Json::array());
+        if (ti < 0 || ti >= static_cast<int>(textures.size()) || !textures[static_cast<std::size_t>(ti)].contains("source")) return "";
+        int si = textures[static_cast<std::size_t>(ti)]["source"].get<int>();
+        const Json& images = g.doc.value("images", Json::array());
+        if (si < 0 || si >= static_cast<int>(images.size())) return "";
+        const Json& img = images[static_cast<std::size_t>(si)];
+        if (img.contains("uri") && !img["uri"].get<std::string>().starts_with("data:")) {
+            // Relative to the glTF file; expressed relative to the project like every asset path.
+            std::filesystem::path rel = std::filesystem::path(display_path).parent_path() / img["uri"].get<std::string>();
+            return rel.lexically_normal().generic_string();
+        }
+        if (img.contains("bufferView")) return display_path + "#image" + std::to_string(si);  // embedded: decoded on request
+        return "";
+    };
     for (const Json& m : g.doc.value("materials", Json::array())) {
         Material mat;
         mat.name = m.value("name", "");
@@ -421,25 +446,16 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             }
             mat.metallic = pbr.value("metallicFactor", 1.0f);
             mat.roughness = pbr.value("roughnessFactor", 1.0f);
-            if (pbr.contains("baseColorTexture") && pbr["baseColorTexture"].contains("index")) {
-                int ti = pbr["baseColorTexture"]["index"].get<int>();
-                const Json& textures = g.doc.value("textures", Json::array());
-                if (ti >= 0 && ti < static_cast<int>(textures.size()) && textures[static_cast<std::size_t>(ti)].contains("source")) {
-                    int si = textures[static_cast<std::size_t>(ti)]["source"].get<int>();
-                    const Json& images = g.doc.value("images", Json::array());
-                    if (si >= 0 && si < static_cast<int>(images.size())) {
-                        const Json& img = images[static_cast<std::size_t>(si)];
-                        if (img.contains("uri") && !img["uri"].get<std::string>().starts_with("data:")) {
-                            // Relative to the glTF file; expressed relative to the project like every asset path.
-                            std::filesystem::path rel = std::filesystem::path(display_path).parent_path() / img["uri"].get<std::string>();
-                            mat.texture = rel.lexically_normal().generic_string();
-                        } else if (img.contains("bufferView")) {
-                            // Embedded image: exposed as "<file>#image<N>" and decoded on request.
-                            mat.texture = display_path + "#image" + std::to_string(si);
-                        }
-                    }
-                }
-            }
+            if (pbr.contains("baseColorTexture")) mat.texture = texture_path(pbr["baseColorTexture"]);
+            if (pbr.contains("metallicRoughnessTexture")) mat.metallic_roughness_texture = texture_path(pbr["metallicRoughnessTexture"]);
+        }
+        if (m.contains("normalTexture")) {
+            mat.normal_texture = texture_path(m["normalTexture"]);
+            mat.normal_scale = m["normalTexture"].value("scale", 1.0f);
+        }
+        if (m.contains("emissiveTexture")) mat.emissive_texture = texture_path(m["emissiveTexture"]);
+        if (m.contains("emissiveFactor") && m["emissiveFactor"].size() == 3) {
+            mat.emissive = {m["emissiveFactor"][0].get<float>(), m["emissiveFactor"][1].get<float>(), m["emissiveFactor"][2].get<float>()};
         }
         mesh.materials.push_back(mat);
     }

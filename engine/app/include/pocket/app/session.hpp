@@ -15,6 +15,7 @@
 #include <pocket/ui/document.hpp>
 #include <pocket/ui/font.hpp>
 #include <pocket/ui/painter.hpp>
+#include <pocket/world/recorder.hpp>
 #include <pocket/world/transcript.hpp>
 #include <pocket/world/world.hpp>
 
@@ -73,6 +74,9 @@ class Session {
     world::EntityId resolve_entity(const Json& v) const;
     Result<Json> world_command(std::string_view op, const Json& p, std::string_view source);
     Result<Json> events_command(std::string_view op, const Json& p, std::string_view source);
+    Result<Json> recorder_command(std::string_view op, const Json& p);
+    Result<Json> debug_command(std::string_view op, const Json& p);
+    void build_debug_draw();
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
     Result<Json> sprite_command(std::string_view op, const Json& p);
@@ -99,6 +103,17 @@ class Session {
     std::unique_ptr<renderer::Particles> particles_;
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
+    world::Recorder recorder_;
+    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false; } debug_flags_;
+    struct DebugShape {
+        int kind = 0;  // 0 line, 1 box, 2 sphere
+        Vec3 a, b;     // line ends; box center + half; sphere center (radius in b.x)
+        Quat rotation;
+        rhi::Color color;
+        std::int64_t until_tick = 0;  // drawn while tick < until_tick
+    };
+    std::vector<DebugShape> debug_shapes_;
+    renderer::DebugDraw debug_draw_;
     std::unique_ptr<assets::AssetStore> assets_;
     std::unique_ptr<audio::Audio> audio_;
     std::unique_ptr<Journal> journal_;

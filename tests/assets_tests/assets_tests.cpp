@@ -199,3 +199,29 @@ TEST_CASE("parse_gltf rejects malformed input with a location", "[assets]") {
     REQUIRE_FALSE(old.has_value());
     REQUIRE(old.error().message.find("version 1") != std::string::npos);
 }
+
+TEST_CASE("glTF material maps are read with their factors", "[assets][pbr]") {
+    assets::AssetStore store(root() / "samples" / "assets");
+    auto mesh = store.mesh("assets/plate.glb");
+    REQUIRE(mesh.has_value());
+    REQUIRE((*mesh)->materials.size() == 1);
+    const assets::Material& m = (*mesh)->materials[0];
+    REQUIRE(m.name == "plate");
+    REQUIRE(m.texture.empty());
+    REQUIRE(m.metallic_roughness_texture == "assets/plate_mr.png");
+    REQUIRE(m.normal_texture == "assets/plate_normal.png");
+    REQUIRE(m.normal_scale == Catch::Approx(1.0f));
+    REQUIRE(m.emissive_texture == "assets/plate_glow.png");
+    REQUIRE(m.emissive.x == Catch::Approx(1.0f));
+    REQUIRE(m.metallic == Catch::Approx(1.0f));
+    REQUIRE(m.roughness == Catch::Approx(1.0f));
+    // The maps decode as images of the expected size.
+    auto img = store.image("assets/plate_normal.png");
+    REQUIRE(img.has_value());
+    REQUIRE((*img)->width == 64);
+    // A material without maps keeps empty paths.
+    auto crate = store.mesh("assets/crate.glb");
+    REQUIRE(crate.has_value());
+    REQUIRE((*crate)->materials[0].normal_texture.empty());
+    REQUIRE((*crate)->materials[0].texture == "assets/checker.png");
+}

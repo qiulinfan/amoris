@@ -12,6 +12,7 @@
 #include <pocket/world/flecs.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -68,6 +69,12 @@ class World {
     Status set(EntityId id, std::string_view component, const Json& partial, std::uint64_t cause = 0);
     Status remove(EntityId id, std::string_view component, std::uint64_t cause = 0);
     [[nodiscard]] std::vector<std::string> components_of(EntityId id) const;
+    // Every serialized component of an entity as {name: value} (what scenes and the recorder store).
+    [[nodiscard]] Json components_json(EntityId id) const;
+    // The hash of each serialized component of an entity (cheap change detection without JSON).
+    void component_hashes(EntityId id, const std::function<void(std::string_view name, std::uint64_t hash)>& fn) const;
+    // Every entity in tree order (parents before children, siblings in creation order).
+    void visit_all(const std::function<void(EntityId id, EntityId parent, int depth)>& fn) const;
     [[nodiscard]] static bool known_component(std::string_view component);
 
     // Components (typed, for engine systems) -------------------------------------------------

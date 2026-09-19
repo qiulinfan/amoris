@@ -84,6 +84,14 @@ export interface MeshRenderer {
     color: Color;
     /** Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. */
     texture: string;
+    /** 0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives). */
+    metallic: number;
+    /** 0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives). */
+    roughness: number;
+    /** Light the surface gives off regardless of lighting, added to the asset material's emissive color. */
+    emissive: Color;
+    /** Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. */
+    normal_map: string;
     /** Whether the mesh is drawn. */
     visible: boolean;
 }
@@ -162,6 +170,14 @@ export interface Animator {
     time: number;
     /** Set when a non-looping clip reached its end; cleared by play. */
     finished: boolean;
+    /** Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running. */
+    fade: number;
+    /** Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed. */
+    fade_time: number;
+    /** The clip fading out (keeps playing at its own time until the fade ends); empty when none. */
+    from_clip: string;
+    /** Seconds into from_clip, advanced by the engine. */
+    from_time: number;
 }
 
 /** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once. */
@@ -316,11 +332,11 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
-    MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", visible: true },
+    MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, normal_map: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0 },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false },

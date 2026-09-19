@@ -60,10 +60,11 @@ fn tools_list() -> Value {
             "headless": { "type": "boolean", "default": true, "description": "false opens a window" },
             "editor": { "type": "boolean", "default": false, "description": "open the project in the Pocket editor (hierarchy, inspector, play/stop) and operate it through ui_* tools" },
             "seed": { "type": "integer" },
-            "size": { "type": "string", "description": "WxH render target size" }
+            "size": { "type": "string", "description": "WxH render target size" },
+            "history": { "type": "integer", "description": "keep the last N ticks for recorder.at/diff/track/first (time travel)" }
         }), &["project"])),
         tool("runtime_stop", "Stop the running session and return its final JSON report.", obj_schema(json!({}), &[])),
-        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.*, render.* families plus state, step, capture, log.tail, report.", obj_schema(json!({
+        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees) families plus state, step, capture, log.tail, report.", obj_schema(json!({
             "method": { "type": "string" },
             "params": { "type": "object" }
         }), &["method"])),
@@ -165,6 +166,9 @@ impl<'a> McpServer<'a> {
         }
         if let Some(size) = args.get("size").and_then(|s| s.as_str()) {
             cmd.arg("--size").arg(size);
+        }
+        if let Some(history) = args.get("history").and_then(|h| h.as_u64()) {
+            cmd.arg("--history").arg(history.to_string());
         }
         cmd.current_dir(&self.ws.root).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().context("spawning pocket_runtime")?;

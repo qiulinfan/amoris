@@ -23,6 +23,8 @@ export interface PlayAnimationOptions {
     loop?: boolean;
     speed?: number;
     time?: number;
+    /** Seconds to cross-fade from the clip playing now (which keeps playing until the fade ends). */
+    fade?: number;
 }
 
 export const animation = {
@@ -39,7 +41,7 @@ export const animation = {
         return command("animation.stop", { entity, reset }) as Components["Animator"];
     },
     /** Every joint of the entity's pose in world space: where the bones are right now. */
-    pose(entity: EntityRef): { entity: number; mesh: string; joints: PoseJoint[]; posed: boolean } {
-        return command("animation.pose", { entity }) as { entity: number; mesh: string; joints: PoseJoint[]; posed: boolean };
+    pose(entity: EntityRef): { entity: number; mesh: string; joints: PoseJoint[]; posed: boolean; clip?: string; time?: number; blend?: { from: string; from_time: number; weight: number; remaining: number } } {
+        return command("animation.pose", { entity });
     },
 };

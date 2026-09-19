@@ -36,6 +36,9 @@ class EventLog {
     // Events with seq > since, oldest first, at most limit. type_prefix filters "a.b" and "a.".
     [[nodiscard]] std::vector<Event> since(std::uint64_t since_seq, std::size_t limit = 1000, std::string_view type_prefix = {}) const;
     [[nodiscard]] std::vector<Event> recent(std::size_t n) const;
+    [[nodiscard]] const Event* find(std::uint64_t seq) const;  // null when never emitted or evicted
+    // The event and the chain of its causes, the event first; stops at an unknown cause or `limit`.
+    [[nodiscard]] std::vector<Event> why(std::uint64_t seq, std::size_t limit = 32) const;
     [[nodiscard]] std::uint64_t last_seq() const { return next_seq_ - 1; }
     [[nodiscard]] std::uint64_t total() const { return next_seq_ - 1; }
     [[nodiscard]] std::size_t stored() const { return events_.size(); }

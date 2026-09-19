@@ -282,6 +282,10 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["mesh"] = v.mesh;
     vec_to_json(j["color"], v.color);
     j["texture"] = v.texture;
+    j["metallic"] = v.metallic;
+    j["roughness"] = v.roughness;
+    vec_to_json(j["emissive"], v.emissive);
+    j["normal_map"] = v.normal_map;
     j["visible"] = v.visible;
 }
 
@@ -289,6 +293,10 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "mesh", v.mesh);
     if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
     scalar_from_json(j, "texture", v.texture);
+    scalar_from_json(j, "metallic", v.metallic);
+    scalar_from_json(j, "roughness", v.roughness);
+    if (j.is_object() && j.contains("emissive")) vec_from_json(j["emissive"], v.emissive);
+    scalar_from_json(j, "normal_map", v.normal_map);
     scalar_from_json(j, "visible", v.visible);
 }
 
@@ -299,6 +307,13 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.color.b);
     h.f32(v.color.a);
     h.str(v.texture);
+    h.f32(v.metallic);
+    h.f32(v.roughness);
+    h.f32(v.emissive.r);
+    h.f32(v.emissive.g);
+    h.f32(v.emissive.b);
+    h.f32(v.emissive.a);
+    h.str(v.normal_map);
     h.u8(v.visible ? 1 : 0);
 }
 
@@ -309,6 +324,13 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "color.g") { *out = &v.color.g; return 1; }
     if (path == "color.b") { *out = &v.color.b; return 1; }
     if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "metallic") { *out = &v.metallic; return 1; }
+    if (path == "roughness") { *out = &v.roughness; return 1; }
+    if (path == "emissive") { *out = &v.emissive.r; return 4; }
+    if (path == "emissive.r") { *out = &v.emissive.r; return 1; }
+    if (path == "emissive.g") { *out = &v.emissive.g; return 1; }
+    if (path == "emissive.b") { *out = &v.emissive.b; return 1; }
+    if (path == "emissive.a") { *out = &v.emissive.a; return 1; }
     return 0;
 }
 
@@ -473,6 +495,10 @@ void to_json(Json& j, const Animator& v) {
     j["speed"] = v.speed;
     j["time"] = v.time;
     j["finished"] = v.finished;
+    j["fade"] = v.fade;
+    j["fade_time"] = v.fade_time;
+    j["from_clip"] = v.from_clip;
+    j["from_time"] = v.from_time;
 }
 
 void from_json(const Json& j, Animator& v) {
@@ -482,6 +508,10 @@ void from_json(const Json& j, Animator& v) {
     scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "time", v.time);
     scalar_from_json(j, "finished", v.finished);
+    scalar_from_json(j, "fade", v.fade);
+    scalar_from_json(j, "fade_time", v.fade_time);
+    scalar_from_json(j, "from_clip", v.from_clip);
+    scalar_from_json(j, "from_time", v.from_time);
 }
 
 void hash_component(StateHasherRef& h, const Animator& v) {
@@ -491,12 +521,19 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.speed);
     h.f32(v.time);
     h.u8(v.finished ? 1 : 0);
+    h.f32(v.fade);
+    h.f32(v.fade_time);
+    h.str(v.from_clip);
+    h.f32(v.from_time);
 }
 
 std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
     (void)v;
     if (path == "speed") { *out = &v.speed; return 1; }
     if (path == "time") { *out = &v.time; return 1; }
+    if (path == "fade") { *out = &v.fade; return 1; }
+    if (path == "fade_time") { *out = &v.fade_time; return 1; }
+    if (path == "from_time") { *out = &v.from_time; return 1; }
     return 0;
 }
 
@@ -858,10 +895,14 @@ constexpr std::array<FieldInfo, 4> kLightFields = {{
     FieldInfo{"intensity", "f32", "Multiplier applied to color."},
     FieldInfo{"range", "f32", "Point light range in meters."},
 }};
-constexpr std::array<FieldInfo, 4> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 8> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"color", "color", "Base color, linear RGB; multiplies the asset's material color."},
     FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
+    FieldInfo{"metallic", "f32", "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives)."},
+    FieldInfo{"roughness", "f32", "0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives)."},
+    FieldInfo{"emissive", "color", "Light the surface gives off regardless of lighting, added to the asset material's emissive color."},
+    FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
 }};
 constexpr std::array<FieldInfo, 10> kSpriteFields = {{
@@ -894,13 +935,17 @@ constexpr std::array<FieldInfo, 6> kTileMapFields = {{
     FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this."},
     FieldInfo{"visible", "bool", "Whether the map is drawn."},
 }};
-constexpr std::array<FieldInfo, 6> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 10> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)."},
     FieldInfo{"playing", "bool", "Whether time advances."},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished)."},
     FieldInfo{"speed", "f32", "Playback rate multiplier."},
     FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek."},
     FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
+    FieldInfo{"fade", "f32", "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running."},
+    FieldInfo{"fade_time", "f32", "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed."},
+    FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none."},
+    FieldInfo{"from_time", "f32", "Seconds into from_clip, advanced by the engine."},
 }};
 constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},

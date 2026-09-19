@@ -19,11 +19,22 @@ onStart(() => {
     if (arm !== undefined) log("arm.glb", animation.clips(arm));
 });
 
+let armClip = "wave";
+
 onTick((t) => {
     yaw += t.dt * 0.6;
     if (crate) world.set(crate, "Transform", { rotation: { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } });
+    // Every four seconds the arm cross-fades between its two clips over half a second.
+    if (t.tick > 0 && t.tick % 240 === 0) {
+        const arm = world.find("Arm");
+        if (arm !== undefined) {
+            armClip = armClip === "wave" ? "nod" : "wave";
+            animation.play(arm, armClip, { fade: 0.5 });
+        }
+    }
 });
 
 expose("yaw", () => Number(yaw.toFixed(3)));
+expose("arm.clip", () => armClip);
 expose("arm.time", () => Number((world.get(world.find("Arm") ?? 0, "Animator")?.time ?? 0).toFixed(3)));
 expose("missing", () => (command<{ assets?: { missing?: string[] } }>("render.stats").assets?.missing ?? []).length);

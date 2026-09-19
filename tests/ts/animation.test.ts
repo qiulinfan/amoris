@@ -18,4 +18,13 @@ test("clips, play, stop and pose through the SDK", () => {
     expect(pose.joints.length).toBe(2);
     expect(pose.joints[1].name).toBe("tip");
     expect(() => animation.play(arm, "missing")).toThrow();
+    // A cross-fade remembers the outgoing clip and its time.
+    animation.play(arm, "wave", { time: 0.4 });
+    const fading = animation.play(arm, "nod", { fade: 0.3 });
+    expect(fading.clip).toBe("nod");
+    expect(fading.from_clip).toBe("wave");
+    expect(Math.abs(fading.from_time - 0.4) < 1e-6).toBe(true);   // stored as a 32-bit float
+    expect(Math.abs(fading.fade - 0.3) < 1e-6).toBe(true);
+    // Playing without a fade drops any fade in progress.
+    expect(animation.play(arm, "wave").from_clip).toBe("");
 });

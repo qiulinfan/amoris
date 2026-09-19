@@ -23,7 +23,7 @@ Gameplay reads only `t.dt` and never the wall clock, which is what makes runs re
 
 ## Events
 
-`events.emit("crate.dropped", { id }, { subject: id, cause })` and `events.recent()`, `events.since(seq)`. Events carry causes, so a transcript can say what led to what.
+`events.emit("crate.dropped", { id }, { subject: id, cause })` and `events.recent()`, `events.since(seq)`, `events.why(seq)` (the chain of causes as a story). Events carry causes, so a transcript can say what led to what. `recorder.start(600)` keeps the last 600 ticks; `recorder.track("/Ball", "Transform", "position.y")` is a jump profile, `recorder.first("/Ball", "Transform", "position.y", "<", 0)` the tick it fell through, `recorder.diff({ from, to })` what changed; `render.visible()` lists what the camera sees with coverage and bounds; `render.debug({ colliders: true })` and `debug.line(a, b, { color, ticks })` draw collision shapes and your own markers into captures.
 
 ## Input
 
@@ -67,7 +67,7 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Animation
 
-`animation.play(entity, clip?, { loop, speed, restart, time })`, `animation.stop(entity, reset)`, `animation.clips(entity | { mesh })`, `animation.pose(entity)` for glTF skins and clips through the `Animator` component (`docs/design/animation.md`).
+`animation.play(entity, clip?, { loop, speed, restart, time, fade })`, `animation.stop(entity, reset)`, `animation.clips(entity | { mesh })`, `animation.pose(entity)` for glTF skins and clips through the `Animator` component (`docs/design/animation.md`).
 
 ## Particles
 

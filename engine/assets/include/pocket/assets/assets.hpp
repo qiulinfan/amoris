@@ -28,6 +28,11 @@ struct Material {
     std::string texture;       // project-relative image path, empty for none
     float metallic = 0;
     float roughness = 1;
+    std::string metallic_roughness_texture;  // glTF: roughness in G, metallic in B; multiplies the factors
+    std::string normal_texture;              // tangent-space normal map, +Y up (glTF convention)
+    float normal_scale = 1;
+    std::string emissive_texture;
+    Vec3 emissive{0, 0, 0};                  // linear RGB, multiplied by the emissive texture
     bool double_sided = false;
     std::string name;
 };

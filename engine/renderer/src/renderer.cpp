@@ -20,7 +20,7 @@ namespace {
 constexpr std::uint32_t kMaxPointLights = 8;
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 176;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 208;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -43,8 +43,31 @@ struct alignas(16) ObjectUniforms {
     float color[4];
     std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit)
     float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
+    float pbr[4];             // metallic, roughness, normal scale, 1 when a normal map is bound
+    float emissive[4];        // linear RGB added after lighting, w unused
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
+
+constexpr const char* kLineWgsl = R"WGSL(
+struct LineFrame {
+    view_proj: mat4x4f,
+};
+@group(0) @binding(0) var<uniform> frame: LineFrame;
+struct VsOut {
+    @builtin(position) clip: vec4f,
+    @location(0) color: vec4f,
+};
+@vertex fn vs(@location(0) position: vec3f, @location(1) color: vec4f) -> VsOut {
+    var out: VsOut;
+    out.clip = frame.view_proj * vec4f(position, 1.0);
+    out.clip.z = out.clip.z - 0.0005 * out.clip.w;  // a hair toward the camera: lines on a surface win
+    out.color = color;
+    return out;
+}
+@fragment fn fs(in: VsOut) -> @location(0) vec4f {
+    return in.color;
+}
+)WGSL";
 
 constexpr const char* kMeshWgsl = R"WGSL(
 struct Frame {
@@ -67,12 +90,17 @@ struct Object {
     color: vec4f,
     id: vec4u,
     uv_rect: vec4f,
+    pbr: vec4f,
+    emissive: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 @group(1) @binding(1) var<storage, read> joints: array<mat4x4f>;
 @group(2) @binding(0) var base_tex: texture_2d<f32>;
 @group(2) @binding(1) var base_samp: sampler;
+@group(2) @binding(2) var mr_tex: texture_2d<f32>;
+@group(2) @binding(3) var normal_tex: texture_2d<f32>;
+@group(2) @binding(4) var emissive_tex: texture_2d<f32>;
 
 struct VsOut {
     @builtin(position) clip: vec4f,
@@ -81,6 +109,7 @@ struct VsOut {
     @location(2) uv: vec2f,
     @location(3) color: vec4f,
     @location(4) @interpolate(flat) id: u32,
+    @location(5) @interpolate(flat) instance: u32,
 };
 
 @vertex fn vs(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
@@ -93,6 +122,7 @@ struct VsOut {
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.color = object.color;
     out.id = object.id.x;
+    out.instance = instance;
     return out;
 }
 
@@ -118,6 +148,7 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.color = object.color;
     out.id = object.id.x;
+    out.instance = instance;
     return out;
 }
 
@@ -132,15 +163,64 @@ struct FsOut {
     @location(1) id: u32,
 };
 
+// Tangent frame from screen-space derivatives (no vertex tangents needed), then the map's
+// +Y-up (glTF) normal bent into world space.
+fn perturb_normal(n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, map: vec3f) -> vec3f {
+    let dp2perp = cross(dp2, n);
+    let dp1perp = cross(n, dp1);
+    let t = dp2perp * duv1.x + dp1perp * duv2.x;
+    let b = dp2perp * duv1.y + dp1perp * duv2.y;
+    let invmax = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
+    let tbn = mat3x3f(t * invmax, b * invmax, n);
+    return normalize(tbn * vec3f(map.x, -map.y, map.z));
+}
+
+// GGX / Schlick / Smith specular plus Lambert diffuse for one light direction; the diffuse term
+// is not divided by pi (and the specular scaled to match) so brightness stays comparable to a plain
+// Lambert surface under a light of intensity one.
+fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32) -> vec3f {
+    let h = normalize(l + v);
+    let ndl = max(dot(n, l), 0.0);
+    let ndv = max(dot(n, v), 1e-4);
+    let ndh = max(dot(n, h), 0.0);
+    let vdh = max(dot(v, h), 0.0);
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let denom = ndh * ndh * (a2 - 1.0) + 1.0;
+    let d = a2 / max(denom * denom, 1e-6);            // GGX, times pi
+    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+    let f0 = mix(vec3f(0.04), albedo, metallic);
+    let f = f0 + (vec3f(1.0) - f0) * pow(1.0 - vdh, 5.0);
+    let spec = d * g * f / max(4.0 * ndv, 1e-4);      // the ndl of the denominator cancels with the one below
+    let diffuse = albedo * (1.0 - metallic) * (vec3f(1.0) - f);
+    return (diffuse * ndl + spec);
+}
+
 @fragment fn fs(in: VsOut) -> FsOut {
-    let n = normalize(in.normal);
+    let object = objects[in.instance];
+    // Derivatives and samples first: both must stay in uniform control flow.
+    let dp1 = dpdx(in.world_pos);
+    let dp2 = dpdy(in.world_pos);
+    let duv1 = dpdx(in.uv);
+    let duv2 = dpdy(in.uv);
+    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    let mr = textureSample(mr_tex, base_samp, in.uv);
+    let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
+    let em = textureSample(emissive_tex, base_samp, in.uv).rgb;
+    var n = normalize(in.normal);
+    if (object.pbr.w > 0.5) {
+        n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z));
+    }
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    var light = frame.ambient.rgb;
+    let metallic = clamp(object.pbr.x * mr.b, 0.0, 1.0);
+    let roughness = clamp(object.pbr.y * mr.g, 0.04, 1.0);
+    let albedo = base.rgb;
+    let f0 = mix(vec3f(0.04), albedo, metallic);
+    var color = frame.ambient.rgb * mix(albedo, f0, metallic);
     // Directional light.
     let l = normalize(-frame.sun_dir.xyz);
     let ndl = max(dot(n, l), 0.0);
-    let h = normalize(l + v);
-    let spec = pow(max(dot(n, h), 0.0), 32.0) * 0.25;
     // Shadow map lookup with a 3x3 comparison filter; slope-scaled bias against acne.
     var shadow = 1.0;
     if (frame.shadow.w > 0.5) {
@@ -158,7 +238,7 @@ struct FsOut {
             shadow = mix(1.0 - frame.shadow.z, 1.0, lit / 9.0);
         }
     }
-    light += frame.sun_color.rgb * (ndl + spec * ndl) * shadow;
+    color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow;
     // Point lights.
     for (var i = 0u; i < frame.point_count.x; i = i + 1u) {
         let to_light = frame.point_pos[i].xyz - in.world_pos;
@@ -166,12 +246,11 @@ struct FsOut {
         let range = frame.point_pos[i].w;
         let att = clamp(1.0 - (dist * dist) / (range * range), 0.0, 1.0);
         let pl = to_light / max(dist, 0.0001);
-        let pndl = max(dot(n, pl), 0.0);
-        light += frame.point_color[i].rgb * pndl * att * att;
+        color += frame.point_color[i].rgb * brdf(n, v, pl, albedo, metallic, roughness) * att * att;
     }
-    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    color += object.emissive.rgb * em;
     var out: FsOut;
-    out.color = vec4f(base.rgb * light, base.a);
+    out.color = vec4f(color, base.a);
     out.id = in.id;
     return out;
 }
@@ -221,6 +300,11 @@ struct Renderer::Impl {
     std::uint32_t joint_count = 0;
     const Animation* animation = nullptr;  // poses for the frame being drawn
     WGPURenderPipeline sprite_pipeline = nullptr;
+    WGPURenderPipeline line_pipeline = nullptr;
+    WGPUPipelineLayout line_layout = nullptr;
+    WGPUShaderModule line_shader = nullptr;
+    WGPUBuffer line_buffer = nullptr;
+    std::size_t line_capacity = 0;  // vertices
     WGPURenderPipeline shadow_pipeline = nullptr;
     WGPUPipelineLayout shadow_layout = nullptr;
     WGPUBindGroupLayout scene_bgl = nullptr;   // frame uniforms + shadow map + comparison sampler
@@ -245,11 +329,11 @@ struct Renderer::Impl {
     struct GpuTexture {
         WGPUTexture texture = nullptr;
         WGPUTextureView view = nullptr;
-        WGPUBindGroup bind_group = nullptr;
-        WGPUBindGroup bind_group_nearest = nullptr;
     };
     GpuTexture white;
+    GpuTexture flat_normal;   // (0.5, 0.5, 1): no bend
     std::map<std::string, GpuTexture> textures;
+    std::map<std::string, WGPUBindGroup> material_groups;  // "base|mr|normal|emissive|filter" -> group 2
     struct AssetMesh {
         GpuMesh gpu;
         std::vector<assets::Submesh> submeshes;
@@ -274,8 +358,6 @@ struct Renderer::Impl {
     std::vector<std::uint8_t> object_staging;
 
     void release_texture(GpuTexture& t) {
-        if (t.bind_group) wgpuBindGroupRelease(t.bind_group);
-        if (t.bind_group_nearest) wgpuBindGroupRelease(t.bind_group_nearest);
         if (t.view) wgpuTextureViewRelease(t.view);
         if (t.texture) wgpuTextureRelease(t.texture);
         t = GpuTexture{};
@@ -295,12 +377,15 @@ struct Renderer::Impl {
         asset_meshes.clear();
         for (auto& [path, t] : textures) release_texture(t);
         textures.clear();
+        for (auto& [key, bg] : material_groups) wgpuBindGroupRelease(bg);
+        material_groups.clear();
         failed.clear();
     }
 
     ~Impl() {
         release_assets();
         release_texture(white);
+        release_texture(flat_normal);
         if (sampler) wgpuSamplerRelease(sampler);
         if (nearest_sampler) wgpuSamplerRelease(nearest_sampler);
         if (material_bgl) wgpuBindGroupLayoutRelease(material_bgl);
@@ -322,6 +407,10 @@ struct Renderer::Impl {
         if (shadow_texture) wgpuTextureRelease(shadow_texture);
         if (shadow_sampler) wgpuSamplerRelease(shadow_sampler);
         if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
+        if (line_pipeline) wgpuRenderPipelineRelease(line_pipeline);
+        if (line_layout) wgpuPipelineLayoutRelease(line_layout);
+        if (line_shader) wgpuShaderModuleRelease(line_shader);
+        if (line_buffer) wgpuBufferRelease(line_buffer);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
         if (skinned_pipeline) wgpuRenderPipelineRelease(skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
@@ -405,7 +494,7 @@ struct Renderer::Impl {
         od.entries = oe;
         object_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &od);
 
-        WGPUBindGroupLayoutEntry me[2]{};
+        WGPUBindGroupLayoutEntry me[5]{};
         me[0].binding = 0;
         me[0].visibility = WGPUShaderStage_Fragment;
         me[0].texture.sampleType = WGPUTextureSampleType_Float;
@@ -413,9 +502,13 @@ struct Renderer::Impl {
         me[1].binding = 1;
         me[1].visibility = WGPUShaderStage_Fragment;
         me[1].sampler.type = WGPUSamplerBindingType_Filtering;
+        for (std::uint32_t b = 2; b < 5; ++b) {
+            me[b] = me[0];
+            me[b].binding = b;
+        }
         WGPUBindGroupLayoutDescriptor md{};
         md.label = rhi::str("pocket.material");
-        md.entryCount = 2;
+        md.entryCount = 5;
         md.entries = me;
         material_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &md);
 
@@ -517,6 +610,53 @@ struct Renderer::Impl {
         rpd.primitive.cullMode = WGPUCullMode_None;
         sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
+        // Debug lines: their own tiny shader over the frame uniform, alpha blended, depth tested
+        // without writing, and no id writes (a line over an entity leaves its id in place).
+        {
+            POCKET_TRY(lm, device->create_shader("pocket.lines", kLineWgsl));
+            line_shader = lm;
+            WGPUBindGroupLayout lbgls[1] = {frame_bgl};
+            WGPUPipelineLayoutDescriptor lpld{};
+            lpld.label = rhi::str("pocket.lines");
+            lpld.bindGroupLayoutCount = 1;
+            lpld.bindGroupLayouts = lbgls;
+            line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
+            WGPUVertexAttribute lattrs[2]{};
+            lattrs[0].format = WGPUVertexFormat_Float32x3;
+            lattrs[0].offset = 0;
+            lattrs[0].shaderLocation = 0;
+            lattrs[1].format = WGPUVertexFormat_Float32x4;
+            lattrs[1].offset = sizeof(float) * 3;
+            lattrs[1].shaderLocation = 1;
+            WGPUVertexBufferLayout lvbl{};
+            lvbl.stepMode = WGPUVertexStepMode_Vertex;
+            lvbl.arrayStride = sizeof(DebugVertex);
+            lvbl.attributeCount = 2;
+            lvbl.attributes = lattrs;
+            WGPUColorTargetState ltargets[2] = {targets[0], targets[1]};
+            ltargets[1].writeMask = WGPUColorWriteMask_None;
+            WGPUFragmentState lfs{};
+            lfs.module = line_shader;
+            lfs.entryPoint = rhi::str("fs");
+            lfs.targetCount = 2;
+            lfs.targets = ltargets;
+            WGPURenderPipelineDescriptor lrpd{};
+            lrpd.label = rhi::str("pocket.lines");
+            lrpd.layout = line_layout;
+            lrpd.vertex.module = line_shader;
+            lrpd.vertex.entryPoint = rhi::str("vs");
+            lrpd.vertex.bufferCount = 1;
+            lrpd.vertex.buffers = &lvbl;
+            lrpd.primitive.topology = WGPUPrimitiveTopology_LineList;
+            lrpd.primitive.frontFace = WGPUFrontFace_CCW;
+            lrpd.primitive.cullMode = WGPUCullMode_None;
+            lrpd.depthStencil = &ds;  // LessEqual, no writes (the sprite settings)
+            lrpd.multisample.count = 1;
+            lrpd.multisample.mask = 0xFFFFFFFFu;
+            lrpd.fragment = &lfs;
+            line_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &lrpd);
+            if (!line_pipeline) return fail("gpu_pipeline_failed", "line pipeline creation failed");
+        }
         // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
         // in the lookup handles acne.
         WGPUDepthStencilState sds = ds;
@@ -635,6 +775,9 @@ struct Renderer::Impl {
         const std::uint8_t white_px[4] = {255, 255, 255, 255};
         POCKET_TRY(w, upload_texture("pocket.white", 1, 1, white_px));
         white = w;
+        const std::uint8_t flat_px[4] = {128, 128, 255, 255};
+        POCKET_TRY(fnrm, upload_texture("pocket.flat_normal", 1, 1, flat_px));
+        flat_normal = fnrm;
 
         for (int k = 0; k < kPrimitiveCount; ++k) {
             MeshData data = make_primitive(k);
@@ -678,20 +821,33 @@ struct Renderer::Impl {
         layout.rowsPerImage = h;
         WGPUExtent3D ext{w, h, 1};
         wgpuQueueWriteTexture(device->queue(), &dst, rgba, static_cast<std::size_t>(w) * h * 4, &layout, &ext);
-        WGPUBindGroupEntry entries[2]{};
-        entries[0].binding = 0;
-        entries[0].textureView = t.view;
-        entries[1].binding = 1;
-        entries[1].sampler = sampler;
-        WGPUBindGroupDescriptor bd{};
-        bd.label = rhi::str(label);
-        bd.layout = material_bgl;
-        bd.entryCount = 2;
-        bd.entries = entries;
-        t.bind_group = wgpuDeviceCreateBindGroup(device->device(), &bd);
-        entries[1].sampler = nearest_sampler;
-        t.bind_group_nearest = wgpuDeviceCreateBindGroup(device->device(), &bd);
         return t;
+    }
+
+    // Group 2 for a set of maps: base color, metallic-roughness, normal, emissive (empty paths take
+    // the white or flat-normal defaults), with the linear or nearest sampler. Cached by key.
+    WGPUBindGroup material_for(const std::string& base, const std::string& mr, const std::string& normal, const std::string& emissive, bool nearest) {
+        std::string key = base + "|" + mr + "|" + normal + "|" + emissive + (nearest ? "|n" : "|l");
+        if (auto it = material_groups.find(key); it != material_groups.end()) return it->second;
+        WGPUBindGroupEntry entries[5]{};
+        entries[0].binding = 0;
+        entries[0].textureView = view_for(base, white);
+        entries[1].binding = 1;
+        entries[1].sampler = nearest ? nearest_sampler : sampler;
+        entries[2].binding = 2;
+        entries[2].textureView = view_for(mr, white);
+        entries[3].binding = 3;
+        entries[3].textureView = view_for(normal, flat_normal);
+        entries[4].binding = 4;
+        entries[4].textureView = view_for(emissive, white);
+        WGPUBindGroupDescriptor bd{};
+        bd.label = rhi::str("pocket.material");
+        bd.layout = material_bgl;
+        bd.entryCount = 5;
+        bd.entries = entries;
+        WGPUBindGroup bg = wgpuDeviceCreateBindGroup(device->device(), &bd);
+        material_groups[key] = bg;
+        return bg;
     }
 
     // Logged once per path; listed in the stats of every frame that wanted it.
@@ -704,25 +860,27 @@ struct Renderer::Impl {
     }
 
     // The bind group for an image path (the white texture when empty or unavailable).
-    WGPUBindGroup texture_for(const std::string& path, bool nearest = false) {
-        auto pick = [&](const GpuTexture& t) { return nearest ? t.bind_group_nearest : t.bind_group; };
-        if (path.empty()) return pick(white);
-        if (auto it = textures.find(path); it != textures.end()) return pick(it->second);
-        if (!assets) { report_missing(path, "no asset store"); return pick(white); }
-        if (failed.contains(path)) { note_missing(path); return pick(white); }
+    // The view of an image by project path, uploaded on first use; `fallback` when unavailable.
+    WGPUTextureView view_for(const std::string& path, const GpuTexture& fallback) {
+        if (path.empty()) return fallback.view;
+        if (auto it = textures.find(path); it != textures.end()) return it->second.view;
+        if (!assets) { report_missing(path, "no asset store"); return fallback.view; }
+        if (failed.contains(path)) { note_missing(path); return fallback.view; }
         auto img = assets->image(path);
         if (!img) {
             report_missing(path, img.error().message);
-            return pick(white);
+            return fallback.view;
         }
         auto t = upload_texture(path.c_str(), (*img)->width, (*img)->height, (*img)->rgba.data());
         if (!t) {
             report_missing(path, t.error().message);
-            return pick(white);
+            return fallback.view;
         }
         textures[path] = *t;
-        return pick(*t);
+        return t->view;
     }
+
+    WGPUBindGroup texture_for(const std::string& path, bool nearest = false) { return material_for(path, "", "", "", nearest); }
 
     // A glTF mesh by project path, uploaded on first use; null when unavailable.
     AssetMesh* asset_mesh(const std::string& path) {
@@ -880,7 +1038,7 @@ std::uint32_t tile_layers_parts(const Draws& sprites) {
 }
 }  // namespace
 
-Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation) {
+Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug) {
     Impl& im = *impl_;
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
     im.last_width = frame.width;
@@ -988,24 +1146,39 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         to_array(model, ou.model);
         to_array(transpose(model.inverse_affine()), ou.normal);
         ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
-        auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, bool skinned = false) {
+        // Material inputs: the asset's material, overridden per entity by the MeshRenderer.
+        auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, const assets::Material* mat, bool skinned = false) {
             if (count >= kMaxObjects) return;
             ou.color[0] = color.x; ou.color[1] = color.y; ou.color[2] = color.z; ou.color[3] = color.w;
-            draws.push_back({tex, mesh_key, gpu, first, n, im.texture_for(tex), ou, skinned});
+            float metallic = mr.metallic >= 0 ? mr.metallic : (mat ? mat->metallic : 0.0f);
+            float roughness = mr.roughness >= 0 ? mr.roughness : (mat ? mat->roughness : 1.0f);
+            const std::string& normal_map = !mr.normal_map.empty() ? mr.normal_map : (mat ? mat->normal_texture : std::string{});
+            const std::string& mr_map = mat ? mat->metallic_roughness_texture : std::string{};
+            const std::string& em_map = mat ? mat->emissive_texture : std::string{};
+            ou.pbr[0] = metallic;
+            ou.pbr[1] = roughness;
+            ou.pbr[2] = mat ? mat->normal_scale : 1.0f;
+            ou.pbr[3] = normal_map.empty() ? 0.0f : 1.0f;
+            ou.emissive[0] = mr.emissive.r + (mat ? mat->emissive.x : 0.0f);
+            ou.emissive[1] = mr.emissive.g + (mat ? mat->emissive.y : 0.0f);
+            ou.emissive[2] = mr.emissive.b + (mat ? mat->emissive.z : 0.0f);
+            ou.emissive[3] = 0;
+            WGPUBindGroup group = im.material_for(tex, mr_map, normal_map, em_map, false);
+            draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned});
             ++count;
         };
         ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
         int kind = Impl::primitive_index(mr.mesh);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
-            push(&gm, 0, gm.index_count, mr.texture, {mr.color.r, mr.color.g, mr.color.b, mr.color.a}, mr.mesh);
+            push(&gm, 0, gm.index_count, mr.texture, {mr.color.r, mr.color.g, mr.color.b, mr.color.a}, mr.mesh, nullptr);
             return;
         }
         Impl::AssetMesh* am = im.asset_mesh(mr.mesh);
         if (!am) {
             // Missing asset: a magenta cube marks the spot instead of hiding the problem.
             const GpuMesh& gm = im.meshes[0];
-            push(&gm, 0, gm.index_count, "", {1, 0, 1, 1}, "cube");
+            push(&gm, 0, gm.index_count, "", {1, 0, 1, 1}, "cube", nullptr);
             return;
         }
         // A posed skin: its joint matrices go into the joint buffer once per entity and skin.
@@ -1028,7 +1201,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
             ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
             if (skinned) ++skinned_instances;
-            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, skinned);
+            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, &mat, skinned);
         }
         ou.id[2] = 0;
     });
@@ -1160,6 +1333,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.skinned = skinned_instances;
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
+    im.stats.materials = static_cast<std::uint32_t>(im.material_groups.size());
 
     WGPURenderPassColorAttachment ca[2]{};
     ca[0].view = frame.color;
@@ -1286,6 +1460,21 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             i += run;
         }
     }
+    if (debug && !debug->vertices().empty()) {
+        const auto& verts = debug->vertices();
+        if (verts.size() > im.line_capacity) {
+            if (im.line_buffer) wgpuBufferRelease(im.line_buffer);
+            im.line_capacity = std::max<std::size_t>(verts.size() * 2, 1024);
+            im.line_buffer = im.device->create_buffer("pocket.lines", WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, im.line_capacity * sizeof(DebugVertex));
+        }
+        im.device->write_buffer(im.line_buffer, 0, verts.data(), verts.size() * sizeof(DebugVertex));
+        wgpuRenderPassEncoderSetPipeline(pass, im.line_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetVertexBuffer(pass, 0, im.line_buffer, 0, verts.size() * sizeof(DebugVertex));
+        wgpuRenderPassEncoderDraw(pass, static_cast<std::uint32_t>(verts.size()), 1, 0, 0);
+        im.stats.draw_calls++;
+        im.stats.debug_lines = static_cast<std::uint32_t>(verts.size() / 2);
+    }
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
     return {};
@@ -1387,6 +1576,8 @@ Json Renderer::describe() const {
     j["particles"] = s.particles;
     j["skinned"] = s.skinned;
     j["tile_layers"] = s.tile_layers;
+    j["debug_lines"] = s.debug_lines;
+    j["materials"] = s.materials;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;
     j["has_camera"] = s.has_camera;

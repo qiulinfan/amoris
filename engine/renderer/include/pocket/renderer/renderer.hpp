@@ -5,6 +5,7 @@
 #include <pocket/core/json.hpp>
 #include <pocket/core/result.hpp>
 #include <pocket/renderer/animation.hpp>
+#include <pocket/renderer/debug_draw.hpp>
 #include <pocket/renderer/particles.hpp>
 #include <pocket/rhi/device.hpp>
 #include <pocket/world/world.hpp>
@@ -31,6 +32,7 @@ struct RenderStats {
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
+    std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;
     bool has_camera = false;
@@ -38,6 +40,7 @@ struct RenderStats {
     world::EntityId camera = 0;
     std::uint32_t asset_meshes = 0;   // distinct glTF meshes on the GPU
     std::uint32_t textures = 0;       // distinct images on the GPU
+    std::uint32_t materials = 0;      // distinct material bind groups (texture sets)
     std::vector<std::string> missing; // asset paths that failed to load this frame (drawn as magenta cubes)
 };
 
@@ -68,7 +71,7 @@ class Renderer {
 
     // Draw the world into the frame (color + depth from the frame, ids into the renderer's own
     // target). Must be called between Device::begin_frame and Device::end_frame.
-    Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr);
+    Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr, const DebugDraw* debug = nullptr);
     // Read back the id buffer of the last rendered frame.
     Result<IdImage> read_ids();
     // Entity under a pixel (0 when background). Reads back the whole id buffer.

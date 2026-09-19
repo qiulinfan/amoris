@@ -48,6 +48,24 @@ std::vector<Event> EventLog::recent(std::size_t n) const {
     return out;
 }
 
+const Event* EventLog::find(std::uint64_t seq) const {
+    if (events_.empty() || seq == 0) return nullptr;
+    std::uint64_t first = events_.front().seq;
+    if (seq < first || seq > events_.back().seq) return nullptr;
+    const Event& e = events_[static_cast<std::size_t>(seq - first)];
+    return e.seq == seq ? &e : nullptr;
+}
+
+std::vector<Event> EventLog::why(std::uint64_t seq, std::size_t limit) const {
+    std::vector<Event> chain;
+    const Event* e = find(seq);
+    while (e && chain.size() < limit) {
+        chain.push_back(*e);
+        e = e->cause != 0 ? find(e->cause) : nullptr;
+    }
+    return chain;
+}
+
 Json EventLog::histogram(std::uint64_t since_seq) const {
     std::map<std::string, std::uint64_t> counts;
     for (const Event& e : events_) {

@@ -239,3 +239,78 @@ TEST_CASE("transcript segments trends and groups events", "[world]") {
     REQUIRE(small.segments[0].events["tick.mark"]["count"] == 4);
     REQUIRE(small.segments[0].events["bounce"]["count"] == 1);
 }
+
+#include <pocket/world/recorder.hpp>
+
+TEST_CASE("the recorder replays the world at any kept tick", "[world][recorder]") {
+    World w;
+    Recorder r;
+    r.start(5);
+    EntityId ball = w.spawn("Ball", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 10}, {"z", 0}}}}}, {"Health", {{"current", 100}}}}).value();
+    for (int tick = 1; tick <= 12; ++tick) {
+        w.set_tick_index(tick);
+        REQUIRE(w.set(ball, "Transform", Json{{"position", {{"y", 10 - tick}}}}).has_value());
+        if (tick == 4) REQUIRE(w.spawn("Late", 0, Json{{"Transform", Json::object()}}).has_value());
+        if (tick == 6) REQUIRE(w.set(ball, "Health", Json{{"current", 40}}).has_value());
+        if (tick == 8) REQUIRE(w.remove(ball, "Health").has_value());
+        if (tick == 9) REQUIRE(w.rename(ball, "Orb").has_value());
+        r.record(w, tick);
+    }
+    Json st = r.status();
+    REQUIRE(st["frames"].get<int>() == 5);   // the ring keeps ticks 8..12
+    REQUIRE(st["from"].get<int>() == 8);
+    REQUIRE(st["to"].get<int>() == 12);
+    REQUIRE_FALSE(r.at(3).has_value());       // evicted
+    // Tick 8: the health is gone, the name is still Ball, y is 2.
+    Json at8 = r.at(8, ball).value();
+    REQUIRE(at8["entity"]["path"] == "/Ball");
+    REQUIRE_FALSE(at8["entity"]["components"].contains("Health"));
+    REQUIRE(at8["entity"]["components"]["Transform"]["position"]["y"].get<double>() == Catch::Approx(2.0));
+    Json at10 = r.at(10).value();
+    REQUIRE(at10["entities"].size() == 2);
+    REQUIRE(at10["entities"][0]["path"] == "/Orb");
+    // Base folding kept the history that was evicted: Late (spawned at tick 4) exists at tick 8.
+    bool late = false;
+    for (const auto& e : r.at(8).value()["entities"]) if (e["path"] == "/Late") late = true;
+    REQUIRE(late);
+    Json d = r.diff(8, 12).value();
+    REQUIRE(d["renamed"].size() == 1);
+    REQUIRE(d["renamed"][0]["to"] == "/Orb");
+    REQUIRE(d["changed"].size() == 1);
+    REQUIRE(d["changed"][0]["field"] == "Transform.position.y");
+    REQUIRE(d["changed"][0]["from"].get<double>() == Catch::Approx(2.0));
+    REQUIRE(d["changed"][0]["to"].get<double>() == Catch::Approx(-2.0));
+    Json tr = r.track(ball, "Transform", "position.y").value();
+    REQUIRE(tr["ticks"] == Json::array({8, 9, 10, 11, 12}));
+    REQUIRE(tr["values"][0].get<double>() == Catch::Approx(2.0));
+    REQUIRE(tr["values"][4].get<double>() == Catch::Approx(-2.0));
+    Json f = r.first(ball, "Transform", "position.y", "<", 0).value();
+    REQUIRE(f["tick"].get<int>() == 11);
+    REQUIRE(r.first(ball, "Transform", "position.y", "<", -100).value().is_null());
+    REQUIRE_FALSE(r.first(ball, "Transform", "position.y", "~", 0).has_value());
+    REQUIRE(Recorder::field_of(Json{{"a", {{"b", 3}}}}, "a.b") == 3);
+    REQUIRE(Recorder::field_of(Json{{"a", 1}}, "a.b").is_null());
+    // Destruction shows in a diff and the entity vanishes from later ticks.
+    w.set_tick_index(13);
+    REQUIRE(w.destroy(ball).has_value());
+    r.record(w, 13);
+    REQUIRE(r.diff(12, 13).value()["destroyed"].size() == 1);
+    REQUIRE_FALSE(r.at(13, ball).has_value());
+    r.stop();
+    REQUIRE_FALSE(r.recording());
+}
+
+TEST_CASE("events.why walks cause links", "[world][events]") {
+    World w;
+    auto& ev = w.events();
+    std::uint64_t a = ev.emit(1, "input.jump", 0, nullptr);
+    std::uint64_t b = ev.emit(1, "player.jumped", 0, nullptr, a, "script");
+    std::uint64_t c = ev.emit(3, "coin.collected", 0, nullptr, b, "script");
+    auto chain = ev.why(c);
+    REQUIRE(chain.size() == 3);
+    REQUIRE(chain[0].type == "coin.collected");
+    REQUIRE(chain[2].type == "input.jump");
+    REQUIRE(ev.why(a).size() == 1);
+    REQUIRE(ev.why(999).empty());
+    REQUIRE(ev.find(b)->cause == a);
+}

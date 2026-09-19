@@ -254,6 +254,65 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     REQUIRE(s.command("animation.play", Json{{"entity", "Crate"}, {"clip", "wave"}}).has_value() == false);
 }
 
+TEST_CASE("clips cross-fade and land on the new clip", "[runtime][animation]") {
+    auto make = [] {
+        app::Options o;
+        o.project_dir = root() / "samples" / "assets";
+        o.bundle = root() / "build" / "ts" / "assets.js";
+        o.project_config = o.bundle.string() + ".project.json";
+        o.headless = true;
+        o.frames = 1000;
+        o.width = 160;
+        o.height = 90;
+        o.log_level = "warn";
+        return o;
+    };
+    auto tip_axis_x = [](app::Session& s) { return s.command("animation.pose", Json{{"entity", "Arm"}}).value()["joints"][1]["axis_y"]["x"].get<double>(); };
+    // Two sessions at the same point of the wave (its +45 degree extreme): one cuts to nod, one
+    // fades over a fifth of a second, while the wave swings back through +27 degrees.
+    app::Session cut(make()), fade(make());
+    REQUIRE(cut.start().has_value());
+    REQUIRE(fade.start().has_value());
+    for (int i = 0; i < 30; ++i) {
+        REQUIRE(cut.frame().has_value());
+        REQUIRE(fade.frame().has_value());
+    }
+    REQUIRE(cut.command("animation.play", Json{{"entity", "Arm"}, {"clip", "nod"}}).has_value());
+    Json fading = fade.command("animation.play", Json{{"entity", "Arm"}, {"clip", "nod"}, {"fade", 0.2}}).value();
+    REQUIRE(fading["from_clip"] == "wave");
+    REQUIRE(fading["from_time"].get<double>() == Catch::Approx(0.5).margin(1e-4));
+    REQUIRE(fading["fade"].get<double>() == Catch::Approx(0.2));
+    // Halfway through the fade the pose sits between the two clips and says so.
+    for (int i = 0; i < 6; ++i) {
+        REQUIRE(cut.frame().has_value());
+        REQUIRE(fade.frame().has_value());
+    }
+    Json mid = fade.command("animation.pose", Json{{"entity", "Arm"}}).value();
+    INFO(mid.dump());
+    REQUIRE(mid["blend"]["from"] == "wave");
+    REQUIRE(mid["blend"]["weight"].get<double>() == Catch::Approx(0.5).margin(0.05));
+    double x_cut = tip_axis_x(cut), x_fade = tip_axis_x(fade);
+    INFO("cut " << x_cut << " fade " << x_fade);
+    REQUIRE(std::abs(x_cut - x_fade) > 0.1);  // still carrying half of the wave's lean
+    // After the fade both sessions agree exactly: the new clip has run the same time in both.
+    for (int i = 0; i < 20; ++i) {
+        REQUIRE(cut.frame().has_value());
+        REQUIRE(fade.frame().has_value());
+    }
+    Json after = fade.command("world.get", Json{{"entity", "Arm"}, {"component", "Animator"}}).value();
+    REQUIRE(after["from_clip"] == "");
+    REQUIRE(after["fade"].get<double>() == 0.0);
+    REQUIRE(after["clip"] == "nod");
+    Json pa = cut.command("animation.pose", Json{{"entity", "Arm"}}).value(), pb = fade.command("animation.pose", Json{{"entity", "Arm"}}).value();
+    for (int j = 0; j < 2; ++j) {
+        for (const char* k : {"x", "y", "z"}) {
+            REQUIRE(pa["joints"][j]["position"][k].get<double>() == Catch::Approx(pb["joints"][j]["position"][k].get<double>()).margin(1e-4));
+            REQUIRE(pa["joints"][j]["axis_y"][k].get<double>() == Catch::Approx(pb["joints"][j]["axis_y"][k].get<double>()).margin(1e-4));
+        }
+    }
+    REQUIRE_FALSE(pb.contains("blend"));
+}
+
 TEST_CASE("particles spawn, draw, burst and hash deterministically", "[runtime][particles]") {
     auto make = [](std::uint64_t seed) {
         app::Options o;
@@ -362,6 +421,74 @@ TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime]
     REQUIRE(state["joints"].get<int>() == 3);
     // The capsule log came to rest on its side.
     REQUIRE(position("/Log").y == Catch::Approx(0.35f).margin(0.05f));
+}
+
+TEST_CASE("the recorder, events.why and render.visible explain a run", "[runtime][recorder]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "physics";
+    o.bundle = root() / "build" / "ts" / "physics.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.seed = 3;
+    o.log_level = "warn";
+    o.history = 400;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 320; ++i) REQUIRE(s.frame().has_value());
+    Json st = s.command("recorder.status", Json::object()).value();
+    INFO(st.dump());
+    REQUIRE(st["recording"] == true);
+    REQUIRE(st["frames"].get<int>() == 320);
+    REQUIRE(st["from"].get<int>() == 0);
+    // The chain's last link was kicked at tick 60: the first tick it moved past z = -4.5.
+    Json first = s.command("recorder.first", Json{{"entity", "/Link3"}, {"component", "Transform"}, {"field", "position.z"}, {"op", ">"}, {"value", -4.5}}).value();
+    REQUIRE(first["tick"].get<int>() > 60);
+    REQUIRE(first["tick"].get<int>() < 90);
+    Json track = s.command("recorder.track", Json{{"entity", "/Link3"}, {"component", "Transform"}, {"field", "position.z"}, {"from", 0}, {"to", 59}}).value();
+    REQUIRE(track["ticks"].size() == 60);
+    for (const auto& v : track["values"]) REQUIRE(v.get<double>() == Catch::Approx(-5.0).margin(0.01));  // hung still before the kick
+    // The lantern's rope broke after the kick at tick 240: it exists at tick 200 with its Joint, and without it at tick 300.
+    REQUIRE(s.command("recorder.at", Json{{"tick", 200}, {"entity", "/Lantern"}}).value()["entity"]["components"].contains("Joint"));
+    REQUIRE_FALSE(s.command("recorder.at", Json{{"tick", 300}, {"entity", "/Lantern"}}).value()["entity"]["components"].contains("Joint"));
+    Json diff = s.command("recorder.diff", Json{{"from", 200}, {"to", 300}, {"entity", "/Lantern"}}).value();
+    bool joint_gone = false;
+    for (const auto& c : diff["changed"]) if (c["field"] == "Joint" && c["to"].is_null()) joint_gone = true;
+    REQUIRE(joint_gone);
+    REQUIRE(diff["spawned"].empty());
+    // Why did the Joint component go? Because the joint broke.
+    Json removed = s.command("events.since", Json{{"seq", 0}, {"type", "component.removed"}}).value();
+    std::uint64_t seq = 0;
+    for (const auto& e : removed["events"]) if (e["data"]["component"] == "Joint") seq = e["seq"].get<std::uint64_t>();
+    REQUIRE(seq != 0);
+    Json why = s.command("events.why", Json{{"seq", seq}}).value();
+    INFO(why.dump());
+    REQUIRE(why["chain"].size() == 2);
+    REQUIRE(why["chain"][1]["type"] == "joint.broken");
+    REQUIRE(why["complete"] == true);
+    REQUIRE(why["story"].get<std::string>().find("component.removed(/Lantern)") == 0);
+    // What the camera sees: the ground covers most of the frame, the ramp is in it, with bounds inside the image.
+    Json vis = s.command("render.visible", Json{{"limit", 5}}).value();
+    INFO(vis.dump());
+    REQUIRE(vis["visible"].size() == 5);
+    REQUIRE(vis["visible"][0]["name"] == "Ground");
+    REQUIRE(vis["visible"][0]["coverage"].get<double>() > 0.3);
+    bool ramp = false;
+    for (const auto& e : vis["visible"]) {
+        REQUIRE(e["bounds"]["x"].get<int>() + e["bounds"]["width"].get<int>() <= 320);
+        REQUIRE(e["center"]["x"].get<double>() <= 1.0);
+        if (e["name"] == "Ramp") ramp = true;
+    }
+    REQUIRE(ramp);
+    REQUIRE(vis["count"].get<int>() >= 5);
+    // Stopping keeps what was recorded; clearing drops it.
+    REQUIRE(s.command("recorder.stop", Json::object()).value()["recording"] == false);
+    for (int i = 0; i < 5; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("recorder.status", Json::object()).value()["to"].get<int>() == 319);
+    REQUIRE(s.command("recorder.clear", Json::object()).value()["frames"].get<int>() == 0);
+    REQUIRE_FALSE(s.command("recorder.at", Json{{"tick", 100}}).has_value());
 }
 
 TEST_CASE("sprite clips from project.toml play through commands", "[runtime][sprites]") {

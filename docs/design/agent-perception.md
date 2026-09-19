@@ -136,6 +136,16 @@ Memory is multi-resolution, as in people: the last seconds at full fidelity in t
 - M4: physics explanation, gameplay analyzers, executable scenarios with bots.
 - Later: the environment interface for play bots and recorded human sessions.
 
-## Implementation pointers (2026-09-18)
+## Implementation pointers (2026-09-19)
 
-What this document asks for and where it now lives: the tree with budgets and salience is `world.tree` (`engine/world/src/world.cpp`); the causal event log is `engine/world/events.hpp`; determinism and hashing are in `World::hash` and the session's per-tick state hash, with `--record/--replay` for input journals; the id buffer is the renderer's second target with `render.pick`; the gameplay transcript with segmentation is `engine/world/transcript.hpp`; the observation surface is the runtime's command set, served over HTTP and MCP (`docs/mcp.md`). Not built: observation tiers (player-knowable versus omniscient), the perception benchmark, and the agent eval suite.
+What this document asks for and where it now lives:
+
+- State: the tree with budgets and salience is `world.tree`, with `world.describe`, `world.query`, `world.summary` (`engine/world/src/world.cpp`).
+- Causality: the event log is `engine/world/events.hpp`; `events.why {seq}` walks the cause links and returns the chain with a one-line story (`component.removed(/Lantern) at tick 241 <- joint.broken(/Lantern) at tick 241`), and says whether the chain is complete or stopped at an evicted event.
+- Space and shape: `physics.raycast`, `physics.overlap`, `physics.contacts`, `physics.joints`; the id buffer is the renderer's second target, read by `render.pick` (one pixel), `render.ids` (every entity with pixel count, bounds and center) and `render.visible` (the same, largest first, without the background: what the camera sees, as numbers).
+- Time: `--history N` or `recorder.start {ticks}` keeps the last N ticks of every entity's components as deltas (`engine/world/recorder.hpp`); `recorder.at {tick}` replays the world or one entity at a tick, `recorder.diff {from, to}` lists what spawned, died, was renamed and which fields changed, `recorder.track {entity, component, field}` returns a field over time, `recorder.first {entity, component, field, op, value}` finds the first tick a predicate holds. Change detection hashes components and converts only what changed to JSON; the sanitized debug build pays about 1.6 ms per tick for the physics sample (31 entities, a dozen moving) and about 250 ms for the swarm (3000 entities moving every tick), so recording is off by default and on demand. The gameplay transcript with segmentation is `engine/world/transcript.hpp`.
+- Determinism: `World::hash` and the session's per-tick state hash, `--record/--replay` for input journals.
+- Vision: `capture` and `render.ids {path}` write PNGs of the frame and of the id buffer; `render.debug {colliders, joints, bounds, axes}` and `debug.line/box/sphere` draw the invisible (collision shapes, joints, bounds, a script's own markers) as lines into the same captures (`docs/design/rendering.md`).
+- Operability: everything above is the runtime's command set, served over HTTP and MCP (`docs/mcp.md`), from the SDK (`events.why`, `recorder.*`, `render.visible`) and in the editor's panels.
+
+Not built: observation tiers (player-knowable versus omniscient), physics explanation, gameplay analyzers beyond the transcript, executable scenarios with bots, the perception benchmark, and the agent eval suite.

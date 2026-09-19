@@ -28,4 +28,8 @@ export const events = {
     lastSeq(): number {
         return command<number>("events.last_seq");
     },
+    /** The event and the chain of its causes (the event first), with a one-line story. */
+    why(seq: number, limit = 32): { chain: WorldEvent[]; story: string; root: number; complete: boolean } {
+        return command("events.why", { seq, limit });
+    },
 };

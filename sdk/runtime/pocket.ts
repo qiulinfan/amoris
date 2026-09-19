@@ -14,11 +14,15 @@ declare const __pocket: {
 };
 
 export { world, render, command, transcript } from "./world";
-export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity, Packed } from "./world";
+export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity, Packed, VisibleEntity } from "./world";
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
 export { events } from "./events";
 export type { WorldEvent } from "./events";
+export { recorder } from "./recorder";
+export { debug } from "./debug";
+export type { DebugColor, DebugOptions } from "./debug";
+export type { RecorderStatus, RecordedEntity, RecordedDiff, Comparison } from "./recorder";
 export { physics, onContacts } from "./physics";
 export { sprites } from "./sprites";
 export { particles } from "./particles";

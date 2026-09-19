@@ -75,6 +75,17 @@ TEST_CASE("editor opens a project paused and shows its world", "[editor]") {
     Json vp = ok(s.command("render.viewport", Json::object()));
     REQUIRE(vp["full"] == false);
     REQUIRE(vp["w"].get<double>() > 300);
+    // The Overlays button draws colliders and joints as lines in the scene pane.
+    REQUIRE(ok(s.command("render.stats", Json::object()))["debug_lines"].get<int>() == 0);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "overlays")}}));
+    ok(s.idle_frame());
+    Json ds = ok(s.command("debug.stats", Json::object()));
+    REQUIRE(ds["colliders"] == true);
+    REQUIRE(ds["joints"] == true);
+    REQUIRE(ok(s.command("render.stats", Json::object()))["debug_lines"].get<int>() > 12 * 7);  // seven boxes, spheres, a capsule, joints
+    ok(s.command("ui.click", Json{{"id", find_named(s, "overlays")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("debug.stats", Json::object()))["colliders"] == false);
     ok(s.finish());
 }
 

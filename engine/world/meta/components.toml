@@ -76,6 +76,10 @@ fields = [
     { name = "mesh", type = "string", default = "cube", doc = "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)." },
     { name = "color", type = "color", default = [0.8, 0.8, 0.8, 1.0], doc = "Base color, linear RGB; multiplies the asset's material color." },
     { name = "texture", type = "string", default = "", doc = "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none." },
+    { name = "metallic", type = "f32", default = -1.0, doc = "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives)." },
+    { name = "roughness", type = "f32", default = -1.0, doc = "0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives)." },
+    { name = "emissive", type = "color", default = [0.0, 0.0, 0.0, 1.0], doc = "Light the surface gives off regardless of lighting, added to the asset material's emissive color." },
+    { name = "normal_map", type = "string", default = "", doc = "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none." },
     { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
 ]
 
@@ -131,6 +135,10 @@ fields = [
     { name = "speed", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
     { name = "time", type = "f32", default = 0.0, doc = "Seconds into the clip; advanced by the engine, writable to seek." },
     { name = "finished", type = "bool", default = false, doc = "Set when a non-looping clip reached its end; cleared by play." },
+    { name = "fade", type = "f32", default = 0.0, doc = "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running." },
+    { name = "fade_time", type = "f32", default = 0.0, doc = "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed." },
+    { name = "from_clip", type = "string", default = "", doc = "The clip fading out (keeps playing at its own time until the fade ends); empty when none." },
+    { name = "from_time", type = "f32", default = 0.0, doc = "Seconds into from_clip, advanced by the engine." },
 ]
 
 [[component]]

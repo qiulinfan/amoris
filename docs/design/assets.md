@@ -4,7 +4,7 @@ How meshes and images get from a project's folder onto the screen, and how scrip
 
 ## Layout
 
-A project keeps its files under `<project>/assets/`. Paths in components are project-relative (`assets/crate.glb`); the store refuses anything that resolves outside the project directory. `MeshRenderer.mesh` names either a built-in primitive (`cube`, `sphere`, `plane`, `cylinder`) or a glTF file; `MeshRenderer.texture` names an image that multiplies the color (and overrides the asset's own base color texture).
+A project keeps its files under `<project>/assets/`. Paths in components are project-relative (`assets/crate.glb`); the store refuses anything that resolves outside the project directory. `MeshRenderer.mesh` names either a built-in primitive (`cube`, `sphere`, `plane`, `cylinder`) or a glTF file; `MeshRenderer.texture` names an image that multiplies the color (and overrides the asset's own base color texture); `metallic`, `roughness`, `emissive` and `normal_map` override the material's values (`docs/design/rendering.md`, Materials).
 
 ```
 samples/assets/
@@ -31,7 +31,7 @@ Images decode through stb_image (PNG, JPEG, BMP, TGA, GIF frames, PSD, HDR to 8-
 
 ## Rendering
 
-The mesh pipeline samples one base color texture per draw (group 2: texture + sampler, linear filtering, repeat) multiplied by the object color; a 1x1 white texture stands in when there is none. Primitives carry texture coordinates (cube per face, sphere equirectangular, plane 0..1, cylinder unwrapped). glTF meshes upload once per path; each material becomes a draw, and draws are sorted by texture then mesh so bind changes are rare and the order is stable. A mesh that cannot be loaded is drawn as a magenta cube and listed under `render.stats.assets.missing` every frame, with one warning in the log, so a wrong path is visible instead of silent.
+The mesh pipeline samples one base color texture per draw (group 2: texture + sampler, linear filtering, repeat) multiplied by the object color; a 1x1 white texture stands in when there is none. Primitives carry texture coordinates (cube per face, sphere equirectangular, plane 0..1, cylinder unwrapped). glTF meshes upload once per path; each material becomes a draw with its base color, metallic-roughness, normal and emissive maps in one bind group, and draws are sorted by material then mesh so bind changes are rare and the order is stable. A mesh that cannot be loaded is drawn as a magenta cube and listed under `render.stats.assets.missing` every frame, with one warning in the log, so a wrong path is visible instead of silent.
 
 ## Commands
 

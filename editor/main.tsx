@@ -28,6 +28,7 @@ const schema = command<{ components: SchemaComponent[] }>("world.schema").compon
 const selection = signal<number[]>([]);   // ordered; the last one is the primary selection
 const playing = signal(false);
 const paused = signal(true);
+const overlays = signal(false);   // colliders and joints drawn as lines in the scene pane
 const tab = signal<"console" | "events" | "transcript">("console");
 const status = signal({ tick: 0, hash: "", entities: 0, frames: 0 });
 const rows = signal<TreeRow[]>([]);
@@ -493,6 +494,12 @@ onInput((events) => {
 });
 
 // ------------------------------------------------------------------------------------ views
+function toggleOverlays(): void {
+    const on = !overlays();
+    render.debug({ colliders: on, joints: on });
+    overlays.set(on);
+}
+
 function Toolbar() {
     const s = status();
     historyVersion();
@@ -512,6 +519,8 @@ function Toolbar() {
             <Button label="Spawn" name="spawn" onClick={spawnEntity} />
             <Button label="Duplicate" name="duplicate" onClick={duplicateSelected} disabled={selection().length === 0} />
             <Button label="Delete" name="delete" onClick={deleteSelected} disabled={selection().length === 0} />
+            <box width={12} />
+            <Button label={overlays() ? "Overlays: on" : "Overlays"} name="overlays" onClick={toggleOverlays} />
             <box flex={1} />
             <Label text={`tick ${s.tick}`} muted name="tick" />
             <Label text={`${s.entities} entities`} muted name="entities" />

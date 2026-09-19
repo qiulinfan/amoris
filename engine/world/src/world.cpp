@@ -844,6 +844,35 @@ std::uint64_t World::hash() const {
     return h.digest();
 }
 
+Json World::components_json(EntityId id) const {
+    Json comps = Json::object();
+    flecs::entity e = impl_->ecs.entity(id);
+    if (id == 0 || !e.is_alive()) return comps;
+    for (const auto& op : ops_table()) {
+        if (op.serialized && op.has(e)) comps[std::string(op.name)] = op.get(e);
+    }
+    return comps;
+}
+
+void World::component_hashes(EntityId id, const std::function<void(std::string_view, std::uint64_t)>& fn) const {
+    flecs::entity e = impl_->ecs.entity(id);
+    if (id == 0 || !e.is_alive()) return;
+    for (const auto& op : ops_table()) {
+        if (!op.serialized || !op.has(e)) continue;
+        StateHasherRef h;
+        op.hash(h, e);
+        fn(op.name, h.digest());
+    }
+}
+
+void World::visit_all(const std::function<void(EntityId, EntityId, int)>& fn) const {
+    std::function<void(EntityId, EntityId, int)> rec = [&](EntityId id, EntityId parent, int depth) {
+        fn(id, parent, depth);
+        for (EntityId c : children(id)) rec(c, id, depth + 1);
+    };
+    for (EntityId r : roots()) rec(r, 0, 0);
+}
+
 Json World::save_entity_json(EntityId id) const {
     std::function<Json(EntityId)> save_entity = [&](EntityId id) {
         flecs::entity e = impl_->ecs.entity(id);

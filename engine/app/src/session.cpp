@@ -88,6 +88,7 @@ Status Session::start() {
         if (project_.is_discarded()) return fail("bad_project_config", "{} is not valid JSON", options_.project_config.string());
     }
     name_ = project_.contains("name") && project_["name"].is_string() ? project_["name"].get<std::string>() : options_.project_dir.filename().string();
+    if (options_.history > 0) recorder_.start(static_cast<std::size_t>(options_.history));
     Json window = project_.contains("window") && project_["window"].is_object() ? project_["window"] : Json::object();
     int width = options_.width > 0 ? options_.width : window.value("width", 960);
     int height = options_.height > 0 ? options_.height : window.value("height", 540);
@@ -329,6 +330,7 @@ void Session::run_tick() {
     particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
     if (audio_) tick_audio(clock_.tick_seconds);
+    if (recorder_.recording()) recorder_.record(*world_, tick);
     perf_world_.add(sw.ms());
     sw = Stopwatch{};
     Json s = dispatch("state", nullptr);
@@ -387,7 +389,8 @@ Status Session::render_frame() {
     if (audio_) audio_->pump();
     auto frame = device_->begin_frame();
     if (!frame) return fail(frame.error());
-    if (auto r = renderer_->render(*frame, *world_, clear_, particles_.get(), animation_.get()); !r) {
+    build_debug_draw();
+    if (auto r = renderer_->render(*frame, *world_, clear_, particles_.get(), animation_.get(), debug_draw_.lines() ? &debug_draw_ : nullptr); !r) {
         // Still submit the encoder so the device stays consistent, then report.
         (void)device_->end_frame(*frame);
         return fail(r.error());
@@ -807,6 +810,19 @@ Result<Json> Session::animation_command(std::string_view op, const Json& p) {
             for (const char* k : {"loop", "speed", "time"}) {
                 if (p.contains(k)) patch[k] = p[k];
             }
+            // A cross-fade from what plays now: the current clip becomes from_clip at its time.
+            float fade = opt<float>(p, "fade", 0.0f);
+            const auto* current = w.try_get<world::Animator>(id);
+            if (fade > 0 && current && !current->clip.empty()) {
+                patch["from_clip"] = current->clip;
+                patch["from_time"] = current->time;
+                patch["fade"] = fade;
+                patch["fade_time"] = 0.0;
+            } else {
+                patch["from_clip"] = "";
+                patch["fade"] = 0.0;
+                patch["fade_time"] = 0.0;
+            }
         } else {
             patch["playing"] = false;
             if (opt<bool>(p, "reset", false)) patch["time"] = 0.0;
@@ -939,30 +955,63 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         }
         return j;
     }
-    if (op == "ids") {
+    if (op == "ids" || op == "visible") {
         POCKET_TRY(img, renderer_->read_ids());
-        std::map<std::uint32_t, std::uint64_t> counts;
-        for (std::uint32_t id : img.ids) counts[id]++;
-        Json entities = Json::array();
-        for (auto& [index, n] : counts) {
+        struct Span { std::uint64_t pixels = 0; std::uint32_t x0 = ~0u, y0 = ~0u, x1 = 0, y1 = 0; };
+        std::map<std::uint32_t, Span> spans;
+        for (std::uint32_t y = 0; y < img.height; ++y) {
+            for (std::uint32_t x = 0; x < img.width; ++x) {
+                Span& sp = spans[img.ids[static_cast<std::size_t>(y) * img.width + x]];
+                sp.pixels++;
+                sp.x0 = std::min(sp.x0, x);
+                sp.y0 = std::min(sp.y0, y);
+                sp.x1 = std::max(sp.x1, x);
+                sp.y1 = std::max(sp.y1, y);
+            }
+        }
+        const double total = static_cast<double>(img.width) * static_cast<double>(img.height);
+        std::vector<Json> entities;
+        for (auto& [index, sp] : spans) {
+            if (op == "visible" && index == 0) continue;  // the background is not an entity
             Json e;
             world::EntityId id = world_->from_index(index);
             e["id"] = id;
-            e["pixels"] = n;
-            if (id != 0) e["path"] = world_->path(id);
-            else if (index != 0) e["stale"] = true;
+            e["pixels"] = sp.pixels;
+            e["coverage"] = total > 0 ? static_cast<double>(sp.pixels) / total : 0.0;
+            e["bounds"] = Json{{"x", sp.x0}, {"y", sp.y0}, {"width", sp.x1 - sp.x0 + 1}, {"height", sp.y1 - sp.y0 + 1}};
+            e["center"] = Json{{"x", img.width ? (sp.x0 + sp.x1 + 1) * 0.5 / img.width : 0.0}, {"y", img.height ? (sp.y0 + sp.y1 + 1) * 0.5 / img.height : 0.0}};
+            if (id != 0) {
+                e["path"] = world_->path(id);
+                e["name"] = world_->name(id);
+            } else if (index != 0) {
+                e["stale"] = true;
+            }
             entities.push_back(e);
+        }
+        if (op == "visible") {
+            std::stable_sort(entities.begin(), entities.end(), [](const Json& a, const Json& b) { return a["pixels"].get<std::uint64_t>() > b["pixels"].get<std::uint64_t>(); });
+            auto limit = static_cast<std::size_t>(std::max(opt<int>(p, "limit", 50), 0));
+            if (entities.size() > limit) entities.resize(limit);
         }
         Json j;
         j["width"] = img.width;
         j["height"] = img.height;
-        j["visible"] = entities;
-        std::string path = opt<std::string>(p, "path", "");
+        j["visible"] = Json(entities);
+        j["count"] = spans.size() - (spans.contains(0) ? 1 : 0);
+        std::string path = op == "ids" ? opt<std::string>(p, "path", "") : "";
         if (!path.empty()) {
             POCKET_TRY_VOID(write_png(path, ids_to_image(img)));
             j["path"] = path;
         }
         return j;
+    }
+    if (op == "debug") {
+        if (p.contains("colliders") && p["colliders"].is_boolean()) debug_flags_.colliders = p["colliders"].get<bool>();
+        if (p.contains("joints") && p["joints"].is_boolean()) debug_flags_.joints = p["joints"].get<bool>();
+        if (p.contains("bounds") && p["bounds"].is_boolean()) debug_flags_.bounds = p["bounds"].get<bool>();
+        if (p.contains("axes") && p["axes"].is_boolean()) debug_flags_.axes = p["axes"].get<bool>();
+        if (p.contains("all") && p["all"].is_boolean()) debug_flags_.colliders = debug_flags_.joints = debug_flags_.bounds = debug_flags_.axes = p["all"].get<bool>();
+        return Json{{"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"lines", renderer_->stats().debug_lines}};
     }
     if (op == "shadows") {
         renderer::ShadowSettings s = renderer_->shadows();
@@ -1872,7 +1921,169 @@ Result<Json> Session::events_command(std::string_view op, const Json& p, std::st
     }
     if (op == "histogram") return ev.histogram(opt<std::uint64_t>(p, "seq", 0));
     if (op == "last_seq") return ev.last_seq();
+    if (op == "why") {
+        std::uint64_t seq = opt<std::uint64_t>(p, "seq", 0);
+        if (seq == 0) return fail("bad_args", "events.why needs a seq");
+        auto chain = ev.why(seq, static_cast<std::size_t>(opt<int>(p, "limit", 32)));
+        if (chain.empty()) return fail("not_found", "event {} is not in the log", seq);
+        Json arr = Json::array();
+        std::string story;
+        for (const auto& e : chain) {
+            arr.push_back(world::event_to_json(e));
+            if (!story.empty()) story += " <- ";
+            story += e.type;
+            std::string who = e.subject && world_->alive(e.subject) ? world_->path(e.subject) : (e.data.is_object() && e.data.contains("path") && e.data["path"].is_string() ? e.data["path"].get<std::string>() : "");
+            if (!who.empty()) story += "(" + who + ")";
+            story += " at tick " + std::to_string(e.tick);
+        }
+        Json j;
+        j["chain"] = arr;
+        j["story"] = story;
+        j["root"] = chain.back().seq;
+        j["complete"] = chain.back().cause == 0;  // false when the chain stops at an evicted event
+        return j;
+    }
     return fail("unknown_command", "unknown events command '{}'", op);
+}
+
+void Session::build_debug_draw() {
+    debug_draw_.clear();
+    const world::World& w = *world_;
+    if (debug_flags_.colliders) {
+        w.ecs().each([&](flecs::entity e, const world::Collider& c, const world::Transform& t) {
+            rhi::Color color{0.6f, 0.6f, 0.6f, 1};  // static
+            if (const auto* rb = e.try_get<world::RigidBody>()) {
+                if (rb->kind == 0) color = rb->sleeping ? rhi::Color{0.15f, 0.5f, 0.15f, 1} : rhi::Color{0.2f, 1.0f, 0.2f, 1};
+                else if (rb->kind == 2) color = {0.3f, 0.6f, 1.0f, 1};
+            }
+            if (c.is_trigger) color = {1.0f, 0.9f, 0.2f, 1};
+            Vec3 center = t.position + t.rotation.rotate(c.offset);
+            if (c.shape == 1) debug_draw_.sphere(center, c.size.x, color);
+            else if (c.shape == 2) debug_draw_.capsule(center, c.size.x, c.size.y, t.rotation, color);
+            else debug_draw_.box(center, c.size, t.rotation, color);
+        });
+    }
+    if (debug_flags_.joints) {
+        w.ecs().each([&](flecs::entity e, const world::Joint& j, const world::Transform& t) {
+            Vec3 a = t.position + t.rotation.rotate(j.anchor);
+            Vec3 b = j.target_anchor;
+            if (!j.target.empty()) {
+                world::EntityId target = w.find(j.target);
+                if (!target) return;
+                const auto* tt = w.try_get<world::Transform>(target);
+                if (!tt) return;
+                b = tt->position + tt->rotation.rotate(j.target_anchor);
+            }
+            (void)e;
+            rhi::Color color = j.kind == 1 ? rhi::Color{1.0f, 0.4f, 0.8f, 1} : rhi::Color{1.0f, 0.6f, 0.2f, 1};
+            debug_draw_.line(a, b, color);
+            debug_draw_.sphere(a, 0.05f, color, 8);
+            debug_draw_.sphere(b, 0.05f, color, 8);
+        });
+    }
+    if (debug_flags_.bounds) {
+        w.ecs().each([&](flecs::entity, const world::Bounds& b) { debug_draw_.aabb(b.min, b.max, {0.4f, 0.8f, 1.0f, 1}); });
+    }
+    if (debug_flags_.axes) debug_draw_.axes({0, 0, 0}, 1.0f);
+    std::int64_t tick = clock_.tick;
+    std::erase_if(debug_shapes_, [&](const DebugShape& d) { return tick >= d.until_tick; });
+    for (const DebugShape& d : debug_shapes_) {
+        if (d.kind == 0) debug_draw_.line(d.a, d.b, d.color);
+        else if (d.kind == 1) debug_draw_.box(d.a, d.b, d.rotation, d.color);
+        else debug_draw_.sphere(d.a, d.b.x, d.color);
+    }
+}
+
+Result<Json> Session::debug_command(std::string_view op, const Json& p) {
+    auto color_of = [&](rhi::Color fallback) {
+        if (!p.contains("color")) return fallback;
+        const Json& c = p["color"];
+        if (c.is_object()) return rhi::Color{c.value("r", fallback.r), c.value("g", fallback.g), c.value("b", fallback.b), c.value("a", 1.0f)};
+        if (c.is_array() && c.size() >= 3) return rhi::Color{c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c.size() > 3 ? c[3].get<float>() : 1.0f};
+        return fallback;
+    };
+    auto add = [&](DebugShape d) {
+        int ticks = std::max(opt<int>(p, "ticks", 1), 1);
+        d.until_tick = clock_.tick + ticks;
+        debug_shapes_.push_back(d);
+        return Json{{"shapes", debug_shapes_.size()}, {"until_tick", d.until_tick}};
+    };
+    if (op == "line") {
+        if (!p.contains("a") || !p.contains("b")) return fail("bad_args", "debug.line needs a and b");
+        DebugShape d;
+        d.kind = 0;
+        d.a = vec3_of(p["a"], {0, 0, 0});
+        d.b = vec3_of(p["b"], {0, 0, 0});
+        d.color = color_of({1, 1, 1, 1});
+        return add(d);
+    }
+    if (op == "box") {
+        DebugShape d;
+        d.kind = 1;
+        d.a = vec3_of(p.value("center", Json(nullptr)), {0, 0, 0});
+        d.b = vec3_of(p.value("half", Json(nullptr)), {0.5f, 0.5f, 0.5f});
+        if (p.contains("rotation") && p["rotation"].is_object()) {
+            const Json& q = p["rotation"];
+            d.rotation = normalize(Quat{q.value("x", 0.0f), q.value("y", 0.0f), q.value("z", 0.0f), q.value("w", 1.0f)});
+        }
+        d.color = color_of({1, 1, 1, 1});
+        return add(d);
+    }
+    if (op == "sphere") {
+        DebugShape d;
+        d.kind = 2;
+        d.a = vec3_of(p.value("center", Json(nullptr)), {0, 0, 0});
+        d.b = {opt<float>(p, "radius", 0.5f), 0, 0};
+        d.color = color_of({1, 1, 1, 1});
+        return add(d);
+    }
+    if (op == "clear") {
+        std::size_t n = debug_shapes_.size();
+        debug_shapes_.clear();
+        return Json{{"cleared", n}};
+    }
+    if (op == "stats") {
+        return Json{{"shapes", debug_shapes_.size()}, {"lines", renderer_->stats().debug_lines}, {"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}};
+    }
+    return fail("unknown_command", "unknown debug command '{}'", op);
+}
+
+Result<Json> Session::recorder_command(std::string_view op, const Json& p) {
+    if (op == "start") {
+        recorder_.start(static_cast<std::size_t>(opt<int>(p, "ticks", 600)));
+        return recorder_.status();
+    }
+    if (op == "stop") {
+        recorder_.stop();
+        return recorder_.status();
+    }
+    if (op == "clear") {
+        recorder_.clear();
+        return recorder_.status();
+    }
+    if (op == "status") return recorder_.status();
+    auto entity_of = [&](const char* key) -> world::EntityId { return p.contains(key) ? resolve_entity(p[key]) : 0; };
+    if (op == "at") {
+        if (!p.contains("tick")) return fail("bad_args", "recorder.at needs a tick");
+        return recorder_.at(p["tick"].get<std::int64_t>(), entity_of("entity"));
+    }
+    if (op == "diff") {
+        std::int64_t from = opt<std::int64_t>(p, "from", recorder_.first_tick());
+        std::int64_t to = opt<std::int64_t>(p, "to", recorder_.last_tick());
+        return recorder_.diff(from, to, entity_of("entity"), static_cast<std::size_t>(opt<int>(p, "limit", 200)));
+    }
+    if (op == "track" || op == "first") {
+        world::EntityId id = entity_of("entity");
+        if (id == 0) return fail("not_found", "recorder.{} needs a live entity", op);
+        std::string component = opt<std::string>(p, "component", "Transform");
+        std::string field = opt<std::string>(p, "field", "");
+        if (op == "track") {
+            return recorder_.track(id, component, field, opt<std::int64_t>(p, "from", -1), opt<std::int64_t>(p, "to", -1), opt<int>(p, "every", 1));
+        }
+        if (!p.contains("value")) return fail("bad_args", "recorder.first needs op and value");
+        return recorder_.first(id, component, field, opt<std::string>(p, "op", "<"), p["value"], opt<std::int64_t>(p, "from", -1));
+    }
+    return fail("unknown_command", "unknown recorder command '{}'", op);
 }
 
 Result<Json> Session::command(std::string_view name, const Json& params, std::string_view source) {
@@ -1880,6 +2091,8 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     const Json& p = params.is_object() ? params : Json::object();
     if (name.starts_with("world.")) return world_command(name.substr(6), p, source);
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
+    if (name.starts_with("recorder.")) return recorder_command(name.substr(9), p);
+    if (name.starts_with("debug.")) return debug_command(name.substr(6), p);
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("sprite.")) return sprite_command(name.substr(7), p);
@@ -1959,7 +2172,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "render.stats", "render.pick", "render.project", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

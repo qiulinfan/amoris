@@ -33,6 +33,7 @@ struct Options {
     std::string title;
     bool inspectable = false;
     bool hash_every_tick = true;
+    int history = 0;                       // > 0: record the last N ticks for recorder.* from the start
     int serve = -1;                        // -1: no control server; 0: any port; else the port
     bool paused = false;                   // start paused; agents advance with `step`
     std::filesystem::path record;          // write an input journal

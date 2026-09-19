@@ -106,6 +106,10 @@ struct MeshRenderer {
     std::string mesh = "cube";
     Color4 color{0.8f, 0.8f, 0.8f, 1.0f};
     std::string texture = "";
+    float metallic = -1.0f;
+    float roughness = -1.0f;
+    Color4 emissive{0.0f, 0.0f, 0.0f, 1.0f};
+    std::string normal_map = "";
     bool visible = true;
     constexpr bool operator==(const MeshRenderer&) const = default;
 };
@@ -173,6 +177,10 @@ struct Animator {
     float speed = 1.0f;
     float time = 0.0f;
     bool finished = false;
+    float fade = 0.0f;
+    float fade_time = 0.0f;
+    std::string from_clip = "";
+    float from_time = 0.0f;
     constexpr bool operator==(const Animator&) const = default;
 };
 void to_json(Json& j, const Animator& v);

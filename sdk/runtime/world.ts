@@ -171,6 +171,17 @@ export const world = {
     },
 };
 
+export interface VisibleEntity {
+    id: Entity;
+    path?: string;
+    name?: string;
+    pixels: number;
+    coverage: number;
+    bounds: { x: number; y: number; width: number; height: number };
+    center: { x: number; y: number };
+    stale?: boolean;
+}
+
 /** Rendering queries: what is on screen, and where. */
 export const render = {
     stats(): { draw_calls: number; shadow_draws: number; shadows: boolean; instances: number; sprites: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
@@ -189,9 +200,17 @@ export const render = {
     shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {
         return command("render.shadows", settings);
     },
-    /** Entities visible in the last frame with their pixel counts; optionally writes a PNG. */
-    ids(path?: string): { width: number; height: number; visible: Array<{ id: Entity; pixels: number; path?: string }> } {
+    /** Entities visible in the last frame with their pixel counts and bounds; optionally writes a PNG of the id buffer. */
+    ids(path?: string): { width: number; height: number; count: number; visible: VisibleEntity[] } {
         return command("render.ids", { path });
+    },
+    /** Engine overlays drawn as lines: colliders (green dynamic, gray static, blue kinematic, yellow triggers), joints, bounds, world axes. */
+    debug(flags: { colliders?: boolean; joints?: boolean; bounds?: boolean; axes?: boolean; all?: boolean } = {}): { colliders: boolean; joints: boolean; bounds: boolean; axes: boolean; lines: number } {
+        return command("render.debug", flags);
+    },
+    /** What the camera sees, largest first: coverage (fraction of the frame), pixel bounds, normalized center. */
+    visible(limit = 50): VisibleEntity[] {
+        return command<{ visible: VisibleEntity[] }>("render.visible", { limit }).visible;
     },
 };
 

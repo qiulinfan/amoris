@@ -81,6 +81,10 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `mesh` | string | "cube" | cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
 | `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color, linear RGB; multiplies the asset's material color. |
 | `texture` | string | "" | Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. |
+| `metallic` | f32 | -1.0 | 0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives). |
+| `roughness` | f32 | -1.0 | 0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives). |
+| `emissive` | color | [0.0, 0.0, 0.0, 1.0] | Light the surface gives off regardless of lighting, added to the asset material's emissive color. |
+| `normal_map` | string | "" | Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 
 ## Sprite
@@ -140,6 +144,10 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `speed` | f32 | 1.0 | Playback rate multiplier. |
 | `time` | f32 | 0.0 | Seconds into the clip; advanced by the engine, writable to seek. |
 | `finished` | bool | false | Set when a non-looping clip reached its end; cleared by play. |
+| `fade` | f32 | 0.0 | Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running. |
+| `fade_time` | f32 | 0.0 | Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed. |
+| `from_clip` | string | "" | The clip fading out (keeps playing at its own time until the fade ends); empty when none. |
+| `from_time` | f32 | 0.0 | Seconds into from_clip, advanced by the engine. |
 
 ## ParticleEmitter
 

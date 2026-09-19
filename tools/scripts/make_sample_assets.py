@@ -151,7 +151,52 @@ def cube():
     return positions, normals, uvs, indices
 
 
-def glb(positions, normals, uvs, indices, material, nodes, texture_uri=None):
+def bump_normal(size=64, cells=4, depth=0.35):
+    """A tangent-space normal map (+Y up) of raised square tiles with beveled edges."""
+    rgba = bytearray()
+    cell = size // cells
+    bevel = max(2, cell // 6)
+    for y in range(size):
+        for x in range(size):
+            cx, cy = x % cell, y % cell
+            nx = ny = 0.0
+            if cx < bevel: nx = -depth
+            elif cx >= cell - bevel: nx = depth
+            if cy < bevel: ny = depth      # top edge of the tile faces up (+Y up in the map = up in the image)
+            elif cy >= cell - bevel: ny = -depth
+            nz = (1.0 - nx * nx - ny * ny) ** 0.5
+            rgba += bytes((int((nx * 0.5 + 0.5) * 255), int((ny * 0.5 + 0.5) * 255), int((nz * 0.5 + 0.5) * 255), 255))
+    return png(size, size, bytes(rgba))
+
+
+def tilted_normal(size=8, nx=0.0, ny=0.0):
+    """A uniform normal map bent toward (nx, ny): what the renderer tests use to pin the sign convention."""
+    nz = (1.0 - nx * nx - ny * ny) ** 0.5
+    px = bytes((int((nx * 0.5 + 0.5) * 255), int((ny * 0.5 + 0.5) * 255), int((nz * 0.5 + 0.5) * 255), 255))
+    return png(size, size, px * (size * size))
+
+
+def metal_rough(size=64):
+    """glTF metallic-roughness map: roughness (G) rises left to right, metallic (B) rises top to bottom."""
+    rgba = bytearray()
+    for y in range(size):
+        for x in range(size):
+            rgba += bytes((0, int(255 * x / (size - 1)), int(255 * y / (size - 1)), 255))
+    return png(size, size, bytes(rgba))
+
+
+def glow(size=64, cells=4):
+    """Emissive map: a thin bright grid, black elsewhere."""
+    rgba = bytearray()
+    cell = size // cells
+    for y in range(size):
+        for x in range(size):
+            on = (x % cell) < 2 or (y % cell) < 2
+            rgba += bytes((255, 140, 40, 255) if on else (0, 0, 0, 255))
+    return png(size, size, bytes(rgba))
+
+
+def glb(positions, normals, uvs, indices, material, nodes, texture_uri=None, images=None):
     def pack(fmt, items):
         return b"".join(struct.pack(fmt, *i) for i in items)
     pos = pack("<fff", positions)
@@ -190,10 +235,11 @@ def glb(positions, normals, uvs, indices, material, nodes, texture_uri=None):
         "bufferViews": views,
         "accessors": accessors,
     }
-    if texture_uri:
-        doc["images"] = [{"uri": texture_uri}]
+    uris = list(images or ([texture_uri] if texture_uri else []))
+    if uris:
+        doc["images"] = [{"uri": u} for u in uris]
         doc["samplers"] = [{"magFilter": 9728, "minFilter": 9728, "wrapS": 10497, "wrapT": 10497}]
-        doc["textures"] = [{"source": 0, "sampler": 0}]
+        doc["textures"] = [{"source": i, "sampler": 0} for i in range(len(uris))]
     return doc, buf
 
 
@@ -419,7 +465,27 @@ def main():
     pi = [0, 2, 1, 0, 3, 2, 0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4]
     doc, buf = glb(pp, None, None, pi, {"name": "green", "pbrMetallicRoughness": {"baseColorFactor": [0.3, 0.8, 0.35, 1], "metallicFactor": 0, "roughnessFactor": 1}}, [{"name": "pyramid"}])
     write_gltf_embedded(os.path.join(out, "pyramid.gltf"), doc, buf)
-    for name in ("checker.png", "crate.glb", "pyramid.gltf"):
+    # Plate: a cube with every PBR map (normal, metallic-roughness, emissive) for docs and tests.
+    with open(os.path.join(out, "plate_normal.png"), "wb") as f:
+        f.write(bump_normal())
+    with open(os.path.join(out, "plate_mr.png"), "wb") as f:
+        f.write(metal_rough())
+    with open(os.path.join(out, "plate_glow.png"), "wb") as f:
+        f.write(glow())
+    with open(os.path.join(out, "normal_up.png"), "wb") as f:
+        f.write(tilted_normal(ny=0.8))
+    with open(os.path.join(out, "normal_flat.png"), "wb") as f:
+        f.write(tilted_normal())
+    plate_material = {
+        "name": "plate",
+        "pbrMetallicRoughness": {"baseColorFactor": [0.85, 0.85, 0.9, 1], "metallicFactor": 1, "roughnessFactor": 1, "metallicRoughnessTexture": {"index": 1}},
+        "normalTexture": {"index": 0, "scale": 1.0},
+        "emissiveTexture": {"index": 2},
+        "emissiveFactor": [1, 1, 1],
+    }
+    doc, buf = glb(p, n, u, i, plate_material, [{"name": "plate"}], images=["plate_normal.png", "plate_mr.png", "plate_glow.png"])
+    write_glb(os.path.join(out, "plate.glb"), doc, buf)
+    for name in ("checker.png", "crate.glb", "pyramid.gltf", "plate.glb", "plate_normal.png", "plate_mr.png", "plate_glow.png", "normal_up.png", "normal_flat.png"):
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
 
 
