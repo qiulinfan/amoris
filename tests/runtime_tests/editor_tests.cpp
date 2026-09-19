@@ -6,6 +6,7 @@
 
 #include <catch_amalgamated.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 
@@ -141,4 +142,170 @@ TEST_CASE("editor hosts the project's interface inside the scene pane", "[editor
     }
     REQUIRE(parent == viewport);
     ok(s.finish());
+}
+
+TEST_CASE("editor edits are undoable and redoable", "[editor]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    Json before = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    double x0 = before["position"]["x"].get<double>();
+
+    // Inspector edit, then Cmd+Z / Cmd+Shift+Z through the keyboard path, then the toolbar buttons.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ramp")}}));
+    ok(s.idle_frame());
+    int input = find_named(s, "Transform.position.x");
+    ok(s.command("ui.click", Json{{"id", input}}));
+    ok(s.command("ui.key", Json{{"key", "End"}}));
+    for (int i = 0; i < 10; ++i) ok(s.command("ui.key", Json{{"key", "Backspace"}}));
+    ok(s.command("ui.type", Json{{"text", "2.5"}}));
+    ok(s.command("ui.key", Json{{"key", "Return"}}));
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}))["position"]["x"].get<double>() == Catch::Approx(2.5));
+    ok(s.command("ui.key", Json{{"key", "Escape"}}));  // drop focus so shortcuts reach the editor
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}))["position"]["x"].get<double>() == Catch::Approx(x0));
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}))["position"]["x"].get<double>() == Catch::Approx(2.5));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}))["position"]["x"].get<double>() == Catch::Approx(x0));
+
+    // Spawn, delete and duplicate come back exactly.
+    std::size_t n = s.world().entity_count();
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "spawn")}}));
+    REQUIRE(s.world().entity_count() == n + 1);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(s.world().entity_count() == n);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "redo")}}));
+    REQUIRE(s.world().entity_count() == n + 1);
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(s.world().entity_count() == n);
+
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ramp")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "delete")}}));
+    REQUIRE(s.world().entity_count() < n);
+    REQUIRE(ok(s.command("world.find", Json{{"path", "/Ramp"}})).is_null());
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(s.world().entity_count() == n);
+    Json restored = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(restored["position"]["x"].get<double>() == Catch::Approx(x0));
+    REQUIRE(restored["scale"] == before["scale"]);
+
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ramp")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "duplicate")}}));
+    REQUIRE(s.world().entity_count() == n + 1);
+    REQUIRE_FALSE(ok(s.command("world.find", Json{{"path", "/Ramp 2"}})).is_null());
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    REQUIRE(ok(s.command("world.find", Json{{"path", "/Ramp 2"}})).is_null());
+    REQUIRE(s.world().entity_count() == n);
+    ok(s.finish());
+}
+
+TEST_CASE("editor gizmo drags the selection along a world axis", "[editor]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ramp")}}));
+    ok(s.idle_frame());
+    ok(s.idle_frame());
+    Json before = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    // The X handle sits where the axis tip projects; drag it further along the axis' screen direction.
+    Json cq = ok(s.command("ui.query", Json{{"name", "gizmo:plane"}}));
+    Json xq = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));
+    REQUIRE(cq.size() == 1);
+    REQUIRE(xq.size() == 1);
+    double cx = cq[0]["rect"]["x"].get<double>(), cy = cq[0]["rect"]["y"].get<double>();
+    double tx = xq[0]["rect"]["x"].get<double>(), ty = xq[0]["rect"]["y"].get<double>();
+    double dx = tx - cx, dy = ty - cy;
+    REQUIRE(std::hypot(dx, dy) > 5);
+    ok(s.command("ui.drag", Json{{"id", xq[0]["id"]}, {"dx", dx}, {"dy", dy}, {"steps", 5}}));
+    Json after = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    INFO(before.dump() << " -> " << after.dump());
+    // One axis length further along +X, nothing else touched.
+    REQUIRE(after["position"]["x"].get<double>() > before["position"]["x"].get<double>() + 0.1);
+    REQUIRE(after["position"]["y"].get<double>() == Catch::Approx(before["position"]["y"].get<double>()).margin(1e-4));
+    REQUIRE(after["position"]["z"].get<double>() == Catch::Approx(before["position"]["z"].get<double>()).margin(1e-4));
+    // The move is one undo step, and the handles followed the entity.
+    ok(s.idle_frame());
+    Json xq2 = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));
+    REQUIRE(std::abs(xq2[0]["rect"]["x"].get<double>() - tx) + std::abs(xq2[0]["rect"]["y"].get<double>() - ty) > 1);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    Json undone = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(undone["position"]["x"].get<double>() == Catch::Approx(before["position"]["x"].get<double>()).margin(1e-5));
+
+    // The rotate handle turns around world Y (100 px per radian); the scale handle grows uniformly.
+    ok(s.idle_frame());
+    Json rq = ok(s.command("ui.query", Json{{"name", "gizmo:rotate"}}));
+    REQUIRE(rq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", rq[0]["id"]}, {"dx", 314}, {"dy", 0}, {"steps", 5}}));
+    Json turned = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    INFO(turned.dump());
+    // Ramp starts rolled about Z (w = 0.966); a half turn about world Y moves that weight into y.
+    REQUIRE(std::abs(turned["rotation"]["y"].get<double>()) > 0.9);
+    REQUIRE(turned["position"] == undone["position"]);
+    ok(s.idle_frame());
+    Json sq = ok(s.command("ui.query", Json{{"name", "gizmo:scale"}}));
+    REQUIRE(sq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", sq[0]["id"]}, {"dx", 139}, {"dy", 0}, {"steps", 5}}));
+    Json grown = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(grown["scale"]["x"].get<double>() == Catch::Approx(before["scale"]["x"].get<double>() * 2.0).epsilon(0.02));
+    REQUIRE(grown["scale"]["y"].get<double>() == Catch::Approx(before["scale"]["y"].get<double>() * 2.0).epsilon(0.02));
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    Json back = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(back["scale"] == before["scale"]);
+    REQUIRE(back["rotation"]["y"].get<double>() == Catch::Approx(before["rotation"]["y"].get<double>()).margin(1e-5));
+
+    // Shift-click extends the selection; the toolbar reports the count through the inspector title.
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ground")}, {"mods", Json::array({"shift"})}}));
+    ok(s.idle_frame());
+    std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 8}, {"max_nodes", 2000}}))["text"].get<std::string>();
+    INFO(snap);
+    REQUIRE(snap.find("(+1 more)") != std::string::npos);
+    ok(s.finish());
+}
+
+TEST_CASE("editor remembers its layout in the project", "[editor]") {
+    std::filesystem::path saved = root() / "samples" / "physics" / ".pocket" / "editor.json";
+    std::filesystem::remove(saved);
+    {
+        app::Session s(editor_options("physics"));
+        ok(s.start());
+        s.set_paused(true);
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+        Json h = ok(s.command("ui.query", Json{{"name", "hierarchy"}}));
+        double w0 = h[0]["rect"]["w"].get<double>();
+        ok(s.command("ui.drag", Json{{"id", find_named(s, "split:hierarchy")}, {"dx", 60}, {"dy", 0}}));
+        ok(s.idle_frame());
+        h = ok(s.command("ui.query", Json{{"name", "hierarchy"}}));
+        REQUIRE(h[0]["rect"]["w"].get<double>() == Catch::Approx(w0 + 60).margin(1));
+        ok(s.command("ui.click", Json{{"id", find_named(s, "tab:events")}}));
+        ok(s.finish());
+    }
+    REQUIRE(std::filesystem::exists(saved));
+    {
+        app::Session s(editor_options("physics"));
+        ok(s.start());
+        s.set_paused(true);
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+        Json h = ok(s.command("ui.query", Json{{"name", "hierarchy"}}));
+        REQUIRE(h[0]["rect"]["w"].get<double>() == Catch::Approx(300).margin(1));
+        std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 4}}))["text"].get<std::string>();
+        REQUIRE(snap.find("bottom-body") != std::string::npos);
+        ok(s.finish());
+    }
+    std::filesystem::remove(saved);
 }

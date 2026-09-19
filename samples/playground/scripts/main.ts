@@ -3,7 +3,7 @@
 // Enemies spawn on a timer, move toward the player with a Velocity, and are "hit" when they get
 // close. Every hit is an event whose cause is the spawn event of that enemy, so an agent can ask
 // "why did the player lose health?" and get a chain, not a guess.
-import { events, expose, log, onStart, onTick, random, setClearColor, world } from "pocket";
+import { events, expose, log, onStart, onTick, random, setClearColor, tween, world } from "pocket";
 
 const enemies = new Map<number, { spawnSeq: number }>();
 let nextSpawn = 0.5;
@@ -27,8 +27,10 @@ onTick(({ tick, dt, time }) => {
         // Enemies come from a prefab file; only the position differs per spawn.
         const id = world.instantiate("prefabs/enemy.json", {
             parent: "/Level",
-            components: { Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist } } },
+            components: { Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist }, scale: { x: 0.2, y: 0.2, z: 0.2 } } },
         });
+        // Pop in over 0.4 s of simulation time (tweens run on ticks, so this replays exactly).
+        tween.scale(id, 1, { duration: 0.4, ease: "backOut" });
         const spawnSeq = events.lastSeq();
         enemies.set(id, { spawnSeq });
         events.emit("enemy.spawned", { id, angle: Number(angle.toFixed(3)) }, { subject: id, cause: spawnSeq });

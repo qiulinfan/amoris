@@ -37,6 +37,8 @@ export interface UiEvent {
     repeat?: boolean;
     consumed?: boolean;
     entered?: boolean;
+    /** Modifier keys held during a click, mousedown or keydown: "shift", "ctrl", "alt", "meta". */
+    mods?: string[];
 }
 
 export interface UiRect { x: number; y: number; w: number; h: number }
@@ -85,8 +87,8 @@ export const ui = {
     type(text: string): UiEvent[] {
         return cmd<{ events: UiEvent[] }>("ui.type", { text }).events;
     },
-    key(key: string): UiEvent[] {
-        return cmd<{ events: UiEvent[] }>("ui.key", { key }).events;
+    key(key: string, mods?: string[]): UiEvent[] {
+        return cmd<{ events: UiEvent[] }>("ui.key", { key, mods }).events;
     },
     stats(): { nodes: number; focused: number; hovered: number; paints: number } {
         return cmd("ui.stats");

@@ -1,4 +1,4 @@
-import { events, world } from "pocket";
+import { events, input, world } from "pocket";
 import { expect, test } from "pocket/test";
 
 test("spawn, get, set and describe", () => {
@@ -91,4 +91,21 @@ test("pack and unpack move numbers without JSON", () => {
     expect(world.get(ids[3], "Transform")!.position.x).toBe(3);  // untouched
     expect(() => world.pack("Transform", ["nope"])).toThrow();
     expect(() => world.pack("MeshRenderer", ["mesh"])).toThrow();  // strings are not packable
+});
+
+test("input actions map keys and synthetic holds", () => {
+    input.map({ jump: ["Space", "pad:a"], move_x: { negative: ["A", "Left"], positive: ["D", "Right"], axis: ["pad:leftx"] } });
+    expect(input.axis("move_x")).toBe(0);
+    expect(input.down("jump")).toBe(false);
+    input.hold({ action: "move_x" }, 3);   // holds D (the first positive key)
+    input.press({ key: "Space" });
+    const a = input.actions();
+    expect(a.move_x.value).toBe(1);
+    expect(a.move_x.down).toBe(true);
+    expect(a.move_x.pressed).toBe(true);
+    expect(a.jump.down).toBe(true);
+    const d = input.describe();
+    expect(d.move_x.negative!.length).toBe(2);
+    expect(d.move_x.axis![0]).toBe("pad:leftx");
+    expect(() => input.hold({ action: "nope" })).toThrow();
 });

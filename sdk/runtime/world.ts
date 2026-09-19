@@ -159,8 +159,9 @@ export const world = {
     unpack(count?: number): void {
         command("world.unpack", { count });
     },
-    save(): Scene {
-        return command<Scene>("world.save");
+    /** The whole world as a scene, or one entity with its descendants as a fragment for `instantiate`. */
+    save(entity?: EntityRef): Scene {
+        return command<Scene>("world.save", entity === undefined ? {} : { entity });
     },
     load(scene: Scene, clear = true): number {
         return command<{ entities: number }>("world.load", { scene, clear }).entities;
@@ -180,9 +181,9 @@ export const render = {
         const r = command<{ id: Entity; path?: string; name?: string }>("render.pick", { x, y });
         return r.id === 0 ? undefined : r;
     },
-    /** Pixel position of an entity's world position in the last frame. */
-    project(entity: EntityRef): { visible: boolean; x?: number; y?: number; inside?: boolean } {
-        return command("render.project", { entity });
+    /** Pixel position of an entity's world position, or of any world point, in the last frame. */
+    project(target: EntityRef | { x: number; y: number; z: number }): { visible: boolean; x?: number; y?: number; inside?: boolean } {
+        return command("render.project", typeof target === "object" ? { point: target } : { entity: target });
     },
     /** Entities visible in the last frame with their pixel counts; optionally writes a PNG. */
     ids(path?: string): { width: number; height: number; visible: Array<{ id: Entity; pixels: number; path?: string }> } {

@@ -1,5 +1,8 @@
 #include <pocket/platform/platform.hpp>
 
+#include <algorithm>
+#include <map>
+
 #include <pocket/core/log.hpp>
 
 #include <SDL3/SDL.h>
@@ -17,6 +20,10 @@ const char* event_type_name(EventType type) {
         case EventType::MouseWheel: return "mouse_wheel";
         case EventType::Resize: return "resize";
         case EventType::Text: return "text";
+        case EventType::PadAdded: return "pad_added";
+        case EventType::PadRemoved: return "pad_removed";
+        case EventType::PadButton: return "pad_button";
+        case EventType::PadAxis: return "pad_axis";
     }
     return "unknown";
 }
@@ -24,22 +31,66 @@ const char* event_type_name(EventType type) {
 Event event_from_json(const Json& j) {
     Event e;
     std::string t = j.is_object() ? j.value("type", "quit") : "quit";
-    e.type = t == "key_down" ? EventType::KeyDown : t == "key_up" ? EventType::KeyUp : t == "mouse_move" ? EventType::MouseMove : t == "mouse_down" ? EventType::MouseDown : t == "mouse_up" ? EventType::MouseUp : t == "mouse_wheel" ? EventType::MouseWheel : t == "resize" ? EventType::Resize : t == "text" ? EventType::Text : EventType::Quit;
+    e.type = t == "key_down" ? EventType::KeyDown : t == "key_up" ? EventType::KeyUp : t == "mouse_move" ? EventType::MouseMove : t == "mouse_down" ? EventType::MouseDown : t == "mouse_up" ? EventType::MouseUp : t == "mouse_wheel" ? EventType::MouseWheel : t == "resize" ? EventType::Resize : t == "text" ? EventType::Text : t == "pad_added" ? EventType::PadAdded : t == "pad_removed" ? EventType::PadRemoved : t == "pad_button" ? EventType::PadButton : t == "pad_axis" ? EventType::PadAxis : EventType::Quit;
     if (!j.is_object()) return e;
     e.key_name = j.contains("key") && j["key"].is_string() ? j["key"].get<std::string>() : "";
     e.key = j.contains("code") && j["code"].is_number() ? j["code"].get<int>() : 0;
     e.repeat = j.contains("repeat") && j["repeat"].is_boolean() && j["repeat"].get<bool>();
+    e.mods = j.contains("mods") ? mods_from_json(j["mods"]) : 0;
     auto num = [&](const char* k) -> float { return j.contains(k) && j[k].is_number() ? j[k].get<float>() : 0.0f; };
     e.x = num("x"); e.y = num("y"); e.dx = num("dx"); e.dy = num("dy");
     e.button = j.contains("button") && j["button"].is_number() ? j["button"].get<int>() : 0;
     e.width = static_cast<int>(num("width")); e.height = static_cast<int>(num("height"));
     e.text = j.contains("text") && j["text"].is_string() ? j["text"].get<std::string>() : "";
+    e.pad = j.contains("pad") && j["pad"].is_number() ? j["pad"].get<int>() : 0;
+    e.pressed = j.contains("pressed") && j["pressed"].is_boolean() && j["pressed"].get<bool>();
+    e.value = num("value");
+    if (j.contains("button") && j["button"].is_string()) e.key_name = j["button"].get<std::string>();
+    if (j.contains("axis") && j["axis"].is_string()) e.key_name = j["axis"].get<std::string>();
+    if (j.contains("name") && j["name"].is_string()) e.text = j["name"].get<std::string>();
     return e;
 }
+
+Json mods_to_json(int mods) {
+    Json j = Json::array();
+    if (mods & kModShift) j.push_back("shift");
+    if (mods & kModCtrl) j.push_back("ctrl");
+    if (mods & kModAlt) j.push_back("alt");
+    if (mods & kModMeta) j.push_back("meta");
+    return j;
+}
+
+int mods_from_json(const Json& j) {
+    if (j.is_number()) return j.get<int>();
+    int out = 0;
+    if (j.is_array()) {
+        for (const auto& m : j) {
+            if (!m.is_string()) continue;
+            std::string s = m.get<std::string>();
+            if (s == "shift") out |= kModShift;
+            else if (s == "ctrl" || s == "control") out |= kModCtrl;
+            else if (s == "alt" || s == "option") out |= kModAlt;
+            else if (s == "meta" || s == "cmd" || s == "super" || s == "gui") out |= kModMeta;
+        }
+    }
+    return out;
+}
+
+namespace {
+int mods_from_sdl(SDL_Keymod m) {
+    int out = 0;
+    if (m & SDL_KMOD_SHIFT) out |= kModShift;
+    if (m & SDL_KMOD_CTRL) out |= kModCtrl;
+    if (m & SDL_KMOD_ALT) out |= kModAlt;
+    if (m & SDL_KMOD_GUI) out |= kModMeta;
+    return out;
+}
+}  // namespace
 
 Json event_to_json(const Event& e) {
     Json j;
     j["type"] = event_type_name(e.type);
+    if (e.mods && (e.type == EventType::KeyDown || e.type == EventType::KeyUp || e.type == EventType::MouseDown || e.type == EventType::MouseUp)) j["mods"] = mods_to_json(e.mods);
     switch (e.type) {
         case EventType::KeyDown:
         case EventType::KeyUp:
@@ -63,6 +114,16 @@ Json event_to_json(const Event& e) {
         case EventType::Text:
             j["text"] = e.text;
             break;
+        case EventType::PadAdded:
+        case EventType::PadRemoved:
+            j["pad"] = e.pad; j["name"] = e.text;
+            break;
+        case EventType::PadButton:
+            j["pad"] = e.pad; j["button"] = e.key_name; j["pressed"] = e.pressed;
+            break;
+        case EventType::PadAxis:
+            j["pad"] = e.pad; j["axis"] = e.key_name; j["value"] = e.value;
+            break;
         case EventType::Quit:
             break;
     }
@@ -79,10 +140,18 @@ struct Platform::Impl {
     InputState input;
     int pixel_w = 0, pixel_h = 0;
     bool text_input = false;
+    std::map<SDL_JoystickID, SDL_Gamepad*> pads;  // open gamepads by instance id
+    int pad_index(SDL_JoystickID id) const {
+        int i = 0;
+        for (auto& [jid, pad] : pads) { if (jid == id) return i; ++i; }
+        return 0;
+    }
 
     ~Impl() {
         if (metal_view) SDL_Metal_DestroyView(metal_view);
         if (window) SDL_DestroyWindow(window);
+        for (auto& [id, pad] : pads) SDL_CloseGamepad(pad);
+        pads.clear();
         if (sdl_initialized) SDL_Quit();
     }
 };
@@ -100,7 +169,7 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
         return p;
     }
     SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         return fail("platform_init_failed", "SDL_Init failed: {}", SDL_GetError());
     }
     p->impl_->sdl_initialized = true;
@@ -136,6 +205,7 @@ std::vector<Event> Platform::poll() {
                 ev.key = static_cast<int>(e.key.scancode);
                 ev.key_name = SDL_GetScancodeName(e.key.scancode);
                 ev.repeat = e.key.repeat;
+                ev.mods = mods_from_sdl(e.key.mod);
                 if (ev.key >= 0 && ev.key < static_cast<int>(impl_->input.keys.size())) {
                     impl_->input.keys[static_cast<std::size_t>(ev.key)] = e.type == SDL_EVENT_KEY_DOWN;
                 }
@@ -152,6 +222,7 @@ std::vector<Event> Platform::poll() {
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? EventType::MouseDown : EventType::MouseUp;
                 ev.button = e.button.button; ev.x = e.button.x; ev.y = e.button.y;
+                ev.mods = mods_from_sdl(SDL_GetModState());
                 if (ev.button >= 0 && ev.button < static_cast<int>(impl_->input.buttons.size())) {
                     impl_->input.buttons[static_cast<std::size_t>(ev.button)] = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 }
@@ -173,6 +244,49 @@ std::vector<Event> Platform::poll() {
                 ev.text = e.text.text;
                 out.push_back(ev);
                 break;
+            case SDL_EVENT_GAMEPAD_ADDED: {
+                SDL_Gamepad* pad = SDL_OpenGamepad(e.gdevice.which);
+                if (!pad) break;
+                impl_->pads[e.gdevice.which] = pad;
+                impl_->input.pads = static_cast<int>(impl_->pads.size());
+                ev.type = EventType::PadAdded;
+                ev.pad = impl_->pad_index(e.gdevice.which);
+                const char* name = SDL_GetGamepadName(pad);
+                ev.text = name ? name : "gamepad";
+                log::info("platform", "gamepad {} connected: {}", ev.pad, ev.text);
+                out.push_back(ev);
+                break;
+            }
+            case SDL_EVENT_GAMEPAD_REMOVED: {
+                auto it = impl_->pads.find(e.gdevice.which);
+                if (it == impl_->pads.end()) break;
+                ev.type = EventType::PadRemoved;
+                ev.pad = impl_->pad_index(e.gdevice.which);
+                SDL_CloseGamepad(it->second);
+                impl_->pads.erase(it);
+                impl_->input.pads = static_cast<int>(impl_->pads.size());
+                out.push_back(ev);
+                break;
+            }
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+                ev.type = EventType::PadButton;
+                ev.pad = impl_->pad_index(e.gbutton.which);
+                const char* name = SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(e.gbutton.button));
+                ev.key_name = name ? name : "unknown";
+                ev.pressed = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+                out.push_back(ev);
+                break;
+            }
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+                ev.type = EventType::PadAxis;
+                ev.pad = impl_->pad_index(e.gaxis.which);
+                const char* name = SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(e.gaxis.axis));
+                ev.key_name = name ? name : "unknown";
+                ev.value = std::clamp(static_cast<float>(e.gaxis.value) / 32767.0f, -1.0f, 1.0f);
+                out.push_back(ev);
+                break;
+            }
             default:
                 break;
         }

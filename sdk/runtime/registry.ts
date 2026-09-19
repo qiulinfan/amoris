@@ -1,0 +1,43 @@
+// Internal: handler registries shared by every SDK module. Lives on globalThis so that several
+// bundles (the editor and a project) share one script host: each bundle registers under the
+// context name the runtime sets in `__pocket_bundle` before evaluating it, and `script.reload`
+// drops one context at a time. SDK modules import this instead of pocket.ts to avoid cycles.
+import type { Tick, Frame, InputEvent } from "./pocket";
+
+export interface Handlers {
+    start: Array<() => void>;
+    stop: Array<() => void>;
+    tick: Array<(t: Tick) => void>;
+    frame: Array<(f: Frame) => void>;
+    input: Array<(events: InputEvent[]) => void>;
+    exposed: Map<string, () => unknown>;
+}
+
+export interface Registry {
+    contexts: Map<string, Handlers>;
+    /** Contexts that received "start"; only they get ticks, frames, input and contacts. */
+    active: Set<string>;
+    keysDown: Set<string>;
+}
+
+export const registry: Registry = (() => {
+    const g = globalThis as unknown as { __pocket_registry?: Registry };
+    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set() };
+    return g.__pocket_registry;
+})();
+
+export function contextHandlers(name: string): Handlers {
+    let h = registry.contexts.get(name);
+    if (h === undefined) {
+        h = { start: [], stop: [], tick: [], frame: [], input: [], exposed: new Map() };
+        registry.contexts.set(name, h);
+    }
+    return h;
+}
+
+export const contextName: string = (() => {
+    const g = globalThis as unknown as { __pocket_bundle?: unknown };
+    return typeof g.__pocket_bundle === "string" ? g.__pocket_bundle : "main";
+})();
+export const own = contextHandlers(contextName);
+export const keysDown = registry.keysDown;

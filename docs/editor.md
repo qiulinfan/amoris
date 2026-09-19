@@ -12,13 +12,18 @@
 
 | Pane | Backed by |
 |---|---|
-| Toolbar: Play / Pause / Step / Stop, Save scene, Spawn, Delete, tick, entity count, state hash | `script.start`, `pause`/`resume`/`step`, `script.reload`, `world.load`, `project.save_scene`, `world.spawn`/`destroy`, `state`, `world.summary` |
-| Hierarchy: every entity by path, click to select | `world.query`, `world.describe` |
-| Scene pane: the renderer confined to the pane; click selects by the id buffer; drag orbits the camera; wheel zooms | `render.viewport`, `render.pick`, `world.set` on the Camera's Transform |
+| Toolbar: Play / Pause / Step / Stop, Undo / Redo, Save scene, Spawn, Duplicate, Delete, tick, entity count, state hash | `script.start`, `pause`/`resume`/`step`, `script.reload`, `world.load`, `project.save_scene`, `world.spawn`/`instantiate`/`destroy`, `state`, `world.summary` |
+| Hierarchy: every entity by path; click selects, shift-click (or cmd/ctrl-click) extends the selection | `world.query`, `world.describe` |
+| Scene pane: the renderer confined to the pane; click selects by the id buffer (shift extends); drag orbits the camera; wheel zooms; a gizmo on the selection (X, Y, Z handles move along a world axis, the center handle moves in the camera plane, R turns around world Y, S scales uniformly; every selected entity moves together) | `render.viewport`, `render.pick`, `render.project`, `world.set` on Transforms |
+| Splitters between the panes; widths, the bottom height and the chosen tab persist in the project's `.pocket/editor.json` | `project.read`, `project.write` |
 | Inspector: name, path, every component the entity has with one input per field (vector fields as x/y/z), remove, add component | `world.schema` (the fields), `world.describe`, `world.set`, `world.remove`, `world.rename` |
 | Console / Events / Transcript tabs | `log.tail`, `events.recent`, `transcript` |
 
-Keyboard: Space plays or pauses, Delete removes the selected entity, Escape clears the selection (only when no text input has focus).
+Keyboard (when no text input has focus): Space plays or pauses, Delete removes the selection, Escape clears it, Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z or Ctrl+Y redoes, Cmd/Ctrl+D duplicates, Cmd/Ctrl+A selects everything, Cmd/Ctrl+S saves the scene.
+
+## Undo
+
+Every edit the editor makes (a field, a rename, adding or removing a component, spawning, deleting, duplicating, a gizmo drag) is one entry in `editor/history.ts` with its inverse; deleted entities come back from a `world.save {entity}` fragment with their children, and entities that return get new ids, which later entries follow. Play clears the history because Stop restores the whole scene anyway.
 
 `pocket editor <project> --watch` (and `pocket run <project> --watch` without the editor) keeps the window open and hot reloads the project's scripts whenever a source file under the project changes: the tool rebundles, then calls `project.reload` over the control server. Under the editor the scene on disk is left alone and a dormant project stays dormant; without the editor the scene is reloaded too and the project starts again. A bundle error is printed and the previous scripts keep running.
 
@@ -35,8 +40,8 @@ Everything in the editor is reachable without a window:
 ./build/debug/bin/pocket_runtime --project samples/physics --bundle build/ts/physics.js --editor build/ts/editor.js --headless --serve 4711 --paused --json
 ```
 
-Then `ui.snapshot` lists the panes and their elements by name (`play`, `entity:Ramp`, `Transform.position.x`, `tab:transcript`), `ui.click {id}` presses buttons and selects rows, `ui.type` / `ui.key` edit inspector fields, and `capture` shows the result. `pocket mcp` exposes the same through `runtime_start {project, editor: true}` and the `ui_*` tools. `tests/evidence/editor/session.md` is one such session, and `tests/runtime_tests/editor_tests.cpp` does the same in-process.
+Then `ui.snapshot` lists the panes and their elements by name (`play`, `undo`, `entity:Ramp`, `Transform.position.x`, `gizmo:x`, `gizmo:rotate`, `split:hierarchy`, `tab:transcript`), `ui.click {id, mods}` presses buttons and selects rows (`mods: ["shift"]` extends), `ui.type` / `ui.key` edit inspector fields (`ui.key {key: "Z", mods: ["meta"]}` undoes), `ui.drag {id, dx, dy}` pulls a gizmo handle or a splitter, and `capture` shows the result. `pocket mcp` exposes the same through `runtime_start {project, editor: true}` and the `ui_*` tools. `tests/evidence/editor/session.md` is one such session, and `tests/runtime_tests/editor_tests.cpp` does the same in-process.
 
 ## Not yet
 
-Undo/redo, multi-selection, gizmos for moving entities in the scene pane, asset browsing (assets arrive with M5), docking and layout persistence, a script editor. Each is an editor-side feature on the existing commands.
+Rotation about other axes and per-axis scale handles, snapping, an asset browser, drag-to-reparent in the hierarchy, tabbed docking beyond resizable panes, a script editor. Each is an editor-side feature on the existing commands. Gizmo drags apply the world-space delta to each entity's local position, which is exact for entities whose parents are not rotated or scaled.

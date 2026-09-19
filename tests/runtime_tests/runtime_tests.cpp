@@ -160,3 +160,40 @@ TEST_CASE("prefab files instantiate, save and reload through the session", "[run
     REQUIRE(hist["scene.loaded"] == 1);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("input actions carry edges across frames and release held keys", "[runtime][input]") {
+    auto o = hello_options(1000);
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("input.map", Json{{"actions", Json{{"move_x", Json{{"negative", Json::array({"A"})}, {"positive", Json::array({"D"})}}}, {"jump", Json::array({"Space", "pad:a"})}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json before = s.command("input.actions", Json::object()).value();
+    REQUIRE(before["move_x"]["down"] == false);
+    // Hold D for 3 ticks: down with a pressed edge now, down during the next three ticks,
+    // released at the start of the frame after that.
+    Json held = s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 3}}).value();
+    REQUIRE(held["keys"][0] == "D");
+    REQUIRE(held["actions"]["move_x"]["value"].get<double>() == Catch::Approx(1.0));
+    REQUIRE(held["actions"]["move_x"]["pressed"] == true);
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(s.frame().has_value());
+        Json mid = s.command("input.actions", Json::object()).value();
+        INFO("tick " << i << ": " << mid.dump());
+        REQUIRE(mid["move_x"]["down"] == true);
+        REQUIRE(mid["move_x"]["pressed"] == false);
+    }
+    REQUIRE(s.frame().has_value());
+    Json after = s.command("input.actions", Json::object()).value();
+    INFO(after.dump());
+    REQUIRE(after["move_x"]["down"] == false);
+    // The released edge was consumed by the tick that saw it (see input_map_tests for edges).
+    REQUIRE(after["move_x"]["released"] == false);
+    REQUIRE(s.command("input.state", Json::object()).value()["held"].empty());
+    // Pad events map like keys; a pad axis within the deadzone is nothing.
+    Json st = s.command("input.state", Json::object()).value();
+    REQUIRE(st["pads"] == 0);
+    Json d = s.command("input.describe", Json::object()).value();
+    REQUIRE(d["jump"]["positive"].size() == 2);
+    REQUIRE_FALSE(s.command("input.hold", Json{{"action", "fly"}}).has_value());
+    REQUIRE(s.finish().has_value());
+}

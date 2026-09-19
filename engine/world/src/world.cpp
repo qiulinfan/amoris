@@ -709,6 +709,10 @@ Status World::unpack(std::string_view component, const std::vector<std::string>&
 
 void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
 
+void World::update_transforms() {
+    for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
+}
+
 void World::tick(double dt) {
     auto fdt = static_cast<float>(dt);
     // Motion: integrate velocity into the local transform.

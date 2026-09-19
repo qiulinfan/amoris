@@ -235,7 +235,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::create_dir_all(project.join("scripts"))?;
     std::fs::create_dir_all(project.join("assets"))?;
     std::fs::create_dir_all(project.join("prefabs"))?;
-    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n"))?;
+    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n\n# Actions instead of keys: keyboard and gamepad both work, and agents can hold an action by name.\n[input.actions]\nmove_x = {{ negative = [\"A\", \"Left\", \"pad:dpad_left\"], positive = [\"D\", \"Right\", \"pad:dpad_right\"], axis = [\"pad:leftx\"] }}\nmove_z = {{ negative = [\"W\", \"Up\", \"pad:dpad_up\"], positive = [\"S\", \"Down\", \"pad:dpad_down\"], axis = [\"pad:lefty\"] }}\ndrop = [\"Space\", \"pad:a\"]\n"))?;
     std::fs::write(project.join("scene.json"), r#"{
   "format": "pocket-scene",
   "entities": [
@@ -255,7 +255,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
 "#)?;
     std::fs::write(project.join("scripts").join("main.ts"), format!(r#"// {name}: move the player with WASD, drop crates with Space. Every value that matters is exposed,
 // so `pocket run {name} -- --headless --frames 300 --json` reports it and an agent can read it.
-import {{ events, expose, isKeyDown, log, onInput, onStart, onTick, world }} from "pocket";
+import {{ events, expose, input, log, onStart, onTick, world }} from "pocket";
 
 let player = 0;
 let crates = 0;
@@ -269,21 +269,13 @@ onStart(() => {{
 
 onTick((t) => {{
     const speed = 4;
-    if (isKeyDown("A")) x -= speed * t.dt;
-    if (isKeyDown("D")) x += speed * t.dt;
-    if (isKeyDown("W")) z -= speed * t.dt;
-    if (isKeyDown("S")) z += speed * t.dt;
+    x += input.axis("move_x") * speed * t.dt;
+    z += input.axis("move_z") * speed * t.dt;
     if (player) world.set(player, "Transform", {{ position: {{ x, y: 0.5, z }} }});
-}});
-
-onInput((input) => {{
-    for (const e of input) {{
-        if (e.ui !== undefined) continue;
-        if (e.type === "key_down" && e.key === "Space" && !e.repeat) {{
-            const id = world.instantiate("prefabs/crate.json", {{ components: {{ Transform: {{ position: {{ x, y: 3, z }} }} }} }});
-            crates++;
-            events.emit("crate.dropped", {{ id, x, z }}, {{ subject: id }});
-        }}
+    if (input.pressed("drop")) {{
+        const id = world.instantiate("prefabs/crate.json", {{ components: {{ Transform: {{ position: {{ x, y: 3, z }} }} }} }});
+        crates++;
+        events.emit("crate.dropped", {{ id, x, z }}, {{ subject: id }});
     }}
 }});
 

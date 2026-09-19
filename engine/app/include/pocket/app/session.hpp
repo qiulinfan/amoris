@@ -2,6 +2,7 @@
 // the HTTP control server and tests all share.
 #pragma once
 
+#include <pocket/app/input_map.hpp>
 #include <pocket/app/runtime.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/audio/audio.hpp>
@@ -76,6 +77,8 @@ class Session {
     Result<Json> physics_command(std::string_view op, const Json& p);
     Result<Json> assets_command(std::string_view op, const Json& p);
     Result<Json> audio_command(std::string_view op, const Json& p);
+    Result<Json> input_command(std::string_view op, const Json& p);
+    void release_expired_holds();
     void tick_audio(double dt);
     Status render_frame();
 
@@ -95,6 +98,8 @@ class Session {
     std::filesystem::path font_path_;
     std::vector<std::string> bundle_names_;
     std::map<std::string, Json> prefab_cache_;  // parsed prefab files by project-relative path
+    InputMap input_map_;
+    std::map<std::string, std::int64_t> held_keys_;  // synthetic holds: key name -> tick at which it releases
     // Typed-array packing buffers shared with scripts (never freed while a script may hold them).
     std::vector<float> pack_data_;
     std::vector<double> pack_ids_;

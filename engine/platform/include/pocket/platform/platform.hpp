@@ -25,7 +25,7 @@ struct Config {
     bool resizable = true;
 };
 
-enum class EventType : std::uint8_t { Quit, KeyDown, KeyUp, MouseMove, MouseDown, MouseUp, MouseWheel, Resize, Text };
+enum class EventType : std::uint8_t { Quit, KeyDown, KeyUp, MouseMove, MouseDown, MouseUp, MouseWheel, Resize, Text, PadAdded, PadRemoved, PadButton, PadAxis };
 
 struct Event {
     EventType type = EventType::Quit;
@@ -37,7 +37,15 @@ struct Event {
     int button = 0;          // 1 left, 2 middle, 3 right
     int width = 0, height = 0;  // pixel size for Resize
     std::string text;        // for Text
+    int pad = 0;             // gamepad index (PadAdded/Removed/Button/Axis); key_name carries the button/axis name
+    int mods = 0;            // modifier bits (kModShift | ...) for keys and mouse buttons
+    bool pressed = false;    // PadButton
+    float value = 0;         // PadAxis, -1..1
 };
+
+enum Mod : int { kModShift = 1, kModCtrl = 2, kModAlt = 4, kModMeta = 8 };
+Json mods_to_json(int mods);              // ["shift", "meta"]
+int mods_from_json(const Json& json);     // names array or bit number
 
 const char* event_type_name(EventType type);
 Json event_to_json(const Event& event);
@@ -47,6 +55,7 @@ struct InputState {
     std::array<bool, 512> keys{};
     std::array<bool, 8> buttons{};
     float mouse_x = 0, mouse_y = 0;
+    int pads = 0;  // connected gamepads
 };
 
 class Platform {

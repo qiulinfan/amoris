@@ -614,6 +614,10 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
         if (const Node* n = im.get(target); n && !n->name.empty()) e["name"] = n->name;
         out.push_back(std::move(e));
     };
+    auto with_mods = [](Json j, int mods) {
+        if (mods) j["mods"] = platform::mods_to_json(mods);
+        return j;
+    };
     auto set_focus_to = [&](NodeId id) {
         if (im.focused == id) return;
         if (im.focused) {
@@ -676,7 +680,7 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     set_focus_to(0);
                 }
                 NodeId t = im.listener_target(h, kMouseDown);
-                if (t) emit(t, "mousedown", Json{{"x", ev.x}, {"y", ev.y}, {"button", ev.button}});
+                if (t) emit(t, "mousedown", with_mods(Json{{"x", ev.x}, {"y", ev.y}, {"button", ev.button}}, ev.mods));
                 break;
             }
             case EventType::MouseUp: {
@@ -686,7 +690,7 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                 if (im.pressed && h == im.pressed && !im.dragging) {
                     NodeId t = im.listener_target(h, kClick);
                     Node* n = im.get(t);
-                    if (t && !(n && n->disabled)) emit(t, "click", Json{{"x", ev.x}, {"y", ev.y}, {"button", ev.button}});
+                    if (t && !(n && n->disabled)) emit(t, "click", with_mods(Json{{"x", ev.x}, {"y", ev.y}, {"button", ev.button}}, ev.mods));
                 } else if (im.pressed && im.dragging) {
                     NodeId dt = im.listener_target(im.pressed, kDrag);
                     if (dt) emit(dt, "dragend", Json{{"x", ev.x}, {"y", ev.y}});
@@ -742,11 +746,11 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     }
                 }
                 NodeId t = im.listener_target(im.focused ? im.focused : im.hovered, kKeyDown);
-                if (t) emit(t, "keydown", Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", consumed}});
+                if (t) emit(t, "keydown", with_mods(Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", consumed}}, ev.mods));
                 else if (!consumed) {
                     // Unfocused keys go to the root listener if any.
                     NodeId rt = im.listener_target(im.root_id, kKeyDown);
-                    if (rt) emit(rt, "keydown", Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", false}});
+                    if (rt) emit(rt, "keydown", with_mods(Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", false}}, ev.mods));
                 }
                 break;
             }

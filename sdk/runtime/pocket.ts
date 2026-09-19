@@ -21,6 +21,14 @@ export { events } from "./events";
 export type { WorldEvent } from "./events";
 export { physics, onContacts } from "./physics";
 export { audio } from "./audio";
+export { input } from "./input";
+export { tween, ease } from "./tween";
+export type { Easing, EaseName, TweenOptions, TweenHandle } from "./tween";
+export { timer, wait, nextTick, lastTick } from "./timer";
+export type { TimerHandle } from "./timer";
+export type { ActionState, Binding } from "./input";
+import { setActionSnapshot } from "./input";
+import type { ActionState as ActionStateT } from "./input";
 export type { PlayOptions, Voice } from "./audio";
 export type { RayHit, Contact } from "./physics";
 import { dispatchContacts } from "./physics";
@@ -47,20 +55,29 @@ export interface Tick {
     dt: number;
     /** Simulation time in seconds at the start of this tick. */
     time: number;
+    /** Action states from the input map (see `input`), when one is configured. */
+    actions?: Record<string, ActionStateT>;
 }
 
 export interface InputEvent {
-    type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text";
+    type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis";
+    pad?: number;
+    button?: number | string;
+    axis?: string;
+    value?: number;
+    pressed?: boolean;
+    name?: string;
     /** Set when the event landed on an interface element (its node id); gameplay usually ignores those. */
     ui?: number;
     key?: string;
     code?: number;
     repeat?: boolean;
+    /** Modifier keys held: "shift", "ctrl", "alt", "meta" (keys and mouse buttons). */
+    mods?: string[];
     x?: number;
     y?: number;
     dx?: number;
     dy?: number;
-    button?: number;
     width?: number;
     height?: number;
     text?: string;
@@ -68,48 +85,8 @@ export interface InputEvent {
 
 export type LogFields = Record<string, unknown>;
 
-/**
- * Handler registries live on globalThis so that several bundles (the editor and a project) share
- * one script host: each bundle registers under the context name the runtime sets in
- * `__pocket_bundle` before evaluating it, and `script.reload` drops one context at a time.
- */
-interface Handlers {
-    start: Array<() => void>;
-    stop: Array<() => void>;
-    tick: Array<(t: Tick) => void>;
-    frame: Array<(f: Frame) => void>;
-    input: Array<(events: InputEvent[]) => void>;
-    exposed: Map<string, () => unknown>;
-}
-
-interface Registry {
-    contexts: Map<string, Handlers>;
-    /** Contexts that received "start"; only they get ticks, frames, input and contacts. */
-    active: Set<string>;
-    keysDown: Set<string>;
-}
-
-const registry: Registry = (() => {
-    const g = globalThis as unknown as { __pocket_registry?: Registry };
-    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set() };
-    return g.__pocket_registry;
-})();
-
-function contextHandlers(name: string): Handlers {
-    let h = registry.contexts.get(name);
-    if (h === undefined) {
-        h = { start: [], stop: [], tick: [], frame: [], input: [], exposed: new Map() };
-        registry.contexts.set(name, h);
-    }
-    return h;
-}
-
-const contextName: string = (() => {
-    const g = globalThis as unknown as { __pocket_bundle?: unknown };
-    return typeof g.__pocket_bundle === "string" ? g.__pocket_bundle : "main";
-})();
-const own = contextHandlers(contextName);
-const keysDown = registry.keysDown;
+import { registry, contextHandlers, contextName, own, keysDown } from "./registry";
+import type { Handlers } from "./registry";
 
 export interface Frame {
     /** Frames rendered so far. */
@@ -245,6 +222,7 @@ export function isActive(): boolean {
             return undefined;
         }
         case "tick":
+            setActionSnapshot((arg as Tick).actions);
             for (const h of selected(context)) for (const f of h.tick) f(arg as Tick);
             return undefined;
         case "frame":

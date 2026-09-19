@@ -154,6 +154,10 @@ Status Session::start() {
     ac.headless = options_.headless;
     POCKET_TRY(audio, audio::Audio::create(ac));
     audio_ = std::move(audio);
+    if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
+        if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
+        else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
+    }
     if (project_.contains("physics") && project_["physics"].is_object()) {
         const Json& ph = project_["physics"];
         if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
@@ -270,7 +274,9 @@ void Session::run_tick() {
     t["tick"] = tick;
     t["dt"] = clock_.tick_seconds;
     t["time"] = clock_.sim_seconds();
+    if (input_map_.size() > 0) t["actions"] = input_map_.snapshot();
     dispatch("tick", t);
+    input_map_.consume_edges();
     physics_->step(*world_, clock_.tick_seconds);
     if (!physics_->contacts().empty()) {
         Json contacts = Json::array();
@@ -381,6 +387,8 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
             journal_->record_frame(ticks, raw);
         }
     }
+    release_expired_holds();
+    for (auto& e : events) input_map_.apply(e);
     for (auto& e : events) input_events.push_back(platform::event_to_json(e));
     if (ui_) {
         float w = 0, h = 0, scale = 1;
@@ -413,7 +421,12 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
 Json Session::inject_events(std::vector<platform::Event> events) {
     Json out;
     Json input_events = Json::array();
-    for (auto& e : events) input_events.push_back(platform::event_to_json(e));
+    for (auto& e : events) { input_map_.apply(e); input_events.push_back(platform::event_to_json(e)); }
+    // Synthetic input is part of the run: record it so a replay reproduces it.
+    if (journal_ && journal_->recording && !journal_->frames.empty()) {
+        Json& last = journal_->frames.back();
+        if (last.is_object() && last.contains("events") && last["events"].is_array()) for (auto& e : input_events) last["events"].push_back(e);
+    }
     Json ui_events = Json::array();
     if (ui_) {
         float w = 0, h = 0, scale = 1;
@@ -447,8 +460,11 @@ Status Session::idle_frame() {
     (void)has_frame;
     if (platform_->quit_requested()) return {};
     if (!input_events.empty()) dispatch("input", input_events);
+    // No tick ran: edits made since the last one (inspector, gizmo, agents) still need world transforms.
+    world_->update_transforms();
     dispatch("frame", frame_info());
     host_->drain_microtasks();
+    world_->update_transforms();
     if (errors_.empty()) {
         if (auto r = render_frame(); !r) {
             record_error(r.error());
@@ -564,12 +580,20 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         return j;
     }
     if (op == "project") {
-        world::EntityId id = p.contains("entity") ? resolve_entity(p["entity"]) : 0;
-        if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p.value("entity", Json(nullptr)).dump());
-        const world::WorldTransform* wt = world_->try_get<world::WorldTransform>(id);
-        if (!wt) return fail("no_transform", "entity {} has no WorldTransform", world_->path(id));
+        // An entity's world position, or any world point {x, y, z}.
+        Vec3 pos;
+        if (p.contains("point") && p["point"].is_object()) {
+            const Json& pt = p["point"];
+            pos = Vec3{opt<float>(pt, "x", 0.0f), opt<float>(pt, "y", 0.0f), opt<float>(pt, "z", 0.0f)};
+        } else {
+            world::EntityId id = p.contains("entity") ? resolve_entity(p["entity"]) : 0;
+            if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p.value("entity", Json(nullptr)).dump());
+            const world::WorldTransform* wt = world_->try_get<world::WorldTransform>(id);
+            if (!wt) return fail("no_transform", "entity {} has no WorldTransform", world_->path(id));
+            pos = wt->position;
+        }
         float x = 0, y = 0;
-        bool visible = renderer_->project(wt->position, x, y);
+        bool visible = renderer_->project(pos, x, y);
         Json j;
         j["visible"] = visible;
         if (visible) {
@@ -648,6 +672,76 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         return Json{{"ok", true}, {"version", assets_->version()}};
     }
     return fail("unknown_command", "unknown assets command '{}'", op);
+}
+
+void Session::release_expired_holds() {
+    if (held_keys_.empty()) return;
+    std::vector<platform::Event> ups;
+    for (auto it = held_keys_.begin(); it != held_keys_.end();) {
+        if (clock_.tick >= it->second) {
+            platform::Event up;
+            up.type = platform::EventType::KeyUp;
+            up.key_name = it->first;
+            ups.push_back(up);
+            it = held_keys_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!ups.empty()) inject_events(std::move(ups));
+}
+
+Result<Json> Session::input_command(std::string_view op, const Json& p) {
+    if (op == "map") {
+        POCKET_TRY_VOID(input_map_.configure(p.contains("actions") ? p["actions"] : p));
+        return Json{{"actions", input_map_.size()}};
+    }
+    if (op == "actions") return input_map_.snapshot();
+    if (op == "describe") return input_map_.describe();
+    if (op == "state") {
+        Json j;
+        j["platform"] = platform_->describe();
+        j["pads"] = platform_->input().pads;
+        j["held"] = Json::object();
+        for (auto& [k, until] : held_keys_) j["held"][k] = until;
+        j["actions"] = input_map_.snapshot();
+        return j;
+    }
+    if (op == "hold" || op == "press") {
+        // Press a key (or every key bound to an action) now and release it after `ticks` ticks
+        // (1 for press). Goes through the same path as real input, including the journal.
+        int ticks = op == "press" ? 1 : std::clamp(opt<int>(p, "ticks", 1), 1, 100000);
+        std::vector<std::string> keys;
+        if (p.contains("key") && p["key"].is_string()) keys.push_back(p["key"].get<std::string>());
+        else if (p.contains("action") && p["action"].is_string()) {
+            std::string action = p["action"].get<std::string>();
+            if (!input_map_.has_action(action)) return fail("no_such_action", "no action named '{}'", action);
+            // sign -1 (or a negative value) holds the action's negative direction.
+            int sign = opt<int>(p, "sign", 1);
+            if (p.contains("value") && p["value"].is_number() && p["value"].get<double>() < 0) sign = -1;
+            keys = input_map_.keys_of(action, sign < 0 ? -1 : 1);
+            if (keys.empty()) return fail("bad_args", "action '{}' has no {} key bindings to hold", action, sign < 0 ? "negative" : "positive");
+            keys.resize(1);
+        } else {
+            return fail("bad_args", "hold needs a key name or an action");
+        }
+        std::vector<platform::Event> downs;
+        for (const auto& k : keys) {
+            if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], clock_.tick + ticks); continue; }
+            platform::Event down;
+            down.type = platform::EventType::KeyDown;
+            down.key_name = k;
+            downs.push_back(down);
+            held_keys_[k] = clock_.tick + ticks;
+        }
+        if (!downs.empty()) inject_events(std::move(downs));
+        Json j;
+        j["keys"] = keys;
+        j["until_tick"] = clock_.tick + ticks;
+        j["actions"] = input_map_.snapshot();
+        return j;
+    }
+    return fail("unknown_command", "unknown input command '{}'", op);
 }
 
 Result<Json> Session::audio_command(std::string_view op, const Json& p) {
@@ -799,6 +893,7 @@ Result<Json> Session::ui_command(std::string_view op, const Json& p) {
         int button = opt<int>(p, "button", 1);
         platform::Event move; move.type = platform::EventType::MouseMove; move.x = x; move.y = y;
         platform::Event down; down.type = platform::EventType::MouseDown; down.x = x; down.y = y; down.button = button;
+        down.mods = p.contains("mods") ? platform::mods_from_json(p["mods"]) : 0;
         platform::Event up = down; up.type = platform::EventType::MouseUp;
         return inject_events({move, down, up});
     }
@@ -842,6 +937,7 @@ Result<Json> Session::ui_command(std::string_view op, const Json& p) {
         std::string key = opt<std::string>(p, "key", "");
         if (key.empty()) return fail("bad_args", "key needs a key name such as Return, Backspace, Left");
         platform::Event down; down.type = platform::EventType::KeyDown; down.key_name = key;
+        down.mods = p.contains("mods") ? platform::mods_from_json(p["mods"]) : 0;
         platform::Event up = down; up.type = platform::EventType::KeyUp;
         return inject_events({down, up});
     }
@@ -1150,7 +1246,18 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     }
     if (op == "summary") return w.summary();
     if (op == "schema") return world::World::schema();
-    if (op == "save") return w.save();
+    if (op == "update_transforms") {
+        w.update_transforms();
+        return Json::object();
+    }
+    if (op == "save") {
+        if (p.contains("entity") && !p["entity"].is_null()) {
+            world::EntityId id = resolve_entity(p["entity"]);
+            if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+            return w.save_subtree(id);
+        }
+        return w.save();
+    }
     if (op == "load") {
         // An inline scene object, or a scene file by project-relative path.
         Json scene = p.value("scene", Json::object());
@@ -1314,6 +1421,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("assets.")) return assets_command(name.substr(7), p);
     if (name.starts_with("audio.")) return audio_command(name.substr(6), p);
+    if (name.starts_with("input.")) return input_command(name.substr(6), p);
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
@@ -1382,7 +1490,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

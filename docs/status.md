@@ -8,7 +8,10 @@ What exists on the `agent-first` branch, how to verify it, and what is next. Eve
 |---|---|---|
 | Build tool `pocket` (Rust): manifests, toolchain discovery, Ninja graph, `compile_commands.json`, dependency fetch with sha256 and CMake foreign builds, oxc TypeScript bundler, codegen, `--json` everywhere, MCP server | `tools/pocket` | every command below |
 | Core: `Result`/`Error` on `std::expected`, JSONL logging with a ring, fixed tick clock, PCG32, state hasher, math, filesystem | `engine/core` | `core_tests` |
-| Platform: SDL3 window, normalized input events, headless mode | `engine/platform` | runtime tests, windowed runs |
+| Platform: SDL3 window, normalized keyboard/mouse/gamepad events, OS text input, headless mode | `engine/platform` | runtime tests, windowed runs |
+| Editor depth: undo/redo of every edit, multi-selection, move/rotate/scale gizmo handles agents can drag, resizable panes with the layout saved per project, keyboard shortcuts, modifier keys on events | `editor/history.ts`, `editor/gizmo.ts`, `editor/main.tsx`, `docs/editor.md` | `runtime_tests` (`[editor]`) |
+| Scripting helpers: tweens (numbers and component fields, easing, repeat/yoyo/delay) and timers (`after`, `every`, `wait`, the setTimeout family) on the simulation clock | `sdk/runtime/tween.ts`, `sdk/runtime/timer.ts`, `docs/sdk.md` | `tests/ts/tween.test.ts` |
+| Input actions: action maps (keys, pad buttons, axes with dead zones) from project.toml or scripts, per-frame edges in every tick, synthetic holds for agents that the journal records | `engine/app/input_map`, `sdk/runtime/input.ts`, `docs/design/input.md` | `runtime_tests` (`[input]`), `tests/ts/world.test.ts` |
 | RHI: wgpu-native device, offscreen target, blit present, captures | `engine/rhi` | `renderer_tests`, captures in evidence |
 | Script host: JavaScriptCore backend behind `ScriptHost` (ADR 0005), JSON dispatch, typed-array sharing | `engine/script` | every sample and TypeScript test |
 | World: flecs entities with ordered hierarchy, generated components (`pocket gen`), JSON access with merge, tree/describe/query/summary/schema, deterministic hash, scenes, motion/lifetime/transform/bounds systems, causal event log, gameplay transcript | `engine/world` | `world_tests`, `tests/ts/world.test.ts` |
@@ -48,7 +51,6 @@ The `transcript` field of any report, `GET /tree` on a served runtime, and the `
 
 ## Next
 
-1. Editor depth: undo/redo, gizmos, multi-selection, layout persistence; HarfBuzz shaping for the UI.
-2. Input mapping (actions, gamepads), tweening helpers, editor undo and gizmos.
+1. HarfBuzz shaping for the UI.
 3. Agent eval suite and the perception-efficiency benchmark from `docs/design/agent-perception.md`.
 4. Web export (M6). Asset loading and packaging are done; skins, animations and PBR maps are not.
