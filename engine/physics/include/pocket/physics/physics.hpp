@@ -1,0 +1,79 @@
+// Rigid body physics on the world.
+//
+// Bodies are entities with RigidBody + Collider (+ Transform, + Velocity for motion). The step
+// runs in a fixed order: gravity and damping, broadphase on world AABBs (sorted by entity id so
+// runs are reproducible), narrowphase (sphere-sphere, sphere-box, box-box via SAT), a sequential
+// impulse solver with Baumgarte position correction, integration, sleeping. Contacts that begin
+// or end become events (collision.begin/end, trigger.enter/exit) so gameplay can react without
+// polling and agents can read what touched what.
+#pragma once
+
+#include <pocket/core/json.hpp>
+#include <pocket/core/math.hpp>
+#include <pocket/core/result.hpp>
+#include <pocket/world/world.hpp>
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace pocket::physics {
+
+struct Settings {
+    Vec3 gravity{0, -9.81f, 0};
+    int solver_iterations = 10;
+    float baumgarte = 0.4f;    // fraction of the remaining penetration removed per step (position projection)
+    float slop = 0.005f;
+    float sleep_linear = 0.05f;   // speeds below which a body may sleep
+    float sleep_angular = 0.05f;
+    float sleep_seconds = 0.5f;   // time below the thresholds before sleeping
+};
+
+struct Contact {
+    world::EntityId a = 0, b = 0;
+    Vec3 point;
+    Vec3 normal;   // from a to b
+    float depth = 0;
+    bool trigger = false;
+};
+
+struct RayHit {
+    world::EntityId entity = 0;
+    Vec3 point;
+    Vec3 normal;
+    float distance = 0;
+};
+
+struct StepStats {
+    std::uint32_t bodies = 0;
+    std::uint32_t awake = 0;
+    std::uint32_t pairs = 0;
+    std::uint32_t contacts = 0;
+    std::uint32_t begins = 0;
+    std::uint32_t ends = 0;
+};
+
+class Physics {
+   public:
+    explicit Physics(Settings settings = {});
+    ~Physics();
+    Physics(const Physics&) = delete;
+    Physics& operator=(const Physics&) = delete;
+
+    // Advance all bodies by dt. Emits events into world.events(). Call before World::tick.
+    void step(world::World& world, double dt);
+    [[nodiscard]] const std::vector<Contact>& contacts() const;  // of the last step
+    [[nodiscard]] const StepStats& stats() const;
+    [[nodiscard]] Json describe() const;
+    // Closest hit along a ray against every collider (triggers included when include_triggers).
+    [[nodiscard]] Result<RayHit> raycast(const world::World& world, Vec3 origin, Vec3 direction, float max_distance = 1000.0f, bool include_triggers = false) const;
+    // Every collider overlapping a world-space sphere.
+    [[nodiscard]] std::vector<world::EntityId> overlap_sphere(const world::World& world, Vec3 center, float radius) const;
+    Settings& settings();
+
+   private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+}  // namespace pocket::physics

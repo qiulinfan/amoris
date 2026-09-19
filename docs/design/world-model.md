@@ -45,6 +45,14 @@ Scripts call `command(name, params)`; external processes POST the same JSON-RPC 
 
 The renderer writes an entity id into a second render target for every fragment. `render.pick(x, y)` returns the entity under a pixel, `render.project(entity)` returns where an entity is on screen, and `render.ids()` lists every visible entity with its pixel count (optionally writing a false-color PNG). A screenshot is therefore never the only evidence: an agent can ask what it is looking at.
 
+## Physics as events (M4)
+
+`engine/physics` steps bodies (`RigidBody` + `Collider`) before the world systems each tick. Every contact that begins or ends becomes an event (`collision.begin`, `collision.end`, `trigger.enter`, `trigger.exit`) carrying both paths, the contact point, normal and closing speed, and every exit event is caused by its enter event. Scripts get the full contact list per tick through `onContacts`; agents ask `physics.contacts`, `physics.raycast`, `physics.overlap` and `physics.stats`. Sleeping bodies keep their contacts, so "resting on" stays answerable. The solver is deterministic: bodies are processed in entity id order and two identical scenarios hash identically.
+
+## The transcript: perception as state compression
+
+`transcript` (a command, a report field and an MCP tool) turns the per-tick exposed state and the event log into a few lines. The exposed numeric values are split into segments in which each keeps its trend (rising, falling, constant), debounced so solver noise does not fragment them; constants that did not change since the previous segment are omitted; string values report their changes; events inside a segment are grouped by type with counts, first and last ticks and a few subjects. A line budget merges the shortest neighbours. For the hello sample this reads as `t0-46: ball.y falling 2.997->0, bounces rising 0->1`, then alternating rising and falling segments of shrinking length, then `ball.grounded rising 0->1` and only `hue rising` afterwards: the physical story, from numbers, without frames. See `tests/evidence/transcripts.md`.
+
 ## What is not there yet
 
-Typed-array access for hot component data (scripts currently pay one JSON round trip per call), a transcript/segmentation layer over the event log, the MCP wrapper (planned as `pocket mcp`, a thin stdio bridge to `/rpc`).
+Typed-array access for hot component data (scripts currently pay one JSON round trip per call), the MCP wrapper (planned as `pocket mcp`, a thin stdio bridge to `/rpc`).

@@ -154,3 +154,45 @@ TEST_CASE("schema lists every component with defaults", "[world]") {
     REQUIRE(World::known_component("Velocity"));
     REQUIRE_FALSE(World::known_component("Nope"));
 }
+
+#include <pocket/world/transcript.hpp>
+
+TEST_CASE("transcript segments trends and groups events", "[world]") {
+    std::vector<StateSample> samples;
+    EventLog log;
+    // 30 ticks falling, a bounce event, 20 ticks rising, then 30 ticks constant with a string change.
+    double y = 3.0;
+    for (int t = 0; t < 80; ++t) {
+        if (t < 30) y -= 0.1;
+        else if (t < 50) y += 0.05;
+        Json s;
+        s["y"] = y;
+        s["count"] = t < 30 ? 0 : 1;
+        s["label"] = t < 60 ? "air" : "ground";
+        samples.push_back({t, s});
+        if (t == 30) log.emit(t, "bounce", 0, Json{{"path", "/Ball"}});
+        if (t >= 60 && t % 5 == 0) log.emit(t, "tick.mark", 0, nullptr);
+    }
+    TranscriptOptions o;
+    Transcript tr = build_transcript(samples, log, o);
+    INFO(tr.text);
+    REQUIRE(tr.segments.size() >= 3);
+    REQUIRE(tr.segments.front().trends["y"]["trend"] == "falling");
+    REQUIRE(tr.segments.front().to <= 30);
+    bool rising = false, changed = false, bounce = false;
+    for (auto& seg : tr.segments) {
+        if (seg.trends.contains("y") && seg.trends["y"]["trend"] == "rising") rising = true;
+        if (seg.trends.contains("label") && seg.trends["label"]["trend"] == "changed") changed = true;
+        if (seg.events.contains("bounce")) bounce = true;
+    }
+    REQUIRE(rising);
+    REQUIRE(changed);
+    REQUIRE(bounce);
+    REQUIRE(tr.text.find("tick.markx4") != std::string::npos);
+    // The line budget coarsens without losing events.
+    o.max_lines = 2;
+    Transcript small = build_transcript(samples, log, o);
+    REQUIRE(small.segments.size() == 1);
+    REQUIRE(small.segments[0].events["tick.mark"]["count"] == 4);
+    REQUIRE(small.segments[0].events["bounce"]["count"] == 1);
+}

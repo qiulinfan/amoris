@@ -12,12 +12,16 @@ declare const __pocket: {
     command(name: string, params?: unknown): unknown;
 };
 
-export { world, render, command } from "./world";
+export { world, render, command, transcript } from "./world";
 export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity } from "./world";
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
 export { events } from "./events";
 export type { WorldEvent } from "./events";
+export { physics, onContacts } from "./physics";
+export type { RayHit, Contact } from "./physics";
+import { dispatchContacts } from "./physics";
+import type { Contact as ContactT } from "./physics";
 
 export interface RuntimeInfo {
     tickRate: number;
@@ -163,6 +167,9 @@ function collectState(): Record<string, unknown> {
             for (const h of inputHandlers) h(events);
             return undefined;
         }
+        case "contacts":
+            dispatchContacts(arg as ContactT[]);
+            return undefined;
         case "stop":
             for (const h of stopHandlers) h();
             return undefined;

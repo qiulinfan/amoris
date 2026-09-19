@@ -146,3 +146,8 @@ export const render = {
         return command("render.ids", { path });
     },
 };
+
+/** The run so far as stable regimes and grouped events (see docs/design/agent-perception.md). */
+export function transcript(options: { since_tick?: number; until_tick?: number; max_lines?: number; tolerance?: number } = {}): string {
+    return command<{ text: string }>("transcript", options).text;
+}

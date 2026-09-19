@@ -89,3 +89,29 @@ Axis-aligned bounding box in world space, computed by the engine from the mesh a
 | `min` | vec3 | [0.0, 0.0, 0.0] | Minimum corner. |
 | `max` | vec3 | [0.0, 0.0, 0.0] | Maximum corner. |
 
+## RigidBody
+
+Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `kind` | i32 | 0 | 0 dynamic, 1 static, 2 kinematic. |
+| `mass` | f32 | 1.0 | Kilograms; ignored for static bodies. |
+| `restitution` | f32 | 0.2 | Bounciness 0..1. |
+| `friction` | f32 | 0.5 | Coulomb friction coefficient. |
+| `linear_damping` | f32 | 0.01 | Velocity lost per second (fraction). |
+| `angular_damping` | f32 | 0.05 | Angular velocity lost per second (fraction). |
+| `gravity_scale` | f32 | 1.0 | Multiplier on world gravity. |
+| `sleeping` | bool | false | Set by the engine when the body came to rest; cleared when touched. |
+
+## Collider
+
+Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `shape` | i32 | 0 | 0 box, 1 sphere. |
+| `size` | vec3 | [0.5, 0.5, 0.5] | Box half extents, or radius in x for spheres. |
+| `offset` | vec3 | [0.0, 0.0, 0.0] | Local offset of the shape center. |
+| `is_trigger` | bool | false | Overlap events only, no collision response. |
+

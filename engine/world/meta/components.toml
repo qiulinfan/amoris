@@ -84,3 +84,27 @@ fields = [
     { name = "min", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Minimum corner." },
     { name = "max", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Maximum corner." },
 ]
+
+[[component]]
+name = "RigidBody"
+doc = "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots)."
+fields = [
+    { name = "kind", type = "i32", default = 0, doc = "0 dynamic, 1 static, 2 kinematic." },
+    { name = "mass", type = "f32", default = 1.0, doc = "Kilograms; ignored for static bodies." },
+    { name = "restitution", type = "f32", default = 0.2, doc = "Bounciness 0..1." },
+    { name = "friction", type = "f32", default = 0.5, doc = "Coulomb friction coefficient." },
+    { name = "linear_damping", type = "f32", default = 0.01, doc = "Velocity lost per second (fraction)." },
+    { name = "angular_damping", type = "f32", default = 0.05, doc = "Angular velocity lost per second (fraction)." },
+    { name = "gravity_scale", type = "f32", default = 1.0, doc = "Multiplier on world gravity." },
+    { name = "sleeping", type = "bool", default = false, doc = "Set by the engine when the body came to rest; cleared when touched." },
+]
+
+[[component]]
+name = "Collider"
+doc = "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push."
+fields = [
+    { name = "shape", type = "i32", default = 0, doc = "0 box, 1 sphere." },
+    { name = "size", type = "vec3", default = [0.5, 0.5, 0.5], doc = "Box half extents, or radius in x for spheres." },
+    { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Local offset of the shape center." },
+    { name = "is_trigger", type = "bool", default = false, doc = "Overlap events only, no collision response." },
+]

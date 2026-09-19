@@ -90,6 +90,38 @@ export interface Bounds {
     max: Vec3;
 }
 
+/** Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots). */
+export interface RigidBody {
+    /** 0 dynamic, 1 static, 2 kinematic. */
+    kind: number;
+    /** Kilograms; ignored for static bodies. */
+    mass: number;
+    /** Bounciness 0..1. */
+    restitution: number;
+    /** Coulomb friction coefficient. */
+    friction: number;
+    /** Velocity lost per second (fraction). */
+    linear_damping: number;
+    /** Angular velocity lost per second (fraction). */
+    angular_damping: number;
+    /** Multiplier on world gravity. */
+    gravity_scale: number;
+    /** Set by the engine when the body came to rest; cleared when touched. */
+    sleeping: boolean;
+}
+
+/** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
+export interface Collider {
+    /** 0 box, 1 sphere. */
+    shape: number;
+    /** Box half extents, or radius in x for spheres. */
+    size: Vec3;
+    /** Local offset of the shape center. */
+    offset: Vec3;
+    /** Overlap events only, no collision response. */
+    is_trigger: boolean;
+}
+
 export interface Components {
     Transform: Transform;
     WorldTransform: WorldTransform;
@@ -100,11 +132,13 @@ export interface Components {
     Light: Light;
     MeshRenderer: MeshRenderer;
     Bounds: Bounds;
+    RigidBody: RigidBody;
+    Collider: Collider;
 }
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Bounds"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Bounds", "RigidBody", "Collider"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -117,6 +151,8 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
     MeshRenderer: { mesh: 0, color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, visible: true },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
+    RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false },
+    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

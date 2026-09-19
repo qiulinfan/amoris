@@ -125,6 +125,13 @@ Status Session::start() {
     renderer_ = std::move(renderer);
 
     world_ = std::make_unique<world::World>();
+    physics_ = std::make_unique<physics::Physics>();
+    if (project_.contains("physics") && project_["physics"].is_object()) {
+        const Json& ph = project_["physics"];
+        if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
+            physics_->settings().gravity = {ph["gravity"][0].get<float>(), ph["gravity"][1].get<float>(), ph["gravity"][2].get<float>()};
+        }
+    }
     rng_.reseed(options_.seed);
     clock_.tick_seconds = 1.0 / options_.tick_rate;
 
@@ -203,10 +210,26 @@ void Session::run_tick() {
     t["dt"] = clock_.tick_seconds;
     t["time"] = clock_.sim_seconds();
     dispatch("tick", t);
+    physics_->step(*world_, clock_.tick_seconds);
+    if (!physics_->contacts().empty()) {
+        Json contacts = Json::array();
+        for (const auto& c : physics_->contacts()) {
+            Json cj;
+            cj["a"] = c.a;
+            cj["b"] = c.b;
+            cj["normal"] = Json{{"x", c.normal.x}, {"y", c.normal.y}, {"z", c.normal.z}};
+            cj["point"] = Json{{"x", c.point.x}, {"y", c.point.y}, {"z", c.point.z}};
+            cj["depth"] = c.depth;
+            cj["trigger"] = c.trigger;
+            contacts.push_back(cj);
+        }
+        dispatch("contacts", contacts);
+    }
     world_->tick(clock_.tick_seconds);
     Json s = dispatch("state", nullptr);
     if (!s.is_object()) s = Json::object();
     last_state_ = s;
+    if (state_history_.size() < 200000) state_history_.push_back(world::StateSample{tick, s});
     if (options_.hash_every_tick) {
         hasher_.i64(tick);
         hasher_.str(s.dump());
@@ -263,6 +286,61 @@ rhi::Image ids_to_image(const renderer::IdImage& ids) {
 }
 
 }  // namespace
+
+namespace {
+Vec3 vec3_of(const Json& j, Vec3 fallback) {
+    if (j.is_array() && j.size() >= 3) return {j[0].get<float>(), j[1].get<float>(), j[2].get<float>()};
+    if (j.is_object()) return {j.value("x", fallback.x), j.value("y", fallback.y), j.value("z", fallback.z)};
+    return fallback;
+}
+Json json_of(Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; }
+}  // namespace
+
+Result<Json> Session::physics_command(std::string_view op, const Json& p) {
+    if (op == "stats") return physics_->describe();
+    if (op == "raycast") {
+        Vec3 origin = vec3_of(p.value("origin", Json(nullptr)), {0, 0, 0});
+        Vec3 dir = vec3_of(p.value("direction", Json(nullptr)), {0, -1, 0});
+        auto hit = physics_->raycast(*world_, origin, dir, opt<float>(p, "max_distance", 1000.0f), opt<bool>(p, "include_triggers", false));
+        if (!hit) {
+            if (hit.error().code == "no_hit") return nullptr;
+            return fail(hit.error());
+        }
+        Json j;
+        j["entity"] = hit->entity;
+        j["path"] = world_->path(hit->entity);
+        j["point"] = json_of(hit->point);
+        j["normal"] = json_of(hit->normal);
+        j["distance"] = hit->distance;
+        return j;
+    }
+    if (op == "overlap") {
+        Vec3 center = vec3_of(p.value("center", Json(nullptr)), {0, 0, 0});
+        auto ids = physics_->overlap_sphere(*world_, center, opt<float>(p, "radius", 1.0f));
+        Json arr = Json::array();
+        for (auto id : ids) arr.push_back(Json{{"id", id}, {"path", world_->path(id)}});
+        return arr;
+    }
+    if (op == "contacts") {
+        Json arr = Json::array();
+        for (const auto& c : physics_->contacts()) {
+            Json cj;
+            cj["a"] = world_->path(c.a);
+            cj["b"] = world_->path(c.b);
+            cj["point"] = json_of(c.point);
+            cj["normal"] = json_of(c.normal);
+            cj["depth"] = c.depth;
+            cj["trigger"] = c.trigger;
+            arr.push_back(cj);
+        }
+        return arr;
+    }
+    if (op == "gravity") {
+        if (p.contains("gravity")) physics_->settings().gravity = vec3_of(p["gravity"], physics_->settings().gravity);
+        return json_of(physics_->settings().gravity);
+    }
+    return fail("unknown_command", "unknown physics command '{}'", op);
+}
 
 Result<Json> Session::render_command(std::string_view op, const Json& p) {
     if (op == "stats") return renderer_->describe();
@@ -568,6 +646,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("world.")) return world_command(name.substr(6), p, source);
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
+    if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name == "state") {
         Json j;
         j["tick"] = clock_.tick;
@@ -622,9 +701,18 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         for (auto& r : log::global().recent(static_cast<std::size_t>(opt<int>(p, "n", 50)), min_level)) arr.push_back(log::to_json(r));
         return arr;
     }
+    if (name == "transcript") {
+        world::TranscriptOptions to;
+        to.since_tick = static_cast<std::int64_t>(opt<double>(p, "since_tick", 0));
+        to.until_tick = static_cast<std::int64_t>(opt<double>(p, "until_tick", -1));
+        to.max_lines = opt<int>(p, "max_lines", 40);
+        to.tolerance = opt<double>(p, "tolerance", 1e-4);
+        to.debounce = opt<int>(p, "debounce", 3);
+        return world::build_transcript(state_history_, world_->events(), to).to_json();
+    }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }
@@ -639,6 +727,7 @@ Json Session::report() {
     if (platform_) report["platform"] = platform_->describe();
     if (device_) report["gpu"] = device_->describe();
     if (renderer_) report["render"] = renderer_->describe();
+    if (physics_) report["physics"] = physics_->describe();
     if (host_) report["script"] = host_->describe();
     report["frames"] = frames_;
     report["ticks"] = ticks_;
@@ -669,6 +758,11 @@ Json Session::report() {
         j["mode"] = journal_->replaying ? "replay" : "record";
         j["frames"] = journal_->frames.size();
         report["journal"] = j;
+    }
+    if (!state_history_.empty()) {
+        world::TranscriptOptions to;
+        to.max_lines = 24;
+        report["transcript"] = world::build_transcript(state_history_, world_->events(), to).text;
     }
     Json tail = Json::array();
     for (auto& r : log::global().recent(20)) tail.push_back(log::to_json(r));

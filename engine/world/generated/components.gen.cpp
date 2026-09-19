@@ -229,6 +229,66 @@ void hash_component(StateHasherRef& h, const Bounds& v) {
     h.f32(v.max.z);
 }
 
+void to_json(Json& j, const RigidBody& v) {
+    j = Json::object();
+    j["kind"] = v.kind;
+    j["mass"] = v.mass;
+    j["restitution"] = v.restitution;
+    j["friction"] = v.friction;
+    j["linear_damping"] = v.linear_damping;
+    j["angular_damping"] = v.angular_damping;
+    j["gravity_scale"] = v.gravity_scale;
+    j["sleeping"] = v.sleeping;
+}
+
+void from_json(const Json& j, RigidBody& v) {
+    scalar_from_json(j, "kind", v.kind);
+    scalar_from_json(j, "mass", v.mass);
+    scalar_from_json(j, "restitution", v.restitution);
+    scalar_from_json(j, "friction", v.friction);
+    scalar_from_json(j, "linear_damping", v.linear_damping);
+    scalar_from_json(j, "angular_damping", v.angular_damping);
+    scalar_from_json(j, "gravity_scale", v.gravity_scale);
+    scalar_from_json(j, "sleeping", v.sleeping);
+}
+
+void hash_component(StateHasherRef& h, const RigidBody& v) {
+    h.i64(static_cast<std::int64_t>(v.kind));
+    h.f32(v.mass);
+    h.f32(v.restitution);
+    h.f32(v.friction);
+    h.f32(v.linear_damping);
+    h.f32(v.angular_damping);
+    h.f32(v.gravity_scale);
+    h.u8(v.sleeping ? 1 : 0);
+}
+
+void to_json(Json& j, const Collider& v) {
+    j = Json::object();
+    j["shape"] = v.shape;
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["offset"], v.offset);
+    j["is_trigger"] = v.is_trigger;
+}
+
+void from_json(const Json& j, Collider& v) {
+    scalar_from_json(j, "shape", v.shape);
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "is_trigger", v.is_trigger);
+}
+
+void hash_component(StateHasherRef& h, const Collider& v) {
+    h.i64(static_cast<std::int64_t>(v.shape));
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.size.z);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
+    h.u8(v.is_trigger ? 1 : 0);
+}
+
 namespace {
 
 constexpr std::array<FieldInfo, 3> kTransformFields = {{
@@ -273,8 +333,24 @@ constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},
     FieldInfo{"max", "vec3", "Maximum corner."},
 }};
+constexpr std::array<FieldInfo, 8> kRigidBodyFields = {{
+    FieldInfo{"kind", "i32", "0 dynamic, 1 static, 2 kinematic."},
+    FieldInfo{"mass", "f32", "Kilograms; ignored for static bodies."},
+    FieldInfo{"restitution", "f32", "Bounciness 0..1."},
+    FieldInfo{"friction", "f32", "Coulomb friction coefficient."},
+    FieldInfo{"linear_damping", "f32", "Velocity lost per second (fraction)."},
+    FieldInfo{"angular_damping", "f32", "Angular velocity lost per second (fraction)."},
+    FieldInfo{"gravity_scale", "f32", "Multiplier on world gravity."},
+    FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched."},
+}};
+constexpr std::array<FieldInfo, 4> kColliderFields = {{
+    FieldInfo{"shape", "i32", "0 box, 1 sphere."},
+    FieldInfo{"size", "vec3", "Box half extents, or radius in x for spheres."},
+    FieldInfo{"offset", "vec3", "Local offset of the shape center."},
+    FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response."},
+}};
 
-constexpr std::array<ComponentInfo, 9> kComponents = {{
+constexpr std::array<ComponentInfo, 11> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -284,6 +360,8 @@ constexpr std::array<ComponentInfo, 9> kComponents = {{
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
     ComponentInfo{"MeshRenderer", "Draws a built-in primitive mesh with a flat material.", true, kMeshRendererFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
+    ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
+    ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
 }};
 
 }  // namespace

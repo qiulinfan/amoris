@@ -135,3 +135,7 @@ Memory is multi-resolution, as in people: the last seconds at full fidelity in t
 - M3: the recorder and time travel, segmentation and the gameplay transcript, exposed in the editor as a timeline and a why panel, and over MCP.
 - M4: physics explanation, gameplay analyzers, executable scenarios with bots.
 - Later: the environment interface for play bots and recorded human sessions.
+
+## Implementation pointers (2026-09-18)
+
+What this document asks for and where it now lives: the tree with budgets and salience is `world.tree` (`engine/world/src/world.cpp`); the causal event log is `engine/world/events.hpp`; determinism and hashing are in `World::hash` and the session's per-tick state hash, with `--record/--replay` for input journals; the id buffer is the renderer's second target with `render.pick`; the gameplay transcript with segmentation is `engine/world/transcript.hpp`; the observation surface is the runtime's command set, served over HTTP and MCP (`docs/mcp.md`). Not built: observation tiers (player-knowable versus omniscient), the perception benchmark, and the agent eval suite.

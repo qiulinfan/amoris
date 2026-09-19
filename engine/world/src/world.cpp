@@ -157,7 +157,8 @@ struct World::Impl {
 #define POCKET_REGISTER(C) ecs.component<C>("__pocket::" #C);
         POCKET_COMPONENT_LIST(POCKET_REGISTER)
 #undef POCKET_REGISTER
-        motion = ecs.query<Transform, Velocity>();
+        // Bodies are integrated by the physics step, not by the kinematic motion system.
+        motion = ecs.query_builder<Transform, Velocity>().without<RigidBody>().build();
         lifetime = ecs.query<Lifetime>();
         bounds = ecs.query<const MeshRenderer, const WorldTransform>();
     }

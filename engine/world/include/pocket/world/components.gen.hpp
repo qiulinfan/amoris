@@ -103,6 +103,32 @@ struct Bounds {
 void to_json(Json& j, const Bounds& v);
 void from_json(const Json& j, Bounds& v);
 
+/// Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).
+struct RigidBody {
+    std::int32_t kind = 0;
+    float mass = 1.0f;
+    float restitution = 0.2f;
+    float friction = 0.5f;
+    float linear_damping = 0.01f;
+    float angular_damping = 0.05f;
+    float gravity_scale = 1.0f;
+    bool sleeping = false;
+    constexpr bool operator==(const RigidBody&) const = default;
+};
+void to_json(Json& j, const RigidBody& v);
+void from_json(const Json& j, RigidBody& v);
+
+/// Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
+struct Collider {
+    std::int32_t shape = 0;
+    Vec3 size{0.5f, 0.5f, 0.5f};
+    Vec3 offset{0.0f, 0.0f, 0.0f};
+    bool is_trigger = false;
+    constexpr bool operator==(const Collider&) const = default;
+};
+void to_json(Json& j, const Collider& v);
+void from_json(const Json& j, Collider& v);
+
 struct FieldInfo {
     std::string_view name;
     std::string_view type;
@@ -129,5 +155,7 @@ void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
+void hash_component(struct StateHasherRef& h, const RigidBody& v);
+void hash_component(struct StateHasherRef& h, const Collider& v);
 
 }  // namespace pocket::world

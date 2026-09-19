@@ -28,11 +28,15 @@ RHI decision (ADR 0002), mesh, material, light and camera, offscreen render targ
 
 ## M3: UI system and editor shell
 
+Status: the agent interface part is done (2026-09-18): `pocket mcp` serves build, test, headless runs and live paused sessions (tree, query, describe, schema, step, events, capture, pick, any runtime command) over the Model Context Protocol; evidence in `tests/evidence/m3/`, usage in `docs/mcp.md`. Pocket UI and the editor shell are not started.
+
 Pocket UI (ADR 0004): element tree with a DOM-like API, Yoga flexbox layout, CSS subset, FreeType and HarfBuzz text, the 2D batch renderer on the RHI, TSX components with signals, tree snapshots and selector queries, golden-image UI tests. Then the editor shell on top of it: docking, menus, document and command model, scene view, inspector generated from metadata, play and stop, an MCP server exposing the same commands as the CLI, evidence capture hooks as a product feature. No Dear ImGui at any milestone; before M3, verification is headless.
 
 ## M4: physics
 
-Port of the aipocket `Physics3D` engine (bodies, shapes, SAT manifolds, sequential impulses, sleeping, triggers, raycasts) with its unit tests, bridged to the ECS and TypeScript.
+Status: done as a new implementation rather than a port (2026-09-18), evidence in `tests/evidence/m4/`. `engine/physics`: boxes and spheres, static/dynamic/kinematic bodies from `RigidBody` + `Collider` metadata, gravity, sort-and-sweep broadphase ordered by entity id, SAT and sphere tests, sequential impulses with accumulated clamped normal and friction impulses, Baumgarte correction, restitution, sleeping, triggers, `collision.begin/end` and `trigger.enter/exit` events with causes, raycast and sphere overlap, `physics.*` commands and the `onContacts` SDK hook. Not yet: capsules and meshes, joints, continuous collision, per-body layers.
+
+The original plan was a port of the aipocket `Physics3D` engine (bodies, shapes, SAT manifolds, sequential impulses, sleeping, triggers, raycasts) with its unit tests, bridged to the ECS and TypeScript.
 
 ## M5: assets, cook, package
 

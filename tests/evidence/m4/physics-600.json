@@ -1,0 +1,262 @@
+{
+  "ok": true,
+  "project": "physics",
+  "frames": 600,
+  "ticks": 600,
+  "state": {
+    "dropped": 12,
+    "resting": 6,
+    "inGoal": 10,
+    "contacts": 6,
+    "ray": "/Ground at 5.00",
+    "lowest": 0.345
+  },
+  "state_hash": "6dae386100e688d4",
+  "world": {
+    "tick": 600,
+    "entities": 21,
+    "roots": 21,
+    "components": {
+      "Transform": 21,
+      "WorldTransform": 21,
+      "Velocity": 12,
+      "Camera": 1,
+      "Light": 1,
+      "MeshRenderer": 18,
+      "Bounds": 18,
+      "RigidBody": 19,
+      "Collider": 19
+    },
+    "events": 269,
+    "hash": "2534fbb6bffd58f1"
+  },
+  "events": {
+    "total": 269,
+    "histogram": {
+      "collision.begin": 115,
+      "collision.end": 103,
+      "entity.spawned": 21,
+      "goal.reached": 10,
+      "trigger.enter": 12,
+      "trigger.exit": 8
+    },
+    "tail": [
+      {
+        "seq": 260,
+        "tick": 539,
+        "type": "collision.end",
+        "subject": 496,
+        "data": {
+          "a": "/WallEast",
+          "b": "/Ball_5"
+        },
+        "cause": 258,
+        "source": "engine"
+      },
+      {
+        "seq": 261,
+        "tick": 553,
+        "type": "collision.begin",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_5",
+          "point": {
+            "x": 11.178910255432129,
+            "y": 0.0,
+            "z": 0.5006386041641235
+          },
+          "normal": {
+            "x": 0.0,
+            "y": 1.0,
+            "z": 0.0
+          },
+          "speed": 1.6998497247695923
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 262,
+        "tick": 554,
+        "type": "collision.end",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_5"
+        },
+        "cause": 261,
+        "source": "engine"
+      },
+      {
+        "seq": 263,
+        "tick": 562,
+        "type": "collision.begin",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_5",
+          "point": {
+            "x": 10.9450101852417,
+            "y": 0.0,
+            "z": 0.5006386041641235
+          },
+          "normal": {
+            "x": 0.0,
+            "y": 1.0,
+            "z": 0.0
+          },
+          "speed": 1.3889765739440918
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 264,
+        "tick": 568,
+        "type": "collision.begin",
+        "subject": 496,
+        "data": {
+          "a": "/WallEast",
+          "b": "/Ball_6",
+          "point": {
+            "x": 12.0,
+            "y": 0.3449999690055847,
+            "z": 5.971689701080322
+          },
+          "normal": {
+            "x": -1.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "speed": 2.4786734580993652
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 265,
+        "tick": 569,
+        "type": "collision.end",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_6"
+        },
+        "cause": 217,
+        "source": "engine"
+      },
+      {
+        "seq": 266,
+        "tick": 569,
+        "type": "collision.end",
+        "subject": 496,
+        "data": {
+          "a": "/WallEast",
+          "b": "/Ball_6"
+        },
+        "cause": 264,
+        "source": "engine"
+      },
+      {
+        "seq": 267,
+        "tick": 581,
+        "type": "collision.begin",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_6",
+          "point": {
+            "x": 11.275269508361816,
+            "y": 0.0,
+            "z": 6.276119232177734
+          },
+          "normal": {
+            "x": 0.0,
+            "y": 1.0,
+            "z": 0.0
+          },
+          "speed": 2.116313934326172
+        },
+        "source": "engine"
+      },
+      {
+        "seq": 268,
+        "tick": 582,
+        "type": "collision.end",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_6"
+        },
+        "cause": 267,
+        "source": "engine"
+      },
+      {
+        "seq": 269,
+        "tick": 589,
+        "type": "collision.begin",
+        "subject": 493,
+        "data": {
+          "a": "/Ground",
+          "b": "/Ball_6",
+          "point": {
+            "x": 11.085153579711914,
+            "y": 0.0,
+            "z": 6.469380855560303
+          },
+          "normal": {
+            "x": 0.0,
+            "y": 1.0,
+            "z": 0.0
+          },
+          "speed": 1.928436040878296
+        },
+        "source": "engine"
+      }
+    ]
+  },
+  "physics": {
+    "bodies": 19,
+    "awake": 6,
+    "pairs": 6,
+    "contacts": 6,
+    "begins": 0,
+    "ends": 0,
+    "gravity": {
+      "x": 0.0,
+      "y": -9.8100004196167,
+      "z": 0.0
+    }
+  },
+  "render": {
+    "draw_calls": 18,
+    "meshes": 18,
+    "point_lights": 0,
+    "has_camera": true,
+    "has_sun": true,
+    "camera": 501
+  },
+  "capture": {
+    "width": 640,
+    "height": 360,
+    "center_pixel": [
+      97,
+      109,
+      96,
+      255
+    ],
+    "corner_pixel": [
+      26,
+      28,
+      36,
+      255
+    ],
+    "path": "tests/evidence/m4/physics-600.png",
+    "render": {
+      "draw_calls": 18,
+      "meshes": 18,
+      "point_lights": 0,
+      "has_camera": true,
+      "has_sun": true,
+      "camera": 501
+    }
+  }
+}

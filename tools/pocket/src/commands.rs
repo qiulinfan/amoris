@@ -108,14 +108,14 @@ fn tail(s: &str, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-fn exe_path(ws: &Workspace, config: &str, module: &str) -> Result<PathBuf> {
+pub fn exe_path(ws: &Workspace, config: &str, module: &str) -> Result<PathBuf> {
     let m = ws.modules.get(module).ok_or_else(|| anyhow!("unknown module {module}"))?;
     let out = m.file.output.clone().unwrap_or_else(|| module.to_string());
     Ok(ws.build_dir(config).join("bin").join(out))
 }
 
 /// Locate a sample or project directory by name.
-fn find_project(ws: &Workspace, name: &str) -> Option<PathBuf> {
+pub fn find_project(ws: &Workspace, name: &str) -> Option<PathBuf> {
     let direct = PathBuf::from(name);
     if direct.join("project.toml").exists() {
         return Some(direct);
@@ -219,6 +219,29 @@ pub fn bundle_all_samples(ws: &Workspace) -> Result<Vec<PathBuf>> {
         outs.push(bundle_project(ws, &d, None)?.out);
     }
     Ok(outs)
+}
+
+/// Run a project with the runtime and capture its JSON report (the runtime must be given --json).
+pub fn run_captured(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Result<Report> {
+    let t0 = Instant::now();
+    let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is not a project with project.toml"))?;
+    let runtime = "pocket_runtime";
+    let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
+    if !outcome.ok {
+        let mut rep = Report::failure("run", "runtime build failed");
+        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
+        return Ok(rep);
+    }
+    let bundle = bundle_project(ws, &project, None)?;
+    let exe = exe_path(ws, config, runtime)?;
+    let output = toolchain::command(exe.to_str().unwrap()).arg("--project").arg(&project).arg("--bundle").arg(&bundle.out).args(args).current_dir(&ws.root).output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or(json!({ "raw": stdout }));
+    let ok = output.status.success() && report.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut rep = if ok { Report::success("run", format!("{target} finished")) } else { Report::failure("run", format!("{target} exited {}", output.status.code().unwrap_or(-1))) };
+    rep.data = json!({ "project": project, "report": report, "stderr_tail": tail(&String::from_utf8_lossy(&output.stderr), 20) });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
 }
 
 pub fn ts_bundle(ws: &Workspace, project: &Path, out: Option<&Path>) -> Result<Report> {

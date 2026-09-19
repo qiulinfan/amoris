@@ -1,0 +1,47 @@
+name: ci
+on:
+  push:
+    branches: [agent-first, main]
+  pull_request:
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tools
+        run: brew install ninja cmake
+      - name: Cache dependencies and cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            .pocket/deps
+            .pocket/cache
+            tools/pocket/target
+            ~/.cargo/registry
+          key: ${{ runner.os }}-pocket-${{ hashFiles('pocket.toml', 'tools/pocket/Cargo.lock') }}
+      - name: Bootstrap
+        run: ./scripts/bootstrap.sh
+      - name: Generated code is current
+        run: ./.pocket/pocket gen --check
+      - name: Build
+        run: ./.pocket/pocket build --json > build-report.json; python3 -c "import json;d=json.load(open('build-report.json'));print(d['summary']);raise SystemExit(0 if d['ok'] else 1)"
+      - name: Test
+        run: ./.pocket/pocket test --json > test-report.json; python3 -c "import json;d=json.load(open('test-report.json'));print(d['summary']);[print(r['module'],r['ok']) for r in d['data']['results']];raise SystemExit(0 if d['ok'] else 1)"
+      - name: Headless samples
+        run: |
+          ./.pocket/pocket run hello -- --headless --frames 120 --json --capture hello.png > hello.json
+          ./.pocket/pocket run playground -- --headless --frames 240 --json --capture playground.png > playground.json
+          ./.pocket/pocket run physics -- --headless --frames 300 --json --capture physics.png > physics.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-and-captures
+          path: |
+            build-report.json
+            test-report.json
+            hello.json
+            playground.json
+            physics.json
+            *.png

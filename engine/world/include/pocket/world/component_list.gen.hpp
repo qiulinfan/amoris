@@ -10,4 +10,6 @@
     X(Camera) \
     X(Light) \
     X(MeshRenderer) \
-    X(Bounds)
+    X(Bounds) \
+    X(RigidBody) \
+    X(Collider)

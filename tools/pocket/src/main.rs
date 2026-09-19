@@ -10,6 +10,7 @@ mod deps;
 mod gen;
 mod graph;
 mod manifest;
+mod mcp;
 mod ninja;
 mod report;
 mod toolchain;
@@ -81,6 +82,8 @@ enum Command {
     Clean,
     /// Print the resolved module graph.
     Graph,
+    /// Serve the Model Context Protocol over stdio: build, test, run and drive live sessions.
+    Mcp,
     /// Regenerate code from component metadata (C++, TypeScript, docs).
     Gen {
         /// Fail if any generated file is out of date instead of writing it.
@@ -132,5 +135,9 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),
+        Command::Mcp => {
+            mcp::serve(&ws)?;
+            Ok(report::Report::success("mcp", "stdio session ended"))
+        }
     }
 }

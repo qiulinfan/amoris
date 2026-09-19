@@ -1,0 +1,11 @@
+name = "physics"
+entry = "scripts/main.ts"
+scene = "scene.json"
+
+[window]
+title = "Pocket: physics"
+width = 960
+height = 540
+
+[physics]
+gravity = [0.0, -9.81, 0.0]

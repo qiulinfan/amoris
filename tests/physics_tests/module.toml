@@ -1,0 +1,5 @@
+name = "physics_tests"
+kind = "test"
+description = "Physics unit tests on a bare world: falling and resting, restitution, sphere/box/box collisions, static and kinematic bodies, triggers and events, raycasts, determinism."
+sources = ["*.cpp"]
+private_deps = ["pocket_physics", "catch2"]
