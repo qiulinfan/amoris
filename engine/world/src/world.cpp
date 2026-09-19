@@ -149,6 +149,7 @@ struct World::Impl {
     std::int64_t tick = 0;
     flecs::query<Transform, Velocity> motion;
     flecs::query<Lifetime> lifetime;
+    flecs::query<const MeshRenderer, const WorldTransform> bounds;
 
     Impl() {
         ecs_log_set_level(-1);
@@ -158,6 +159,7 @@ struct World::Impl {
 #undef POCKET_REGISTER
         motion = ecs.query<Transform, Velocity>();
         lifetime = ecs.query<Lifetime>();
+        bounds = ecs.query<const MeshRenderer, const WorldTransform>();
     }
 
     void forget_root(EntityId id) {
@@ -281,6 +283,12 @@ Status World::destroy(EntityId id, std::uint64_t cause) {
 }
 
 bool World::alive(EntityId id) const { return id != 0 && live(impl_->ecs.entity(id)); }
+
+EntityId World::from_index(std::uint32_t index) const {
+    if (index == 0) return 0;
+    ecs_entity_t e = ecs_get_alive(impl_->ecs.c_ptr(), index);
+    return e != 0 && live(impl_->ecs.entity(e)) ? e : 0;
+}
 
 EntityId World::find(std::string_view path) const {
     std::string p(path);
@@ -619,6 +627,26 @@ void World::tick(double dt) {
     }
     // Transform propagation in tree order.
     for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
+    // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives).
+    // Adding Bounds is a structural change, so the writes are deferred until the query ends.
+    impl_->ecs.defer_begin();
+    impl_->bounds.each([](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
+        Vec3 lo{-0.5f, -0.5f, -0.5f}, hi{0.5f, 0.5f, 0.5f};
+        if (mr.mesh == 2) { lo.y = 0; hi.y = 0; }  // plane
+        Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
+        Bounds b;
+        bool first = true;
+        for (int i = 0; i < 8; ++i) {
+            Vec3 corner{(i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z};
+            Vec3 p = m.transform_point(corner);
+            if (first) { b.min = b.max = p; first = false; continue; }
+            b.min = {std::min(b.min.x, p.x), std::min(b.min.y, p.y), std::min(b.min.z, p.z)};
+            b.max = {std::max(b.max.x, p.x), std::max(b.max.y, p.y), std::max(b.max.z, p.z)};
+        }
+        const Bounds* current = e.try_get<Bounds>();
+        if (!current || !(*current == b)) e.set<Bounds>(b);
+    });
+    impl_->ecs.defer_end();
     impl_->tick++;
 }
 

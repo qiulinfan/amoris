@@ -47,14 +47,20 @@ TEST_CASE("hello runs headless and reports state", "[runtime]") {
     REQUIRE(rep["state_hash"].get<std::string>().size() == 16);
     REQUIRE(rep["gpu"]["backend"] == "metal");
     REQUIRE(rep["script"]["engine"] == "JavaScriptCore");
-    // The capture must show the clear color the script set on the last tick.
-    auto px = rep["capture"]["center_pixel"];
+    // The top-left pixel is sky: it must show the clear color the script set on the last tick.
+    // The center shows the ball or the ground, so it must differ from the sky.
+    auto corner = rep["capture"]["corner_pixel"];
+    auto center = rep["capture"]["center_pixel"];
     auto cc = rep["clear_color"];
+    bool center_differs = false;
     for (int i = 0; i < 3; ++i) {
         int expected = static_cast<int>(std::lround(cc[i].get<double>() * 255.0));
-        REQUIRE(std::abs(px[i].get<int>() - expected) <= 1);
+        REQUIRE(std::abs(corner[i].get<int>() - expected) <= 1);
+        if (std::abs(center[i].get<int>() - expected) > 2) center_differs = true;
     }
-    REQUIRE(px[3] == 255);
+    REQUIRE(center_differs);
+    REQUIRE(corner[3] == 255);
+    REQUIRE(rep["render"]["meshes"] == 2);
     REQUIRE(std::filesystem::exists(o.capture));
 }
 

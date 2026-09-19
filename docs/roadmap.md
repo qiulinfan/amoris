@@ -22,6 +22,8 @@ ECS decision (ADR 0003), component metadata DSL, code generation for bindings, `
 
 ## M2: graphics
 
+Status: first slice done on macOS (2026-09-18), evidence in `tests/evidence/m2/`. Delivered: `engine/renderer` forward renderer on the WebGPU-shaped RHI (primitive meshes, one directional and up to eight point lights, first active Camera, per-object uniforms with dynamic offsets), an entity id buffer written with every frame plus `render.pick`, `render.project` and `render.ids` commands, `Bounds` computed by the world, captures of color and ids. Not yet: materials and textures, loaded meshes, shadows, MSAA, golden-image comparisons across GPUs.
+
 RHI decision (ADR 0002), mesh, material, light and camera, offscreen render targets, frame capture and golden images. Ports the Phase 1 math conventions spec (right-handed, +Y up, depth [0,1], counter-clockwise front faces, column-major matrices) as tests.
 
 ## M3: UI system and editor shell

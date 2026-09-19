@@ -1,0 +1,5 @@
+name = "renderer_tests"
+kind = "test"
+description = "Headless rendering tests: the playground scene renders meshes, the id buffer maps pixels to entities, projection agrees with picking, captures differ from the clear color."
+sources = ["*.cpp"]
+private_deps = ["pocket_app", "catch2"]

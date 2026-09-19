@@ -126,3 +126,23 @@ export const world = {
         command("world.clear");
     },
 };
+
+/** Rendering queries: what is on screen, and where. */
+export const render = {
+    stats(): { draw_calls: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
+        return command("render.stats");
+    },
+    /** Entity under a pixel of the last frame (undefined for background). */
+    pick(x: number, y: number): { id: Entity; path?: string; name?: string } | undefined {
+        const r = command<{ id: Entity; path?: string; name?: string }>("render.pick", { x, y });
+        return r.id === 0 ? undefined : r;
+    },
+    /** Pixel position of an entity's world position in the last frame. */
+    project(entity: EntityRef): { visible: boolean; x?: number; y?: number; inside?: boolean } {
+        return command("render.project", { entity });
+    },
+    /** Entities visible in the last frame with their pixel counts; optionally writes a PNG. */
+    ids(path?: string): { width: number; height: number; visible: Array<{ id: Entity; pixels: number; path?: string }> } {
+        return command("render.ids", { path });
+    },
+};

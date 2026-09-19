@@ -1,0 +1,6 @@
+name = "pocket_renderer"
+kind = "static_library"
+description = "Forward renderer for the world: primitive meshes, Lambert lighting with one directional and up to 8 point lights, the first active Camera, and an entity id buffer written alongside color so any pixel can be traced back to an entity."
+sources = ["src/**/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core", "pocket_rhi", "pocket_world"]

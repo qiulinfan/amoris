@@ -3,5 +3,5 @@ kind = "static_library"
 description = "The runtime: command line, project loading, fixed-step loop, script dispatch, the world, the command surface shared by scripts and the HTTP control server, input journaling, state hashing, capture and JSON reports. Everything pocket_runtime does is callable in-process (tests use it that way)."
 sources = ["src/**/*.cpp"]
 public_include = ["include"]
-public_deps = ["pocket_core", "pocket_platform", "pocket_rhi", "pocket_script", "pocket_world"]
+public_deps = ["pocket_core", "pocket_platform", "pocket_rhi", "pocket_script", "pocket_world", "pocket_renderer"]
 private_deps = ["stb", "httplib"]

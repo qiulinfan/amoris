@@ -12,6 +12,6 @@
       ]
     },
     { "name": "Sun", "components": { "Transform": { "rotation": { "x": -0.3826834, "y": 0, "z": 0, "w": 0.9238795 } }, "Light": { "kind": 0, "intensity": 1 } } },
-    { "name": "Camera", "components": { "Transform": { "position": { "x": 0, "y": 4, "z": 10 } }, "Camera": { "fov_degrees": 50 } } }
+    { "name": "Camera", "components": { "Transform": { "position": { "x": 0, "y": 5, "z": 11 }, "rotation": { "x": -0.1908, "y": 0, "z": 0, "w": 0.9816 } }, "Camera": { "fov_degrees": 50 } } }
   ]
 }

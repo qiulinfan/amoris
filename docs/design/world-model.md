@@ -41,6 +41,10 @@ Simulation runs in fixed ticks. Each tick: scripts receive `tick`, the built-in 
 
 Scripts call `command(name, params)`; external processes POST the same JSON-RPC calls to `--serve`'s `/rpc`, or use the convenience routes `/tree`, `/state`, `/summary`, `/events?since=N`, `/schema`, `/commands`. With `--paused`, the runtime waits for `step { ticks }` so an agent can drive the simulation tick by tick, inspect, and continue. The same words work in both places: what a script can do, an agent can do.
 
+## Pixels back to entities (M2)
+
+The renderer writes an entity id into a second render target for every fragment. `render.pick(x, y)` returns the entity under a pixel, `render.project(entity)` returns where an entity is on screen, and `render.ids()` lists every visible entity with its pixel count (optionally writing a false-color PNG). A screenshot is therefore never the only evidence: an agent can ask what it is looking at.
+
 ## What is not there yet
 
-Typed-array access for hot component data (scripts currently pay one JSON round trip per call), a transcript/segmentation layer over the event log, the id buffer for pixel-to-entity lookup (M2), the MCP wrapper (planned as `pocket mcp`, a thin stdio bridge to `/rpc`).
+Typed-array access for hot component data (scripts currently pay one JSON round trip per call), a transcript/segmentation layer over the event log, the MCP wrapper (planned as `pocket mcp`, a thin stdio bridge to `/rpc`).

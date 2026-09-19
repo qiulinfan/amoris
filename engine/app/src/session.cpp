@@ -5,6 +5,7 @@
 #include <stb_image_write.h>
 
 #include <chrono>
+#include <map>
 #include <thread>
 
 namespace pocket::app {
@@ -120,6 +121,9 @@ Status Session::start() {
     POCKET_TRY(host, script::ScriptHost::create(sc));
     host_ = std::move(host);
 
+    POCKET_TRY(renderer, renderer::Renderer::create(*device_));
+    renderer_ = std::move(renderer);
+
     world_ = std::make_unique<world::World>();
     rng_.reseed(options_.seed);
     clock_.tick_seconds = 1.0 / options_.tick_rate;
@@ -225,11 +229,100 @@ Status Session::run_ticks(int ticks) {
 Status Session::render_frame() {
     auto frame = device_->begin_frame();
     if (!frame) return fail(frame.error());
-    WGPURenderPassEncoder pass = device_->begin_main_pass(*frame, clear_);
-    wgpuRenderPassEncoderEnd(pass);
-    wgpuRenderPassEncoderRelease(pass);
+    if (auto r = renderer_->render(*frame, *world_, clear_); !r) {
+        // Still submit the encoder so the device stays consistent, then report.
+        (void)device_->end_frame(*frame);
+        return fail(r.error());
+    }
     POCKET_TRY_VOID(device_->end_frame(*frame));
     return {};
+}
+
+namespace {
+
+// Visualize an id buffer: each id gets a stable pseudo-random color, background stays black.
+rhi::Image ids_to_image(const renderer::IdImage& ids) {
+    rhi::Image img;
+    img.width = ids.width;
+    img.height = ids.height;
+    img.rgba.resize(static_cast<std::size_t>(ids.width) * ids.height * 4);
+    for (std::size_t i = 0; i < ids.ids.size(); ++i) {
+        std::uint32_t id = ids.ids[i];
+        std::uint8_t* px = img.rgba.data() + i * 4;
+        if (id == 0) {
+            px[0] = px[1] = px[2] = 0;
+        } else {
+            std::uint32_t h = id * 2654435761u;
+            px[0] = static_cast<std::uint8_t>(64 + (h & 0x7F));
+            px[1] = static_cast<std::uint8_t>(64 + ((h >> 8) & 0x7F));
+            px[2] = static_cast<std::uint8_t>(64 + ((h >> 16) & 0x7F));
+        }
+        px[3] = 255;
+    }
+    return img;
+}
+
+}  // namespace
+
+Result<Json> Session::render_command(std::string_view op, const Json& p) {
+    if (op == "stats") return renderer_->describe();
+    if (op == "pick") {
+        auto x = static_cast<std::uint32_t>(opt<double>(p, "x", -1));
+        auto y = static_cast<std::uint32_t>(opt<double>(p, "y", -1));
+        POCKET_TRY(index, renderer_->pick(x, y));
+        world::EntityId id = world_->from_index(static_cast<std::uint32_t>(index));
+        Json j;
+        j["id"] = id;
+        if (id != 0) {
+            j["path"] = world_->path(id);
+            j["name"] = world_->name(id);
+        } else if (index != 0) {
+            j["stale"] = true;
+        }
+        return j;
+    }
+    if (op == "project") {
+        world::EntityId id = p.contains("entity") ? resolve_entity(p["entity"]) : 0;
+        if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p.value("entity", Json(nullptr)).dump());
+        const world::WorldTransform* wt = world_->try_get<world::WorldTransform>(id);
+        if (!wt) return fail("no_transform", "entity {} has no WorldTransform", world_->path(id));
+        float x = 0, y = 0;
+        bool visible = renderer_->project(wt->position, x, y);
+        Json j;
+        j["visible"] = visible;
+        if (visible) {
+            j["x"] = x;
+            j["y"] = y;
+            j["inside"] = x >= 0 && y >= 0 && x < static_cast<float>(device_->width()) && y < static_cast<float>(device_->height());
+        }
+        return j;
+    }
+    if (op == "ids") {
+        POCKET_TRY(img, renderer_->read_ids());
+        std::map<std::uint32_t, std::uint64_t> counts;
+        for (std::uint32_t id : img.ids) counts[id]++;
+        Json entities = Json::array();
+        for (auto& [index, n] : counts) {
+            Json e;
+            world::EntityId id = world_->from_index(index);
+            e["id"] = id;
+            e["pixels"] = n;
+            if (id != 0) e["path"] = world_->path(id);
+            else if (index != 0) e["stale"] = true;
+            entities.push_back(e);
+        }
+        Json j;
+        j["width"] = img.width;
+        j["height"] = img.height;
+        j["visible"] = entities;
+        std::string path = opt<std::string>(p, "path", "");
+        if (!path.empty()) {
+            POCKET_TRY_VOID(write_png(path, ids_to_image(img)));
+            j["path"] = path;
+        }
+        return j;
+    }
+    return fail("unknown_command", "unknown render command '{}'", op);
 }
 
 Status Session::frame() {
@@ -474,6 +567,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     const Json& p = params.is_object() ? params : Json::object();
     if (name.starts_with("world.")) return world_command(name.substr(6), p, source);
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
+    if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name == "state") {
         Json j;
         j["tick"] = clock_.tick;
@@ -508,10 +602,17 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         c["height"] = img.height;
         std::size_t center = (static_cast<std::size_t>(img.height / 2) * img.width + img.width / 2) * 4;
         c["center_pixel"] = Json::array({img.rgba[center], img.rgba[center + 1], img.rgba[center + 2], img.rgba[center + 3]});
+        c["corner_pixel"] = Json::array({img.rgba[0], img.rgba[1], img.rgba[2], img.rgba[3]});
         if (!path.empty()) {
             POCKET_TRY_VOID(write_png(path, img));
             c["path"] = path;
         }
+        std::string ids_path = opt<std::string>(p, "ids", "");
+        if (!ids_path.empty()) {
+            POCKET_TRY(idj, render_command("ids", Json{{"path", ids_path}}));
+            c["ids"] = idj;
+        }
+        c["render"] = renderer_->describe();
         capture_info_ = c;
         return c;
     }
@@ -523,7 +624,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }
@@ -537,6 +638,7 @@ Json Session::report() {
     report["tick_rate"] = options_.tick_rate;
     if (platform_) report["platform"] = platform_->describe();
     if (device_) report["gpu"] = device_->describe();
+    if (renderer_) report["render"] = renderer_->describe();
     if (host_) report["script"] = host_->describe();
     report["frames"] = frames_;
     report["ticks"] = ticks_;

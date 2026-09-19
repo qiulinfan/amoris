@@ -49,6 +49,8 @@ class World {
     Result<EntityId> spawn(std::string_view name, EntityId parent = 0, const Json& components = Json::object(), std::uint64_t cause = 0);
     Status destroy(EntityId id, std::uint64_t cause = 0);
     [[nodiscard]] bool alive(EntityId id) const;
+    // The live entity whose index (low 32 bits) matches, e.g. from the renderer's id buffer; 0 if none.
+    [[nodiscard]] EntityId from_index(std::uint32_t index) const;
     [[nodiscard]] EntityId find(std::string_view path) const;  // "/A/B", "A/B" or a bare name searched from the roots
     [[nodiscard]] std::string path(EntityId id) const;
     [[nodiscard]] std::string name(EntityId id) const;

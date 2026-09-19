@@ -12,7 +12,7 @@ declare const __pocket: {
     command(name: string, params?: unknown): unknown;
 };
 
-export { world, command } from "./world";
+export { world, render, command } from "./world";
 export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity } from "./world";
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";

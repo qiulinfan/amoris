@@ -5,6 +5,7 @@
 #include <pocket/app/runtime.hpp>
 #include <pocket/core/core.hpp>
 #include <pocket/platform/platform.hpp>
+#include <pocket/renderer/renderer.hpp>
 #include <pocket/rhi/device.hpp>
 #include <pocket/script/script_host.hpp>
 #include <pocket/world/world.hpp>
@@ -37,6 +38,7 @@ class Session {
     [[nodiscard]] const Options& options() const { return options_; }
     [[nodiscard]] world::World& world() { return *world_; }
     [[nodiscard]] rhi::Device& device() { return *device_; }
+    [[nodiscard]] renderer::Renderer& renderer() { return *renderer_; }
     [[nodiscard]] std::int64_t tick() const { return clock_.tick; }
     Status finish();                      // dispatch "stop", capture, close journal
 
@@ -47,6 +49,7 @@ class Session {
     world::EntityId resolve_entity(const Json& v) const;
     Result<Json> world_command(std::string_view op, const Json& p, std::string_view source);
     Result<Json> events_command(std::string_view op, const Json& p, std::string_view source);
+    Result<Json> render_command(std::string_view op, const Json& p);
     Status render_frame();
 
     Options options_;
@@ -54,6 +57,7 @@ class Session {
     std::unique_ptr<rhi::Device> device_;
     std::unique_ptr<script::ScriptHost> host_;
     std::unique_ptr<world::World> world_;
+    std::unique_ptr<renderer::Renderer> renderer_;
     std::unique_ptr<Journal> journal_;
     TickClock clock_;
     StateHasher hasher_;
