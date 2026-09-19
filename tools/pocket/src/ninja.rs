@@ -24,6 +24,8 @@ pub struct Generated {
 
 pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> Result<Generated> {
     let cfg = ws.config(config)?;
+    let target = ws.target_of(config)?;
+    let wasm = target == "wasm";
     let build_dir = ws.build_dir(config);
     toolchain::ensure_dir(&build_dir)?;
     let mut n = String::new();
@@ -31,7 +33,7 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     writeln!(n, "cxx = {}\ncc = {}\nar = {}", q(&tc.cxx), q(&tc.cc), q(&tc.ar))?;
     let mut common: Vec<String> = vec![];
     if let Some(t) = &ws.file.toolchain.macos_deployment_target {
-        if tc.host_os == "macos" {
+        if tc.host_os == "macos" && !wasm {
             common.push(format!("-mmacosx-version-min={t}"));
         }
     }
@@ -40,7 +42,7 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
         common.push(format!("-D{d}"));
     }
     let std_flag = format!("-std={}", ws.file.toolchain.cxx_standard);
-    let warn = ws.file.toolchain.warnings.join(" ");
+    let warn = cfg.warnings.as_ref().unwrap_or(&ws.file.toolchain.warnings).join(" ");
     let cxxflags = format!("{} {} {} {}", std_flag, common.join(" "), ws.file.toolchain.cxx_flags.join(" "), cfg.cxx_flags.join(" "));
     let cflags = format!("-std=c17 {} {} {}", common.join(" "), ws.file.toolchain.c_flags.join(" "), cfg.c_flags.join(" "));
     writeln!(n, "cxxflags = {}\ncflags = {}\nwarn = {}", cxxflags, cflags, warn)?;
@@ -67,9 +69,9 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
             let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("");
             let (rule, extra) = match ext {
                 "cpp" | "cc" | "cxx" => ("cxx", m.cxx_flags.join(" ")),
-                "mm" => ("objcxx", m.cxx_flags.join(" ")),
+                "mm" if !wasm => ("objcxx", m.cxx_flags.join(" ")),
                 "c" => ("cc", m.c_flags.join(" ")),
-                "m" => ("objcxx", m.c_flags.join(" ")),
+                "m" if !wasm => ("objcxx", m.c_flags.join(" ")),
                 _ => continue,
             };
             writeln!(n, "build {}: {} {}", pesc(&obj), rule, pesc(src))?;
@@ -91,27 +93,33 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
                 }
             }
             _ => {
-                let exe = build_dir.join("bin").join(&m.output);
+                // Emscripten emits <name>.js plus <name>.wasm beside it.
+                let exe = if wasm { build_dir.join("bin").join(format!("{}.js", m.output)) } else { build_dir.join("bin").join(&m.output) };
                 let mut inputs = objs_str.clone();
                 let mut libs: Vec<String> = vec![];
                 for lm in &m.link_modules {
-                    let dep = &graph.modules[lm];
+                    let Some(dep) = graph.modules.get(lm) else { continue };
                     if !dep.sources.is_empty() {
                         inputs.push(pesc(&build_dir.join("lib").join(format!("lib{lm}.a"))));
                     }
                 }
-                let mut frameworks: Vec<String> = m.frameworks.clone();
+                let mut frameworks: Vec<String> = if wasm { vec![] } else { m.frameworks.clone() };
                 let mut weak: Vec<String> = vec![];
-                let mut link_flags: Vec<String> = m.link_flags.clone();
+                let mut link_flags: Vec<String> = if wasm { vec![] } else { m.link_flags.clone() };
                 for dn in &m.link_deps {
                     if let Some(d) = ws.dependency(dn) {
-                        let pfx = crate::deps::prefix(ws, d);
+                        if !crate::deps::applies(d, &target) {
+                            continue;
+                        }
+                        let pfx = crate::deps::prefix_for(ws, d, &target);
                         for l in &d.libs {
                             libs.push(pfx.join(l).to_string_lossy().into_owned());
                         }
-                        frameworks.extend(d.frameworks.iter().cloned());
-                        weak.extend(d.weak_frameworks.iter().cloned());
-                        link_flags.extend(d.link_flags.iter().cloned());
+                        if !wasm {
+                            frameworks.extend(d.frameworks.iter().cloned());
+                            weak.extend(d.weak_frameworks.iter().cloned());
+                            link_flags.extend(d.link_flags.iter().cloned());
+                        }
                     }
                 }
                 for f in dedup(frameworks) {

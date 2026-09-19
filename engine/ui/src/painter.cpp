@@ -64,8 +64,10 @@ fn sd_round_box(p: vec2f, half: vec2f, r: f32) -> f32 {
 @fragment fn fs(in: VsOut) -> @location(0) vec4f {
     let mode = in.params.y;
     var alpha = in.color.a;
+    // Sampled outside the branches: implicit-derivative sampling must stay in uniform control flow.
+    let coverage = textureSample(atlas, smp, in.uv).r;
     if (mode > 0.5 && mode < 1.5) {
-        alpha = alpha * textureSample(atlas, smp, in.uv).r;
+        alpha = alpha * coverage;
     } else if (mode > 1.5 && mode < 2.5) {
         let d = sd_round_box(in.px - in.rect.xy, in.rect.zw, in.params.x);
         alpha = alpha * (1.0 - smoothstep(-0.6, 0.6, d));

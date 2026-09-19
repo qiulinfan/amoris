@@ -100,6 +100,21 @@ A 2D image: a textured unit square in the entity's XY plane, sized in world unit
 | `filter` | string | "linear" | Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles). |
 | `visible` | bool | true | Whether the sprite is drawn. |
 
+## SpriteAnimation
+
+Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `clip` | string | "" | Clip name; empty plays nothing. |
+| `playing` | bool | true | Whether time advances. |
+| `loop` | bool | true | Wrap at the end (else stop on the last frame and emit sprite.finished); sprite.play takes it from the clip unless told otherwise. |
+| `speed` | f32 | 1.0 | Playback rate multiplier; negative plays backwards. |
+| `fps` | f32 | 0.0 | Frames per second; 0 uses the clip's rate. |
+| `frame` | i32 | 0 | Index into the clip's frame list (read to know where it is, write to jump). |
+| `time` | f32 | 0.0 | Seconds into the current frame; advanced by the engine. |
+| `finished` | bool | false | Set when a non-looping clip reached its end; cleared by play. |
+
 ## Bounds
 
 Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. Derived: computed by the engine, not stored in scenes.

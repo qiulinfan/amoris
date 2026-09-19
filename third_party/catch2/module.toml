@@ -4,3 +4,4 @@ description = "Catch2 v3.16.0 amalgamated, provides main() for test executables.
 sources = ["src/catch_amalgamated.cpp"]
 public_include = ["include"]
 third_party = true
+exclude_targets = ["wasm"]

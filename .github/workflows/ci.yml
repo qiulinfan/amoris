@@ -57,3 +57,45 @@ jobs:
             pack.json
             packed.json
             *.png
+
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake python3 python3-pip && python3 -m pip install --break-system-packages fonttools
+      - name: Cache emsdk, dependencies and cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pocket-tools/emsdk
+            .pocket/deps
+            .pocket/cache
+            tools/pocket/target
+            ~/.cargo/registry
+          key: ${{ runner.os }}-pocket-web-6.0.9-${{ hashFiles('pocket.toml', 'tools/pocket/Cargo.lock') }}
+      - name: Emscripten 6.0.9
+        run: |
+          if [ ! -x "$HOME/.pocket-tools/emsdk/upstream/emscripten/em++" ]; then
+            mkdir -p "$HOME/.pocket-tools"
+            git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/.pocket-tools/emsdk"
+            cd "$HOME/.pocket-tools/emsdk" && ./emsdk install 6.0.9 && ./emsdk activate 6.0.9
+          fi
+      - name: Build the tool
+        run: |
+          cargo build --release --manifest-path tools/pocket/Cargo.toml
+          mkdir -p .pocket && cp tools/pocket/target/release/pocket .pocket/pocket
+      - name: Dependencies for wasm
+        run: ./.pocket/pocket setup --target wasm --json > setup-wasm.json; python3 -c "import json;d=json.load(open('setup-wasm.json'));print(d['summary']);raise SystemExit(0 if d['ok'] else 1)"
+      - name: Pack hello for the web, with the editor
+        run: ./.pocket/pocket pack hello --web --editor --json > pack-web.json; python3 -c "import json;d=json.load(open('pack-web.json'));print(d['summary']);raise SystemExit(0 if d['ok'] else 1)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-pack
+          path: |
+            setup-wasm.json
+            pack-web.json
+            dist/web/hello/index.html

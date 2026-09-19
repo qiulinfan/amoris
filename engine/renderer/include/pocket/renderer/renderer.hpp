@@ -14,8 +14,16 @@
 
 namespace pocket::renderer {
 
+struct ShadowSettings {
+    bool enabled = true;
+    float strength = 0.85f;   // how dark a fully shadowed surface gets (0 none, 1 black)
+    float bias = 0.0008f;     // depth bias in shadow-map units, scaled by slope in the shader
+};
+
 struct RenderStats {
-    std::uint32_t draw_calls = 0;     // instanced draws issued
+    std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
+    std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
+    bool shadows = false;             // whether a shadow map was rendered this frame
     std::uint32_t instances = 0;      // objects drawn (one per entity, or per glTF material)
     std::uint32_t sprites = 0;        // of which sprites
     std::uint32_t meshes = 0;
@@ -67,6 +75,8 @@ class Renderer {
     // Project a world point to pixel coordinates using the last frame's camera; false if behind.
     [[nodiscard]] bool project(Vec3 world_pos, float& out_x, float& out_y) const;
     void set_viewport(Viewport v);
+    void set_shadows(ShadowSettings s);
+    [[nodiscard]] ShadowSettings shadows() const;
     // Where glTF meshes and images come from (MeshRenderer.mesh / .texture paths). Optional.
     void set_assets(assets::AssetStore* store);
     // Local bounds of asset meshes first uploaded since the last call (path -> min/max).

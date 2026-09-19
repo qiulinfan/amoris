@@ -15,6 +15,7 @@ namespace pocket::rhi {
 
 struct Config {
     void* metal_layer = nullptr;  // CAMetalLayer*; null for headless
+    std::string canvas_selector;  // web: the <canvas> to present into ("#canvas"); empty for headless
     std::uint32_t width = 640;
     std::uint32_t height = 360;
     bool prefer_high_performance = true;
@@ -56,6 +57,8 @@ class Device {
     Status end_frame(Frame& frame);
     // Read back the offscreen target of the last submitted frame.
     Result<Image> capture();
+    // Let the GPU make progress: process callbacks (and on the web, yield to the page).
+    void poll(bool wait);
 
     [[nodiscard]] WGPUDevice device() const;
     [[nodiscard]] WGPUQueue queue() const;

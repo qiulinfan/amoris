@@ -57,6 +57,10 @@ saves.load("slot-1");
 
 A slot is one JSON file (the scene plus the `onSave` objects per script context) in the user's data directory for the project (`saves.dir()`; `--save-dir` or `POCKET_SAVE_DIR` override it, tests point it at a temp folder). Loading replaces the world and calls `onLoad`; the run's tick counter keeps counting. `save.written` and `save.loaded` appear in the event log.
 
+## Sprites
+
+`sprites.defineClip(name, { texture, columns, rows, frames | first + count, fps, loop })`, `sprites.play(entity, name, { speed, loop, fps, restart })`, `sprites.stop(entity, reset)`, `sprites.clips()`; the engine plays clips through the `SpriteAnimation` component every tick (`docs/design/sprites.md`).
+
 ## Physics, audio, interface
 
 `physics.raycast`, `physics.overlap`, `onContacts` (`docs/roadmap.md` M4); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).

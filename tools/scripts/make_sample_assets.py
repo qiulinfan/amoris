@@ -47,6 +47,29 @@ def sprite_player(size=32):
     return png(size, size, px)
 
 
+def sprite_player_sheet(size=32, frames=4):
+    """A walk cycle: the ship bobs and squashes over four frames laid out left to right."""
+    bob = [0, -2, 0, 1]
+    squash = [0, 1, 0, -1]
+    px = bytearray()
+    c = (size - 1) / 2
+    for y in range(size):
+        for f in range(frames):
+            for x in range(size):
+                dx, dy = x - c, (y - c - bob[f]) * (1 + squash[f] * 0.08)
+                d = (dx * dx + dy * dy) ** 0.5
+                if d <= c - 0.5:
+                    if (dx * dx + (dy + 5) * (dy + 5)) ** 0.5 < 5:
+                        px += bytes((240, 240, 255, 255))   # cockpit
+                    elif d > c - 3:
+                        px += bytes((40, 60, 120, 255))     # outline
+                    else:
+                        px += bytes((90, 150, 240, 255))    # body
+                else:
+                    px += bytes((0, 0, 0, 0))
+    return png(size * frames, size, px)
+
+
 def sprite_coin(size=16):
     px = bytearray()
     c = (size - 1) / 2
@@ -59,6 +82,24 @@ def sprite_coin(size=16):
             else:
                 px += bytes((0, 0, 0, 0))
     return png(size, size, px)
+
+
+def sprite_coin_sheet(size=16, frames=4):
+    """A spinning coin: the disc narrows to an edge and back over four frames."""
+    widths = [1.0, 0.6, 0.15, 0.6]
+    px = bytearray()
+    c = (size - 1) / 2
+    for y in range(size):
+        for f in range(frames):
+            for x in range(size):
+                nx = (x - c) / max(widths[f], 0.01)
+                d = (nx * nx + (y - c) ** 2) ** 0.5
+                if d <= c - 0.5:
+                    inner = d < c - 3 and widths[f] > 0.3
+                    px += bytes((250, 210, 60, 255) if inner else (200, 140, 20, 255))
+                else:
+                    px += bytes((0, 0, 0, 0))
+    return png(size * frames, size, px)
 
 
 def sprite_tiles(tile=16):
@@ -207,7 +248,7 @@ def make_sounds(out):
 
 def make_sprites(out):
     os.makedirs(out, exist_ok=True)
-    for name, data in (("player.png", sprite_player()), ("coin.png", sprite_coin()), ("tiles.png", sprite_tiles())):
+    for name, data in (("player.png", sprite_player_sheet()), ("coin.png", sprite_coin_sheet()), ("tiles.png", sprite_tiles())):
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")

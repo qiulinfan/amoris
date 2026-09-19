@@ -173,7 +173,7 @@ export const world = {
 
 /** Rendering queries: what is on screen, and where. */
 export const render = {
-    stats(): { draw_calls: number; instances: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
+    stats(): { draw_calls: number; shadow_draws: number; shadows: boolean; instances: number; sprites: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
         return command("render.stats");
     },
     /** Entity under a pixel of the last frame (undefined for background). */
@@ -184,6 +184,10 @@ export const render = {
     /** Pixel position of an entity's world position, or of any world point, in the last frame. */
     project(target: EntityRef | { x: number; y: number; z: number }): { visible: boolean; x?: number; y?: number; inside?: boolean } {
         return command("render.project", typeof target === "object" ? { point: target } : { entity: target });
+    },
+    /** Shadow map settings (on by default when a sun exists; project.toml [render] shadows = false turns it off). */
+    shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {
+        return command("render.shadows", settings);
     },
     /** Entities visible in the last frame with their pixel counts; optionally writes a PNG. */
     ids(path?: string): { width: number; height: number; visible: Array<{ id: Entity; pixels: number; path?: string }> } {

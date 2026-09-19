@@ -19,26 +19,55 @@ pub struct DepStatus {
 }
 
 pub fn prefix(ws: &Workspace, dep: &Dependency) -> PathBuf {
+    prefix_for(ws, dep, "native")
+}
+
+/// Where a dependency is installed for a target; cmake sources get their own wasm build.
+pub fn prefix_for(ws: &Workspace, dep: &Dependency, target: &str) -> PathBuf {
     let v = if dep.version.is_empty() { "system".to_string() } else { dep.version.clone() };
+    if target == "wasm" && dep.kind == "cmake" {
+        return ws.deps_dir().join(format!("{}-{}-wasm", dep.name, v));
+    }
     ws.deps_dir().join(format!("{}-{}", dep.name, v))
 }
 
-fn stamp_key(dep: &Dependency) -> String {
+/// Whether a dependency contributes headers and libraries on a target. On wasm, Emscripten
+/// ports and prebuilt native archives do not; cmake sources are rebuilt and files are shared.
+pub fn applies(dep: &Dependency, target: &str) -> bool {
+    if target != "wasm" {
+        return true;
+    }
+    if dep.wasm == "skip" || dep.wasm == "port" {
+        return false;
+    }
+    matches!(dep.kind.as_str(), "cmake" | "file")
+}
+
+fn stamp_key(dep: &Dependency, target: &str) -> String {
     let mut h = Sha256::new();
     h.update(dep.sha256.as_bytes());
     h.update(dep.url.as_bytes());
     for a in &dep.cmake_args {
         h.update(a.as_bytes());
     }
+    // Only cmake dependencies are built per target (into their own prefix); files and prebuilt
+    // archives are shared, so their stamp must not depend on the target.
+    if target != "native" && dep.kind == "cmake" {
+        h.update(target.as_bytes());
+    }
     hex(&h.finalize())
 }
 
 pub fn is_ready(ws: &Workspace, dep: &Dependency) -> bool {
-    if dep.kind == "system" {
+    is_ready_for(ws, dep, "native")
+}
+
+pub fn is_ready_for(ws: &Workspace, dep: &Dependency, target: &str) -> bool {
+    if dep.kind == "system" || !applies(dep, target) {
         return true;
     }
-    let stamp = prefix(ws, dep).join(".pocket-stamp");
-    std::fs::read_to_string(stamp).map(|s| s.trim() == stamp_key(dep)).unwrap_or(false)
+    let stamp = prefix_for(ws, dep, target).join(".pocket-stamp");
+    std::fs::read_to_string(stamp).map(|s| s.trim() == stamp_key(dep, target)).unwrap_or(false)
 }
 
 pub fn status(ws: &Workspace) -> Vec<DepStatus> {
@@ -149,12 +178,15 @@ fn extract(archive: &Path, dest: &Path, strip_components: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<String>) -> Result<DepStatus> {
-    let pfx = prefix(ws, dep);
+pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<String>, target: &str) -> Result<DepStatus> {
+    let pfx = prefix_for(ws, dep, target);
     if dep.kind == "system" {
         return Ok(DepStatus { name: dep.name.clone(), version: dep.version.clone(), kind: dep.kind.clone(), state: "system".into(), prefix: String::new() });
     }
-    if !force && is_ready(ws, dep) {
+    if !applies(dep, target) {
+        return Ok(DepStatus { name: dep.name.clone(), version: dep.version.clone(), kind: dep.kind.clone(), state: format!("not used on {target}"), prefix: String::new() });
+    }
+    if !force && is_ready_for(ws, dep, target) {
         return Ok(DepStatus { name: dep.name.clone(), version: dep.version.clone(), kind: dep.kind.clone(), state: "ready".into(), prefix: pfx.to_string_lossy().into_owned() });
     }
     if dep.url.is_empty() || dep.sha256.is_empty() {
@@ -188,18 +220,34 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             log.push(format!("extract {} -> {}", file_name, src.display()));
             extract(&cache, &src, dep.strip_components)?;
             let cmake = toolchain::detect()?.cmake.context("cmake not found on PATH; needed for foreign builds")?;
-            log.push(format!("cmake configure {}", dep.name));
+            let sdk = if target == "wasm" { Some(toolchain::emsdk()?) } else { None };
+            let bld = if target == "wasm" { bld.with_file_name(format!("{}-{}-wasm", dep.name, dep.version)) } else { bld };
+            if bld.exists() {
+                // A stale CMake cache would keep the previous configuration's flags.
+                std::fs::remove_dir_all(&bld)?;
+            }
+            log.push(format!("cmake configure {} ({target})", dep.name));
             let mut cfg = toolchain::command(&cmake);
             cfg.arg("-S").arg(&src).arg("-B").arg(&bld).arg("-G").arg("Ninja").arg("-DCMAKE_BUILD_TYPE=Release").arg(format!("-DCMAKE_INSTALL_PREFIX={}", pfx.display()));
+            if let Some(sdk) = &sdk {
+                cfg.arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", sdk.cmake_toolchain.display()));
+                toolchain::em_env(&mut cfg, sdk);
+            }
             for a in &dep.cmake_args {
                 cfg.arg(a);
             }
             run_logged(cfg, &format!("cmake configure {}", dep.name))?;
             log.push(format!("cmake build {}", dep.name));
             let mut b = toolchain::command(&cmake);
+            if let Some(sdk) = &sdk {
+                toolchain::em_env(&mut b, sdk);
+            }
             b.arg("--build").arg(&bld).arg("-j").arg(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).to_string());
             run_logged(b, &format!("cmake build {}", dep.name))?;
             let mut i = toolchain::command(&cmake);
+            if let Some(sdk) = &sdk {
+                toolchain::em_env(&mut i, sdk);
+            }
             i.arg("--install").arg(&bld);
             run_logged(i, &format!("cmake install {}", dep.name))?;
         }
@@ -210,7 +258,7 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             bail!("dependency {}: expected library {} missing after setup", dep.name, lib);
         }
     }
-    std::fs::write(pfx.join(".pocket-stamp"), stamp_key(dep))?;
+    std::fs::write(pfx.join(".pocket-stamp"), stamp_key(dep, target))?;
     Ok(DepStatus { name: dep.name.clone(), version: dep.version.clone(), kind: dep.kind.clone(), state: "installed".into(), prefix: pfx.to_string_lossy().into_owned() })
 }
 

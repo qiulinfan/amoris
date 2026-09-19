@@ -49,6 +49,12 @@ fn default_std() -> String { "c++26".into() }
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigSection {
+    /// "native" (default) or "wasm" (Emscripten: the web build).
+    #[serde(default)]
+    pub target: String,
+    /// Replaces [toolchain] warnings for this config (Emscripten's driver turns -Werror on its own notes).
+    #[serde(default)]
+    pub warnings: Option<Vec<String>>,
     #[serde(default)]
     pub cxx_flags: Vec<String>,
     #[serde(default)]
@@ -89,6 +95,10 @@ pub struct Dependency {
     pub defines: Vec<String>,
     #[serde(default)]
     pub license: String,
+    /// Role on the wasm target: "" (cmake sources are rebuilt with Emscripten; prebuilt and system
+    /// dependencies are skipped), "port" (an Emscripten port supplies it), "skip".
+    #[serde(default)]
+    pub wasm: String,
 }
 fn one() -> u32 { 1 }
 
@@ -141,6 +151,9 @@ pub struct ModuleFile {
     /// Suppress warnings-as-errors for third-party code.
     #[serde(default)]
     pub third_party: bool,
+    /// Targets this module is not built for ("wasm").
+    #[serde(default)]
+    pub exclude_targets: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +203,11 @@ impl Workspace {
 
     pub fn config(&self, name: &str) -> Result<&ConfigSection> {
         self.file.configs.get(name).ok_or_else(|| anyhow!("unknown config '{}' (known: {})", name, self.file.configs.keys().cloned().collect::<Vec<_>>().join(", ")))
+    }
+
+    pub fn target_of(&self, config: &str) -> Result<String> {
+        let t = &self.config(config)?.target;
+        Ok(if t.is_empty() { "native".to_string() } else { t.clone() })
     }
 
     pub fn build_dir(&self, config: &str) -> PathBuf { self.root.join("build").join(config) }

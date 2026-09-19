@@ -11,14 +11,15 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub fn setup(ws: &Workspace, force: bool) -> Result<Report> {
+pub fn setup(ws: &Workspace, force: bool, target: &str) -> Result<Report> {
     let t0 = Instant::now();
     let mut log = vec![];
     let mut statuses = vec![];
     for d in &ws.file.dependencies {
-        statuses.push(deps::setup_one(ws, d, force, &mut log)?);
+        statuses.push(deps::setup_one(ws, d, force, &mut log, target)?);
     }
-    let mut rep = Report::success("setup", format!("{} dependencies ready", statuses.len()));
+    let ready = statuses.iter().filter(|s| s.state == "ready" || s.state == "installed" || s.state == "system").count();
+    let mut rep = Report::success("setup", format!("{} dependencies ready for {target}", ready));
     rep.data = json!({ "dependencies": statuses, "log": log });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
@@ -35,14 +36,18 @@ pub fn doctor(ws: &Workspace) -> Result<Report> {
     } else {
         Report::success("doctor", "toolchain and dependencies ready")
     };
-    rep.data = json!({ "toolchain": tc, "dependencies": statuses, "modules": ws.modules.keys().collect::<Vec<_>>() });
+    // Web readiness (docs/web.md): the Emscripten SDK and fontTools for font subsetting.
+    let emsdk = toolchain::emsdk().ok().map(|s| s.root.to_string_lossy().into_owned());
+    let fonttools = toolchain::command("python3").args(["-c", "import fontTools; print(fontTools.version)"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    rep.data = json!({ "toolchain": tc, "dependencies": statuses, "modules": ws.modules.keys().collect::<Vec<_>>(), "web": { "emsdk": emsdk, "fonttools": fonttools } });
     Ok(rep)
 }
 
-fn ensure_deps(ws: &Workspace) -> Result<()> {
-    let missing: Vec<String> = ws.file.dependencies.iter().filter(|d| !deps::is_ready(ws, d)).map(|d| d.name.clone()).collect();
+fn ensure_deps(ws: &Workspace, target: &str) -> Result<()> {
+    let missing: Vec<String> = ws.file.dependencies.iter().filter(|d| !deps::is_ready_for(ws, d, target)).map(|d| d.name.clone()).collect();
     if !missing.is_empty() {
-        bail!("dependencies not set up: {} (run `pocket setup`)", missing.join(", "));
+        let hint = if target == "native" { "pocket setup".to_string() } else { format!("pocket setup --target {target}") };
+        bail!("dependencies not set up for {target}: {} (run `{hint}`)", missing.join(", "));
     }
     Ok(())
 }
@@ -54,10 +59,11 @@ pub struct BuildOutcome {
 }
 
 pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_only: bool) -> Result<BuildOutcome> {
-    ensure_deps(ws)?;
+    let target = ws.target_of(config)?;
+    ensure_deps(ws, &target)?;
     crate::gen::generate(ws, false)?;
-    let tc = toolchain::detect()?;
-    let graph = Graph::resolve(ws)?;
+    let tc = toolchain::detect_for(&target)?;
+    let graph = Graph::resolve_for(ws, &target)?;
     for t in targets {
         if !graph.modules.contains_key(t) {
             bail!("unknown target '{}' (known: {})", t, graph.modules.keys().cloned().collect::<Vec<_>>().join(", "));
@@ -73,6 +79,9 @@ pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_
         return Ok(BuildOutcome { ok: true, output: String::new(), build_dir: gen.build_dir });
     }
     let mut cmd = toolchain::command(&ninja_bin);
+    if target == "wasm" {
+        toolchain::em_env(&mut cmd, &toolchain::emsdk()?);
+    }
     cmd.arg("-C").arg(&gen.build_dir);
     if targets.is_empty() {
         cmd.arg("all");
@@ -456,9 +465,23 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             ts_results.push(json!({ "file": f, "ok": ok, "passed": passed, "failed": failed_n, "elapsed_ms": started.elapsed().as_millis(), "results": tests_json.get("results").cloned().unwrap_or(json!([])) }));
         }
     }
-    let total = tests.len() + ts_results.len();
+    // The build tool's own unit tests (cargo test), when cargo is on PATH.
+    let mut tool_result = json!(null);
+    if filter.map(|f| "pocket_tool".contains(f)).unwrap_or(true) {
+        if let Some(cargo) = toolchain::which("cargo") {
+            let started = Instant::now();
+            let out = toolchain::command(&cargo).args(["test", "--release", "--quiet", "--manifest-path"]).arg(ws.root.join("tools").join("pocket").join("Cargo.toml")).current_dir(&ws.root).output()?;
+            let ok = out.status.success();
+            if !ok {
+                failed += 1;
+                eprintln!("--- pocket_tool (cargo test) failed ---\n{}", tail(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)), 40));
+            }
+            tool_result = json!({ "module": "pocket_tool", "ok": ok, "exit_code": out.status.code(), "elapsed_ms": started.elapsed().as_millis() });
+        }
+    }
+    let total = tests.len() + ts_results.len() + if tool_result.is_null() { 0 } else { 1 };
     let mut rep = if failed == 0 { Report::success("test", format!("{total} test modules passed")) } else { Report::failure("test", format!("{failed} of {total} test modules failed")) };
-    rep.data = json!({ "config": config, "results": results, "ts": ts_results, "bundles": bundles });
+    rep.data = json!({ "config": config, "results": results, "ts": ts_results, "tool": tool_result, "bundles": bundles });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
 }

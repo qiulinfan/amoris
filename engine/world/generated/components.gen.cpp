@@ -381,6 +381,48 @@ std::size_t numeric_span(Sprite& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const SpriteAnimation& v) {
+    j = Json::object();
+    j["clip"] = v.clip;
+    j["playing"] = v.playing;
+    j["loop"] = v.loop;
+    j["speed"] = v.speed;
+    j["fps"] = v.fps;
+    j["frame"] = v.frame;
+    j["time"] = v.time;
+    j["finished"] = v.finished;
+}
+
+void from_json(const Json& j, SpriteAnimation& v) {
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "playing", v.playing);
+    scalar_from_json(j, "loop", v.loop);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "fps", v.fps);
+    scalar_from_json(j, "frame", v.frame);
+    scalar_from_json(j, "time", v.time);
+    scalar_from_json(j, "finished", v.finished);
+}
+
+void hash_component(StateHasherRef& h, const SpriteAnimation& v) {
+    h.str(v.clip);
+    h.u8(v.playing ? 1 : 0);
+    h.u8(v.loop ? 1 : 0);
+    h.f32(v.speed);
+    h.f32(v.fps);
+    h.i64(static_cast<std::int64_t>(v.frame));
+    h.f32(v.time);
+    h.u8(v.finished ? 1 : 0);
+}
+
+std::size_t numeric_span(SpriteAnimation& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "speed") { *out = &v.speed; return 1; }
+    if (path == "fps") { *out = &v.fps; return 1; }
+    if (path == "time") { *out = &v.time; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Bounds& v) {
     j = Json::object();
     vec_to_json(j["min"], v.min);
@@ -591,6 +633,16 @@ constexpr std::array<FieldInfo, 10> kSpriteFields = {{
     FieldInfo{"filter", "string", "Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles)."},
     FieldInfo{"visible", "bool", "Whether the sprite is drawn."},
 }};
+constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
+    FieldInfo{"clip", "string", "Clip name; empty plays nothing."},
+    FieldInfo{"playing", "bool", "Whether time advances."},
+    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit sprite.finished); sprite.play takes it from the clip unless told otherwise."},
+    FieldInfo{"speed", "f32", "Playback rate multiplier; negative plays backwards."},
+    FieldInfo{"fps", "f32", "Frames per second; 0 uses the clip's rate."},
+    FieldInfo{"frame", "i32", "Index into the clip's frame list (read to know where it is, write to jump)."},
+    FieldInfo{"time", "f32", "Seconds into the current frame; advanced by the engine."},
+    FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
+}};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},
     FieldInfo{"max", "vec3", "Maximum corner."},
@@ -621,7 +673,7 @@ constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};
 
-constexpr std::array<ComponentInfo, 13> kComponents = {{
+constexpr std::array<ComponentInfo, 14> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -631,6 +683,7 @@ constexpr std::array<ComponentInfo, 13> kComponents = {{
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
     ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},
+    ComponentInfo{"SpriteAnimation", "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.", true, kSpriteAnimationFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},

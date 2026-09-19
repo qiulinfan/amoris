@@ -20,6 +20,8 @@ export { componentNames, componentDefaults, derivedComponents } from "./generate
 export { events } from "./events";
 export type { WorldEvent } from "./events";
 export { physics, onContacts } from "./physics";
+export { sprites } from "./sprites";
+export type { SpriteClip, PlayClipOptions } from "./sprites";
 export { audio } from "./audio";
 export { input } from "./input";
 export { tween, ease } from "./tween";

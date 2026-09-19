@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__POCKET_NAME__</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101014; color: #cfd2dc; font: 14px system-ui, sans-serif; }
+  body { overflow: hidden; }
+  /* The canvas fills the page; the runtime follows its size (and the device pixel ratio). */
+  canvas { display: block; outline: none; width: 100vw; height: 100vh; }
+  #status { position: fixed; left: 12px; bottom: 10px; opacity: 0.8; pointer-events: none; }
+  #status:empty { display: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<!-- Text goes through this field while a runtime text input has focus: the keyboard, an IME's
+     composition and a phone's keyboard all land here, and the page hands the text to the runtime. -->
+<input id="pocket-text" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+       style="position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0.01; border: 0; padding: 0; font-size: 16px;">
+<div id="status">loading…</div>
+<script>
+// The runtime is started by pocket_runtime.js with these arguments; the project lives in the
+// virtual file system under /game (see __POCKET_NAME__.data.js). Everything a native run accepts
+// on its command line can go here (--size WxH, --log-level, --paused, --seed ...).
+var Module = {
+  canvas: document.getElementById("canvas"),
+  arguments: ["--project", "/game/project", "--bundle", "/game/project.js", "--project-config", "/game/project.json"__POCKET_EXTRA_ARGS__],
+  print: (text) => console.log(text),
+  printErr: (text) => console.error(text),
+  setStatus: (text) => { document.getElementById("status").textContent = text; },
+  onRuntimeInitialized: () => { document.getElementById("status").textContent = ""; },
+  onAbort: (what) => { document.getElementById("status").textContent = "aborted: " + what; },
+  // Called by the runtime when a text input gains or loses focus.
+  pocketTextInput: (enabled) => {
+    const field = document.getElementById("pocket-text");
+    textActive = enabled;
+    if (enabled) { field.value = ""; field.focus({ preventScroll: true }); }
+    else { field.blur(); Module.canvas.focus({ preventScroll: true }); }
+  },
+};
+var textActive = false;
+(() => {
+  const field = document.getElementById("pocket-text");
+  let composing = false;
+  const send = (text) => { if (text) { try { window.pocket.command("ui.type", { text }); } catch (e) { console.error(e); } } field.value = ""; };
+  field.addEventListener("compositionstart", () => { composing = true; });
+  field.addEventListener("compositionend", (e) => { composing = false; send(e.data); });
+  field.addEventListener("input", (e) => {
+    if (composing || e.inputType === "insertCompositionText") return;
+    if (e.inputType === "insertText" || e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop") send(e.data || field.value);
+    else field.value = "";
+  });
+  // A click on the canvas must not steal the focus while text is being typed.
+  Module.canvas.addEventListener("mousedown", (e) => { if (textActive) e.preventDefault(); });
+})();
+
+// The page's handle on the runtime, for players' own scripts, tests and agents alike:
+//   pocket.command("world.tree", {})         -> the command's result (throws an Error with .code on failure)
+//   await pocket.commandAsync("render.capture", {path: "/shot.png"})  -> commands that wait on the GPU
+//   pocket.ready                              -> resolves once the runtime accepts commands
+// The same command names as the native control server and MCP (docs/mcp.md).
+window.pocket = (() => {
+  let resolveReady;
+  const ready = new Promise((r) => { resolveReady = r; });
+  function unpack(ptr) {
+    const text = Module.UTF8ToString(ptr);
+    Module._free(ptr);
+    const reply = JSON.parse(text);
+    if (!reply.ok) {
+      const err = new Error(reply.error.message);
+      err.code = reply.error.code;
+      err.detail = reply.error.detail;
+      throw err;
+    }
+    return reply.result;
+  }
+  const api = {
+    name: "__POCKET_NAME__",
+    config: "__POCKET_CONFIG__",
+    ready,
+    command(name, params) {
+      const ptr = Module.ccall("pocket_command", "number", ["string", "string"], [name, JSON.stringify(params || {})]);
+      return unpack(ptr);
+    },
+    async commandAsync(name, params) {
+      const ptr = await Module.ccall("pocket_command", "number", ["string", "string"], [name, JSON.stringify(params || {})], { async: true });
+      return unpack(ptr);
+    },
+    // A PNG of the canvas as the browser shows it, as a data URL (no GPU readback needed).
+    snapshot() { return Module.canvas.toDataURL("image/png"); },
+  };
+  const wait = () => {
+    try {
+      if (api.command("state")) { resolveReady(api); return; }
+    } catch (e) { /* the runtime has not started yet */ }
+    setTimeout(wait, 50);
+  };
+  wait();
+  return api;
+})();
+</script>
+<script src="__POCKET_NAME__.data.js"></script>
+<script src="pocket_runtime.js"></script>
+</body>
+</html>

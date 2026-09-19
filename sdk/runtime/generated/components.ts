@@ -112,6 +112,26 @@ export interface Sprite {
     visible: boolean;
 }
 
+/** Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends. */
+export interface SpriteAnimation {
+    /** Clip name; empty plays nothing. */
+    clip: string;
+    /** Whether time advances. */
+    playing: boolean;
+    /** Wrap at the end (else stop on the last frame and emit sprite.finished); sprite.play takes it from the clip unless told otherwise. */
+    loop: boolean;
+    /** Playback rate multiplier; negative plays backwards. */
+    speed: number;
+    /** Frames per second; 0 uses the clip's rate. */
+    fps: number;
+    /** Index into the clip's frame list (read to know where it is, write to jump). */
+    frame: number;
+    /** Seconds into the current frame; advanced by the engine. */
+    time: number;
+    /** Set when a non-looping clip reached its end; cleared by play. */
+    finished: boolean;
+}
+
 /** Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. */
 export interface Bounds {
     /** Minimum corner. */
@@ -180,6 +200,7 @@ export interface Components {
     Light: Light;
     MeshRenderer: MeshRenderer;
     Sprite: Sprite;
+    SpriteAnimation: SpriteAnimation;
     Bounds: Bounds;
     RigidBody: RigidBody;
     Collider: Collider;
@@ -188,7 +209,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "Bounds", "RigidBody", "Collider", "AudioSource"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "Bounds", "RigidBody", "Collider", "AudioSource"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -201,6 +222,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
     MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
+    SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },

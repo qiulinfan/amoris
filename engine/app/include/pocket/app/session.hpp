@@ -75,6 +75,7 @@ class Session {
     Result<Json> events_command(std::string_view op, const Json& p, std::string_view source);
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
+    Result<Json> sprite_command(std::string_view op, const Json& p);
     Result<Json> assets_command(std::string_view op, const Json& p);
     Result<Json> audio_command(std::string_view op, const Json& p);
     Result<Json> input_command(std::string_view op, const Json& p);

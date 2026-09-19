@@ -17,3 +17,6 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | Noto Sans Arabic | 2.010 | OFL-1.1 | fetched `file` dependency used by the shaping test |
 | Noto Sans CJK SC | 2.004 | OFL 1.1 | fetched as a single file by `pocket setup`; the default UI font (Latin + Chinese, Japanese, Korean) |
 | JavaScriptCore | system | Apple system framework | linked as a framework; see ADR 0005 |
+| Emscripten | 6.0.9 | MIT / UIUC | the web toolchain (`configs.wasm`), found under `~/.pocket-tools/emsdk`; not fetched by `pocket setup` |
+| SDL3 (Emscripten port) | 3.4.2 | Zlib | `--use-port=sdl3` on the web target instead of the fetched source |
+| emdawnwebgpu | Emscripten port (Dawn) | BSD-3-Clause | `--use-port=emdawnwebgpu`: the WebGPU C API over the browser's WebGPU on the web target |

@@ -73,6 +73,49 @@ TEST_CASE("motion and transform propagation", "[world]") {
     REQUIRE(d["components"].contains("WorldTransform"));
 }
 
+TEST_CASE("sprite clips advance frames, loop, finish and write uv", "[world][sprites]") {
+    World w;
+    World::SpriteClip spin = World::SpriteClip::from_json(Json{{"texture", "sheet.png"}, {"columns", 4}, {"rows", 2}, {"first", 4}, {"count", 4}, {"fps", 10}}).value();
+    REQUIRE(spin.frames == std::vector<int>{4, 5, 6, 7});
+    w.define_clip("spin", spin);
+    REQUIRE(w.clip("spin") != nullptr);
+    auto e = w.spawn("Coin", 0, Json{{"Transform", Json::object()}, {"Sprite", Json::object()}, {"SpriteAnimation", {{"clip", "spin"}}}}).value();
+    w.tick(0.0);
+    const Sprite* s = w.try_get<Sprite>(e);
+    REQUIRE(s != nullptr);
+    REQUIRE(s->texture == "sheet.png");                       // the clip's sheet replaces the sprite's texture
+    REQUIRE(s->uv.x == Catch::Approx(0.0f));                  // cell 4: column 0, row 1 of a 4x2 grid
+    REQUIRE(s->uv.y == Catch::Approx(0.5f));
+    REQUIRE(s->uv.z == Catch::Approx(0.25f));
+    REQUIRE(s->uv.w == Catch::Approx(1.0f));
+    for (int i = 0; i < 6; ++i) w.tick(1.0 / 60.0);            // 0.1 s at 10 fps: one frame
+    REQUIRE(w.try_get<SpriteAnimation>(e)->frame == 1);
+    REQUIRE(w.try_get<Sprite>(e)->uv.x == Catch::Approx(0.25f));
+    for (int i = 0; i < 18; ++i) w.tick(1.0 / 60.0);           // three more: wraps to frame 0
+    REQUIRE(w.try_get<SpriteAnimation>(e)->frame == 0);
+    REQUIRE(w.try_get<SpriteAnimation>(e)->playing == true);
+    // A non-looping clip stops on its last frame and says so once.
+    REQUIRE(w.set(e, "SpriteAnimation", Json{{"loop", false}, {"frame", 0}, {"time", 0.0}, {"speed", 2.0}}).has_value());
+    for (int i = 0; i < 30; ++i) w.tick(1.0 / 60.0);           // 0.5 s at 20 fps is plenty
+    const SpriteAnimation* a = w.try_get<SpriteAnimation>(e);
+    REQUIRE(a->finished == true);
+    REQUIRE(a->playing == false);
+    REQUIRE(a->frame == 3);
+    int finished_events = 0;
+    for (const auto& ev : w.events().recent(100)) {
+        if (ev.type == "sprite.finished") ++finished_events;
+    }
+    REQUIRE(finished_events == 1);
+    // Clips travel with scenes.
+    Json scene = w.save();
+    REQUIRE(scene["sprite_clips"]["spin"]["fps"] == 10);
+    World w2;
+    REQUIRE(w2.load(scene).has_value());
+    REQUIRE(w2.clip("spin") != nullptr);
+    REQUIRE(w2.clip("spin")->frames.size() == 4);
+    REQUIRE(World::SpriteClip::from_json(Json{{"columns", 2}, {"frames", {0, 5}}}).has_value() == false);
+}
+
 TEST_CASE("tree text, queries and hashing are deterministic", "[world]") {
     auto build = [](World& w) {
         auto level = w.spawn("Level", 0, Json{{"Transform", Json::object()}}).value();

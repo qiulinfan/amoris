@@ -158,6 +158,8 @@ struct World::Impl {
     flecs::query<Lifetime> lifetime;
     flecs::query<const MeshRenderer, const WorldTransform> bounds;
     flecs::query<const Sprite, const WorldTransform> sprite_bounds;
+    flecs::query<SpriteAnimation, Sprite> sprite_anim;
+    std::map<std::string, World::SpriteClip> clips;
 
     Impl() {
         ecs_log_set_level(-1);
@@ -170,6 +172,7 @@ struct World::Impl {
         lifetime = ecs.query<Lifetime>();
         bounds = ecs.query<const MeshRenderer, const WorldTransform>();
         sprite_bounds = ecs.query<const Sprite, const WorldTransform>();
+        sprite_anim = ecs.query<SpriteAnimation, Sprite>();
     }
 
     void forget_root(EntityId id) {
@@ -776,6 +779,47 @@ void World::tick(double dt) {
         std::uint64_t cause = impl_->events.emit(impl_->tick, "lifetime.expired", id, Json{{"path", path(id)}});
         (void)destroy(id, cause);
     }
+    // Sprite animation: advance each playing clip by dt and write the frame's uv (and texture).
+    std::vector<EntityId> finished;
+    impl_->sprite_anim.each([&](flecs::entity e, SpriteAnimation& a, Sprite& s) {
+        if (a.clip.empty()) return;
+        auto it = impl_->clips.find(a.clip);
+        if (it == impl_->clips.end() || it->second.frames.empty()) return;
+        const SpriteClip& c = it->second;
+        const int n = static_cast<int>(c.frames.size());
+        if (a.frame < 0) a.frame = 0;
+        if (a.frame >= n) a.frame = n - 1;
+        if (a.playing && !a.finished) {
+            const float fps = a.fps > 0 ? a.fps : c.fps;
+            const float period = fps > 0 ? 1.0f / fps : 0.0f;
+            a.time += fdt * std::abs(a.speed);
+            const bool backwards = a.speed < 0;
+            while (period > 0 && a.time >= period) {
+                a.time -= period;
+                int next = a.frame + (backwards ? -1 : 1);
+                if (next >= n || next < 0) {
+                    if (a.loop) {
+                        next = backwards ? n - 1 : 0;
+                    } else {
+                        a.frame = backwards ? 0 : n - 1;
+                        a.playing = false;
+                        a.finished = true;
+                        a.time = 0;
+                        finished.push_back(e.id());
+                        break;
+                    }
+                }
+                a.frame = next;
+            }
+        }
+        const Vec4 uv = cell_uv(c, c.frames[static_cast<std::size_t>(a.frame)]);
+        s.uv = uv;
+        if (!c.texture.empty() && s.texture != c.texture) s.texture = c.texture;
+    });
+    for (EntityId id : finished) {
+        const SpriteAnimation* a = try_get<SpriteAnimation>(id);
+        impl_->events.emit(impl_->tick, "sprite.finished", id, Json{{"path", path(id)}, {"clip", a ? a->clip : ""}});
+    }
     // Transform propagation in tree order.
     for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
     update_bounds();
@@ -828,7 +872,61 @@ Json World::save() const {
     Json entities = Json::array();
     for (EntityId r : roots()) entities.push_back(save_entity_json(r));
     scene["entities"] = entities;
+    if (!impl_->clips.empty()) {
+        Json clips = Json::object();
+        for (const auto& [name, clip] : impl_->clips) clips[name] = clip.to_json();
+        scene["sprite_clips"] = clips;
+    }
     return scene;
+}
+
+Json World::SpriteClip::to_json() const {
+    return Json{{"texture", texture}, {"columns", columns}, {"rows", rows}, {"frames", frames}, {"fps", fps}, {"loop", loop}};
+}
+
+Result<World::SpriteClip> World::SpriteClip::from_json(const Json& j) {
+    if (!j.is_object()) return fail("bad_clip", "a sprite clip is an object with columns, rows, frames (or first/count), fps, loop, texture");
+    SpriteClip c;
+    c.texture = j.value("texture", "");
+    c.columns = j.value("columns", 1);
+    c.rows = j.value("rows", 1);
+    c.fps = j.value("fps", 8.0f);
+    c.loop = j.value("loop", true);
+    if (c.columns < 1 || c.rows < 1) return fail("bad_clip", "columns and rows must be at least 1");
+    if (j.contains("frames") && j["frames"].is_array()) {
+        for (const auto& f : j["frames"]) {
+            if (!f.is_number_integer()) return fail("bad_clip", "frames must be cell indices");
+            c.frames.push_back(f.get<int>());
+        }
+    } else {
+        // A contiguous run: first cell and count (default: every cell of the grid).
+        int first = j.value("first", 0);
+        int count = j.value("count", c.columns * c.rows - first);
+        for (int i = 0; i < count; ++i) c.frames.push_back(first + i);
+    }
+    const int cells = c.columns * c.rows;
+    for (int f : c.frames) {
+        if (f < 0 || f >= cells) return fail("bad_clip", "frame {} is outside a {}x{} grid", f, c.columns, c.rows);
+    }
+    if (c.frames.empty()) return fail("bad_clip", "a clip needs at least one frame");
+    return c;
+}
+
+void World::define_clip(const std::string& name, SpriteClip clip) { impl_->clips[name] = std::move(clip); }
+
+const World::SpriteClip* World::clip(std::string_view name) const {
+    auto it = impl_->clips.find(std::string(name));
+    return it == impl_->clips.end() ? nullptr : &it->second;
+}
+
+const std::map<std::string, World::SpriteClip>& World::clips() const { return impl_->clips; }
+
+Vec4 World::cell_uv(const SpriteClip& clip, int cell) {
+    const int col = cell % clip.columns;
+    const int row = cell / clip.columns;
+    const float cw = 1.0f / static_cast<float>(clip.columns);
+    const float rh = 1.0f / static_cast<float>(clip.rows);
+    return Vec4{static_cast<float>(col) * cw, static_cast<float>(row) * rh, static_cast<float>(col + 1) * cw, static_cast<float>(row + 1) * rh};
 }
 
 Json World::save_subtree(EntityId id) const {
@@ -875,6 +973,12 @@ Status World::load(const Json& scene, bool clear_first) {
     }
     if (scene.value("format", "pocket-scene") != "pocket-scene") return fail("bad_scene", "unknown scene format");
     if (clear_first) clear();
+    if (scene.contains("sprite_clips") && scene["sprite_clips"].is_object()) {
+        for (const auto& [name, j] : scene["sprite_clips"].items()) {
+            POCKET_TRY(clip, SpriteClip::from_json(j));
+            define_clip(name, std::move(clip));
+        }
+    }
     std::function<Status(const Json&, EntityId)> load_entity = [&](const Json& j, EntityId parent) -> Status {
         if (!j.is_object()) return fail("bad_scene", "entity entries must be objects");
         std::string n = j.value("name", "");

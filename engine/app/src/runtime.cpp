@@ -3,6 +3,12 @@
 
 #include "server.hpp"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <cstdlib>
+#include <cstring>
+#endif
+
 #include <cstdio>
 #include <print>
 
@@ -30,6 +36,7 @@ std::string usage() {
   --record <file>       write an input journal for replay
   --replay <file>       replay an input journal (use with --headless for exact reproduction)
   --save-dir <dir>      where save slots are written and read (default: the user data directory)
+  --font <file>         UI font file (overrides the project config and POCKET_FONT)
 )";
 }
 
@@ -73,6 +80,7 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--record") { POCKET_TRY(v, need(i, "--record")); o.record = v; ++i; }
         else if (a == "--replay") { POCKET_TRY(v, need(i, "--replay")); o.replay = v; ++i; }
         else if (a == "--save-dir") { POCKET_TRY(v, need(i, "--save-dir")); o.save_dir = v; ++i; }
+        else if (a == "--font") { POCKET_TRY(v, need(i, "--font")); o.font = v; ++i; }
         else if (a == "--help" || a == "-h") return fail("help", "{}", usage());
         else return fail("bad_args", "unknown argument '{}'", a);
     }
@@ -94,6 +102,70 @@ Json error_json(const Error& e) {
 
 }  // namespace
 
+#ifdef __EMSCRIPTEN__
+namespace {
+// The browser owns the loop: one Session lives for the page, the frame callback advances it,
+// and the page (or an agent in it) calls pocket_command between frames.
+Session* g_web_session = nullptr;
+// A command that waits on the GPU (capture) yields to the event loop; frames must not run
+// inside it, so the frame callback skips while a command is in flight.
+bool g_web_busy = false;
+
+void web_frame(void* arg) {
+    auto* session = static_cast<Session*>(arg);
+    if (g_web_busy) return;
+    if (session->finished() || !session->ok()) {
+        (void)session->finish();
+        log::info("runtime", "web: run finished");
+        emscripten_cancel_main_loop();
+        return;
+    }
+    if (session->paused()) {
+        (void)session->idle_frame();
+    } else {
+        (void)session->frame();
+    }
+}
+}  // namespace
+
+extern "C" {
+// Any runtime command from the page: pocket_command("world.tree", "{}") -> JSON string (freed by the caller).
+EMSCRIPTEN_KEEPALIVE char* pocket_command(const char* name, const char* params) {
+    Json out;
+    if (!g_web_session) {
+        out["ok"] = false;
+        out["error"] = Json{{"code", "not_running"}, {"message", "the runtime has not started"}};
+    } else {
+        Json p = Json::parse(params && *params ? params : "{}", nullptr, false);
+        if (p.is_discarded()) p = Json::object();
+        g_web_busy = true;
+        Result<Json> r = g_web_session->command(name ? name : "", p);
+        g_web_busy = false;
+        if (r) {
+            out["ok"] = true;
+            out["result"] = *r;
+        } else {
+            out["ok"] = false;
+            out["error"] = error_json(r.error());
+        }
+    }
+    std::string text = out.dump();
+    char* buf = static_cast<char*>(std::malloc(text.size() + 1));
+    std::memcpy(buf, text.c_str(), text.size() + 1);
+    return buf;
+}
+}
+
+Result<Json> run(const Options& options) {
+    static Session* session = new Session(options);
+    POCKET_TRY_VOID(session->start());
+    g_web_session = session;
+    session->set_paused(options.paused);
+    log::info("runtime", "web: main loop handed to the page");
+    emscripten_set_main_loop_arg(web_frame, session, 0, 1);
+    return session->report();   // not reached: the loop above never returns
+}
+#else
 Result<Json> run(const Options& options) {
     Session session(options);
     POCKET_TRY_VOID(session.start());
@@ -130,6 +202,7 @@ Result<Json> run(const Options& options) {
     if (server) report["control"] = server->describe();
     return report;
 }
+#endif
 
 int main(int argc, char** argv) {
     std::vector<std::string> args(argv + 1, argv + argc);

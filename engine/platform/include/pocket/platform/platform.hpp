@@ -75,6 +75,7 @@ class Platform {
 
     [[nodiscard]] bool headless() const;
     [[nodiscard]] void* metal_layer() const;  // CAMetalLayer*, null when headless
+    [[nodiscard]] std::string canvas_selector() const;  // web: the window's <canvas>; empty elsewhere
     [[nodiscard]] int pixel_width() const;
     [[nodiscard]] int pixel_height() const;
     [[nodiscard]] float pixel_density() const;

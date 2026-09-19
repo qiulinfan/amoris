@@ -42,6 +42,9 @@ enum Command {
         /// Re-fetch and rebuild even when the stamp matches.
         #[arg(long)]
         force: bool,
+        /// Target to set dependencies up for: native (default) or wasm (Emscripten).
+        #[arg(long, default_value = "native")]
+        target: String,
     },
     /// Report toolchain and dependency status.
     Doctor,
@@ -99,15 +102,21 @@ enum Command {
     /// Pack a project into a self-contained folder (dist/<name>) that runs without the repository.
     Pack {
         target: String,
-        /// Build configuration for the runtime inside the pack.
-        #[arg(long, default_value = "release")]
-        config: String,
-        /// Output directory (default dist/<name>).
+        /// Build configuration for the runtime inside the pack (--web uses the wasm configuration).
+        #[arg(long)]
+        config: Option<String>,
+        /// Output directory (default dist/<name>, or dist/web/<name> with --web).
         #[arg(long)]
         out: Option<PathBuf>,
         /// Also write dist/<name>.zip.
         #[arg(long)]
         zip: bool,
+        /// Pack for the browser: a static folder (index.html, the wasm runtime, the packaged project) to host anywhere.
+        #[arg(long)]
+        web: bool,
+        /// With --web: ship the editor too; the page opens the project in the editor, paused.
+        #[arg(long)]
+        editor: bool,
     },
     /// Open a project in the Pocket editor (a window with the scene, hierarchy, inspector and console).
     Editor {
@@ -163,7 +172,7 @@ fn run(cli: Cli) -> Result<report::Report> {
     };
     let ws = manifest::Workspace::load(&root)?;
     match cli.command {
-        Command::Setup { force } => commands::setup(&ws, force),
+        Command::Setup { force, target } => commands::setup(&ws, force, &target),
         Command::Doctor => commands::doctor(&ws),
         Command::Build { targets, config, generate_only } => commands::build(&ws, &config, &targets, generate_only),
         Command::Run { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, false) } else { commands::run(&ws, &config, &target, &args) },
@@ -173,7 +182,15 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),
         Command::New { name, dir } => commands::new_project(&ws, &name, &dir),
-        Command::Pack { target, config, out, zip } => pack::pack(&ws, &config, &target, out.as_deref(), zip),
+        Command::Pack { target, config, out, zip, web, editor } => {
+            if web {
+                pack::pack_web(&ws, config.as_deref().unwrap_or("wasm"), &target, out.as_deref(), zip, editor)
+            } else if editor {
+                Ok(report::Report::failure("pack", "--editor needs --web (native packs run the editor with `pocket editor`)"))
+            } else {
+                pack::pack(&ws, config.as_deref().unwrap_or("release"), &target, out.as_deref(), zip)
+            }
+        }
         Command::Editor { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, true) } else { commands::editor(&ws, &config, &target, &args) },
         Command::Mcp => {
             mcp::serve(&ws)?;

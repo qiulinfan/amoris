@@ -96,6 +96,20 @@ fields = [
 ]
 
 [[component]]
+name = "SpriteAnimation"
+doc = "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends."
+fields = [
+    { name = "clip", type = "string", default = "", doc = "Clip name; empty plays nothing." },
+    { name = "playing", type = "bool", default = true, doc = "Whether time advances." },
+    { name = "loop", type = "bool", default = true, doc = "Wrap at the end (else stop on the last frame and emit sprite.finished); sprite.play takes it from the clip unless told otherwise." },
+    { name = "speed", type = "f32", default = 1.0, doc = "Playback rate multiplier; negative plays backwards." },
+    { name = "fps", type = "f32", default = 0.0, doc = "Frames per second; 0 uses the clip's rate." },
+    { name = "frame", type = "i32", default = 0, doc = "Index into the clip's frame list (read to know where it is, write to jump)." },
+    { name = "time", type = "f32", default = 0.0, doc = "Seconds into the current frame; advanced by the engine." },
+    { name = "finished", type = "bool", default = false, doc = "Set when a non-looping clip reached its end; cleared by play." },
+]
+
+[[component]]
 name = "Bounds"
 doc = "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only."
 serialized = false

@@ -57,6 +57,10 @@ struct Surface {
 
 impl Graph {
     pub fn resolve(ws: &Workspace) -> Result<Graph> {
+        Self::resolve_for(ws, "native")
+    }
+
+    pub fn resolve_for(ws: &Workspace, target: &str) -> Result<Graph> {
         // Validate references first.
         for (name, m) in &ws.modules {
             for d in m.file.public_deps.iter().chain(m.file.private_deps.iter()) {
@@ -70,6 +74,9 @@ impl Graph {
         let mut modules = IndexMap::new();
         for name in &order {
             let m = &ws.modules[name];
+            if m.file.exclude_targets.iter().any(|t| t == target) || (target == "wasm" && m.file.kind == "test") {
+                continue;
+            }
             // Own public surface = own public includes/defines + surfaces of public deps (transitively).
             let mut pub_inc: IndexSet<PathBuf> = IndexSet::new();
             let mut pub_def: IndexSet<String> = IndexSet::new();
@@ -80,7 +87,7 @@ impl Graph {
                 pub_def.insert(d.clone());
             }
             for d in &m.file.public_deps {
-                merge_dep_surface(ws, &surfaces, d, &mut pub_inc, &mut pub_def);
+                merge_dep_surface(ws, &surfaces, d, &mut pub_inc, &mut pub_def, target);
             }
             // Compile surface = public surface + private includes + private deps' surfaces.
             let mut inc: IndexSet<PathBuf> = pub_inc.clone();
@@ -92,7 +99,7 @@ impl Graph {
                 def.insert(d.clone());
             }
             for d in &m.file.private_deps {
-                merge_dep_surface(ws, &surfaces, d, &mut inc, &mut def);
+                merge_dep_surface(ws, &surfaces, d, &mut inc, &mut def, target);
             }
             let sources = expand_sources(ws, &m.dir, &m.file.sources)?;
             if sources.is_empty() && m.file.kind != "static_library" {
@@ -140,7 +147,7 @@ impl Graph {
     }
 }
 
-fn merge_dep_surface(ws: &Workspace, surfaces: &IndexMap<String, Surface>, dep: &str, inc: &mut IndexSet<PathBuf>, def: &mut IndexSet<String>) {
+fn merge_dep_surface(ws: &Workspace, surfaces: &IndexMap<String, Surface>, dep: &str, inc: &mut IndexSet<PathBuf>, def: &mut IndexSet<String>, target: &str) {
     if let Some(s) = surfaces.get(dep) {
         for i in &s.include_dirs {
             inc.insert(i.clone());
@@ -149,7 +156,10 @@ fn merge_dep_surface(ws: &Workspace, surfaces: &IndexMap<String, Surface>, dep: 
             def.insert(d.clone());
         }
     } else if let Some(d) = ws.dependency(dep) {
-        let pfx = crate::deps::prefix(ws, d);
+        if !crate::deps::applies(d, target) {
+            return;
+        }
+        let pfx = crate::deps::prefix_for(ws, d, target);
         for i in &d.include_dirs {
             inc.insert(pfx.join(i));
         }

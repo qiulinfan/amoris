@@ -2,7 +2,11 @@
 
 #include <pocket/core/log.hpp>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#else
 #include <webgpu/wgpu.h>
+#endif
 
 #include <cstring>
 
@@ -222,6 +226,23 @@ struct Device::Impl {
     }
 };
 
+namespace {
+// Progress for asynchronous GPU work. wgpu-native processes callbacks from a poll; in the
+// browser the callbacks arrive from the page's event loop, so waiting means yielding to it
+// (emscripten_sleep, an Asyncify unwind), and a non-waiting poll is nothing to do.
+void device_progress(WGPUInstance instance, WGPUDevice device, bool wait) {
+#ifdef __EMSCRIPTEN__
+    (void)device;
+    if (wait) emscripten_sleep(1);
+#else
+    if (device) wgpuDevicePoll(device, wait, nullptr);
+#endif
+    if (instance) wgpuInstanceProcessEvents(instance);
+}
+}  // namespace
+
+void Device::poll(bool wait) { device_progress(impl_->instance, impl_->device, wait); }
+
 Device::Device() : impl_(std::make_unique<Impl>()) {}
 Device::~Device() = default;
 
@@ -232,6 +253,18 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     im.instance = wgpuCreateInstance(nullptr);
     if (!im.instance) return fail("gpu_instance_failed", "wgpuCreateInstance returned null");
 
+#ifdef __EMSCRIPTEN__
+    if (!config.canvas_selector.empty()) {
+        WGPUEmscriptenSurfaceSourceCanvasHTMLSelector src{};
+        src.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
+        src.selector = str(config.canvas_selector.c_str());
+        WGPUSurfaceDescriptor sd{};
+        sd.nextInChain = &src.chain;
+        sd.label = str("pocket.surface");
+        im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
+        if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from canvas {}", config.canvas_selector);
+    }
+#else
     if (config.metal_layer) {
         WGPUSurfaceSourceMetalLayer src{};
         src.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
@@ -242,8 +275,9 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
         im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
         if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from Metal layer");
     }
+#endif
 
-    struct AdapterResult { WGPUAdapter adapter = nullptr; std::string msg; } ar;
+    struct AdapterResult { WGPUAdapter adapter = nullptr; std::string msg; bool done = false; } ar;
     WGPURequestAdapterOptions opts{};
     opts.powerPreference = config.prefer_high_performance ? WGPUPowerPreference_HighPerformance : WGPUPowerPreference_LowPower;
     opts.compatibleSurface = im.surface;
@@ -252,11 +286,12 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     aci.callback = [](WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* u1, void*) {
         auto* r = static_cast<AdapterResult*>(u1);
         r->msg = to_string(message);
+        r->done = true;
         if (status == WGPURequestAdapterStatus_Success) r->adapter = adapter;
     };
     aci.userdata1 = &ar;
     wgpuInstanceRequestAdapter(im.instance, &opts, aci);
-    wgpuInstanceProcessEvents(im.instance);
+    for (int i = 0; i < 100000 && !ar.done; ++i) device_progress(im.instance, nullptr, true);
     if (!ar.adapter) return fail("gpu_adapter_failed", "no adapter: {}", ar.msg);
     im.adapter = ar.adapter;
     WGPUAdapterInfo info{};
@@ -266,7 +301,7 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     im.adapter_backend = backend_name(info.backendType);
     wgpuAdapterInfoFreeMembers(info);
 
-    struct DeviceResult { WGPUDevice device = nullptr; std::string msg; } dr;
+    struct DeviceResult { WGPUDevice device = nullptr; std::string msg; bool done = false; } dr;
     WGPUDeviceDescriptor dd{};
     dd.label = str("pocket.device");
     dd.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
@@ -289,11 +324,12 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     dci.callback = [](WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* u1, void*) {
         auto* r = static_cast<DeviceResult*>(u1);
         r->msg = to_string(message);
+        r->done = true;
         if (status == WGPURequestDeviceStatus_Success) r->device = device;
     };
     dci.userdata1 = &dr;
     wgpuAdapterRequestDevice(im.adapter, &dd, dci);
-    wgpuInstanceProcessEvents(im.instance);
+    for (int i = 0; i < 100000 && !dr.done; ++i) device_progress(im.instance, nullptr, true);
     if (!dr.device) return fail("gpu_device_failed", "no device: {}", dr.msg);
     im.device = dr.device;
     im.queue = wgpuDeviceGetQueue(im.device);
@@ -394,12 +430,15 @@ Status Device::end_frame(Frame& frame) {
     wgpuCommandEncoderRelease(frame.encoder);
     frame.encoder = nullptr;
     if (present) {
+#ifndef __EMSCRIPTEN__
         wgpuSurfacePresent(im.surface);
+#endif
+        // The browser presents the canvas when the frame callback returns.
         im.presented++;
     }
     if (surface_view) wgpuTextureViewRelease(surface_view);
     if (st.texture) wgpuTextureRelease(st.texture);
-    wgpuDevicePoll(im.device, false, nullptr);
+    device_progress(im.instance, im.device, false);
     ++im.frame_index;
     if (im.error) return fail("gpu_error", "a GPU error was reported during frame {}", frame.index);
     return {};
@@ -443,10 +482,7 @@ Result<Image> Device::capture() {
     };
     mci.userdata1 = &mr;
     wgpuBufferMapAsync(readback, WGPUMapMode_Read, 0, bd.size, mci);
-    for (int i = 0; i < 10000 && !mr.done; ++i) {
-        wgpuDevicePoll(im.device, true, nullptr);
-        wgpuInstanceProcessEvents(im.instance);
-    }
+    for (int i = 0; i < 10000 && !mr.done; ++i) device_progress(im.instance, im.device, true);
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         wgpuBufferRelease(readback);
         return fail("gpu_map_failed", "readback map failed: {}", mr.msg);

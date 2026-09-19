@@ -91,8 +91,27 @@ class World {
     [[nodiscard]] Json summary() const;
     [[nodiscard]] static Json schema();  // component metadata as JSON
 
+    // Sprite clips ---------------------------------------------------------------------------
+    // A run of frames on a sheet laid out as a grid: frame i is cell frames[i] (column-major
+    // index: cell = row * columns + column). SpriteAnimation names a clip; the tick writes Sprite.uv.
+    struct SpriteClip {
+        std::string texture;          // sheet image; empty keeps the Sprite's own texture
+        int columns = 1;
+        int rows = 1;
+        std::vector<int> frames;      // cell indices in play order
+        float fps = 8.0f;
+        bool loop = true;
+        [[nodiscard]] Json to_json() const;
+        static Result<SpriteClip> from_json(const Json& j);
+    };
+    void define_clip(const std::string& name, SpriteClip clip);
+    [[nodiscard]] const SpriteClip* clip(std::string_view name) const;
+    [[nodiscard]] const std::map<std::string, SpriteClip>& clips() const;
+    // uv rectangle (u0, v0, u1, v1) of one cell of a clip's grid.
+    [[nodiscard]] static Vec4 cell_uv(const SpriteClip& clip, int cell);
+
     // Simulation -----------------------------------------------------------------------------
-    // Runs the built-in systems (motion, lifetime, transform propagation) for one tick.
+    // Runs the built-in systems (motion, lifetime, sprite animation, transform propagation) for one tick.
     void tick(double dt);
     // Recompute WorldTransform and Bounds from the Transform hierarchy without ticking (edits while paused, loads).
     void update_transforms();

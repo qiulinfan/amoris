@@ -1,3 +1,4 @@
+#ifndef __EMSCRIPTEN__
 #include "server.hpp"
 
 #include <pocket/core/log.hpp>
@@ -177,3 +178,4 @@ Json ControlServer::describe() const {
 }
 
 }  // namespace pocket::app
+#endif  // __EMSCRIPTEN__

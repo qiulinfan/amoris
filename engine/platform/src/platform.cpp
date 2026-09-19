@@ -7,6 +7,14 @@
 #include <pocket/core/log.hpp>
 
 #include <SDL3/SDL.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+// clang-format off
+EM_JS(void, pocket_web_text_input, (int enabled), {
+    if (typeof Module !== "undefined" && typeof Module.pocketTextInput === "function") Module.pocketTextInput(!!enabled);
+});
+// clang-format on
+#endif
 
 namespace pocket::platform {
 
@@ -163,7 +171,9 @@ struct Platform::Impl {
     }
 
     ~Impl() {
+#ifndef __EMSCRIPTEN__
         if (metal_view) SDL_Metal_DestroyView(metal_view);
+#endif
         if (window) SDL_DestroyWindow(window);
         for (auto& [id, pad] : pads) SDL_CloseGamepad(pad);
         pads.clear();
@@ -188,15 +198,23 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
         return fail("platform_init_failed", "SDL_Init failed: {}", SDL_GetError());
     }
     p->impl_->sdl_initialized = true;
+#ifdef __EMSCRIPTEN__
+    // The page sizes the canvas (CSS); SDL follows it and reports resizes, so the window is
+    // always resizable in the browser.
+    SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
+#else
     SDL_WindowFlags flags = SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#endif
     if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
     if (!config.visible) flags |= SDL_WINDOW_HIDDEN;
     SDL_Window* w = SDL_CreateWindow(config.title.c_str(), config.width, config.height, flags);
     if (!w) return fail("window_create_failed", "SDL_CreateWindow failed: {}", SDL_GetError());
     p->impl_->window = w;
+#ifndef __EMSCRIPTEN__
     p->impl_->metal_view = SDL_Metal_CreateView(w);
     if (!p->impl_->metal_view) return fail("metal_view_failed", "SDL_Metal_CreateView failed: {}", SDL_GetError());
     p->impl_->layer = SDL_Metal_GetLayer(p->impl_->metal_view);
+#endif
     SDL_GetWindowSizeInPixels(w, &p->impl_->pixel_w, &p->impl_->pixel_h);
     log::info("platform", "window {}x{} points, {}x{} pixels, driver {}", config.width, config.height, p->impl_->pixel_w, p->impl_->pixel_h, SDL_GetCurrentVideoDriver());
     return p;
@@ -255,9 +273,12 @@ std::vector<Event> Platform::poll() {
                 out.push_back(ev);
                 break;
             case SDL_EVENT_TEXT_INPUT:
+#ifndef __EMSCRIPTEN__
+                // On the web the page delivers text (see set_text_input); SDL's keypress path would double it.
                 ev.type = EventType::Text;
                 ev.text = e.text.text;
                 out.push_back(ev);
+#endif
                 break;
             case SDL_EVENT_GAMEPAD_ADDED: {
                 SDL_Gamepad* pad = SDL_OpenGamepad(e.gdevice.which);
@@ -313,6 +334,13 @@ bool Platform::quit_requested() const { return impl_->quit; }
 const InputState& Platform::input() const { return impl_->input; }
 bool Platform::headless() const { return impl_->config.headless; }
 void* Platform::metal_layer() const { return impl_->layer; }
+std::string Platform::canvas_selector() const {
+#ifdef __EMSCRIPTEN__
+    return impl_->window ? "#canvas" : "";
+#else
+    return "";
+#endif
+}
 int Platform::pixel_width() const { return impl_->pixel_w; }
 int Platform::pixel_height() const { return impl_->pixel_h; }
 float Platform::pixel_density() const { return impl_->window ? SDL_GetWindowPixelDensity(impl_->window) : 1.0f; }
@@ -323,6 +351,11 @@ void Platform::set_text_input(bool enabled) {
     if (!impl_->window) return;
     if (enabled) SDL_StartTextInput(impl_->window);
     else SDL_StopTextInput(impl_->window);
+#ifdef __EMSCRIPTEN__
+    // The page's hidden text field takes over: it receives what the keyboard, an IME or a phone's
+    // keyboard produce and hands it to the runtime through ui.type (docs/web.md).
+    pocket_web_text_input(enabled ? 1 : 0);
+#endif
 }
 
 bool Platform::text_input() const { return impl_->text_input; }

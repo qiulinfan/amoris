@@ -133,6 +133,23 @@ void from_json(const Json& j, Sprite& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(Sprite& v, std::string_view path, float** out);
 
+/// Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.
+struct SpriteAnimation {
+    std::string clip = "";
+    bool playing = true;
+    bool loop = true;
+    float speed = 1.0f;
+    float fps = 0.0f;
+    std::int32_t frame = 0;
+    float time = 0.0f;
+    bool finished = false;
+    constexpr bool operator==(const SpriteAnimation&) const = default;
+};
+void to_json(Json& j, const SpriteAnimation& v);
+void from_json(const Json& j, SpriteAnimation& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(SpriteAnimation& v, std::string_view path, float** out);
+
 /// Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.
 struct Bounds {
     Vec3 min{0.0f, 0.0f, 0.0f};
@@ -216,6 +233,7 @@ void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
 void hash_component(struct StateHasherRef& h, const Sprite& v);
+void hash_component(struct StateHasherRef& h, const SpriteAnimation& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);

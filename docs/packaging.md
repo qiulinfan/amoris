@@ -23,3 +23,5 @@ dist/<name>/
 ```
 
 The packed runtime is the same executable the repository runs, so every command, report and capture works unchanged; only the sources are absent. Nothing is signed or notarized: distributing outside a machine you control needs Apple's tooling on top of this. Windows and Linux packs arrive with those platforms (V8, ADR 0005).
+
+`pocket pack <project> --web` makes the browser version instead: `dist/web/<name>/` with `index.html`, the wasm runtime and the project packaged into a virtual file system, to host on any static server. The page exposes the same commands through `window.pocket`; see [the web build](web.md).

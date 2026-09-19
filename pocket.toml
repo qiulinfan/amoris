@@ -27,6 +27,16 @@ c_flags = ["-O2", "-g"]
 defines = ["NDEBUG=1"]
 link_flags = []
 
+# The web build (docs/web.md): Emscripten, SDL3 and WebGPU from its ports, scripts on the
+# browser's own JavaScript engine, assets from a packaged virtual file system.
+[configs.wasm]
+target = "wasm"
+warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-initializers"]
+cxx_flags = ["-O2", "-fno-exceptions", "--use-port=sdl3", "--use-port=emdawnwebgpu"]
+c_flags = ["-O2", "--use-port=sdl3"]
+defines = ["NDEBUG=1", "POCKET_WEB=1"]
+link_flags = ["-O2", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sASYNCIFY=1", "-sASYNCIFY_STACK_SIZE=131072", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
+
 [[dependencies]]
 name = "sdl3"
 version = "3.4.16"
@@ -36,6 +46,7 @@ sha256 = "7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68"
 cmake_args = ["-DSDL_STATIC=ON", "-DSDL_SHARED=OFF", "-DSDL_TESTS=OFF", "-DSDL_EXAMPLES=OFF", "-DSDL_TEST_LIBRARY=OFF", "-DSDL_INSTALL_DOCS=OFF"]
 include_dirs = ["include"]
 libs = ["lib/libSDL3.a"]
+wasm = "port"
 frameworks = ["CoreMedia", "CoreVideo", "Cocoa", "IOKit", "ForceFeedback", "Carbon", "CoreAudio", "AudioToolbox", "AVFoundation", "Foundation", "GameController", "Metal", "QuartzCore"]
 weak_frameworks = ["UniformTypeIdentifiers", "CoreHaptics"]
 link_flags = ["-lpthread", "-lm"]
@@ -50,6 +61,7 @@ sha256 = "a5797a37b1adf720bcd5dcffb291edbbd5b7b14be0a3874c28e6393a655a7a3e"
 strip_components = 0
 include_dirs = ["include"]
 libs = ["lib/libwgpu_native.a"]
+wasm = "port"
 frameworks = ["Metal", "QuartzCore", "CoreFoundation", "Foundation", "CoreGraphics", "IOKit", "IOSurface", "AppKit"]
 license = "MIT OR Apache-2.0"
 

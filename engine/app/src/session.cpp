@@ -1,6 +1,7 @@
 #include <pocket/app/session.hpp>
 
 #include "journal.hpp"
+#include "web_fs.hpp"
 
 #include <stb_image_write.h>
 
@@ -104,6 +105,14 @@ Status Session::start() {
 
     POCKET_TRY(bundle_src, fs::read_text(options_.bundle));
 
+#ifdef __EMSCRIPTEN__
+    if (!options_.save_dir.empty()) {
+        log::warn("runtime", "--save-dir is ignored in the browser; saves live in IndexedDB");
+        options_.save_dir.clear();
+    }
+    if (!web_mount_saves(save_dir().string())) log::warn("runtime", "saves will not persist: the browser refused IndexedDB");
+#endif
+
     platform::Config pc;
     pc.title = title.empty() ? "Pocket" : title;
     pc.width = width;
@@ -115,6 +124,7 @@ Status Session::start() {
 
     rhi::Config rc;
     rc.metal_layer = platform_->metal_layer();
+    rc.canvas_selector = platform_->canvas_selector();
     rc.width = static_cast<std::uint32_t>(platform_->pixel_width());
     rc.height = static_cast<std::uint32_t>(platform_->pixel_height());
     POCKET_TRY(device, rhi::Device::create(rc));
@@ -133,6 +143,7 @@ Status Session::start() {
     // ui_unavailable and everything else works.
     std::string font = project_.contains("font") && project_["font"].is_string() ? project_["font"].get<std::string>() : "";
     if (const char* env = std::getenv("POCKET_FONT"); env && *env) font = env;
+    if (!options_.font.empty()) font = options_.font.string();
     // A relative font path is relative to the project config (packed games ship the font next to it).
     if (!font.empty() && std::filesystem::path(font).is_relative() && !options_.project_config.empty()) font = (options_.project_config.parent_path() / font).string();
     if (!font.empty() && std::filesystem::exists(font)) {
@@ -158,6 +169,19 @@ Status Session::start() {
     if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
         if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
         else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
+    }
+    if (project_.contains("sprite_clips") && project_["sprite_clips"].is_object()) {
+        for (const auto& [name, j] : project_["sprite_clips"].items()) {
+            if (auto clip = world::World::SpriteClip::from_json(j)) world_->define_clip(name, std::move(*clip));
+            else log::warn("runtime", "project sprite clip '{}': {}", name, clip.error().to_string());
+        }
+    }
+    if (project_.contains("render") && project_["render"].is_object()) {
+        renderer::ShadowSettings s = renderer_->shadows();
+        const Json& r = project_["render"];
+        if (r.contains("shadows") && r["shadows"].is_boolean()) s.enabled = r["shadows"].get<bool>();
+        if (r.contains("shadow_strength") && r["shadow_strength"].is_number()) s.strength = std::clamp(r["shadow_strength"].get<float>(), 0.0f, 1.0f);
+        renderer_->set_shadows(s);
     }
     if (project_.contains("physics") && project_["physics"].is_object()) {
         const Json& ph = project_["physics"];
@@ -512,10 +536,13 @@ Status Session::idle_frame() {
         }
     }
     frames_++;
-    // Nothing else throttles a paused window: pace it at the tick rate.
+    // Nothing else throttles a paused window: pace it at the tick rate. (The browser paces its
+    // own frame callback.)
+#ifndef __EMSCRIPTEN__
     double spent = pace_timer_.seconds();
     double budget = clock_.tick_seconds;
     if (spent < budget) std::this_thread::sleep_for(std::chrono::duration<double>(budget - spent));
+#endif
     pace_timer_.lap();
     frame_timer_.lap();  // resuming must not simulate the time spent paused
     return {};
@@ -555,6 +582,66 @@ Vec3 vec3_of(const Json& j, Vec3 fallback) {
 }
 Json json_of(Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; }
 }  // namespace
+
+Result<Json> Session::sprite_command(std::string_view op, const Json& p) {
+    // Sprite clips and playback (docs/design/sprites.md): the same calls for scripts and agents.
+    auto& w = *world_;
+    if (op == "clip") {
+        std::string name = opt<std::string>(p, "name", "");
+        if (name.empty()) return fail("bad_args", "clip needs a name");
+        POCKET_TRY(clip, world::World::SpriteClip::from_json(p));
+        Json j = clip.to_json();
+        w.define_clip(name, std::move(clip));
+        j["name"] = name;
+        return j;
+    }
+    if (op == "clips") {
+        Json out = Json::object();
+        for (const auto& [name, clip] : w.clips()) out[name] = clip.to_json();
+        return out;
+    }
+    if (op == "play" || op == "stop") {
+        if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
+        world::EntityId id = resolve_entity(p["entity"]);
+        if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+        std::uint64_t cause = opt<std::uint64_t>(p, "cause", 0);
+        Json patch = Json::object();
+        if (op == "play") {
+            std::string clip = opt<std::string>(p, "clip", "");
+            if (!clip.empty()) {
+                const world::World::SpriteClip* c = w.clip(clip);
+                if (!c) return fail("no_such_clip", "no sprite clip named '{}' (define it with sprite.clip or [sprite_clips])", clip);
+                patch["clip"] = clip;
+                patch["loop"] = c->loop;   // the clip's setting unless the call says otherwise (below)
+            } else if (!w.has(id, "SpriteAnimation")) {
+                return fail("bad_args", "play needs a clip name");
+            }
+            if (!w.has(id, "Sprite")) {
+                // A sprite the clip can draw on; the clip's texture fills it on the first tick.
+                POCKET_TRY_VOID(w.set(id, "Sprite", Json::object(), cause));
+            }
+            const bool restart = opt<bool>(p, "restart", true);
+            patch["playing"] = true;
+            patch["finished"] = false;
+            if (restart) {
+                patch["frame"] = 0;
+                patch["time"] = 0.0;
+            }
+            for (const char* k : {"loop", "speed", "fps"}) {
+                if (p.contains(k)) patch[k] = p[k];
+            }
+        } else {
+            patch["playing"] = false;
+            if (opt<bool>(p, "reset", false)) {
+                patch["frame"] = 0;
+                patch["time"] = 0.0;
+            }
+        }
+        POCKET_TRY_VOID(w.set(id, "SpriteAnimation", patch, cause));
+        return w.get(id, "SpriteAnimation");
+    }
+    return fail("unknown_command", "unknown sprite command '{}'", op);
+}
 
 Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     if (op == "stats") return physics_->describe();
@@ -668,6 +755,14 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         }
         return j;
     }
+    if (op == "shadows") {
+        renderer::ShadowSettings s = renderer_->shadows();
+        if (p.contains("enabled") && p["enabled"].is_boolean()) s.enabled = p["enabled"].get<bool>();
+        if (p.contains("strength") && p["strength"].is_number()) s.strength = std::clamp(p["strength"].get<float>(), 0.0f, 1.0f);
+        if (p.contains("bias") && p["bias"].is_number()) s.bias = std::max(0.0f, p["bias"].get<float>());
+        renderer_->set_shadows(s);
+        return Json{{"enabled", s.enabled}, {"strength", s.strength}, {"bias", s.bias}};
+    }
     if (op == "viewport") {
         // Points in, points out; the renderer works in pixels.
         float w = 0, h = 0, scale = 1;
@@ -735,7 +830,12 @@ std::filesystem::path Session::save_dir() const {
     if (!options_.save_dir.empty()) return options_.save_dir;
     if (const char* env = std::getenv("POCKET_SAVE_DIR"); env && *env) return env;
     if (project_.contains("saves") && project_["saves"].is_string()) return options_.project_dir / project_["saves"].get<std::string>();
+#ifdef __EMSCRIPTEN__
+    // The browser's persistent store (IndexedDB through IDBFS), mounted in start().
+    return std::filesystem::path("/saves") / (name_.empty() ? "project" : name_);
+#else
     return platform::user_data_dir("pocket", name_.empty() ? "project" : name_);
+#endif
 }
 
 Result<Json> Session::save_command(std::string_view op, const Json& p) {
@@ -766,6 +866,9 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         std::filesystem::create_directories(dir, ec);
         std::string text = save.dump(2) + "\n";
         POCKET_TRY_VOID(fs::write_text(path, text));
+#ifdef __EMSCRIPTEN__
+        web_sync_saves();
+#endif
         world_->events().emit(clock_.tick, "save.written", 0, Json{{"slot", slot}, {"entities", world_->entity_count()}}, 0, "save");
         return Json{{"slot", slot}, {"path", path.string()}, {"bytes", text.size()}, {"entities", world_->entity_count()}};
     }
@@ -821,6 +924,9 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         POCKET_TRY(path, slot_path(slot));
         std::error_code ec;
         bool existed = std::filesystem::remove(path, ec);
+#ifdef __EMSCRIPTEN__
+        if (existed) web_sync_saves();
+#endif
         return Json{{"slot", slot}, {"deleted", existed}};
     }
     return fail("unknown_command", "unknown save command '{}'", op);
@@ -1211,7 +1317,9 @@ Status Session::frame() {
         } else {
             (void)platform_->poll();
             if (auto r = render_frame(); !r) { record_error(r.error()); return fail(r.error()); }
+#ifndef __EMSCRIPTEN__
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+#endif
             return {};
         }
     }
@@ -1239,6 +1347,7 @@ Status Session::frame() {
     }
     frames_++;
     perf_frame_.add(frame_sw.ms());
+#ifndef __EMSCRIPTEN__
     if (device_->has_surface() && device_->presented_frames() == presented_before) {
         // Occluded or hidden window: nothing throttles the loop, so pace it at the tick rate to
         // keep real-time simulation sensible and the CPU idle.
@@ -1246,6 +1355,9 @@ Status Session::frame() {
         double budget = clock_.tick_seconds;
         if (spent < budget) std::this_thread::sleep_for(std::chrono::duration<double>(budget - spent));
     }
+#else
+    (void)presented_before;
+#endif
     pace_timer_.lap();
     if (options_.headless && options_.frames < 0 && !options_.serve && frames_ >= 3600) quit_ = true;
     return {};
@@ -1561,6 +1673,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
+    if (name.starts_with("sprite.")) return sprite_command(name.substr(7), p);
     if (name.starts_with("assets.")) return assets_command(name.substr(7), p);
     if (name.starts_with("audio.")) return audio_command(name.substr(6), p);
     if (name.starts_with("input.")) return input_command(name.substr(6), p);
@@ -1634,7 +1747,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

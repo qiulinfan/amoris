@@ -1,14 +1,15 @@
 // A 2D game on sprites (docs/design/sprites.md): an orthographic camera, a ground row cut from a
-// two-tile sheet, a player moved by actions, coins that bob on a tween and are collected on
-// contact, a score in the HUD and in the exposed state.
+// two-tile sheet, a player moved by actions with a walk cycle from a sheet clip, spinning coins
+// that bob on a tween and are collected on contact, a score in the HUD and in the exposed state.
 //   pocket run sprites
 //   pocket run sprites -- --headless --frames 120 --json
-import { Label, events, expose, input, log, mount, onStart, onTick, setClearColor, signal, tween, world } from "pocket";
+import { Label, events, expose, input, log, mount, onStart, onTick, setClearColor, signal, sprites, tween, world } from "pocket";
 
 const score = signal(0);
 const coins = new Set<number>();
 let player = 0;
 let facingLeft = false;
+let walking = false;
 
 onStart(() => {
     setClearColor(0.45, 0.7, 0.95, 1);
@@ -21,10 +22,12 @@ onStart(() => {
         world.spawn(`dirt${i}`, { parent: ground, components: { Transform: { position: { x, y: -5, z: 0 } }, Sprite: { texture: "assets/tiles.png", uv: { x: 0.5, y: 0, z: 1, w: 1 }, filter: "nearest" } } });
     }
     player = world.spawn("Player", { components: { Transform: { position: { x: 0, y: -3, z: 0 } }, Sprite: { texture: "assets/player.png", layer: 2, filter: "nearest" } } });
+    sprites.play(player, "idle");
     for (let i = 0; i < 6; i++) {
         // Along the ground where the player walks, bobbing a little; the last two float higher.
         const y = i < 4 ? -3 : -1.5;
         const id = world.spawn(`Coin${i}`, { components: { Transform: { position: { x: -6 + i * 2.4, y, z: 0 } }, Sprite: { texture: "assets/coin.png", size: { x: 0.5, y: 0.5 }, layer: 1, filter: "nearest" } } });
+        sprites.play(id, "coin", { speed: 1 + i * 0.15 });
         coins.add(id);
         tween.to(id, "Transform", { position: { y: y + 0.3 } }, { duration: 0.8, ease: "sineInOut", repeat: Infinity, yoyo: true, delay: i * 0.1 });
     }
@@ -44,6 +47,8 @@ onTick((t) => {
     const x = Math.max(-9.5, Math.min(9.5, p.x + dx));
     const y = Math.max(-3.4, Math.min(4.5, p.y + dy));
     if (dx !== 0 || dy !== 0) world.set(player, "Transform", { position: { x, y } });
+    const moving = dx !== 0 || dy !== 0;
+    if (moving !== walking) { walking = moving; sprites.play(player, walking ? "walk" : "idle"); }
     if (dx < 0 && !facingLeft) { facingLeft = true; world.set(player, "Sprite", { flip_x: true }); }
     if (dx > 0 && facingLeft) { facingLeft = false; world.set(player, "Sprite", { flip_x: false }); }
     for (const id of coins) {
@@ -63,3 +68,4 @@ onTick((t) => {
 expose("score", () => score());
 expose("coins", () => coins.size);
 expose("player.x", () => Number(world.get(player, "Transform")?.position.x.toFixed(2) ?? 0));
+expose("player.clip", () => world.get(player, "SpriteAnimation")?.clip ?? "");

@@ -1,3 +1,4 @@
+#ifndef __EMSCRIPTEN__
 // JavaScriptCore backend for ScriptHost.
 #include <pocket/script/script_host.hpp>
 
@@ -295,3 +296,4 @@ Result<std::unique_ptr<ScriptHost>> ScriptHost::create(const Config& config) {
 }
 
 }  // namespace pocket::script
+#endif  // __EMSCRIPTEN__

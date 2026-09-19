@@ -11,6 +11,7 @@
     X(Light) \
     X(MeshRenderer) \
     X(Sprite) \
+    X(SpriteAnimation) \
     X(Bounds) \
     X(RigidBody) \
     X(Collider) \

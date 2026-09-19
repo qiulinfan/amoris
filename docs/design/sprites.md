@@ -18,13 +18,23 @@ Sprites go through the instanced path: every sprite with the same texture in a r
 
 ## The sample
 
-`samples/sprites`: an orthographic camera, a ground row cut from a two-tile sheet, a player moved by the `move_x` / `move_y` actions, coins that bob on a tween and are collected on contact, a score in the HUD and in the exposed state.
+`samples/sprites`: an orthographic camera, a ground row cut from a two-tile sheet, a player moved by the `move_x` / `move_y` actions with a four-frame walk cycle while moving, spinning coins that bob on a tween and are collected on contact, a score in the HUD and in the exposed state.
 
 ```bash
 ./.pocket/pocket run sprites
 ./.pocket/pocket run sprites -- --headless --frames 120 --json      # score, coins, render.sprites
 ```
 
+## Animation
+
+A clip is a run of cells on a sheet laid out as a grid: `texture`, `columns`, `rows`, `frames` (cell indices, `cell = row * columns + column`; or `first` and `count`), `fps`, `loop`. Clips are named in `[sprite_clips]` in project.toml or registered by `sprites.defineClip` (the `sprite.clip` command); scenes carry the clips they were saved with. `sprites.play(entity, "walk", { speed, loop, fps, restart })` puts a `SpriteAnimation` on the entity (and a `Sprite` if it has none); every tick the engine advances `time` by `dt * |speed|`, steps `frame` at the clip's rate (backwards for a negative speed), and writes the cell's rectangle into `Sprite.uv` (and the clip's texture into `Sprite.texture`). A non-looping clip stops on its last frame with `finished = true` and emits `sprite.finished`; `sprites.stop` pauses. Everything is in the component, so an agent reads where an animation is with `world.get`, and the state hash covers it.
+
+```ts
+sprites.play(player, moving ? "walk" : "idle");
+sprites.play(coin, "coin", { speed: 1.3 });
+sprites.defineClip("pop", { texture: "assets/fx.png", columns: 4, rows: 1, fps: 24, loop: false });
+```
+
 ## Not yet
 
-Sprite animation clips (drive `uv` from a timer or tween for now), 2D physics and tile map files. Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).
+2D physics and tile map files. Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).

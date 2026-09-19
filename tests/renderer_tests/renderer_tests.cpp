@@ -1,5 +1,6 @@
 #include <pocket/app/runtime.hpp>
 #include <pocket/app/session.hpp>
+#include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
 
 #include <catch_amalgamated.hpp>
@@ -147,5 +148,60 @@ TEST_CASE("glTF meshes and textures render; missing assets are marked", "[render
     REQUIRE(s.frame().has_value());
     stats = s.command("render.stats", Json::object()).value();
     REQUIRE(stats["assets"]["meshes"] == 2);  // re-uploaded after the reload
+    REQUIRE(s.finish().has_value());
+}
+
+namespace {
+// Brightness of the pixel a world point projects to, from a fresh capture.
+double brightness_at(app::Session& s, const Json& capture, Vec3 point) {
+    Json pr = s.command("render.project", Json{{"point", Json{{"x", point.x}, {"y", point.y}, {"z", point.z}}}}).value();
+    REQUIRE(pr["visible"] == true);
+    int x = static_cast<int>(pr["x"].get<double>()), y = static_cast<int>(pr["y"].get<double>());
+    auto bytes = fs::read_text(capture["path"].get<std::string>());
+    REQUIRE(bytes.has_value());
+    auto img = assets::decode_image(*bytes, "capture");
+    REQUIRE(img.has_value());
+    REQUIRE(x >= 0);
+    REQUIRE(y >= 0);
+    REQUIRE(static_cast<std::uint32_t>(x) < img->width);
+    REQUIRE(static_cast<std::uint32_t>(y) < img->height);
+    std::size_t at = (static_cast<std::size_t>(y) * img->width + static_cast<std::size_t>(x)) * 4;
+    return img->rgba[at] + img->rgba[at + 1] + img->rgba[at + 2];
+}
+}  // namespace
+
+TEST_CASE("the sun casts shadows onto the ground", "[renderer][shadows]") {
+    app::Session s(playground_options());
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A wide ground, a cube floating above it, a sun shining toward +X and down at 45 degrees
+    // (its -Z rotated by the quaternion (-0.5, -0.5, 0, 0.7071)), a camera straight above.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ground"}, {"components", Json{{"Transform", Json{{"scale", Json{{"x", 12}, {"y", 1}, {"z", 12}}}}}, {"MeshRenderer", Json{{"mesh", "plane"}, {"color", Json{{"r", 0.8}, {"g", 0.8}, {"b", 0.8}, {"a", 1}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Cube"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.5}, {"y", -0.5}, {"z", 0}, {"w", 0.70710678}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1.2}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 10}, {"z", 0.001}}}, {"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["shadows"] == true);
+    REQUIRE(stats["shadow_draws"].get<int>() >= 1);
+    std::string path = (root() / "build" / "test-out" / "shadows.png").string();
+    Json cap = s.command("capture", Json{{"path", path}}).value();
+    // The cube's shadow lands at +X on the ground; open ground at -X is lit.
+    double shaded = brightness_at(s, cap, {1.3f, 0, 0});
+    double lit = brightness_at(s, cap, {-3.0f, 0, 0});
+    INFO("shaded " << shaded << " lit " << lit);
+    REQUIRE(lit > 200);
+    REQUIRE(shaded < lit * 0.7);
+    // Turned off, the same two points match.
+    REQUIRE(s.command("render.shadows", Json{{"enabled", false}}).value()["enabled"] == false);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["shadows"] == false);
+    std::string path2 = (root() / "build" / "test-out" / "shadows-off.png").string();
+    Json cap2 = s.command("capture", Json{{"path", path2}}).value();
+    double shaded2 = brightness_at(s, cap2, {1.3f, 0, 0});
+    double lit2 = brightness_at(s, cap2, {-3.0f, 0, 0});
+    INFO("off: shaded " << shaded2 << " lit " << lit2);
+    REQUIRE(std::abs(shaded2 - lit2) < lit2 * 0.1);
     REQUIRE(s.finish().has_value());
 }

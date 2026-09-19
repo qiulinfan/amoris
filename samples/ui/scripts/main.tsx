@@ -22,6 +22,7 @@ function Hud() {
                 <box width={`${health()}%`} height="100%" background={health() < 40 ? "#e5484d" : "#3dbf6d"} radius={5} />
             </box>
             <Label text={message()} muted />
+            <Label text="中文 · 日本語 · 한국어 · Ünïcödé: one font, shaped by HarfBuzz" muted size={13} name="scripts" />
         </box>
     );
 }

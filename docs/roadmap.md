@@ -22,7 +22,7 @@ ECS decision (ADR 0003), component metadata DSL, code generation for bindings, `
 
 ## M2: graphics
 
-Status: first slice done on macOS (2026-09-18), evidence in `tests/evidence/m2/`. Delivered: `engine/renderer` forward renderer on the WebGPU-shaped RHI (primitive meshes, one directional and up to eight point lights, first active Camera, per-object uniforms with dynamic offsets), an entity id buffer written with every frame plus `render.pick`, `render.project` and `render.ids` commands, `Bounds` computed by the world, captures of color and ids. Not yet: materials and textures, loaded meshes, shadows, MSAA, golden-image comparisons across GPUs.
+Status: first slice done on macOS (2026-09-18), evidence in `tests/evidence/m2/`. Delivered: `engine/renderer` forward renderer on the WebGPU-shaped RHI (primitive meshes, one directional and up to eight point lights, first active Camera, per-object uniforms with dynamic offsets), an entity id buffer written with every frame plus `render.pick`, `render.project` and `render.ids` commands, `Bounds` computed by the world, captures of color and ids. Since then: textures and glTF meshes (M5 first half), instanced draws, sprites and orthographic cameras, a directional shadow map (`docs/design/rendering.md`). Not yet: MSAA, golden-image comparisons across GPUs.
 
 RHI decision (ADR 0002), mesh, material, light and camera, offscreen render targets, frame capture and golden images. Ports the Phase 1 math conventions spec (right-handed, +Y up, depth [0,1], counter-clockwise front faces, column-major matrices) as tests.
 
@@ -45,6 +45,8 @@ Asset registry, content-addressed derived-data cache, cooking, packaging for the
 ## M6: ship by link
 
 Web export: the core compiled to wasm32 with Emscripten and SDL3, the RHI on browser WebGPU, scripts running on the browser's JavaScript engine. Portability of the core and the WebGPU-shaped RHI are constraints from M0 so that this milestone is a port, not a rewrite.
+
+Status: done on 2026-09-19 as `pocket pack <project> --web` (`docs/web.md`), with the hello and sprites samples verified in Chromium: rendering, shadows, Pocket UI text, keyboard input, captures through the runtime's own command, resizing. Fonts are subset per project (a pack is 6 MB, the runtime itself), saves persist in IndexedDB, text input goes through the page (IMEs work), and `--editor` ships the editor in the page.
 
 ## Reuse of existing tests
 

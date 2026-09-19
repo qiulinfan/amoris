@@ -198,6 +198,50 @@ TEST_CASE("input actions carry edges across frames and release held keys", "[run
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("sprite clips from project.toml play through commands", "[runtime][sprites]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json clips = s.command("sprite.clips", Json::object()).value();
+    REQUIRE(clips.contains("walk"));
+    REQUIRE(clips["walk"]["frames"].size() == 4);
+    REQUIRE(s.frame().has_value());
+    // Idle at rest, walking while an action is held, idle again afterwards; the coins spin on their own.
+    Json idle = s.command("world.get", Json{{"entity", "Player"}, {"component", "SpriteAnimation"}}).value();
+    REQUIRE(idle["clip"] == "idle");
+    REQUIRE(s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 30}}).has_value());
+    for (int i = 0; i < 10; ++i) REQUIRE(s.frame().has_value());
+    Json walking = s.command("world.get", Json{{"entity", "Player"}, {"component", "SpriteAnimation"}}).value();
+    REQUIRE(walking["clip"] == "walk");
+    REQUIRE(walking["playing"] == true);
+    Json coin = s.command("world.get", Json{{"entity", "Coin5"}, {"component", "SpriteAnimation"}}).value();
+    REQUIRE(coin["clip"] == "coin");
+    Json sprite = s.command("world.get", Json{{"entity", "Coin5"}, {"component", "Sprite"}}).value();
+    REQUIRE(sprite["uv"]["z"].get<double>() - sprite["uv"]["x"].get<double>() == Catch::Approx(0.25));
+    for (int i = 0; i < 40; ++i) REQUIRE(s.frame().has_value());
+    Json again = s.command("world.get", Json{{"entity", "Player"}, {"component", "SpriteAnimation"}}).value();
+    REQUIRE(again["clip"] == "idle");
+    // A one-shot clip defined on the fly stops and reports.
+    REQUIRE(s.command("sprite.clip", Json{{"name", "pop"}, {"columns", 4}, {"rows", 1}, {"fps", 60}, {"loop", false}}).has_value());
+    REQUIRE(s.command("sprite.play", Json{{"entity", "Player"}, {"clip", "pop"}}).has_value());
+    for (int i = 0; i < 10; ++i) REQUIRE(s.frame().has_value());
+    Json popped = s.command("world.get", Json{{"entity", "Player"}, {"component", "SpriteAnimation"}}).value();
+    REQUIRE(popped["finished"] == true);
+    REQUIRE(popped["frame"] == 3);
+    Json ev = s.command("events.recent", Json{{"limit", 50}, {"type", "sprite.finished"}}).value();
+    INFO(ev.dump());
+    REQUIRE(ev.size() >= 1);
+    REQUIRE(s.command("sprite.play", Json{{"entity", "Player"}, {"clip", "nope"}}).has_value() == false);
+}
+
 TEST_CASE("sprites draw unlit through an orthographic camera and are picked by shape", "[runtime][sprites]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";

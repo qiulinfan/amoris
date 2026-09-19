@@ -15,9 +15,54 @@ pub struct Toolchain {
     pub developer_dir: Option<String>,
     pub cxx_version: String,
     pub host_os: String,
+    /// "native" or "wasm".
+    pub target: String,
 }
 
-fn which(name: &str) -> Option<String> {
+/// The Emscripten SDK: POCKET_EMSDK, then EMSDK, then ~/.pocket-tools/emsdk.
+#[derive(Serialize, Debug, Clone)]
+pub struct Emsdk {
+    pub root: PathBuf,
+    pub emscripten: PathBuf,
+    pub config_file: PathBuf,
+    pub cmake_toolchain: PathBuf,
+}
+
+pub fn emsdk() -> Result<Emsdk> {
+    let mut candidates: Vec<PathBuf> = vec![];
+    for var in ["POCKET_EMSDK", "EMSDK"] {
+        if let Ok(v) = std::env::var(var) {
+            candidates.push(PathBuf::from(v));
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".pocket-tools").join("emsdk"));
+    }
+    for root in candidates {
+        let emscripten = root.join("upstream").join("emscripten");
+        if emscripten.join("em++").is_file() {
+            return Ok(Emsdk { config_file: root.join(".emscripten"), cmake_toolchain: emscripten.join("cmake").join("Modules").join("Platform").join("Emscripten.cmake"), root, emscripten });
+        }
+    }
+    bail!("Emscripten SDK not found: install it with `git clone https://github.com/emscripten-core/emsdk ~/.pocket-tools/emsdk && ~/.pocket-tools/emsdk/emsdk install latest && ~/.pocket-tools/emsdk/emsdk activate latest`, or set POCKET_EMSDK")
+}
+
+/// Environment for running Emscripten tools without sourcing emsdk_env.sh.
+pub fn em_env(cmd: &mut Command, sdk: &Emsdk) {
+    if sdk.config_file.is_file() {
+        cmd.env("EM_CONFIG", &sdk.config_file);
+    }
+    cmd.env("EMSDK", &sdk.root);
+    cmd.env("EMSDK_QUIET", "1");
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![sdk.emscripten.clone()];
+    paths.extend(std::env::split_paths(&path));
+    if let Ok(joined) = std::env::join_paths(paths) {
+        cmd.env("PATH", joined);
+    }
+}
+
+pub fn which(name: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join(name);
@@ -50,6 +95,32 @@ pub fn command(program: &str) -> Command {
     cmd
 }
 
+pub fn detect_for(target: &str) -> Result<Toolchain> {
+    if target == "wasm" {
+        let sdk = emsdk()?;
+        let cxx = sdk.emscripten.join("em++").to_string_lossy().into_owned();
+        let mut probe = command(&cxx);
+        em_env(&mut probe, &sdk);
+        let out = probe.arg("--version").output().context("running em++ --version")?;
+        if !out.status.success() {
+            bail!("{} --version failed: {}", cxx, String::from_utf8_lossy(&out.stderr));
+        }
+        let cxx_version = String::from_utf8_lossy(&out.stdout).lines().find(|l| l.contains("emcc")).unwrap_or("").to_string();
+        return Ok(Toolchain {
+            cxx,
+            cc: sdk.emscripten.join("emcc").to_string_lossy().into_owned(),
+            ar: sdk.emscripten.join("emar").to_string_lossy().into_owned(),
+            ninja: which("ninja"),
+            cmake: which("cmake"),
+            developer_dir: developer_dir(),
+            cxx_version,
+            host_os: std::env::consts::OS.to_string(),
+            target: "wasm".into(),
+        });
+    }
+    detect()
+}
+
 pub fn detect() -> Result<Toolchain> {
     let cxx = std::env::var("POCKET_CXX").ok().or_else(|| which("clang++")).context("clang++ not found on PATH (set POCKET_CXX)")?;
     let cc = std::env::var("POCKET_CC").ok().or_else(|| which("clang")).unwrap_or_else(|| cxx.replace("clang++", "clang"));
@@ -68,6 +139,7 @@ pub fn detect() -> Result<Toolchain> {
         developer_dir: developer_dir(),
         cxx_version,
         host_os: std::env::consts::OS.to_string(),
+        target: "native".into(),
     })
 }
 

@@ -3,7 +3,9 @@
 #include <pocket/core/log.hpp>
 #include <pocket/renderer/primitives.hpp>
 
+#ifndef __EMSCRIPTEN__
 #include <webgpu/wgpu.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -30,7 +32,10 @@ struct alignas(16) FrameUniforms {
     std::uint32_t point_count[4];
     float point_pos[kMaxPointLights][4];
     float point_color[kMaxPointLights][4];
+    float light_view_proj[16];   // the sun's orthographic view for the shadow map
+    float shadow[4];             // texel size, depth bias, strength, enabled
 };
+constexpr std::uint32_t kShadowMapSize = 2048;
 
 struct alignas(16) ObjectUniforms {
     float model[16];
@@ -51,7 +56,11 @@ struct Frame {
     point_count: vec4u,
     point_pos: array<vec4f, 8>,
     point_color: array<vec4f, 8>,
+    light_view_proj: mat4x4f,
+    shadow: vec4f,
 };
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(2) var shadow_samp: sampler_comparison;
 struct Object {
     model: mat4x4f,
     normal: mat4x4f,
@@ -86,6 +95,12 @@ struct VsOut {
     return out;
 }
 
+// Shadow pass: depth only, from the sun.
+@vertex fn vs_shadow(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
+    let object = objects[instance];
+    return frame.light_view_proj * (object.model * vec4f(position, 1.0));
+}
+
 struct FsOut {
     @location(0) color: vec4f,
     @location(1) id: u32,
@@ -100,7 +115,24 @@ struct FsOut {
     let ndl = max(dot(n, l), 0.0);
     let h = normalize(l + v);
     let spec = pow(max(dot(n, h), 0.0), 32.0) * 0.25;
-    light += frame.sun_color.rgb * (ndl + spec * ndl);
+    // Shadow map lookup with a 3x3 comparison filter; slope-scaled bias against acne.
+    var shadow = 1.0;
+    if (frame.shadow.w > 0.5) {
+        let sp = frame.light_view_proj * vec4f(in.world_pos, 1.0);
+        let ndc = sp.xyz / sp.w;
+        let suv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        if (suv.x >= 0.0 && suv.x <= 1.0 && suv.y >= 0.0 && suv.y <= 1.0 && ndc.z >= 0.0 && ndc.z <= 1.0) {
+            let bias = frame.shadow.y * (1.0 + 2.0 * (1.0 - ndl));
+            var lit = 0.0;
+            for (var j = -1; j <= 1; j = j + 1) {
+                for (var i = -1; i <= 1; i = i + 1) {
+                    lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, suv + vec2f(f32(i), f32(j)) * frame.shadow.x, ndc.z - bias);
+                }
+            }
+            shadow = mix(1.0 - frame.shadow.z, 1.0, lit / 9.0);
+        }
+    }
+    light += frame.sun_color.rgb * (ndl + spec * ndl) * shadow;
     // Point lights.
     for (var i = 0u; i < frame.point_count.x; i = i + 1u) {
         let to_light = frame.point_pos[i].xyz - in.world_pos;
@@ -155,6 +187,14 @@ struct Renderer::Impl {
     WGPUPipelineLayout layout = nullptr;
     WGPURenderPipeline pipeline = nullptr;
     WGPURenderPipeline sprite_pipeline = nullptr;
+    WGPURenderPipeline shadow_pipeline = nullptr;
+    WGPUPipelineLayout shadow_layout = nullptr;
+    WGPUBindGroupLayout scene_bgl = nullptr;   // frame uniforms + shadow map + comparison sampler
+    WGPUBindGroup scene_bg = nullptr;
+    WGPUTexture shadow_texture = nullptr;
+    WGPUTextureView shadow_view = nullptr;
+    WGPUSampler shadow_sampler = nullptr;
+    ShadowSettings shadows;
     WGPUBuffer frame_buffer = nullptr;
     WGPUBuffer object_buffer = nullptr;
     WGPUBindGroup frame_bg = nullptr;
@@ -226,6 +266,13 @@ struct Renderer::Impl {
         if (frame_bg) wgpuBindGroupRelease(frame_bg);
         if (object_buffer) wgpuBufferRelease(object_buffer);
         if (frame_buffer) wgpuBufferRelease(frame_buffer);
+        if (shadow_pipeline) wgpuRenderPipelineRelease(shadow_pipeline);
+        if (shadow_layout) wgpuPipelineLayoutRelease(shadow_layout);
+        if (scene_bg) wgpuBindGroupRelease(scene_bg);
+        if (scene_bgl) wgpuBindGroupLayoutRelease(scene_bgl);
+        if (shadow_view) wgpuTextureViewRelease(shadow_view);
+        if (shadow_texture) wgpuTextureRelease(shadow_texture);
+        if (shadow_sampler) wgpuSamplerRelease(shadow_sampler);
         if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
         if (layout) wgpuPipelineLayoutRelease(layout);
@@ -275,6 +322,20 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
+        WGPUBindGroupLayoutEntry se[3]{};
+        se[0] = fe;
+        se[1].binding = 1;
+        se[1].visibility = WGPUShaderStage_Fragment;
+        se[1].texture.sampleType = WGPUTextureSampleType_Depth;
+        se[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        se[2].binding = 2;
+        se[2].visibility = WGPUShaderStage_Fragment;
+        se[2].sampler.type = WGPUSamplerBindingType_Comparison;
+        WGPUBindGroupLayoutDescriptor scene_ld{};
+        scene_ld.label = rhi::str("pocket.scene");
+        scene_ld.entryCount = 3;
+        scene_ld.entries = se;
+        scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
         WGPUBindGroupLayoutEntry oe{};
         oe.binding = 0;
@@ -302,12 +363,18 @@ struct Renderer::Impl {
         md.entries = me;
         material_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &md);
 
-        WGPUBindGroupLayout bgls[3] = {frame_bgl, object_bgl, material_bgl};
+        WGPUBindGroupLayout bgls[3] = {scene_bgl, object_bgl, material_bgl};
         WGPUPipelineLayoutDescriptor pld{};
         pld.label = rhi::str("pocket.mesh");
         pld.bindGroupLayoutCount = 3;
         pld.bindGroupLayouts = bgls;
         layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUBindGroupLayout sbgls[2] = {frame_bgl, object_bgl};
+        WGPUPipelineLayoutDescriptor spld{};
+        spld.label = rhi::str("pocket.shadow");
+        spld.bindGroupLayoutCount = 2;
+        spld.bindGroupLayouts = sbgls;
+        shadow_layout = wgpuDeviceCreatePipelineLayout(device->device(), &spld);
 
         WGPUVertexAttribute attrs[3]{};
         attrs[0].format = WGPUVertexFormat_Float32x3;
@@ -372,6 +439,20 @@ struct Renderer::Impl {
         rpd.primitive.cullMode = WGPUCullMode_None;
         sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
+        // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
+        // in the lookup handles acne.
+        WGPUDepthStencilState sds = ds;
+        sds.format = WGPUTextureFormat_Depth32Float;
+        sds.depthWriteEnabled = WGPUOptionalBool_True;
+        sds.depthCompare = WGPUCompareFunction_Less;
+        rpd.label = rhi::str("pocket.shadow");
+        rpd.layout = shadow_layout;
+        rpd.vertex.entryPoint = rhi::str("vs_shadow");
+        rpd.fragment = nullptr;
+        rpd.depthStencil = &sds;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        shadow_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!shadow_pipeline) return fail("gpu_pipeline_failed", "shadow pipeline creation failed");
 
         frame_buffer = device->create_buffer("pocket.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
         object_buffer = device->create_buffer("pocket.objects", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kObjectStride) * kMaxObjects);
@@ -387,6 +468,50 @@ struct Renderer::Impl {
         fbd.entryCount = 1;
         fbd.entries = &fbe;
         frame_bg = wgpuDeviceCreateBindGroup(device->device(), &fbd);
+
+        WGPUTextureDescriptor std_{};
+        std_.label = rhi::str("pocket.shadow");
+        std_.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+        std_.dimension = WGPUTextureDimension_2D;
+        std_.size = {kShadowMapSize, kShadowMapSize, 1};
+        std_.format = WGPUTextureFormat_Depth32Float;
+        std_.mipLevelCount = 1;
+        std_.sampleCount = 1;
+        shadow_texture = wgpuDeviceCreateTexture(device->device(), &std_);
+        if (!shadow_texture) return fail("gpu_texture_failed", "cannot create the shadow map");
+        WGPUTextureViewDescriptor svd{};
+        svd.format = std_.format;
+        svd.dimension = WGPUTextureViewDimension_2D;
+        svd.mipLevelCount = 1;
+        svd.arrayLayerCount = 1;
+        svd.aspect = WGPUTextureAspect_DepthOnly;
+        svd.usage = std_.usage;
+        shadow_view = wgpuTextureCreateView(shadow_texture, &svd);
+        WGPUSamplerDescriptor ssd{};
+        ssd.label = rhi::str("pocket.shadow");
+        ssd.addressModeU = WGPUAddressMode_ClampToEdge;
+        ssd.addressModeV = WGPUAddressMode_ClampToEdge;
+        ssd.addressModeW = WGPUAddressMode_ClampToEdge;
+        ssd.magFilter = WGPUFilterMode_Linear;
+        ssd.minFilter = WGPUFilterMode_Linear;
+        ssd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        ssd.lodMinClamp = 0;
+        ssd.lodMaxClamp = 32;
+        ssd.compare = WGPUCompareFunction_LessEqual;
+        ssd.maxAnisotropy = 1;
+        shadow_sampler = wgpuDeviceCreateSampler(device->device(), &ssd);
+        WGPUBindGroupEntry sbe[3]{};
+        sbe[0] = fbe;
+        sbe[1].binding = 1;
+        sbe[1].textureView = shadow_view;
+        sbe[2].binding = 2;
+        sbe[2].sampler = shadow_sampler;
+        WGPUBindGroupDescriptor sbd{};
+        sbd.label = rhi::str("pocket.scene");
+        sbd.layout = scene_bgl;
+        sbd.entryCount = 3;
+        sbd.entries = sbe;
+        scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
 
         WGPUBindGroupEntry obe{};
         obe.binding = 0;
@@ -650,6 +775,31 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.point_count[0] = points;
     im.stats.has_sun = have_sun;
     im.stats.point_lights = points;
+    // The sun's orthographic view fits a sphere around everything with Bounds.
+    bool shadows_on = im.shadows.enabled;
+    {
+        Vec3 lo{0, 0, 0}, hi{0, 0, 0};
+        bool any = false;
+        world.ecs().each([&](flecs::entity, const world::Bounds& b) {
+            if (!any) { lo = b.min; hi = b.max; any = true; return; }
+            lo = {std::min(lo.x, b.min.x), std::min(lo.y, b.min.y), std::min(lo.z, b.min.z)};
+            hi = {std::max(hi.x, b.max.x), std::max(hi.y, b.max.y), std::max(hi.z, b.max.z)};
+        });
+        if (!any) shadows_on = false;
+        Vec3 center = (lo + hi) * 0.5f;
+        Vec3 ext = (hi - lo) * 0.5f;
+        float radius = std::max(1.0f, std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z));
+        Vec3 dir = normalize(Vec3{fu.sun_dir[0], fu.sun_dir[1], fu.sun_dir[2]});
+        Vec3 up = std::abs(dir.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        Mat4 light_view = Mat4::look_at(center - dir * (radius * 2.0f), center, up);
+        Mat4 light_proj = Mat4::orthographic(-radius, radius, -radius, radius, 0.05f, radius * 4.0f);
+        to_array(light_proj * light_view, fu.light_view_proj);
+        fu.shadow[0] = 1.0f / static_cast<float>(kShadowMapSize);
+        fu.shadow[1] = im.shadows.bias;
+        fu.shadow[2] = im.shadows.strength;
+        fu.shadow[3] = shadows_on ? 1.0f : 0.0f;
+    }
+    im.stats.shadows = shadows_on;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
     // Gather one object per primitive entity and one per material of a glTF entity, sorted by
@@ -765,6 +915,54 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     ds.stencilLoadOp = WGPULoadOp_Undefined;
     ds.stencilStoreOp = WGPUStoreOp_Undefined;
     ds.stencilReadOnly = true;
+    // Instanced runs of equal mesh, submesh and material; the same loop serves both passes.
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter) {
+        const GpuMesh* current_mesh = nullptr;
+        WGPUBindGroup current_material = nullptr;
+        std::size_t i = 0;
+        while (i < draws.size()) {
+            const Draw& d = draws[i];
+            std::size_t run = 1;
+            while (i + run < draws.size()) {
+                const Draw& n = draws[i + run];
+                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material) break;
+                ++run;
+            }
+            if (d.gpu != current_mesh) {
+                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
+                wgpuRenderPassEncoderSetIndexBuffer(pass, d.gpu->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                current_mesh = d.gpu;
+            }
+            if (with_materials && d.material != current_material) {
+                wgpuRenderPassEncoderSetBindGroup(pass, 2, d.material, 0, nullptr);
+                current_material = d.material;
+            }
+            wgpuRenderPassEncoderDrawIndexed(pass, d.count, static_cast<std::uint32_t>(run), d.first, 0, static_cast<std::uint32_t>(i));
+            counter++;
+            i += run;
+        }
+    };
+    if (shadows_on && !draws.empty()) {
+        WGPURenderPassDepthStencilAttachment sds{};
+        sds.view = im.shadow_view;
+        sds.depthLoadOp = WGPULoadOp_Clear;
+        sds.depthStoreOp = WGPUStoreOp_Store;
+        sds.depthClearValue = 1.0f;
+        sds.stencilLoadOp = WGPULoadOp_Undefined;
+        sds.stencilStoreOp = WGPUStoreOp_Undefined;
+        sds.stencilReadOnly = true;
+        WGPURenderPassDescriptor srp{};
+        srp.label = rhi::str("pocket.shadow");
+        srp.colorAttachmentCount = 0;
+        srp.depthStencilAttachment = &sds;
+        WGPURenderPassEncoder spass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &srp);
+        wgpuRenderPassEncoderSetPipeline(spass, im.shadow_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(spass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
+        draw_runs(spass, false, im.stats.shadow_draws);
+        wgpuRenderPassEncoderEnd(spass);
+        wgpuRenderPassEncoderRelease(spass);
+    }
     WGPURenderPassDescriptor rp{};
     rp.label = rhi::str("pocket.scene");
     rp.colorAttachmentCount = 2;
@@ -777,39 +975,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetPipeline(pass, im.pipeline);
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        const GpuMesh* current_mesh = nullptr;
-        WGPUBindGroup current_material = nullptr;
-        std::size_t i = 0;
-        while (i < draws.size()) {
-            const Draw& d = draws[i];
-            // A run of objects with the same mesh, submesh and material is one instanced draw;
-            // instance_index selects each one's row in the object buffer.
-            std::size_t run = 1;
-            while (i + run < draws.size()) {
-                const Draw& n = draws[i + run];
-                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material) break;
-                ++run;
-            }
-            if (d.gpu != current_mesh) {
-                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
-                wgpuRenderPassEncoderSetIndexBuffer(pass, d.gpu->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-                current_mesh = d.gpu;
-            }
-            if (d.material != current_material) {
-                wgpuRenderPassEncoderSetBindGroup(pass, 2, d.material, 0, nullptr);
-                current_material = d.material;
-            }
-            wgpuRenderPassEncoderDrawIndexed(pass, d.count, static_cast<std::uint32_t>(run), d.first, 0, static_cast<std::uint32_t>(i));
-            im.stats.draw_calls++;
-            i += run;
-        }
+        draw_runs(pass, true, im.stats.draw_calls);
     }
     if (!sprites.empty()) {
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
         wgpuRenderPassEncoderSetPipeline(pass, im.sprite_pipeline);
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quad.vertices, 0, WGPU_WHOLE_SIZE);
         wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
@@ -865,7 +1038,7 @@ Result<IdImage> Renderer::read_ids() {
     mci.userdata1 = &mr;
     wgpuBufferMapAsync(readback, WGPUMapMode_Read, 0, bd.size, mci);
     for (int i = 0; i < 10000 && !mr.done; ++i) {
-        wgpuDevicePoll(im.device->device(), true, nullptr);
+        im.device->poll(true);
         wgpuInstanceProcessEvents(im.device->instance());
     }
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
@@ -905,6 +1078,8 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
 }
 
 void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
+void Renderer::set_shadows(ShadowSettings s) { impl_->shadows = s; }
+ShadowSettings Renderer::shadows() const { return impl_->shadows; }
 void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
 std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> Renderer::take_new_bounds() { return std::exchange(impl_->new_bounds, {}); }
 void Renderer::drop_asset_cache() { impl_->release_assets(); }
@@ -915,6 +1090,8 @@ Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
     Json j;
     j["draw_calls"] = s.draw_calls;
+    j["shadow_draws"] = s.shadow_draws;
+    j["shadows"] = s.shadows;
     j["instances"] = s.instances;
     j["sprites"] = s.sprites;
     j["meshes"] = s.meshes;

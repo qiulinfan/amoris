@@ -6,6 +6,12 @@ title = "Pocket: sprites"
 width = 960
 height = 540
 
+# Sheet clips the engine plays through SpriteAnimation (docs/design/sprites.md): cells left to right.
+[sprite_clips]
+idle = { texture = "assets/player.png", columns = 4, rows = 1, frames = [0], fps = 1 }
+walk = { texture = "assets/player.png", columns = 4, rows = 1, fps = 10 }
+coin = { texture = "assets/coin.png", columns = 4, rows = 1, fps = 8 }
+
 # Actions instead of keys; agents hold them by name (docs/design/input.md).
 [input.actions]
 move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", "pad:dpad_right"], axis = ["pad:leftx"] }
