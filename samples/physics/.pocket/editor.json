@@ -1,0 +1,10 @@
+{
+  "layout": {
+    "hierarchy": 240,
+    "inspector": 320,
+    "bottom": 200
+  },
+  "tab": "script",
+  "snap": false,
+  "snap_step": 0.5
+}

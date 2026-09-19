@@ -38,6 +38,7 @@ Json Mesh::describe() const {
         if (m.emissive.x > 0 || m.emissive.y > 0 || m.emissive.z > 0) mj["emissive"] = Json{{"r", m.emissive.x}, {"g", m.emissive.y}, {"b", m.emissive.z}};
         if (m.double_sided) mj["double_sided"] = true;
         if (m.blend) mj["blend"] = true;
+        if (m.alpha_cutoff > 0) mj["cutoff"] = m.alpha_cutoff;
         mats.push_back(mj);
     }
     j["materials"] = mats;
@@ -921,6 +922,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         mat.name = m.value("name", "");
         mat.double_sided = m.value("doubleSided", false);
         mat.blend = m.value("alphaMode", "OPAQUE") == "BLEND";
+        if (m.value("alphaMode", "OPAQUE") == "MASK") mat.alpha_cutoff = m.value("alphaCutoff", 0.5f);
         if (m.contains("pbrMetallicRoughness")) {
             const Json& pbr = m["pbrMetallicRoughness"];
             if (pbr.contains("baseColorFactor") && pbr["baseColorFactor"].size() == 4) {
@@ -1426,12 +1428,31 @@ Json AssetStore::list() const {
         for (const auto& p : paths) {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" ? "audio" : "other";
+            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" ? "audio" : "other";
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
             f["kind"] = kind;
             f["bytes"] = std::filesystem::file_size(p);
             f["loaded"] = kind == "mesh" ? meshes_.contains(f["path"].get<std::string>()) : kind == "image" ? images_.contains(f["path"].get<std::string>()) : kind == "tilemap" ? tilemaps_.contains(f["path"].get<std::string>()) : false;
+            files.push_back(f);
+        }
+    }
+    // The project's scripts too (scripts/ and scenarios/), so an editor can open them.
+    for (const char* sub : {"scripts", "scenarios"}) {
+        std::filesystem::path sdir = project_dir_ / sub;
+        if (!std::filesystem::is_directory(sdir)) continue;
+        std::vector<std::filesystem::path> paths;
+        for (auto& entry : std::filesystem::recursive_directory_iterator(sdir)) if (entry.is_regular_file()) paths.push_back(entry.path());
+        std::sort(paths.begin(), paths.end());
+        for (const auto& p : paths) {
+            std::string ext = p.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (ext != ".ts" && ext != ".tsx" && ext != ".js") continue;
+            Json f;
+            f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
+            f["kind"] = "script";
+            f["bytes"] = std::filesystem::file_size(p);
+            f["loaded"] = false;
             files.push_back(f);
         }
     }

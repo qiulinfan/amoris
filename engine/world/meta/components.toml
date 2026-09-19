@@ -79,6 +79,7 @@ fields = [
     { name = "metallic", type = "f32", default = -1.0, doc = "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives)." },
     { name = "roughness", type = "f32", default = -1.0, doc = "0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives)." },
     { name = "emissive", type = "color", default = [0.0, 0.0, 0.0, 1.0], doc = "Light the surface gives off regardless of lighting, added to the asset material's emissive color." },
+    { name = "cutoff", type = "f32", default = 0.0, doc = "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none." },
     { name = "normal_map", type = "string", default = "", doc = "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none." },
     { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
 ]
@@ -95,7 +96,7 @@ fields = [
     { name = "uv", type = "vec4", default = [0.0, 0.0, 1.0, 1.0], doc = "Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets." },
     { name = "flip_x", type = "bool", default = false, doc = "Mirror horizontally." },
     { name = "flip_y", type = "bool", default = false, doc = "Mirror vertically." },
-    { name = "filter", type = "string", default = "linear", doc = "Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles)." },
+    { name = "filter", type = "string", default = "linear", doc = "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles)." },
     { name = "visible", type = "bool", default = true, doc = "Whether the sprite is drawn." },
 ]
 

@@ -1,7 +1,7 @@
 {
-  "note": "state hash of samples/hello after 120 headless ticks at 60 Hz; regenerate deliberately when the sample or the hash contract changes (2026-09-18: MeshRenderer.mesh became a string and gained texture, both hashed; 2026-09-19: Camera gained orthographic and ortho_size, both hashed; 2026-09-19: the per-tick hash also folds in the particle simulation, empty for hello) Regenerated 2026-09-19 after MeshRenderer gained metallic, roughness, emissive and normal_map (the world hash covers every component field).",
+  "note": "state hash of samples/hello after 120 headless ticks at 60 Hz; regenerate deliberately when the sample or the hash contract changes (2026-09-18: MeshRenderer.mesh became a string and gained texture, both hashed; 2026-09-19: Camera gained orthographic and ortho_size, both hashed; 2026-09-19: the per-tick hash also folds in the particle simulation, empty for hello) Regenerated 2026-09-19 after MeshRenderer gained metallic, roughness, emissive and normal_map (the world hash covers every component field). Regenerated 2026-09-19 after MeshRenderer gained cutoff (hashed like every component field).",
   "frames": 120,
-  "state_hash": "adf250ee49de827e",
+  "state_hash": "cbbf741803663363",
   "state": {
     "hue": 0.1,
     "ball.y": 0.3913,

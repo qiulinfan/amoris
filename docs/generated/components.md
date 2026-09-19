@@ -101,7 +101,7 @@ A 2D image: a textured unit square in the entity's XY plane, sized in world unit
 | `uv` | vec4 | [0.0, 0.0, 1.0, 1.0] | Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets. |
 | `flip_x` | bool | false | Mirror horizontally. |
 | `flip_y` | bool | false | Mirror vertically. |
-| `filter` | string | "linear" | Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles). |
+| `filter` | string | "linear" | Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles). |
 | `visible` | bool | true | Whether the sprite is drawn. |
 
 ## SpriteAnimation

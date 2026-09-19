@@ -17,11 +17,15 @@
 
 ## Materials and assets
 
-`MeshRenderer.color` tints, `texture` multiplies, glTF materials bring their base color and texture (`docs/design/assets.md`). A missing asset is drawn as a magenta cube and named in `render.stats.assets.missing`.
+`MeshRenderer.color` tints, `texture` multiplies, glTF materials bring their base color and texture (`docs/design/assets.md`). A missing asset is drawn as a magenta cube and named in `render.stats.assets.missing`. Every texture is uploaded with its mip chain (each level a 2 by 2 average of the one above, weighted by alpha so transparent texels do not darken edges); the linear sampler filters between levels, so a texture drawn small is smooth rather than sparkling, and the nearest sampler (`Sprite.filter`, tile layers) stays on the full-size image so pixel art keeps its texels.
 
 ## Translucent meshes
 
 A mesh whose color alpha is under 1 (the `MeshRenderer` color, multiplied by the material's base color alpha) or whose glTF material has `alphaMode: BLEND` is translucent: it draws after every opaque mesh, far to near by its entity's depth along the camera, with the same lit shading alpha blended over what is behind it, depth tested but not written, so translucent things never hide each other and an opaque wall in front still hides them. It casts a shadow and writes its id like any other mesh (`render.pick` finds it; the wall in front of it wins as it does on screen). `render.stats.translucent` counts them; `runtime_tests` (`[translucent]`) holds a half-red pane over the hello scene and reads the pixel.
+
+## Cut-outs
+
+A textured mesh with a `cutoff` (`MeshRenderer.cutoff`, or a glTF material with `alphaMode: MASK` and its `alphaCutoff`) is cut out where its picture's alpha is under the cutoff: those texels are neither drawn nor picked, so leaves, fences and grates come from one quad and a picture with transparent parts, and `render.pick` through a hole finds what is behind. The cut is per texel and unblended (the edge is as sharp as the picture); a soft edge is a translucent mesh's job. Cut-out parts still cast their mesh's whole shadow.
 
 ## Comparing frames
 
@@ -29,7 +33,7 @@ A mesh whose color alpha is under 1 (the `MeshRenderer` color, multiplied by the
 
 ## Not yet
 
-Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, order-independent transparency (translucent meshes sort by their entity's depth, so two that interleave draw in one order), glTF alpha masks (`MASK` draws opaque), post-processing. Each is a renderer-internal change: the commands and components stay.
+Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, order-independent transparency (translucent meshes sort by their entity's depth, so two that interleave draw in one order), shadows that follow a cut-out's holes (the shadow pass draws the mesh whole), post-processing. Each is a renderer-internal change: the commands and components stay.
 
 ## Debug lines
 

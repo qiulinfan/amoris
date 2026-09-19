@@ -5,8 +5,14 @@
 
 #include <SDL3/SDL.h>
 
+#define STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c>
+#undef STB_VORBIS_HEADER_ONLY
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 
 namespace pocket::audio {
@@ -70,20 +76,39 @@ struct Audio::Impl {
         if (auto it = clips.find(path); it != clips.end()) return it->second.get();
         POCKET_TRY(full, resolve(path));
         POCKET_TRY(bytes, fs::read_bytes(full));
-        SDL_IOStream* io = SDL_IOFromConstMem(bytes.data(), bytes.size());
-        if (!io) return fail("bad_audio", "{}: {}", path, SDL_GetError());
+        std::string ext = full.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         SDL_AudioSpec spec{};
-        Uint8* buf = nullptr;
-        Uint32 len = 0;
-        if (!SDL_LoadWAV_IO(io, true, &spec, &buf, &len)) return fail("bad_audio", "{}: {}", path, SDL_GetError());
+        std::vector<std::uint8_t> pcm;   // the file's samples, in `spec`
+        if (ext == ".ogg") {
+            // Ogg Vorbis through stb_vorbis: 16-bit frames, interleaved, at the file's rate.
+            int channels = 0, rate = 0;
+            short* out = nullptr;
+            const int frames = stb_vorbis_decode_memory(reinterpret_cast<const unsigned char*>(bytes.data()), static_cast<int>(bytes.size()), &channels, &rate, &out);
+            if (frames <= 0 || !out || channels <= 0 || rate <= 0) { std::free(out); return fail("bad_audio", "{}: not an Ogg Vorbis file", path); }
+            spec.format = SDL_AUDIO_S16;
+            spec.channels = channels;
+            spec.freq = rate;
+            const auto* raw = reinterpret_cast<const std::uint8_t*>(out);
+            pcm.assign(raw, raw + static_cast<std::size_t>(frames) * static_cast<std::size_t>(channels) * sizeof(short));
+            std::free(out);
+        } else {
+            SDL_IOStream* io = SDL_IOFromConstMem(bytes.data(), bytes.size());
+            if (!io) return fail("bad_audio", "{}: {}", path, SDL_GetError());
+            Uint8* buf = nullptr;
+            Uint32 len = 0;
+            if (!SDL_LoadWAV_IO(io, true, &spec, &buf, &len)) return fail("bad_audio", "{}: {}", path, SDL_GetError());
+            pcm.assign(buf, buf + len);
+            SDL_free(buf);
+        }
         // Convert to the mixer format: float, stereo, mixer rate.
         SDL_AudioSpec dst{};
         dst.format = SDL_AUDIO_F32;
         dst.channels = 2;
         dst.freq = config.sample_rate;
         SDL_AudioStream* conv = SDL_CreateAudioStream(&spec, &dst);
-        if (!conv) { SDL_free(buf); return fail("bad_audio", "{}: {}", path, SDL_GetError()); }
-        SDL_PutAudioStreamData(conv, buf, static_cast<int>(len));
+        if (!conv) return fail("bad_audio", "{}: {}", path, SDL_GetError());
+        SDL_PutAudioStreamData(conv, pcm.data(), static_cast<int>(pcm.size()));
         SDL_FlushAudioStream(conv);
         auto c = std::make_unique<Clip>();
         c->path = path;
@@ -96,7 +121,6 @@ struct Audio::Impl {
             c->samples.resize(got > 0 ? static_cast<std::size_t>(got) / sizeof(float) : 0);
         }
         SDL_DestroyAudioStream(conv);
-        SDL_free(buf);
         c->frames = static_cast<std::uint32_t>(c->samples.size() / 2);
         c->duration = static_cast<double>(c->frames) / config.sample_rate;
         if (c->frames == 0) return fail("bad_audio", "{}: no samples", path);

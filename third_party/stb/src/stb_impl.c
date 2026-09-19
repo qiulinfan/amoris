@@ -3,3 +3,5 @@
 #define STBI_NO_STDIO_CALLBACKS_UNUSED 1
 #include "stb_image.h"
 #include "stb_image_write.h"
+#define STB_VORBIS_NO_STDIO
+#include "stb_vorbis.c"

@@ -398,6 +398,13 @@ TEST_CASE("a multi-line input takes Return as a new line, moves by lines and com
     INFO(snap);
     REQUIRE(snap.find("value=\"ab\\ncd\"") != std::string::npos);
     REQUIRE(snap.find("multiline") != std::string::npos);
+    // A click lands on the line under it, at the nearest boundary; the same value set again keeps the caret.
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 12, 38), mouse(platform::EventType::MouseUp, 12, 38)}, text_wanted);
+    REQUIRE(f.doc->describe(45)["caret"] == 3);
+    f.apply(Json::parse(R"([["set", 45, {"value": "ab\ncd"}]])"));
+    REQUIRE(f.doc->describe(45)["caret"] == 3);
+    f.apply(Json::parse(R"([["set", 45, {"value": "ab\ncd\n"}]])"));
+    REQUIRE(f.doc->describe(45)["caret"] == 6);
     // Measured height grows with the lines when no height is set.
     f.apply(Json::parse(R"([["create", 46, "input"], ["set", 46, {"position": "absolute", "left": 10, "top": 100, "width": 150, "multiline": true, "value": "one\ntwo\nthree"}], ["append", 1, 46]])"));
     f.layout();

@@ -2639,6 +2639,135 @@ TEST_CASE("an interface box draws a project image, fitted, cropped or stretched,
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a texture drawn small is sampled from its mip chain, unless it is pixel art", "[runtime][render][mips]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    // A 64 by 64 checkerboard of 2-pixel cells, written as a BMP beside the sample's assets and removed after.
+    const std::filesystem::path file = o.project_dir / "assets" / "checker-test.bmp";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        const int w = 64, h = 64;
+        std::vector<std::uint8_t> bmp(54 + static_cast<std::size_t>(w) * h * 3, 0);
+        auto put32 = [&](std::size_t at, std::uint32_t v) { for (int i = 0; i < 4; ++i) bmp[at + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(v >> (8 * i)); };
+        bmp[0] = 'B';
+        bmp[1] = 'M';
+        put32(2, static_cast<std::uint32_t>(bmp.size()));
+        put32(10, 54);
+        put32(14, 40);
+        put32(18, w);
+        put32(22, h);
+        bmp[26] = 1;
+        bmp[28] = 24;
+        put32(34, static_cast<std::uint32_t>(w * h * 3));
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const std::uint8_t v = ((x / 2 + y / 2) % 2) ? 255 : 0;
+                const std::size_t at = 54 + (static_cast<std::size_t>(y) * w + static_cast<std::size_t>(x)) * 3;
+                bmp[at] = bmp[at + 1] = bmp[at + 2] = v;
+            }
+        }
+        std::ofstream out(file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bmp.data()), static_cast<std::streamsize>(bmp.size()));
+    }
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // At the frame's center, half a unit wide: nine pixels for 64 texels, the cells far below pixel size.
+    Json sp;
+    sp["name"] = "Checker";
+    sp["components"]["Transform"] = Json{{"position", {{"x", 0.0}, {"y", 0.0}, {"z", 1.0}}}};
+    sp["components"]["Sprite"] = Json{{"texture", "assets/checker-test.bmp"}, {"size", {{"x", 0.5}, {"y", 0.5}}}, {"layer", 9}};
+    REQUIRE(s.command("world.spawn", sp).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto px = [](const Json& p, int i) { return p[i].get<int>(); };
+    Json smooth = s.command("capture", Json::object()).value();
+    INFO("smooth " << smooth["center_pixel"].dump() << " stats " << smooth["render"].dump());
+    // Filtered through the chain: an even gray, neither cell's color.
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(px(smooth["center_pixel"], i) > 80);
+        REQUIRE(px(smooth["center_pixel"], i) < 176);
+    }
+    // Nearest sampling stays on the full image: the pixel is one cell or the other.
+    REQUIRE(s.command("world.set", Json{{"entity", "Checker"}, {"component", "Sprite"}, {"value", Json{{"filter", "nearest"}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json crisp = s.command("capture", Json::object()).value();
+    INFO("crisp " << crisp["center_pixel"].dump());
+    const int v = px(crisp["center_pixel"], 0);
+    const bool one_cell = v < 40 || v > 215;
+    REQUIRE(one_cell);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a textured mesh with a cutoff is cut out where its picture is transparent", "[runtime][render][cutout]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    // A 64 by 64 green picture with a transparent 32 by 32 hole in the middle, as a TGA beside the sample's assets, removed after.
+    const std::filesystem::path file = o.project_dir / "assets" / "hole-test.tga";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        const int w = 64, h = 64;
+        std::vector<std::uint8_t> tga(18 + static_cast<std::size_t>(w) * h * 4, 0);
+        tga[2] = 2;   // uncompressed true color
+        tga[12] = w;
+        tga[14] = h;
+        tga[16] = 32;
+        tga[17] = 0x28;   // 8 alpha bits, rows from the top
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const bool hole = x >= 16 && x < 48 && y >= 16 && y < 48;
+                std::uint8_t* px = &tga[18 + (static_cast<std::size_t>(y) * w + static_cast<std::size_t>(x)) * 4];
+                px[0] = 0;
+                px[1] = 255;
+                px[2] = 0;
+                px[3] = hole ? 0 : 255;
+            }
+        }
+        std::ofstream out(file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(tga.data()), static_cast<std::streamsize>(tga.size()));
+    }
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const auto px = [](const Json& p, int i) { return p[i].get<int>(); };
+    const Json plain = s.command("capture", Json::object()).value()["center_pixel"];
+    // A quad over the frame's center, two units wide, glowing green through the picture and lit by nothing (black base color).
+    Json q;
+    q["name"] = "Grate";
+    q["components"]["Transform"] = Json{{"position", {{"x", 0.0}, {"y", 0.0}, {"z", 1.0}}}, {"scale", {{"x", 2.0}, {"y", 2.0}, {"z", 1.0}}}};
+    q["components"]["MeshRenderer"] = Json{{"mesh", "quad"}, {"texture", "assets/hole-test.tga"}, {"color", {{"r", 0.0}, {"g", 0.0}, {"b", 0.0}, {"a", 1.0}}}, {"emissive", {{"r", 0.0}, {"g", 1.0}, {"b", 0.0}, {"a", 1.0}}}};
+    REQUIRE(s.command("world.spawn", q).has_value());
+    REQUIRE(s.frame().has_value());
+    Json solid = s.command("capture", Json::object()).value();
+    INFO("plain " << plain.dump() << " solid " << solid["center_pixel"].dump());
+    // Without a cutoff the hole is drawn like the rest: green, and the quad is picked there.
+    REQUIRE(px(solid["center_pixel"], 1) > 200);
+    REQUIRE(px(solid["center_pixel"], 0) < 40);
+    REQUIRE(s.command("render.pick", Json{{"x", 160}, {"y", 90}}).value()["name"] == "Grate");
+    // With one, the hole shows what is behind and picks nothing of the quad.
+    REQUIRE(s.command("world.set", Json{{"entity", "Grate"}, {"component", "MeshRenderer"}, {"value", Json{{"cutoff", 0.5}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json cut = s.command("capture", Json::object()).value();
+    INFO("cut " << cut["center_pixel"].dump());
+    for (int i = 0; i < 3; ++i) REQUIRE(px(cut["center_pixel"], i) == Catch::Approx(px(plain, i)).margin(2));
+    REQUIRE(s.command("render.pick", Json{{"x", 160}, {"y", 90}}).value()["name"] != "Grate");
+    REQUIRE(s.command("world.get", Json{{"entity", "Grate"}, {"component", "MeshRenderer"}}).value()["cutoff"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a mesh with alpha under one is drawn translucent over what is behind it, after the opaque meshes", "[runtime][render][translucent]") {
     app::Session s(hello_options(200));
     REQUIRE(s.start().has_value());

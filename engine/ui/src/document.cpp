@@ -330,7 +330,11 @@ struct Document::Impl {
             else if (k == "textAlign") { std::string s = v.get<std::string>(); n.text_align = s == "center" ? TextAlign::Center : s == "right" ? TextAlign::Right : TextAlign::Left; }
             else if (k == "textWrap" || k == "wrapText") { n.text_wrap = v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "text") { n.text = v.is_string() ? v.get<std::string>() : v.dump(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
-            else if (k == "value") { n.value = v.is_string() ? v.get<std::string>() : v.dump(); n.caret = static_cast<int>(n.value.size()); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
+            else if (k == "value") {
+                // The same value again (a re-render echoing what was typed) keeps the caret where it is.
+                std::string nv = v.is_string() ? v.get<std::string>() : v.dump();
+                if (nv != n.value) { n.value = std::move(nv); n.caret = static_cast<int>(n.value.size()); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
+            }
             else if (k == "placeholder") n.placeholder = v.get<std::string>();
             else if (k == "multiline") { n.multiline = v.is_boolean() && v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "name") n.name = v.get<std::string>();
@@ -762,14 +766,25 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                 Node* n = im.get(h);
                 if (n && n->type == "input" && !n->disabled) {
                     set_focus_to(h);
-                    // Place the caret near the click.
+                    // Place the caret at the boundary nearest the click; in a text area, on the line under it.
                     float px = n->font_size * im.scale;
                     float local = (ev.x - n->rect.x - YGNodeLayoutGetPadding(n->yoga, YGEdgeLeft) - n->border_width - 1) * im.scale;
-                    std::size_t best = n->value.size();
-                    for (std::size_t i = 0; i <= n->value.size(); i = utf8_next(n->value, i)) {
-                        float w = im.font.measure(n->value.substr(0, i), px);
-                        if (w >= local) { best = i; break; }
-                        if (i == n->value.size()) break;
+                    std::size_t from = 0, to = n->value.size();
+                    if (n->multiline) {
+                        const float lh = im.font.metrics(px).line_height / im.scale;
+                        const float top = n->rect.y + YGNodeLayoutGetPadding(n->yoga, YGEdgeTop) + n->border_width + 2;
+                        const int line = n->first_line + static_cast<int>(std::floor(std::max(0.0f, ev.y - top) / std::max(lh, 1.0f)));
+                        for (int i = 0; i < line; ++i) { const std::size_t nl = n->value.find('\n', from); if (nl == std::string::npos) break; from = nl + 1; }
+                        to = line_end_of(n->value, from);
+                    }
+                    std::size_t best = to, prev = from;
+                    float prev_w = 0;
+                    for (std::size_t i = from; i <= to; i = utf8_next(n->value, i)) {
+                        float w = im.font.measure(n->value.substr(from, i - from), px);
+                        if (w >= local) { best = (i > from && w - local > local - prev_w) ? prev : i; break; }
+                        prev = i;
+                        prev_w = w;
+                        if (i >= to) break;
                     }
                     n->caret = static_cast<int>(best);
                 } else {

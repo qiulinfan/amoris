@@ -155,6 +155,7 @@ struct MeshRenderer {
     float metallic = -1.0f;
     float roughness = -1.0f;
     Color4 emissive{0.0f, 0.0f, 0.0f, 1.0f};
+    float cutoff = 0.0f;
     std::string normal_map = "";
     bool visible = true;
     constexpr bool operator==(const MeshRenderer&) const = default;

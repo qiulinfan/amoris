@@ -64,6 +64,34 @@ TEST_CASE("clips decode and voices follow the tick", "[audio]") {
     REQUIRE(events.size() == 1);
 }
 
+TEST_CASE("an Ogg Vorbis clip decodes like a WAV", "[audio][ogg]") {
+    auto a = headless_audio();
+    REQUIRE(a->load("assets/chime.ogg").has_value());
+    Json clips = a->clips();
+    REQUIRE(clips.size() == 1);
+    INFO(clips.dump());
+    REQUIRE(clips[0]["source_rate"] == 22050);
+    REQUIRE(clips[0]["source_channels"] == 2);
+    REQUIRE(clips[0]["seconds"].get<double>() == Catch::Approx(0.4).margin(0.03));   // the encoder pads a frame or so
+    // It plays to its end like any clip.
+    audio::PlayOptions o;
+    auto id = a->play("assets/chime.ogg", o);
+    REQUIRE(id.has_value());
+    std::vector<audio::VoiceEvent> events;
+    for (int i = 0; i < 20; ++i) for (auto& e : a->tick(1.0 / 60)) events.push_back(e);
+    REQUIRE(events.empty());
+    REQUIRE(a->voices().size() == 1);
+    for (int i = 0; i < 8; ++i) for (auto& e : a->tick(1.0 / 60)) events.push_back(e);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0].type == "audio.finished");
+    REQUIRE(a->voices().empty());
+    // A file that is not Vorbis is refused by name, not by crashing.
+    REQUIRE_FALSE(a->load("assets/beep.wav").has_value() == false);
+    auto bad = a->load("assets/nothing.ogg");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().code == "no_such_asset");
+}
+
 TEST_CASE("loops report and stops by id, clip and tag", "[audio]") {
     auto a = headless_audio();
     audio::PlayOptions loop;

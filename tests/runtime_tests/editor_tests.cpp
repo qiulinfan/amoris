@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 
 using namespace pocket;
 
@@ -700,4 +701,55 @@ TEST_CASE("inspector shows list fields as JSON and takes them back", "[editor][l
     INFO(snap);
     REQUIRE(snap.find("layers (1)") != std::string::npos);
     REQUIRE(snap.find("\"clip\":\"nod\"") != std::string::npos);
+}
+
+TEST_CASE("editor opens a project script in a text area and saves it", "[editor][script]") {
+    // A scratch script beside the sample's, removed after the test.
+    const std::filesystem::path file = root() / "samples" / "physics" / "scripts" / "note-test.ts";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    { std::ofstream out(file); out << "export const note = 1;\n"; }
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tab:script")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "script:scripts/main.ts"}})).size() == 1);
+    Json row = ok(s.command("ui.query", Json{{"name", "script:scripts/note-test.ts"}}));
+    REQUIRE(row.size() == 1);
+    ok(s.command("ui.click", Json{{"id", row[0]["id"]}}));
+    ok(s.idle_frame());
+    Json area = ok(s.command("ui.query", Json{{"name", "script:text"}}));
+    REQUIRE(area.size() == 1);
+    const int area_id = area[0]["id"].get<int>();
+    Json d = ok(s.command("ui.describe", Json{{"id", area_id}}));
+    REQUIRE(d["value"] == "export const note = 1;\n");
+    REQUIRE(d["multiline"] == true);
+    REQUIRE(d["rect"]["h"].get<double>() > 60);   // it fills the panel, not one line
+    // Typing at the end adds a line; the header shows the file modified; Save writes it.
+    ok(s.command("ui.focus", Json{{"id", area_id}}));
+    ok(s.command("ui.type", Json{{"text", "export const two = 2;"}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.describe", Json{{"id", area_id}}))["value"] == "export const note = 1;\nexport const two = 2;");
+    {
+        std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 12}}))["text"].get<std::string>();
+        INFO(snap);
+        REQUIRE(snap.find("note-test.ts (modified)") != std::string::npos);
+    }
+    ok(s.command("ui.click", Json{{"id", find_named(s, "script:save")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("project.read", Json{{"path", "scripts/note-test.ts"}}))["text"] == "export const note = 1;\nexport const two = 2;");
+    {
+        std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 12}}))["text"].get<std::string>();
+        REQUIRE(snap.find("(modified)") == std::string::npos);
+    }
+    // Return inside the area is a new line; Cmd+Return saves without leaving it.
+    ok(s.command("ui.focus", Json{{"id", area_id}}));
+    ok(s.command("ui.key", Json{{"key", "Return"}}));
+    ok(s.command("ui.type", Json{{"text", "// three"}}));
+    ok(s.command("ui.key", Json{{"key", "Return"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("project.read", Json{{"path", "scripts/note-test.ts"}}))["text"] == "export const note = 1;\nexport const two = 2;\n// three");
+    REQUIRE(ok(s.command("ui.describe", Json{{"id", area_id}}))["caret"] == 53);
+    ok(s.finish());
 }

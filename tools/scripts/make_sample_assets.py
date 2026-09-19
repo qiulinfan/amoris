@@ -539,6 +539,8 @@ def make_sounds(out):
     wav(os.path.join(out, "click.wav"), click, rate)
     for name in ("beep.wav", "hum.wav", "click.wav"):
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
+    # chime.ogg beside them is checked in, not generated: a 0.4 s 660 Hz sine at 22050 Hz, stereo,
+    # encoded once with ffmpeg's Vorbis encoder (this script writes WAV only).
 
 
 def sprites_level():

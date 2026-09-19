@@ -18,9 +18,9 @@ interface LogRow { seq: number; tick?: number; level: string; cat: string; msg: 
 interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 interface Layout { hierarchy: number; inspector: number; bottom: number }
-interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "other"; bytes: number; loaded: boolean }
-type Tab = "console" | "events" | "transcript" | "assets" | "input";
-const TABS: Tab[] = ["console", "events", "transcript", "assets", "input"];
+interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "other"; bytes: number; loaded: boolean }
+type Tab = "console" | "events" | "transcript" | "assets" | "input" | "script";
+const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "script"];
 interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
@@ -57,6 +57,9 @@ const newKeys = signal("");
 const assetRows = signal<AssetRow[]>([]);      // the project's assets/ folder, shown by the Assets tab
 const assetPick = signal("");                  // the asset whose description is shown
 const assetInfo = signal("");
+const scriptPath = signal("");                 // the script open in the Script tab's text area
+const scriptText = signal("");
+const scriptDirty = signal(false);
 
 let editScene: unknown = null;
 let orbit: Orbit | undefined;
@@ -141,7 +144,7 @@ function refreshBottom(): void {
     const t = tab();
     if (t === "console") logs.set(command<LogRow[]>("log.tail", { n: 40 }));
     else if (t === "events") recentEvents.set(command<WorldEvent[]>("events.recent", { n: 40 }));
-    else if (t === "assets") assetRows.set(command<AssetRow[]>("assets.list"));
+    else if (t === "assets" || t === "script") assetRows.set(command<AssetRow[]>("assets.list"));
     else if (t === "input") actions.set(command<Record<string, ActionBindings>>("input.describe"));
     else transcriptText.set(command<{ text: string }>("transcript", { max_lines: 30 }).text);
 }
@@ -554,6 +557,22 @@ function saveBindings(): void {
 
 // ------------------------------------------------------------------------------------ assets
 /** One line about an asset, from assets.describe. */
+function openScript(path: string): void {
+    const r = command<{ text: string }>("project.read", { path });
+    scriptPath.set(path);
+    scriptText.set(r.text);
+    scriptDirty.set(false);
+    notice.set(`Opened ${path}.`);
+}
+
+function saveScript(): void {
+    const path = scriptPath();
+    if (!path) return;
+    command("project.write", { path, text: scriptText() });
+    scriptDirty.set(false);
+    notice.set(`Saved ${path}; pocket --watch rebuilds and reloads it.`);
+}
+
 function describeAsset(path: string): string {
     try {
         const d = command<Record<string, unknown>>("assets.describe", { path });
@@ -1030,6 +1049,28 @@ function Bottom() {
                 </box>
             )),
         ];
+    } else if (t === "script") {
+        const list = assetRows().filter((r) => r.kind === "script");
+        const path = scriptPath();
+        body = [
+            <box key="script" direction="row" gap={8} flex={1}>
+                <box direction="column" width={220} gap={1} overflow="scroll">
+                    {list.length === 0 ? <Label text="No scripts under scripts/ or scenarios/." muted size={12} wrap /> : list.map((r) => (
+                        <box key={r.path} name={`script:${r.path}`} padding={[2, 6]} radius={3} background={path === r.path ? theme.accent : null} onClick={() => openScript(r.path)}>
+                            <Label text={r.path} size={12} color={path === r.path ? theme.accentText : theme.text} />
+                        </box>
+                    ))}
+                </box>
+                <box direction="column" flex={1} gap={4}>
+                    <Row gap={8} align="center">
+                        <Label text={path ? (scriptDirty() ? `${path} (modified)` : path) : "Open a script from the list."} size={12} name="script-path" />
+                        <Button label="Save" small primary={scriptDirty()} name="script:save" onClick={saveScript} />
+                        <Label text="Cmd/Ctrl+Return saves. pocket editor --watch rebuilds and reloads the project after a save." muted size={12} wrap flex={1} />
+                    </Row>
+                    <TextInput multiline flex={1} name="script:text" value={scriptText()} disabled={!path} onInput={(v) => { scriptText.set(v); scriptDirty.set(true); }} onChange={(v) => { scriptText.set(v); saveScript(); }} />
+                </box>
+            </box>,
+        ];
     } else {
         body = transcriptText().split("\n").map((line, i) => <Label key={i} text={line} size={12} />);
     }
@@ -1041,6 +1082,7 @@ function Bottom() {
                 {tabButton("transcript", "Transcript")}
                 {tabButton("assets", "Assets")}
                 {tabButton("input", "Input")}
+                {tabButton("script", "Script")}
                 <box flex={1} />
                 <Label text={notice()} muted size={12} name="notice" />
             </Row>

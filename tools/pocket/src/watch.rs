@@ -67,7 +67,7 @@ fn newest_asset(project: &Path) -> SystemTime {
                 continue;
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-            if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "glb" | "gltf" | "bin") {
+            if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "ogg" | "glb" | "gltf" | "bin") {
                 if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
                     if m > *newest {
                         *newest = m;

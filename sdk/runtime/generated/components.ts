@@ -130,6 +130,8 @@ export interface MeshRenderer {
     roughness: number;
     /** Light the surface gives off regardless of lighting, added to the asset material's emissive color. */
     emissive: Color;
+    /** Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none. */
+    cutoff: number;
     /** Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. */
     normal_map: string;
     /** Whether the mesh is drawn. */
@@ -154,7 +156,7 @@ export interface Sprite {
     flip_x: boolean;
     /** Mirror vertically. */
     flip_y: boolean;
-    /** Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles). */
+    /** Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles). */
     filter: string;
     /** Whether the sprite is drawn. */
     visible: boolean;
@@ -603,7 +605,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
-    MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, normal_map: "", visible: true },
+    MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },

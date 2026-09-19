@@ -34,7 +34,7 @@ function cmd<T>(name: string, params?: unknown): T {
 
 /** The AudioListener component (docs/design/audio.md, Where a sound is): spatial sounds are heard from its entity instead of the camera while it is enabled. */
 export const audio = {
-    /** Start a clip (project-relative WAV path); returns the voice id. */
+    /** Start a clip (project-relative WAV or Ogg Vorbis path); returns the voice id. */
     play(clip: string, options: PlayOptions = {}): number {
         return cmd<{ voice: number }>("audio.play", { clip, ...options }).voice;
     },

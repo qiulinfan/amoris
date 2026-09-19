@@ -37,7 +37,7 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 | Command | Purpose |
 |---|---|
-| `assets.list` | Files under `assets/` with kind (mesh, image, tilemap, audio, other), size, and whether they are loaded. |
+| `assets.list` | Files under `assets/` with kind (mesh, image, tilemap, audio, other), size, and whether they are loaded; the project's scripts under `scripts/` and `scenarios/` (`.ts`, `.tsx`, `.js`) follow with kind `script`. |
 | `assets.describe {path}` | A mesh's vertices, triangles, submeshes, nodes, materials and bounds; an image's size. Loads it if needed. |
 | `assets.reload {path?}` | Forget decoded data (one path or all) and drop GPU copies; the next frame reloads from disk. |
 | `assets.stats` | Counts of loaded meshes, images and failures plus the renderer's view. |
@@ -46,7 +46,7 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 ## Not yet
 
-KHR extensions (texture transform, materials variants, draco), mipmaps and anisotropic filtering, sRGB-correct shading, alpha masks (`alphaMode: MASK` draws opaque; `BLEND` draws translucent, `docs/design/rendering.md`), instantiating a glTF node tree as entities (today one file is one drawable), and audio or font assets through the same store.
+KHR extensions (texture transform, materials variants, draco), anisotropic filtering, sRGB-correct shading (`alphaMode: MASK` cuts out and `BLEND` draws translucent, `docs/design/rendering.md`), instantiating a glTF node tree as entities (today one file is one drawable), and audio or font assets through the same store.
 
 ## Tile maps
 

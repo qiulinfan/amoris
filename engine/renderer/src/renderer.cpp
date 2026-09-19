@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <set>
@@ -44,7 +45,7 @@ struct alignas(16) ObjectUniforms {
     std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit)
     float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
     float pbr[4];             // metallic, roughness, normal scale, 1 when a normal map is bound
-    float emissive[4];        // linear RGB added after lighting, w unused
+    float emissive[4];        // linear RGB added after lighting; w: alpha cutoff (texels under it are cut out; 0 for none)
     std::uint32_t morph[4];   // x: first vec4 of the asset's morph deltas, y: vertices per target, z: targets weighed (0: none)
     float morph_weights[8];   // one per target, up to eight
 };
@@ -231,6 +232,8 @@ fn shade(in: VsOut) -> vec4f {
     let mr = textureSample(mr_tex, base_samp, in.uv);
     let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
     let em = textureSample(emissive_tex, base_samp, in.uv).rgb;
+    // A cut-out: texels under the cutoff are not drawn (nor picked, the id goes with the color).
+    if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
     if (object.pbr.w > 0.5) {
         n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z));
@@ -287,6 +290,9 @@ fn shade(in: VsOut) -> vec4f {
     return shade(in);
 }
 @fragment fn fs_id(in: VsOut) -> @location(0) u32 {
+    let object = objects[in.instance];
+    let a = textureSample(base_tex, base_samp, in.uv).a * in.color.a;
+    if (object.emissive.w > 0.0 && a < object.emissive.w) { discard; }
     return in.id;
 }
 
@@ -1011,6 +1017,7 @@ struct Renderer::Impl {
         sd.magFilter = WGPUFilterMode_Nearest;
         sd.minFilter = WGPUFilterMode_Nearest;
         sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.lodMaxClamp = 0;   // pixel art keeps its texels: the full-size level however small it is drawn
         sd.addressModeU = WGPUAddressMode_ClampToEdge;
         sd.addressModeV = WGPUAddressMode_ClampToEdge;
         nearest_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
@@ -1033,36 +1040,72 @@ struct Renderer::Impl {
         return {};
     }
 
+    // A texture with its full mip chain: each level averages 2 by 2 texels of the one above,
+    // weighted by alpha so transparent texels do not darken the edges of what is drawn small.
     Result<GpuTexture> upload_texture(const char* label, std::uint32_t w, std::uint32_t h, const std::uint8_t* rgba) {
         GpuTexture t;
+        std::uint32_t levels = 1;
+        while ((w >> levels) > 0 || (h >> levels) > 0) ++levels;
         WGPUTextureDescriptor td{};
         td.label = rhi::str(label);
         td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
         td.dimension = WGPUTextureDimension_2D;
         td.size = {w, h, 1};
         td.format = WGPUTextureFormat_RGBA8Unorm;
-        td.mipLevelCount = 1;
+        td.mipLevelCount = levels;
         td.sampleCount = 1;
         t.texture = wgpuDeviceCreateTexture(device->device(), &td);
         if (!t.texture) return fail("gpu_texture_failed", "cannot create texture {} ({}x{})", label, w, h);
         WGPUTextureViewDescriptor vd{};
         vd.format = td.format;
         vd.dimension = WGPUTextureViewDimension_2D;
-        vd.mipLevelCount = 1;
+        vd.mipLevelCount = levels;
         vd.arrayLayerCount = 1;
         vd.aspect = WGPUTextureAspect_All;
         vd.usage = td.usage;
         t.view = wgpuTextureCreateView(t.texture, &vd);
-        WGPUTexelCopyTextureInfo dst{};
-        dst.texture = t.texture;
-        dst.origin = {0, 0, 0};
-        dst.aspect = WGPUTextureAspect_All;
-        WGPUTexelCopyBufferLayout layout{};
-        layout.offset = 0;
-        layout.bytesPerRow = w * 4;
-        layout.rowsPerImage = h;
-        WGPUExtent3D ext{w, h, 1};
-        wgpuQueueWriteTexture(device->queue(), &dst, rgba, static_cast<std::size_t>(w) * h * 4, &layout, &ext);
+        auto write_level = [&](std::uint32_t level, std::uint32_t lw, std::uint32_t lh, const std::uint8_t* data) {
+            WGPUTexelCopyTextureInfo dst{};
+            dst.texture = t.texture;
+            dst.mipLevel = level;
+            dst.origin = {0, 0, 0};
+            dst.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferLayout layout{};
+            layout.offset = 0;
+            layout.bytesPerRow = lw * 4;
+            layout.rowsPerImage = lh;
+            WGPUExtent3D ext{lw, lh, 1};
+            wgpuQueueWriteTexture(device->queue(), &dst, data, static_cast<std::size_t>(lw) * lh * 4, &layout, &ext);
+        };
+        write_level(0, w, h, rgba);
+        if (levels == 1) return t;
+        std::vector<std::uint8_t> prev(rgba, rgba + static_cast<std::size_t>(w) * h * 4), next;
+        std::uint32_t pw = w, ph = h;
+        for (std::uint32_t level = 1; level < levels; ++level) {
+            const std::uint32_t nw = std::max(1u, pw / 2), nh = std::max(1u, ph / 2);
+            next.assign(static_cast<std::size_t>(nw) * nh * 4, 0);
+            for (std::uint32_t y = 0; y < nh; ++y) {
+                for (std::uint32_t x = 0; x < nw; ++x) {
+                    float weighted[3] = {0, 0, 0}, plain[3] = {0, 0, 0}, alpha = 0;
+                    for (std::uint32_t dy = 0; dy < 2; ++dy) {
+                        for (std::uint32_t dx = 0; dx < 2; ++dx) {
+                            const std::uint32_t sx = std::min(pw - 1, x * 2 + dx), sy = std::min(ph - 1, y * 2 + dy);
+                            const std::uint8_t* p = &prev[(static_cast<std::size_t>(sy) * pw + sx) * 4];
+                            const float a = static_cast<float>(p[3]);
+                            for (int c = 0; c < 3; ++c) { weighted[c] += static_cast<float>(p[c]) * a; plain[c] += static_cast<float>(p[c]); }
+                            alpha += a;
+                        }
+                    }
+                    std::uint8_t* q = &next[(static_cast<std::size_t>(y) * nw + x) * 4];
+                    for (int c = 0; c < 3; ++c) q[c] = static_cast<std::uint8_t>(std::lround(alpha > 0 ? weighted[c] / alpha : plain[c] / 4));
+                    q[3] = static_cast<std::uint8_t>(std::lround(alpha / 4));
+                }
+            }
+            write_level(level, nw, nh, next.data());
+            prev.swap(next);
+            pw = nw;
+            ph = nh;
+        }
         return t;
     }
 
@@ -1528,7 +1571,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ou.emissive[0] = mr.emissive.r + (mat ? mat->emissive.x : 0.0f);
             ou.emissive[1] = mr.emissive.g + (mat ? mat->emissive.y : 0.0f);
             ou.emissive[2] = mr.emissive.b + (mat ? mat->emissive.z : 0.0f);
-            ou.emissive[3] = 0;
+            ou.emissive[3] = mr.cutoff > 0 ? mr.cutoff : (mat ? mat->alpha_cutoff : 0.0f);
             WGPUBindGroup group = im.material_for(tex, mr_map, normal_map, em_map, false);
             const bool blend = color.w < 0.999f || (mat && mat->blend);
             const Vec3 to_cam = t.position - im.camera.position;

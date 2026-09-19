@@ -35,6 +35,7 @@ struct Material {
     Vec3 emissive{0, 0, 0};                  // linear RGB, multiplied by the emissive texture
     bool double_sided = false;
     bool blend = false;                      // glTF alphaMode BLEND: drawn translucent, after the opaque meshes
+    float alpha_cutoff = 0;                  // glTF alphaMode MASK: texels with alpha under this are cut out (0: none)
     std::string name;
 };
 
