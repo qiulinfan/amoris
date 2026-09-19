@@ -14,10 +14,13 @@ particles.burst(sparks, 30);
 - Positions are world space by default (a moving emitter leaves a trail); `world_space = false` keeps them relative to the emitter (they move with it).
 - The renderer draws every live particle as one instance through the sprite path: a camera-facing billboard (`billboard = true`) or a flat XY quad for 2D, sized and tinted by age, in `layer` order with sprites, writing the emitter's id into the id buffer so `render.pick` on a particle names its emitter. `render.stats.particles` counts them.
 - The state hash covers every live particle (position and age), so two runs with the same seed and inputs match, and a replay is exact.
-- `particles.stats` (per emitter: alive, spawned, died), `particles.burst {entity, count}`, `particles.clear` are commands; the SDK's `particles` object wraps them.
+- A `floor` (a world height, or the emitter's own height when `world_space` is false) catches particles: one that crosses it comes back to it and bounces with `bounce` of its speed, and once the bounce is spent it rests there, sliding to a stop at `floor_friction`; sparks skitter across the ground, rain lands, snow settles. `particles.stats` counts the `landed` per emitter.
+- `stretch` draws each particle stretched along its motion by that many seconds of travel (a quad whose long axis follows the velocity as the camera sees it, or in XY for a sprite): rain streaks, sparks, a fast trail without a ribbon.
+- `child` names another entity with a `ParticleEmitter`: where each of this emitter's particles dies, the child bursts `child_count` of its own (fireworks that burst, a raindrop that splashes), in the child's own stream and count cap. A child may have a child; a chain ends when a link has no `child`.
+- `particles.stats` (per emitter: alive, spawned, died, landed), `particles.list {entity, limit}` (the live particles of an emitter: position, velocity, age, life, resting), `particles.burst {entity, count}`, `particles.clear` are commands; the SDK's `particles` object wraps them.
 
 `tests/evidence/rendering/particles.png` is the playground after 150 headless frames: the fountain's spray at the left, drawn by the runtime's own capture.
 
 ## Limits
 
-Particles are simulated on the CPU (thousands are fine, hundreds of thousands are not), they do not collide, and there is no sub-emitter or trail yet. Soft edges come from the texture: an empty `texture` draws hard-edged quads.
+Particles are simulated on the CPU (thousands are fine, hundreds of thousands are not); they collide with the emitter's floor plane only, not with the bodies or the tiles, and a trail is a stretched quad, not a ribbon of the particle's path. Soft edges come from the texture: an empty `texture` draws hard-edged quads.

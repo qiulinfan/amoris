@@ -32,8 +32,10 @@ struct RenderStats {
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
     std::uint32_t morphed = 0;        // of which drawn with morph target weights
+    std::uint32_t moving_parts = 0;   // submeshes placed by an animated node (moving parts)
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after an edit, over the renderer's life
+    std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     int msaa = 1;                     // samples per pixel of the color pass (1 or 4)
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene

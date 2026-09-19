@@ -43,6 +43,10 @@ struct Submesh {
     std::uint32_t index_count = 0;
     std::uint32_t material = 0;
     int skin = -1;  // index into Mesh::skins when the geometry is skinned
+    // The node a clip moves (or one below it), when the geometry is a moving part: its vertices
+    // stay in the node's own space and the pose places them (docs/design/animation.md, Moving
+    // parts); -1 for geometry baked into the file's space.
+    int node = -1;
 };
 
 // Skinning data of one vertex, parallel to Mesh::vertices (zeros for unskinned geometry).
@@ -107,6 +111,10 @@ struct Mesh {
     std::vector<MorphTarget> morph_targets;
     std::vector<float> default_weights;     // one per target, from the file's mesh weights (zeros otherwise)
     [[nodiscard]] bool skinned() const { return !skin_vertices.empty(); }
+    // A node's matrix in the file's space with the nodes at rest (identity for -1 or out of range).
+    [[nodiscard]] Mat4 rest_global(int node) const;
+    // Submeshes that are moving parts (Submesh::node set).
+    [[nodiscard]] std::size_t moving_parts() const;
     [[nodiscard]] const AnimationClip* clip(std::string_view name) const;
     // A target's index by name, or by its index written as a string; -1 when there is none.
     [[nodiscard]] int morph_target(std::string_view name) const;
@@ -124,6 +132,15 @@ struct TileSet {
     int image_width = 0, image_height = 0;
     int spacing = 0, margin = 0;
     std::map<int, Json> tile_properties;  // local id -> {name: value}
+    // Tiled's tile animations: the frames a tile shows in turn, each a local id for a duration
+    // in milliseconds (docs/design/tilemaps.md, Drawing). frame_at answers the id drawn at a time
+    // of the simulation clock (the tile's own id when it has no animation).
+    struct Animation {
+        std::vector<std::pair<int, int>> frames;   // local id, milliseconds
+        int total_ms = 0;
+    };
+    std::map<int, Animation> animations;
+    [[nodiscard]] int frame_at(int local_id, std::uint64_t time_ms) const;
     [[nodiscard]] bool solid(int local_id) const;
     [[nodiscard]] bool one_way(int local_id) const;  // solid only from above (a platform to jump through)
     [[nodiscard]] int slope(int local_id) const;     // 1: a floor rising to the right across the cell, -1: to the left, 0: none
@@ -161,6 +178,12 @@ struct TileMap {
     std::string path;
     int width = 0, height = 0;          // tiles
     int tile_width = 0, tile_height = 0;  // pixels
+    // Tiled's orientation: orthogonal, isometric, staggered (isometric with staggered rows or
+    // columns) or hexagonal; the last two stagger every other row (`stagger_y`) or column, the
+    // odd ones (`stagger_odd`) or the even ones, and a hexagon's flat side is `hex_side` pixels.
+    std::string orientation = "orthogonal";
+    int hex_side = 0;
+    bool stagger_y = true, stagger_odd = true;
     std::vector<TileSet> tilesets;
     std::vector<TileLayer> layers;
     std::vector<ObjectLayer> object_layers;
@@ -168,6 +191,16 @@ struct TileMap {
     Json source;                 // the parsed Tiled document, kept so edits can be written back
     std::uint64_t revision = 0;  // bumped by every edit; renderers rebuild a layer whose revision moved
     bool file = true;            // false for a copy made at runtime: it has no file of its own until saved to one
+    // The map's geometry in its own pixels (y down from the top-left of the drawn map), the way
+    // Tiled draws it (docs/design/tilemaps.md, Orientations): where a cell's box (tile_width by
+    // tile_height) has its top-left, the cell under a pixel (false outside the map), the drawn
+    // map's size, and where an object's Tiled coordinates land (isometric objects are given in
+    // the unprojected tile space, the others in pixels).
+    [[nodiscard]] bool orthogonal() const { return orientation == "orthogonal"; }
+    [[nodiscard]] Vec2 tile_pixel(int x, int y) const;
+    [[nodiscard]] bool cell_at_pixel(float px, float py, int& x, int& y) const;
+    [[nodiscard]] Vec2 pixel_size() const;
+    [[nodiscard]] Vec2 object_pixel(float ox, float oy) const;
     [[nodiscard]] const TileSet* tileset_for(std::uint32_t gid) const;
     [[nodiscard]] const TileLayer* layer(std::string_view name) const;
     [[nodiscard]] TileLayer* layer_mut(std::string_view name);
@@ -230,6 +263,10 @@ class AssetStore {
     // no file until saved to one, and reloading the assets keeps it. Refused for a name in use.
     Result<TileMap*> copy_tilemap(const std::string& path, const std::string& name);
     [[nodiscard]] bool has_mesh(const std::string& path) const;
+    // The simulation time the animated tiles are drawn at, in milliseconds; the session sets it
+    // every tick, so the animations run on the simulation clock and pause with it.
+    void set_tile_time(std::uint64_t ms) { tile_time_ms_ = ms; }
+    [[nodiscard]] std::uint64_t tile_time() const { return tile_time_ms_; }
     // Forget cached data so the next access reloads from disk.
     void invalidate(const std::string& path);
     void invalidate_all();
@@ -250,6 +287,7 @@ class AssetStore {
     std::map<std::string, std::unique_ptr<TileMap>> tilemaps_;
     std::map<std::string, std::string> failures_;
     std::uint64_t version_ = 1;
+    std::uint64_t tile_time_ms_ = 0;
 };
 
 }  // namespace pocket::assets

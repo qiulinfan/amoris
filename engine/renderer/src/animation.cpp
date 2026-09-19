@@ -832,6 +832,18 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
         }
     }
     j["joints"] = joints;
+    // The moving parts: unskinned geometry a clip moves, placed by its node.
+    Json parts = Json::array();
+    for (const assets::Submesh& sm : mesh.submeshes) {
+        if (sm.node < 0) continue;
+        const auto ni = static_cast<std::size_t>(sm.node);
+        const Mat4 g = p && ni < p->globals.size() ? p->globals[ni] : mesh.rest_global(sm.node);
+        const Mat4 w = model * g;
+        const Vec3 pos = w.transform_point({0, 0, 0});
+        const Vec3 ax = normalize(w.transform_dir({1, 0, 0})), ay = normalize(w.transform_dir({0, 1, 0}));
+        parts.push_back(Json{{"node", ni}, {"name", ni < mesh.nodes.size() ? mesh.nodes[ni].name : ""}, {"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}, {"axis_x", {{"x", ax.x}, {"y", ax.y}, {"z", ax.z}}}, {"axis_y", {{"x", ay.x}, {"y", ay.y}, {"z", ay.z}}}});
+    }
+    j["parts"] = parts;
     j["posed"] = p != nullptr;
     if (!mesh.morph_targets.empty()) {
         Json weights = Json::array();

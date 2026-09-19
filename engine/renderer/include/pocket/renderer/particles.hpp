@@ -18,6 +18,8 @@ struct Particle {
     Vec3 velocity;
     float age = 0;
     float life = 1;
+    bool resting = false;   // landed on the emitter's floor (bounce spent)
+    bool touched = false;   // met the floor at least once
 };
 
 struct EmitterPool {
@@ -27,6 +29,7 @@ struct EmitterPool {
     bool seen = false;           // touched in the last step
     std::uint64_t spawned = 0;
     std::uint64_t died = 0;
+    std::uint64_t landed = 0;    // particles that met the floor
 };
 
 class Particles {
@@ -38,6 +41,8 @@ class Particles {
     void clear();
     [[nodiscard]] std::size_t alive() const;
     [[nodiscard]] Json stats() const;
+    // The live particles of one emitter (position, velocity, age, life, resting), up to `limit`.
+    [[nodiscard]] Json list(world::EntityId emitter, std::size_t limit) const;
     // Deterministic fold of every live particle (count, positions, ages), for state hashes.
     [[nodiscard]] std::uint64_t hash() const;
     [[nodiscard]] const std::map<world::EntityId, EmitterPool>& pools() const { return pools_; }

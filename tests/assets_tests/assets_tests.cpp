@@ -128,14 +128,14 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(map.width == 20);
     REQUIRE(map.height == 10);
     REQUIRE(map.tile_width == 16);
-    REQUIRE(map.layers.size() == 3);
+    REQUIRE(map.layers.size() == 4);
     REQUIRE(map.layers[0].name == "ground");
     REQUIRE(map.layers[0].gids[8 * 20 + 3] == 1);
     REQUIRE(map.layers[0].gids[9 * 20 + 3] == 2);
     REQUIRE(map.layers[0].gids[0] == 0);
     REQUIRE(map.tilesets.size() == 1);
     REQUIRE(map.tilesets[0].image == "assets/tiles.png");   // resolved next to the map
-    REQUIRE(map.tilesets[0].columns == 5);
+    REQUIRE(map.tilesets[0].columns == 7);
     REQUIRE(map.tilesets[0].slope(3) == 1);
     REQUIRE(map.tilesets[0].slope(4) == -1);
     REQUIRE(map.tilesets[0].slope(0) == 0);
@@ -146,6 +146,14 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(map.tilesets[0].solid(0));
     REQUIRE_FALSE(map.tilesets[0].one_way(0));
     REQUIRE(map.tilesets[0].one_way(2));
+    // The water tile animates between two frames of 400 ms; other tiles show themselves.
+    REQUIRE(map.tilesets[0].animations.size() == 1);
+    REQUIRE(map.tilesets[0].frame_at(5, 0) == 5);
+    REQUIRE(map.tilesets[0].frame_at(5, 399) == 5);
+    REQUIRE(map.tilesets[0].frame_at(5, 400) == 6);
+    REQUIRE(map.tilesets[0].frame_at(5, 800) == 5);
+    REQUIRE(map.tilesets[0].frame_at(0, 1234) == 0);
+    REQUIRE(map.layer("water")->gids[7 * 20] == 6);
     REQUIRE(map.tileset_for(2) == &map.tilesets[0]);
     // The deco layer flips its tiles horizontally and is solid as a whole.
     std::uint32_t deco = map.layers[1].gids[6 * 20 + 13];
@@ -171,7 +179,7 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(d["layers"][0]["tiles"] == 43);  // two ground rows and the three hill cells
     REQUIRE(store.describe("assets/level.tmj")["kind"] == "tilemap");
     // Bad maps say why.
-    REQUIRE(assets::parse_tilemap("{\"orientation\":\"isometric\",\"width\":1,\"height\":1,\"tilewidth\":1,\"tileheight\":1}", "x.tmj").has_value() == false);
+    REQUIRE(assets::parse_tilemap("{\"orientation\":\"spherical\",\"width\":1,\"height\":1,\"tilewidth\":1,\"tileheight\":1}", "x.tmj").has_value() == false);
     REQUIRE(assets::parse_tilemap("{\"width\":2,\"height\":2,\"tilewidth\":16,\"tileheight\":16,\"tilesets\":[],\"layers\":[{\"type\":\"tilelayer\",\"name\":\"a\",\"width\":2,\"height\":2,\"data\":[0,0,0,5]}]}", "x.tmj").has_value() == false);
 }
 
@@ -193,16 +201,16 @@ TEST_CASE("a tile map is edited in memory and written back as Tiled JSON", "[ass
     REQUIRE(map.revision == 1);
     REQUIRE(map.set("nope", 0, 0, 1).error().code == "unknown_layer");
     REQUIRE(map.set("ground", 20, 0, 1).error().code == "out_of_map");
-    REQUIRE(map.set("ground", 0, 0, 7).error().code == "bad_gid");
+    REQUIRE(map.set("ground", 0, 0, 8).error().code == "bad_gid");
     REQUIRE(*map.set("ground", 0, 0, 2u | assets::TileMap::kFlipH) == 0);
     // The document keeps everything it had; only the layer data follows the edits.
     Json doc = map.to_json();
-    REQUIRE(doc["nextlayerid"] == 5);
+    REQUIRE(doc["nextlayerid"] == 6);
     REQUIRE(doc["layers"][0]["data"][7 * 20 + 3] == 1);
     REQUIRE(doc["layers"][0]["data"][0] == (2u | assets::TileMap::kFlipH));
     auto again = assets::parse_tilemap(doc.dump(), "again.tmj");
     REQUIRE(again.has_value());
-    REQUIRE(again->layers.size() == 3);
+    REQUIRE(again->layers.size() == 4);
     REQUIRE(again->layers[0].gids[7 * 20 + 3] == 1);
     REQUIRE(again->object_layers[0].objects.size() == 7);
     REQUIRE(again->properties["title"] == "coins");
@@ -249,6 +257,87 @@ TEST_CASE("a tile map is edited in memory and written back as Tiled JSON", "[ass
     REQUIRE(fd.has_value());
     REQUIRE(fd->layers[0].gids == std::vector<std::uint32_t>{1, 0});
     REQUIRE(fd->tilesets[0].one_way(2));
+    REQUIRE(fd->tilesets[0].animations.size() == 1);   // the animation written with the tiles
+    REQUIRE(fd->tilesets[0].frame_at(5, 500) == 6);
+}
+
+TEST_CASE("isometric, staggered and hexagonal maps place their cells the way Tiled draws them", "[assets][tilemap][orientation]") {
+    auto near = [](Vec2 a, float x, float y) { return std::fabs(a.x - x) < 1e-4f && std::fabs(a.y - y) < 1e-4f; };
+    // Isometric: 2 by 2, diamonds 32 wide and 16 tall; the map is 64 by 32 pixels with tile (0, 0)
+    // at the top and (0, 1) at the left.
+    auto iso = assets::parse_tilemap(R"({"width":2,"height":2,"tilewidth":32,"tileheight":16,"orientation":"isometric","tilesets":[{"firstgid":1,"name":"t","image":"t.png","tilewidth":32,"tileheight":16,"columns":1,"tilecount":1}],"layers":[{"id":1,"type":"tilelayer","name":"a","width":2,"height":2,"data":[1,1,1,1]}]})", "iso.tmj");
+    REQUIRE(iso.has_value());
+    REQUIRE(iso->orientation == "isometric");
+    REQUIRE(near(iso->tile_pixel(0, 0), 16, 0));
+    REQUIRE(near(iso->tile_pixel(1, 0), 32, 8));
+    REQUIRE(near(iso->tile_pixel(0, 1), 0, 8));
+    REQUIRE(near(iso->tile_pixel(1, 1), 16, 16));
+    REQUIRE(near(iso->pixel_size(), 64, 32));
+    int x = -1, y = -1;
+    REQUIRE(iso->cell_at_pixel(32, 8, x, y));   // the center of (0, 0)
+    REQUIRE((x == 0 && y == 0));
+    REQUIRE(iso->cell_at_pixel(32, 24, x, y));  // the center of (1, 1)
+    REQUIRE((x == 1 && y == 1));
+    REQUIRE(iso->cell_at_pixel(10, 16, x, y));  // left, in (0, 1)
+    REQUIRE((x == 0 && y == 1));
+    REQUIRE_FALSE(iso->cell_at_pixel(2, 2, x, y));   // the corner outside the diamonds
+    REQUIRE(near(iso->object_pixel(16, 16), 32, 16));   // unprojected tile (1, 1): the top corner of its diamond
+    REQUIRE(iso->describe()["orientation"] == "isometric");
+    REQUIRE(iso->to_json()["orientation"] == "isometric");
+    // Hexagonal, rows staggered (the odd ones shifted right by half a tile), a flat side of 8 in
+    // tiles 32 wide and 32 tall: rows are 20 pixels apart.
+    auto hex = assets::parse_tilemap(R"({"width":3,"height":3,"tilewidth":32,"tileheight":32,"orientation":"hexagonal","hexsidelength":8,"staggeraxis":"y","staggerindex":"odd","tilesets":[{"firstgid":1,"name":"t","image":"t.png","tilewidth":32,"tileheight":32,"columns":1,"tilecount":1}],"layers":[{"id":1,"type":"tilelayer","name":"a","width":3,"height":3,"data":[1,1,1,1,1,1,1,1,1]}]})", "hex.tmj");
+    REQUIRE(hex.has_value());
+    REQUIRE(near(hex->tile_pixel(0, 1), 16, 20));
+    REQUIRE(near(hex->tile_pixel(2, 2), 64, 40));
+    REQUIRE(near(hex->pixel_size(), 112, 72));
+    REQUIRE(hex->cell_at_pixel(64, 36, x, y));   // the center of (1, 1)
+    REQUIRE((x == 1 && y == 1));
+    REQUIRE(hex->cell_at_pixel(80, 16, x, y));   // the center of (2, 0)
+    REQUIRE((x == 2 && y == 0));
+    REQUIRE(hex->cell_at_pixel(48, 20, x, y));   // between (1, 0) below-left and (1, 1): nearer (1, 0)'s center (48, 16)
+    REQUIRE((x == 1 && y == 0));
+    REQUIRE(hex->describe()["hex_side"] == 8);
+    REQUIRE(hex->describe()["stagger_axis"] == "y");
+    REQUIRE(hex->to_json()["hexsidelength"] == 8);
+    // Staggered isometric in columns, the even ones shifted down: column 0 starts half a tile down.
+    auto stag = assets::parse_tilemap(R"({"width":3,"height":2,"tilewidth":32,"tileheight":16,"orientation":"staggered","staggeraxis":"x","staggerindex":"even","tilesets":[{"firstgid":1,"name":"t","image":"t.png","tilewidth":32,"tileheight":16,"columns":1,"tilecount":1}],"layers":[{"id":1,"type":"tilelayer","name":"a","width":3,"height":2,"data":[1,1,1,1,1,1]}]})", "stag.tmj");
+    REQUIRE(stag.has_value());
+    REQUIRE(near(stag->tile_pixel(0, 0), 0, 8));
+    REQUIRE(near(stag->tile_pixel(1, 0), 16, 0));
+    REQUIRE(near(stag->tile_pixel(2, 1), 32, 24));
+    REQUIRE(near(stag->pixel_size(), 64, 40));
+    REQUIRE(stag->cell_at_pixel(32, 8, x, y));   // the center of (1, 0)
+    REQUIRE((x == 1 && y == 0));
+    REQUIRE(stag->cell_at_pixel(16, 32, x, y));  // the center of (0, 1)
+    REQUIRE((x == 0 && y == 1));
+    REQUIRE(stag->to_json()["staggerindex"] == "even");
+    // An orientation Tiled does not have, and a hexagon's side longer than the tile, are refused.
+    REQUIRE_FALSE(assets::parse_tilemap(R"({"width":1,"height":1,"tilewidth":16,"tileheight":16,"orientation":"round","tilesets":[],"layers":[]})", "bad.tmj").has_value());
+    REQUIRE_FALSE(assets::parse_tilemap(R"({"width":1,"height":1,"tilewidth":16,"tileheight":16,"orientation":"hexagonal","hexsidelength":40,"tilesets":[],"layers":[]})", "bad.tmj").has_value());
+}
+
+TEST_CASE("geometry under an animated node is a moving part kept in its node's space", "[assets][gltf][parts]") {
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/fan.glb");
+    REQUIRE(m.has_value());
+    const assets::Mesh& fan = **m;
+    REQUIRE(fan.submeshes.size() == 2);
+    REQUIRE(fan.moving_parts() == 1);
+    REQUIRE(fan.nodes.size() == 2);
+    // The hub is baked; the blade (node 1, half a unit up, turned by the spin clip) is a part whose
+    // vertices stay around its own origin, so the file's bounds place it by its rest.
+    REQUIRE(fan.submeshes[0].node == -1);
+    REQUIRE(fan.submeshes[1].node == 1);
+    float top = -1e9f;
+    for (std::uint32_t i = fan.submeshes[1].first_index; i < fan.submeshes[1].first_index + fan.submeshes[1].index_count; ++i) top = std::max(top, fan.vertices[fan.indices[i]].position.y);
+    REQUIRE(top == Catch::Approx(0.15f));
+    REQUIRE(fan.aabb_max.y == Catch::Approx(0.65f));
+    REQUIRE(fan.aabb_max.x == Catch::Approx(0.8f));
+    REQUIRE(fan.rest_global(1).transform_point({0, 0, 0}).y == Catch::Approx(0.5f));
+    REQUIRE(store.describe("assets/fan.glb")["moving_parts"] == 1);
+    // The arm is skinned: no parts, the skin does the moving.
+    REQUIRE((*store.mesh("assets/arm.glb"))->moving_parts() == 0);
 }
 
 TEST_CASE("gltf with an embedded buffer and no normals gets flat normals", "[assets]") {

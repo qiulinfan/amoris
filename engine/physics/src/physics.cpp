@@ -127,6 +127,17 @@ struct MeshShape {
             v.push_back(position + rotation.rotate(Vec3{mv.position.x * scale.x, mv.position.y * scale.y, mv.position.z * scale.z}));
         }
         for (const assets::Submesh& sm : mesh.submeshes) {
+            if (sm.node < 0) continue;
+            // A moving part collides where its node rests (the collider is static; the clip is not).
+            const Mat4 place = mesh.rest_global(sm.node);
+            for (std::uint32_t i = sm.first_index; i < sm.first_index + sm.index_count && i < mesh.indices.size(); ++i) {
+                const std::uint32_t vi = mesh.indices[i];
+                if (vi >= v.size()) continue;
+                const Vec3 local = place.transform_point(mesh.vertices[vi].position);
+                v[vi] = position + rotation.rotate(Vec3{local.x * scale.x, local.y * scale.y, local.z * scale.z});
+            }
+        }
+        for (const assets::Submesh& sm : mesh.submeshes) {
             if (sm.skin >= 0) continue;  // skinned geometry moves with its joints: no collision
             for (std::uint32_t i = sm.first_index; i + 2 < sm.first_index + sm.index_count; i += 3) {
                 std::array<std::uint32_t, 3> t{mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]};

@@ -852,6 +852,12 @@ void to_json(Json& j, const ParticleEmitter& v) {
     j["billboard"] = v.billboard;
     j["world_space"] = v.world_space;
     j["seed"] = v.seed;
+    j["floor"] = v.floor;
+    j["bounce"] = v.bounce;
+    j["floor_friction"] = v.floor_friction;
+    j["stretch"] = v.stretch;
+    j["child"] = v.child;
+    j["child_count"] = v.child_count;
 }
 
 void from_json(const Json& j, ParticleEmitter& v) {
@@ -872,6 +878,12 @@ void from_json(const Json& j, ParticleEmitter& v) {
     scalar_from_json(j, "billboard", v.billboard);
     scalar_from_json(j, "world_space", v.world_space);
     scalar_from_json(j, "seed", v.seed);
+    scalar_from_json(j, "floor", v.floor);
+    scalar_from_json(j, "bounce", v.bounce);
+    scalar_from_json(j, "floor_friction", v.floor_friction);
+    scalar_from_json(j, "stretch", v.stretch);
+    scalar_from_json(j, "child", v.child);
+    scalar_from_json(j, "child_count", v.child_count);
 }
 
 void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
@@ -905,6 +917,12 @@ void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
     h.u8(v.billboard ? 1 : 0);
     h.u8(v.world_space ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.seed));
+    h.f32(v.floor);
+    h.f32(v.bounce);
+    h.f32(v.floor_friction);
+    h.f32(v.stretch);
+    h.i64(static_cast<std::int64_t>(v.child));
+    h.i64(static_cast<std::int64_t>(v.child_count));
 }
 
 std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out) {
@@ -939,6 +957,10 @@ std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out)
     if (path == "color_end.g") { *out = &v.color_end.g; return 1; }
     if (path == "color_end.b") { *out = &v.color_end.b; return 1; }
     if (path == "color_end.a") { *out = &v.color_end.a; return 1; }
+    if (path == "floor") { *out = &v.floor; return 1; }
+    if (path == "bounce") { *out = &v.bounce; return 1; }
+    if (path == "floor_friction") { *out = &v.floor_friction; return 1; }
+    if (path == "stretch") { *out = &v.stretch; return 1; }
     return 0;
 }
 
@@ -1597,7 +1619,7 @@ constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine)."},
     FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick)."},
 }};
-constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
+constexpr std::array<FieldInfo, 23> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
     FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate."},
     FieldInfo{"rate", "f32", "Particles per second while emitting."},
@@ -1615,6 +1637,12 @@ constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
     FieldInfo{"billboard", "bool", "Face the camera (3D); false keeps quads in the XY plane for 2D scenes."},
     FieldInfo{"world_space", "bool", "Particles keep their world position when the emitter moves; false moves them with it."},
     FieldInfo{"seed", "i32", "Extra seed for the emitter's random stream (the entity id seeds it too)."},
+    FieldInfo{"floor", "f32", "A floor the particles land on: the world height (or the emitter's own when world_space is false) below which a particle is put back and bounces with `bounce`; the default is far below anything."},
+    FieldInfo{"bounce", "f32", "How much of the speed into the floor a particle keeps coming back up; 0 lands it (it slides on with `floor_friction`)."},
+    FieldInfo{"floor_friction", "f32", "Fraction of the speed along the floor lost per second while a particle rests on it."},
+    FieldInfo{"stretch", "f32", "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square."},
+    FieldInfo{"child", "entity", "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none."},
+    FieldInfo{"child_count", "i32", "Particles the child emits at each death."},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},
@@ -1738,7 +1766,7 @@ constexpr std::array<ComponentInfo, 24> kComponents = {{
     ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
     ComponentInfo{"IK", "Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.", true, kIKFields},
     ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},
-    ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.", true, kParticleEmitterFields},
+    ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.", true, kParticleEmitterFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},

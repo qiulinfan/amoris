@@ -407,6 +407,7 @@ struct Renderer::Impl {
     struct AssetMesh {
         GpuMesh gpu;
         std::vector<assets::Submesh> submeshes;
+        std::vector<Mat4> rest;   // per submesh: where its node rests, for a moving part drawn without a pose
         std::vector<assets::Material> materials;
         std::uint32_t morph_base = 0, morph_targets = 0, morph_vertices = 0;  // the asset's deltas in the morph buffer
     };
@@ -418,9 +419,16 @@ struct Renderer::Impl {
         std::vector<Part> parts;
         std::int32_t index;  // position of the layer in the map's file order
         std::uint64_t revision = 0;  // the layer revision the mesh was built from
+        // The layer's animated cells, a small mesh of their own rebuilt whenever a frame changes
+        // (frame_key: the ids drawn now), so the static cells are built once per edit.
+        GpuMesh anim;
+        std::vector<Part> anim_parts;
+        std::string frame_key;
+        bool has_anim = false;
     };
     std::map<std::string, TileLayerMesh> tile_meshes;
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after edits, over the renderer's life
+    std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     std::set<std::string> failed;  // asset paths reported once
     std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> new_bounds;
     RenderStats stats;
@@ -445,6 +453,8 @@ struct Renderer::Impl {
         for (auto& [key, tm] : tile_meshes) {
             if (tm.gpu.vertices) wgpuBufferRelease(tm.gpu.vertices);
             if (tm.gpu.indices) wgpuBufferRelease(tm.gpu.indices);
+            if (tm.anim.vertices) wgpuBufferRelease(tm.anim.vertices);
+            if (tm.anim.indices) wgpuBufferRelease(tm.anim.indices);
         }
         tile_meshes.clear();
         asset_meshes.clear();
@@ -1109,6 +1119,7 @@ struct Renderer::Impl {
         am.gpu.indices = device->create_buffer(path.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, src.indices.size() * sizeof(std::uint32_t), src.indices.data());
         if (src.skinned()) am.gpu.skin = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, src.skin_vertices.size() * sizeof(assets::SkinVertex), src.skin_vertices.data());
         am.gpu.index_count = static_cast<std::uint32_t>(src.indices.size());
+        for (const assets::Submesh& sm : src.submeshes) am.rest.push_back(src.rest_global(sm.node));
         am.gpu.aabb_min = src.aabb_min;
         am.gpu.aabb_max = src.aabb_max;
         am.submeshes = src.submeshes;
@@ -1147,32 +1158,31 @@ struct Renderer::Impl {
     }
 
     // One tile layer of a map as a mesh of textured quads in the entity's XY plane, built once.
-    const TileLayerMesh* tile_layer_mesh(const assets::TileMap& map, const assets::TileLayer& layer, std::int32_t layer_index, float tile_size) {
-        const std::string key = map.path + "|" + layer.name + "|" + std::to_string(layer_index) + "|" + std::to_string(tile_size);
-        if (auto it = tile_meshes.find(key); it != tile_meshes.end()) {
-            if (it->second.revision == layer.revision) return &it->second;
-            // The map was edited (tilemap.set / fill): drop the stale mesh and build the layer again.
-            if (it->second.gpu.vertices) wgpuBufferRelease(it->second.gpu.vertices);
-            if (it->second.gpu.indices) wgpuBufferRelease(it->second.gpu.indices);
-            tile_meshes.erase(it);
-            ++tile_rebuilds;
-        }
-        std::vector<Vertex> verts;
-        std::vector<std::uint32_t> indices;
-        TileLayerMesh tm;
-        tm.index = layer_index;
-        tm.revision = layer.revision;
-        // Group quads per tileset so each texture is one draw.
-        std::map<const assets::TileSet*, std::vector<std::pair<int, int>>> by_set;
-        for (int y = 0; y < layer.height; ++y) {
-            for (int x = 0; x < layer.width; ++x) {
-                std::uint32_t gid = layer.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(layer.width) + static_cast<std::size_t>(x)];
-                if (gid == 0) continue;
-                if (const assets::TileSet* ts = map.tileset_for(gid)) by_set[ts].push_back({x, y});
+    // The ids the animated tiles of `map` show at the time, one entry per animated tile of every
+    // tileset, in order: equal keys draw the same frames.
+    static std::string frame_key_of(const assets::TileMap& map, std::uint64_t time_ms) {
+        std::string key;
+        for (const assets::TileSet& ts : map.tilesets) {
+            for (const auto& [id, anim] : ts.animations) {
+                key += std::to_string(ts.frame_at(id, time_ms));
+                key += ',';
             }
         }
-        const float ox = layer.offset_x / static_cast<float>(map.tile_width) * tile_size;
-        const float oy = -layer.offset_y / static_cast<float>(map.tile_height) * tile_size;
+        return key;
+    }
+
+    // The quads of `cells` (with `frame` giving the id drawn for a gid), grouped per tileset so each
+    // texture is one draw, uploaded as one mesh.
+    void build_tile_quads(const assets::TileMap& map, const assets::TileLayer& layer, float tile_size, const std::map<const assets::TileSet*, std::vector<std::pair<int, int>>>& by_set, std::uint64_t time_ms, const std::string& key, GpuMesh& gpu, std::vector<TileLayerMesh::Part>& parts) {
+        std::vector<Vertex> verts;
+        std::vector<std::uint32_t> indices;
+        // An orthogonal map's cells are tile_size square; the others keep the tiles' pixel
+        // proportions, a cell's width being tile_size, and a tile taller than its cell (a wall on
+        // an isometric map) stands up from the cell's bottom edge.
+        const bool ortho = map.orthogonal();
+        const float sx = tile_size / static_cast<float>(map.tile_width), sy = ortho ? tile_size / static_cast<float>(map.tile_height) : sx;
+        const float ox = layer.offset_x * sx;
+        const float oy = -layer.offset_y * sy;
         for (auto& [ts, cells] : by_set) {
             TileLayerMesh::Part part{static_cast<std::uint32_t>(indices.size()), 0, ts->image};
             const float iw = ts->image_width > 0 ? static_cast<float>(ts->image_width) : static_cast<float>(ts->columns * (ts->tile_width + ts->spacing) - ts->spacing + 2 * ts->margin);
@@ -1180,7 +1190,7 @@ struct Renderer::Impl {
             const float ih = ts->image_height > 0 ? static_cast<float>(ts->image_height) : static_cast<float>(rows * (ts->tile_height + ts->spacing) - ts->spacing + 2 * ts->margin);
             for (auto [x, y] : cells) {
                 std::uint32_t gid = layer.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(layer.width) + static_cast<std::size_t>(x)];
-                const std::uint32_t local = (gid & assets::TileMap::kIdMask) - ts->first_gid;
+                const std::uint32_t local = static_cast<std::uint32_t>(ts->frame_at(static_cast<int>((gid & assets::TileMap::kIdMask) - ts->first_gid), time_ms));
                 const int col = static_cast<int>(local % static_cast<std::uint32_t>(ts->columns));
                 const int row = static_cast<int>(local / static_cast<std::uint32_t>(ts->columns));
                 float u0 = (static_cast<float>(ts->margin + col * (ts->tile_width + ts->spacing))) / iw;
@@ -1192,8 +1202,19 @@ struct Renderer::Impl {
                 if (gid & assets::TileMap::kFlipD) { std::swap(uv[0], uv[2]); }
                 if (gid & assets::TileMap::kFlipH) { std::swap(uv[0], uv[1]); std::swap(uv[2], uv[3]); }
                 if (gid & assets::TileMap::kFlipV) { std::swap(uv[0], uv[3]); std::swap(uv[1], uv[2]); }
-                const float wx0 = ox + static_cast<float>(x) * tile_size, wx1 = wx0 + tile_size;
-                const float wy1 = oy - static_cast<float>(y) * tile_size, wy0 = wy1 - tile_size;
+                float wx0, wx1, wy0, wy1;
+                if (ortho) {
+                    wx0 = ox + static_cast<float>(x) * tile_size;
+                    wx1 = wx0 + tile_size;
+                    wy1 = oy - static_cast<float>(y) * tile_size;
+                    wy0 = wy1 - tile_size;
+                } else {
+                    const Vec2 cell = map.tile_pixel(x, y);
+                    wx0 = ox + cell.x * sx;
+                    wx1 = wx0 + static_cast<float>(ts->tile_width) * sx;
+                    wy0 = oy - (cell.y + static_cast<float>(map.tile_height)) * sy;
+                    wy1 = wy0 + static_cast<float>(ts->tile_height) * sy;
+                }
                 auto base = static_cast<std::uint32_t>(verts.size());
                 verts.push_back({{wx0, wy0, 0}, {0, 0, 1}, uv[0]});
                 verts.push_back({{wx1, wy0, 0}, {0, 0, 1}, uv[1]});
@@ -1202,16 +1223,74 @@ struct Renderer::Impl {
                 indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
             }
             part.count = static_cast<std::uint32_t>(indices.size()) - part.first;
-            tm.parts.push_back(part);
+            parts.push_back(part);
         }
         if (verts.empty()) {
             verts.push_back({});
             indices.push_back(0);
         }
-        tm.gpu.vertices = device->create_buffer(key.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
-        tm.gpu.indices = device->create_buffer(key.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, indices.size() * sizeof(std::uint32_t), indices.data());
-        tm.gpu.index_count = static_cast<std::uint32_t>(indices.size());
-        auto [it, inserted] = tile_meshes.emplace(key, std::move(tm));
+        gpu.vertices = device->create_buffer(key.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
+        gpu.indices = device->create_buffer(key.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, indices.size() * sizeof(std::uint32_t), indices.data());
+        gpu.index_count = static_cast<std::uint32_t>(indices.size());
+    }
+
+    const TileLayerMesh* tile_layer_mesh(const assets::TileMap& map, const assets::TileLayer& layer, std::int32_t layer_index, float tile_size, std::uint64_t time_ms) {
+        const std::string key = map.path + "|" + layer.name + "|" + std::to_string(layer_index) + "|" + std::to_string(tile_size);
+        auto it = tile_meshes.find(key);
+        if (it != tile_meshes.end() && it->second.revision != layer.revision) {
+            // The map was edited (tilemap.set / fill): drop the stale mesh and build the layer again.
+            if (it->second.gpu.vertices) wgpuBufferRelease(it->second.gpu.vertices);
+            if (it->second.gpu.indices) wgpuBufferRelease(it->second.gpu.indices);
+            if (it->second.anim.vertices) wgpuBufferRelease(it->second.anim.vertices);
+            if (it->second.anim.indices) wgpuBufferRelease(it->second.anim.indices);
+            tile_meshes.erase(it);
+            it = tile_meshes.end();
+            ++tile_rebuilds;
+        }
+        if (it == tile_meshes.end()) {
+            TileLayerMesh tm;
+            tm.index = layer_index;
+            tm.revision = layer.revision;
+            std::map<const assets::TileSet*, std::vector<std::pair<int, int>>> fixed, animated;
+            for (int y = 0; y < layer.height; ++y) {
+                for (int x = 0; x < layer.width; ++x) {
+                    std::uint32_t gid = layer.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(layer.width) + static_cast<std::size_t>(x)];
+                    if (gid == 0) continue;
+                    const assets::TileSet* ts = map.tileset_for(gid);
+                    if (!ts) continue;
+                    const bool moving = ts->animations.contains(static_cast<int>((gid & assets::TileMap::kIdMask) - ts->first_gid));
+                    (moving ? animated : fixed)[ts].push_back({x, y});
+                }
+            }
+            build_tile_quads(map, layer, tile_size, fixed, time_ms, key, tm.gpu, tm.parts);
+            tm.has_anim = !animated.empty();
+            if (tm.has_anim) {
+                tm.frame_key = frame_key_of(map, time_ms);
+                build_tile_quads(map, layer, tile_size, animated, time_ms, key + "|anim", tm.anim, tm.anim_parts);
+            }
+            it = tile_meshes.emplace(key, std::move(tm)).first;
+        } else if (it->second.has_anim) {
+            // A frame moved on: only the animated cells are built again.
+            std::string now = frame_key_of(map, time_ms);
+            if (now != it->second.frame_key) {
+                std::map<const assets::TileSet*, std::vector<std::pair<int, int>>> animated;
+                for (int y = 0; y < layer.height; ++y) {
+                    for (int x = 0; x < layer.width; ++x) {
+                        std::uint32_t gid = layer.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(layer.width) + static_cast<std::size_t>(x)];
+                        if (gid == 0) continue;
+                        const assets::TileSet* ts = map.tileset_for(gid);
+                        if (ts && ts->animations.contains(static_cast<int>((gid & assets::TileMap::kIdMask) - ts->first_gid))) animated[ts].push_back({x, y});
+                    }
+                }
+                if (it->second.anim.vertices) wgpuBufferRelease(it->second.anim.vertices);
+                if (it->second.anim.indices) wgpuBufferRelease(it->second.anim.indices);
+                it->second.anim = {};
+                it->second.anim_parts.clear();
+                it->second.frame_key = std::move(now);
+                build_tile_quads(map, layer, tile_size, animated, time_ms, key + "|anim", it->second.anim, it->second.anim_parts);
+                ++tile_frames;
+            }
+        }
         return &it->second;
     }
 
@@ -1383,6 +1462,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     std::uint32_t entities = 0;
     std::uint32_t skinned_instances = 0;
     std::uint32_t morphed_instances = 0;
+    std::uint32_t moving_parts = 0;
     im.animation = animation;
     im.joint_count = 0;
     world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr, const world::WorldTransform& t) {
@@ -1457,14 +1537,27 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 ou.morph[2] = am->morph_targets;
             }
         }
-        for (const assets::Submesh& sm : am->submeshes) {
+        for (std::size_t si = 0; si < am->submeshes.size(); ++si) {
+            const assets::Submesh& sm = am->submeshes[si];
             const assets::Material& mat = am->materials[std::min<std::size_t>(sm.material, am->materials.size() - 1)];
             Vec4 color{mr.color.r * mat.base_color.x, mr.color.g * mat.base_color.y, mr.color.b * mat.base_color.z, mr.color.a * mat.base_color.w};
             const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
             ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
             if (skinned) ++skinned_instances;
             if (morphed) ++morphed_instances;
+            // A moving part: placed by its node's matrix from the pose (its rest without one).
+            const bool part = sm.node >= 0;
+            if (part) {
+                const Mat4 placed = model * (pose && static_cast<std::size_t>(sm.node) < pose->globals.size() ? pose->globals[static_cast<std::size_t>(sm.node)] : am->rest[si]);
+                to_array(placed, ou.model);
+                to_array(transpose(placed.inverse_affine()), ou.normal);
+                ++moving_parts;
+            }
             push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, &mat, skinned);
+            if (part) {
+                to_array(model, ou.model);
+                to_array(transpose(model.inverse_affine()), ou.normal);
+            }
         }
         ou.id[2] = 0;
     });
@@ -1507,12 +1600,16 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         for (const assets::TileLayer& layer : (*map)->layers) {
             const std::int32_t this_index = index++;
             if (!layer.visible || (!tmc.layer.empty() && layer.name != tmc.layer)) continue;
-            const Impl::TileLayerMesh* lm = im.tile_layer_mesh(**map, layer, this_index, tmc.tile_size > 0 ? tmc.tile_size : 1.0f);
+            const Impl::TileLayerMesh* lm = im.tile_layer_mesh(**map, layer, this_index, tmc.tile_size > 0 ? tmc.tile_size : 1.0f, im.assets->tile_time());
             if (!lm) continue;
             ou.color[0] = tmc.color.r; ou.color[1] = tmc.color.g; ou.color[2] = tmc.color.b; ou.color[3] = tmc.color.a * layer.opacity;
             for (const auto& part : lm->parts) {
                 if (count + sprites.size() >= kMaxObjects) return;
                 sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->gpu, part.first, part.count, this_index});
+            }
+            for (const auto& part : lm->anim_parts) {
+                if (count + sprites.size() >= kMaxObjects) return;
+                sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->anim, part.first, part.count, this_index});
             }
             ++tile_layers;
         }
@@ -1552,12 +1649,32 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 const float size = e->size.x + (e->size.y - e->size.x) * k;
                 const Vec3 pos = origin + p.position;
                 Mat4 model;
+                // Stretched along its motion: the quad's long axis follows the velocity as seen
+                // (in the camera's plane for a billboard, in XY for a sprite), by stretch seconds of travel.
+                const float speed = length(p.velocity);
+                const bool streak = e->stretch > 0.0f && speed > 1e-4f;
                 if (e->billboard) {
-                    const Vec3 r = right * size, u = up * size;
-                    model.m[0] = r.x; model.m[1] = r.y; model.m[2] = r.z;
-                    model.m[4] = u.x; model.m[5] = u.y; model.m[6] = u.z;
+                    Vec3 r = right, u = up;
+                    float along = size;
+                    if (streak) {
+                        const Vec3 f = cross(right, up);
+                        Vec3 seen = p.velocity - f * dot(p.velocity, f);   // the motion in the camera's plane
+                        if (length(seen) > 1e-4f) {
+                            r = normalize(seen);
+                            u = cross(f, r);
+                            along = size + e->stretch * length(seen);
+                        }
+                    }
+                    const Vec3 rr = r * along, uu = u * size;
+                    model.m[0] = rr.x; model.m[1] = rr.y; model.m[2] = rr.z;
+                    model.m[4] = uu.x; model.m[5] = uu.y; model.m[6] = uu.z;
                     const Vec3 f = cross(right, up);
                     model.m[8] = f.x; model.m[9] = f.y; model.m[10] = f.z;
+                } else if (streak && std::hypot(p.velocity.x, p.velocity.y) > 1e-4f) {
+                    const float l = std::hypot(p.velocity.x, p.velocity.y);
+                    const float c = p.velocity.x / l, sn = p.velocity.y / l, along = size + e->stretch * l;
+                    model.m[0] = c * along; model.m[1] = sn * along;
+                    model.m[4] = -sn * size; model.m[5] = c * size;
                 } else {
                     model.m[0] = size; model.m[5] = size;
                 }
@@ -1594,9 +1711,11 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.particles = particle_count;
     im.stats.tile_layers = tile_layers;
     im.stats.tile_rebuilds = im.tile_rebuilds;
+    im.stats.tile_frames = im.tile_frames;
     im.stats.msaa = im.msaa_applied;
     im.stats.skinned = skinned_instances;
     im.stats.morphed = morphed_instances;
+    im.stats.moving_parts = moving_parts;
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
     im.stats.materials = static_cast<std::uint32_t>(im.material_groups.size());
@@ -1895,8 +2014,10 @@ Json Renderer::describe() const {
     j["particles"] = s.particles;
     j["skinned"] = s.skinned;
     j["morphed"] = s.morphed;
+    j["moving_parts"] = s.moving_parts;
     j["tile_layers"] = s.tile_layers;
     j["tile_rebuilds"] = s.tile_rebuilds;
+    j["tile_frames"] = s.tile_frames;
     j["msaa"] = s.msaa;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;

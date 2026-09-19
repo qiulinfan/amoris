@@ -104,13 +104,19 @@ def sprite_coin_sheet(size=16, frames=4):
 
 
 def sprite_tiles(tile=16):
-    """Five tiles side by side, each 16x16: grass, dirt, a thin wooden platform (one-way), a slope
-    rising to the right and a slope rising to the left (grass along the diagonal, dirt below)."""
-    w, h = tile * 5, tile
+    """Seven tiles side by side, each 16x16: grass, dirt, a thin wooden platform (one-way), a slope
+    rising to the right, a slope rising to the left (grass along the diagonal, dirt below), and two
+    frames of water (the ripples shifted between them) that the map animates."""
+    w, h = tile * 7, tile
     px = bytearray()
     for y in range(h):
         for x in range(w):
-            if x < tile:
+            if x >= tile * 5:
+                frame = (x - tile * 5) // tile
+                lx = x % tile
+                ripple = (lx + y * 2 + frame * 4) % 8 < 2 and 3 <= y <= 12
+                px += bytes((150, 200, 240, 255)) if ripple else bytes((60, 120, 210, 230))
+            elif x < tile:
                 shade = 20 if (x * 7 + y * 13) % 5 == 0 else 0
                 px += bytes((70 + shade, 160 + shade, 70, 255)) if y > 2 else bytes((120, 200, 90, 255))
             elif x < tile * 2:
@@ -396,6 +402,86 @@ def skinned_arm():
     return doc, buf
 
 
+def spinning_fan():
+    """A hub with a blade: two unskinned boxes on two nodes, the blade a child of the hub half a
+    unit up, and a 'spin' clip that turns the blade about Y once every two seconds. The blade is a
+    moving part: geometry a clip moves without a skin."""
+    import math
+    def box(hx, hy, hz):
+        pts, nrm, idx = [], [], []
+        faces = [((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((-1, 0, 0), (0, 0, 1), (0, 1, 0)), ((0, 1, 0), (0, 0, 1), (1, 0, 0)), ((0, -1, 0), (1, 0, 0), (0, 0, 1)), ((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (0, 1, 0), (1, 0, 0))]
+        for n, u, v in faces:
+            base = len(pts)
+            for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                pts.append(tuple(hx * (n[0] + su * u[0] + sv * v[0]) if i == 0 else hy * (n[1] + su * u[1] + sv * v[1]) if i == 1 else hz * (n[2] + su * u[2] + sv * v[2]) for i in range(3)))
+                nrm.append(n)
+            idx += [base, base + 1, base + 2, base, base + 2, base + 3]
+        return pts, nrm, idx
+    hub_p, hub_n, hub_i = box(0.2, 0.2, 0.2)
+    blade_p, blade_n, blade_i = box(0.8, 0.15, 0.15)
+    def pack(fmt, items):
+        return b"".join(struct.pack(fmt, *i) for i in items)
+    def quat_y(deg):
+        h = math.radians(deg) / 2
+        return (0.0, math.sin(h), 0.0, math.cos(h))
+    spin_t = [0.0, 0.5, 1.0, 1.5, 2.0]
+    spin_q = [quat_y(90 * k) for k in range(5)]
+    blobs = [
+        ("HP", pack("<fff", hub_p), 34962), ("HN", pack("<fff", hub_n), 34962), ("HI", b"".join(struct.pack("<H", i) for i in hub_i), 34963),
+        ("BP", pack("<fff", blade_p), 34962), ("BN", pack("<fff", blade_n), 34962), ("BI", b"".join(struct.pack("<H", i) for i in blade_i), 34963),
+        ("ST", pack("<f", [(t,) for t in spin_t]), None), ("SQ", pack("<ffff", spin_q), None),
+    ]
+    buf, views, index_of = b"", [], {}
+    for name, data, target in blobs:
+        while len(buf) % 4:
+            buf += b"\x00"
+        v = {"buffer": 0, "byteOffset": len(buf), "byteLength": len(data)}
+        if target:
+            v["target"] = target
+        index_of[name] = len(views)
+        views.append(v)
+        buf += data
+    while len(buf) % 4:
+        buf += b"\x00"
+    def bounds(pts):
+        return [min(p[i] for p in pts) for i in range(3)], [max(p[i] for p in pts) for i in range(3)]
+    hb, bb = bounds(hub_p), bounds(blade_p)
+    accessors = [
+        {"bufferView": index_of["HP"], "componentType": 5126, "count": len(hub_p), "type": "VEC3", "min": hb[0], "max": hb[1]},
+        {"bufferView": index_of["HN"], "componentType": 5126, "count": len(hub_n), "type": "VEC3"},
+        {"bufferView": index_of["HI"], "componentType": 5123, "count": len(hub_i), "type": "SCALAR"},
+        {"bufferView": index_of["BP"], "componentType": 5126, "count": len(blade_p), "type": "VEC3", "min": bb[0], "max": bb[1]},
+        {"bufferView": index_of["BN"], "componentType": 5126, "count": len(blade_n), "type": "VEC3"},
+        {"bufferView": index_of["BI"], "componentType": 5123, "count": len(blade_i), "type": "SCALAR"},
+        {"bufferView": index_of["ST"], "componentType": 5126, "count": len(spin_t), "type": "SCALAR", "min": [spin_t[0]], "max": [spin_t[-1]]},
+        {"bufferView": index_of["SQ"], "componentType": 5126, "count": len(spin_q), "type": "VEC4"},
+    ]
+    doc = {
+        "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"name": "Hub", "mesh": 0, "children": [1]},
+            {"name": "Blade", "mesh": 1, "translation": [0, 0.5, 0]},
+        ],
+        "meshes": [
+            {"name": "hub", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1}, "indices": 2, "material": 0}]},
+            {"name": "blade", "primitives": [{"attributes": {"POSITION": 3, "NORMAL": 4}, "indices": 5, "material": 1}]},
+        ],
+        "materials": [
+            {"name": "hub", "pbrMetallicRoughness": {"baseColorFactor": [0.3, 0.3, 0.35, 1], "metallicFactor": 0.5, "roughnessFactor": 0.5}},
+            {"name": "blade", "pbrMetallicRoughness": {"baseColorFactor": [0.85, 0.2, 0.2, 1], "metallicFactor": 0, "roughnessFactor": 0.6}},
+        ],
+        "animations": [
+            {"name": "spin", "samplers": [{"input": 6, "output": 7, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]},
+        ],
+        "buffers": [{"byteLength": len(buf)}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    return doc, buf
+
+
 def write_glb(path, doc, buf):
     js = json.dumps(doc, separators=(",", ":")).encode()
     while len(js) % 4:
@@ -466,6 +552,9 @@ def sprites_level():
     platforms = [0] * (w * h)
     for x in (4, 5, 6):         # a one-way plank the player jumps through from below and lands on
         platforms[6 * w + x] = plank
+    water = [0] * (w * h)
+    for x in (0, 1, 2):         # a pool on the ground at the left edge, its ripples animated by the tileset
+        water[7 * w + x] = 6
     objects = [{"id": 1, "name": "player", "type": "spawn", "point": True, "x": 160, "y": 120, "width": 0, "height": 0, "rotation": 0, "visible": True}]
     for i in range(6):
         x = (-6 + i * 2.4 + 10) * 16
@@ -474,20 +563,22 @@ def sprites_level():
                         "properties": [{"name": "bob", "type": "float", "value": 0.3}]})
     return {
         "type": "map", "version": "1.10", "tiledversion": "1.11.0", "orientation": "orthogonal", "renderorder": "right-down",
-        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 5, "nextobjectid": 8,
+        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 6, "nextobjectid": 8,
         "properties": [{"name": "title", "type": "string", "value": "coins"}],
-        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 80, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
-                      "columns": 5, "tilecount": 5, "spacing": 0, "margin": 0,
+        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 112, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
+                      "columns": 7, "tilecount": 7, "spacing": 0, "margin": 0,
                       "tiles": [{"id": 0, "properties": [{"name": "solid", "type": "bool", "value": True}]},
                                 {"id": 1, "properties": [{"name": "solid", "type": "bool", "value": True}]},
                                 {"id": 2, "properties": [{"name": "one_way", "type": "bool", "value": True}]},
                                 {"id": 3, "properties": [{"name": "slope", "type": "int", "value": 1}]},
-                                {"id": 4, "properties": [{"name": "slope", "type": "int", "value": -1}]}]}],
+                                {"id": 4, "properties": [{"name": "slope", "type": "int", "value": -1}]},
+                                {"id": 5, "animation": [{"tileid": 5, "duration": 400}, {"tileid": 6, "duration": 400}]}]}],
         "layers": [
             {"id": 1, "type": "tilelayer", "name": "ground", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": ground},
             {"id": 2, "type": "tilelayer", "name": "deco", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": deco,
              "properties": [{"name": "solid", "type": "bool", "value": True}]},
             {"id": 4, "type": "tilelayer", "name": "platforms", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": platforms},
+            {"id": 5, "type": "tilelayer", "name": "water", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": water},
             {"id": 3, "type": "objectgroup", "name": "spawns", "objects": objects, "opacity": 1, "visible": True, "x": 0, "y": 0},
         ],
     }
@@ -563,6 +654,9 @@ def main():
     arm_doc, arm_buf = skinned_arm()
     write_glb(os.path.join(out, "arm.glb"), arm_doc, arm_buf)
     print("arm.glb", os.path.getsize(os.path.join(out, "arm.glb")), "bytes")
+    fan_doc, fan_buf = spinning_fan()
+    write_glb(os.path.join(out, "fan.glb"), fan_doc, fan_buf)
+    print("fan.glb", os.path.getsize(os.path.join(out, "fan.glb")), "bytes")
     crate_material = {"name": "crate", "pbrMetallicRoughness": {"baseColorFactor": [1, 0.9, 0.7, 1], "baseColorTexture": {"index": 0}, "metallicFactor": 0, "roughnessFactor": 0.8}}
     nodes = [{"name": "crate"}, {"name": "crate_small", "translation": [1.5, 0, 0], "scale": [0.5, 0.5, 0.5]}]
     doc, buf = glb(p, n, u, i, crate_material, nodes, texture_uri="checker.png")

@@ -59,12 +59,56 @@ void Particles::step(const world::World& world, float dt) {
             spawn(pool, e, t, n);
         }
         const float keep = std::max(0.0f, 1.0f - e.drag * dt);
+        const float slide = std::max(0.0f, 1.0f - e.floor_friction * dt);
+        const float floor_y = e.world_space ? e.floor : e.floor - t.position.y;   // the floor in the particles' own space
         for (Particle& p : pool.alive) {
+            p.age += dt;
+            if (p.resting) {
+                // On the floor: held there, sliding to a stop.
+                p.velocity.y = 0.0f;
+                p.velocity.x *= slide * keep;
+                p.velocity.z *= slide * keep;
+                p.position += p.velocity * dt;
+                p.position.y = floor_y;
+                continue;
+            }
             p.velocity = (p.velocity + e.gravity * dt) * keep;
             p.position += p.velocity * dt;
-            p.age += dt;
+            // The floor: a particle that went through it comes back to it, bouncing with the
+            // speed it keeps, or resting there once the bounce is spent.
+            if (p.position.y < floor_y) {
+                p.position.y = floor_y;
+                if (!p.touched) { p.touched = true; pool.landed++; }
+                const float into = -p.velocity.y;
+                if (into > 0.0f && e.bounce > 0.0f && into * e.bounce > 0.05f) {
+                    p.velocity.y = into * e.bounce;
+                } else {
+                    p.velocity.y = 0.0f;
+                    p.resting = true;
+                }
+            }
         }
         auto dead = std::remove_if(pool.alive.begin(), pool.alive.end(), [](const Particle& p) { return p.age >= p.life; });
+        // A child emitter bursts where each dead particle was (fireworks, a splash), in its own
+        // stream; a child that is its own parent or missing is left alone.
+        if (e.child != 0 && e.child != ent.id() && dead != pool.alive.end() && e.child_count > 0) {
+            if (const auto* ce = world.try_get<world::ParticleEmitter>(e.child)) {
+                const auto* ct = world.try_get<world::WorldTransform>(e.child);
+                world::WorldTransform at;
+                if (ct) at = *ct;
+                EmitterPool& child = pool_for(e.child, *ce);
+                child.seen = true;
+                const Vec3 origin = e.world_space ? Vec3{0, 0, 0} : t.position;
+                for (auto it = dead; it != pool.alive.end(); ++it) {
+                    world::WorldTransform where = at;
+                    where.position = origin + it->position;
+                    if (!ce->world_space && ct) where.position = where.position - ct->position;   // relative to the child, as its particles are
+                    const std::size_t before = child.alive.size();
+                    spawn(child, *ce, where, e.child_count);
+                    if (!ce->world_space) for (std::size_t k = before; k < child.alive.size(); ++k) child.alive[k].position = where.position;   // relative to the child's own origin
+                }
+            }
+        }
         pool.died += static_cast<std::uint64_t>(std::distance(dead, pool.alive.end()));
         pool.alive.erase(dead, pool.alive.end());
     });
@@ -105,12 +149,23 @@ Json Particles::stats() const {
     for (const auto& [id, pool] : pools_) {
         spawned += pool.spawned;
         died += pool.died;
-        per.push_back(Json{{"entity", id}, {"alive", pool.alive.size()}, {"spawned", pool.spawned}, {"died", pool.died}});
+        per.push_back(Json{{"entity", id}, {"alive", pool.alive.size()}, {"spawned", pool.spawned}, {"died", pool.died}, {"landed", pool.landed}});
     }
     j["spawned"] = spawned;
     j["died"] = died;
     j["pools"] = per;
     return j;
+}
+
+Json Particles::list(world::EntityId emitter, std::size_t limit) const {
+    Json arr = Json::array();
+    const auto it = pools_.find(emitter);
+    if (it == pools_.end()) return arr;
+    for (const Particle& p : it->second.alive) {
+        if (arr.size() >= limit) break;
+        arr.push_back(Json{{"position", {{"x", p.position.x}, {"y", p.position.y}, {"z", p.position.z}}}, {"velocity", {{"x", p.velocity.x}, {"y", p.velocity.y}, {"z", p.velocity.z}}}, {"age", p.age}, {"life", p.life}, {"resting", p.resting}});
+    }
+    return arr;
 }
 
 std::uint64_t Particles::hash() const {

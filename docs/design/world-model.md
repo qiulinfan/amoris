@@ -55,7 +55,7 @@ The renderer writes an entity id into a second render target for every fragment.
 
 ## What is not there yet
 
-Typed-array access for hot component data (scripts currently pay one JSON round trip per call), the MCP wrapper (planned as `pocket mcp`, a thin stdio bridge to `/rpc`).
+Typed-array access for hot component data: scripts pay one JSON round trip per call, and a loop over many entities reads them in one call with `world.query {with, fields}` rather than one by one.
 
 ## Scenes and prefabs
 

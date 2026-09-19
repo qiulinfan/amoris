@@ -281,7 +281,7 @@ void from_json(const Json& j, LookAt& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(LookAt& v, std::string_view path, float** out);
 
-/// Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.
+/// Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.
 struct ParticleEmitter {
     std::string texture = "";
     bool emitting = true;
@@ -300,6 +300,12 @@ struct ParticleEmitter {
     bool billboard = true;
     bool world_space = true;
     std::int32_t seed = 0;
+    float floor = -1000000.0f;
+    float bounce = 0.3f;
+    float floor_friction = 0.5f;
+    float stretch = 0.0f;
+    std::uint64_t child = 0;
+    std::int32_t child_count = 8;
     constexpr bool operator==(const ParticleEmitter&) const = default;
 };
 void to_json(Json& j, const ParticleEmitter& v);

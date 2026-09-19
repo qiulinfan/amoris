@@ -178,6 +178,7 @@ Status Nav::bake_tilemap(const world::World& w, assets::AssetStore& assets, Enti
     if (!tmc) return fail("no_tilemap", "entity {} has no TileMap", map_entity);
     if (p.mode != "topdown" && p.mode != "platformer") return fail("bad_args", "mode must be topdown or platformer");
     POCKET_TRY(map, assets.tilemap(tmc->map));
+    if (!map->orthogonal()) return fail("bad_tilemap", "{} is {}: only orthogonal maps bake to a grid (their cells are the grid's)", tmc->map, map->orientation);
     Vec3 origin{0, 0, 0};
     if (const auto* wt = w.try_get<world::WorldTransform>(map_entity)) origin = wt->position;
     else if (const auto* t = w.try_get<world::Transform>(map_entity)) origin = t->position;

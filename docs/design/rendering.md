@@ -21,7 +21,7 @@
 
 ## Not yet
 
-Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, PBR maps (metallic, roughness, normal), skinning and animation, transparency sorting for meshes, post-processing. Each is a renderer-internal change: the commands and components stay.
+Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, transparency sorting for meshes (sprites and particles sort; meshes draw in material order), post-processing. Each is a renderer-internal change: the commands and components stay.
 
 ## Debug lines
 

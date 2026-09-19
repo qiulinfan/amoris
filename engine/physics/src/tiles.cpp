@@ -43,6 +43,7 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     w.ecs().each([&](flecs::entity e, const world::TileMap& tm) {
         auto m = assets.tilemap(tm.map);
         if (!m) return;
+        if (!(*m)->orthogonal()) return;   // the platformer sees orthogonal maps only (docs/design/tilemaps.md, Orientations)
         MapView v;
         v.map = *m;
         v.ts = tm.tile_size > 0 ? tm.tile_size : 1.0f;

@@ -785,8 +785,8 @@ TEST_CASE("sprites draw unlit through an orthographic camera and are picked by s
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
     REQUIRE(stats["sprites"].get<int>() == 10);  // the player, six coins, the lift, the ball and the puck; the ground is a tile map
-    REQUIRE(stats["tile_layers"].get<int>() == 3);         // ground, deco and platforms layers of level.tmj
-    REQUIRE(stats["draw_calls"].get<int>() <= 6);           // runs per texture, split by layer
+    REQUIRE(stats["tile_layers"].get<int>() == 4);         // ground, deco, platforms and water layers of level.tmj
+    REQUIRE(stats["draw_calls"].get<int>() <= 7);           // runs per texture, split by layer (four tile layers among them)
     // The map answers what is where: solid ground under the player, air above, the ledge at (13,6).
     Json below = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", 0.0}, {"y", -3.6}}).value();
     REQUIRE(below["solid"] == true);
@@ -872,6 +872,96 @@ TEST_CASE("save slots hold the world and script state and load back exactly", "[
     REQUIRE(saw_written);
     REQUIRE(saw_loaded);
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("animated tiles show the frame the simulation clock is at", "[runtime][tilemap][animtiles]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    auto water = [&]() {
+        for (const Json& l : s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", 0}, {"tile_y", 7}}).value()["layers"]) if (l["layer"] == "water") return l;
+        return Json(nullptr);
+    };
+    auto frames = [&]() { return s.command("render.stats", Json::object()).value()["tile_frames"].get<int>(); };
+    // The pool's cell holds tile 5 (gid 6), which shows itself in its first 400 ms and tile 6 after.
+    Json w = water();
+    INFO(w.dump());
+    REQUIRE(w["id"] == 5);
+    REQUIRE(w["frame"] == 5);
+    REQUIRE(w["solid"] == false);
+    const int built = frames();
+    for (int i = 0; i < 12; ++i) REQUIRE(s.frame().has_value());   // 0.2 s: the same frame, nothing rebuilt
+    REQUIRE(water()["frame"] == 5);
+    REQUIRE(frames() == built);
+    for (int i = 0; i < 15; ++i) REQUIRE(s.frame().has_value());   // past 0.4 s: the second frame, one rebuild of the animated cells
+    REQUIRE(water()["frame"] == 6);
+    REQUIRE(frames() == built + 1);
+    for (int i = 0; i < 24; ++i) REQUIRE(s.frame().has_value());   // past 0.8 s: round again
+    REQUIRE(water()["frame"] == 5);
+    REQUIRE(frames() == built + 2);
+    // A cell with a still tile has no frame.
+    for (const Json& l : s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", 0}, {"tile_y", 8}}).value()["layers"]) if (l["layer"] == "ground") REQUIRE_FALSE(l.contains("frame"));
+}
+
+TEST_CASE("an isometric map is drawn, asked, and left alone by bodies and the grid", "[runtime][tilemap][isomap]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    // A 4 by 3 isometric map of 32 by 16 diamonds drawn from the sample's 16-pixel tiles, written
+    // beside the sample's map for the test and removed after it.
+    const std::filesystem::path file = o.project_dir / "assets" / "iso-test.tmj";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        std::ofstream out(file);
+        out << R"({"width":4,"height":3,"tilewidth":32,"tileheight":16,"orientation":"isometric","tilesets":[{"firstgid":1,"name":"tiles","image":"tiles.png","imagewidth":80,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":5,"tilecount":5,"tiles":[{"id":0,"properties":[{"name":"solid","type":"bool","value":true}]}]}],"layers":[{"id":1,"type":"tilelayer","name":"floor","width":4,"height":3,"data":[1,2,3,4,1,1,1,1,2,2,2,2]}]})";
+    }
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const int drawn_before = s.command("render.stats", Json::object()).value()["tile_layers"].get<int>();
+    // Far from the sample's level, so nothing of it is under the bodies here.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Iso"}, {"components", Json{{"Transform", Json{{"position", {{"x", 100}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", "assets/iso-test.tmj"}, {"tile_size", 1.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_before + 1);
+    Json info = s.command("tilemap.info", Json{{"entity", "Iso"}}).value();
+    INFO(info.dump());
+    REQUIRE(info["orientation"] == "isometric");
+    REQUIRE(info["bounds"]["max"]["x"].get<double>() == Catch::Approx(103.5));   // (4 + 3) diamonds' half widths at a unit per 32 pixels
+    REQUIRE(info["bounds"]["min"]["y"].get<double>() == Catch::Approx(-1.75));
+    // The center of tile (1, 1): its box at pixel (32, 16), so its center at (48, 24), a unit and a half in and three quarters down.
+    Json cell = s.command("tilemap.cell", Json{{"entity", "Iso"}, {"x", 101.5}, {"y", -0.75}}).value();
+    INFO(cell.dump());
+    REQUIRE(cell["tile_x"] == 1);
+    REQUIRE(cell["tile_y"] == 1);
+    REQUIRE(cell["inside"] == true);
+    REQUIRE(cell["center"]["x"].get<double>() == Catch::Approx(101.5));
+    REQUIRE(cell["center"]["y"].get<double>() == Catch::Approx(-0.75));
+    REQUIRE(s.command("tilemap.cell", Json{{"entity", "Iso"}, {"x", 100.1}, {"y", -0.05}}).value()["inside"] == false);   // the top-left corner, outside the diamonds
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Iso"}, {"tile_x", 0}, {"tile_y", 0}}).value()["solid"] == true);
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Iso"}, {"tile_x", 1}, {"tile_y", 0}}).value()["solid"] == false);
+    // A body over the map falls through it: the platformer knows orthogonal maps only.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Drop"}, {"components", Json{{"Transform", Json{{"position", {{"x", 101.5}, {"y", -0.2}, {"z", 0}}}}}, {"Body2D", Json{{"size", {{"x", 0.2}, {"y", 0.2}}}}}}}}).has_value());
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json drop = s.command("world.get", Json{{"entity", "Drop"}, {"component", "Transform"}}).value();
+    REQUIRE(drop["position"]["y"].get<double>() < -1.75);
+    REQUIRE(s.command("world.get", Json{{"entity", "Drop"}, {"component", "Body2D"}}).value()["grounded"] == false);
+    // And the grid does not bake from it.
+    REQUIRE(s.command("nav.bake", Json{{"entity", "Iso"}, {"mode", "topdown"}}).error().code == "bad_tilemap");
 }
 
 TEST_CASE("an entity's copy of a map is edited apart from the map and outlives a reload", "[runtime][tilemap][mapcopy]") {
@@ -1103,7 +1193,7 @@ TEST_CASE("tiles are edited at runtime: drawn, solid, felt by bodies and saved",
     REQUIRE(s.frame().has_value());
     REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["name"] == "Level");
     Json stats = s.command("render.stats", Json::object()).value();
-    REQUIRE(stats["tile_layers"].get<int>() == 3);
+    REQUIRE(stats["tile_layers"].get<int>() == 4);
     REQUIRE(stats["tile_rebuilds"].get<int>() == 1);
     bool saw = false;
     for (const Json& e : s.command("events.recent", Json{{"n", 50}}).value()) saw = saw || (e["type"] == "tilemap.changed" && e["data"]["tile_x"] == 10);
@@ -1125,13 +1215,13 @@ TEST_CASE("tiles are edited at runtime: drawn, solid, felt by bodies and saved",
     REQUIRE(s.command("render.stats", Json::object()).value()["tile_rebuilds"].get<int>() == 2);
     // Saved as Tiled JSON with the edits and everything else intact; escapes are refused.
     Json saved = s.command("tilemap.save", Json{{"entity", "Level"}, {"path", "assets/level-edited.tmj"}}).value();
-    REQUIRE(saved["layers"] == 3);
+    REQUIRE(saved["layers"] == 4);
     REQUIRE(std::filesystem::exists(edited));
     auto text = fs::read_text(edited);
     REQUIRE(text.has_value());
     auto again = assets::parse_tilemap(*text, "level-edited.tmj");
     REQUIRE(again.has_value());
-    REQUIRE(again->layers.size() == 3);
+    REQUIRE(again->layers.size() == 4);
     REQUIRE(again->layers[0].gids[5 * 20 + 10] == 1);
     REQUIRE(again->layers[0].gids[8 * 20 + 9] == 0);
     REQUIRE(again->layers[0].gids[8 * 20 + 8] == 1);
@@ -1650,6 +1740,132 @@ TEST_CASE("per-joint IK limits give one joint its own most and least bend", "[ru
     p = pose();
     REQUIRE(p["ik"]["reached"] == true);
     REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(11.46).margin(0.5));
+}
+
+TEST_CASE("particles land on a floor, burst a child where they die and stretch along their motion", "[runtime][particles][floor][child][stretch]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto emitter = [&](const char* name, Vec3 at, Json fields) {
+        fields["emitting"] = false;
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", {{"x", at.x}, {"y", at.y}, {"z", at.z}}}}}, {"ParticleEmitter", fields}}}}).has_value());
+        REQUIRE(s.frame().has_value());   // its world transform is computed on the tick
+        return s.command("world.find", Json{{"path", name}}).value().get<world::EntityId>();
+    };
+    auto pool = [&](world::EntityId id) {
+        for (const Json& pl : s.command("particles.stats", Json::object()).value()["pools"]) if (pl["entity"].get<world::EntityId>() == id) return pl;
+        return Json(nullptr);
+    };
+    auto list = [&](const char* name) { return s.command("particles.list", Json{{"entity", name}, {"limit", 1000}}).value()["particles"]; };
+    // Sparks thrown sideways from two units up with a floor at half a unit: they fall, bounce, come
+    // to rest on it and slide to a stop, never below it.
+    const world::EntityId sparks = emitter("Sparks", {40, 2, 0}, Json{{"gravity", {{"x", 0}, {"y", -10}, {"z", 0}}}, {"lifetime", {{"x", 6}, {"y", 6}}}, {"speed", {{"x", 2}, {"y", 2}}}, {"direction", {{"x", 1}, {"y", 0}, {"z", 0}}}, {"spread", 0}, {"floor", 0.5}, {"bounce", 0.5}, {"floor_friction", 2.0}});
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Sparks"}, {"count", 20}}).value()["alive"] == 20);
+    float lowest = 1e9f;
+    int bounced = 0;
+    for (int i = 0; i < 180; ++i) {
+        REQUIRE(s.frame().has_value());
+        for (const Json& p : list("Sparks")) {
+            lowest = std::min(lowest, p["position"]["y"].get<float>());
+            if (p["velocity"]["y"].get<float>() > 0.5f && p["position"]["y"].get<float>() < 0.6f) ++bounced;
+        }
+    }
+    INFO("lowest " << lowest << " bounced " << bounced);
+    REQUIRE(lowest >= 0.499f);
+    REQUIRE(bounced > 0);   // seen going back up off the floor
+    REQUIRE(pool(sparks)["landed"] == 20);
+    Json rested = list("Sparks");
+    REQUIRE(rested.size() == 20);
+    for (const Json& p : rested) {
+        REQUIRE(p["resting"] == true);
+        REQUIRE(p["position"]["y"].get<float>() == Catch::Approx(0.5f).margin(1e-3f));
+        REQUIRE(std::fabs(p["velocity"]["x"].get<float>()) < 0.1f);   // slid to a stop
+        REQUIRE(p["position"]["x"].get<float>() > 40.0f);           // after sliding some way
+    }
+    // Shells that die after half a second, each bursting ten of a child emitter's particles where it died.
+    const world::EntityId burst = emitter("Burst", {40, 0, 0}, Json{{"max", 500}, {"speed", {{"x", 1}, {"y", 2}}}, {"spread", 180}, {"gravity", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"lifetime", {{"x", 3}, {"y", 3}}}});
+    const world::EntityId shells = emitter("Shells", {40, 5, 0}, Json{{"lifetime", {{"x", 0.5}, {"y", 0.5}}}, {"speed", {{"x", 3}, {"y", 3}}}, {"spread", 0}, {"gravity", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"child", burst}, {"child_count", 10}});
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Shells"}, {"count", 3}}).has_value());
+    for (int i = 0; i < 40; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(pool(shells)["died"] == 3);
+    REQUIRE(pool(burst)["spawned"] == 30);
+    REQUIRE(pool(burst)["alive"] == 30);
+    // They burst where the shells were: a unit and a half up the shells' way (3 m/s for half a second), give or take their own flight since.
+    for (const Json& p : list("Burst")) REQUIRE(std::fabs(p["position"]["y"].get<float>() - 6.5f) < 1.2f);
+    // A streak: a particle flying +X at ten a second drawn stretched by a fifth of a second covers a
+    // unit ahead of itself, where a square one does not. Seen head-on from +Z, high up and off to the side.
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 60}, {"y", 3.5}, {"z", 6}}}, {"rotation", {{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    const world::EntityId streak = emitter("Streak", {59, 3.5, 0}, Json{{"gravity", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"lifetime", {{"x", 10}, {"y", 10}}}, {"speed", {{"x", 10}, {"y", 10}}}, {"direction", {{"x", 1}, {"y", 0}, {"z", 0}}}, {"spread", 0}, {"size", {{"x", 0.2}, {"y", 0.2}}}, {"stretch", 0.2}});
+    const world::EntityId dot = emitter("Dot", {59, 2.5, 0}, Json{{"gravity", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"lifetime", {{"x", 10}, {"y", 10}}}, {"speed", {{"x", 10}, {"y", 10}}}, {"direction", {{"x", 1}, {"y", 0}, {"z", 0}}}, {"spread", 0}, {"size", {{"x", 0.2}, {"y", 0.2}}}});
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Streak"}, {"count", 1}}).has_value());
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Dot"}, {"count", 1}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto pick_at = [&](double x, double y, double z) {
+        Json pr = s.command("render.project", Json{{"point", {{"x", x}, {"y", y}, {"z", z}}}}).value();
+        REQUIRE(pr["visible"] == true);
+        return s.command("render.pick", Json{{"x", pr["x"].get<double>()}, {"y", pr["y"].get<double>()}}).value()["id"].get<world::EntityId>();
+    };
+    // After one tick both particles are a sixth of a unit along; the streak reaches a unit further.
+    REQUIRE(pick_at(59.17, 3.5, 0.0) == streak);
+    REQUIRE(pick_at(59.17, 2.5, 0.0) == dot);
+    REQUIRE(pick_at(59.9, 3.5, 0.0) == streak);
+    REQUIRE(pick_at(59.9, 2.5, 0.0) != dot);
+}
+
+TEST_CASE("a clip turns an unskinned part: the blade is drawn where its node puts it", "[runtime][animation][parts]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The camera straight in front of the fan, which stands at the origin with its blade half a unit up.
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0.5}, {"z", 6}}}, {"rotation", {{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Fan"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/fan.glb"}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const world::EntityId fan = s.command("world.find", Json{{"path", "Fan"}}).value().get<world::EntityId>();
+    auto pick_at = [&](double x, double y, double z) {
+        Json pr = s.command("render.project", Json{{"point", {{"x", x}, {"y", y}, {"z", z}}}}).value();
+        INFO(pr.dump());
+        REQUIRE(pr["visible"] == true);
+        return s.command("render.pick", Json{{"x", pr["x"].get<double>()}, {"y", pr["y"].get<double>()}}).value()["id"].get<world::EntityId>();
+    };
+    auto parts = [&]() { return s.command("animation.pose", Json{{"entity", "Fan"}}).value()["parts"]; };
+    // At rest the blade lies along +X: its tip at (0.7, 0.5, 0) is the fan, and above the tip is empty.
+    Json p = parts();
+    INFO(p.dump());
+    REQUIRE(p.size() == 1);
+    REQUIRE(p[0]["name"] == "Blade");
+    REQUIRE(p[0]["position"]["y"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(p[0]["axis_x"]["x"].get<double>() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(pick_at(0.7, 0.5, 0.0) == fan);
+    REQUIRE(pick_at(0.7, 0.9, 0.0) != fan);
+    REQUIRE(s.command("render.stats", Json::object()).value()["moving_parts"].get<int>() == 1);
+    // A quarter of the spin clip later the blade points down -Z (a quarter turn about Y): the tip
+    // has left +X for -Z, and the pose says so.
+    REQUIRE(s.command("animation.play", Json{{"entity", "Fan"}, {"clip", "spin"}, {"loop", true}}).has_value());
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());   // half a second: 90 degrees
+    p = parts();
+    INFO(p.dump());
+    REQUIRE(p[0]["axis_x"]["z"].get<double>() == Catch::Approx(-1.0).margin(0.05));
+    REQUIRE(p[0]["position"]["y"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(pick_at(0.7, 0.5, 0.0) != fan);
+    // Seen from +Z the turned blade is a short bar at the center: the point a little in front of the hub is it.
+    REQUIRE(pick_at(0.0, 0.5, 0.7) == fan);
+    REQUIRE(s.command("render.stats", Json::object()).value()["moving_parts"].get<int>() == 1);
 }
 
 TEST_CASE("a hinge bends one way only: the chain folds on the hinge's side or misses", "[runtime][animation][ik][iklimit][ikhinge]") {

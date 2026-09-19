@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <optional>
 
 namespace pocket::assets {
@@ -40,6 +41,7 @@ Json Mesh::describe() const {
     }
     j["materials"] = mats;
     j["aabb"] = Json{{"min", Json::array({aabb_min.x, aabb_min.y, aabb_min.z})}, {"max", Json::array({aabb_max.x, aabb_max.y, aabb_max.z})}};
+    j["moving_parts"] = moving_parts();
     j["skinned"] = skinned();
     Json sk = Json::array();
     for (const auto& s : skins) sk.push_back(Json{{"name", s.name}, {"joints", s.joints.size()}});
@@ -61,6 +63,21 @@ int Mesh::morph_target(std::string_view name) const {
         if (i >= 0 && static_cast<std::size_t>(i) < morph_targets.size()) return i;
     }
     return -1;
+}
+
+Mat4 Mesh::rest_global(int node) const {
+    Mat4 g = Mat4::identity();
+    if (node < 0 || static_cast<std::size_t>(node) >= nodes.size()) return g;
+    std::vector<std::size_t> lineage;
+    for (int n = node, guard = 0; n >= 0 && static_cast<std::size_t>(n) < nodes.size() && guard < 256; n = nodes[static_cast<std::size_t>(n)].parent, ++guard) lineage.push_back(static_cast<std::size_t>(n));
+    for (auto it = lineage.rbegin(); it != lineage.rend(); ++it) g = g * nodes[*it].rest;
+    return g;
+}
+
+std::size_t Mesh::moving_parts() const {
+    std::size_t n = 0;
+    for (const Submesh& sm : submeshes) n += sm.node >= 0;
+    return n;
 }
 
 const AnimationClip* Mesh::clip(std::string_view name) const {
@@ -90,6 +107,17 @@ bool truthy(const Json& props, const char* key) {
 }
 
 }  // namespace
+
+int TileSet::frame_at(int local_id, std::uint64_t time_ms) const {
+    const auto it = animations.find(local_id);
+    if (it == animations.end()) return local_id;
+    auto t = static_cast<int>(time_ms % static_cast<std::uint64_t>(it->second.total_ms));
+    for (const auto& [id, ms] : it->second.frames) {
+        if (t < ms) return id;
+        t -= ms;
+    }
+    return it->second.frames.back().first;
+}
 
 bool TileSet::solid(int local_id) const {
     auto it = tile_properties.find(local_id);
@@ -329,7 +357,12 @@ Json TileMap::to_json() const {
     if (!source.is_object()) {
         doc["type"] = "map";
         doc["version"] = "1.10";
-        doc["orientation"] = "orthogonal";
+        doc["orientation"] = orientation;
+        if (orientation == "hexagonal") doc["hexsidelength"] = hex_side;
+        if (orientation == "hexagonal" || orientation == "staggered") {
+            doc["staggeraxis"] = stagger_y ? "y" : "x";
+            doc["staggerindex"] = stagger_odd ? "odd" : "even";
+        }
         doc["renderorder"] = "right-down";
         doc["infinite"] = false;
         doc["width"] = width;
@@ -341,7 +374,21 @@ Json TileMap::to_json() const {
         for (const TileSet& t : tilesets) {
             Json tj{{"name", t.name}, {"firstgid", t.first_gid}, {"image", std::filesystem::path(t.image).filename().generic_string()}, {"tilewidth", t.tile_width}, {"tileheight", t.tile_height}, {"columns", t.columns}, {"tilecount", t.tile_count}, {"imagewidth", t.image_width}, {"imageheight", t.image_height}, {"spacing", t.spacing}, {"margin", t.margin}};
             Json tiles = Json::array();
-            for (const auto& [id, props] : t.tile_properties) tiles.push_back(Json{{"id", id}, {"properties", tiled_properties(props)}});
+            for (const auto& [id, props] : t.tile_properties) {
+                Json tile{{"id", id}, {"properties", tiled_properties(props)}};
+                if (auto a = t.animations.find(id); a != t.animations.end()) {
+                    Json frames = Json::array();
+                    for (const auto& [fid, ms] : a->second.frames) frames.push_back(Json{{"tileid", fid}, {"duration", ms}});
+                    tile["animation"] = frames;
+                }
+                tiles.push_back(tile);
+            }
+            for (const auto& [id, anim] : t.animations) {
+                if (t.tile_properties.contains(id)) continue;
+                Json frames = Json::array();
+                for (const auto& [fid, ms] : anim.frames) frames.push_back(Json{{"tileid", fid}, {"duration", ms}});
+                tiles.push_back(Json{{"id", id}, {"animation", frames}});
+            }
             if (!tiles.empty()) tj["tiles"] = tiles;
             sets.push_back(tj);
         }
@@ -414,14 +461,90 @@ int TileMap::slope_at(int x, int y) const {
     return 0;
 }
 
+// Whether the cell at index `i` along the stagger axis is the shifted one.
+bool staggered_index(const TileMap& m, int i) { return (i % 2 != 0) == m.stagger_odd; }
+
+Vec2 TileMap::tile_pixel(int x, int y) const {
+    const auto tw = static_cast<float>(tile_width), th = static_cast<float>(tile_height);
+    if (orientation == "isometric") return {(static_cast<float>(x - y) + static_cast<float>(height - 1)) * tw * 0.5f, static_cast<float>(x + y) * th * 0.5f};
+    if (orientation == "staggered" || orientation == "hexagonal") {
+        const auto side = static_cast<float>(hex_side);
+        if (stagger_y) return {static_cast<float>(x) * tw + (staggered_index(*this, y) ? tw * 0.5f : 0.0f), static_cast<float>(y) * (th + side) * 0.5f};
+        return {static_cast<float>(x) * (tw + side) * 0.5f, static_cast<float>(y) * th + (staggered_index(*this, x) ? th * 0.5f : 0.0f)};
+    }
+    return {static_cast<float>(x) * tw, static_cast<float>(y) * th};
+}
+
+Vec2 TileMap::pixel_size() const {
+    const auto tw = static_cast<float>(tile_width), th = static_cast<float>(tile_height);
+    const auto w = static_cast<float>(width), h = static_cast<float>(height);
+    if (orientation == "isometric") return {(w + h) * tw * 0.5f, (w + h) * th * 0.5f};
+    if (orientation == "staggered" || orientation == "hexagonal") {
+        const auto side = static_cast<float>(hex_side);
+        if (stagger_y) return {w * tw + (height > 1 ? tw * 0.5f : 0.0f), th + (h - 1.0f) * (th + side) * 0.5f};
+        return {tw + (w - 1.0f) * (tw + side) * 0.5f, h * th + (width > 1 ? th * 0.5f : 0.0f)};
+    }
+    return {w * tw, h * th};
+}
+
+bool TileMap::cell_at_pixel(float px, float py, int& x, int& y) const {
+    const auto tw = static_cast<float>(tile_width), th = static_cast<float>(tile_height);
+    if (orientation == "isometric") {
+        // Back through the projection: the unprojected tile space has square cells of tile_height.
+        const float ux = (px - static_cast<float>(height) * tw * 0.5f) / tw, uy = py / th;
+        x = static_cast<int>(std::floor(uy + ux));
+        y = static_cast<int>(std::floor(uy - ux));
+    } else if (orientation == "staggered" || orientation == "hexagonal") {
+        // The cell whose center is nearest, among the guess from the box grid and its neighbours
+        // (a hexagon or a diamond is the set of points nearest its center); a diamond's distances
+        // are measured with the axes scaled to the tile, so a wide tile is not read as a tall one.
+        const auto side = static_cast<float>(hex_side);
+        const float sx = orientation == "hexagonal" ? 1.0f : 1.0f / tw, sy = orientation == "hexagonal" ? 1.0f : 1.0f / th;
+        int gx, gy;
+        if (stagger_y) { gy = static_cast<int>(std::floor(py / ((th + side) * 0.5f))); gx = static_cast<int>(std::floor((px - (staggered_index(*this, gy) ? tw * 0.5f : 0.0f)) / tw)); }
+        else { gx = static_cast<int>(std::floor(px / ((tw + side) * 0.5f))); gy = static_cast<int>(std::floor((py - (staggered_index(*this, gx) ? th * 0.5f : 0.0f)) / th)); }
+        float best = std::numeric_limits<float>::max();
+        x = gx;
+        y = gy;
+        for (int cy = gy - 1; cy <= gy + 1; ++cy) {
+            for (int cx = gx - 1; cx <= gx + 1; ++cx) {
+                const Vec2 c = tile_pixel(cx, cy);
+                const float dx = (px - (c.x + tw * 0.5f)) * sx, dy = (py - (c.y + th * 0.5f)) * sy;
+                const float d = dx * dx + dy * dy;
+                if (d < best) { best = d; x = cx; y = cy; }
+            }
+        }
+    } else {
+        x = static_cast<int>(std::floor(px / tw));
+        y = static_cast<int>(std::floor(py / th));
+    }
+    return x >= 0 && y >= 0 && x < width && y < height;
+}
+
+Vec2 TileMap::object_pixel(float ox, float oy) const {
+    if (orientation != "isometric") return {ox, oy};
+    const auto tw = static_cast<float>(tile_width), th = static_cast<float>(tile_height);
+    const float ux = ox / th, uy = oy / th;   // Tiled keeps isometric objects in the unprojected tile space
+    return {(ux - uy) * tw * 0.5f + static_cast<float>(height) * tw * 0.5f, (ux + uy) * th * 0.5f};
+}
+
 Json TileMap::describe() const {
     Json j;
     j["path"] = path;
     j["kind"] = "tilemap";
+    j["orientation"] = orientation;
+    if (orientation == "hexagonal") j["hex_side"] = hex_side;
+    if (orientation == "hexagonal" || orientation == "staggered") {
+        j["stagger_axis"] = stagger_y ? "y" : "x";
+        j["stagger_index"] = stagger_odd ? "odd" : "even";
+    }
     j["width"] = width;
     j["height"] = height;
     j["tile_width"] = tile_width;
     j["tile_height"] = tile_height;
+    const Vec2 px = pixel_size();
+    j["pixel_width"] = px.x;
+    j["pixel_height"] = px.y;
     Json ls = Json::array();
     for (const TileLayer& l : layers) {
         std::size_t filled = 0;
@@ -447,15 +570,20 @@ Json TileMap::describe() const {
 Result<TileMap> parse_tilemap(const std::string& text, const std::string& display_path) {
     Json doc = Json::parse(text, nullptr, false);
     if (doc.is_discarded() || !doc.is_object()) return fail("bad_tilemap", "{}: not a JSON object", display_path);
-    if (doc.value("orientation", "orthogonal") != "orthogonal") return fail("bad_tilemap", "{}: only orthogonal maps are supported", display_path);
     TileMap map;
     map.path = display_path;
+    map.orientation = doc.value("orientation", "orthogonal");
+    if (map.orientation != "orthogonal" && map.orientation != "isometric" && map.orientation != "staggered" && map.orientation != "hexagonal") return fail("bad_tilemap", "{}: orientation '{}' is not one of orthogonal, isometric, staggered, hexagonal", display_path, map.orientation);
     map.width = doc.value("width", 0);
     map.height = doc.value("height", 0);
     map.tile_width = doc.value("tilewidth", 0);
     map.tile_height = doc.value("tileheight", 0);
+    map.hex_side = map.orientation == "hexagonal" ? doc.value("hexsidelength", 0) : 0;
+    map.stagger_y = doc.value("staggeraxis", "y") != "x";
+    map.stagger_odd = doc.value("staggerindex", "odd") != "even";
     map.properties = properties_of(doc);
     if (map.width <= 0 || map.height <= 0 || map.tile_width <= 0 || map.tile_height <= 0) return fail("bad_tilemap", "{}: width, height, tilewidth and tileheight must be positive", display_path);
+    if (map.hex_side < 0 || (map.orientation == "hexagonal" && map.hex_side > (map.stagger_y ? map.tile_height : map.tile_width))) return fail("bad_tilemap", "{}: hexsidelength must lie between 0 and the tile's extent along the stagger axis", display_path);
     std::filesystem::path base = std::filesystem::path(display_path).parent_path();
     for (const Json& t : doc.value("tilesets", Json::array())) {
         if (!t.is_object()) continue;
@@ -476,7 +604,19 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
         if (ts.columns <= 0) return fail("bad_tilemap", "{}: tileset '{}' has no columns", display_path, ts.name);
         if (ts.tile_count <= 0 && ts.image_height > 0) ts.tile_count = ts.columns * ((ts.image_height - 2 * ts.margin + ts.spacing) / (ts.tile_height + ts.spacing));
         for (const Json& tile : t.value("tiles", Json::array())) {
-            if (tile.is_object() && tile.contains("id")) ts.tile_properties[tile["id"].get<int>()] = properties_of(tile);
+            if (!tile.is_object() || !tile.contains("id")) continue;
+            const int id = tile["id"].get<int>();
+            ts.tile_properties[id] = properties_of(tile);
+            if (tile.contains("animation") && tile["animation"].is_array()) {
+                TileSet::Animation anim;
+                for (const Json& f : tile["animation"]) {
+                    if (!f.is_object()) continue;
+                    const int ms = std::max(f.value("duration", 0), 0);
+                    anim.frames.emplace_back(f.value("tileid", id), ms);
+                    anim.total_ms += ms;
+                }
+                if (!anim.frames.empty() && anim.total_ms > 0) ts.animations[id] = std::move(anim);
+            }
         }
         map.tilesets.push_back(std::move(ts));
     }
@@ -890,6 +1030,22 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         }
         mesh.animations.push_back(std::move(clip));
     }
+    // Nodes a clip moves, and everything below them: their unskinned geometry is kept in the
+    // node's own space as a moving part the pose places, instead of baked into the file's space.
+    std::vector<bool> moved(nodes.size(), false);
+    for (const AnimationClip& clip : mesh.animations) {
+        for (const AnimationChannel& c : clip.channels) {
+            if (c.path == 3 || c.node < 0 || c.node >= static_cast<int>(nodes.size())) continue;   // weights move no node
+            std::vector<int> stack{c.node};
+            while (!stack.empty()) {
+                const int n = stack.back();
+                stack.pop_back();
+                if (n < 0 || n >= static_cast<int>(nodes.size()) || moved[static_cast<std::size_t>(n)]) continue;
+                moved[static_cast<std::size_t>(n)] = true;
+                if (static_cast<std::size_t>(n) < mesh.nodes.size()) for (int ch : mesh.nodes[static_cast<std::size_t>(n)].children) stack.push_back(ch);
+            }
+        }
+    }
     bool any_geometry = false;
     std::function<Status(int, const Mat4&, int)> visit = [&](int ni, const Mat4& parent, int depth) -> Status {
         if (depth > 64 || ni < 0 || ni >= static_cast<int>(nodes.size())) return {};
@@ -902,7 +1058,8 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             // A skinned mesh stays in its bind space: the joints place it, not the node (glTF 2.0).
             const int skin_index = node.value("skin", -1);
             if (skin_index >= static_cast<int>(mesh.skins.size())) return fail("bad_gltf", "{}: node skin {} out of range", display_path, skin_index);
-            const Mat4 bake = skin_index >= 0 ? Mat4::identity() : world;
+            const bool part = skin_index < 0 && moved[static_cast<std::size_t>(ni)];
+            const Mat4 bake = skin_index >= 0 || part ? Mat4::identity() : world;
             Mat4 normal_m = transpose_of(bake.inverse_affine());
             for (const Json& prim : meshes[static_cast<std::size_t>(mi)].value("primitives", Json::array())) {
                 int mode = prim.value("mode", 4);
@@ -1006,6 +1163,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                 }
                 Submesh sm;
                 sm.skin = jnt ? skin_index : -1;
+                sm.node = part ? ni : -1;
                 sm.first_index = static_cast<std::uint32_t>(mesh.indices.size());
                 if (prim.contains("indices")) {
                     POCKET_TRY(idx, g.accessor(prim["indices"].get<int>()));
@@ -1050,12 +1208,16 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             }
         }
     }
-    // Merge submeshes that share a material so each material is one draw.
+    // The bounds, with the moving parts where their nodes rest.
     bool first = true;
-    for (const auto& v : mesh.vertices) {
-        if (first) { mesh.aabb_min = mesh.aabb_max = v.position; first = false; continue; }
-        mesh.aabb_min = {std::min(mesh.aabb_min.x, v.position.x), std::min(mesh.aabb_min.y, v.position.y), std::min(mesh.aabb_min.z, v.position.z)};
-        mesh.aabb_max = {std::max(mesh.aabb_max.x, v.position.x), std::max(mesh.aabb_max.y, v.position.y), std::max(mesh.aabb_max.z, v.position.z)};
+    for (const Submesh& sm : mesh.submeshes) {
+        const Mat4 place = mesh.rest_global(sm.node);
+        for (std::uint32_t i = sm.first_index; i < sm.first_index + sm.index_count && i < mesh.indices.size(); ++i) {
+            const Vec3 pos = sm.node >= 0 ? place.transform_point(mesh.vertices[mesh.indices[i]].position) : mesh.vertices[mesh.indices[i]].position;
+            if (first) { mesh.aabb_min = mesh.aabb_max = pos; first = false; continue; }
+            mesh.aabb_min = {std::min(mesh.aabb_min.x, pos.x), std::min(mesh.aabb_min.y, pos.y), std::min(mesh.aabb_min.z, pos.z)};
+            mesh.aabb_max = {std::max(mesh.aabb_max.x, pos.x), std::max(mesh.aabb_max.y, pos.y), std::max(mesh.aabb_max.z, pos.z)};
+        }
     }
     return mesh;
 }

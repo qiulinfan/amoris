@@ -5,7 +5,7 @@ test("a map answers cells, tiles, solidity and objects in world units", () => {
     const level = world.spawn("Level", { components: { Transform: { position: { x: -10, y: 4.5, z: 0 } }, TileMap: { map: "samples/sprites/assets/level.tmj" } } });
     const info = tilemap.info(level) as { width: number; layers: Array<{ name: string }>; bounds: { min: { x: number; y: number } } };
     expect(info.width).toBe(20);
-    expect(info.layers.map((l) => l.name)).toEqual(["ground", "deco", "platforms"]);
+    expect(info.layers.map((l) => l.name)).toEqual(["ground", "deco", "platforms", "water"]);
     expect(info.bounds.min.y).toBe(-5.5);
     expect(tilemap.cell(level, 0, -3.6).tile_y).toBe(8);
     expect(tilemap.solid(level, { x: 0, y: -3.6 })).toBe(true);

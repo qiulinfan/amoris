@@ -216,7 +216,7 @@ fields = [
 
 [[component]]
 name = "ParticleEmitter"
-doc = "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once."
+doc = "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones."
 fields = [
     { name = "texture", type = "string", default = "", doc = "Project-relative image; empty draws soft solid quads." },
     { name = "emitting", type = "bool", default = true, doc = "Whether particles spawn continuously at rate." },
@@ -235,6 +235,12 @@ fields = [
     { name = "billboard", type = "bool", default = true, doc = "Face the camera (3D); false keeps quads in the XY plane for 2D scenes." },
     { name = "world_space", type = "bool", default = true, doc = "Particles keep their world position when the emitter moves; false moves them with it." },
     { name = "seed", type = "i32", default = 0, doc = "Extra seed for the emitter's random stream (the entity id seeds it too)." },
+    { name = "floor", type = "f32", default = -1000000.0, doc = "A floor the particles land on: the world height (or the emitter's own when world_space is false) below which a particle is put back and bounces with `bounce`; the default is far below anything." },
+    { name = "bounce", type = "f32", default = 0.3, doc = "How much of the speed into the floor a particle keeps coming back up; 0 lands it (it slides on with `floor_friction`)." },
+    { name = "floor_friction", type = "f32", default = 0.5, doc = "Fraction of the speed along the floor lost per second while a particle rests on it." },
+    { name = "stretch", type = "f32", default = 0.0, doc = "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square." },
+    { name = "child", type = "entity", default = 0, doc = "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none." },
+    { name = "child_count", type = "i32", default = 8, doc = "Particles the child emits at each death." },
 ]
 
 [[component]]

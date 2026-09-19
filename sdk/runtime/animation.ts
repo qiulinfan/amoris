@@ -84,6 +84,8 @@ export interface PoseInfo {
     entity: number;
     mesh: string;
     joints: PoseJoint[];
+    /** Moving parts: unskinned geometry a clip moves, each placed by its node (docs/design/animation.md, Moving parts). */
+    parts: Array<{ node: number; name: string; position: Vec3; axis_x: Vec3; axis_y: Vec3 }>;
     posed: boolean;
     clip?: string;
     time?: number;

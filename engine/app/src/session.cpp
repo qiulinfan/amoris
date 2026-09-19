@@ -327,6 +327,7 @@ void Session::run_tick() {
         if (!downs.empty()) inject_events(std::move(downs));
     }
     in_tick_ = true;
+    if (assets_) assets_->set_tile_time(static_cast<std::uint64_t>(clock_.sim_seconds() * 1000.0));   // the animated tiles' clock
     Json t;
     t["tick"] = tick;
     t["dt"] = clock_.tick_seconds;
@@ -913,18 +914,30 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
     Vec3 origin{0, 0, 0};
     if (const auto* wt = w.try_get<world::WorldTransform>(id)) origin = wt->position;
     else if (const auto* t = w.try_get<world::Transform>(id)) origin = t->position;
-    // World <-> tile: the entity sits at the map's top-left corner; rows go down (-Y).
+    // World <-> tile: the entity sits at the map's top-left corner; rows go down (-Y). An
+    // orthogonal map's cells are tile_size square; the others are read through the map's own
+    // pixel geometry at tile_size per cell width (docs/design/tilemaps.md, Orientations).
+    const double sx = ts / map->tile_width, sy = map->orthogonal() ? ts / map->tile_height : sx;
     auto to_cell = [&](double wx, double wy, int& cx, int& cy) {
-        cx = static_cast<int>(std::floor((wx - origin.x) / ts));
-        cy = static_cast<int>(std::floor((origin.y - wy) / ts));
+        if (map->orthogonal()) {
+            cx = static_cast<int>(std::floor((wx - origin.x) / ts));
+            cy = static_cast<int>(std::floor((origin.y - wy) / ts));
+        } else {
+            (void)map->cell_at_pixel(static_cast<float>((wx - origin.x) / sx), static_cast<float>((origin.y - wy) / sy), cx, cy);
+        }
     };
-    auto cell_center = [&](int cx, int cy) { return Json{{"x", origin.x + (cx + 0.5) * ts}, {"y", origin.y - (cy + 0.5) * ts}}; };
+    auto cell_center = [&](int cx, int cy) {
+        if (map->orthogonal()) return Json{{"x", origin.x + (cx + 0.5) * ts}, {"y", origin.y - (cy + 0.5) * ts}};
+        const Vec2 c = map->tile_pixel(cx, cy);
+        return Json{{"x", origin.x + (c.x + map->tile_width * 0.5) * sx}, {"y", origin.y - (c.y + map->tile_height * 0.5) * sy}};
+    };
     if (op == "info") {
         Json j = map->describe();
         j["entity"] = id;
         j["tile_size"] = ts;
         j["origin"] = Json{{"x", origin.x}, {"y", origin.y}};
-        j["bounds"] = Json{{"min", {{"x", origin.x}, {"y", origin.y - map->height * ts}}}, {"max", {{"x", origin.x + map->width * ts}, {"y", origin.y}}}};
+        const Vec2 px = map->pixel_size();
+        j["bounds"] = Json{{"min", {{"x", origin.x}, {"y", origin.y - px.y * sy}}}, {"max", {{"x", origin.x + px.x * sx}, {"y", origin.y}}}};
         return j;
     }
     if (op == "cell") {
@@ -956,6 +969,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
                     int local = static_cast<int>((gid & assets::TileMap::kIdMask) - set->first_gid);
                     lj["id"] = local;
                     lj["tileset"] = set->name;
+                    if (set->animations.contains(local)) lj["frame"] = set->frame_at(local, assets_->tile_time());   // the id drawn now
                     lj["solid"] = l.solid_layer() || set->solid(local);
                     lj["one_way"] = set->one_way(local);
                     if (auto it = set->tile_properties.find(local); it != set->tile_properties.end()) lj["properties"] = it->second;
@@ -983,10 +997,12 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         for (const assets::ObjectLayer& ol : map->object_layers) {
             if (!layer_name.empty() && ol.name != layer_name) continue;
             for (const assets::MapObject& o : ol.objects) {
-                // Tiled objects are in pixels from the top-left; tile objects (gid) anchor bottom-left.
-                double wx = origin.x + o.x / map->tile_width * ts;
-                double wy = origin.y - o.y / map->tile_height * ts;
-                double ww = o.width / map->tile_width * ts, wh = o.height / map->tile_height * ts;
+                // Tiled objects are in pixels from the top-left (isometric ones in the unprojected
+                // tile space, taken through the projection); tile objects (gid) anchor bottom-left.
+                const Vec2 op = map->object_pixel(o.x, o.y);
+                double wx = origin.x + op.x * sx;
+                double wy = origin.y - op.y * sy;
+                double ww = o.width * sx, wh = o.height * sy;
                 Json oj{{"layer", ol.name}, {"name", o.name}, {"type", o.type}, {"properties", o.properties}, {"point", o.point}};
                 oj["x"] = wx;
                 oj["y"] = wy;
@@ -1360,6 +1376,17 @@ Result<Json> Session::particles_command(std::string_view op, const Json& p) {
         std::size_t n = particles_->alive();
         particles_->clear();
         return Json{{"cleared", n}};
+    }
+    if (op == "list") {
+        // The live particles of one emitter: where they are and how they move.
+        if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
+        world::EntityId id = resolve_entity(p["entity"]);
+        if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+        const auto limit = static_cast<std::size_t>(std::clamp(opt<int>(p, "limit", 100), 1, 10000));
+        Json arr = particles_->list(id, limit);
+        std::size_t alive = 0;
+        if (auto it = particles_->pools().find(id); it != particles_->pools().end()) alive = it->second.alive.size();
+        return Json{{"entity", id}, {"alive", alive}, {"particles", arr}};
     }
     if (op == "burst") {
         if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
@@ -2867,7 +2894,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

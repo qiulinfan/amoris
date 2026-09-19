@@ -194,7 +194,7 @@ Aims one node of the entity's skinned mesh at a point after the clips, layers an
 
 ## ParticleEmitter
 
-Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.
+Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -215,6 +215,12 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 | `billboard` | bool | true | Face the camera (3D); false keeps quads in the XY plane for 2D scenes. |
 | `world_space` | bool | true | Particles keep their world position when the emitter moves; false moves them with it. |
 | `seed` | i32 | 0 | Extra seed for the emitter's random stream (the entity id seeds it too). |
+| `floor` | f32 | -1000000.0 | A floor the particles land on: the world height (or the emitter's own when world_space is false) below which a particle is put back and bounces with `bounce`; the default is far below anything. |
+| `bounce` | f32 | 0.3 | How much of the speed into the floor a particle keeps coming back up; 0 lands it (it slides on with `floor_friction`). |
+| `floor_friction` | f32 | 0.5 | Fraction of the speed along the floor lost per second while a particle rests on it. |
+| `stretch` | f32 | 0.0 | Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square. |
+| `child` | entity | 0 | An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none. |
+| `child_count` | i32 | 8 | Particles the child emits at each death. |
 
 ## Bounds
 
