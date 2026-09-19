@@ -1,0 +1,259 @@
+{
+  "command": "scenario",
+  "ok": true,
+  "summary": "6 of 6 scenario runs passed (2 scenarios, 3 seeds each)\n  ok  the enemies reach the player around the pillars and the cart without overlapping: 3/3 passed, ticks to pass 482..482 (avg 482)\n      report (seed 1): hits=6, min_gap=1.510\n  ok  an enemy standing behind a pillar is told the way around it: 3/3 passed, ticks to pass 62..62 (avg 62)",
+  "data": {
+    "config": "debug",
+    "frames": 900,
+    "kind": "scenarios",
+    "project": "samples/playground",
+    "results": [
+      {
+        "failed": 0,
+        "file": "samples/playground/scenarios/crowd.ts",
+        "passed": 3,
+        "runs": [
+          {
+            "bots": [],
+            "elapsed_ms": 1344,
+            "error": null,
+            "ok": true,
+            "report": {
+              "hits": 6,
+              "min_gap": 1.51
+            },
+            "seed": 1,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "report min_gap",
+                "name": "the enemies reach the player around the pillars and the cart without overlapping",
+                "report": {
+                  "hits": 6,
+                  "min_gap": 1.51
+                },
+                "seconds": 8.016666666666666,
+                "status": "passed",
+                "step": 4,
+                "steps": 4,
+                "ticks": 482
+              },
+              "enemies": 5,
+              "hits": 6,
+              "killed": 6,
+              "nav.agents": 5,
+              "nav.blocked": 16,
+              "nav.cells": 1396,
+              "nav.detours": 440,
+              "nav.min_gap": 1.51,
+              "player.health": 40
+            },
+            "status": "passed",
+            "step": "report min_gap",
+            "ticks": 482
+          },
+          {
+            "bots": [],
+            "elapsed_ms": 1323,
+            "error": null,
+            "ok": true,
+            "report": {
+              "hits": 8,
+              "min_gap": 0.71
+            },
+            "seed": 2,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "report min_gap",
+                "name": "the enemies reach the player around the pillars and the cart without overlapping",
+                "report": {
+                  "hits": 8,
+                  "min_gap": 0.71
+                },
+                "seconds": 8.016666666666666,
+                "status": "passed",
+                "step": 4,
+                "steps": 4,
+                "ticks": 482
+              },
+              "enemies": 3,
+              "hits": 8,
+              "killed": 8,
+              "nav.agents": 3,
+              "nav.blocked": 16,
+              "nav.cells": 1396,
+              "nav.detours": 476,
+              "nav.min_gap": 0.71,
+              "player.health": 20
+            },
+            "status": "passed",
+            "step": "report min_gap",
+            "ticks": 482
+          },
+          {
+            "bots": [],
+            "elapsed_ms": 1286,
+            "error": null,
+            "ok": true,
+            "report": {
+              "hits": 7,
+              "min_gap": 0.83
+            },
+            "seed": 3,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "report min_gap",
+                "name": "the enemies reach the player around the pillars and the cart without overlapping",
+                "report": {
+                  "hits": 7,
+                  "min_gap": 0.83
+                },
+                "seconds": 8.016666666666666,
+                "status": "passed",
+                "step": 4,
+                "steps": 4,
+                "ticks": 482
+              },
+              "enemies": 4,
+              "hits": 7,
+              "killed": 7,
+              "nav.agents": 4,
+              "nav.blocked": 16,
+              "nav.cells": 1396,
+              "nav.detours": 417,
+              "nav.min_gap": 0.83,
+              "player.health": 30
+            },
+            "status": "passed",
+            "step": "report min_gap",
+            "ticks": 482
+          }
+        ],
+        "scenario": "the enemies reach the player around the pillars and the cart without overlapping",
+        "seeds": 3,
+        "ticks": {
+          "avg": 482.0,
+          "max": 482,
+          "min": 482
+        }
+      },
+      {
+        "failed": 0,
+        "file": "samples/playground/scenarios/crowd.ts",
+        "passed": 3,
+        "runs": [
+          {
+            "bots": [],
+            "elapsed_ms": 399,
+            "error": null,
+            "ok": true,
+            "report": {},
+            "seed": 1,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "agents on the move",
+                "name": "an enemy standing behind a pillar is told the way around it",
+                "report": {},
+                "seconds": 1.0166666666666666,
+                "status": "passed",
+                "step": 2,
+                "steps": 2,
+                "ticks": 62
+              },
+              "enemies": 1,
+              "hits": 0,
+              "killed": 0,
+              "nav.agents": 1,
+              "nav.blocked": 16,
+              "nav.cells": 1396,
+              "nav.detours": 0,
+              "nav.min_gap": null,
+              "player.health": 100
+            },
+            "status": "passed",
+            "step": "agents on the move",
+            "ticks": 62
+          },
+          {
+            "bots": [],
+            "elapsed_ms": 412,
+            "error": null,
+            "ok": true,
+            "report": {},
+            "seed": 2,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "agents on the move",
+                "name": "an enemy standing behind a pillar is told the way around it",
+                "report": {},
+                "seconds": 1.0166666666666666,
+                "status": "passed",
+                "step": 2,
+                "steps": 2,
+                "ticks": 62
+              },
+              "enemies": 1,
+              "hits": 0,
+              "killed": 0,
+              "nav.agents": 1,
+              "nav.blocked": 16,
+              "nav.cells": 1396,
+              "nav.detours": 0,
+              "nav.min_gap": null,
+              "player.health": 100
+            },
+            "status": "passed",
+            "step": "agents on the move",
+            "ticks": 62
+          },
+          {
+            "bots": [],
+            "elapsed_ms": 406,
+            "error": null,
+            "ok": true,
+            "report": {},
+            "seed": 3,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "agents on the move",
+                "name": "an enemy standing behind a pillar is told the way around it",
+                "report": {},
+                "seconds": 1.0166666666666666,
+                "status": "passed",
+                "step": 2,
+                "steps": 2,
+                "ticks": 62
+              },
+              "enemies": 1,
+              "hits": 0,
+              "killed": 0,
+              "nav.agents": 1,
+              "nav.blocked": 16,
+              "nav.cells": 1396,
+              "nav.detours": 10,
+              "nav.min_gap": null,
+              "player.health": 100
+            },
+            "status": "passed",
+            "step": "agents on the move",
+            "ticks": 62
+          }
+        ],
+        "scenario": "an enemy standing behind a pillar is told the way around it",
+        "seeds": 3,
+        "ticks": {
+          "avg": 62.0,
+          "max": 62,
+          "min": 62
+        }
+      }
+    ],
+    "seeds": 3
+  },
+  "elapsed_ms": 5542
+}

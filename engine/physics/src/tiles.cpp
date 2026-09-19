@@ -20,11 +20,20 @@ struct MapView {
     [[nodiscard]] float top(int r) const { return origin.y - static_cast<float>(r) * ts; }
     [[nodiscard]] float bottom(int r) const { return origin.y - static_cast<float>(r + 1) * ts; }
     [[nodiscard]] int solidity(int c, int r) const { return map->solidity_at(c, r); }
+    [[nodiscard]] int slope_at_cell(int c, int r) const { return map->slope_at(c, r); }
 };
 
 constexpr float kSkin = 1e-3f;
 
 }  // namespace
+
+// A kinematic body's box after its move this step, with the move itself (what it carries riders by).
+struct Rect {
+    world::EntityId id = 0;
+    float l = 0, r = 0, b = 0, t = 0;
+    float dx = 0, dy = 0;
+    bool one_way = false;
+};
 
 void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     stats_ = Stats2D{};
@@ -45,7 +54,39 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     std::vector<Landing> landings;
     std::vector<std::pair<world::EntityId, world::Body2D>> writes;
     std::vector<std::pair<world::EntityId, Vec3>> positions;
+    // Platforms first: kinematic bodies move by their velocity, nothing stops them, and the
+    // dynamic bodies below see where they are now and how far they moved.
+    std::vector<Rect> rects;
     w.ecs().each([&](flecs::entity e, const world::Body2D& body_in, const world::Transform& t) {
+        if (!body_in.kinematic) return;
+        world::Body2D b = body_in;
+        stats_.bodies++;
+        stats_.platforms++;
+        Vec3 pos = t.position;
+        Rect rc;
+        rc.id = e.id();
+        rc.dx = b.velocity.x * dt;
+        rc.dy = b.velocity.y * dt;
+        pos.x += rc.dx;
+        pos.y += rc.dy;
+        const float cx = pos.x + b.offset.x, cy = pos.y + b.offset.y;
+        const float hx = std::max(b.size.x, 0.01f), hy = std::max(b.size.y, 0.01f);
+        rc.l = cx - hx;
+        rc.r = cx + hx;
+        rc.b = cy - hy;
+        rc.t = cy + hy;
+        rc.one_way = b.one_way;
+        rects.push_back(rc);
+        b.grounded = false;
+        b.on_wall = 0;
+        b.on_ceiling = false;
+        b.riding = 0;
+        b.on_slope = 0;
+        positions.emplace_back(e.id(), pos);
+        writes.emplace_back(e.id(), b);
+    });
+    w.ecs().each([&](flecs::entity e, const world::Body2D& body_in, const world::Transform& t) {
+        if (body_in.kinematic) return;
         world::Body2D b = body_in;
         stats_.bodies++;
         const MapView* mv = nullptr;
@@ -62,77 +103,180 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         float cx = pos.x + b.offset.x, cy = pos.y + b.offset.y;
         const float hx = std::max(b.size.x, 0.01f), hy = std::max(b.size.y, 0.01f);
         const bool was_grounded = b.grounded;
+        const float step = std::max(b.step, 0.0f);
+        // Carried: a body standing on a platform moves with it before its own move.
+        if (b.riding != 0) {
+            for (const Rect& rc : rects) {
+                if (rc.id != b.riding) continue;
+                cx += rc.dx;
+                cy += rc.dy;
+                stats_.riding++;
+            }
+        }
         b.grounded = false;
         b.on_wall = 0;
         b.on_ceiling = false;
-        if (mv) {
-            // X: sweep the box to its new column range; stop at the first solid column.
-            float dx = b.velocity.x * dt;
-            if (dx != 0) {
-                float nx = cx + dx;
-                int r0 = mv->row(cy + hy - kSkin), r1 = mv->row(cy - hy + kSkin);
+        b.on_slope = 0;
+        world::EntityId riding = 0;
+        bool stepped_tick = false;
+        // The height of a slope's floor at x inside its cell.
+        auto slope_height = [&](int c, int r, float x) {
+            const int sl = mv->slope_at_cell(c, r);
+            float tt = std::clamp((x - mv->left(c)) / mv->ts, 0.0f, 1.0f);
+            if (sl < 0) tt = 1.0f - tt;
+            return mv->bottom(r) + tt * mv->ts;
+        };
+        // X: sweep the box to its new column range; stop at the first solid column or platform,
+        // unless the obstacle is low enough to step onto while grounded.
+        float dx = b.velocity.x * dt;
+        if (dx != 0) {
+            float nx = cx + dx;
+            const float bottom = cy - hy;
+            int r0 = mv ? mv->row(cy + hy - kSkin) : 0, r1 = mv ? mv->row(bottom + kSkin) : -1;
+            float block_x = 0;      // the x the box stops at
+            float top_of_block = 0; // the highest solid top in the blocking column, for stepping up
+            bool blocked = false;
+            if (mv) {
                 if (dx > 0) {
                     int c_from = mv->col(cx + hx), c_to = mv->col(nx + hx - kSkin);
-                    for (int c = c_from; c <= c_to && !b.on_wall; ++c) {
+                    for (int c = c_from; c <= c_to && !blocked; ++c) {
                         for (int r = r0; r <= r1; ++r) {
-                            if (mv->solidity(c, r) == 1) { nx = mv->left(c) - hx - kSkin; b.on_wall = 1; break; }
-                        }
-                    }
-                } else {
-                    int c_from = mv->col(cx - hx), c_to = mv->col(nx - hx + kSkin);
-                    for (int c = c_from; c >= c_to && !b.on_wall; --c) {
-                        for (int r = r0; r <= r1; ++r) {
-                            if (mv->solidity(c, r) == 1) { nx = mv->right(c) + hx + kSkin; b.on_wall = -1; break; }
-                        }
-                    }
-                }
-                if (b.on_wall) { b.velocity.x = 0; stats_.blocked++; }
-                cx = nx;
-            }
-            // Y: the same downward or upward; one-way tiles only catch a box coming from above.
-            float dy = b.velocity.y * dt;
-            if (dy != 0) {
-                float ny = cy + dy;
-                int c0 = mv->col(cx - hx + kSkin), c1 = mv->col(cx + hx - kSkin);
-                bool hit = false;
-                if (dy < 0) {
-                    const float bottom_before = cy - hy;
-                    int r_from = mv->row(cy - hy), r_to = mv->row(ny - hy + kSkin);
-                    for (int r = r_from; r <= r_to && !hit; ++r) {
-                        for (int c = c0; c <= c1; ++c) {
-                            int s = mv->solidity(c, r);
-                            if (s == 1 || (s == 2 && bottom_before >= mv->top(r) - kSkin)) {
-                                ny = mv->top(r) + hy + kSkin;
-                                hit = true;
-                                b.grounded = true;
-                                break;
+                            if (mv->solidity(c, r) == 1) {
+                                if (!blocked) { blocked = true; block_x = mv->left(c) - hx - kSkin; top_of_block = mv->top(r); }
+                                top_of_block = std::max(top_of_block, mv->top(r));
                             }
                         }
                     }
                 } else {
-                    int r_from = mv->row(cy + hy), r_to = mv->row(ny + hy - kSkin);
+                    int c_from = mv->col(cx - hx), c_to = mv->col(nx - hx + kSkin);
+                    for (int c = c_from; c >= c_to && !blocked; --c) {
+                        for (int r = r0; r <= r1; ++r) {
+                            if (mv->solidity(c, r) == 1) {
+                                if (!blocked) { blocked = true; block_x = mv->right(c) + hx + kSkin; top_of_block = mv->top(r); }
+                                top_of_block = std::max(top_of_block, mv->top(r));
+                            }
+                        }
+                    }
+                }
+            }
+            // Solid platforms block sideways too (one-way ones are nothing from the side).
+            for (const Rect& rc : rects) {
+                if (rc.one_way || rc.b >= cy + hy - kSkin || rc.t <= bottom + kSkin) continue;
+                if (dx > 0 && rc.l >= cx + hx - kSkin && rc.l < nx + hx) {
+                    float x = rc.l - hx - kSkin;
+                    if (!blocked || x < block_x) { blocked = true; block_x = x; top_of_block = rc.t; }
+                } else if (dx < 0 && rc.r <= cx - hx + kSkin && rc.r > nx - hx) {
+                    float x = rc.r + hx + kSkin;
+                    if (!blocked || x > block_x) { blocked = true; block_x = x; top_of_block = rc.t; }
+                }
+            }
+            bool stepped = false;
+            if (blocked && was_grounded && mv && top_of_block - bottom <= step + kSkin) {
+                // A step: the box fits above the obstacle at the new height, so climb it.
+                const float ny = top_of_block + hy + kSkin;
+                bool fits = true;
+                int rr0 = mv->row(ny + hy - kSkin), rr1 = mv->row(ny - hy + kSkin);
+                int cc0 = mv->col(nx - hx + kSkin), cc1 = mv->col(nx + hx - kSkin);
+                for (int r = rr0; r <= rr1 && fits; ++r) for (int c = cc0; c <= cc1; ++c) if (mv->solidity(c, r) == 1) { fits = false; break; }
+                for (const Rect& rc : rects) if (!rc.one_way && rc.l < nx + hx && rc.r > nx - hx && rc.b < ny + hy && rc.t > ny - hy + kSkin) fits = false;
+                if (fits) {
+                    cy = ny;
+                    blocked = false;
+                    stepped = true;
+                    stats_.stepped++;
+                }
+            }
+            if (blocked) {
+                nx = block_x;
+                b.on_wall = dx > 0 ? 1 : -1;
+                b.velocity.x = 0;
+                stats_.blocked++;
+            }
+            cx = nx;
+            if (stepped) {
+                // Standing on the edge just climbed; the floor search below would only find the
+                // lower floor the body came from and pull it back down.
+                b.grounded = true;
+                b.velocity.y = 0;
+                stepped_tick = true;
+            }
+        }
+        // Y: down onto solid tiles, one-way tiles and platforms from above, and slope floors; up
+        // against solid tiles and solid platforms. A grounded body that only sinks by gravity may
+        // also reach down a step for the floor, so it walks down slopes and stairs without a hop.
+        float dy = b.velocity.y * dt;
+        const bool just_gravity = was_grounded && b.velocity.y <= 0 && b.velocity.y >= b.gravity * dt * 1.5f;
+        const float reach = just_gravity ? step : 0.0f;
+        if (!stepped_tick && (dy != 0 || reach > 0)) {
+            float ny = cy + dy;
+            int c0 = mv ? mv->col(cx - hx + kSkin) : 0, c1 = mv ? mv->col(cx + hx - kSkin) : -1;
+            bool hit = false;
+            if (dy <= 0) {
+                const float bottom_before = cy - hy;
+                const float lowest = ny - hy - reach;   // how far down a floor may be
+                float best = -1e30f;
+                bool found = false;
+                int best_slope = 0;
+                world::EntityId best_rect = 0;
+                auto offer = [&](float h, int slope, world::EntityId rect) {
+                    if (h < lowest - kSkin) return;
+                    if (h > best) { best = h; found = true; best_slope = slope; best_rect = rect; }
+                };
+                if (mv) {
+                    int r_from = mv->row(bottom_before), r_to = mv->row(lowest + kSkin);
+                    for (int r = r_from; r <= r_to; ++r) {
+                        for (int c = c0; c <= c1; ++c) {
+                            int sv = mv->solidity(c, r);
+                            if (sv == 1) offer(mv->top(r), 0, 0);
+                            else if (sv == 2 && bottom_before >= mv->top(r) - kSkin) offer(mv->top(r), 0, 0);
+                        }
+                    }
+                    // Slopes: the floor under the box's center, in the cells its bottom passes through
+                    // and the one above (walking up, the floor rises past the current bottom).
+                    int cs = mv->col(cx);
+                    for (int r = std::max(r_from - 1, mv->row(bottom_before + step)); r <= r_to; ++r) {
+                        if (mv->solidity(cs, r) != 3) continue;
+                        float h = slope_height(cs, r, cx);
+                        if (h <= bottom_before + step + kSkin) offer(h, mv->slope_at_cell(cs, r), 0);
+                    }
+                }
+                for (const Rect& rc : rects) {
+                    if (rc.r <= cx - hx + kSkin || rc.l >= cx + hx - kSkin) continue;
+                    if (rc.t > bottom_before + kSkin) continue;   // platforms are stood on from above only
+                    offer(rc.t, 0, rc.id);
+                }
+                if (found) {
+                    ny = best + hy + kSkin;
+                    hit = true;
+                    b.grounded = true;
+                    b.on_slope = best_slope;
+                    riding = best_rect;
+                }
+            } else {
+                int r_from = mv ? mv->row(cy + hy) : 0, r_to = mv ? mv->row(ny + hy - kSkin) : 1;
+                if (mv) {
                     for (int r = r_from; r >= r_to && !hit; --r) {
                         for (int c = c0; c <= c1; ++c) {
                             if (mv->solidity(c, r) == 1) { ny = mv->bottom(r) - hy - kSkin; hit = true; b.on_ceiling = true; break; }
                         }
                     }
                 }
-                if (hit) {
-                    if (b.grounded && !was_grounded) landings.push_back({e.id(), -b.velocity.y});
-                    b.velocity.y = 0;
-                    stats_.blocked++;
+                for (const Rect& rc : rects) {
+                    if (rc.one_way || rc.r <= cx - hx + kSkin || rc.l >= cx + hx - kSkin) continue;
+                    if (rc.b >= cy + hy - kSkin && rc.b < ny + hy) {
+                        float y = rc.b - hy - kSkin;
+                        if (!hit || y < ny) { ny = y; hit = true; b.on_ceiling = true; }
+                    }
                 }
-                cy = ny;
-            } else if (b.velocity.y == 0) {
-                // Resting: still grounded while a solid or one-way tile sits right under the box.
-                int c0 = mv->col(cx - hx + kSkin), c1 = mv->col(cx + hx - kSkin);
-                int r = mv->row(cy - hy - 2 * kSkin);
-                for (int c = c0; c <= c1 && !b.grounded; ++c) if (mv->solidity(c, r) != 0) b.grounded = true;
             }
-        } else {
-            cx += b.velocity.x * dt;
-            cy += b.velocity.y * dt;
+            if (hit) {
+                if (b.grounded && !was_grounded) landings.push_back({e.id(), -b.velocity.y});
+                b.velocity.y = 0;
+                stats_.blocked++;
+            }
+            cy = ny;
         }
+        b.riding = riding;
         if (b.grounded) stats_.grounded++;
         pos.x = cx - b.offset.x;
         pos.y = cy - b.offset.y;
@@ -152,7 +296,7 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
 }
 
 Json Physics2D::describe() const {
-    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}};
+    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}};
 }
 
 }  // namespace pocket::physics

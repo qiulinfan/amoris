@@ -104,7 +104,14 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(map.layers[0].gids[0] == 0);
     REQUIRE(map.tilesets.size() == 1);
     REQUIRE(map.tilesets[0].image == "assets/tiles.png");   // resolved next to the map
-    REQUIRE(map.tilesets[0].columns == 3);
+    REQUIRE(map.tilesets[0].columns == 5);
+    REQUIRE(map.tilesets[0].slope(3) == 1);
+    REQUIRE(map.tilesets[0].slope(4) == -1);
+    REQUIRE(map.tilesets[0].slope(0) == 0);
+    REQUIRE(map.slope_at(16, 7) == 1);
+    REQUIRE(map.slope_at(18, 7) == -1);
+    REQUIRE(map.solidity_at(16, 7) == 3);
+    REQUIRE_FALSE(map.solid_at(16, 7));
     REQUIRE(map.tilesets[0].solid(0));
     REQUIRE_FALSE(map.tilesets[0].one_way(0));
     REQUIRE(map.tilesets[0].one_way(2));
@@ -130,7 +137,7 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE(map.object_layers[0].objects[1].properties["bob"] == 0.3);
     REQUIRE(map.properties["title"] == "coins");
     Json d = map.describe();
-    REQUIRE(d["layers"][0]["tiles"] == 40);
+    REQUIRE(d["layers"][0]["tiles"] == 43);  // two ground rows and the three hill cells
     REQUIRE(store.describe("assets/level.tmj")["kind"] == "tilemap");
     // Bad maps say why.
     REQUIRE(assets::parse_tilemap("{\"orientation\":\"isometric\",\"width\":1,\"height\":1,\"tilewidth\":1,\"tileheight\":1}", "x.tmj").has_value() == false);

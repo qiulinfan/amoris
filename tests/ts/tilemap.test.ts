@@ -48,3 +48,13 @@ test("a map is edited in place: set, fill and the solidity that follows", () => 
     expect(() => tilemap.set(level, { tile_x: 0, tile_y: 0 }, 0, "nope")).toThrow();
     expect(() => tilemap.set(level, { tile_x: 0, tile_y: 0 }, 9)).toThrow();
 });
+
+test("slope tiles are floors that rise across the cell", () => {
+    const level = world.spawn("Level", { components: { Transform: { position: { x: -10, y: 4.5, z: 0 } }, TileMap: { map: "samples/sprites/assets/level.tmj" } } });
+    // The hill: a slope rising to the right at cell 16, a block at 17, a slope rising to the left at 18 (row 7).
+    expect(tilemap.tile(level, { tile_x: 16, tile_y: 7 }).slope).toBe(1);
+    expect(tilemap.tile(level, { tile_x: 18, tile_y: 7 }).slope).toBe(-1);
+    expect(tilemap.tile(level, { tile_x: 17, tile_y: 7 }).slope).toBe(0);
+    expect(tilemap.tile(level, { tile_x: 17, tile_y: 7 }).solid).toBe(true);
+    expect(tilemap.solid(level, { tile_x: 16, tile_y: 7 })).toBe(false);   // a slope is a floor, not a wall
+});

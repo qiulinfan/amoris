@@ -104,8 +104,9 @@ def sprite_coin_sheet(size=16, frames=4):
 
 
 def sprite_tiles(tile=16):
-    """Three tiles side by side: grass, dirt and a thin wooden platform (one-way), each 16x16."""
-    w, h = tile * 3, tile
+    """Five tiles side by side, each 16x16: grass, dirt, a thin wooden platform (one-way), a slope
+    rising to the right and a slope rising to the left (grass along the diagonal, dirt below)."""
+    w, h = tile * 5, tile
     px = bytearray()
     for y in range(h):
         for x in range(w):
@@ -115,9 +116,19 @@ def sprite_tiles(tile=16):
             elif x < tile * 2:
                 shade = 15 if (x * 5 + y * 3) % 7 == 0 else 0
                 px += bytes((130 + shade, 90 + shade, 50, 255))
-            else:
+            elif x < tile * 3:
                 # A plank across the top of the cell, transparent below it.
                 px += bytes((170, 120, 60, 255)) if y < 4 else (bytes((120, 80, 40, 255)) if y < 6 else bytes((0, 0, 0, 0)))
+            else:
+                lx = x % tile
+                surface = (tile - 1 - lx) if x < tile * 4 else lx     # the row the floor sits on in this column
+                if y < surface:
+                    px += bytes((0, 0, 0, 0))
+                elif y < surface + 3:
+                    px += bytes((120, 200, 90, 255))
+                else:
+                    shade = 15 if (x * 5 + y * 3) % 7 == 0 else 0
+                    px += bytes((130 + shade, 90 + shade, 50, 255))
     return png(w, h, px)
 
 
@@ -402,12 +413,16 @@ def sprites_level():
     grass row over a dirt row (both solid through a tile property), a 'deco' layer with a few
     flipped grass tiles as ledges, and an object layer placing the player and the coins."""
     w, h = 20, 10
-    grass, dirt, plank = 1, 2, 3
+    grass, dirt, plank, slope_right, slope_left = 1, 2, 3, 4, 5
     flip_h = 0x80000000
     ground = [0] * (w * h)
     for x in range(w):
         ground[8 * w + x] = grass
         ground[9 * w + x] = dirt
+    # A hill on the right: up a slope, over a block, down the other slope (row 7, cells 16-18).
+    ground[7 * w + 16] = slope_right
+    ground[7 * w + 17] = grass
+    ground[7 * w + 18] = slope_left
     deco = [0] * (w * h)
     for x in (13, 14):          # a ledge the last coins float over
         deco[6 * w + x] = grass | flip_h
@@ -424,11 +439,13 @@ def sprites_level():
         "type": "map", "version": "1.10", "tiledversion": "1.11.0", "orientation": "orthogonal", "renderorder": "right-down",
         "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 5, "nextobjectid": 8,
         "properties": [{"name": "title", "type": "string", "value": "coins"}],
-        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 48, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
-                      "columns": 3, "tilecount": 3, "spacing": 0, "margin": 0,
+        "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 80, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
+                      "columns": 5, "tilecount": 5, "spacing": 0, "margin": 0,
                       "tiles": [{"id": 0, "properties": [{"name": "solid", "type": "bool", "value": True}]},
                                 {"id": 1, "properties": [{"name": "solid", "type": "bool", "value": True}]},
-                                {"id": 2, "properties": [{"name": "one_way", "type": "bool", "value": True}]}]}],
+                                {"id": 2, "properties": [{"name": "one_way", "type": "bool", "value": True}]},
+                                {"id": 3, "properties": [{"name": "slope", "type": "int", "value": 1}]},
+                                {"id": 4, "properties": [{"name": "slope", "type": "int", "value": -1}]}]}],
         "layers": [
             {"id": 1, "type": "tilelayer", "name": "ground", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": ground},
             {"id": 2, "type": "tilelayer", "name": "deco", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": deco,

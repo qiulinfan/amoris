@@ -11,6 +11,7 @@ const score = signal(0);
 const coins = new Set<number>();
 let player = 0;
 let level = 0;
+let lift = 0;
 let facingLeft = false;
 let walking = false;
 
@@ -23,6 +24,10 @@ onStart(() => {
     const start = spawns.find((o) => o.name === "player") ?? { x: 0, y: -3 };
     player = world.spawn("Player", { components: { Transform: { position: { x: start.x, y: start.y, z: 0 } }, Sprite: { texture: "assets/player.png", layer: 2, filter: "nearest" }, Body2D: { size: { x: 0.4, y: 0.5 } } } });
     sprites.play(player, "idle");
+    // A lift: a kinematic Body2D riding up and down a rail on the left; the player jumps onto it
+    // and is carried (docs/design/tilemaps.md, 2D physics). One-way, so it passes the walking
+    // player from below instead of shoving it.
+    lift = world.spawn("Lift", { components: { Transform: { position: { x: -8.5, y: -3.2, z: 0 } }, Sprite: { texture: "assets/tiles.png", size: { x: 1.5, y: 0.3 }, uv: { x: 0.4, y: 0, z: 0.6, w: 0.375 }, layer: 1, filter: "nearest" }, Body2D: { kinematic: true, one_way: true, size: { x: 0.75, y: 0.15 }, velocity: { x: 0, y: 1 } } } });
     let i = 0;
     for (const o of spawns.filter((o) => o.type === "coin")) {
         const id = world.spawn(`Coin${i}`, { components: { Transform: { position: { x: o.x, y: o.y, z: 0 } }, Sprite: { texture: "assets/coin.png", size: { x: 0.5, y: 0.5 }, layer: 1, filter: "nearest" } } });
@@ -41,6 +46,11 @@ onStart(() => {
 });
 
 onTick((t) => {
+    // The lift turns around at the ends of its rail.
+    const liftY = world.get(lift, "Transform")!.position.y;
+    const liftV = world.get(lift, "Body2D")!.velocity.y;
+    if (liftY > -1.0 && liftV > 0) world.set(lift, "Body2D", { velocity: { x: 0, y: -1 } });
+    else if (liftY < -3.2 && liftV < 0) world.set(lift, "Body2D", { velocity: { x: 0, y: 1 } });
     const speed = 6;
     const body = world.get(player, "Body2D")!;
     const p = world.get(player, "Transform")!.position;
@@ -75,8 +85,12 @@ onTick((t) => {
 
 expose("score", () => score());
 expose("coins", () => coins.size);
+expose("done", () => coins.size === 0);   // the environment interface ends an episode here (docs/design/environment.md)
 expose("player.x", () => Number(world.get(player, "Transform")?.position.x.toFixed(2) ?? 0));
 expose("player.clip", () => world.get(player, "SpriteAnimation")?.clip ?? "");
 expose("player.y", () => Number(world.get(player, "Transform")?.position.y.toFixed(2) ?? 0));
 expose("player.grounded", () => world.get(player, "Body2D")?.grounded ?? false);
+expose("player.riding", () => { const r = world.get(player, "Body2D")?.riding ?? 0; return r ? world.describe(r).path : ""; });
+expose("player.slope", () => world.get(player, "Body2D")?.on_slope ?? 0);
+expose("lift.y", () => Number(world.get(lift, "Transform")?.position.y.toFixed(2) ?? 0));
 expose("level.solid_below", () => tilemap.solid(level, { x: world.get(player, "Transform")?.position.x ?? 0, y: (world.get(player, "Transform")?.position.y ?? 0) - 0.6 }));

@@ -88,6 +88,15 @@ bool TileSet::one_way(int local_id) const {
     return it != tile_properties.end() && truthy(it->second, "one_way");
 }
 
+int TileSet::slope(int local_id) const {
+    auto it = tile_properties.find(local_id);
+    if (it == tile_properties.end() || !it->second.is_object() || !it->second.contains("slope")) return 0;
+    const Json& v = it->second["slope"];
+    if (v.is_number()) return v.get<double>() > 0 ? 1 : v.get<double>() < 0 ? -1 : 0;
+    if (v.is_string()) return v.get<std::string>() == "right" ? 1 : v.get<std::string>() == "left" ? -1 : 0;
+    return 0;
+}
+
 bool TileLayer::solid_layer() const { return truthy(properties, "solid"); }
 
 const TileSet* TileMap::tileset_for(std::uint32_t gid) const {
@@ -219,11 +228,25 @@ int TileMap::solidity_at(int x, int y) const {
         if (l.solid_layer()) return 1;
         if (const TileSet* ts = tileset_for(gid)) {
             int local = static_cast<int>((gid & kIdMask) - ts->first_gid);
+            if (ts->slope(local) != 0) return 3;
             if (ts->solid(local)) return 1;
             if (ts->one_way(local)) best = 2;
         }
     }
     return best;
+}
+
+int TileMap::slope_at(int x, int y) const {
+    for (const TileLayer& l : layers) {
+        if (!l.visible || x < 0 || y < 0 || x >= l.width || y >= l.height) continue;
+        const std::uint32_t gid = l.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(x)];
+        if (gid == 0) continue;
+        if (const TileSet* ts = tileset_for(gid)) {
+            int s = ts->slope(static_cast<int>((gid & kIdMask) - ts->first_gid));
+            if (s != 0) return (gid & kFlipH) ? -s : s;
+        }
+    }
+    return 0;
 }
 
 Json TileMap::describe() const {

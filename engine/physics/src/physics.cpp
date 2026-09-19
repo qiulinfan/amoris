@@ -27,6 +27,7 @@ struct Body {
     bool trigger = false;
     bool lock_rotation = false;
     bool sleeping = false;
+    std::uint32_t layer = 1, mask = 0xFFFFFFFFu;  // collision layers: a pair interacts when each is on a layer the other's mask includes
     float inv_mass = 0;
     float restitution = 0, friction = 0;
     float linear_damping = 0, angular_damping = 0, gravity_scale = 1;
@@ -806,6 +807,8 @@ struct Physics::Impl {
                 seen.insert(b.id);
             }
             b.trigger = col.is_trigger;
+            b.layer = col.layer;
+            b.mask = col.mask;
             b.sleeping = rb.sleeping;
             b.inv_mass = (rb.kind == 0 && rb.mass > 0) ? 1.0f / rb.mass : 0.0f;
             b.restitution = rb.restitution;
@@ -905,6 +908,7 @@ void Physics::step(world::World& w, double dt_d) {
             const Body& b = im.bodies[order[j]];
             if (b.aabb_min.x > a.aabb_max.x) break;
             if (a.kind != 0 && b.kind != 0) continue;  // nothing dynamic
+            if (!(a.layer & b.mask) || !(b.layer & a.mask)) continue;  // layers keep them apart
             auto moving = [](const Body& x) { return (x.kind == 0 && !x.sleeping) || (x.kind == 2 && (x.velocity.x != 0 || x.velocity.y != 0 || x.velocity.z != 0)); };
             if (!moving(a) && !moving(b)) continue;
             if (!aabb_overlap(a, b)) continue;

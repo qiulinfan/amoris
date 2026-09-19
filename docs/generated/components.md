@@ -230,7 +230,7 @@ Connects this body to another body, to any entity as a fixed point, or to a poin
 
 ## Body2D
 
-A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.
+A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -243,6 +243,11 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 | `grounded` | bool | false | Standing on a solid tile (written by the engine). |
 | `on_wall` | i32 | 0 | -1 touching a wall on the left, 1 on the right, 0 none (written by the engine). |
 | `on_ceiling` | bool | false | Head against a tile (written by the engine). |
+| `kinematic` | bool | false | Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it. |
+| `one_way` | bool | false | Kinematic bodies: catch bodies from above only (a lift that rises through the floor). |
+| `step` | f32 | 0.5 | The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope). |
+| `riding` | entity | 0 | The kinematic body this one stands on and moves with; 0 when none (written by the engine). |
+| `on_slope` | i32 | 0 | 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). |
 
 ## Collider
 
@@ -255,6 +260,8 @@ Collision shape centered on the entity (plus offset). Box half extents come from
 | `offset` | vec3 | [0.0, 0.0, 0.0] | Local offset of the shape center. |
 | `is_trigger` | bool | false | Overlap events only, no collision response. |
 | `mesh` | string | "" | For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh. |
+| `layer` | u32 | 1 | Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them. |
+| `mask` | u32 | 4294967295 | Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes. |
 
 ## AudioSource
 
@@ -269,6 +276,35 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `autoplay` | bool | false | Start playing as soon as the component exists. |
 | `playing` | bool | false | Whether a voice is currently playing this source (written by the engine). |
 | `voice` | u32 | 0 | Id of the playing voice, 0 when silent (written by the engine). |
+
+## NavObstacle
+
+A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `radius` | f32 | 0.5 | Radius of the blocked disc around the entity, in the grid's plane. |
+| `enabled` | bool | true | false lifts the obstacle without removing the component. |
+
+## NavAgent
+
+A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `mode` | i32 | 0 | 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target. |
+| `goal` | vec3 | [0.0, 0.0, 0.0] | The point to reach in mode 1. |
+| `target` | entity | 0 | The entity to follow in mode 2. |
+| `speed` | f32 | 3.0 | Top speed, units per second. |
+| `radius` | f32 | 0.35 | The agent's radius for keeping clear of other agents and obstacles. |
+| `arrive` | f32 | 0.3 | Distance from the goal at which the agent stops (state 2). |
+| `replan` | i32 | 10 | Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once. |
+| `avoidance` | f32 | 1.0 | Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. |
+| `state` | i32 | 0 | 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). |
+| `velocity` | vec3 | [0.0, 0.0, 0.0] | The velocity chosen this tick (written by the engine). |
+| `corner` | vec3 | [0.0, 0.0, 0.0] | The point the agent is heading for: the next corner of its path, or the goal (written by the engine). |
+| `distance` | f32 | 0.0 | Length of the remaining path (written by the engine). |
+| `neighbours` | i32 | 0 | Agents and obstacles the avoidance considered this tick (written by the engine). |
 
 # Records
 

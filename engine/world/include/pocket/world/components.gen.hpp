@@ -295,7 +295,7 @@ void from_json(const Json& j, Joint& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Joint& v, std::string_view path, float** out);
 
-/// A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.
+/// A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.
 struct Body2D {
     Vec2 velocity{0.0f, 0.0f};
     float gravity = -24.0f;
@@ -306,6 +306,11 @@ struct Body2D {
     bool grounded = false;
     std::int32_t on_wall = 0;
     bool on_ceiling = false;
+    bool kinematic = false;
+    bool one_way = false;
+    float step = 0.5f;
+    std::uint64_t riding = 0;
+    std::int32_t on_slope = 0;
     constexpr bool operator==(const Body2D&) const = default;
 };
 void to_json(Json& j, const Body2D& v);
@@ -320,6 +325,8 @@ struct Collider {
     Vec3 offset{0.0f, 0.0f, 0.0f};
     bool is_trigger = false;
     std::string mesh = "";
+    std::uint32_t layer = 1;
+    std::uint32_t mask = 4294967295;
     constexpr bool operator==(const Collider&) const = default;
 };
 void to_json(Json& j, const Collider& v);
@@ -342,6 +349,39 @@ void to_json(Json& j, const AudioSource& v);
 void from_json(const Json& j, AudioSource& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(AudioSource& v, std::string_view path, float** out);
+
+/// A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.
+struct NavObstacle {
+    float radius = 0.5f;
+    bool enabled = true;
+    constexpr bool operator==(const NavObstacle&) const = default;
+};
+void to_json(Json& j, const NavObstacle& v);
+void from_json(const Json& j, NavObstacle& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(NavObstacle& v, std::string_view path, float** out);
+
+/// A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.
+struct NavAgent {
+    std::int32_t mode = 0;
+    Vec3 goal{0.0f, 0.0f, 0.0f};
+    std::uint64_t target = 0;
+    float speed = 3.0f;
+    float radius = 0.35f;
+    float arrive = 0.3f;
+    std::int32_t replan = 10;
+    float avoidance = 1.0f;
+    std::int32_t state = 0;
+    Vec3 velocity{0.0f, 0.0f, 0.0f};
+    Vec3 corner{0.0f, 0.0f, 0.0f};
+    float distance = 0.0f;
+    std::int32_t neighbours = 0;
+    constexpr bool operator==(const NavAgent&) const = default;
+};
+void to_json(Json& j, const NavAgent& v);
+void from_json(const Json& j, NavAgent& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(NavAgent& v, std::string_view path, float** out);
 
 struct FieldInfo {
     std::string_view name;
@@ -379,5 +419,7 @@ void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
+void hash_component(struct StateHasherRef& h, const NavObstacle& v);
+void hash_component(struct StateHasherRef& h, const NavAgent& v);
 
 }  // namespace pocket::world

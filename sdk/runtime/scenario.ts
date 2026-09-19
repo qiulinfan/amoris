@@ -20,6 +20,84 @@ function info(): RuntimeInfo {
 
 export { expect };
 
+/** What a bot's policy sees and can do on a tick it runs. */
+export interface BotView {
+    tick: number;
+    /** Simulated seconds since the run started, and since the bot started. */
+    time: number;
+    seconds: number;
+    /** The project's exposed state (its expose() getters), or one value. */
+    state(): Record<string, unknown>;
+    state<T = unknown>(name: string): T;
+    /** A deterministic number in [0, 1) from the run's seed and the bot's name: its own stream, so a bot never disturbs the game's random(). */
+    random(): number;
+    /** Keep an action held this tick (call it every tick the key should stay down; a tick without it releases). */
+    hold(action: string, sign?: 1 | -1): void;
+    /** Press an action for one tick. */
+    press(action: string): void;
+    /** Whether the bot held the action on its previous tick. */
+    holding(action: string, sign?: 1 | -1): boolean;
+    /** Stop this bot for good. */
+    stop(): void;
+    /** Scratch memory the policy keeps between ticks. */
+    memory: Record<string, unknown>;
+}
+
+/** A policy: called on the bot's ticks with the view; it holds and presses actions. */
+export type BotPolicy = (view: BotView) => void;
+
+export interface BotStats {
+    name: string;
+    /** Ticks the policy ran, holds it started, presses it made. */
+    ticks: number;
+    holds: number;
+    presses: number;
+    stopped: boolean;
+}
+
+export interface RandomBotOptions {
+    /** Actions the bot may hold, each with a direction and a weight (1 by default). */
+    holds?: Array<{ action: string; sign?: 1 | -1; weight?: number }>;
+    /** Actions the bot presses now and then. */
+    presses?: string[];
+    /** Seconds one hold lasts, drawn between the two (0.2 to 1 by default). */
+    hold?: [number, number];
+    /** Chance per tick of a press (0.05 by default). */
+    pressChance?: number;
+    /** Chance that a stretch holds nothing (0.2 by default). */
+    idleChance?: number;
+}
+
+/** Built-in policies. */
+export const bots = {
+    /** A fuzzer: holds a random action for a random stretch, presses at random, all from the seed. */
+    random(options: RandomBotOptions = {}): BotPolicy {
+        const holds = options.holds ?? [];
+        const presses = options.presses ?? [];
+        const [minHold, maxHold] = options.hold ?? [0.2, 1.0];
+        const pressChance = options.pressChance ?? 0.05;
+        const idle = options.idleChance ?? 0.2;
+        const total = holds.reduce((sum, h) => sum + (h.weight ?? 1), 0);
+        return (v) => {
+            const m = v.memory as { until?: number; choice?: { action: string; sign: 1 | -1 } | null };
+            if (m.until === undefined || v.time >= m.until) {
+                m.until = v.time + minHold + v.random() * Math.max(0, maxHold - minHold);
+                m.choice = null;
+                if (holds.length > 0 && v.random() >= idle) {
+                    let pick = v.random() * total;
+                    for (const h of holds) {
+                        pick -= h.weight ?? 1;
+                        if (pick <= 0) { m.choice = { action: h.action, sign: h.sign ?? 1 }; break; }
+                    }
+                    if (!m.choice) m.choice = { action: holds[holds.length - 1].action, sign: holds[holds.length - 1].sign ?? 1 };
+                }
+            }
+            if (m.choice) v.hold(m.choice.action, m.choice.sign);
+            if (presses.length > 0 && v.random() < pressChance) v.press(presses[Math.floor(v.random() * presses.length)]);
+        };
+    },
+};
+
 type Step =
     | { kind: "do"; fn: () => void; label: string }
     | { kind: "wait"; seconds: number; label: string }
@@ -44,6 +122,12 @@ export interface ScenarioTools {
     state<T = unknown>(name: string): T;
     /** How many events of a type happened since the scenario started. */
     count(type: string): number;
+    /** Start a bot: from this step on its policy runs every `every` ticks (1) until the scenario ends, `seconds` pass, or it stops itself. */
+    bot(name: string, policy: BotPolicy, options?: { every?: number; seconds?: number }): void;
+    /** Stop a bot started earlier. */
+    stopBot(name: string): void;
+    /** Put a number, a string or a structure into the run's report (a function is called at this step); the runner prints it. */
+    report(key: string, value: unknown | (() => unknown)): void;
 }
 
 interface Scenario {
@@ -61,6 +145,46 @@ interface Run {
     ticks: number;
     seconds: number;
     error?: string;
+    bots: BotStats[];
+    report: Record<string, unknown>;
+}
+
+interface ActiveBot {
+    name: string;
+    policy: BotPolicy;
+    every: number;
+    stopAt?: number;
+    started: number;
+    stats: BotStats;
+    held: Map<string, number>;
+    memory: Record<string, unknown>;
+    random: () => number;
+}
+
+// splitmix32: a small deterministic stream per bot, seeded from the run and the bot's name.
+function seededRandom(seed: number): () => number {
+    let s = seed >>> 0;
+    return () => {
+        s = (s + 0x9e3779b9) >>> 0;
+        let z = s;
+        z = Math.imul(z ^ (z >>> 16), 0x85ebca6b) >>> 0;
+        z = Math.imul(z ^ (z >>> 13), 0xc2b2ae35) >>> 0;
+        z = (z ^ (z >>> 16)) >>> 0;
+        return z / 4294967296;
+    };
+}
+
+function hashName(name: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < name.length; i++) {
+        h ^= name.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h >>> 0;
+}
+
+function message(e: unknown): string {
+    return e instanceof ExpectationError ? e.message : e instanceof Error ? e.message : String(e);
 }
 
 const scenarios: Scenario[] = [];
@@ -70,6 +194,8 @@ let stepStarted = 0;       // simulated seconds when the current step began
 let eventBase = 0;         // events.last_seq at scenario start
 let holdRelease = 0;       // simulated seconds when a foreground hold ends
 let startTime = 0;
+let activeBots: ActiveBot[] = [];
+let lastTick: Tick = { tick: 0, dt: 1 / 60, time: 0 } as Tick;
 
 function readState(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
@@ -94,8 +220,76 @@ function tools(steps: Step[]): ScenarioTools {
             return name === undefined ? s : s[name];
         },
         count(type) { return events.since(eventBase, { type, limit: 100000 }).length; },
+        bot(name, policy, options = {}) {
+            steps.push({
+                kind: "do",
+                label: `start bot ${name}`,
+                fn: () => {
+                    if (!current) return;
+                    const stats: BotStats = { name, ticks: 0, holds: 0, presses: 0, stopped: false };
+                    current.bots.push(stats);
+                    activeBots.push({
+                        name,
+                        policy,
+                        every: Math.max(1, Math.round(options.every ?? 1)),
+                        stopAt: options.seconds === undefined ? undefined : lastTick.time + options.seconds,
+                        started: lastTick.time,
+                        stats,
+                        held: new Map(),
+                        memory: {},
+                        random: seededRandom((info().seed ^ hashName(name)) >>> 0),
+                    });
+                },
+            });
+        },
+        stopBot(name) {
+            steps.push({ kind: "do", label: `stop bot ${name}`, fn: () => { for (const b of activeBots) if (b.name === name) b.stats.stopped = true; } });
+        },
+        report(key, value) {
+            steps.push({ kind: "do", label: `report ${key}`, fn: () => { if (current) current.report[key] = typeof value === "function" ? (value as () => unknown)() : value; } });
+        },
     };
     return t;
+}
+
+// Every active bot acts on its ticks: its policy sees the state and asks for holds and presses;
+// a hold is refreshed each tick it is wanted, so the key stays down without new press edges.
+function runBots(t: Tick): boolean {
+    for (const b of activeBots) {
+        if (b.stats.stopped) continue;
+        if (b.stopAt !== undefined && t.time + t.dt * 0.5 >= b.stopAt) { b.stats.stopped = true; continue; }
+        if (t.tick % b.every !== 0) continue;
+        const wants = new Set<string>();
+        const view: BotView = {
+            tick: t.tick,
+            time: t.time,
+            seconds: t.time - b.started,
+            state: ((name?: string) => { const s = readState(); return name === undefined ? s : s[name]; }) as BotView["state"],
+            random: b.random,
+            hold: (action, sign = 1) => { wants.add(`${action}:${sign}`); },
+            press: (action) => { input.press({ action }); b.stats.presses++; },
+            holding: (action, sign = 1) => b.held.has(`${action}:${sign}`),
+            stop: () => { b.stats.stopped = true; },
+            memory: b.memory,
+        };
+        try {
+            b.policy(view);
+        } catch (e) {
+            finish("failed", `bot ${b.name}: ${message(e)}`);
+            return false;
+        }
+        b.stats.ticks++;
+        for (const key of wants) {
+            const at = key.lastIndexOf(":");
+            const action = key.slice(0, at);
+            const sign: 1 | -1 = key.slice(at + 1) === "-1" ? -1 : 1;
+            input.hold({ action, sign }, b.every + 1);
+            if (!b.held.has(key)) b.stats.holds++;
+        }
+        b.held = new Map([...wants].map((k) => [k, t.tick]));
+    }
+    activeBots = activeBots.filter((b) => !b.stats.stopped);
+    return true;
 }
 
 let installed = false;
@@ -125,7 +319,8 @@ function finish(status: "passed" | "failed", error?: string): void {
 function begin(s: Scenario): void {
     active = s;
     s.steps = [];
-    current = { name: s.name, status: "running", step: 0, steps: 0, label: "", ticks: 0, seconds: 0 };
+    current = { name: s.name, status: "running", step: 0, steps: 0, label: "", ticks: 0, seconds: 0, bots: [], report: {} };
+    activeBots = [];
     eventBase = events.lastSeq();
     try {
         s.build(tools(s.steps));
@@ -141,6 +336,8 @@ function advance(t: Tick): void {
     if (!current || !active || current.status !== "running") return;
     current.ticks++;
     current.seconds = t.time - startTime;
+    lastTick = t;
+    if (!runBots(t)) return;
     // Steps run until one has to wait; several instantaneous steps fit in one tick.
     for (let guard = 0; guard < 1000; guard++) {
         if (current.step >= active.steps.length) { finish("passed"); return; }
@@ -173,7 +370,7 @@ function advance(t: Tick): void {
                 return;
             }
         } catch (e) {
-            finish("failed", `${step.label}: ${e instanceof ExpectationError ? e.message : (e instanceof Error ? e.message : String(e))}`);
+            finish("failed", `${step.label}: ${message(e)}`);
             return;
         }
     }
@@ -185,7 +382,7 @@ function onStartScenario(): void {
     const wanted = info().scenario;
     const chosen = wanted ? scenarios.find((s) => s.name === wanted) : scenarios[0];
     if (!chosen) {
-        current = { name: wanted, status: "failed", step: 0, steps: 0, label: "", ticks: 0, seconds: 0, error: `no scenario named '${wanted}'` };
+        current = { name: wanted, status: "failed", step: 0, steps: 0, label: "", ticks: 0, seconds: 0, error: `no scenario named '${wanted}'`, bots: [], report: {} };
         command("quit");
         return;
     }

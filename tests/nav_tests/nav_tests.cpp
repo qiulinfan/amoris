@@ -175,3 +175,132 @@ TEST_CASE("a platformer grid from the sprites level links the ground, the plank 
     REQUIRE(n.describe()["source"] == "tilemap:assets/level.tmj:topdown");
     REQUIRE(n.bake_tilemap(w, store, level, nav::TileBakeParams{"sideways"}, 5).error().code == "bad_args");
 }
+
+TEST_CASE("obstacles block the cells under them until they move, and paths and nearest go around", "[nav][obstacles]") {
+    nav::Nav n;
+    n.set_grid(open_grid(12, 12));
+    const Vec3 from{0.5f, 0, 5.5f}, to{11.5f, 0, 5.5f};
+    auto direct = n.path(from, to, true).value();
+    REQUIRE(direct.points.size() == 2);
+    n.set_obstacles({{7, {6.0f, 0, 5.5f}, 1.2f}});
+    REQUIRE(n.grid().blocked_count() > 0);
+    REQUIRE(n.grid().walkable_count() == 144);   // the level is untouched
+    REQUIRE_FALSE(n.grid().walkable_at(5, 5));   // its center is half a cell from the obstacle
+    REQUIRE(n.grid().walkable_at(0, 0));
+    auto around = n.path(from, to, true).value();
+    REQUIRE_FALSE(around.partial);
+    REQUIRE(around.points.size() > 2);
+    REQUIRE(around.length > direct.length + 0.5f);
+    for (const Vec3& p : around.points) REQUIRE(std::hypot(p.x - 6.0f, p.z - 5.5f) > 1.2f);
+    auto near = n.nearest({6.0f, 0, 5.5f}, 3.0f);
+    REQUIRE(near.has_value());
+    REQUIRE(std::hypot(near->x - 6.0f, near->z - 5.5f) > 1.2f);
+    REQUIRE_FALSE(n.reachable(from, {6.5f, 0, 5.5f}));
+    REQUIRE(n.describe()["blocked"].get<int>() == static_cast<int>(n.grid().blocked_count()));
+    REQUIRE(n.describe()["obstacles"].get<int>() == 1);
+    // A radius of zero blocks nothing; the obstacle moved north opens the straight run again.
+    n.set_obstacles({{7, {6.0f, 0, 5.5f}, 0.0f}});
+    REQUIRE(n.grid().blocked_count() == 0);
+    n.set_obstacles({{7, {6.0f, 0, 1.5f}, 1.2f}});
+    REQUIRE(n.grid().blocked_count() > 0);
+    REQUIRE(n.path(from, to, true).value().points.size() == 2);
+    n.set_obstacles({});
+    REQUIRE(n.grid().blocked.empty());
+    // Outside the grid: nothing to block. The grid's agent radius widens every obstacle.
+    n.set_obstacles({{8, {30.0f, 0, 30.0f}, 2.0f}});
+    REQUIRE(n.grid().blocked_count() == 0);
+    nav::Grid wide = open_grid(12, 12);
+    wide.agent_radius = 1.0f;
+    n.set_grid(wide);
+    n.set_obstacles({{7, {6.0f, 0, 5.5f}, 1.2f}});
+    const std::size_t widened = n.grid().blocked_count();
+    wide.agent_radius = 0.0f;
+    n.set_grid(wide);
+    REQUIRE(n.grid().blocked_count() < widened);  // set_grid keeps the obstacles and reapplies them
+    REQUIRE(n.grid().blocked_count() > 0);
+}
+
+TEST_CASE("agents walk to their goals, pass each other, go around obstacles and report arrival or stuck", "[nav][agents]") {
+    World w;
+    nav::Nav n;
+    n.set_grid(open_grid(12, 12));
+    auto agent = [&](const char* name, Vec3 pos, Vec3 goal) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", goal.x}, {"y", goal.y}, {"z", goal.z}}}, {"speed", 2.0}, {"radius", 0.4}}}}).value();
+    };
+    auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+    auto state = [&](EntityId id) { return w.try_get<NavAgent>(id)->state; };
+    int tick = 0;
+    auto run = [&](int ticks, auto&& done) {
+        for (int i = 0; i < ticks && !done(); ++i) {
+            w.set_tick_index(tick++);
+            n.step(w, 1.0f / 60.0f);
+        }
+    };
+    // Two agents on the same row walking toward each other's start pass without overlapping.
+    const EntityId a = agent("A", {1.5f, 0, 5.5f}, {10.5f, 0, 5.5f});
+    const EntityId b = agent("B", {10.5f, 0, 5.5f}, {1.5f, 0, 5.5f});
+    float min_gap = 1e9f;
+    int ticks = 0;
+    for (; ticks < 600 && !(state(a) == 2 && state(b) == 2); ++ticks) {
+        w.set_tick_index(tick++);
+        n.step(w, 1.0f / 60.0f);
+        min_gap = std::min(min_gap, length(pos(a) - pos(b)));
+    }
+    INFO("ticks " << ticks << " gap " << min_gap << " a " << pos(a).x << "," << pos(a).z << " b " << pos(b).x << "," << pos(b).z);
+    REQUIRE(state(a) == 2);
+    REQUIRE(state(b) == 2);
+    REQUIRE(ticks < 450);                    // 9 units at 2 per second is 270 ticks; the detour costs a little
+    REQUIRE(min_gap > 0.7f);                 // two radii of 0.4: never overlapped
+    REQUIRE(length(pos(a) - Vec3{10.5f, 0, 5.5f}) <= 0.35f);
+    REQUIRE(length(pos(b) - Vec3{1.5f, 0, 5.5f}) <= 0.35f);
+    REQUIRE(pos(a).y == 0);                  // the plane is XZ: y is left alone
+    REQUIRE(n.crowd_stats().arrived == 2);
+    REQUIRE(w.events().since(0, 100, "nav.arrived").size() == 2);
+    REQUIRE(w.try_get<NavAgent>(a)->velocity.x == 0);
+    // Idle agents are left alone.
+    const EntityId idle = agent("Idle", {0.5f, 0, 0.5f}, {10.5f, 0, 10.5f});
+    REQUIRE(w.set(idle, "NavAgent", Json{{"mode", 0}}).has_value());
+    run(60, [] { return false; });
+    REQUIRE(pos(idle).x == 0.5f);
+    REQUIRE(state(idle) == 0);
+    // An obstacle in the corridor: the agent goes around it and still arrives.
+    const EntityId cart = w.spawn("Cart", 0, Json{{"Transform", {{"position", {{"x", 6.0f}, {"y", 0}, {"z", 1.5f}}}}}, {"NavObstacle", {{"radius", 1.0}}}}).value();
+    const EntityId c = agent("C", {1.5f, 0, 1.5f}, {10.5f, 0, 1.5f});
+    float nearest_cart = 1e9f;
+    run(600, [&] {
+        nearest_cart = std::min(nearest_cart, std::hypot(pos(c).x - 6.0f, pos(c).z - 1.5f));
+        return state(c) == 2;
+    });
+    INFO("c at " << pos(c).x << "," << pos(c).z << " nearest " << nearest_cart);
+    REQUIRE(state(c) == 2);
+    REQUIRE(nearest_cart > 1.0f);
+    REQUIRE(n.describe()["obstacles"].get<int>() == 1);
+    REQUIRE(n.describe()["blocked"].get<int>() > 0);
+    REQUIRE(w.set(cart, "NavObstacle", Json{{"enabled", false}}).has_value());
+    run(1, [] { return false; });
+    REQUIRE(n.describe()["blocked"].get<int>() == 0);
+    // A goal on the far side of a wall: the agent walks to the closest cell and reports stuck.
+    nav::Grid walled = open_grid(12, 12);
+    for (int x = 0; x < 12; ++x) walled.walkable[walled.index(x, 8)] = 0;
+    n.set_grid(walled);
+    const EntityId d = agent("D", {5.5f, 0, 2.5f}, {5.5f, 0, 10.5f});
+    run(400, [&] { return state(d) == 3; });
+    INFO("d at " << pos(d).x << "," << pos(d).z);
+    REQUIRE(state(d) == 3);
+    REQUIRE(pos(d).z > 6.8f);               // up to the wall's row
+    REQUIRE(w.events().since(0, 100, "nav.stuck").size() == 1);
+    // A target that is gone leaves the agent stuck too; a target that exists is followed.
+    const EntityId e = agent("E", {1.5f, 0, 1.5f}, {0, 0, 0});
+    REQUIRE(w.set(e, "NavAgent", Json{{"mode", 2}, {"target", d}}).has_value());
+    run(120, [] { return false; });
+    REQUIRE(state(e) == 1);
+    REQUIRE(pos(e).x > 1.5f);
+    REQUIRE(w.destroy(d).has_value());
+    run(1, [] { return false; });
+    REQUIRE(state(e) == 3);
+    Json list = n.agents(w);
+    REQUIRE(list.size() == 5);
+    REQUIRE(list[0]["path"] == "/A");
+    REQUIRE(list[0]["state"].get<int>() == 2);
+}
+

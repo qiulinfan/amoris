@@ -28,6 +28,7 @@ pocket scenario physics --seeds 20 --only goal --frames 600
 - `g.until(predicate, { timeout, label })` polls every tick and fails after `timeout` seconds (5 by default).
 - `g.check(fn, label)` runs code now: `expect(...)` assertions (`toBe`, `toEqual`, `toBeCloseTo`, `toBeGreaterThan`, `toBeLessThan`, `toContain`, ...), spawns, writes, anything the SDK offers.
 - `g.state()` is the project's exposed state right now (its `expose()` getters, called directly), `g.state("score")` one value; `g.count(type)` counts events of a type since the scenario started.
+- `g.bot(name, policy, options)` and `g.stopBot(name)` start and stop a bot (below); `g.report(key, value)` records a number or a structure for the run's report.
 
 The scenario bundle is its own script context (`--scenario <bundle>`) loaded after the project, so its `onStart` sees what the project spawned; one scenario runs per session (`--scenario-name` picks it, the first by default). When it passes or fails it emits `scenario.finished`, and the run quits, so the report carries the state of the deciding tick. The exposed `__scenario` (name, status, step, label, ticks, error) is what the runner reads.
 
@@ -37,9 +38,30 @@ The scenario bundle is its own script context (`--scenario <bundle>`) loaded aft
 
 Runs are deterministic per seed: a failing seed replays exactly, and `--history` with `recorder.track` or a `transcript` explains it. `tests/evidence/scenarios/` holds the reports for the physics and sprites samples.
 
+## Bots
+
+A bot is a policy that plays: `g.bot(name, policy, { every, seconds })` starts it as a step, and from then on the policy runs every tick (or every `every` ticks) until the scenario ends, `seconds` pass, `g.stopBot(name)` runs, or the policy calls `view.stop()`. The policy sees a `BotView`: the tick and times, the exposed state (`view.state("player.x")`), a `random()` stream of its own seeded from the run's seed and the bot's name (so a bot never disturbs the game's randomness and replays exactly per seed), `memory` it keeps between ticks, and two verbs: `hold(action, sign?)` keeps an action's key down for this tick (call it every tick the key should stay down; the hold is refreshed under the key, so there is no new press edge), and `press(action)` presses for one tick. Everything goes through `input.hold` / `input.press` like a player's keys, so the journal and the replay carry what the bot did.
+
+```ts
+g.bot("runner", (v) => {
+    v.hold("move_x");                                                    // always run right
+    const m = v.memory as { best?: number; since?: number };
+    const x = v.state<number>("player.x");
+    if (m.best === undefined || x > m.best + 0.05) { m.best = x; m.since = v.tick; }
+    if (v.state<boolean>("player.grounded") && v.tick - (m.since ?? v.tick) > 15) { v.press("jump"); m.since = v.tick; }   // stuck: jump
+});
+g.until(() => g.state<number>("player.x") > 8.5, { timeout: 15, label: "the east edge" });
+```
+
+`bots.random({ holds, presses, hold: [min, max], pressChance, idleChance })` is a fuzzer: it holds a random action (or nothing) for a random stretch and presses at random, all from its stream, so ten seconds of mashing at five seeds is a cheap check that nothing leaves the level, crashes or soft-locks. The run's `bots` (ticks run, holds started, presses) are in `__scenario` and in the runner's rows.
+
+## Analyzers
+
+`analyze` (`sdk/runtime/analyze.ts`) turns recorded motion into numbers. `analyze.series(entity, component, field)` reads one field over the ticks from the frame recorder (`recorder.start(ticks)` first; booleans become 0 and 1), and the pure functions work on any series: `summarize` (extremes with their ticks, mean, spread, `delta`, and `settledAt`, the tick from which the value stayed within a tolerance of its last), `segments` (the series cut into rising, flat and falling stretches with their change), `peaks` (local maxima with their prominence), `rate` (change per second), `pathLength` (distance travelled over one to three coordinate series) and `jumps` (from a height and a grounded series: liftoff, landing, apex and airtime of every stretch in the air, a drop off a ledge included). `g.report(key, value)` puts a number or a structure into the run's report, which the runner prints for the first passing seed (`report (seed 1): coins=3, jumps=4, apex=1.86`) and keeps in the rows; the physics sample reports when the marble's height settled and how many times it crested, the sprites bots report the jumps' apex and the distance a fuzzer covered.
+
 ## Limits
 
-Scenarios drive input and read state; they cannot pause the simulation or step it themselves (the engine owns the loop). There is no bot with a policy yet: a scenario is a fixed script, so "can the level be finished" needs a script that knows how. Scenarios do not render checks (a capture in a `check` works, but nothing compares images).
+Scenarios drive input and read state; they cannot pause the simulation or step it themselves (the engine owns the loop). A bot's policy is script: there is no learned or search-based player inside the runtime; a program that plays step by step uses the environment interface instead (`docs/design/environment.md`). Scenarios do not render checks (a capture in a `check` works, but nothing compares images).
 
 ## Perception benchmarks
 

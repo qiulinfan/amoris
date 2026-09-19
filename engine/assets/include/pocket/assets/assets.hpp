@@ -112,6 +112,7 @@ struct TileSet {
     std::map<int, Json> tile_properties;  // local id -> {name: value}
     [[nodiscard]] bool solid(int local_id) const;
     [[nodiscard]] bool one_way(int local_id) const;  // solid only from above (a platform to jump through)
+    [[nodiscard]] int slope(int local_id) const;     // 1: a floor rising to the right across the cell, -1: to the left, 0: none
 };
 
 struct TileLayer {
@@ -163,8 +164,12 @@ struct TileMap {
     [[nodiscard]] Json to_json() const;
     // Is the tile at (x, y) of any visible layer solid (its tile or its layer says so)?
     [[nodiscard]] bool solid_at(int x, int y) const;
-    // 0 empty, 1 solid, 2 one-way (solid from above only); looks through every visible layer.
+    // 0 empty, 1 solid, 2 one-way (solid from above only), 3 slope (a floor whose height rises
+    // across the cell; see slope_at); looks through every visible layer.
     [[nodiscard]] int solidity_at(int x, int y) const;
+    // 1 for a floor rising to the right, -1 rising to the left (a horizontally flipped slope tile
+    // counts the other way), 0 for no slope at the cell.
+    [[nodiscard]] int slope_at(int x, int y) const;
     [[nodiscard]] Json describe() const;
 };
 

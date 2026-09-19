@@ -318,7 +318,7 @@ export interface Joint {
     speed: number;
 }
 
-/** A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity. */
+/** A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity. */
 export interface Body2D {
     /** Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops. */
     velocity: Vec2;
@@ -338,6 +338,16 @@ export interface Body2D {
     on_wall: number;
     /** Head against a tile (written by the engine). */
     on_ceiling: boolean;
+    /** Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it. */
+    kinematic: boolean;
+    /** Kinematic bodies: catch bodies from above only (a lift that rises through the floor). */
+    one_way: boolean;
+    /** The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope). */
+    step: number;
+    /** The kinematic body this one stands on and moves with; 0 when none (written by the engine). */
+    riding: number;
+    /** 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). */
+    on_slope: number;
 }
 
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
@@ -352,6 +362,10 @@ export interface Collider {
     is_trigger: boolean;
     /** For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh. */
     mesh: string;
+    /** Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them. */
+    layer: number;
+    /** Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes. */
+    mask: number;
 }
 
 /** A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots. */
@@ -370,6 +384,44 @@ export interface AudioSource {
     playing: boolean;
     /** Id of the playing voice, 0 when silent (written by the engine). */
     voice: number;
+}
+
+/** A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors. */
+export interface NavObstacle {
+    /** Radius of the blocked disc around the entity, in the grid's plane. */
+    radius: number;
+    /** false lifts the obstacle without removing the component. */
+    enabled: boolean;
+}
+
+/** A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions. */
+export interface NavAgent {
+    /** 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target. */
+    mode: number;
+    /** The point to reach in mode 1. */
+    goal: Vec3;
+    /** The entity to follow in mode 2. */
+    target: number;
+    /** Top speed, units per second. */
+    speed: number;
+    /** The agent's radius for keeping clear of other agents and obstacles. */
+    radius: number;
+    /** Distance from the goal at which the agent stops (state 2). */
+    arrive: number;
+    /** Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once. */
+    replan: number;
+    /** Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. */
+    avoidance: number;
+    /** 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). */
+    state: number;
+    /** The velocity chosen this tick (written by the engine). */
+    velocity: Vec3;
+    /** The point the agent is heading for: the next corner of its path, or the goal (written by the engine). */
+    corner: Vec3;
+    /** Length of the remaining path (written by the engine). */
+    distance: number;
+    /** Agents and obstacles the avoidance considered this tick (written by the engine). */
+    neighbours: number;
 }
 
 export interface Components {
@@ -392,11 +444,13 @@ export interface Components {
     Body2D: Body2D;
     Collider: Collider;
     AudioSource: AudioSource;
+    NavObstacle: NavObstacle;
+    NavAgent: NavAgent;
 }
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "NavObstacle", "NavAgent"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -416,9 +470,11 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0 },
-    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false },
-    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "" },
+    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0 },
+    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
+    NavObstacle: { radius: 0.5, enabled: true },
+    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0 },
 };
 
 /** Records: the values inside list fields, with their defaults. */

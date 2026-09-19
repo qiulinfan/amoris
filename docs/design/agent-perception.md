@@ -134,7 +134,7 @@ Memory is multi-resolution, as in people: the last seconds at full fidelity in t
 - M2: id buffer and depth outputs, debug render modes, targeted captures, contact sheets, image diffs.
 - M3: the recorder and time travel, segmentation and the gameplay transcript, exposed in the editor as a timeline and a why panel, and over MCP.
 - M4: physics explanation, gameplay analyzers, executable scenarios with bots.
-- Later: the environment interface for play bots and recorded human sessions.
+- The environment interface for play bots and learned players: `docs/design/environment.md` (`env.reset/step/observe`, the Python client). Recorded human sessions are journals (`--record`), replayable with `--replay`.
 
 ## Implementation pointers (2026-09-19)
 

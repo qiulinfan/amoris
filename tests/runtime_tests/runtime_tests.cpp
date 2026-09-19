@@ -603,7 +603,7 @@ TEST_CASE("a scenario bundle plays the game and reports its verdict", "[runtime]
     REQUIRE(s.frame().has_value());  // exposed state is sampled at the end of a tick
     Json state = s.command("state", Json::object()).value()["state"];
     INFO(state.dump());
-    REQUIRE(state["__scenarios"].size() == 5);
+    REQUIRE(state["__scenarios"].size() == 7);
     REQUIRE(state["__scenario"]["status"] == "running");
     REQUIRE_FALSE(s.quit_requested());
     int frames = 1;
@@ -654,8 +654,9 @@ TEST_CASE("Body2D falls onto tiles, is stopped by walls and passes one-way plank
     REQUIRE(s.start().has_value());
     auto body = [&](const char* path) { return s.command("world.get", Json{{"entity", path}, {"component", "Body2D"}}).value(); };
     auto pos = [&](const char* path) { Json t = s.command("world.get", Json{{"entity", path}, {"component", "Transform"}}).value(); return Vec3{t["position"]["x"].get<float>(), t["position"]["y"].get<float>(), 0}; };
-    // A crate dropped from the air lands on the ground row (top at y = -3.5) and reports it.
-    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -8}, {"y", 2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
+    // A crate dropped from the air lands on the ground row (top at y = -3.5) and reports it
+    // (x -7: between the sample's lift, on the rail at x -8.5, and the plank over cells 4 to 6).
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -7}, {"y", 2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
     for (int i = 0; i < 90; ++i) REQUIRE(s.frame().has_value());
     Json crate = body("Crate");
     INFO(crate.dump());
@@ -665,7 +666,7 @@ TEST_CASE("Body2D falls onto tiles, is stopped by walls and passes one-way plank
     Json hist = s.command("events.histogram", Json::object()).value();
     REQUIRE(hist["body2d.landed"].get<int>() >= 1);
     Json stats = s.command("physics.stats", Json::object()).value();
-    REQUIRE(stats["tiles"]["bodies"].get<int>() == 2);  // the player and the crate
+    REQUIRE(stats["tiles"]["bodies"].get<int>() == 3);  // the player, the crate and the lift
     REQUIRE(stats["tiles"]["grounded"].get<int>() == 2);
     // Pushed right along the ground, it stops at the ledge (cells 13-14: x from 3 to 5).
     REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1.0}, {"y", -3.2}}}}}}).has_value());
@@ -774,7 +775,7 @@ TEST_CASE("sprites draw unlit through an orthographic camera and are picked by s
     REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
-    REQUIRE(stats["sprites"].get<int>() == 7);             // player + 6 coins; the ground is a tile map
+    REQUIRE(stats["sprites"].get<int>() == 8);  // the player, six coins and the lift             // player + 6 coins; the ground is a tile map
     REQUIRE(stats["tile_layers"].get<int>() == 3);         // ground, deco and platforms layers of level.tmj
     REQUIRE(stats["draw_calls"].get<int>() <= 6);           // runs per texture, split by layer
     // The map answers what is where: solid ground under the player, air above, the ledge at (13,6).
@@ -1022,6 +1023,29 @@ TEST_CASE("the playground bakes a navigation grid and its enemies path around th
     Json st = s.command("state", Json::object()).value()["state"];
     REQUIRE(st["nav.cells"].get<int>() == info["walkable"].get<int>());
     REQUIRE(st["nav.detours"].get<int>() > 0);
+    // The enemies are agents following the player; the cart is an obstacle blocking the cells under it.
+    REQUIRE(info["obstacles"].get<int>() == 1);
+    REQUIRE(info["blocked"].get<int>() > 0);
+    REQUIRE(info["agents"].get<int>() > 0);
+    REQUIRE(st["nav.blocked"].get<int>() == info["blocked"].get<int>());
+    Json agents = s.command("nav.agents", Json::object()).value();
+    REQUIRE(agents.is_array());
+    REQUIRE(agents.size() >= 1);
+    for (const Json& a : agents) {
+        REQUIRE(a["mode"].get<int>() == 2);
+        REQUIRE(a["state"].get<int>() >= 1);
+        REQUIRE(a["path"].get<std::string>().starts_with("/Level/Enemy"));
+    }
+    REQUIRE(st["nav.min_gap"].is_number());
+    REQUIRE(st["nav.min_gap"].get<double>() > 0.5);
+    // A path straight across the cart's track bends around the cart, wherever it has rolled to.
+    Json cart_t = s.command("world.get", Json{{"entity", "/Level/Cart"}, {"component", "Transform"}}).value();
+    const double cart_x = cart_t["position"]["x"].get<double>(), cart_z = cart_t["position"]["z"].get<double>();
+    Json cart_path = s.command("nav.path", Json{{"from", Json{{"x", cart_x}, {"y", 0.0}, {"z", 7.5}}}, {"to", Json{{"x", cart_x}, {"y", 0.0}, {"z", 0.5}}}}).value();
+    INFO(cart_path.dump() << " cart at " << cart_x << "," << cart_z);
+    REQUIRE(cart_path["partial"] == false);
+    REQUIRE(cart_path["points"].size() > 2);
+    for (const Json& pt : cart_path["points"]) REQUIRE(std::hypot(pt["x"].get<double>() - cart_x, pt["z"].get<double>() - cart_z) > 1.1);
     REQUIRE(s.command("render.debug", Json{{"nav", true}}).value()["nav"] == true);
     REQUIRE(s.frame().has_value());
     REQUIRE(s.command("render.stats", Json::object()).value()["debug_lines"].get<int>() > 1000);
@@ -1030,3 +1054,183 @@ TEST_CASE("the playground bakes a navigation grid and its enemies path around th
     REQUIRE(baked_event);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("physics layers are named by the project and used by queries", "[runtime][layers]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "physics";
+    o.bundle = root() / "build" / "ts" / "physics.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json layers = s.command("physics.layers", Json::object()).value();
+    REQUIRE(layers["names"] == Json::array({"arena", "bodies", "marble"}));
+    REQUIRE(layers["bits"]["marble"].get<int>() == 4);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["layers"].size() == 3);
+    // Put the marble on its layer and ask for it by name.
+    REQUIRE(s.command("world.set", Json{{"entity", "Marble"}, {"component", "Collider"}, {"value", {{"layer", 4}}}}).has_value());
+    for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+    Json hit = s.command("physics.raycast", Json{{"origin", {{"x", 1.6}, {"y", 6}, {"z", 8}}}, {"direction", {{"x", 0}, {"y", -1}, {"z", 0}}}, {"mask", Json::array({"marble"})}}).value();
+    INFO(hit.dump());
+    REQUIRE(hit["path"] == "/Marble");
+    Json bowl = s.command("physics.raycast", Json{{"origin", {{"x", 1.6}, {"y", 6}, {"z", 8}}}, {"direction", {{"x", 0}, {"y", -1}, {"z", 0}}}, {"mask", 1}}).value();
+    REQUIRE(bowl["path"] == "/Bowl");
+    Json near = s.command("physics.overlap", Json{{"center", {{"x", 1.6}, {"y", 4}, {"z", 8}}}, {"radius", 0.5}, {"mask", Json::array({"arena"})}}).value();
+    REQUIRE(near.empty());
+}
+
+TEST_CASE("Body2D walks slopes and steps without leaving the ground and rides kinematic platforms", "[runtime][body2d][platforms]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto body = [&](const char* path) { return s.command("world.get", Json{{"entity", path}, {"component", "Body2D"}}).value(); };
+    auto pos = [&](const char* path) { Json t = s.command("world.get", Json{{"entity", path}, {"component", "Transform"}}).value(); return Vec3{t["position"]["x"].get<float>(), t["position"]["y"].get<float>(), 0}; };
+    auto push = [&](const char* path, double vx) { REQUIRE(s.command("world.set", Json{{"entity", path}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", vx}}}}}}).has_value()); };
+    // The hill: a slope up at cell 16, a block at 17 (top at y -2.5), a slope down at 18, all on row 7.
+    // A crate on the ground at x 5.5 walks right at three units per second and stays grounded throughout.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Walker"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 5.5}, {"y", -3.2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());  // the spawn's landing
+    float top = -10;
+    int airborne = 0;
+    bool up = false, down = false;
+    for (int i = 0; i < 60; ++i) {
+        push("Walker", 3.0);
+        REQUIRE(s.frame().has_value());
+        Json b = body("Walker");
+        if (b["grounded"] != true) airborne++;
+        if (b["on_slope"].get<int>() == 1) up = true;
+        if (b["on_slope"].get<int>() == -1) down = true;
+        top = std::max(top, pos("Walker").y);
+    }
+    INFO(body("Walker").dump() << " at " << pos("Walker").x << "," << pos("Walker").y);
+    REQUIRE(airborne == 0);
+    REQUIRE(up);
+    REQUIRE(down);
+    REQUIRE(top == Catch::Approx(-2.2f).margin(0.02f));           // stood on the block
+    REQUIRE(pos("Walker").x == Catch::Approx(8.5f).margin(0.1f));
+    REQUIRE(pos("Walker").y == Catch::Approx(-2.7f).margin(0.06f));  // halfway down the far slope
+    REQUIRE(body("Walker")["on_slope"].get<int>() == -1);
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["body2d.landed"].get<int>() == 2);                   // the player's and the walker's spawn landings only
+    Json tstats = s.command("physics.stats", Json::object()).value()["tiles"];
+    INFO(tstats.dump());
+    REQUIRE(tstats["platforms"].get<int>() == 1);                     // the sample's lift
+    // A solid platform moving right carries the crate that lands on it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mover"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -8}, {"y", -1.0}, {"z", 0}}}}}, {"Body2D", Json{{"kinematic", true}, {"size", Json{{"x", 0.6}, {"y", 0.15}}}, {"velocity", Json{{"x", 2.0}, {"y", 0.0}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Rider"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -8}, {"y", 0}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json rider = body("Rider");
+    INFO(rider.dump() << " rider at " << pos("Rider").x << "," << pos("Rider").y << " mover at " << pos("Mover").x);
+    REQUIRE(rider["grounded"] == true);
+    REQUIRE(rider["riding"].get<std::uint64_t>() == s.command("world.find", Json{{"path", "Mover"}}).value().get<std::uint64_t>());
+    REQUIRE(pos("Mover").x == Catch::Approx(-6.0f).margin(0.01f));
+    REQUIRE(pos("Rider").x > -7.0f);                                  // carried along since it landed
+    REQUIRE(pos("Rider").y == Catch::Approx(-0.85f + 0.3f).margin(0.01f));
+    REQUIRE(s.command("physics.stats", Json::object()).value()["tiles"]["riding"].get<int>() >= 1);
+    // A one-way platform is passed from below and landed on (at x 1, under open sky and out of the
+    // mover's way); a solid one blocks sideways.
+    REQUIRE(s.command("world.spawn", Json{{"name", "OneWay"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 1}, {"y", -1.5}, {"z", 0}}}}}, {"Body2D", Json{{"kinematic", true}, {"one_way", true}, {"size", Json{{"x", 0.6}, {"y", 0.15}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Jumper"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 1}, {"y", -3.2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}, {"velocity", Json{{"x", 0.0}, {"y", 12.0}}}}}}}}).has_value());
+    bool ceiling = false;
+    for (int i = 0; i < 120; ++i) {
+        REQUIRE(s.frame().has_value());
+        if (body("Jumper")["on_ceiling"] == true) ceiling = true;
+    }
+    REQUIRE_FALSE(ceiling);
+    REQUIRE(pos("Jumper").y == Catch::Approx(-1.35f + 0.3f).margin(0.01f));
+    REQUIRE(body("Jumper")["riding"].get<std::uint64_t>() == s.command("world.find", Json{{"path", "OneWay"}}).value().get<std::uint64_t>());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wall"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 2.0}, {"y", -3.0}, {"z", 0}}}}}, {"Body2D", Json{{"kinematic", true}, {"size", Json{{"x", 0.2}, {"y", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Pusher"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0.5}, {"y", -3.2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}}}}}}).has_value());
+    for (int i = 0; i < 40; ++i) {
+        push("Pusher", 6.0);
+        REQUIRE(s.frame().has_value());
+    }
+    REQUIRE(body("Pusher")["on_wall"].get<int>() == 1);
+    REQUIRE(pos("Pusher").x == Catch::Approx(1.8f - 0.3f).margin(0.01f));
+}
+
+TEST_CASE("the environment interface resets, acts and observes the sprites sample", "[runtime][env]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 5; ++i) REQUIRE(s.frame().has_value());  // some history before the first episode
+    Json d = s.command("env.describe", Json::object()).value();
+    INFO(d.dump());
+    REQUIRE(d["actions"].contains("move_x"));
+    REQUIRE(d["actions"].contains("jump"));
+    REQUIRE(d["score_key"] == "score");
+    REQUIRE(d["has_done"] == true);
+    REQUIRE(d["episode"] == 0);
+    Json first = s.command("env.reset", Json{{"seed", 5}, {"max_ticks", 400}}).value();
+    INFO(first.dump());
+    REQUIRE(first["episode"] == 1);
+    REQUIRE(first["t"] == 0);
+    REQUIRE(first["tick"] == 5);
+    REQUIRE(first["done"] == false);
+    REQUIRE(first["score"] == 0);
+    REQUIRE(first["reward"] == 0.0);
+    REQUIRE(first["state"]["player.x"] == 0);
+    REQUIRE(first["events"].empty());
+    Json walked = s.command("env.step", Json{{"actions", Json{{"move_x", 1}}}, {"ticks", 30}}).value();
+    INFO(walked.dump());
+    REQUIRE(walked["t"] == 30);
+    REQUIRE(walked["tick"] == 35);
+    REQUIRE(walked["state"]["player.x"].get<double>() > 0.5);
+    REQUIRE(walked["score"].get<double>() >= 1);
+    REQUIRE(walked["reward"].get<double>() == walked["score"].get<double>());
+    bool collected = false;
+    for (const Json& e : walked["events"]) collected = collected || e["type"] == "coin.collected";
+    REQUIRE(collected);
+    REQUIRE(walked["actions"]["move_x"]["down"] == true);  // still held on the step's last tick
+    Json jumped = s.command("env.step", Json{{"actions", Json{{"jump", true}}}, {"ticks", 60}}).value();
+    REQUIRE(jumped["t"] == 90);
+    bool landed = false, jumped_ev = false;
+    for (const Json& e : jumped["events"]) { landed = landed || e["type"] == "body2d.landed"; jumped_ev = jumped_ev || e["type"] == "player.jumped"; }
+    REQUIRE(jumped_ev);
+    REQUIRE(landed);
+    REQUIRE(jumped["reward"].get<double>() == 0.0);
+    REQUIRE(s.command("env.observe", Json::object()).value()["t"] == 90);
+    REQUIRE(s.command("env.observe", Json::object()).value()["events"].empty());  // nothing new since
+    // The same seed and acts give the same episode again; the tick counter carries on.
+    Json again = s.command("env.reset", Json{{"seed", 5}}).value();
+    REQUIRE(again["episode"] == 2);
+    REQUIRE(again["t"] == 0);
+    REQUIRE(again["tick"] == 95);
+    REQUIRE(again["state"]["player.x"] == 0);
+    REQUIRE(again["state"]["score"] == 0);
+    Json walked2 = s.command("env.step", Json{{"actions", Json{{"move_x", 1}}}, {"ticks", 30}}).value();
+    REQUIRE(walked2["state"] == walked["state"]);
+    // Bad actions are refused before anything runs; max_ticks ends an episode; a capture rides along.
+    REQUIRE(s.command("env.step", Json{{"actions", Json{{"fly", 1}}}}).error().code == "no_such_action");
+    REQUIRE(s.command("env.step", Json{{"actions", Json{{"jump", "hard"}}}}).error().code == "bad_args");
+    REQUIRE(s.command("env.observe", Json::object()).value()["t"] == 30);
+    REQUIRE(s.command("env.reset", Json{{"max_ticks", 10}}).value()["episode"] == 3);
+    Json ended = s.command("env.step", Json{{"ticks", 10}, {"capture", (root() / "build" / "test-out" / "env-capture.png").string()}}).value();
+    REQUIRE(ended["done"] == true);
+    REQUIRE(ended["t"] == 10);
+    REQUIRE(std::filesystem::exists(root() / "build" / "test-out" / "env-capture.png"));
+    Json events = s.command("events.since", Json{{"seq", 0}, {"type", "env.reset"}, {"limit", 10}}).value()["events"];
+    REQUIRE(events.size() == 3);
+    REQUIRE(s.finish().has_value());
+}
+

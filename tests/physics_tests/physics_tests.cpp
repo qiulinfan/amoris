@@ -508,3 +508,39 @@ TEST_CASE("a slider moves along its axis only, its motor lifts it to the stop an
     REQUIRE(w.try_get<Transform>(lift)->position.y == Catch::Approx(1.0f).margin(0.05f));
     REQUIRE(std::fabs(w.try_get<Transform>(lift)->position.x) < 0.01f);
 }
+
+TEST_CASE("collision layers decide which pairs collide, trigger and answer queries", "[physics][layers]") {
+    World w;
+    physics::Physics p;
+    ground(w);  // layer 1, mask all
+    // Two boxes stacked in the same column: the upper one on layer 2 with a mask that leaves out
+    // layer 2... and the lower one on layer 2 as well, so they pass through each other and both
+    // land on the ground.
+    EntityId lower = w.spawn("Lower", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}, {"layer", 2}, {"mask", 1}}}}).value();
+    EntityId upper = w.spawn("Upper", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 3}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}, {"layer", 2}, {"mask", 1}}}}).value();
+    run(p, w, 240);
+    REQUIRE(w.try_get<Transform>(lower)->position.y == Catch::Approx(0.5f).margin(0.03f));
+    REQUIRE(w.try_get<Transform>(upper)->position.y == Catch::Approx(0.5f).margin(0.03f));  // inside the lower one, not on it
+    // A third box on layer 1 lands on top of the pile: it collides with the layer-2 boxes (its mask
+    // is all) and they collide with it (their mask includes layer 1).
+    EntityId top = body(w, "Top", 0, {0, 3, 0}, 0.5f);
+    run(p, w, 240);
+    REQUIRE(w.try_get<Transform>(top)->position.y == Catch::Approx(1.5f).margin(0.05f));
+    // Queries take a mask: a ray with mask 1 passes the layer-2 boxes and hits the ground.
+    auto any = p.raycast(w, {0, 5, 0}, {0, -1, 0}, 10, physics::Physics::Filter{[](EntityId, const RigidBody&, const Collider& c) { return (c.layer & 0xFFFFFFFFu) != 0; }});
+    REQUIRE(any.has_value());
+    REQUIRE(any->entity == top);
+    auto only1 = p.raycast(w, {0.7f, 5, 0}, {0, -1, 0}, 10, physics::Physics::Filter{[](EntityId, const RigidBody&, const Collider& c) { return (c.layer & 1u) != 0; }});
+    REQUIRE(only1.has_value());
+    REQUIRE(only1->point.y == Catch::Approx(0.0f).margin(0.01f));  // the ground, through the layer-2 boxes
+    auto over = p.overlap_sphere(w, {0, 0.5f, 0}, 0.2f, physics::Physics::Filter{[](EntityId, const RigidBody&, const Collider& c) { return (c.layer & 2u) != 0; }});
+    REQUIRE(over.size() == 2);
+    // A trigger on layer 4 with mask 2 only notices layer-2 bodies.
+    w.spawn("Gate", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1}, {"y", 1}, {"z", 1}}}, {"is_trigger", true}, {"layer", 4}, {"mask", 2}}}});
+    body(w, "Visitor1", 1, {5, 0.5f, 0}, 0.3f);                                     // layer 1: ignored by the gate
+    w.spawn("Visitor2", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", 0.5}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}, {"layer", 2}}}});
+    run(p, w, 5);
+    auto enters = w.events().since(0, 1000, "trigger.enter");
+    REQUIRE(enters.size() == 1);
+    REQUIRE(w.name(enters[0].subject) == "Gate");
+}

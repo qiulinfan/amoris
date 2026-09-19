@@ -502,7 +502,7 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
                 if ok { passed += 1; ticks_to_pass.push(ticks); }
                 total_runs += 1;
                 if ok { total_passed += 1; }
-                runs.push(json!({ "seed": seed, "ok": ok, "status": status, "ticks": ticks, "step": sc.get("label").cloned().unwrap_or(json!(null)), "error": error, "state": rep.get("state").cloned().unwrap_or(json!(null)), "elapsed_ms": started.elapsed().as_millis() }));
+                runs.push(json!({ "seed": seed, "ok": ok, "status": status, "ticks": ticks, "step": sc.get("label").cloned().unwrap_or(json!(null)), "error": error, "report": sc.get("report").cloned().unwrap_or(json!(null)), "bots": sc.get("bots").cloned().unwrap_or(json!(null)), "state": rep.get("state").cloned().unwrap_or(json!(null)), "elapsed_ms": started.elapsed().as_millis() }));
             }
             let n = runs.len() as u64;
             if passed < n { all_ok = false; }
@@ -519,6 +519,18 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
                 let ticks = r.get("ticks").cloned().unwrap_or(json!({}));
                 summary.push_str(&format!("\n  {} {name}: {passed}/{n} passed", if passed == n { "ok " } else { "FAIL" }));
                 if passed > 0 { summary.push_str(&format!(", ticks to pass {}..{} (avg {:.0})", ticks.get("min").and_then(|v| v.as_u64()).unwrap_or(0), ticks.get("max").and_then(|v| v.as_u64()).unwrap_or(0), ticks.get("avg").and_then(|v| v.as_f64()).unwrap_or(0.0))); }
+                // The first passing seed's report (g.report entries) and its bots, one line each.
+                if let Some(run) = r.get("runs").and_then(|v| v.as_array()).and_then(|a| a.iter().find(|run| run.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))) {
+                    let seed = run.get("seed").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if let Some(report) = run.get("report").and_then(|v| v.as_object()).filter(|o| !o.is_empty()) {
+                        let parts: Vec<String> = report.iter().map(|(k, v)| format!("{k}={}", compact_value(v))).collect();
+                        summary.push_str(&format!("\n      report (seed {seed}): {}", parts.join(", ")));
+                    }
+                    if let Some(bots) = run.get("bots").and_then(|v| v.as_array()).filter(|a| !a.is_empty()) {
+                        let parts: Vec<String> = bots.iter().map(|b| format!("{} ({} ticks, {} holds, {} presses)", b.get("name").and_then(|v| v.as_str()).unwrap_or("?"), b.get("ticks").and_then(|v| v.as_u64()).unwrap_or(0), b.get("holds").and_then(|v| v.as_u64()).unwrap_or(0), b.get("presses").and_then(|v| v.as_u64()).unwrap_or(0))).collect();
+                        summary.push_str(&format!("\n      bots (seed {seed}): {}", parts.join(", ")));
+                    }
+                }
                 for run in r.get("runs").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
                     if run.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) { continue; }
                     summary.push_str(&format!("\n      seed {}: {} at '{}': {}", run.get("seed").and_then(|v| v.as_u64()).unwrap_or(0), run.get("status").and_then(|v| v.as_str()).unwrap_or("?"), run.get("step").and_then(|v| v.as_str()).unwrap_or("-"), run.get("error").map(|e| if e.is_string() { e.as_str().unwrap().to_string() } else { e.to_string() }).unwrap_or_default()));
@@ -531,6 +543,15 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
     rep.data = json!({ "project": project, "config": config, "seeds": seeds, "frames": frames, "kind": kind, "results": results });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
+}
+
+/// A report value on one line: numbers to three decimals, strings bare, the rest as JSON.
+fn compact_value(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().map(|f| if f.fract() == 0.0 && f.abs() < 1e15 { format!("{}", f as i64) } else { format!("{f:.3}") }).unwrap_or_else(|| n.to_string()),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// Run a project with the runtime and capture its JSON report (the runtime must be given --json).
@@ -702,9 +723,25 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             tool_result = json!({ "module": "pocket_tool", "ok": ok, "exit_code": out.status.code(), "elapsed_ms": started.elapsed().as_millis() });
         }
     }
-    let total = tests.len() + ts_results.len() + if tool_result.is_null() { 0 } else { 1 };
+    // The Python environment client's tests (sdk/python, docs/design/environment.md), when
+    // python3 is on PATH: they drive the built runtime over its JSON-RPC server.
+    let mut python_result = json!(null);
+    if filter.map(|f| "python".contains(f)).unwrap_or(true) {
+        if let Some(python) = toolchain::which("python3") {
+            let started = Instant::now();
+            let out = toolchain::command(&python).arg(ws.root.join("sdk").join("python").join("test_pocket_env.py")).current_dir(&ws.root).env("POCKET_ROOT", &ws.root).env("POCKET_CONFIG", config).output()?;
+            let ok = out.status.success();
+            let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            if !ok {
+                failed += 1;
+                eprintln!("--- python (sdk/python/test_pocket_env.py) failed ---\n{}", tail(&text, 40));
+            }
+            python_result = json!({ "module": "python", "ok": ok, "exit_code": out.status.code(), "elapsed_ms": started.elapsed().as_millis(), "output_tail": tail(&text, 10) });
+        }
+    }
+    let total = tests.len() + ts_results.len() + if tool_result.is_null() { 0 } else { 1 } + if python_result.is_null() { 0 } else { 1 };
     let mut rep = if failed == 0 { Report::success("test", format!("{total} test modules passed")) } else { Report::failure("test", format!("{failed} of {total} test modules failed")) };
-    rep.data = json!({ "config": config, "results": results, "scenarios": scenario_results, "ts": ts_results, "tool": tool_result, "bundles": bundles });
+    rep.data = json!({ "config": config, "results": results, "scenarios": scenario_results, "ts": ts_results, "tool": tool_result, "python": python_result, "bundles": bundles });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
 }

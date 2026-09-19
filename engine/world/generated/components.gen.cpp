@@ -931,6 +931,11 @@ void to_json(Json& j, const Body2D& v) {
     j["grounded"] = v.grounded;
     j["on_wall"] = v.on_wall;
     j["on_ceiling"] = v.on_ceiling;
+    j["kinematic"] = v.kinematic;
+    j["one_way"] = v.one_way;
+    j["step"] = v.step;
+    j["riding"] = v.riding;
+    j["on_slope"] = v.on_slope;
 }
 
 void from_json(const Json& j, Body2D& v) {
@@ -943,6 +948,11 @@ void from_json(const Json& j, Body2D& v) {
     scalar_from_json(j, "grounded", v.grounded);
     scalar_from_json(j, "on_wall", v.on_wall);
     scalar_from_json(j, "on_ceiling", v.on_ceiling);
+    scalar_from_json(j, "kinematic", v.kinematic);
+    scalar_from_json(j, "one_way", v.one_way);
+    scalar_from_json(j, "step", v.step);
+    scalar_from_json(j, "riding", v.riding);
+    scalar_from_json(j, "on_slope", v.on_slope);
 }
 
 void hash_component(StateHasherRef& h, const Body2D& v) {
@@ -958,6 +968,11 @@ void hash_component(StateHasherRef& h, const Body2D& v) {
     h.u8(v.grounded ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.on_wall));
     h.u8(v.on_ceiling ? 1 : 0);
+    h.u8(v.kinematic ? 1 : 0);
+    h.u8(v.one_way ? 1 : 0);
+    h.f32(v.step);
+    h.i64(static_cast<std::int64_t>(v.riding));
+    h.i64(static_cast<std::int64_t>(v.on_slope));
 }
 
 std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
@@ -973,6 +988,7 @@ std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
     if (path == "offset") { *out = &v.offset.x; return 2; }
     if (path == "offset.x") { *out = &v.offset.x; return 1; }
     if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "step") { *out = &v.step; return 1; }
     return 0;
 }
 
@@ -983,6 +999,8 @@ void to_json(Json& j, const Collider& v) {
     vec_to_json(j["offset"], v.offset);
     j["is_trigger"] = v.is_trigger;
     j["mesh"] = v.mesh;
+    j["layer"] = v.layer;
+    j["mask"] = v.mask;
 }
 
 void from_json(const Json& j, Collider& v) {
@@ -991,6 +1009,8 @@ void from_json(const Json& j, Collider& v) {
     if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
     scalar_from_json(j, "is_trigger", v.is_trigger);
     scalar_from_json(j, "mesh", v.mesh);
+    scalar_from_json(j, "layer", v.layer);
+    scalar_from_json(j, "mask", v.mask);
 }
 
 void hash_component(StateHasherRef& h, const Collider& v) {
@@ -1003,6 +1023,8 @@ void hash_component(StateHasherRef& h, const Collider& v) {
     h.f32(v.offset.z);
     h.u8(v.is_trigger ? 1 : 0);
     h.str(v.mesh);
+    h.i64(static_cast<std::int64_t>(v.layer));
+    h.i64(static_cast<std::int64_t>(v.mask));
 }
 
 std::size_t numeric_span(Collider& v, std::string_view path, float** out) {
@@ -1053,6 +1075,105 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     (void)v;
     if (path == "volume") { *out = &v.volume; return 1; }
     if (path == "pitch") { *out = &v.pitch; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const NavObstacle& v) {
+    j = Json::object();
+    j["radius"] = v.radius;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, NavObstacle& v) {
+    scalar_from_json(j, "radius", v.radius);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const NavObstacle& v) {
+    h.f32(v.radius);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(NavObstacle& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "radius") { *out = &v.radius; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const NavAgent& v) {
+    j = Json::object();
+    j["mode"] = v.mode;
+    vec_to_json(j["goal"], v.goal);
+    j["target"] = v.target;
+    j["speed"] = v.speed;
+    j["radius"] = v.radius;
+    j["arrive"] = v.arrive;
+    j["replan"] = v.replan;
+    j["avoidance"] = v.avoidance;
+    j["state"] = v.state;
+    vec_to_json(j["velocity"], v.velocity);
+    vec_to_json(j["corner"], v.corner);
+    j["distance"] = v.distance;
+    j["neighbours"] = v.neighbours;
+}
+
+void from_json(const Json& j, NavAgent& v) {
+    scalar_from_json(j, "mode", v.mode);
+    if (j.is_object() && j.contains("goal")) vec_from_json(j["goal"], v.goal);
+    scalar_from_json(j, "target", v.target);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "radius", v.radius);
+    scalar_from_json(j, "arrive", v.arrive);
+    scalar_from_json(j, "replan", v.replan);
+    scalar_from_json(j, "avoidance", v.avoidance);
+    scalar_from_json(j, "state", v.state);
+    if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
+    if (j.is_object() && j.contains("corner")) vec_from_json(j["corner"], v.corner);
+    scalar_from_json(j, "distance", v.distance);
+    scalar_from_json(j, "neighbours", v.neighbours);
+}
+
+void hash_component(StateHasherRef& h, const NavAgent& v) {
+    h.i64(static_cast<std::int64_t>(v.mode));
+    h.f32(v.goal.x);
+    h.f32(v.goal.y);
+    h.f32(v.goal.z);
+    h.i64(static_cast<std::int64_t>(v.target));
+    h.f32(v.speed);
+    h.f32(v.radius);
+    h.f32(v.arrive);
+    h.i64(static_cast<std::int64_t>(v.replan));
+    h.f32(v.avoidance);
+    h.i64(static_cast<std::int64_t>(v.state));
+    h.f32(v.velocity.x);
+    h.f32(v.velocity.y);
+    h.f32(v.velocity.z);
+    h.f32(v.corner.x);
+    h.f32(v.corner.y);
+    h.f32(v.corner.z);
+    h.f32(v.distance);
+    h.i64(static_cast<std::int64_t>(v.neighbours));
+}
+
+std::size_t numeric_span(NavAgent& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "goal") { *out = &v.goal.x; return 3; }
+    if (path == "goal.x") { *out = &v.goal.x; return 1; }
+    if (path == "goal.y") { *out = &v.goal.y; return 1; }
+    if (path == "goal.z") { *out = &v.goal.z; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
+    if (path == "radius") { *out = &v.radius; return 1; }
+    if (path == "arrive") { *out = &v.arrive; return 1; }
+    if (path == "avoidance") { *out = &v.avoidance; return 1; }
+    if (path == "velocity") { *out = &v.velocity.x; return 3; }
+    if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
+    if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
+    if (path == "velocity.z") { *out = &v.velocity.z; return 1; }
+    if (path == "corner") { *out = &v.corner.x; return 3; }
+    if (path == "corner.x") { *out = &v.corner.x; return 1; }
+    if (path == "corner.y") { *out = &v.corner.y; return 1; }
+    if (path == "corner.z") { *out = &v.corner.z; return 1; }
+    if (path == "distance") { *out = &v.distance; return 1; }
     return 0;
 }
 
@@ -1204,7 +1325,7 @@ constexpr std::array<FieldInfo, 22> kJointFields = {{
     FieldInfo{"translation", "f32", "Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step."},
     FieldInfo{"speed", "f32", "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's."},
 }};
-constexpr std::array<FieldInfo, 9> kBody2DFields = {{
+constexpr std::array<FieldInfo, 14> kBody2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
     FieldInfo{"max_fall", "f32", "Fastest downward speed."},
@@ -1214,13 +1335,20 @@ constexpr std::array<FieldInfo, 9> kBody2DFields = {{
     FieldInfo{"grounded", "bool", "Standing on a solid tile (written by the engine)."},
     FieldInfo{"on_wall", "i32", "-1 touching a wall on the left, 1 on the right, 0 none (written by the engine)."},
     FieldInfo{"on_ceiling", "bool", "Head against a tile (written by the engine)."},
+    FieldInfo{"kinematic", "bool", "Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it."},
+    FieldInfo{"one_way", "bool", "Kinematic bodies: catch bodies from above only (a lift that rises through the floor)."},
+    FieldInfo{"step", "f32", "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope)."},
+    FieldInfo{"riding", "entity", "The kinematic body this one stands on and moves with; 0 when none (written by the engine)."},
+    FieldInfo{"on_slope", "i32", "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 5> kColliderFields = {{
+constexpr std::array<FieldInfo, 7> kColliderFields = {{
     FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)."},
     FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules."},
     FieldInfo{"offset", "vec3", "Local offset of the shape center."},
     FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response."},
     FieldInfo{"mesh", "string", "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh."},
+    FieldInfo{"layer", "u32", "Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them."},
+    FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
 }};
 constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
@@ -1231,8 +1359,27 @@ constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};
+constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
+    FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane."},
+    FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component."},
+}};
+constexpr std::array<FieldInfo, 13> kNavAgentFields = {{
+    FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target."},
+    FieldInfo{"goal", "vec3", "The point to reach in mode 1."},
+    FieldInfo{"target", "entity", "The entity to follow in mode 2."},
+    FieldInfo{"speed", "f32", "Top speed, units per second."},
+    FieldInfo{"radius", "f32", "The agent's radius for keeping clear of other agents and obstacles."},
+    FieldInfo{"arrive", "f32", "Distance from the goal at which the agent stops (state 2)."},
+    FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once."},
+    FieldInfo{"avoidance", "f32", "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others."},
+    FieldInfo{"state", "i32", "0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine)."},
+    FieldInfo{"velocity", "vec3", "The velocity chosen this tick (written by the engine)."},
+    FieldInfo{"corner", "vec3", "The point the agent is heading for: the next corner of its path, or the goal (written by the engine)."},
+    FieldInfo{"distance", "f32", "Length of the remaining path (written by the engine)."},
+    FieldInfo{"neighbours", "i32", "Agents and obstacles the avoidance considered this tick (written by the engine)."},
+}};
 
-constexpr std::array<ComponentInfo, 19> kComponents = {{
+constexpr std::array<ComponentInfo, 21> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1249,9 +1396,11 @@ constexpr std::array<ComponentInfo, 19> kComponents = {{
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
-    ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.", true, kBody2DFields},
+    ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
+    ComponentInfo{"NavObstacle", "A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.", true, kNavObstacleFields},
+    ComponentInfo{"NavAgent", "A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.", true, kNavAgentFields},
 }};
 
 }  // namespace

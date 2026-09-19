@@ -83,6 +83,8 @@ class Session {
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
     Result<Json> nav_command(std::string_view op, const Json& p);
+    Result<Json> env_command(std::string_view op, const Json& p);
+    Result<Json> env_observation(const Json& p, bool first);
     Result<Json> sprite_command(std::string_view op, const Json& p);
     Result<Json> particles_command(std::string_view op, const Json& p);
     Result<Json> animation_command(std::string_view op, const Json& p);
@@ -109,6 +111,13 @@ class Session {
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<physics::Physics2D> physics2d_;
     nav::Nav nav_;
+    // The environment interface (docs/design/environment.md): episodes over env.reset/step/observe.
+    int env_episode_ = 0;
+    std::int64_t env_start_tick_ = 0;
+    std::uint64_t env_last_seq_ = 0;   // events before this were already observed
+    double env_last_score_ = 0;
+    int env_max_ticks_ = 0;            // 0: no limit
+    std::vector<std::string> physics_layers_;  // [physics] layers names, bit 0 first
     std::vector<std::vector<Vec3>> nav_paths_;  // the last paths asked for, drawn by the nav overlay
     world::Recorder recorder_;
     struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false, nav = false; } debug_flags_;

@@ -20,4 +20,6 @@
     X(Joint) \
     X(Body2D) \
     X(Collider) \
-    X(AudioSource)
+    X(AudioSource) \
+    X(NavObstacle) \
+    X(NavAgent)

@@ -6,7 +6,8 @@
 // colliders, boxes via SAT), a sequential
 // impulse solver with Baumgarte position correction, integration, sleeping. Contacts that begin
 // or end become events (collision.begin/end, trigger.enter/exit) so gameplay can react without
-// polling and agents can read what touched what.
+// polling and agents can read what touched what. Collider.layer and Collider.mask are collision
+// layers: a pair interacts only when each is on a layer the other's mask includes.
 #pragma once
 
 #include <pocket/assets/assets.hpp>

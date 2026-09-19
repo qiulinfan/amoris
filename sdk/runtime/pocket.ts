@@ -20,11 +20,13 @@ export { componentNames, componentDefaults, recordDefaults, derivedComponents } 
 export { events } from "./events";
 export type { WorldEvent } from "./events";
 export { recorder } from "./recorder";
-export { scenario } from "./scenario";
-export type { ScenarioTools } from "./scenario";
+export { scenario, bots } from "./scenario";
+export type { ScenarioTools, BotView, BotPolicy, BotStats, RandomBotOptions } from "./scenario";
+export { analyze } from "./analyze";
+export type { Series, SeriesSummary, Segment, Peak, Jump } from "./analyze";
 export { bench, imageTokens } from "./bench";
 export { nav } from "./nav";
-export type { NavPath, NavInfo, NavPoint } from "./nav";
+export type { NavPath, NavInfo, NavPoint, NavAgentInfo } from "./nav";
 export type { BenchTools, BenchRecord } from "./bench";
 export { expect, ExpectationError } from "./expect";
 export { debug } from "./debug";

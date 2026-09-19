@@ -17,6 +17,10 @@ physics.joints();   // [{ path: "/Bob", target: "/Hook", kind: 0, length: 2, cur
 
 Every pair of shapes collides: sphere-sphere, sphere-box (closest point on the box), box-box (separating axes with a clipped contact manifold), capsule-sphere and capsule-capsule (closest points between segments), capsule-box (the segment's ends and its point nearest the box center, each treated as a sphere; the points that agree with the deepest normal form the manifold, so a lying capsule rests on two). Capsule inertia is a solid cylinder of the capsule's full height, close enough for tumbling.
 
+## Layers
+
+`Collider.layer` is the bits of the layers a shape is on (bit 0 by default) and `Collider.mask` the bits it interacts with (all by default): two shapes collide, touch as a trigger or answer a query only when each is on a layer the other's mask includes, so a projectile on layer 4 with a mask that leaves out its own layer flies through other projectiles, and an enemy that masks out the player's layer walks through the player while still standing on the ground. `[physics] layers = ["arena", "bodies", "marble"]` in `project.toml` names the bits in order; `physics.layers` returns the names and their bits, `physics.raycast` and `physics.overlap` take a `mask` (bits, or a list of names), and the SDK's `physics.layerMask("enemy", "world")` builds one. Names are documentation: the engine only sees bits.
+
 ## The step
 
 The step runs once per fixed tick, before the world's own systems, on every entity that has a `Transform`, a `RigidBody` and a `Collider`:
@@ -44,8 +48,9 @@ Joints are solved with the contacts (effective mass with the bodies' inverse ine
 
 ## Queries and commands
 
-- `physics.raycast {origin, direction, max_distance, include_triggers}`: the nearest hit (entity, point, normal, distance), against boxes, spheres, capsules and mesh triangles (both faces, the normal turned toward the ray).
-- `physics.overlap {center, radius}`: the entities whose shapes overlap a sphere.
+- `physics.raycast {origin, direction, max_distance, include_triggers, mask}`: the nearest hit (entity, point, normal, distance), against boxes, spheres, capsules and mesh triangles (both faces, the normal turned toward the ray) on the layers of `mask`.
+- `physics.overlap {center, radius, mask}`: the entities whose shapes overlap a sphere, on the layers of `mask`.
+- `physics.layers`: the project's layer names and their bits.
 - `physics.contacts`: every contact of the last step (pair, point, normal, depth, trigger flag); the SDK's `onContacts` receives the same list each tick.
 - `physics.joints`: every joint solved in the last step with its target, kind, rest length, current anchor distance and force; hinges add `angle`, `speed`, `torque` and `at_limit` (-1 lower, 1 upper, 2 locked); sliders add `translation`, `speed`, `motor_force` and `at_limit`.
 - `physics.stats`: body, awake, pair, contact and joint counts, begins and ends, broken joints, mesh colliders and their triangles, gravity; `physics.gravity {gravity}` sets it.
@@ -54,4 +59,4 @@ The SDK's `physics` object wraps them (`raycast`, `overlap`, `contacts`, `joints
 
 ## What is not there
 
-Continuous collision for very fast small bodies (they can pass through thin walls), and collision layers and per-pair filtering. 2D platformer physics against tile maps is its own system (`docs/design/tilemaps.md`). `samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that snaps when kicked, a capsule log, a hatch on a limited hinge, a motor-driven paddle, a marble rolling down a mesh-collider bowl, a lift on a motorised slider, a bob on a spring) and `tests/physics_tests` are the reference for what works.
+Continuous collision for very fast small bodies (they can pass through thin walls), and per-pair filtering beyond layers (a callback deciding for two particular bodies). 2D platformer physics against tile maps is its own system (`docs/design/tilemaps.md`). `samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that snaps when kicked, a capsule log, a hatch on a limited hinge, a motor-driven paddle, a marble rolling down a mesh-collider bowl, a lift on a motorised slider, a bob on a spring) and `tests/physics_tests` are the reference for what works.

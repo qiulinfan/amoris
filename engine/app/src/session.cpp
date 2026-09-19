@@ -194,6 +194,11 @@ Status Session::start() {
         if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
             physics_->settings().gravity = {ph["gravity"][0].get<float>(), ph["gravity"][1].get<float>(), ph["gravity"][2].get<float>()};
         }
+        // Layer names, bit 0 first: documentation for agents and scripts (physics.layers).
+        physics_layers_.clear();
+        if (ph.contains("layers") && ph["layers"].is_array()) {
+            for (const Json& n : ph["layers"]) if (n.is_string() && physics_layers_.size() < 32) physics_layers_.push_back(n.get<std::string>());
+        }
     }
     rng_.reseed(options_.seed);
     clock_.tick_seconds = 1.0 / options_.tick_rate;
@@ -349,6 +354,7 @@ void Session::run_tick() {
         dispatch("contacts", contacts);
     }
     if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
     perf_physics_.add(sw.ms());
     sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
@@ -733,6 +739,7 @@ Result<Json> Session::nav_command(std::string_view op, const Json& p) {
         return d;
     }
     if (op == "info") return nav_.describe();
+    if (op == "agents") return nav_.agents(w);
     if (op == "clear") {
         nav_.clear();
         nav_paths_.clear();
@@ -762,6 +769,129 @@ Result<Json> Session::nav_command(std::string_view op, const Json& p) {
         return json_of(*near);
     }
     return fail("unknown_command", "unknown nav command '{}'", op);
+}
+
+Result<Json> Session::env_observation(const Json& p, bool first) {
+    // What a player sees between two acts: the exposed state, the score and its change, whether
+    // the episode is over, the events since the last observation, and the input as it stands.
+    Json o;
+    const std::int64_t t = clock_.tick - env_start_tick_;
+    o["episode"] = env_episode_;
+    o["t"] = t;
+    o["tick"] = clock_.tick;
+    o["time"] = static_cast<double>(t) * clock_.tick_seconds;
+    o["state"] = last_state_.is_object() ? last_state_ : Json::object();
+    double score = 0;
+    bool scored = false;
+    if (last_state_.is_object()) {
+        if (last_state_.contains("reward") && last_state_["reward"].is_number()) { score = last_state_["reward"].get<double>(); scored = true; }
+        else if (last_state_.contains("score") && last_state_["score"].is_number()) { score = last_state_["score"].get<double>(); scored = true; }
+    }
+    o["score"] = scored ? Json(score) : Json(nullptr);
+    o["reward"] = first || !scored ? 0.0 : score - env_last_score_;
+    env_last_score_ = score;
+    bool done = last_state_.is_object() && last_state_.contains("done") && last_state_["done"].is_boolean() && last_state_["done"].get<bool>();
+    if (env_max_ticks_ > 0 && t >= env_max_ticks_) done = true;
+    o["done"] = done;
+    Json events = Json::array();
+    for (const world::Event& e : world_->events().since(env_last_seq_, 200)) {
+        events.push_back(Json{{"seq", e.seq}, {"tick", e.tick}, {"type", e.type}, {"subject", e.subject}, {"data", e.data}, {"cause", e.cause}});
+        env_last_seq_ = e.seq;
+    }
+    o["events"] = events;
+    o["actions"] = input_map_.snapshot();
+    o["world_hash"] = hex64(world_->hash());
+    o["errors"] = errors_.size();
+    if (p.contains("capture") && p["capture"].is_string()) {
+        Json cp = Json{{"path", p["capture"]}};
+        if (p.contains("size")) cp["size"] = p["size"];
+        if (auto r = command("capture", cp, "env"); !r) return fail(r.error());
+        else o["capture"] = *r;
+    }
+    return o;
+}
+
+Result<Json> Session::env_command(std::string_view op, const Json& p) {
+    // The environment interface (docs/design/environment.md): reset, act, observe, for bots,
+    // learned players and agent evaluations, built on the same commands as everything else.
+    if (op == "describe") {
+        Json j;
+        j["actions"] = input_map_.describe();
+        Json keys = Json::array();
+        std::string score_key;
+        bool has_done = false;
+        if (last_state_.is_object()) {
+            for (const auto& [k, v] : last_state_.items()) if (!k.starts_with("__")) keys.push_back(k);
+            if (last_state_.contains("reward") && last_state_["reward"].is_number()) score_key = "reward";
+            else if (last_state_.contains("score") && last_state_["score"].is_number()) score_key = "score";
+            has_done = last_state_.contains("done") && last_state_["done"].is_boolean();
+        }
+        j["observation"] = keys;
+        j["score_key"] = score_key.empty() ? Json(nullptr) : Json(score_key);
+        j["has_done"] = has_done;
+        j["tick_rate"] = options_.tick_rate;
+        j["seed"] = options_.seed;
+        j["episode"] = env_episode_;
+        j["t"] = clock_.tick - env_start_tick_;
+        j["max_ticks"] = env_max_ticks_;
+        return j;
+    }
+    if (op == "reset") {
+        // A fresh episode: the seed, the scene and the scripts start again; the tick counter, the
+        // journal and the event bus carry on, so a session's whole history stays one story.
+        if (p.contains("seed") && p["seed"].is_number()) options_.seed = static_cast<std::uint64_t>(p["seed"].get<double>());
+        if (p.contains("max_ticks") && p["max_ticks"].is_number()) env_max_ticks_ = std::max(p["max_ticks"].get<int>(), 0);
+        for (auto& [key, until] : held_keys_) until = clock_.tick;
+        release_expired_holds();
+        pending_holds_.clear();
+        nav_.clear();
+        nav_paths_.clear();
+        debug_shapes_.clear();
+        recorder_.clear();
+        errors_.clear();
+        rng_.reseed(options_.seed);
+        if (auto r = command("project.reload", Json{{"scene", true}, {"scripts", true}}, "env"); !r) return fail(r.error());
+        Json s = dispatch("state", nullptr);
+        last_state_ = s.is_object() ? s : Json::object();
+        env_episode_++;
+        env_start_tick_ = clock_.tick;
+        world_->events().emit(clock_.tick, "env.reset", 0, Json{{"episode", env_episode_}, {"seed", options_.seed}, {"max_ticks", env_max_ticks_}}, 0, "env");
+        env_last_seq_ = world_->events().last_seq();  // the first observation carries only what the episode does
+        return env_observation(p, true);
+    }
+    if (op == "step") {
+        // Act, then run: every action given is held for the step's ticks (a number: its sign is
+        // the direction) or pressed once (true), then the ticks run and the observation follows.
+        const int ticks = std::clamp(opt<int>(p, "ticks", 1), 1, 100000);
+        const Json acts = p.value("actions", Json::object());
+        std::vector<std::pair<std::string, Json>> list;
+        if (acts.is_object()) {
+            for (const auto& [k, v] : acts.items()) list.emplace_back(k, v);
+        } else if (acts.is_array()) {
+            for (const Json& a : acts) if (a.is_object() && a.contains("action") && a["action"].is_string()) list.emplace_back(a["action"].get<std::string>(), a.value("value", Json(true)));
+        } else {
+            return fail("bad_args", "actions must be an object {{action: value}} or an array of {{action, value}}");
+        }
+        for (const auto& [name, v] : list) {
+            if (!input_map_.has_action(name)) return fail("no_such_action", "no action named '{}'", name);
+            Result<Json> r;
+            if (v.is_boolean()) {
+                if (!v.get<bool>()) continue;
+                r = command("input.press", Json{{"action", name}}, "env");
+            } else if (v.is_number()) {
+                const double x = v.get<double>();
+                if (x == 0) continue;
+                r = command("input.hold", Json{{"action", name}, {"ticks", ticks}, {"sign", x < 0 ? -1 : 1}}, "env");
+            } else {
+                return fail("bad_args", "action '{}' must be true (press) or a number (hold, its sign the direction)", name);
+            }
+            if (!r) return fail(r.error());
+        }
+        if (auto r = command("step", Json{{"ticks", ticks}}, "env"); !r) return fail(r.error());
+        return env_observation(p, false);
+    }
+    if (op == "observe") return env_observation(p, false);
+    return fail("unknown_command", "unknown env command '{}'", op);
 }
 
 Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
@@ -828,7 +958,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
             }
             layers.push_back(lj);
         }
-        Json j{{"tile_x", cx}, {"tile_y", cy}, {"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"layers", layers}};
+        Json j{{"tile_x", cx}, {"tile_y", cy}, {"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"slope", map->slope_at(cx, cy)}, {"layers", layers}};
         j["center"] = cell_center(cx, cy);
         return j;
     }
@@ -840,7 +970,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         } else {
             to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
         }
-        return Json{{"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"tile_x", cx}, {"tile_y", cy}};
+        return Json{{"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"slope", map->slope_at(cx, cy)}, {"tile_x", cx}, {"tile_y", cy}};
     }
     if (op == "objects") {
         std::string layer_name = opt<std::string>(p, "layer", "");
@@ -1100,12 +1230,35 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     if (op == "stats") {
         Json j = physics_->describe();
         if (physics2d_) j["tiles"] = physics2d_->describe();
+        j["layers"] = physics_layers_;
         return j;
     }
+    if (op == "layers") {
+        Json bits = Json::object();
+        for (std::size_t i = 0; i < physics_layers_.size(); ++i) bits[physics_layers_[i]] = 1u << i;
+        return Json{{"names", physics_layers_}, {"bits", bits}};
+    }
+    // Queries take a layer mask: only shapes on a layer in it answer (all layers by default).
+    auto mask_of = [&]() -> std::uint32_t {
+        if (!p.contains("mask")) return 0xFFFFFFFFu;
+        if (p["mask"].is_number()) return static_cast<std::uint32_t>(p["mask"].get<double>());
+        std::uint32_t m = 0;
+        if (p["mask"].is_array()) {
+            for (const Json& n : p["mask"]) {
+                if (n.is_number()) m |= static_cast<std::uint32_t>(n.get<double>());
+                else if (n.is_string()) {
+                    for (std::size_t i = 0; i < physics_layers_.size(); ++i) if (physics_layers_[i] == n.get<std::string>()) m |= 1u << i;
+                }
+            }
+        }
+        return m;
+    };
     if (op == "raycast") {
         Vec3 origin = vec3_of(p.value("origin", Json(nullptr)), {0, 0, 0});
         Vec3 dir = vec3_of(p.value("direction", Json(nullptr)), {0, -1, 0});
-        auto hit = physics_->raycast(*world_, origin, dir, opt<float>(p, "max_distance", 1000.0f), opt<bool>(p, "include_triggers", false));
+        const bool include_triggers = opt<bool>(p, "include_triggers", false);
+        const std::uint32_t mask = mask_of();
+        auto hit = physics_->raycast(*world_, origin, dir, opt<float>(p, "max_distance", 1000.0f), [include_triggers, mask](world::EntityId, const world::RigidBody&, const world::Collider& col) { return (include_triggers || !col.is_trigger) && (col.layer & mask) != 0; });
         if (!hit) {
             if (hit.error().code == "no_hit") return nullptr;
             return fail(hit.error());
@@ -1120,7 +1273,8 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     }
     if (op == "overlap") {
         Vec3 center = vec3_of(p.value("center", Json(nullptr)), {0, 0, 0});
-        auto ids = physics_->overlap_sphere(*world_, center, opt<float>(p, "radius", 1.0f));
+        const std::uint32_t mask = mask_of();
+        auto ids = physics_->overlap_sphere(*world_, center, opt<float>(p, "radius", 1.0f), [mask](world::EntityId, const world::RigidBody&, const world::Collider& col) { return (col.layer & mask) != 0; });
         Json arr = Json::array();
         for (auto id : ids) arr.push_back(Json{{"id", id}, {"path", world_->path(id)}});
         return arr;
@@ -2287,20 +2441,31 @@ void Session::build_debug_draw() {
         const nav::Grid& g = nav_.grid();
         const float r = g.cell * 0.2f;
         const rhi::Color cell_color{0.3f, 0.9f, 0.9f, 0.6f};
+        const rhi::Color blocked_color{1.0f, 0.45f, 0.15f, 0.9f};  // under an obstacle right now
         for (int y = 0; y < g.height; ++y) {
             for (int x = 0; x < g.width; ++x) {
-                if (!g.walkable_at(x, y)) continue;
+                const std::size_t i = g.index(x, y);
+                if (g.walkable[i] == 0) continue;
+                const rhi::Color& col = (!g.blocked.empty() && g.blocked[i] != 0) ? blocked_color : cell_color;
                 Vec3 c = g.center_of(x, y);
                 if (g.plane == 0) {
                     c.y += 0.02f;
-                    debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, cell_color);
-                    debug_draw_.line(c - Vec3{0, 0, r}, c + Vec3{0, 0, r}, cell_color);
+                    debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, col);
+                    debug_draw_.line(c - Vec3{0, 0, r}, c + Vec3{0, 0, r}, col);
                 } else {
-                    debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, cell_color);
-                    debug_draw_.line(c - Vec3{0, r, 0}, c + Vec3{0, r, 0}, cell_color);
+                    debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, col);
+                    debug_draw_.line(c - Vec3{0, r, 0}, c + Vec3{0, r, 0}, col);
                 }
             }
         }
+        // Each moving agent: its velocity as a line and the corner it heads for.
+        const rhi::Color agent_color{0.4f, 1.0f, 0.4f, 1};
+        const Vec3 lift = g.plane == 0 ? Vec3{0, 0.05f, 0} : Vec3{0, 0, 0};
+        w.ecs().each([&](flecs::entity, const world::NavAgent& a, const world::Transform& t) {
+            if (a.state != 1) return;
+            debug_draw_.line(t.position + lift, t.position + a.velocity * 0.5f + lift, agent_color);
+            debug_draw_.sphere(a.corner + lift, g.cell * 0.15f, agent_color, 6);
+        });
         const rhi::Color path_color{1.0f, 0.95f, 0.2f, 1};
         for (const auto& pts : nav_paths_) {
             for (std::size_t i = 1; i < pts.size(); ++i) debug_draw_.line(pts[i - 1] + Vec3{0, 0.05f, 0}, pts[i] + Vec3{0, 0.05f, 0}, path_color);
@@ -2422,6 +2587,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("nav.")) return nav_command(name.substr(4), p);
+    if (name.starts_with("env.")) return env_command(name.substr(4), p);
     if (name.starts_with("sprite.")) return sprite_command(name.substr(7), p);
     if (name.starts_with("particles.")) return particles_command(name.substr(10), p);
     if (name.starts_with("animation.")) return animation_command(name.substr(10), p);
@@ -2499,7 +2665,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.clear", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

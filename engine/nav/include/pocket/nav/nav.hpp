@@ -10,6 +10,7 @@
 #include <pocket/world/world.hpp>
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -43,18 +44,34 @@ struct Grid {
     float depth = 0;         // XY grids: the z of every point
     bool diagonal = true;
     float max_step = 0.4f;
-    std::vector<std::uint8_t> walkable;      // row-major
+    float agent_radius = 0;                  // the radius the grid was baked for; obstacles grow by it
+    std::vector<std::uint8_t> walkable;      // row-major: the level
+    std::vector<std::uint8_t> blocked;       // row-major: the moment (cells under obstacles); empty when none
     std::vector<float> ground;               // XZ grids: ground height per cell
     std::vector<std::vector<int>> links;     // platformer: extra directed moves per cell (jumps, drops), as cell indices
     std::string source;
     std::uint64_t baked_tick = 0;
     [[nodiscard]] bool inside(int x, int y) const { return x >= 0 && y >= 0 && x < width && y < height; }
     [[nodiscard]] std::size_t index(int x, int y) const { return static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x); }
-    [[nodiscard]] bool walkable_at(int x, int y) const { return inside(x, y) && walkable[index(x, y)] != 0; }
+    // Walkable in the level and not under an obstacle right now.
+    [[nodiscard]] bool walkable_at(int x, int y) const { return inside(x, y) && walkable[index(x, y)] != 0 && (blocked.empty() || blocked[index(x, y)] == 0); }
+    [[nodiscard]] std::size_t blocked_count() const;
     [[nodiscard]] Vec3 center_of(int x, int y) const;
     [[nodiscard]] bool cell_of(Vec3 p, int& x, int& y) const;  // false when the point is outside the grid
     [[nodiscard]] std::size_t walkable_count() const;
     [[nodiscard]] std::size_t link_count() const;
+};
+
+// A disc in the grid's plane that blocks the cells under it (docs/design/navigation.md, Obstacles).
+struct Obstacle {
+    world::EntityId id = 0;
+    Vec3 position;
+    float radius = 0.5f;
+};
+
+// What the last step() did with the world's NavAgent and NavObstacle entities.
+struct CrowdStats {
+    int agents = 0, moving = 0, arrived = 0, stuck = 0, obstacles = 0, blocked = 0, replans = 0, avoiding = 0;
 };
 
 struct Path {
@@ -74,8 +91,8 @@ class Nav {
     Status bake_colliders(const world::World& world, const physics::Physics& physics, const BakeParams& params, std::uint64_t tick);
     // Bake from a TileMap entity in its XY plane (docs/design/tilemaps.md).
     Status bake_tilemap(const world::World& world, assets::AssetStore& assets, world::EntityId map_entity, const TileBakeParams& params, std::uint64_t tick);
-    void set_grid(Grid grid) { grid_ = std::move(grid); }
-    void clear() { grid_ = Grid{}; }
+    void set_grid(Grid grid);
+    void clear();
     [[nodiscard]] bool baked() const { return grid_.width > 0 && grid_.height > 0; }
     [[nodiscard]] const Grid& grid() const { return grid_; }
     // A* between the cells under two points (each snapped to the nearest walkable cell within two
@@ -87,9 +104,31 @@ class Nav {
     // difference counts too, so a foot of a pillar snaps to the ground beside it, not its top).
     [[nodiscard]] std::optional<Vec3> nearest(Vec3 p, float max_radius) const;
     [[nodiscard]] Json describe() const;
+    // Block the cells within each obstacle's radius (plus the grid's agent radius) of its position
+    // for every query until the next call. step() applies the world's NavObstacle entities.
+    void set_obstacles(std::vector<Obstacle> obstacles);
+    [[nodiscard]] const std::vector<Obstacle>& obstacles() const { return obstacles_; }
+    // Move the world's NavAgent entities one tick: paths around the obstacles, local avoidance
+    // between agents, arrival and stuck events (docs/design/navigation.md, Agents).
+    void step(world::World& w, float dt);
+    [[nodiscard]] const CrowdStats& crowd_stats() const { return crowd_; }
+    // Every agent with its state and plan, ordered by entity id.
+    [[nodiscard]] Json agents(world::World& w) const;
 
    private:
+    struct AgentRun {
+        std::vector<Vec3> path;   // the corners planned last, the first being the start cell's center
+        std::size_t next = 1;     // the corner being headed for
+        std::uint64_t planned_tick = 0;
+        Vec3 goal;                // the goal the path was planned for
+        bool partial = false;
+        bool planned = false;
+    };
+    void reapply_obstacles();
     Grid grid_;
+    std::vector<Obstacle> obstacles_;
+    std::map<world::EntityId, AgentRun> runs_;
+    CrowdStats crowd_;
 };
 
 }  // namespace pocket::nav

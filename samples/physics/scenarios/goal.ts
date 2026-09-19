@@ -1,5 +1,5 @@
 // Scenarios for the physics sample: what the arena promises whatever the seed.
-import { expect, physics, scenario } from "pocket";
+import { analyze, expect, physics, recorder, scenario } from "pocket";
 
 scenario("within eight seconds at least three bodies reach the goal", (g) => {
     g.until(() => (g.state("inGoal") as number) >= 3, { timeout: 8, label: "three in the goal" });
@@ -25,6 +25,7 @@ scenario("the hatch drops to its stop and the paddle turns at its motor speed", 
 });
 
 scenario("the marble rolls down the bowl's triangles to its bottom and stays", (g) => {
+    g.check(() => { recorder.start(1200); }, "record the run");
     g.until(() => g.state<number>("marbleOffset") < 0.3, { timeout: 4, label: "marble through the bottom" });
     g.wait(7);   // it swings up the far side and back until the damping has taken the roll out
     g.check(() => {
@@ -34,6 +35,9 @@ scenario("the marble rolls down the bowl's triangles to its bottom and stays", (
         expect(hit?.path).toBe("/Bowl");
         expect(Math.abs((hit?.point.y ?? 0) - 1)).toBeLessThan(0.06);   // y = r^2 / 4 at r = 2
     }, "marble resting at the bottom, rays see the bowl");
+    // The report: when the marble's height settled and how many times it crested on the way.
+    g.report("marbleSettledAt", () => analyze.summarize(analyze.series("/Marble", "Transform", "position.y"), { settle: 0.02 }).settledAt);
+    g.report("marbleCrests", () => analyze.peaks(analyze.series("/Marble", "Transform", "position.y"), { minProminence: 0.05 }).length);
 });
 
 scenario("the lift rises to its stop and the bob settles at its spring's stretch", (g) => {

@@ -47,3 +47,29 @@ scenario("the one-way plank is passed from below and landed on from above", (g) 
     g.until(() => (g.state("player.y") as number) > -0.9, { timeout: 1.0, label: "through the plank" });    // the plank's top is at y = -1.5: the body rises through it
     g.until(() => (g.state("player.grounded") as boolean) && (g.state("player.y") as number) > -1.1, { timeout: 1.5, label: "landed on the plank" });
 });
+
+scenario("walking right over the hill keeps the player on the ground, up and down the slopes", (g) => {
+    g.holdWhile("move_x", 3.0);
+    g.until(() => g.state<number>("player.x") > 7.4, { timeout: 2.5, label: "on the hill's top" });
+    g.check(() => {
+        expect(g.state("player.grounded")).toBe(true);
+        expect(g.state<number>("player.y")).toBeGreaterThan(-2.1);    // standing on the block (its top at -2.5)
+        expect(g.count("body2d.landed")).toBe(1);                      // only the spawn's landing: no hop up the slope
+    }, "up the slope without leaving the ground");
+    g.until(() => g.state<number>("player.x") > 8.9, { timeout: 2.0, label: "down the far slope" });
+    g.check(() => {
+        expect(g.state("player.grounded")).toBe(true);
+        expect(g.state<number>("player.y")).toBeLessThan(-2.6);
+        expect(g.count("body2d.landed")).toBe(1);                      // walked down, never fell
+    }, "down the slope without leaving the ground");
+});
+
+scenario("a jump onto the lift is carried up", (g) => {
+    g.hold("move_x", 1.45, -1);                                        // to x about -8.7, under the lift's rail
+    g.check(() => expect(Math.abs(g.state<number>("player.x") + 8.5)).toBeLessThan(0.4), "under the rail");
+    g.until(() => g.state<number>("lift.y") < -2.9, { timeout: 6, label: "the lift near the floor" });
+    g.press("jump");
+    g.until(() => g.state("player.riding") === "/Lift", { timeout: 2, label: "landed on the lift" });
+    g.until(() => g.state<number>("player.y") > -1.5, { timeout: 5, label: "carried up" });
+    g.check(() => expect(g.state("player.riding")).toBe("/Lift"), "still riding");
+});

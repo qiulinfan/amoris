@@ -59,19 +59,34 @@ export function dispatchContacts(contacts: Contact[]): void {
 }
 
 export const physics = {
-    /** Closest collider along a ray, or undefined. */
-    raycast(origin: Vec3 | [number, number, number], direction: Vec3 | [number, number, number], options: { max_distance?: number; include_triggers?: boolean } = {}): RayHit | undefined {
+    /** Closest collider along a ray, or undefined. `mask` limits it to layers (bits, or names from project.toml). */
+    raycast(origin: Vec3 | [number, number, number], direction: Vec3 | [number, number, number], options: { max_distance?: number; include_triggers?: boolean; mask?: number | Array<string | number> } = {}): RayHit | undefined {
         const r = command<RayHit | null>("physics.raycast", { origin, direction, ...options });
         return r === null ? undefined : r;
     },
-    /** Colliders overlapping a sphere. */
-    overlap(center: Vec3 | [number, number, number], radius: number): Array<{ id: Entity; path: string }> {
-        return command("physics.overlap", { center, radius });
+    /** Colliders overlapping a sphere, on the layers of `mask` (all by default). */
+    overlap(center: Vec3 | [number, number, number], radius: number, options: { mask?: number | Array<string | number> } = {}): Array<{ id: Entity; path: string }> {
+        return command("physics.overlap", { center, radius, ...options });
+    },
+    /** The named collision layers of the project ([physics] layers in project.toml): name to bit. */
+    layers(): Record<string, number> {
+        return command<{ names: string[]; bits: Record<string, number> }>("physics.layers").bits;
+    },
+    /** A mask from layer names (and bits), for Collider.mask or a query. */
+    layerMask(...layers: Array<string | number>): number {
+        const bits = physics.layers();
+        let m = 0;
+        for (const l of layers) {
+            if (typeof l === "number") m |= l;
+            else if (bits[l] !== undefined) m |= bits[l];
+            else throw new Error(`no physics layer named '${l}' (project.toml [physics] layers)`);
+        }
+        return m >>> 0;
     },
     contacts(): Array<{ a: string; b: string; point: Vec3; normal: Vec3; depth: number; trigger: boolean }> {
         return command("physics.contacts");
     },
-    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; gravity: Vec3 } {
+    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; gravity: Vec3; layers: string[] } {
         return command("physics.stats");
     },
     /** Every joint solved in the last step, with the force it carried. */

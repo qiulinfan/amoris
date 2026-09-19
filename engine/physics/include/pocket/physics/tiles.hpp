@@ -1,6 +1,8 @@
 // 2D platformer physics against tile maps (docs/design/tilemaps.md): Body2D boxes fall, move
-// along X then Y, and stop at the solid cells of a TileMap; one-way tiles stop them from above
-// only. Deterministic, in entity order, on the fixed tick.
+// along X then Y, and stop at the solid cells of a TileMap and at kinematic bodies (platforms);
+// one-way tiles and platforms stop them from above only; slope tiles are floors whose height
+// rises across the cell; small steps are climbed. Deterministic, in entity order, on the fixed
+// tick.
 #pragma once
 
 #include <pocket/assets/assets.hpp>
@@ -16,6 +18,9 @@ struct Stats2D {
     std::uint32_t grounded = 0;
     std::uint32_t landings = 0;   // this step
     std::uint32_t blocked = 0;    // axis moves stopped by a tile this step
+    std::uint32_t platforms = 0;  // kinematic bodies
+    std::uint32_t riding = 0;     // bodies carried by a platform this step
+    std::uint32_t stepped = 0;    // edges climbed without a jump this step
 };
 
 class Physics2D {

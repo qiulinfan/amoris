@@ -1,17 +1,19 @@
 // Playground: a scene file, entities spawned and driven from TypeScript, and a causal event log.
 //
-// Enemies spawn on a timer, walk toward the player along navigation paths around the pillars
-// (docs/design/navigation.md), and are "hit" when they get close. Every hit is an event whose
-// cause is the spawn event of that enemy, so an agent can ask "why did the player lose health?"
-// and get a chain, not a guess.
+// Enemies spawn on a timer as navigation agents that follow the player around the pillars and
+// around a cart rolling across the south half (docs/design/navigation.md), and are "hit" when they get
+// close. Every hit is an event whose cause is the spawn event of that enemy, so an agent can ask
+// "why did the player lose health?" and get a chain, not a guess.
 import { events, expose, log, nav, onStart, onTick, particles, random, setClearColor, tween, world } from "pocket";
 
-const enemies = new Map<number, { spawnSeq: number }>();
+const enemies = new Map<number, { spawnSeq: number; spawnTick: number }>();
 let nextSpawn = 0.5;
 let hits = 0;
 let killed = 0;
 let navCells = 0;
-let detours = 0;   // enemy ticks steered along a path with a corner in it
+let detours = 0;         // enemy ticks spent heading for a path corner rather than straight at the player
+let minGap = Infinity;   // the closest two enemies (older than a quarter second) have come, center to center
+let cart = 0;
 
 onStart(() => {
     log("playground start", { entities: world.summary().entities });
@@ -19,6 +21,17 @@ onStart(() => {
     setClearColor(0.08, 0.09, 0.12, 1);
     // The walkable ground between the pillars, from the static colliders in the scene.
     navCells = nav.bake({ min: { x: -9.5, y: -1, z: -9.5 }, max: { x: 9.5, y: 2, z: 9.5 }, cell: 0.5, agent_radius: 0.35, agent_height: 1.0 }).walkable ?? 0;
+    // A cart rolling back and forth across the south half, between the player and the enemies
+    // that come from there: a NavObstacle, so paths bend around it wherever it is, without a new bake.
+    cart = world.spawn("Cart", {
+        parent: "/Level",
+        components: {
+            Transform: { position: { x: -5, y: 0.3, z: 4.5 }, scale: { x: 1.2, y: 0.6, z: 0.8 } },
+            MeshRenderer: { mesh: "cube", color: { r: 0.6, g: 0.45, b: 0.25, a: 1 } },
+            Velocity: { linear: { x: 1.5, y: 0, z: 0 } },
+            NavObstacle: { radius: 0.8 },
+        },
+    });
     // A fountain in the corner: continuous particles falling back under gravity.
     world.spawn("Fountain", {
         parent: "/Level",
@@ -29,27 +42,39 @@ onStart(() => {
     });
 });
 
-onTick(({ tick, dt, time }) => {
+onTick(({ tick, time }) => {
     const player = world.find("/Level/Player");
     if (player === undefined) return;
+
+    // The cart turns around at the ends of its track.
+    const cartPos = world.get(cart, "Transform")?.position;
+    const cartVel = world.get(cart, "Velocity")?.linear;
+    if (cartPos && cartVel) {
+        if (cartPos.x > 5 && cartVel.x > 0) world.set(cart, "Velocity", { linear: { x: -1.5, y: 0, z: 0 } });
+        else if (cartPos.x < -5 && cartVel.x < 0) world.set(cart, "Velocity", { linear: { x: 1.5, y: 0, z: 0 } });
+    }
 
     if (time >= nextSpawn && enemies.size < 6) {
         nextSpawn = time + 0.75;
         const angle = random() * Math.PI * 2;
         const dist = 6 + random() * 2;
-        // Enemies come from a prefab file; only the position differs per spawn.
+        // Enemies come from a prefab file; the position and the agent's target are set per spawn.
         const id = world.instantiate("prefabs/enemy.json", {
             parent: "/Level",
-            components: { Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist }, scale: { x: 0.2, y: 0.2, z: 0.2 } } },
+            components: {
+                Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist }, scale: { x: 0.2, y: 0.2, z: 0.2 } },
+                NavAgent: { mode: 2, target: player, speed: 2.5, radius: 0.35 },
+            },
         });
         // Pop in over 0.4 s of simulation time (tweens run on ticks, so this replays exactly).
         tween.scale(id, 1, { duration: 0.4, ease: "backOut" });
         const spawnSeq = events.lastSeq();
-        enemies.set(id, { spawnSeq });
+        enemies.set(id, { spawnSeq, spawnTick: tick });
         events.emit("enemy.spawned", { id, angle: Number(angle.toFixed(3)) }, { subject: id, cause: spawnSeq });
     }
 
     const playerPos = world.get(player, "Transform")!.position;
+    const settled: Array<{ x: number; z: number }> = [];
     for (const [id, info] of enemies) {
         const t = world.get(id, "Transform");
         if (t === undefined) {
@@ -80,18 +105,13 @@ onTick(({ tick, dt, time }) => {
             killed++;
             continue;
         }
-        // Steer toward the next corner of the path around the pillars, straight at the player when clear.
-        let target = { x: playerPos.x, z: playerPos.z };
-        try {
-            const path = nav.path(t.position, playerPos);
-            if (path.points.length > 2) { detours++; target = { x: path.points[1].x, z: path.points[1].z }; }
-        } catch {
-            // off the grid (spawned outside it): head straight in
-        }
-        const tx = target.x - t.position.x, tz = target.z - t.position.z;
-        const td = Math.hypot(tx, tz) || 1;
-        const speed = 2.5;
-        world.set(id, "Velocity", { linear: { x: (tx / td) * speed, y: 0, z: (tz / td) * speed } });
+        // The agent does the walking; a corner that is not the player is a detour around something.
+        const agent = world.get(id, "NavAgent");
+        if (agent !== undefined && agent.state === 1 && Math.hypot(agent.corner.x - playerPos.x, agent.corner.z - playerPos.z) > 0.6) detours++;
+        if (tick - info.spawnTick > 15) settled.push({ x: t.position.x, z: t.position.z });
+    }
+    for (let i = 0; i < settled.length; i++) {
+        for (let j = i + 1; j < settled.length; j++) minGap = Math.min(minGap, Math.hypot(settled[i].x - settled[j].x, settled[i].z - settled[j].z));
     }
 
     if (tick % 120 === 0 && tick > 0) {
@@ -102,6 +122,9 @@ onTick(({ tick, dt, time }) => {
 expose("enemies", () => enemies.size);
 expose("nav.cells", () => navCells);
 expose("nav.detours", () => detours);
+expose("nav.blocked", () => nav.info().blocked);
+expose("nav.agents", () => nav.info().agents);
+expose("nav.min_gap", () => (minGap === Infinity ? null : Number(minGap.toFixed(2))));
 expose("hits", () => hits);
 expose("killed", () => killed);
 expose("player.health", () => {

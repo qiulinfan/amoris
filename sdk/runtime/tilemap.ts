@@ -9,6 +9,8 @@ export interface TileInfo {
     center: { x: number; y: number };
     /** A one-way platform tile on some visible layer (solid from above only; see Body2D). */
     one_way: boolean;
+    /** 1 for a floor rising to the right across the cell, -1 rising to the left, 0 flat. */
+    slope: number;
     layers: Array<{ layer: string; gid: number; id: number | null; tileset: string | null; solid: boolean; one_way?: boolean; properties: Record<string, unknown>; flip_h?: boolean; flip_v?: boolean }>;
 }
 

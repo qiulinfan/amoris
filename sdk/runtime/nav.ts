@@ -29,6 +29,38 @@ export interface NavInfo {
     max_step?: number;
     source?: string;
     baked_tick?: number;
+    /** The radius the grid was baked for; obstacles grow by it. */
+    agent_radius?: number;
+    /** NavObstacle entities applied this tick and the cells under them. */
+    obstacles: number;
+    blocked: number;
+    /** NavAgent entities moved this tick, by state, and how many replanned or deviated to avoid something. */
+    agents: number;
+    moving: number;
+    arrived: number;
+    stuck: number;
+    replans: number;
+    avoiding: number;
+}
+
+export interface NavAgentInfo {
+    id: number;
+    path: string;
+    mode: number;
+    /** 0 idle, 1 moving, 2 arrived, 3 stuck. */
+    state: number;
+    speed: number;
+    radius: number;
+    velocity: Vec3;
+    /** The point the agent heads for: the next corner of its path or the goal. */
+    corner: Vec3;
+    /** Length of the remaining path. */
+    distance: number;
+    neighbours: number;
+    /** Corners left on the planned path (absent when the agent has no plan). */
+    corners?: number;
+    partial?: boolean;
+    planned_tick?: number;
 }
 
 export type NavPoint = Vec3 | [number, number, number] | EntityRef;
@@ -60,6 +92,10 @@ export const nav = {
     },
     info(): NavInfo {
         return command("nav.info");
+    },
+    /** Every NavAgent with its state and plan, ordered by entity id (docs/design/navigation.md, Agents). */
+    agents(): NavAgentInfo[] {
+        return command("nav.agents");
     },
     clear(): void {
         command("nav.clear");
