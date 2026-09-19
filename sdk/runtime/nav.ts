@@ -51,6 +51,8 @@ export interface NavInfo {
     avoiding: number;
     /** Agents that slowed down behind another this tick (their `queue` preference). */
     queuing: number;
+    /** Followers walking a path to a slot out of sight (behind a wall) this tick. */
+    detours: number;
 }
 
 export interface NavAgentInfo {

@@ -235,9 +235,6 @@ Status TileMap::move_layer(std::string_view name, std::size_t index) {
     for (; k < layers.size(); ++k) if (layers[k].name == name) break;
     if (k == layers.size()) return fail("unknown_layer", "{} has no tile layer '{}'", path, name);
     if (index >= layers.size()) return fail("bad_args", "index {} is outside the {} tile layers of {}", index, layers.size(), path);
-    if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
-        for (const Json& l : source["layers"]) if (l.is_object() && l.value("type", "tilelayer") == "group") return fail("has_groups", "{} has layer groups, whose order the groups own; reorder it in Tiled", path);
-    }
     if (index == k) return {};
     TileLayer moving = std::move(layers[k]);
     layers.erase(layers.begin() + static_cast<std::ptrdiff_t>(k));
@@ -245,17 +242,32 @@ Status TileMap::move_layer(std::string_view name, std::size_t index) {
     ++revision;
     for (TileLayer& l : layers) ++l.revision;   // every layer's draw order moved: the meshes are keyed by it
     if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
-        Json& list = source["layers"];
-        std::vector<std::size_t> tile_nodes;   // positions of the tile layer nodes, in order
-        for (std::size_t i = 0; i < list.size(); ++i) if (list[i].is_object() && list[i].value("type", "tilelayer") == "tilelayer") tile_nodes.push_back(i);
-        if (k < tile_nodes.size() && index < tile_nodes.size()) {
-            Json node = list[tile_nodes[k]];
-            list.erase(list.begin() + static_cast<std::ptrdiff_t>(tile_nodes[k]));
-            tile_nodes.clear();
-            for (std::size_t i = 0; i < list.size(); ++i) if (list[i].is_object() && list[i].value("type", "tilelayer") == "tilelayer") tile_nodes.push_back(i);
-            // Before the node now holding the target position, or after the last tile layer.
-            const std::size_t at = index < tile_nodes.size() ? tile_nodes[index] : (tile_nodes.empty() ? list.size() : tile_nodes.back() + 1);
-            list.insert(list.begin() + static_cast<std::ptrdiff_t>(at), std::move(node));
+        // The tile layer nodes in document order, groups flattened: each as the list holding it
+        // and its position there. The moved node leaves its list and goes before the node now at
+        // the target position, in that node's list (so a layer moved to where a group's layer is
+        // joins the group), or after the last tile layer when the target is the end.
+        using Slot = std::pair<Json*, std::size_t>;
+        std::vector<Slot> nodes;
+        std::function<void(Json&)> collect = [&](Json& list) {
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                if (!list[i].is_object()) continue;
+                const std::string type = list[i].value("type", "tilelayer");
+                if (type == "group") {
+                    if (list[i].contains("layers") && list[i]["layers"].is_array()) collect(list[i]["layers"]);
+                } else if (type == "tilelayer") {
+                    nodes.emplace_back(&list, i);
+                }
+            }
+        };
+        collect(source["layers"]);
+        if (k < nodes.size()) {
+            Json node = (*nodes[k].first)[nodes[k].second];
+            nodes[k].first->erase(nodes[k].first->begin() + static_cast<std::ptrdiff_t>(nodes[k].second));
+            nodes.clear();
+            collect(source["layers"]);
+            if (index < nodes.size()) nodes[index].first->insert(nodes[index].first->begin() + static_cast<std::ptrdiff_t>(nodes[index].second), std::move(node));
+            else if (!nodes.empty()) nodes.back().first->insert(nodes.back().first->begin() + static_cast<std::ptrdiff_t>(nodes.back().second + 1), std::move(node));
+            else source["layers"].push_back(std::move(node));
         }
     }
     return {};
@@ -282,6 +294,34 @@ Result<TileSet*> TileMap::add_tileset(TileSet set) {
     }
     tilesets.push_back(std::move(set));
     return &tilesets.back();
+}
+
+Status TileMap::remove_tileset(std::string_view name) {
+    std::size_t k = 0;
+    for (; k < tilesets.size(); ++k) if (tilesets[k].name == name) break;
+    if (k == tilesets.size()) return fail("unknown_tileset", "{} has no tileset '{}'", path, name);
+    const TileSet& set = tilesets[k];
+    const std::uint32_t first = set.first_gid, last = set.first_gid + static_cast<std::uint32_t>(std::max(set.tile_count, 1)) - 1;
+    for (const TileLayer& l : layers) {
+        std::size_t used = 0;
+        for (std::uint32_t g : l.gids) {
+            const std::uint32_t id = g & kIdMask;
+            used += id >= first && id <= last;
+        }
+        if (used > 0) return fail("tileset_in_use", "{} tiles of tileset '{}' are on layer '{}' of {}; clear them first", used, name, l.name, path);
+    }
+    tilesets.erase(tilesets.begin() + static_cast<std::ptrdiff_t>(k));
+    ++revision;
+    if (source.is_object() && source.contains("tilesets") && source["tilesets"].is_array()) {
+        Json& list = source["tilesets"];
+        for (auto it = list.begin(); it != list.end(); ++it) {
+            if (it->is_object() && it->value("firstgid", 0u) == first && it->value("name", "") == name) {
+                list.erase(it);
+                break;
+            }
+        }
+    }
+    return {};
 }
 
 Json TileMap::to_json() const {
@@ -1089,6 +1129,19 @@ Result<TileMap*> AssetStore::tilemap_mut(const std::string& path) {
     return tilemaps_.at(path).get();
 }
 
+Result<TileMap*> AssetStore::copy_tilemap(const std::string& path, const std::string& name) {
+    if (name.empty()) return fail("bad_args", "a map copy needs a name");
+    if (tilemaps_.contains(name)) return fail("duplicate_map", "a map named {} is already loaded", name);
+    POCKET_TRY(src, tilemap(path));
+    auto owned = std::make_unique<TileMap>(*src);
+    owned->path = name;
+    owned->file = false;
+    TileMap* raw = owned.get();
+    tilemaps_[name] = std::move(owned);
+    version_++;
+    return raw;
+}
+
 Result<const Image*> AssetStore::image(const std::string& path) {
     if (auto it = images_.find(path); it != images_.end()) return it->second.get();
     if (auto f = failures_.find("image:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);
@@ -1159,7 +1212,7 @@ void AssetStore::invalidate(const std::string& path) {
 void AssetStore::invalidate_all() {
     meshes_.clear();
     images_.clear();
-    tilemaps_.clear();
+    for (auto it = tilemaps_.begin(); it != tilemaps_.end();) it = it->second->file ? tilemaps_.erase(it) : std::next(it);   // copies have no file to reload from
     failures_.clear();
     version_++;
 }

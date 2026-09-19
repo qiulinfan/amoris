@@ -168,7 +168,7 @@ Inverse kinematics on a chain of the entity's skinned mesh: after the clips and 
 | `target_entity` | string | "" | An entity (name or path) whose world position is the target; empty uses target. |
 | `pole_entity` | string | "" | An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has. |
 | `max_bend` | f32 | 180.0 | The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false. |
-| `limits` | list:IKLimit | [] | Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend. |
+| `limits` | list:IKLimit | [] | Per-joint bends, by node name, each with a least and a most, and a hinge's side; joints without an entry take max_bend. |
 | `weight` | f32 | 1.0 | How much of the solve applies: 0 the posed chain, 1 the solved one. |
 | `iterations` | i32 | 8 | FABRIK passes per tick (each is a backward and a forward sweep). |
 | `tolerance` | f32 | 0.001 | The solve stops once the effector is this close to the target, in meters. |
@@ -382,13 +382,14 @@ One morph target weight set by script (docs/design/animation.md, Morph targets):
 
 ## IKLimit
 
-The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry.
+The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it, and, with `side`, the one way it bends (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `joint` | string | "" | The joint's node name. |
-| `min_bend` | f32 | 0.0 | The least the joint bends: a knee kept from locking straight. |
+| `min_bend` | f32 | 0.0 | The least the joint bends: a knee kept from locking straight. A hinge's may be negative, a few degrees back past straight. |
 | `max_bend` | f32 | 180.0 | The most the joint bends. |
+| `side` | vec3 | [0.0, 0.0, 0.0] | Set, the joint is a hinge: its bone turns about one axis only, across `side` and the bone above it, and bends toward `side` alone, between min_bend and max_bend; `side` is a direction in the entity's space with the mesh at rest, carried along as the bone above turns. Zero for a joint that bends any way within its cone. |
 
 ## AnimationLayer
 

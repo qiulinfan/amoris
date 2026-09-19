@@ -16,6 +16,7 @@ to a runner, then checks the world through the same commands. Runners:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -164,12 +165,34 @@ def event_cause_check(env, answer):
 
 # ---- script tasks: the runner edits scripts/main.ts of a copy of the sample; the harness bundles
 # the copy again, reloads the script context and checks the exposed state.
+def entry_script(project_dir):
+    """The project's entry script from its project.toml (scripts/main.ts unless it says otherwise)."""
+    with open(os.path.join(project_dir, "project.toml")) as f:
+        for line in f:
+            m = re.match(r'\s*entry\s*=\s*"([^"]+)"', line)
+            if m:
+                return m.group(1)
+    return "scripts/main.ts"
+
+
 def edit_main(project_dir, transform):
-    path = os.path.join(project_dir, "scripts", "main.ts")
+    path = os.path.join(project_dir, entry_script(project_dir))
     with open(path) as f:
         text = f.read()
     with open(path, "w") as f:
         f.write(transform(text))
+
+
+def state_key(st, name):
+    """A state key written by expose, whether the state is flat ("player.y") or nested."""
+    if name in st:
+        return st[name]
+    cur = st
+    for part in name.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
 
 
 def expose_count_solve(env, project_dir):
@@ -213,6 +236,83 @@ def spawn_stars_check(env, answer):
     return True, "Star0 to Star4 along x at y 2, spheres"
 
 
+def double_jump_solve(env, project_dir):
+    # A second jump in the air, once per flight: a counter cleared on the ground.
+    def transform(t):
+        a = "const coins = new Set<number>();"
+        b = '    if (input.pressed("jump") && body.grounded) {\n        vy = 10.5;'
+        if a not in t or b not in t:
+            raise RuntimeError("the sprites script changed shape")
+        t = t.replace(a, a + "\nlet airJumps = 0;   // jumps taken since the player last stood", 1)
+        return t.replace(b, '    if (body.grounded) airJumps = 0;\n    if (input.pressed("jump") && (body.grounded || airJumps < 1)) {\n        if (!body.grounded) airJumps++;\n        vy = 10.5;', 1)
+    edit_main(project_dir, transform)
+
+
+def double_jump_check(env, answer):
+    # Jump, press jump again in the air, and see how high the player got: a single jump rises 2.3.
+    st = lambda: env.command("state", {})["state"]  # noqa: E731
+    for _ in range(240):
+        if state_key(st(), "player.grounded"):
+            break
+        env.command("step", {"ticks": 1})
+    s = st()
+    if not state_key(s, "player.grounded"):
+        return False, "the player never landed"
+    start = state_key(s, "player.y")
+    env.command("input.press", {"action": "jump"})
+    env.command("step", {"ticks": 12})
+    if state_key(st(), "player.grounded"):
+        return False, "the first jump did not lift the player"
+    env.command("input.press", {"action": "jump"})
+    apex = start
+    for _ in range(80):
+        env.command("step", {"ticks": 1})
+        apex = max(apex, state_key(st(), "player.y"))
+    rise = apex - start
+    return rise > 3.0, f"rose {rise:.2f} with jump pressed again in the air (a single jump rises 2.3)"
+
+
+def coin_respawn_solve(env, project_dir):
+    # A collected coin comes back where it was after three seconds of simulation time.
+    def transform(t):
+        imp = "tilemap, tween, world } from \"pocket\";"
+        a = "const coins = new Set<number>();"
+        col = "            coins.delete(id);\n            tween.cancelAll(id);\n            world.destroy(id);"
+        if imp not in t or a not in t or col not in t:
+            raise RuntimeError("the sprites script changed shape")
+        t = t.replace(imp, "tilemap, timer, tween, world } from \"pocket\";", 1)
+        t = t.replace(a, a + "\nlet respawned = 0;", 1)
+        back = (
+            "\n            const at = { x: c.position.x, y: c.position.y };"
+            "\n            timer.after(3, () => {"
+            "\n                const again = world.spawn(`CoinBack${respawned++}`, { components: { Transform: { position: { x: at.x, y: at.y, z: 0 } }, Sprite: { texture: \"assets/coin.png\", size: { x: 0.5, y: 0.5 }, layer: 1, filter: \"nearest\" } } });"
+            "\n                sprites.play(again, \"coin\", { speed: 1 });"
+            "\n                coins.add(again);"
+            "\n            });"
+        )
+        return t.replace(col, col + back, 1)
+    edit_main(project_dir, transform)
+
+
+def coin_respawn_check(env, answer):
+    # Stand the player on a coin: the count drops at once and is back three seconds later, not before.
+    st = lambda: env.command("state", {})["state"]  # noqa: E731
+    before = state_key(st(), "coins")
+    home = env.command("world.get", {"entity": "Player", "component": "Transform"})["position"]
+    coin = env.command("world.get", {"entity": "Coin0", "component": "Transform"})["position"]
+    env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": coin["x"], "y": coin["y"], "z": 0}}})
+    env.command("step", {"ticks": 2})
+    taken = state_key(st(), "coins")
+    if taken != before - 1:
+        return False, f"{before} coins, {taken} after standing on one"
+    env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": home}})   # away again, or it would take the coin back at once
+    env.command("step", {"ticks": 100})
+    early = state_key(st(), "coins")
+    env.command("step", {"ticks": 90})
+    after = state_key(st(), "coins")
+    return early == before - 1 and after == before, f"{before} coins, {taken} once taken, {early} after 1.7 s, {after} after 3.2 s"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -236,6 +336,10 @@ TASKS = [
      "task": "Edit scripts/main.ts in the project directory so that the ball starts its fall from a height of 1.0 instead of 3.0."},
     {"name": "spawn_stars", "project": "hello", "ticks": 0, "script": True, "solve": spawn_stars_solve, "check": spawn_stars_check,
      "task": "Edit scripts/main.ts in the project directory so that, on start, the project also spawns five entities named Star0 to Star4 at x 0 to 4, y 2, z 0, each drawing a sphere (a MeshRenderer with mesh \"sphere\")."},
+    {"name": "double_jump", "project": "sprites", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "solve": double_jump_solve, "check": double_jump_check,
+     "task": "Edit scripts/main.tsx in the project directory to give the player a double jump: pressing the jump action while in the air, once per time off the ground, gives the same upward speed again (a jump from the ground rises 2.3 units today; with a second jump pressed a fifth of a second later it must rise more than 3)."},
+    {"name": "coin_respawn", "project": "sprites", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "solve": coin_respawn_solve, "check": coin_respawn_check,
+     "task": "Edit scripts/main.tsx in the project directory so that a collected coin comes back where it was three seconds of game time after it was collected (drawn and collectable again, counted in the exposed \"coins\" state), and not before."},
 ]
 
 
@@ -272,7 +376,7 @@ def run_external(cmd, env, task, timeout, project_dir):
     """One external runner: the task as JSON on stdin, the last JSON line of its output as the answer."""
     payload = {"task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": DOCS,
                "notes": "POST {\"id\": 1, \"method\": \"<command>\", \"params\": {...}} to rpc_url + \"/rpc\"; the runtime is paused; `commands` lists every method."
-                        + (" This task edits files: change scripts/main.ts under project_dir; the harness bundles the project again and reloads the script when you are done." if task.get("script") else "")}
+                        + (f" This task edits files: change {task.get('entry', 'scripts/main.ts')} under project_dir; the harness bundles the project again and reloads the project (a fresh world from the scene, the script started again) when you are done." if task.get("script") else "")}
     proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})
     answer = None
     for line in reversed(proc.stdout.strip().splitlines()):
@@ -317,11 +421,12 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
                 if code != 0:
                     error = f"runner exited {code}: {err.strip()[-300:]}"
             if t.get("script"):
-                # The edit takes effect through the tool's bundler and the script context's reload.
+                # The edit takes effect through the tool's bundler and a project reload: a fresh
+                # world from the scene and the edited script started over it.
                 bundle(project_dir)
-                reloaded = env.command("script.reload", {"name": "project"})
-                if reloaded.get("errors"):
-                    raise RuntimeError(f"the reloaded script has errors: {reloaded['errors']}")
+                reloaded = env.command("project.reload", {})
+                if not reloaded.get("ok", False):
+                    raise RuntimeError(f"the reloaded project has errors: {reloaded}")
                 env.command("step", {"ticks": 2})
             ok, detail = t["check"](env, answer)
         except Exception as e:  # noqa: BLE001 - the report carries the failure

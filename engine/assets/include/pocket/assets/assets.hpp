@@ -167,6 +167,7 @@ struct TileMap {
     Json properties;
     Json source;                 // the parsed Tiled document, kept so edits can be written back
     std::uint64_t revision = 0;  // bumped by every edit; renderers rebuild a layer whose revision moved
+    bool file = true;            // false for a copy made at runtime: it has no file of its own until saved to one
     [[nodiscard]] const TileSet* tileset_for(std::uint32_t gid) const;
     [[nodiscard]] const TileLayer* layer(std::string_view name) const;
     [[nodiscard]] TileLayer* layer_mut(std::string_view name);
@@ -178,10 +179,14 @@ struct TileMap {
     // last (its first gid follows). Each is kept in the source document too, so save writes it.
     Result<TileLayer*> add_layer(const std::string& name, bool visible, float opacity, Json properties);
     Status remove_layer(std::string_view name);
-    // Move a tile layer to a position among the tile layers (0 is drawn first, under the others).
-    // Refused for a document with layer groups, whose order the groups own.
+    // Move a tile layer to a position among the tile layers (0 is drawn first, under the others),
+    // in the document's order with groups flattened: a layer moved to where a group's layer is
+    // joins that group.
     Status move_layer(std::string_view name, std::size_t index);
     Result<TileSet*> add_tileset(TileSet set);
+    // Remove a tileset no layer uses a tile of (refused with `tileset_in_use` otherwise); the other
+    // tilesets keep their ids.
+    Status remove_tileset(std::string_view name);
     // The map as Tiled JSON: the source document with every tile layer's data replaced by the
     // current cells (a map built in memory gets a minimal document).
     [[nodiscard]] Json to_json() const;
@@ -221,6 +226,9 @@ class AssetStore {
     Result<const TileMap*> tilemap(const std::string& path);
     // The same map for editing (docs/design/tilemaps.md, Editing); every entity drawing it sees the change.
     Result<TileMap*> tilemap_mut(const std::string& path);
+    // A copy of a loaded map under a new name, edited apart from it (an entity's own map); it has
+    // no file until saved to one, and reloading the assets keeps it. Refused for a name in use.
+    Result<TileMap*> copy_tilemap(const std::string& path, const std::string& name);
     [[nodiscard]] bool has_mesh(const std::string& path) const;
     // Forget cached data so the next access reloads from disk.
     void invalidate(const std::string& path);

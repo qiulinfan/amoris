@@ -19,14 +19,16 @@ Each task starts one of the samples paused in a headless runtime with the JSON-R
 | `expose_count` | hello (a copy) | edit the script to expose the entity count as `answer` | `state`, `world.summary` |
 | `ball_lower` | hello (a copy) | edit the script so the ball starts its fall at 1.0 | `state` |
 | `spawn_stars` | hello (a copy) | edit the script to spawn five named spheres on start | `world.find`, `world.get` |
+| `double_jump` | sprites (a copy) | design a mechanic: a second jump in the air, once per flight | `input.press`, `state` (the rise of a jump pressed again in the air) |
+| `coin_respawn` | sprites (a copy) | design a mechanic: a collected coin returns after three seconds | `world.set`, `state` (the coin count once taken, at 1.7 s and at 3.2 s) |
 
-Five tasks change the world through commands, three ask a question about it, and three ask for a change to the project's TypeScript. The question tasks take their truth from the same commands at check time, so a runner that reads the world correctly passes them and one that guesses does not. The script tasks run on a copy of the sample (`pocket new --from`, under `build/agent-eval/`): the runner gets `project_dir` and edits `scripts/main.ts` there, and when it returns the harness bundles the copy again with the tool, reloads the project's script context (`script.reload`, which re-evaluates the bundle and runs `onStart` again over the world as it is) and steps two ticks before the check. The copy and its bundle are removed afterwards.
+Five tasks change the world through commands, three ask a question about it, and five ask for a change to the project's TypeScript: three a line or two, and two a mechanic the runner has to design (where the jump counter lives and when it clears; what a coin is, where it was, how to bring it back later), with a check that plays the result rather than reads the source. The question tasks take their truth from the same commands at check time, so a runner that reads the world correctly passes them and one that guesses does not. The script tasks run on a copy of the sample (`pocket new --from`, under `build/agent-eval/`): the runner gets `project_dir` and edits the project's entry script there (`scripts/main.ts`, or `scripts/main.tsx` for the sprites sample; the task text names it), and when it returns the harness bundles the copy again with the tool, reloads the project (`project.reload`: a fresh world from the scene, the edited script started over it) and steps two ticks before the check. The copy and its bundle are removed afterwards.
 
 ## Runners
 
 ```bash
-python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 11/11
-python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor, 0/11
+python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 13/13
+python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor, 0/13
 python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,recolor --json
 ```
 

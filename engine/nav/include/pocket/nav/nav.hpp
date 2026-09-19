@@ -71,7 +71,7 @@ struct Obstacle {
 
 // What the last step() did with the world's NavAgent and NavObstacle entities.
 struct CrowdStats {
-    int agents = 0, moving = 0, arrived = 0, stuck = 0, obstacles = 0, blocked = 0, replans = 0, avoiding = 0, queuing = 0;
+    int agents = 0, moving = 0, arrived = 0, stuck = 0, obstacles = 0, blocked = 0, replans = 0, avoiding = 0, queuing = 0, detours = 0;   // detours: followers walking a path to a slot out of sight, this tick
 };
 
 // The walkable cells covered by rectangles that share edges (docs/design/navigation.md, Navmesh):

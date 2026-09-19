@@ -14,14 +14,16 @@ export interface MorphWeight {
     weight: number;
 }
 
-/** The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry. */
+/** The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it, and, with `side`, the one way it bends (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry. */
 export interface IKLimit {
     /** The joint's node name. */
     joint: string;
-    /** The least the joint bends: a knee kept from locking straight. */
+    /** The least the joint bends: a knee kept from locking straight. A hinge's may be negative, a few degrees back past straight. */
     min_bend: number;
     /** The most the joint bends. */
     max_bend: number;
+    /** Set, the joint is a hinge: its bone turns about one axis only, across `side` and the bone above it, and bends toward `side` alone, between min_bend and max_bend; `side` is a direction in the entity's space with the mesh at rest, carried along as the bone above turns. Zero for a joint that bends any way within its cone. */
+    side: Vec3;
 }
 
 /** One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers. */
@@ -246,7 +248,7 @@ export interface IK {
     pole_entity: string;
     /** The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false. */
     max_bend: number;
-    /** Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend. */
+    /** Per-joint bends, by node name, each with a least and a most, and a hinge's side; joints without an entry take max_bend. */
     limits: IKLimit[];
     /** How much of the solve applies: 0 the posed chain, 1 the solved one. */
     weight: number;
@@ -602,7 +604,7 @@ export interface Records {
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     MorphWeight: { target: "", weight: 0 },
-    IKLimit: { joint: "", min_bend: 0, max_bend: 180 },
+    IKLimit: { joint: "", min_bend: 0, max_bend: 180, side: { x: 0, y: 0, z: 0 } },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
 };
 

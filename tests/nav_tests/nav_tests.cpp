@@ -331,6 +331,39 @@ TEST_CASE("formation followers keep their slots behind and beside a leader as it
     REQUIRE(state(f1) == 3);
 }
 
+TEST_CASE("a follower whose slot is behind a wall paths around it and re-forms", "[nav][agents][formation][formationpath]") {
+    World w;
+    nav::Nav n;
+    nav::Grid g = open_grid(12, 12);
+    for (int y = 3; y <= 9; ++y) g.walkable[g.index(4, y)] = 0;   // a wall across the middle, open at both ends
+    n.set_grid(g);
+    auto spawn = [&](const char* name, Vec3 pos, Json agent) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"NavAgent", agent}}).value();
+    };
+    auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+    auto state = [&](EntityId id) { return w.try_get<NavAgent>(id)->state; };
+    // The leader stands east of the wall; its follower starts west of it, its slot a unit behind
+    // the leader (heading +X until it moves), right through the wall from where it stands.
+    const EntityId leader = spawn("Leader", {7.5f, 0, 6.5f}, Json{{"mode", 1}, {"goal", {{"x", 7.5f}, {"y", 0}, {"z", 6.5f}}}, {"speed", 2.0}, {"radius", 0.3}});
+    const EntityId f1 = spawn("F1", {2.5f, 0, 6.5f}, Json{{"mode", 3}, {"target", leader}, {"offset", {{"x", -1.0f}, {"y", 0}, {"z", 0}}}, {"speed", 3.0}, {"radius", 0.3}});
+    float detour = 0;   // how far off the row the follower went
+    int detours = 0;
+    int tick = 0;
+    for (; tick < 900 && state(f1) != 2; ++tick) {
+        w.set_tick_index(tick);
+        n.step(w, 1.0f / 60.0f);
+        detour = std::max(detour, std::fabs(pos(f1).z - 6.5f));
+        detours += n.crowd_stats().detours;
+    }
+    INFO("f1 " << pos(f1).x << "," << pos(f1).z << " detour " << detour << " ticks " << tick << " detour ticks " << detours);
+    REQUIRE(state(f1) == 2);
+    REQUIRE(std::hypot(pos(f1).x - 6.5f, pos(f1).z - 6.5f) < 0.3f);   // in its slot, east of the wall
+    REQUIRE(detour > 2.5f);   // around the wall's end, not through it
+    REQUIRE(detours > 30);    // pathing while out of sight
+    REQUIRE(n.crowd_stats().detours == 0);   // in sight once in place
+    REQUIRE(w.try_get<NavAgent>(f1)->corner.x < 7.0f);
+}
+
 TEST_CASE("a higher-priority agent walks straight while the lower one yields", "[nav][agents][priority]") {
     World w;
     nav::Nav n;

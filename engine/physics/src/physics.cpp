@@ -1004,7 +1004,7 @@ bool sphere_cast_body(Vec3 o, Vec3 dir, float r, const Body& b, float reach, flo
 }
 
 // Whether two bodies' shapes overlap, and the normal from `b` into `a` when they do.
-bool overlap_pair(const Body& a, const Body& b, Vec3& normal) {
+bool overlap_pair(const Body& a, const Body& b, Vec3& normal, Vec3* point = nullptr) {
     Manifold m;
     bool hit = false;
     if (a.shape == 3 && b.shape == 3) hit = false;
@@ -1019,22 +1019,40 @@ bool overlap_pair(const Body& a, const Body& b, Vec3& normal) {
     else if (a.shape == 2 && b.shape == 0) hit = collide_cb(a, b, m, false);
     else if (a.shape == 0 && b.shape == 2) hit = collide_cb(b, a, m, true);
     else hit = collide_bb(a, b, m);
-    if (hit) normal = -m.normal;   // the manifold's normal runs from a to b
+    if (hit) {
+        normal = -m.normal;   // the manifold's normal runs from a to b
+        if (point) *point = m.points.empty() ? a.position : m.points.front();
+    }
     return hit;
 }
 
-// The sweep of a box or capsule `a` along `motion` against `b`, by samples: no sample skips more
-// than half of a's thinnest extent, the first overlapping sample is bisected back to the last free
-// one, and the fraction of the motion reached is the time of impact. `limit` bounds the search.
-bool stepped_sweep(const Body& a, Vec3 motion, const Body& b, float limit, float& fraction, Vec3& normal) {
+// The sweep of `a` along `motion`, turning by `spin` (an axis times an angle) meanwhile, against
+// `b`, itself turning in place by `b_spin`, by samples: no sample skips more than half of the
+// thinner body's thinnest extent along the farthest point's path of either, the first overlapping
+// sample is bisected back to the last free one, and the fraction of the step reached is the time
+// of impact, with the contact point there. `limit` bounds the search.
+bool stepped_sweep(const Body& a, Vec3 motion, Vec3 spin, const Body& b, Vec3 b_spin, float limit, float& fraction, Vec3& normal, Vec3& point) {
     const float dist = length(motion);
-    if (dist <= 1e-6f) return false;
-    const int samples = std::clamp(static_cast<int>(std::ceil(dist / std::max(thinnest_extent(a) * 0.5f, 1e-3f))), 1, 256);
-    Body moved = a;
-    Vec3 n;
-    if (overlap_pair(a, b, n)) {   // already touching: the impact is now
+    const float angle = length(spin), b_angle = length(b_spin);
+    const float arc = angle * bounding_radius(a) + b_angle * bounding_radius(b);
+    if (dist + arc <= 1e-6f) return false;
+    const float thin = b_angle > 1e-6f ? std::min(thinnest_extent(a), thinnest_extent(b)) : thinnest_extent(a);
+    const int samples = std::clamp(static_cast<int>(std::ceil((dist + arc) / std::max(thin * 0.5f, 1e-3f))), 1, 256);
+    Body moved = a, other = b;
+    auto place = [&](float f) {
+        moved.position = a.position + motion * f;
+        if (angle > 1e-6f) moved.rotation = normalize(Quat::from_axis_angle(spin, angle * f) * a.rotation);
+        update_aabb(moved);
+        if (b_angle > 1e-6f) {
+            other.rotation = normalize(Quat::from_axis_angle(b_spin, b_angle * f) * b.rotation);
+            update_aabb(other);
+        }
+    };
+    Vec3 n, pt;
+    if (overlap_pair(a, b, n, &pt)) {   // already touching: the impact is now
         fraction = 0;
         normal = n;
+        point = pt;
         return true;
     }
     float lo = 0, hi = 0;
@@ -1042,9 +1060,8 @@ bool stepped_sweep(const Body& a, Vec3 motion, const Body& b, float limit, float
     for (int i = 1; i <= samples; ++i) {
         const float f = static_cast<float>(i) / static_cast<float>(samples);
         if (f > limit) break;
-        moved.position = a.position + motion * f;
-        update_aabb(moved);
-        if (overlap_pair(moved, b, n)) {
+        place(f);
+        if (overlap_pair(moved, other, n, &pt)) {
             hi = f;
             found = true;
             break;
@@ -1054,14 +1071,14 @@ bool stepped_sweep(const Body& a, Vec3 motion, const Body& b, float limit, float
     if (!found) return false;
     for (int k = 0; k < 6; ++k) {
         const float mid = 0.5f * (lo + hi);
-        moved.position = a.position + motion * mid;
-        update_aabb(moved);
-        Vec3 nm;
-        if (overlap_pair(moved, b, nm)) { hi = mid; n = nm; }
+        place(mid);
+        Vec3 nm, pm;
+        if (overlap_pair(moved, other, nm, &pm)) { hi = mid; n = nm; pt = pm; }
         else lo = mid;
     }
     fraction = lo;
     normal = n;
+    point = pt;
     return true;
 }
 
@@ -1671,13 +1688,15 @@ void Physics::step(world::World& w, double dt_d) {
         else if (info.kind == 3) (void)w.set(info.entity, "Joint", Json{{"force", info.force}, {"translation", info.translation}, {"speed", info.speed}});
         else (void)w.set(info.entity, "Joint", Json{{"force", info.force}});
     }
-    // Continuous collision: a body that asked for it is swept along this step's motion, relative
-    // to each shape it may touch (static, kinematic, or dynamic and moving too), and stops a skin
-    // short of the first impact; the impact exchanges an impulse along the normal with the
-    // restitution, the rest of the step's motion is dropped for both, and the contact solver takes
-    // over next step. A sphere is cast exactly against the other's shape (a rounded box, a grown
-    // capsule or sphere, the triangles' offset faces and edges); a box or capsule is swept by
-    // samples finer than half its thinnest extent, bisected back to the impact.
+    // Continuous collision: a body that asked for it is swept along this step's motion, turning
+    // as it goes, relative to each shape it may touch (static, kinematic, or dynamic and moving
+    // too), and stops a skin short of the first impact; the impact exchanges an impulse at the
+    // contact point along the normal with the restitution (the body's spin counts, so a blade's
+    // tip is stopped and the blade turned back), the rest of the step's motion is dropped for
+    // both, and the contact solver takes over next step. A sphere is cast exactly against the
+    // other's shape (a rounded box, a grown capsule or sphere, the triangles' offset faces and
+    // edges); a box or capsule is swept by samples finer than half its thinnest extent along its
+    // farthest point's path, bisected back to the impact.
     for (Body& b : im.bodies) b.swept = false;
     for (std::size_t bi = 0; bi < im.bodies.size(); ++bi) {
         Body& b = im.bodies[bi];
@@ -1685,64 +1704,91 @@ void Physics::step(world::World& w, double dt_d) {
         const Vec3 motion = b.velocity * dt;
         const float dist = length(motion);
         const float radius = bounding_radius(b);
-        if (dist <= radius * 0.5f) continue;  // slow for its size: the discrete step is enough
-        const Vec3 swept_min{std::min(b.aabb_min.x, b.aabb_min.x + motion.x), std::min(b.aabb_min.y, b.aabb_min.y + motion.y), std::min(b.aabb_min.z, b.aabb_min.z + motion.z)};
-        const Vec3 swept_max{std::max(b.aabb_max.x, b.aabb_max.x + motion.x), std::max(b.aabb_max.y, b.aabb_max.y + motion.y), std::max(b.aabb_max.z, b.aabb_max.z + motion.z)};
+        const Vec3 spin = b.shape == 1 || b.lock_rotation ? Vec3{0, 0, 0} : b.angular * dt;   // a sphere's turn moves nothing
+        const float arc = length(spin) * radius;
+        if (dist + arc <= radius * 0.5f) continue;  // slow for its size: the discrete step is enough
+        const Vec3 swept_min{std::min(b.aabb_min.x, b.aabb_min.x + motion.x) - arc, std::min(b.aabb_min.y, b.aabb_min.y + motion.y) - arc, std::min(b.aabb_min.z, b.aabb_min.z + motion.z) - arc};
+        const Vec3 swept_max{std::max(b.aabb_max.x, b.aabb_max.x + motion.x) + arc, std::max(b.aabb_max.y, b.aabb_max.y + motion.y) + arc, std::max(b.aabb_max.z, b.aabb_max.z + motion.z) + arc};
         float best_f = 1.0f;   // the fraction of the step at the first impact
-        Vec3 best_n;
+        Vec3 best_n, best_p;
+        bool best_exact = false;   // found by an exact cast rather than by samples
         std::size_t hit_i = im.bodies.size();
         for (std::size_t oi = 0; oi < im.bodies.size(); ++oi) {
             const Body& o = im.bodies[oi];
             if (oi == bi || o.trigger || o.swept) continue;
-            const Vec3 o_motion = (o.kind == 0 && !o.sleeping) || o.kind == 2 ? o.velocity * dt : Vec3{0, 0, 0};
-            const Vec3 o_min{std::min(o.aabb_min.x, o.aabb_min.x + o_motion.x), std::min(o.aabb_min.y, o.aabb_min.y + o_motion.y), std::min(o.aabb_min.z, o.aabb_min.z + o_motion.z)};
-            const Vec3 o_max{std::max(o.aabb_max.x, o.aabb_max.x + o_motion.x), std::max(o.aabb_max.y, o.aabb_max.y + o_motion.y), std::max(o.aabb_max.z, o.aabb_max.z + o_motion.z)};
+            const bool o_moves = (o.kind == 0 && !o.sleeping) || o.kind == 2;
+            const Vec3 o_motion = o_moves ? o.velocity * dt : Vec3{0, 0, 0};
+            // The other's turn over the step counts too (a spinning bar meets what flies past
+            // where it will be), sampled with the body's sweep; a sphere's turn moves nothing.
+            const Vec3 o_spin = o_moves && o.shape != 1 && !o.lock_rotation ? o.angular * dt : Vec3{0, 0, 0};
+            const float o_arc = length(o_spin) * bounding_radius(o);
+            const Vec3 o_min{std::min(o.aabb_min.x, o.aabb_min.x + o_motion.x) - o_arc, std::min(o.aabb_min.y, o.aabb_min.y + o_motion.y) - o_arc, std::min(o.aabb_min.z, o.aabb_min.z + o_motion.z) - o_arc};
+            const Vec3 o_max{std::max(o.aabb_max.x, o.aabb_max.x + o_motion.x) + o_arc, std::max(o.aabb_max.y, o.aabb_max.y + o_motion.y) + o_arc, std::max(o.aabb_max.z, o.aabb_max.z + o_motion.z) + o_arc};
             if (o_min.x > swept_max.x || o_max.x < swept_min.x || o_min.y > swept_max.y || o_max.y < swept_min.y || o_min.z > swept_max.z || o_max.z < swept_min.z) continue;
             if (!allowed(b, o)) continue;
-            // The other is held still and the body moves by the motion between them.
+            // The other is held in place and the body moves by the motion between them.
             const Vec3 rel = motion - o_motion;
             const float rel_len = length(rel);
-            if (rel_len <= 1e-6f) continue;
+            if (rel_len <= 1e-6f && arc <= 1e-6f && o_arc <= 1e-6f) continue;
             float f = 1.0f;
-            Vec3 n;
-            if (b.shape == 1) {
+            Vec3 n, pt;
+            if (b.shape == 1 && o_arc <= 1e-6f) {
+                if (rel_len <= 1e-6f) continue;
                 float t = 0;
                 if (!sphere_cast_body(b.position, rel * (1.0f / rel_len), b.half.x, o, rel_len * best_f, t, n)) continue;
                 f = t / rel_len;
-            } else if (!stepped_sweep(b, rel, o, best_f, f, n)) {
+                pt = b.position + rel * f - n * b.half.x;
+            } else if (!stepped_sweep(b, rel, spin, o, o_spin, best_f, f, n, pt)) {
                 continue;
             }
             if (f >= best_f) continue;
             best_f = f;
             best_n = n;
+            best_p = pt;
+            best_exact = b.shape == 1 && o_arc <= 1e-6f;
             hit_i = oi;
         }
         if (hit_i >= im.bodies.size()) continue;
         Body& o = im.bodies[hit_i];
         const bool dynamic = o.kind == 0 && !o.sleeping;
         const Vec3 o_motion = dynamic || o.kind == 2 ? o.velocity * dt : Vec3{0, 0, 0};
+        const Vec3 o_spin = (dynamic || o.kind == 2) && o.shape != 1 && !o.lock_rotation ? o.angular * dt : Vec3{0, 0, 0};
+        const float o_arc = length(o_spin) * bounding_radius(o);
         const float rel_len = length(motion - o_motion);
-        const float stop = std::max(best_f - s.slop / std::max(rel_len, 1e-6f), 0.0f);   // a skin short
+        const float stop = std::max(best_f - s.slop / std::max(rel_len + arc + o_arc, 1e-6f), 0.0f);   // a skin short
         b.position += motion * stop;
+        if (arc > 0.0f) b.rotation = normalize(Quat::from_axis_angle(spin, length(spin) * stop) * b.rotation);
         b.swept = true;
         b.touched = true;
         if (dynamic) {
             o.position += o_motion * stop;
+            if (o_arc > 0.0f) o.rotation = normalize(Quat::from_axis_angle(o_spin, length(o_spin) * stop) * o.rotation);
             o.swept = true;
             o.touched = true;
         }
-        const Vec3 o_vel = dynamic || o.kind == 2 ? o.velocity : Vec3{0, 0, 0};
-        const float vn = dot(b.velocity - o_vel, best_n);
+        // The impulse at the contact point: the spin of either body counts, so a turning body is
+        // turned back as well as stopped.
+        const Vec3 point = best_exact ? b.position - best_n * b.half.x : best_p + motion * (stop - best_f);
+        const Vec3 rb = point - b.position, ro = point - o.position;
+        const Vec3 vb = b.velocity + (b.lock_rotation ? Vec3{0, 0, 0} : cross(b.angular, rb));
+        const Vec3 vo = dynamic ? o.velocity + (o.lock_rotation ? Vec3{0, 0, 0} : cross(o.angular, ro)) : (o.kind == 2 ? o.velocity : Vec3{0, 0, 0});
+        const float vn = dot(vb - vo, best_n);
         if (vn < 0) {
             const float e = b.restitution;   // the swept body's: a pellet with none stays where it stopped
-            const float j = -(1.0f + e) * vn / (b.inv_mass + (dynamic ? o.inv_mass : 0.0f));
+            float k = b.inv_mass + (dynamic ? o.inv_mass : 0.0f);
+            if (!b.lock_rotation) k += dot(best_n, cross(mul3(b.inv_inertia_world, cross(rb, best_n)), rb));
+            if (dynamic && !o.lock_rotation) k += dot(best_n, cross(mul3(o.inv_inertia_world, cross(ro, best_n)), ro));
+            const float j = -(1.0f + e) * vn / std::max(k, 1e-9f);
             b.velocity += best_n * (j * b.inv_mass);
-            if (dynamic) o.velocity -= best_n * (j * o.inv_mass);
+            if (!b.lock_rotation) b.angular += mul3(b.inv_inertia_world, cross(rb, best_n * j));
+            if (dynamic) {
+                o.velocity -= best_n * (j * o.inv_mass);
+                if (!o.lock_rotation) o.angular -= mul3(o.inv_inertia_world, cross(ro, best_n * j));
+            }
         }
         im.stats.ccd_hits++;
         if (dynamic) im.stats.ccd_dynamic++;
-        const Vec3 point = b.position - best_n * (b.shape == 1 ? b.half.x : 0.0f);
-        w.events().emit(w.tick_index(), "physics.ccd", b.id, Json{{"path", w.path(b.id)}, {"other", w.path(o.id)}, {"dynamic", dynamic}, {"exact", b.shape == 1}, {"point", {{"x", point.x}, {"y", point.y}, {"z", point.z}}}, {"normal", {{"x", best_n.x}, {"y", best_n.y}, {"z", best_n.z}}}, {"speed", -vn}, {"fraction", best_f}});
+        w.events().emit(w.tick_index(), "physics.ccd", b.id, Json{{"path", w.path(b.id)}, {"other", w.path(o.id)}, {"dynamic", dynamic}, {"exact", best_exact}, {"point", {{"x", point.x}, {"y", point.y}, {"z", point.z}}}, {"normal", {{"x", best_n.x}, {"y", best_n.y}, {"z", best_n.z}}}, {"speed", -vn}, {"fraction", best_f}});
     }
     // 4. Integrate, project out remaining penetration, sleep.
     for (Body& b : im.bodies) {
@@ -1751,7 +1797,7 @@ void Physics::step(world::World& w, double dt_d) {
         if (b.lock_rotation) b.angular = {};
         if (!b.swept) b.position += b.velocity * dt;
         float w_len = length(b.angular);
-        if (w_len > 1e-6f) b.rotation = normalize(Quat::from_axis_angle(b.angular, w_len * dt) * b.rotation);
+        if (w_len > 1e-6f && !b.swept) b.rotation = normalize(Quat::from_axis_angle(b.angular, w_len * dt) * b.rotation);   // a swept body turned as far as its impact
         if (b.kind == 0) {
             // Snap to rest: creep below these thresholds is solver noise, not motion, and would
             // otherwise tilt stacks and start balls rolling.

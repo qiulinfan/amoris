@@ -1,8 +1,8 @@
 {
   "runner": "null",
   "passed": 0,
-  "total": 11,
-  "seconds": 10.4,
+  "total": 13,
+  "seconds": 12.7,
   "tasks": [
     {
       "name": "spawn_named",
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": false,
-      "seconds": 1.3,
+      "seconds": 1.4,
       "detail": "no number answered (truth 5)",
       "answer": null,
       "error": null
@@ -100,6 +100,24 @@
       "ok": false,
       "seconds": 0.3,
       "detail": "no entity named Star0",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "double_jump",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.9,
+      "detail": "rose 2.21 with jump pressed again in the air (a single jump rises 2.3)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "coin_respawn",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 1.3,
+      "detail": "6 coins, 5 once taken, 5 after 1.7 s, 5 after 3.2 s",
       "answer": null,
       "error": null
     }

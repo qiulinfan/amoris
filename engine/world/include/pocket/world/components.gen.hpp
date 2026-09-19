@@ -31,11 +31,12 @@ void from_json(const Json& j, MorphWeight& v);
 std::size_t numeric_span(MorphWeight& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const MorphWeight& v);
 
-/// The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry.
+/// The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it, and, with `side`, the one way it bends (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry.
 struct IKLimit {
     std::string joint = "";
     float min_bend = 0.0f;
     float max_bend = 180.0f;
+    Vec3 side{0.0f, 0.0f, 0.0f};
     constexpr bool operator==(const IKLimit&) const = default;
 };
 void to_json(Json& j, const IKLimit& v);

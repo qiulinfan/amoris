@@ -218,6 +218,21 @@ TEST_CASE("a tile map is edited in memory and written back as Tiled JSON", "[ass
     Json gd = grouped->to_json();
     REQUIRE(gd["layers"][0]["layers"][0]["data"] == Json::array({0, 1}));
     REQUIRE(gd["layers"][1]["data"] == Json::array({1, 0}));
+    // Reordering counts layers with the groups flattened: the top layer moved under the inner one
+    // joins the group before it, and the inner one moved last follows it there.
+    REQUIRE(grouped->move_layer("top", 0).has_value());
+    REQUIRE(grouped->layers[0].name == "top");
+    gd = grouped->to_json();
+    REQUIRE(gd["layers"].size() == 1);
+    REQUIRE(gd["layers"][0]["layers"][0]["name"] == "top");
+    REQUIRE(gd["layers"][0]["layers"][1]["name"] == "inner");
+    REQUIRE(grouped->move_layer("inner", 1).has_value());
+    REQUIRE(grouped->layers[1].name == "inner");
+    REQUIRE(grouped->to_json()["layers"][0]["layers"][1]["name"] == "inner");
+    auto reread = assets::parse_tilemap(grouped->to_json().dump(), "g.tmj");
+    REQUIRE(reread.has_value());
+    REQUIRE(reread->layers[0].name == "top");
+    REQUIRE(reread->layers[0].gids == std::vector<std::uint32_t>{1, 0});
     // A map built in memory writes a minimal document that reads back.
     assets::TileMap fresh;
     fresh.width = 2;

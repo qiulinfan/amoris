@@ -17,8 +17,13 @@ export interface IKOptions {
     pole?: string;
     /** Degrees any joint of the chain may bend from the bone above it (default 180: free). */
     maxBend?: number;
-    /** Per-joint bends by node name, each with a least and a most; joints without an entry take maxBend. */
-    limits?: Array<{ joint: string; minBend?: number; maxBend?: number }>;
+    /**
+     * Per-joint bends by node name, each with a least and a most; joints without an entry take
+     * maxBend. A `side` makes the joint a hinge: it turns about one axis only and bends toward
+     * that side alone (a direction in the entity's space with the mesh at rest, carried along by
+     * the bone above); its minBend may then be negative.
+     */
+    limits?: Array<{ joint: string; minBend?: number; maxBend?: number; side?: Vec3 }>;
     weight?: number;
     iterations?: number;
     tolerance?: number;
@@ -126,7 +131,7 @@ export const animation = {
         else if (target) { value.target = target; value.target_entity = ""; }
         if (pole !== undefined) value.pole_entity = pole;
         if (maxBend !== undefined) value.max_bend = maxBend;
-        if (limits !== undefined) value.limits = limits.map((l) => ({ joint: l.joint, min_bend: l.minBend ?? 0, max_bend: l.maxBend ?? 180 }));
+        if (limits !== undefined) value.limits = limits.map((l) => ({ joint: l.joint, min_bend: l.minBend ?? 0, max_bend: l.maxBend ?? 180, side: l.side ?? { x: 0, y: 0, z: 0 } }));
         world.set(entity, "IK", value);
         return world.get(entity, "IK")!;
     },

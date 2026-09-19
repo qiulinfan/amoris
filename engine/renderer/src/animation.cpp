@@ -301,10 +301,31 @@ Vec3 clamp_floor(Vec3 dir, Vec3 ref, float min_rad, Vec3 hint) {
     return normalize(ref * std::cos(min_rad) + perp * std::sin(min_rad));
 }
 
+// A hinge: the unit `dir` brought into the plane of the unit `ref` and `side`, then kept between
+// `lo` and `hi` radians from ref measured toward side (a bend the other way is a negative angle,
+// so it comes back to lo). A side along ref gives no plane: the joint bends any way, within a cone.
+Vec3 clamp_hinge(Vec3 dir, Vec3 ref, Vec3 side, float lo, float hi, Vec3 hint) {
+    Vec3 s = side - ref * dot(side, ref);
+    if (length(s) < 1e-6f) return clamp_floor(clamp_cone(dir, ref, hi), ref, std::max(lo, 0.0f), hint);
+    s = normalize(s);
+    const float x = dot(dir, ref), y = dot(dir, s);
+    const float angle = x * x + y * y < 1e-12f ? lo : std::clamp(std::atan2(y, x), lo, hi);
+    return normalize(ref * std::cos(angle) + s * std::sin(angle));
+}
+
+// A node's global matrix in the asset's space with the mesh at rest.
+Mat4 rest_global(const assets::Mesh& mesh, int node) {
+    std::vector<std::size_t> lineage;
+    for (int n = node, guard = 0; n >= 0 && static_cast<std::size_t>(n) < mesh.nodes.size() && guard < 256; n = mesh.nodes[static_cast<std::size_t>(n)].parent, ++guard) lineage.push_back(static_cast<std::size_t>(n));
+    Mat4 g = Mat4::identity();
+    for (auto it = lineage.rbegin(); it != lineage.rend(); ++it) g = g * mesh.nodes[*it].rest;
+    return g;
+}
+
 // FABRIK on the chain of `bones` joints ending at `end`: joint positions are moved to reach the
 // target (backward from the effector, forward from the base, the pole applied to the middle
-// joints, every bone kept within `max_bend` of the one above it), then every joint is turned so
-// its bone points along the solved positions.
+// joints, every bone kept within `max_bend` of the one above it, a hinge in its plane and on its
+// side), then every joint is turned so its bone points along the solved positions.
 void solve_ik(const world::World& world, world::EntityId self, const assets::Mesh& mesh, Locals& l, world::IK& ik) {
     ik.error = 0.0f;
     ik.reached = false;
@@ -337,31 +358,49 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
     // parent's bone, or, without a parent (or one at the same point), the posed first bone.
     const float deg = 3.14159265f / 180.0f;
     std::vector<float> lo(n, 0.0f), hi(n, std::clamp(ik.max_bend, 0.0f, 180.0f) * deg);
+    // A hinge's side, given in the asset's space at rest, is carried by the node above the joint:
+    // taken into that node's rest frame here, out through its posed frame and the swing the solve
+    // gives its bone when the joint is clamped.
+    std::vector<Vec3> hinge(n, Vec3{0, 0, 0});   // the side in the posed frame of the node above; zero for no hinge
+    const int parent0 = mesh.nodes[chain[0]].parent;
     for (std::size_t i = 0; i < n; ++i) {
         for (const world::IKLimit& lim : ik.limits) {
             if (lim.joint != mesh.nodes[chain[i]].name) continue;
-            lo[i] = std::clamp(lim.min_bend, 0.0f, 180.0f) * deg;
+            const bool is_hinge = length(lim.side) > 1e-6f;
+            lo[i] = std::clamp(lim.min_bend, is_hinge ? -180.0f : 0.0f, 180.0f) * deg;
             hi[i] = std::clamp(lim.max_bend, 0.0f, 180.0f) * deg;
             if (hi[i] < lo[i]) hi[i] = lo[i];
+            if (!is_hinge) continue;
+            const int node_above = i == 0 ? parent0 : static_cast<int>(chain[i - 1]);
+            Vec3 side = normalize(lim.side);
+            if (node_above >= 0 && static_cast<std::size_t>(node_above) < cur.globals.size()) {
+                side = rest_global(mesh, node_above).inverse_affine().transform_dir(side);
+                side = cur.globals[static_cast<std::size_t>(node_above)].transform_dir(side);
+            }
+            hinge[i] = safe_dir(side);
         }
     }
     bool limited = ik.max_bend < 180.0f;
-    for (std::size_t i = 0; i < n; ++i) limited = limited || lo[i] > 0.0f || hi[i] < 180.0f * deg;
+    for (std::size_t i = 0; i < n; ++i) limited = limited || lo[i] > 0.0f || hi[i] < 180.0f * deg || length(hinge[i]) > 0.0f;
     const Vec3 bend_hint = has_pole ? safe_dir(pole - base) : Vec3{0, 0, 1};
     Vec3 above = safe_dir(p[1] - p[0]);
-    if (const int parent = mesh.nodes[chain[0]].parent; parent >= 0 && static_cast<std::size_t>(parent) < cur.globals.size()) {
-        const Vec3 pp = cur.globals[static_cast<std::size_t>(parent)].transform_point({0, 0, 0});
+    if (parent0 >= 0 && static_cast<std::size_t>(parent0) < cur.globals.size()) {
+        const Vec3 pp = cur.globals[static_cast<std::size_t>(parent0)].transform_point({0, 0, 0});
         if (length(p[0] - pp) > 1e-4f) above = safe_dir(p[0] - pp);
     }
+    // A joint's bend limit applied to its bone `dir` given the bone above it, `ref`, now pointing
+    // where the pose had it point along `ref_posed`: a hinge's side swings with the bone above.
+    auto limit = [&](std::size_t i, Vec3 dir, Vec3 ref, Vec3 ref_posed) {
+        if (length(hinge[i]) > 0.0f) return clamp_hinge(dir, ref, from_to(ref_posed, ref).rotate(hinge[i]), lo[i], hi[i], bend_hint);
+        return clamp_floor(clamp_cone(dir, ref, hi[i]), ref, lo[i], bend_hint);
+    };
+    auto posed_above = [&](std::size_t i) { return i == 0 ? above : safe_dir(p[i] - p[i - 1]); };
     // The forward sweep: from the base down, each bone pointed along `want`, within the limit.
     auto forward = [&](auto want) {
         q[0] = base;
         for (std::size_t i = 0; i < n; ++i) {
             Vec3 dir = safe_dir(want(i));
-            if (limited) {
-                const Vec3 ref = i == 0 ? above : safe_dir(q[i] - q[i - 1]);
-                dir = clamp_floor(clamp_cone(dir, ref, hi[i]), ref, lo[i], bend_hint);
-            }
+            if (limited) dir = limit(i, dir, i == 0 ? above : safe_dir(q[i] - q[i - 1]), posed_above(i));
             q[i + 1] = q[i] + dir * d[i];
         }
     };
@@ -392,8 +431,12 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             }
             const float along = std::clamp((reach * reach + a * a - b * b) / (2.0f * reach), -a, a);
             const float r = std::sqrt(std::max(a * a - along * along, 0.0f));
+            // The middle joint goes to the pole's side of the line, else the pose's; a hinge there
+            // decides instead: the bone below it leaves the line toward the hinge's side, so the
+            // joint itself goes the other way.
             Vec3 side{0, 0, 0};
-            if (has_pole) side = (pole - base) - axis * dot(pole - base, axis);
+            if (length(hinge[k]) > 0.0f) side = (hinge[k] - axis * dot(hinge[k], axis)) * -1.0f;
+            if (length(side) < 1e-6f && has_pole) side = (pole - base) - axis * dot(pole - base, axis);
             if (length(side) < 1e-6f) side = (q[k] - base) - axis * dot(q[k] - base, axis);
             if (length(side) < 1e-3f * total) side = cross(axis, {0, 0, 1});
             if (length(side) < 1e-6f) side = cross(axis, {1, 0, 0});
@@ -420,11 +463,17 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             q[n] = target;
             for (std::size_t i = n; i-- > 0;) {
                 Vec3 bone = safe_dir(q[i + 1] - q[i]);
-                if (limited && i + 1 < n) bone = clamp_floor(clamp_cone(bone, safe_dir(q[i + 2] - q[i + 1]), hi[i + 1]), safe_dir(q[i + 2] - q[i + 1]), lo[i + 1], bend_hint);   // the bend at joint i+1
+                if (limited && i + 1 < n) {
+                    // The bend at joint i+1, seen from the bone below it: the bone above leaves it
+                    // by the same angle the other way, so a hinge's side is mirrored.
+                    const Vec3 below = safe_dir(q[i + 2] - q[i + 1]);
+                    if (length(hinge[i + 1]) > 0.0f) bone = clamp_hinge(bone, below, from_to(safe_dir(p[i + 2] - p[i + 1]), below).rotate(hinge[i + 1]) * -1.0f, lo[i + 1], hi[i + 1], bend_hint);
+                    else bone = clamp_floor(clamp_cone(bone, below, hi[i + 1]), below, lo[i + 1], bend_hint);
+                }
                 q[i] = q[i + 1] - bone * d[i];
             }
             if (has_pole) {
-                for (std::size_t i = 1; i < n; ++i) toward_pole(q[i - 1], q[i], q[i + 1], pole);
+                for (std::size_t i = 1; i < n; ++i) if (length(hinge[i]) == 0.0f) toward_pole(q[i - 1], q[i], q[i + 1], pole);   // a hinge keeps its own plane
             }
             forward([&](std::size_t i) { return q[i + 1] - q[i]; });
         }

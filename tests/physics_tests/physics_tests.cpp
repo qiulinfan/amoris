@@ -577,6 +577,90 @@ TEST_CASE("continuous collision holds a fast small sphere at a thin wall that a 
     REQUIRE(w.events().since(0, 100, "physics.ccd").size() == 2);
 }
 
+TEST_CASE("continuous collision sweeps a pellet into a spinning bar that turns into its path", "[physics][ccd][spin][otherspin]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // A bar four meters long lies along x at height 3, spinning about z at -20 radians a second
+    // (its +x end sweeps down); a pellet a meter and a half out flies up at 24 m/s from 0.7 below
+    // the bar's line. In one tick the pellet rises 0.4 and the bar's line there drops 0.52: they
+    // cross mid-tick, where the bar was not at the start of the tick and the pellet is not at its
+    // end. Without the bar's turn in the sweep the pellet passes through it.
+    auto bar = [&](const char* name, float z) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 3}, {"z", z}}}}}, {"RigidBody", {{"kind", 0}, {"mass", 50.0}, {"gravity_scale", 0.0}, {"restitution", 0.0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 2.0}, {"y", 0.1}, {"z", 0.1}}}}}, {"Velocity", {{"angular", {{"x", 0}, {"y", 0}, {"z", -20.0}}}}}}).value();
+    };
+    auto pellet = [&](const char* name, float z, bool ccd) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", 1.5}, {"y", 2.3}, {"z", z}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", ccd}, {"mass", 0.01}, {"gravity_scale", 0.0}, {"restitution", 0.0}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.05}, {"y", 0.05}, {"z", 0.05}}}}}, {"Velocity", {{"linear", {{"x", 0}, {"y", 24.0}, {"z", 0}}}}}}).value();
+    };
+    const EntityId blade = bar("Blade", 0.0f);
+    const EntityId swept = pellet("Swept", 0.0f, true);
+    (void)bar("Dud", 6.0f);
+    const EntityId dud = pellet("Dud pellet", 6.0f, false);
+    run(p, w, 1);
+    INFO("swept " << w.try_get<Transform>(swept)->position.y << " v " << w.try_get<Velocity>(swept)->linear.y << " dud " << w.try_get<Transform>(dud)->position.y << " blade spin " << w.try_get<Velocity>(blade)->angular.z);
+    // The unswept pellet went through the bar; the swept one met it and was knocked back down.
+    REQUIRE(w.try_get<Transform>(dud)->position.y == Catch::Approx(2.7).margin(0.02));
+    REQUIRE(w.try_get<Velocity>(swept)->linear.y < 0.0f);
+    REQUIRE(w.try_get<Transform>(swept)->position.y < 2.65f);
+    auto hits = w.events().since(0, 100, "physics.ccd");
+    Json hit(nullptr);
+    for (const auto& h : hits) if (h.subject == swept) { hit = h.data; break; }
+    REQUIRE(!hit.is_null());
+    REQUIRE(hit["dynamic"] == true);
+    REQUIRE(hit["exact"] == false);   // sampled: the other's turn has no exact cast
+    REQUIRE(hit["fraction"].get<double>() > 0.3);
+    REQUIRE(hit["fraction"].get<double>() < 0.95);
+    // The bar turned as far as the impact, not the whole tick, and kept most of its spin.
+    const Quat q = w.try_get<Transform>(blade)->rotation;
+    const float turned = 2.0f * std::atan2(std::fabs(q.z), q.w);
+    REQUIRE(turned > 0.05f);
+    REQUIRE(turned < 0.33f);
+    REQUIRE(std::fabs(w.try_get<Velocity>(blade)->angular.z) > 15.0f);
+}
+
+TEST_CASE("continuous collision sweeps a spinning plank's tip into a pane its center never nears", "[physics][ccd][spin]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // The pane: 4 cm thick at x 5. Two planks two meters long lie along z with their centers at
+    // x 4.2, not moving, spinning at 40 radians a second so a tip swings 0.67 m a tick: within one
+    // tick it crosses the pane's x, which the plank's translation (none) would never notice.
+    w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 4}}}}}});
+    auto plank = [&](const char* name, float z, bool ccd) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", 4.2}, {"y", 1}, {"z", z}}}, {"rotation", {{"x", 0}, {"y", 0.7071068}, {"z", 0}, {"w", 0.7071068}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", ccd}, {"gravity_scale", 0.0}, {"restitution", 0.0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1.0}, {"y", 0.05}, {"z", 0.05}}}}}, {"Velocity", {{"angular", {{"x", 0}, {"y", -40.0}, {"z", 0}}}}}}).value();
+    };
+    const EntityId blade = plank("Blade", 0.0f, true);
+    const EntityId dud = plank("Dud", 6.0f, false);   // beyond the pane's end
+    auto tip_x = [&](EntityId id) {
+        const auto* t = w.try_get<Transform>(id);
+        return t->position.x + t->rotation.rotate({1, 0, 0}).x;
+    };
+    float blade_max = 0, dud_max = 0;
+    for (int i = 0; i < 30; ++i) {
+        run(p, w, 1);
+        blade_max = std::max(blade_max, tip_x(blade));
+        dud_max = std::max(dud_max, tip_x(dud));
+    }
+    INFO("blade tip " << blade_max << " dud tip " << dud_max << " blade spin " << w.try_get<Velocity>(blade)->angular.y);
+    // The dud's tip swung through the pane's x; the blade's tip never reached the pane's near face.
+    REQUIRE(dud_max > 5.05f);
+    REQUIRE(blade_max < 5.0f);
+    REQUIRE(blade_max > 4.8f);   // it did get close: the sweep stopped it at the pane, not at the start
+    auto hits = w.events().since(0, 100, "physics.ccd");
+    Json hit(nullptr);
+    for (const auto& h : hits) if (h.subject == blade) { hit = h.data; break; }
+    REQUIRE(!hit.is_null());
+    REQUIRE(hit["exact"] == false);
+    REQUIRE(hit["normal"]["x"].get<double>() == Catch::Approx(-1.0).margin(0.05));
+    REQUIRE(hit["point"]["x"].get<double>() == Catch::Approx(4.98).margin(0.05));
+    // The impulse at the tip both slowed the spin and pushed the blade's center back from the pane
+    // (a tip hit turns and shoves a free body, as it should): the spin lost at least a third and
+    // the blade recoiled along -x.
+    REQUIRE(std::fabs(w.try_get<Velocity>(blade)->angular.y) < 30.0f);
+    REQUIRE(w.try_get<Velocity>(blade)->linear.x < -3.0f);
+    REQUIRE(w.try_get<Transform>(blade)->position.x < 4.2f);
+}
+
 TEST_CASE("continuous collision casts exact shapes, sweeps boxes and capsules by samples and stops dynamic pairs", "[physics][ccd][sweep]") {
     World w;
     physics::Physics p;

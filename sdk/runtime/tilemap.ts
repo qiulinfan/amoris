@@ -147,7 +147,18 @@ export const tilemap = {
         const { tileWidth, tileHeight, ...rest } = options;
         return command("tilemap.add_tileset", { entity, ...rest, tile_width: tileWidth, tile_height: tileHeight }) as TilesetInfo;
     },
-    /** Write the map back as Tiled JSON, to its own file or another path inside the project. */
+    /** Remove a tileset no layer uses a tile of (refused with `tileset_in_use` otherwise). */
+    removeTileset(entity: EntityRef, name: string): { tileset: string; removed: boolean; tilesets: number; revision: number } {
+        return command("tilemap.remove_tileset", { entity, name }) as { tileset: string; removed: boolean; tilesets: number; revision: number };
+    },
+    /**
+     * Give the entity its own copy of its map, under `name` (default `<map>@<entity name>`): edits
+     * to it leave the map the other entities draw alone. The copy has no file until saved to one.
+     */
+    copy(entity: EntityRef, name?: string): { map: string; source: string; layers: number; revision: number } {
+        return command("tilemap.copy", { entity, name }) as { map: string; source: string; layers: number; revision: number };
+    },
+    /** Write the map back as Tiled JSON, to its own file or another path inside the project (a copy needs the path). */
     save(entity: EntityRef, path?: string): { path: string; bytes: number; revision: number; layers: number } {
         return command("tilemap.save", { entity, path }) as { path: string; bytes: number; revision: number; layers: number };
     },

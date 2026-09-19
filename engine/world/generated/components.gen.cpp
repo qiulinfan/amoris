@@ -81,24 +81,33 @@ void to_json(Json& j, const IKLimit& v) {
     j["joint"] = v.joint;
     j["min_bend"] = v.min_bend;
     j["max_bend"] = v.max_bend;
+    vec_to_json(j["side"], v.side);
 }
 
 void from_json(const Json& j, IKLimit& v) {
     scalar_from_json(j, "joint", v.joint);
     scalar_from_json(j, "min_bend", v.min_bend);
     scalar_from_json(j, "max_bend", v.max_bend);
+    if (j.is_object() && j.contains("side")) vec_from_json(j["side"], v.side);
 }
 
 void hash_record(StateHasherRef& h, const IKLimit& v) {
     h.str(v.joint);
     h.f32(v.min_bend);
     h.f32(v.max_bend);
+    h.f32(v.side.x);
+    h.f32(v.side.y);
+    h.f32(v.side.z);
 }
 
 std::size_t numeric_span(IKLimit& v, std::string_view path, float** out) {
     (void)v;
     if (path == "min_bend") { *out = &v.min_bend; return 1; }
     if (path == "max_bend") { *out = &v.max_bend; return 1; }
+    if (path == "side") { *out = &v.side.x; return 3; }
+    if (path == "side.x") { *out = &v.side.x; return 1; }
+    if (path == "side.y") { *out = &v.side.y; return 1; }
+    if (path == "side.z") { *out = &v.side.z; return 1; }
     return 0;
 }
 
@@ -1569,7 +1578,7 @@ constexpr std::array<FieldInfo, 14> kIKFields = {{
     FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
     FieldInfo{"pole_entity", "string", "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has."},
     FieldInfo{"max_bend", "f32", "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false."},
-    FieldInfo{"limits", "list:IKLimit", "Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend."},
+    FieldInfo{"limits", "list:IKLimit", "Per-joint bends, by node name, each with a least and a most, and a hinge's side; joints without an entry take max_bend."},
     FieldInfo{"weight", "f32", "How much of the solve applies: 0 the posed chain, 1 the solved one."},
     FieldInfo{"iterations", "i32", "FABRIK passes per tick (each is a backward and a forward sweep)."},
     FieldInfo{"tolerance", "f32", "The solve stops once the effector is this close to the target, in meters."},

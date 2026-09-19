@@ -874,6 +874,64 @@ TEST_CASE("save slots hold the world and script state and load back exactly", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("an entity's copy of a map is edited apart from the map and outlives a reload", "[runtime][tilemap][mapcopy]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const std::string map = s.command("world.get", Json{{"entity", "Level"}, {"component", "TileMap"}}).value()["map"].get<std::string>();
+    // A second entity draws the same file, off to the side.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Annex"}, {"components", Json{{"Transform", Json{{"position", {{"x", 40}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", map}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int drawn_shared = s.command("render.stats", Json::object()).value()["tile_layers"].get<int>();
+    auto gid_at = [&](const char* entity, int x, int y) {
+        for (const Json& l : s.command("tilemap.tile", Json{{"entity", entity}, {"tile_x", x}, {"tile_y", y}}).value()["layers"]) if (l["gid"].get<std::uint32_t>() != 0) return l["gid"].get<std::uint32_t>();
+        return std::uint32_t{0};
+    };
+    // A cell in the air is empty on both; an edit through the annex, before the copy, is the map's.
+    REQUIRE(gid_at("Level", 3, 2) == 0);
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Annex"}, {"tile_x", 3}, {"tile_y", 2}, {"gid", 1}}).has_value());
+    REQUIRE(gid_at("Level", 3, 2) == 1);
+    Json copy = s.command("tilemap.copy", Json{{"entity", "Annex"}}).value();
+    INFO(copy.dump());
+    REQUIRE(copy["map"] == map + "@Annex");
+    REQUIRE(copy["source"] == map);
+    REQUIRE(s.command("world.get", Json{{"entity", "Annex"}, {"component", "TileMap"}}).value()["map"] == map + "@Annex");
+    REQUIRE(s.command("tilemap.copy", Json{{"entity", "Annex"}, {"name", map + "@Annex"}}).error().code == "duplicate_map");   // a name in use; a copy of the copy would be fine
+    // From here the annex's edits are its own: the level keeps the tile the annex clears.
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Annex"}, {"tile_x", 3}, {"tile_y", 2}, {"clear", true}}).has_value());
+    REQUIRE(gid_at("Annex", 3, 2) == 0);
+    REQUIRE(gid_at("Level", 3, 2) == 1);
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Annex"}, {"tile_x", 4}, {"tile_y", 2}, {"gid", 1}}).has_value());
+    REQUIRE(gid_at("Level", 4, 2) == 0);
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Annex"}, {"tile_x", 4}, {"tile_y", 2}}).value()["solid"] == true);
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Level"}, {"tile_x", 4}, {"tile_y", 2}}).value()["solid"] == false);
+    // Both are drawn, each its own layers.
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_shared);
+    // The copy has no file: saving needs a path; with one it writes a map that reads back.
+    REQUIRE(s.command("tilemap.save", Json{{"entity", "Annex"}}).error().code == "no_file");
+    Json saved = s.command("tilemap.save", Json{{"entity", "Annex"}, {"path", "assets/annex-test.tmj"}}).value();
+    REQUIRE(saved["bytes"].get<std::size_t>() > 100);
+    std::filesystem::remove(o.project_dir / "assets" / "annex-test.tmj");
+    // Reloading the assets forgets the level's unsaved edit and keeps the copy with its own.
+    REQUIRE(s.command("assets.reload", Json::object()).has_value());
+    REQUIRE(gid_at("Level", 3, 2) == 0);
+    REQUIRE(gid_at("Annex", 3, 2) == 0);
+    REQUIRE(gid_at("Annex", 4, 2) == 1);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["tile_layers"].get<int>() == drawn_shared);
+    REQUIRE(s.command("events.since", Json{{"since", 0}, {"limit", 200}, {"type", "tilemap.copied"}}).value()["events"].size() == 1);
+}
+
 TEST_CASE("layers and tilesets are added at runtime: drawn, solid, saved and removed", "[runtime][tilemap][layers]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
@@ -979,8 +1037,13 @@ TEST_CASE("layers and tilesets are added at runtime: drawn, solid, saved and rem
     REQUIRE(again->tilesets.back().solid(1));
     REQUIRE(again->tilesets.back().image == "assets/coin.png");
     std::filesystem::remove(saved_path);
+    // A tileset with tiles on a layer stays; the layer gone, it can go, and the file loses it.
+    REQUIRE(s.command("tilemap.remove_tileset", Json{{"entity", "Level"}, {"name", "coins"}}).error().code == "tileset_in_use");
+    REQUIRE(s.command("tilemap.remove_tileset", Json{{"entity", "Level"}, {"name", "nope"}}).error().code == "unknown_tileset");
     // Removed, the layer and its tiles are gone, from the map and from the next save.
     REQUIRE(s.command("tilemap.remove_layer", Json{{"entity", "Level"}, {"name", "extra"}}).value()["layers"].get<std::size_t>() == layers_before);
+    REQUIRE(s.command("tilemap.remove_tileset", Json{{"entity", "Level"}, {"name", "coins"}}).value()["tilesets"].get<std::size_t>() == sets_before);
+    REQUIRE(s.command("tilemap.info", Json{{"entity", "Level"}}).value()["tilesets"].size() == sets_before);
     REQUIRE(s.command("tilemap.remove_layer", Json{{"entity", "Level"}, {"name", "extra"}}).error().code == "unknown_layer");
     REQUIRE(filled(tile_at(3, 1)).empty());
     REQUIRE_FALSE(has_layer(tile_at(3, 1), "extra"));
@@ -993,11 +1056,11 @@ TEST_CASE("layers and tilesets are added at runtime: drawn, solid, saved and rem
     again = assets::parse_tilemap(*text, "assets/level-layers.tmj");
     REQUIRE(again.has_value());
     REQUIRE(again->layers.size() == layers_before);
-    REQUIRE(again->tilesets.size() == sets_before + 1);
+    REQUIRE(again->tilesets.size() == sets_before);
     std::filesystem::remove(saved_path);
     Json hist = s.command("events.histogram", Json::object()).value();
     REQUIRE(hist["tilemap.layer"].get<int>() == 6);   // added, hidden, shown (a read without changes emits nothing), moved twice, removed
-    REQUIRE(hist["tilemap.tileset"].get<int>() == 1);
+    REQUIRE(hist["tilemap.tileset"].get<int>() == 2);   // added, removed
     REQUIRE(s.finish().has_value());
 }
 
@@ -1587,6 +1650,81 @@ TEST_CASE("per-joint IK limits give one joint its own most and least bend", "[ru
     p = pose();
     REQUIRE(p["ik"]["reached"] == true);
     REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(11.46).margin(0.5));
+}
+
+TEST_CASE("a hinge bends one way only: the chain folds on the hinge's side or misses", "[runtime][animation][ik][iklimit][ikhinge]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto v = [](const Json& j) { return Vec3{j["x"].get<float>(), j["y"].get<float>(), j["z"].get<float>()}; };
+    auto pose = [&]() { return s.command("animation.pose", Json{{"entity", "Leg"}}).value(); };
+    auto joint = [&](const Json& p, const char* name) {
+        for (const Json& j : p["joints"]) if (j["name"] == name) return v(j["position"]);
+        return Vec3{0, 0, 0};
+    };
+    auto limits = [](Json lim) { return Json{{"limits", Json::array({std::move(lim)})}}; };
+    // Two unit bones up +Y, the target a bone's length out and back (0, 1, -1): the fold is a right
+    // angle either way, and the free chain folds on the side the pose leans to, with the tip
+    // joint staying put at (0, 1, 0) and the last bone swinging back.
+    Json spawn = Json{{"name", "Leg"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"IK", Json{{"end", "tip"}, {"bones", 2}, {"tip", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"target", {{"x", 0.0}, {"y", 1.0}, {"z", -1.0}}}}}}}};
+    REQUIRE(s.command("world.spawn", spawn).has_value());
+    REQUIRE(s.frame().has_value());
+    Json p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(length(joint(p, "tip") - Vec3{0, 1, 0}) < 0.05f);
+    // The tip joint a hinge bending toward +Z only: the same target is reached by the mirror fold,
+    // the first bone swinging back and the last one bending forward from it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Leg"}, {"component", "IK"}, {"value", limits(Json{{"joint", "tip"}, {"side", {{"x", 0}, {"y", 0}, {"z", 1}}}})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["limits"] == 1);
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(length(joint(p, "tip") - Vec3{0, 0, -1}) < 0.05f);
+    REQUIRE(length(v(p["ik"]["effector"]) - Vec3{0, 1, -1}) < 0.02f);
+    REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(90.0).margin(1.0));
+    // Bending toward -Z only: the first fold again.
+    REQUIRE(s.command("world.set", Json{{"entity", "Leg"}, {"component", "IK"}, {"value", limits(Json{{"joint", "tip"}, {"side", {{"x", 0}, {"y", 0}, {"z", -1}}}})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(length(joint(p, "tip") - Vec3{0, 1, 0}) < 0.05f);
+    // Both joints hinges toward +Z: no fold reaches a point behind, the chain stays as near as it
+    // can (straight up, a bone's length away).
+    REQUIRE(s.command("world.set", Json{{"entity", "Leg"}, {"component", "IK"}, {"value", Json{{"limits", Json::array({Json{{"joint", "root"}, {"side", {{"x", 0}, {"y", 0}, {"z", 1}}}}, Json{{"joint", "tip"}, {"side", {{"x", 0}, {"y", 0}, {"z", 1}}}}})}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["reached"] == false);
+    REQUIRE(p["ik"]["error"].get<double>() > 1.3);
+    // A hinge's least bend may be negative: the root locked straight (a hinge with no bend at
+    // all) and the tip bending toward +Z, a target a bone's length from the tip joint and a
+    // little behind needs the tip to go 17 degrees back; min_bend -30 allows it, 0 does not.
+    Json both = Json{{"target", {{"x", 0.0}, {"y", 1.0 + std::cos(17.0 * 3.14159265 / 180.0)}, {"z", -std::sin(17.0 * 3.14159265 / 180.0)}}}, {"limits", Json::array({Json{{"joint", "root"}, {"side", {{"x", 0}, {"y", 0}, {"z", 1}}}, {"max_bend", 0.0}}, Json{{"joint", "tip"}, {"side", {{"x", 0}, {"y", 0}, {"z", 1}}}, {"min_bend", -30.0}}})}};
+    REQUIRE(s.command("world.set", Json{{"entity", "Leg"}, {"component", "IK"}, {"value", both}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(length(joint(p, "tip") - Vec3{0, 1, 0}) < 0.02f);   // the root did not move
+    REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(17.0).margin(1.5));
+    both["limits"][1]["min_bend"] = 0.0;
+    REQUIRE(s.command("world.set", Json{{"entity", "Leg"}, {"component", "IK"}, {"value", both}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["reached"] == false);
+    REQUIRE(length(v(p["ik"]["effector"]) - Vec3{0, 2, 0}) < 0.02f);   // held straight
 }
 
 TEST_CASE("a look-at with a speed turns toward its target a little each tick", "[runtime][animation][lookat][lookatspeed]") {

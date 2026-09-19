@@ -388,6 +388,7 @@ Json Nav::describe() const {
     j["replans"] = crowd_.replans;
     j["avoiding"] = crowd_.avoiding;
     j["queuing"] = crowd_.queuing;
+    j["detours"] = crowd_.detours;
     if (!baked()) return j;
     const Grid& g = grid_;
     j["agent_radius"] = g.agent_radius;
@@ -610,21 +611,31 @@ void Nav::step(world::World& w, float dt) {
         const float dgoal = len2(sub(gq, p));
         pl.distance = dgoal;
         if (a.mode == 3) {
-            // A follower steers to its slot, no path: the leader's velocity plus a pull toward the
-            // slot, capped at its speed; arrived only once the leader stands and it is in place.
-            const Lead& L = leads_[a.target];
-            runs_.erase(it.id);
-            if (L.speed < 1e-3f && dgoal <= a.arrive) {
-                pl.state = 2;
+            // A follower with its slot in sight (a straight line over walkable ground, or no grid)
+            // steers to it, no path: the leader's velocity plus a pull toward the slot, capped at
+            // its speed; arrived only once the leader stands and it is in place. A slot out of
+            // sight, behind a wall or a pillar, is walked to along a path like a goal, below.
+            bool in_sight = true;
+            if (baked()) {
+                int ax, ay, bx, by;
+                in_sight = grid_.cell_of(it.pos, ax, ay) && grid_.cell_of(*goal, bx, by) && grid_.walkable_at(bx, by) && line_of_sight(grid_, ax, ay, bx, by);
+            }
+            if (in_sight) {
+                const Lead& L = leads_[a.target];
+                runs_.erase(it.id);
+                if (L.speed < 1e-3f && dgoal <= a.arrive) {
+                    pl.state = 2;
+                    continue;
+                }
+                pl.state = 1;
+                P2 want = add(mul(P2{L.hu, L.hv}, L.speed), mul(sub(gq, p), kFormationGain));
+                const float wl = len2(want), top = std::max(a.speed, 0.0f);
+                if (wl > top && wl > 1e-6f) want = mul(want, top / wl);
+                pl.desired = want;
+                pl.chosen = want;
                 continue;
             }
-            pl.state = 1;
-            P2 want = add(mul(P2{L.hu, L.hv}, L.speed), mul(sub(gq, p), kFormationGain));
-            const float wl = len2(want), top = std::max(a.speed, 0.0f);
-            if (wl > top && wl > 1e-6f) want = mul(want, top / wl);
-            pl.desired = want;
-            pl.chosen = want;
-            continue;
+            crowd_.detours++;
         }
         if (dgoal <= a.arrive) {
             pl.state = 2;

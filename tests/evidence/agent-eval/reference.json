@@ -1,8 +1,8 @@
 {
   "runner": "reference",
-  "passed": 11,
-  "total": 11,
-  "seconds": 10.4,
+  "passed": 13,
+  "total": 13,
+  "seconds": 12.5,
   "tasks": [
     {
       "name": "spawn_named",
@@ -81,7 +81,7 @@
       "project": "hello",
       "ok": true,
       "seconds": 0.3,
-      "detail": "answer 8, entities 8",
+      "detail": "answer 4, entities 4",
       "answer": null,
       "error": null
     },
@@ -100,6 +100,24 @@
       "ok": true,
       "seconds": 0.3,
       "detail": "Star0 to Star4 along x at y 2, spheres",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "double_jump",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.9,
+      "detail": "rose 3.79 with jump pressed again in the air (a single jump rises 2.3)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "coin_respawn",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 1.3,
+      "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
       "answer": null,
       "error": null
     }
