@@ -10,7 +10,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pocket_env import PocketEnv, PocketError, play  # noqa: E402
+from pocket_env import PocketEnv, PocketEnvPool, PocketError, play  # noqa: E402
+from train_example import train  # noqa: E402
 
 
 class SpritesEpisodes(unittest.TestCase):
@@ -51,6 +52,23 @@ class SpritesEpisodes(unittest.TestCase):
             self.assertTrue(env.step(ticks=10)["done"])
             # Any other command works through the same connection.
             self.assertGreater(env.command("world.summary")["entities"], 0)
+
+    def test_pool_plays_parallel_episodes(self):
+        with PocketEnvPool("sprites", 2) as pool:
+            first = pool.reset(seeds=[1, 2], max_ticks=120)
+            self.assertEqual([o["t"] for o in first], [0, 0])
+            walked = pool.step([{"move_x": 1}, {"move_x": -1}], ticks=30)
+            self.assertEqual([o["t"] for o in walked], [30, 30])
+            self.assertGreater(walked[0]["state"]["player.x"], 0.5)
+            self.assertLess(walked[1]["state"]["player.x"], -0.5)
+            same = pool.step({"jump": True}, ticks=90)
+            self.assertTrue(all(o["done"] for o in same))
+
+    def test_training_improves_or_holds(self):
+        hist = train("sprites", generations=2, population=4, envs=2, plan_length=6, hold=30, seed=3, max_ticks=180, log=lambda *a: None)
+        self.assertEqual(len(hist), 2)
+        self.assertGreaterEqual(max(h["best"] for h in hist), 1)     # some plan collects a coin
+        self.assertGreaterEqual(hist[1]["mean"], hist[0]["mean"] - 1e-9)  # the elites pull the population up (or it stays)
 
     def test_play_helper(self):
         rows = play("sprites", policy="right", episodes=1, ticks=240, step=4, seed=1)

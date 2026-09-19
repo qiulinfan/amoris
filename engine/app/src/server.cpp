@@ -1,5 +1,5 @@
 #ifndef __EMSCRIPTEN__
-#include "server.hpp"
+#include <pocket/app/server.hpp>
 
 #include <pocket/core/log.hpp>
 
@@ -32,6 +32,7 @@ struct ControlServer::Impl {
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<std::shared_ptr<Pending>> queue;
+    bool stopping = false;   // set while shutting down: new requests fail instead of waiting for a pump that never comes
     std::uint64_t handled = 0;
 
     Impl(Session& s, int p) : session(s), port(p) {}
@@ -44,6 +45,7 @@ struct ControlServer::Impl {
         auto future = pending->promise.get_future();
         {
             std::lock_guard lock(mutex);
+            if (stopping) return fail("shutting_down", "runtime is shutting down");
             queue.push_back(pending);
         }
         cv.notify_all();
@@ -132,12 +134,17 @@ struct ControlServer::Impl {
 ControlServer::ControlServer(Session& session, int port) : impl_(std::make_unique<Impl>(session, port)) {}
 
 ControlServer::~ControlServer() {
+    // Fail whatever is queued and refuse what arrives from now on, before the server is stopped:
+    // stopping joins the handler threads, and a handler blocked on a request that no pump will
+    // ever run would deadlock the shutdown (and hang its client).
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->stopping = true;
+        for (auto& p : impl_->queue) p->promise.set_value(fail("shutting_down", "runtime is shutting down"));
+        impl_->queue.clear();
+    }
     impl_->server.stop();
     if (impl_->thread.joinable()) impl_->thread.join();
-    // Fail whatever is still queued so no client hangs.
-    std::lock_guard lock(impl_->mutex);
-    for (auto& p : impl_->queue) p->promise.set_value(fail("shutting_down", "runtime is shutting down"));
-    impl_->queue.clear();
 }
 
 Status ControlServer::start() {
@@ -174,6 +181,8 @@ Json ControlServer::describe() const {
     Json j;
     j["url"] = std::format("http://127.0.0.1:{}", impl_->port);
     j["handled"] = impl_->handled;
+    std::lock_guard lock(impl_->mutex);
+    j["queued"] = impl_->queue.size();
     return j;
 }
 

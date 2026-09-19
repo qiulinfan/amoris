@@ -544,3 +544,105 @@ TEST_CASE("collision layers decide which pairs collide, trigger and answer queri
     REQUIRE(enters.size() == 1);
     REQUIRE(w.name(enters[0].subject) == "Gate");
 }
+
+TEST_CASE("continuous collision holds a fast small sphere at a thin wall that a discrete one crosses", "[physics][ccd]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // A pane 4 cm thick and 5 cm pellets fired at 80 m/s from 3 m away: 1.33 m per step.
+    w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 2}}}}}});
+    auto pellet = [&](const char* name, float z, bool ccd, double restitution) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", 2}, {"y", 1}, {"z", z}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", ccd}, {"gravity_scale", 0.0}, {"restitution", restitution}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.05}, {"y", 0.05}, {"z", 0.05}}}}}, {"Velocity", {{"linear", {{"x", 80}, {"y", 0}, {"z", 0}}}}}}).value();
+    };
+    EntityId held = pellet("Held", 0.5f, true, 0.0);
+    EntityId dud = pellet("Dud", -0.5f, false, 0.0);
+    EntityId bouncy = pellet("Bouncy", 1.5f, true, 0.9);
+    auto x = [&](EntityId id) { return w.try_get<Transform>(id)->position.x; };
+    run(p, w, 30);
+    INFO("held " << x(held) << " dud " << x(dud) << " bouncy " << x(bouncy));
+    REQUIRE(x(held) < 4.98f);       // stopped a skin short of the pane's near face
+    REQUIRE(x(held) > 4.85f);
+    REQUIRE(x(dud) > 6.0f);         // crossed the pane between two steps
+    REQUIRE(x(bouncy) < 2.0f);      // reflected by its restitution and gone back the way it came
+    auto hits = w.events().since(0, 100, "physics.ccd");
+    REQUIRE(hits.size() == 2);
+    REQUIRE(hits[0].subject == held);
+    REQUIRE(hits[0].data["other"] == "/Pane");
+    REQUIRE(hits[0].data["normal"]["x"].get<double>() == Catch::Approx(-1.0));
+    REQUIRE(hits[0].data["speed"].get<double>() == Catch::Approx(80.0).margin(0.1));  // a step of damping off 80
+    // A slow body with ccd is not swept (the discrete step is enough) and settles like any other.
+    EntityId slow = w.spawn("Slow", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 2}, {"z", 3}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", true}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}}}}).value();
+    run(p, w, 240);
+    REQUIRE(w.try_get<Transform>(slow)->position.y == Catch::Approx(0.3f).margin(0.03f));
+    REQUIRE(w.events().since(0, 100, "physics.ccd").size() == 2);
+}
+
+TEST_CASE("groups, exceptions and joints keep chosen pairs apart", "[physics][groups]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    auto sphere = [&](const char* name, Vec3 pos, Json collider) {
+        Json col = Json{{"shape", 1}, {"size", {{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}};
+        for (auto& [k, v] : collider.items()) col[k] = v;
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", col}}).value();
+    };
+    auto y = [&](EntityId id) { return w.try_get<Transform>(id)->position.y; };
+    // The same negative group: dropped onto each other, they pass through and both rest on the ground.
+    EntityId n1 = sphere("N1", {0, 1, 0}, Json{{"group", -2}});
+    EntityId n2 = sphere("N2", {0, 3, 0}, Json{{"group", -2}});
+    // The same positive group: layers that would keep them apart are overruled and the upper rests on the lower.
+    EntityId p1 = sphere("P1", {3, 1, 0}, Json{{"group", 3}, {"layer", 2}, {"mask", 1}});
+    EntityId p2 = sphere("P2", {3, 3, 0}, Json{{"group", 3}, {"layer", 2}, {"mask", 1}});
+    // The same layers without a group pass through (the control).
+    EntityId c1 = sphere("C1", {6, 1, 0}, Json{{"layer", 2}, {"mask", 1}});
+    EntityId c2 = sphere("C2", {6, 3, 0}, Json{{"layer", 2}, {"mask", 1}});
+    bool kept_apart = false;  // pairs the rules skipped while the bodies still moved through each other
+    for (int i = 0; i < 240; ++i) {
+        run(p, w, 1);
+        kept_apart = kept_apart || p.stats().ignored > 0;
+    }
+    INFO("n " << y(n1) << "," << y(n2) << " p " << y(p1) << "," << y(p2) << " c " << y(c1) << "," << y(c2));
+    REQUIRE(y(n1) == Catch::Approx(0.3f).margin(0.03f));
+    REQUIRE(y(n2) == Catch::Approx(0.3f).margin(0.03f));
+    REQUIRE(y(p1) == Catch::Approx(0.3f).margin(0.03f));
+    REQUIRE(y(p2) == Catch::Approx(0.9f).margin(0.05f));
+    REQUIRE(y(c2) == Catch::Approx(0.3f).margin(0.03f));
+    REQUIRE(kept_apart);
+    // An exception: two boxes stacked in the same column pass through while it stands, and stack again once lifted.
+    EntityId b1 = body(w, "B1", 0, {-3, 0.5f, 0}, 0.5f);
+    EntityId b2 = body(w, "B2", 0, {-3, 3, 0}, 0.5f);
+    p.ignore(b1, b2);
+    REQUIRE(p.ignored().size() == 1);
+    run(p, w, 240);
+    REQUIRE(y(b2) == Catch::Approx(0.5f).margin(0.03f));
+    p.ignore(b1, b2, false);
+    REQUIRE(p.ignored().empty());
+    REQUIRE(w.set(b2, "Transform", Json{{"position", {{"x", -3}, {"y", 3}, {"z", 0}}}}).has_value());
+    REQUIRE(w.set(b2, "RigidBody", Json{{"sleeping", false}}).has_value());
+    run(p, w, 240);
+    REQUIRE(y(b2) == Catch::Approx(1.5f).margin(0.05f));
+    // An exception dies with one of its bodies.
+    p.ignore(b1, b2);
+    REQUIRE(w.destroy(b2).has_value());
+    run(p, w, 1);
+    REQUIRE(p.ignored().empty());
+    // A joint whose bodies do not collide: a box hanging by a rod inside a fixed one stays there
+    // without a contact; the same box with collide_connected is pushed by the contact.
+    EntityId post = w.spawn("Post", 0, Json{{"Transform", {{"position", {{"x", 8}, {"y", 3}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}).value();
+    EntityId sunk = w.spawn("Sunk", 0, Json{{"Transform", {{"position", {{"x", 8}, {"y", 2.4}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}, {"Joint", {{"kind", 0}, {"target", "Post"}, {"distance", -1}, {"collide_connected", false}}}}).value();
+    EntityId post2 = w.spawn("Post2", 0, Json{{"Transform", {{"position", {{"x", 8}, {"y", 3}, {"z", 3}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}).value();
+    EntityId kept = w.spawn("Kept", 0, Json{{"Transform", {{"position", {{"x", 8}, {"y", 2.4}, {"z", 3}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}, {"Joint", {{"kind", 0}, {"target", "Post2"}, {"distance", -1}}}}).value();
+    bool sunk_contact = false, kept_contact = false;
+    for (int i = 0; i < 120; ++i) {
+        run(p, w, 1);
+        for (const physics::Contact& c : p.contacts()) {
+            if ((c.a == sunk && c.b == post) || (c.a == post && c.b == sunk)) sunk_contact = true;
+            if ((c.a == kept && c.b == post2) || (c.a == post2 && c.b == kept)) kept_contact = true;
+        }
+    }
+    INFO("sunk " << y(sunk) << " kept " << y(kept));
+    REQUIRE_FALSE(sunk_contact);
+    REQUIRE(kept_contact);
+    REQUIRE(y(sunk) == Catch::Approx(2.4f).margin(0.05f));  // hanging on its rod, inside the post
+}
+

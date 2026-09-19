@@ -54,6 +54,7 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     std::vector<Landing> landings;
     std::vector<std::pair<world::EntityId, world::Body2D>> writes;
     std::vector<std::pair<world::EntityId, Vec3>> positions;
+    std::vector<std::pair<world::EntityId, bool>> dyn_was_grounded;  // per dynamic body: grounded before this step
     // Platforms first: kinematic bodies move by their velocity, nothing stops them, and the
     // dynamic bodies below see where they are now and how far they moved.
     std::vector<Rect> rects;
@@ -104,15 +105,25 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         const float hx = std::max(b.size.x, 0.01f), hy = std::max(b.size.y, 0.01f);
         const bool was_grounded = b.grounded;
         const float step = std::max(b.step, 0.0f);
-        // Carried: a body standing on a platform moves with it before its own move.
+        // Carried: a body standing on a platform moves with it before its own move; one standing
+        // on another dynamic body moves with that body's sideways velocity.
         if (b.riding != 0) {
+            bool carried = false;
             for (const Rect& rc : rects) {
                 if (rc.id != b.riding) continue;
                 cx += rc.dx;
                 cy += rc.dy;
-                stats_.riding++;
+                carried = true;
             }
+            if (!carried) {
+                if (const auto* carrier = w.try_get<world::Body2D>(b.riding); carrier && !carrier->kinematic) {
+                    cx += carrier->velocity.x * dt;
+                    carried = true;
+                }
+            }
+            if (carried) stats_.riding++;
         }
+        const bool was_riding = b.riding != 0;
         b.grounded = false;
         b.on_wall = 0;
         b.on_ceiling = false;
@@ -205,8 +216,8 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         // against solid tiles and solid platforms. A grounded body that only sinks by gravity may
         // also reach down a step for the floor, so it walks down slopes and stairs without a hop.
         float dy = b.velocity.y * dt;
-        const bool just_gravity = was_grounded && b.velocity.y <= 0 && b.velocity.y >= b.gravity * dt * 1.5f;
-        const float reach = just_gravity ? step : 0.0f;
+        const bool just_gravity = was_grounded && !was_riding && b.velocity.y <= 0 && b.velocity.y >= b.gravity * dt * 1.5f;
+        const float reach = just_gravity ? step : 0.0f;  // riders never reach down: their floor moves with them
         if (!stepped_tick && (dy != 0 || reach > 0)) {
             float ny = cy + dy;
             int c0 = mv ? mv->col(cx - hx + kSkin) : 0, c1 = mv ? mv->col(cx + hx - kSkin) : -1;
@@ -277,12 +288,105 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
             cy = ny;
         }
         b.riding = riding;
-        if (b.grounded) stats_.grounded++;
         pos.x = cx - b.offset.x;
         pos.y = cy - b.offset.y;
         positions.emplace_back(e.id(), pos);
         writes.emplace_back(e.id(), b);
+        dyn_was_grounded.emplace_back(e.id(), was_grounded);
     });
+    // Bodies against bodies: dynamic boxes that overlap are pushed apart along their smaller
+    // overlap. Sideways, each gives way by the other's share of the mass (a body already against
+    // a wall on that side gives none); vertically, the upper one is lifted onto the lower and
+    // stands on it. Two passes settle small stacks; a body pushed into a solid tile is set back.
+    struct Dyn {
+        std::size_t i;  // index into writes and positions
+        float cx, cy, hx, hy;
+        bool was_grounded;
+        const MapView* mv;
+    };
+    std::vector<Dyn> dyn;
+    for (std::size_t i = 0; i < writes.size(); ++i) {
+        const world::Body2D& b = writes[i].second;
+        if (b.kinematic || !b.collide_bodies) continue;
+        const MapView* mv = nullptr;
+        if (!b.map.empty()) {
+            world::EntityId mid = w.find(b.map);
+            for (const MapEntry& m : maps) if (m.id == mid) mv = &m.view;
+        } else if (!maps.empty()) {
+            mv = &maps.front().view;
+        }
+        bool wg = false;
+        for (const auto& [id, g] : dyn_was_grounded) if (id == writes[i].first) wg = g;
+        dyn.push_back({i, positions[i].second.x + b.offset.x, positions[i].second.y + b.offset.y, std::max(b.size.x, 0.01f), std::max(b.size.y, 0.01f), wg, mv});
+    }
+    for (int pass = 0; pass < 2 && dyn.size() > 1; ++pass) {
+        for (std::size_t p = 0; p < dyn.size(); ++p) {
+            for (std::size_t q = p + 1; q < dyn.size(); ++q) {
+                Dyn& A = dyn[p];
+                Dyn& B = dyn[q];
+                const float ox = (A.hx + B.hx) - std::fabs(A.cx - B.cx);
+                const float oy = (A.hy + B.hy) - std::fabs(A.cy - B.cy);
+                if (ox <= kSkin || oy <= kSkin) continue;
+                if (pass == 0) stats_.pairs++;
+                world::Body2D& a = writes[A.i].second;
+                world::Body2D& b = writes[B.i].second;
+                if (oy < ox) {
+                    Dyn& up = A.cy >= B.cy ? A : B;
+                    Dyn& low = A.cy >= B.cy ? B : A;
+                    world::Body2D& ub = writes[up.i].second;
+                    world::Body2D& lb = writes[low.i].second;
+                    if (ub.on_ceiling && !lb.grounded) {
+                        low.cy -= oy + kSkin;  // squeezed under a ceiling: the lower one yields
+                        if (lb.velocity.y > 0) lb.velocity.y = 0;
+                    } else {
+                        up.cy += oy + kSkin;
+                        if (!up.was_grounded && !ub.grounded && ub.velocity.y < 0) landings.push_back({writes[up.i].first, -ub.velocity.y});
+                        if (ub.velocity.y < 0) ub.velocity.y = 0;
+                        ub.grounded = true;
+                        ub.on_slope = 0;
+                        ub.riding = writes[low.i].first;
+                        if (pass == 0) stats_.stacked++;
+                    }
+                } else {
+                    const int dir = A.cx <= B.cx ? -1 : 1;  // the way A gives way
+                    float sa = std::max(b.mass, 1e-3f), sb = std::max(a.mass, 1e-3f);  // each gives way by the other's mass
+                    if (a.on_wall == dir) sa = 0;
+                    if (b.on_wall == -dir) sb = 0;
+                    if (sa + sb <= 0) continue;
+                    const float total = ox + kSkin;
+                    A.cx += static_cast<float>(dir) * total * sa / (sa + sb);
+                    B.cx -= static_cast<float>(dir) * total * sb / (sa + sb);
+                    if (a.velocity.x * static_cast<float>(-dir) > 0) a.velocity.x = 0;  // no more speed into the other
+                    if (b.velocity.x * static_cast<float>(dir) > 0) b.velocity.x = 0;
+                    if (pass == 0) stats_.pushed++;
+                }
+            }
+        }
+        // Back out of solid tiles and solid platforms a push may have moved a body into.
+        for (Dyn& d : dyn) {
+            world::Body2D& b = writes[d.i].second;
+            auto out_of = [&](float left, float right) {
+                if (d.cx <= (left + right) * 0.5f) { d.cx = left - d.hx - kSkin; b.on_wall = 1; if (b.velocity.x > 0) b.velocity.x = 0; }
+                else { d.cx = right + d.hx + kSkin; b.on_wall = -1; if (b.velocity.x < 0) b.velocity.x = 0; }
+            };
+            if (d.mv) {
+                const int r0 = d.mv->row(d.cy + d.hy - kSkin), r1 = d.mv->row(d.cy - d.hy + kSkin);
+                const int c0 = d.mv->col(d.cx - d.hx + kSkin), c1 = d.mv->col(d.cx + d.hx - kSkin);
+                for (int r = r0; r <= r1; ++r) {
+                    for (int c = c0; c <= c1; ++c) if (d.mv->solidity(c, r) == 1) out_of(d.mv->left(c), d.mv->right(c));
+                }
+            }
+            for (const Rect& rc : rects) {
+                if (rc.one_way) continue;
+                if (rc.l < d.cx + d.hx - kSkin && rc.r > d.cx - d.hx + kSkin && rc.b < d.cy + d.hy - kSkin && rc.t > d.cy - d.hy + kSkin) out_of(rc.l, rc.r);
+            }
+        }
+    }
+    for (const Dyn& d : dyn) {
+        positions[d.i].second.x = d.cx - writes[d.i].second.offset.x;
+        positions[d.i].second.y = d.cy - writes[d.i].second.offset.y;
+    }
+    for (const auto& [id, b] : writes) if (!b.kinematic && b.grounded) stats_.grounded++;
     for (auto& [id, b] : writes) w.set_typed<world::Body2D>(id, b);
     for (auto& [id, pos] : positions) {
         world::Transform t = *w.try_get<world::Transform>(id);
@@ -296,7 +400,7 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
 }
 
 Json Physics2D::describe() const {
-    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}};
+    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}, {"pairs", stats_.pairs}, {"stacked", stats_.stacked}, {"pushed", stats_.pushed}};
 }
 
 }  // namespace pocket::physics

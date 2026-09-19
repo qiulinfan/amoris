@@ -22,4 +22,5 @@
     X(Collider) \
     X(AudioSource) \
     X(NavObstacle) \
-    X(NavAgent)
+    X(NavAgent) \
+    X(Morph)

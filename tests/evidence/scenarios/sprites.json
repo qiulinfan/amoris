@@ -1,7 +1,7 @@
 {
   "command": "scenario",
   "ok": true,
-  "summary": "27 of 27 scenario runs passed (9 scenarios, 3 seeds each)\n  ok  a bot that runs right and jumps for the coins above it crosses the level: 3/3 passed, ticks to pass 94..94 (avg 94)\n      report (seed 1): apex=2.210, coins=3, jumps=2\n      bots (seed 1): runner (93 ticks, 1 holds, 1 presses)\n  ok  ten seconds of random input never leave the level or break anything: 3/3 passed, ticks to pass 602..602 (avg 602)\n      report (seed 1): distance=65.640, furthest=9.500\n      bots (seed 1): fuzz (599 ticks, 9 holds, 26 presses)\n  ok  walking right collects the coin ahead within a second: 3/3 passed, ticks to pass 8..8 (avg 8)\n  ok  walking left for two seconds collects the three coins on the left: 3/3 passed, ticks to pass 133..133 (avg 133)\n  ok  the player stands on the ground and the level's edges hold: 3/3 passed, ticks to pass 248..248 (avg 248)\n  ok  a jump from below the ledge lands on it and the coins over it are collected: 3/3 passed, ticks to pass 66..66 (avg 66)\n  ok  the one-way plank is passed from below and landed on from above: 3/3 passed, ticks to pass 84..84 (avg 84)\n  ok  walking right over the hill keeps the player on the ground, up and down the slopes: 3/3 passed, ticks to pass 92..92 (avg 92)\n  ok  a jump onto the lift is carried up: 3/3 passed, ticks to pass 331..331 (avg 331)",
+  "summary": "30 of 30 scenario runs passed (10 scenarios, 3 seeds each)\n  ok  a bot that runs right and jumps for the coins above it crosses the level: 3/3 passed, ticks to pass 94..94 (avg 94)\n      report (seed 1): apex=2.210, coins=3, jumps=2\n      bots (seed 1): runner (93 ticks, 1 holds, 1 presses)\n  ok  ten seconds of random input never leave the level or break anything: 3/3 passed, ticks to pass 602..602 (avg 602)\n      report (seed 1): distance=65.640, furthest=9.500\n      bots (seed 1): fuzz (599 ticks, 9 holds, 26 presses)\n  ok  walking right collects the coin ahead within a second: 3/3 passed, ticks to pass 8..8 (avg 8)\n  ok  walking left for two seconds collects the three coins on the left: 3/3 passed, ticks to pass 133..133 (avg 133)\n  ok  the player stands on the ground and the level's edges hold: 3/3 passed, ticks to pass 248..248 (avg 248)\n  ok  a jump from below the ledge lands on it and the coins over it are collected: 3/3 passed, ticks to pass 66..66 (avg 66)\n  ok  the one-way plank is passed from below and landed on from above: 3/3 passed, ticks to pass 84..84 (avg 84)\n  ok  walking right over the hill keeps the player on the ground, up and down the slopes: 3/3 passed, ticks to pass 92..92 (avg 92)\n  ok  a jump onto the lift is carried up: 3/3 passed, ticks to pass 331..331 (avg 331)\n  ok  two crates stack and the player pushes the stack along: 3/3 passed, ticks to pass 122..122 (avg 122)",
   "data": {
     "config": "debug",
     "frames": 900,
@@ -23,7 +23,7 @@
                 "ticks": 93
               }
             ],
-            "elapsed_ms": 924,
+            "elapsed_ms": 934,
             "error": null,
             "ok": true,
             "report": {
@@ -57,6 +57,7 @@
                 "ticks": 94
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -1.63,
               "player.clip": "walk",
@@ -81,7 +82,7 @@
                 "ticks": 93
               }
             ],
-            "elapsed_ms": 901,
+            "elapsed_ms": 941,
             "error": null,
             "ok": true,
             "report": {
@@ -115,6 +116,7 @@
                 "ticks": 94
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -1.63,
               "player.clip": "walk",
@@ -139,7 +141,7 @@
                 "ticks": 93
               }
             ],
-            "elapsed_ms": 916,
+            "elapsed_ms": 942,
             "error": null,
             "ok": true,
             "report": {
@@ -173,6 +175,7 @@
                 "ticks": 94
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -1.63,
               "player.clip": "walk",
@@ -211,7 +214,7 @@
                 "ticks": 599
               }
             ],
-            "elapsed_ms": 2077,
+            "elapsed_ms": 2145,
             "error": null,
             "ok": true,
             "report": {
@@ -243,6 +246,7 @@
                 "ticks": 602
               },
               "coins": 1,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.03,
               "player.clip": "idle",
@@ -267,7 +271,7 @@
                 "ticks": 599
               }
             ],
-            "elapsed_ms": 2159,
+            "elapsed_ms": 2234,
             "error": null,
             "ok": true,
             "report": {
@@ -299,6 +303,7 @@
                 "ticks": 602
               },
               "coins": 2,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.03,
               "player.clip": "idle",
@@ -323,7 +328,7 @@
                 "ticks": 599
               }
             ],
-            "elapsed_ms": 2329,
+            "elapsed_ms": 2403,
             "error": null,
             "ok": true,
             "report": {
@@ -355,6 +360,7 @@
                 "ticks": 602
               },
               "coins": 2,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.03,
               "player.clip": "idle",
@@ -385,7 +391,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 294,
+            "elapsed_ms": 318,
             "error": null,
             "ok": true,
             "report": {},
@@ -403,6 +409,7 @@
                 "ticks": 8
               },
               "coins": 5,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -3.07,
               "player.clip": "walk",
@@ -419,7 +426,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 298,
+            "elapsed_ms": 315,
             "error": null,
             "ok": true,
             "report": {},
@@ -437,6 +444,7 @@
                 "ticks": 8
               },
               "coins": 5,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -3.07,
               "player.clip": "walk",
@@ -453,7 +461,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 297,
+            "elapsed_ms": 320,
             "error": null,
             "ok": true,
             "report": {},
@@ -471,6 +479,7 @@
                 "ticks": 8
               },
               "coins": 5,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -3.07,
               "player.clip": "walk",
@@ -501,7 +510,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 600,
+            "elapsed_ms": 626,
             "error": null,
             "ok": true,
             "report": {},
@@ -519,6 +528,7 @@
                 "ticks": 133
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -0.98,
               "player.clip": "idle",
@@ -535,7 +545,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 591,
+            "elapsed_ms": 634,
             "error": null,
             "ok": true,
             "report": {},
@@ -553,6 +563,7 @@
                 "ticks": 133
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -0.98,
               "player.clip": "idle",
@@ -569,7 +580,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 597,
+            "elapsed_ms": 629,
             "error": null,
             "ok": true,
             "report": {},
@@ -587,6 +598,7 @@
                 "ticks": 133
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -0.98,
               "player.clip": "idle",
@@ -617,7 +629,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 867,
+            "elapsed_ms": 901,
             "error": null,
             "ok": true,
             "report": {},
@@ -635,6 +647,7 @@
                 "ticks": 248
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -2.9,
               "player.clip": "idle",
@@ -651,7 +664,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 873,
+            "elapsed_ms": 905,
             "error": null,
             "ok": true,
             "report": {},
@@ -669,6 +682,7 @@
                 "ticks": 248
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -2.9,
               "player.clip": "idle",
@@ -685,7 +699,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 869,
+            "elapsed_ms": 914,
             "error": null,
             "ok": true,
             "report": {},
@@ -703,6 +717,7 @@
                 "ticks": 248
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -2.9,
               "player.clip": "idle",
@@ -733,7 +748,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 525,
+            "elapsed_ms": 545,
             "error": null,
             "ok": true,
             "report": {},
@@ -751,6 +766,7 @@
                 "ticks": 66
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.1,
               "player.clip": "walk",
@@ -767,7 +783,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 520,
+            "elapsed_ms": 546,
             "error": null,
             "ok": true,
             "report": {},
@@ -785,6 +801,7 @@
                 "ticks": 66
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.1,
               "player.clip": "walk",
@@ -801,7 +818,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 519,
+            "elapsed_ms": 554,
             "error": null,
             "ok": true,
             "report": {},
@@ -819,6 +836,7 @@
                 "ticks": 66
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.1,
               "player.clip": "walk",
@@ -849,7 +867,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 525,
+            "elapsed_ms": 548,
             "error": null,
             "ok": true,
             "report": {},
@@ -867,6 +885,7 @@
                 "ticks": 84
               },
               "coins": 4,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -1.8,
               "player.clip": "idle",
@@ -883,7 +902,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 513,
+            "elapsed_ms": 551,
             "error": null,
             "ok": true,
             "report": {},
@@ -901,6 +920,7 @@
                 "ticks": 84
               },
               "coins": 4,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -1.8,
               "player.clip": "idle",
@@ -917,7 +937,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 521,
+            "elapsed_ms": 544,
             "error": null,
             "ok": true,
             "report": {},
@@ -935,6 +955,7 @@
                 "ticks": 84
               },
               "coins": 4,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -1.8,
               "player.clip": "idle",
@@ -965,7 +986,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 595,
+            "elapsed_ms": 621,
             "error": null,
             "ok": true,
             "report": {},
@@ -983,6 +1004,7 @@
                 "ticks": 92
               },
               "coins": 5,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -1.67,
               "player.clip": "walk",
@@ -999,7 +1021,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 590,
+            "elapsed_ms": 624,
             "error": null,
             "ok": true,
             "report": {},
@@ -1017,6 +1039,7 @@
                 "ticks": 92
               },
               "coins": 5,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -1.67,
               "player.clip": "walk",
@@ -1033,7 +1056,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 593,
+            "elapsed_ms": 623,
             "error": null,
             "ok": true,
             "report": {},
@@ -1051,6 +1074,7 @@
                 "ticks": 92
               },
               "coins": 5,
+              "done": false,
               "level.solid_below": true,
               "lift.y": -1.67,
               "player.clip": "walk",
@@ -1081,7 +1105,7 @@
         "runs": [
           {
             "bots": [],
-            "elapsed_ms": 1287,
+            "elapsed_ms": 1343,
             "error": null,
             "ok": true,
             "report": {},
@@ -1099,6 +1123,7 @@
                 "ticks": 331
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.12,
               "player.clip": "idle",
@@ -1115,7 +1140,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 1297,
+            "elapsed_ms": 1335,
             "error": null,
             "ok": true,
             "report": {},
@@ -1133,6 +1158,7 @@
                 "ticks": 331
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.12,
               "player.clip": "idle",
@@ -1149,7 +1175,7 @@
           },
           {
             "bots": [],
-            "elapsed_ms": 1295,
+            "elapsed_ms": 1343,
             "error": null,
             "ok": true,
             "report": {},
@@ -1167,6 +1193,7 @@
                 "ticks": 331
               },
               "coins": 3,
+              "done": false,
               "level.solid_below": false,
               "lift.y": -2.12,
               "player.clip": "idle",
@@ -1189,9 +1216,128 @@
           "max": 331,
           "min": 331
         }
+      },
+      {
+        "failed": 0,
+        "file": "samples/sprites/scenarios/coins.ts",
+        "passed": 3,
+        "runs": [
+          {
+            "bots": [],
+            "elapsed_ms": 659,
+            "error": null,
+            "ok": true,
+            "report": {},
+            "seed": 1,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "pushed along, the top crate riding",
+                "name": "two crates stack and the player pushes the stack along",
+                "report": {},
+                "seconds": 2.0166666666666666,
+                "status": "passed",
+                "step": 5,
+                "steps": 5,
+                "ticks": 122
+              },
+              "coins": 4,
+              "done": false,
+              "level.solid_below": true,
+              "lift.y": -1.17,
+              "player.clip": "walk",
+              "player.grounded": true,
+              "player.riding": "",
+              "player.slope": 0,
+              "player.x": -3.39,
+              "player.y": -3,
+              "score": 2
+            },
+            "status": "passed",
+            "step": "pushed along, the top crate riding",
+            "ticks": 122
+          },
+          {
+            "bots": [],
+            "elapsed_ms": 666,
+            "error": null,
+            "ok": true,
+            "report": {},
+            "seed": 2,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "pushed along, the top crate riding",
+                "name": "two crates stack and the player pushes the stack along",
+                "report": {},
+                "seconds": 2.0166666666666666,
+                "status": "passed",
+                "step": 5,
+                "steps": 5,
+                "ticks": 122
+              },
+              "coins": 4,
+              "done": false,
+              "level.solid_below": true,
+              "lift.y": -1.17,
+              "player.clip": "walk",
+              "player.grounded": true,
+              "player.riding": "",
+              "player.slope": 0,
+              "player.x": -3.39,
+              "player.y": -3,
+              "score": 2
+            },
+            "status": "passed",
+            "step": "pushed along, the top crate riding",
+            "ticks": 122
+          },
+          {
+            "bots": [],
+            "elapsed_ms": 669,
+            "error": null,
+            "ok": true,
+            "report": {},
+            "seed": 3,
+            "state": {
+              "__scenario": {
+                "bots": [],
+                "label": "pushed along, the top crate riding",
+                "name": "two crates stack and the player pushes the stack along",
+                "report": {},
+                "seconds": 2.0166666666666666,
+                "status": "passed",
+                "step": 5,
+                "steps": 5,
+                "ticks": 122
+              },
+              "coins": 4,
+              "done": false,
+              "level.solid_below": true,
+              "lift.y": -1.17,
+              "player.clip": "walk",
+              "player.grounded": true,
+              "player.riding": "",
+              "player.slope": 0,
+              "player.x": -3.39,
+              "player.y": -3,
+              "score": 2
+            },
+            "status": "passed",
+            "step": "pushed along, the top crate riding",
+            "ticks": 122
+          }
+        ],
+        "scenario": "two crates stack and the player pushes the stack along",
+        "seeds": 3,
+        "ticks": {
+          "avg": 122.0,
+          "max": 122,
+          "min": 122
+        }
       }
     ],
     "seeds": 3
   },
-  "elapsed_ms": 23964
+  "elapsed_ms": 26969
 }

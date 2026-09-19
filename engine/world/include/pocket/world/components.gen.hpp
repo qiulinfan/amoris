@@ -19,6 +19,18 @@ struct Color4 {
 };
 
 // Records: the values held by list fields of components.
+/// One morph target weight set by script (docs/design/animation.md, Morph targets): the target by name or index, and the weight that replaces the clip's for it.
+struct MorphWeight {
+    std::string target = "";
+    float weight = 0.0f;
+    constexpr bool operator==(const MorphWeight&) const = default;
+};
+void to_json(Json& j, const MorphWeight& v);
+void from_json(const Json& j, MorphWeight& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(MorphWeight& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const MorphWeight& v);
+
 /// One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers.
 struct AnimationLayer {
     std::string clip = "";
@@ -202,6 +214,9 @@ struct Animator {
     std::string from_clip = "";
     float from_time = 0.0f;
     std::vector<AnimationLayer> layers = {};
+    std::int32_t root_motion = 0;
+    std::string root = "";
+    Vec3 root_delta{0.0f, 0.0f, 0.0f};
     constexpr bool operator==(const Animator&) const = default;
 };
 void to_json(Json& j, const Animator& v);
@@ -257,6 +272,7 @@ struct RigidBody {
     float gravity_scale = 1.0f;
     bool sleeping = false;
     bool lock_rotation = false;
+    bool ccd = false;
     constexpr bool operator==(const RigidBody&) const = default;
 };
 void to_json(Json& j, const RigidBody& v);
@@ -288,6 +304,7 @@ struct Joint {
     float angle = 0.0f;
     float translation = 0.0f;
     float speed = 0.0f;
+    bool collide_connected = true;
     constexpr bool operator==(const Joint&) const = default;
 };
 void to_json(Json& j, const Joint& v);
@@ -311,6 +328,8 @@ struct Body2D {
     float step = 0.5f;
     std::uint64_t riding = 0;
     std::int32_t on_slope = 0;
+    float mass = 1.0f;
+    bool collide_bodies = true;
     constexpr bool operator==(const Body2D&) const = default;
 };
 void to_json(Json& j, const Body2D& v);
@@ -327,6 +346,7 @@ struct Collider {
     std::string mesh = "";
     std::uint32_t layer = 1;
     std::uint32_t mask = 4294967295;
+    std::int32_t group = 0;
     constexpr bool operator==(const Collider&) const = default;
 };
 void to_json(Json& j, const Collider& v);
@@ -383,6 +403,16 @@ void from_json(const Json& j, NavAgent& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(NavAgent& v, std::string_view path, float** out);
 
+/// Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name.
+struct Morph {
+    std::vector<MorphWeight> weights = {};
+    constexpr bool operator==(const Morph&) const = default;
+};
+void to_json(Json& j, const Morph& v);
+void from_json(const Json& j, Morph& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Morph& v, std::string_view path, float** out);
+
 struct FieldInfo {
     std::string_view name;
     std::string_view type;
@@ -421,5 +451,6 @@ void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
 void hash_component(struct StateHasherRef& h, const NavObstacle& v);
 void hash_component(struct StateHasherRef& h, const NavAgent& v);
+void hash_component(struct StateHasherRef& h, const Morph& v);
 
 }  // namespace pocket::world

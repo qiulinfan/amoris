@@ -74,6 +74,28 @@ onStart(() => {
             Joint: { kind: 0, target_anchor: { x: -3, y: 5, z: -7 }, distance: 1, stiffness: 30, damping: 1.5 },
         },
     });
+    // A pane of glass 4 cm thick and two pellets fired at it at 80 m/s (1.3 m per step): the one
+    // with continuous collision stops at the pane, the other crosses it between two steps
+    // (docs/design/physics.md, Continuous collision).
+    world.spawn("Pane", {
+        components: {
+            Transform: { position: { x: 9, y: 1.2, z: 5 }, scale: { x: 0.04, y: 2, z: 3 } },
+            MeshRenderer: { mesh: "cube", color: { r: 0.7, g: 0.9, b: 1, a: 1 } },
+            RigidBody: { kind: 1 },
+            Collider: { shape: 0, size: { x: 0.02, y: 1, z: 1.5 } },
+        },
+    });
+    for (const [name, z, ccd] of [["Pellet", 4.4, true], ["Dud", 5.6, false]] as const) {
+        world.spawn(name, {
+            components: {
+                Transform: { position: { x: 3, y: 1.2, z }, scale: { x: 0.12, y: 0.12, z: 0.12 } },
+                MeshRenderer: { mesh: "sphere", color: ccd ? { r: 0.2, g: 0.9, b: 0.4, a: 1 } : { r: 0.9, g: 0.3, b: 0.3, a: 1 } },
+                RigidBody: { kind: 0, mass: 0.05, ccd, gravity_scale: 0, restitution: 0 },   // no bounce: a hit pellet stays where it stopped
+                Collider: { shape: 1, size: { x: 0.06, y: 0.06, z: 0.06 } },
+                Velocity: { linear: { x: 80, y: 0, z: 0 } },
+            },
+        });
+    }
     log("physics sample", { bodies: physics.stats().bodies, meshes: physics.stats().meshes });
 });
 
@@ -120,6 +142,17 @@ onContacts((contacts) => {
 });
 
 expose("dropped", () => dropped);
+expose("pelletX", () => Number((world.get(world.find("Pellet") ?? 0, "Transform")?.position.x ?? 0).toFixed(3)));
+expose("dudX", () => Number((world.get(world.find("Dud") ?? 0, "Transform")?.position.x ?? 0).toFixed(3)));
+let ccdHits = 0;        // sweeps that stopped a body, summed over the run (physics.stats counts one step)
+let dudCrossed = false; // the dud was seen beyond the pane (it comes back off the east wall later)
+onTick(() => {
+    ccdHits += physics.stats().ccd_hits;
+    const dud = world.find("Dud");
+    if (dud !== undefined && (world.get(dud, "Transform")?.position.x ?? 0) > 9.1) dudCrossed = true;
+});
+expose("ccdHits", () => ccdHits);
+expose("dudCrossed", () => dudCrossed);
 expose("joints", () => physics.joints().length);
 expose("chainTension", () => Math.round(Math.max(0, ...physics.joints().filter((j) => j.path.startsWith("/Link")).map((j) => j.force)) * 10) / 10);
 expose("ropeIntact", () => world.has("/Lantern", "Joint"));

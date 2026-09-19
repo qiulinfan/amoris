@@ -1,7 +1,7 @@
 #include <pocket/app/runtime.hpp>
 #include <pocket/app/session.hpp>
 
-#include "server.hpp"
+#include <pocket/app/server.hpp>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -19,7 +19,8 @@ std::string usage() {
 
   --headless            no window, no OS video; each frame runs exactly one tick
   --hidden              create the window but keep it hidden
-  --frames N            stop after N frames (default: until the window closes)
+  --frames N            stop after N frames (default: until the window closes; a headless run
+                        without --serve stops after 3600 frames)
   --capture <file.png>  write the last frame to a PNG
   --json                print a JSON report on stdout
   --seed N              deterministic RNG seed (default 1)

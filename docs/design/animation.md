@@ -11,11 +11,13 @@ animation.layer(hero, { clip: "Wave", mask: "spine" });   // the arms wave while
 animation.layer(hero, { clip: "Breathe", additive: true, weight: 0.5 });   // a breath added onto whatever plays
 animation.clips(hero);                                // { clips: [{ name, duration }], skins: [{ joints }] }
 animation.pose(hero).joints.find((j) => j.name === "hand.R");   // world position and bone axis right now
+animation.morph(hero, { smile: 0.7 });                 // a morph target's weight, over the clip's
+animation.rootMotion(hero, 1);                         // the walk clip's root travel moves the Transform
 ```
 
 ## What the asset carries
 
-The glTF reader (`engine/assets`) keeps, besides the baked geometry: every node with its rest transform and parent; the skins (joint node indices and inverse bind matrices); the animation clips (channels of translation, rotation or scale keyframes on nodes, LINEAR or STEP; cubic splines use their key values); and per-vertex `JOINTS_0` / `WEIGHTS_0` for skinned primitives, with weights normalised. A skinned primitive is not baked by its node's transform (the joints place it, as the specification says) and its submesh records the skin. `assets.describe` shows skins and clips.
+The glTF reader (`engine/assets`) keeps, besides the baked geometry: every node with its rest transform and parent; the skins (joint node indices and inverse bind matrices); the animation clips (channels of translation, rotation, scale or morph `weights` keyframes on nodes, LINEAR or STEP; cubic splines use their key values); the morph targets with their deltas; and per-vertex `JOINTS_0` / `WEIGHTS_0` for skinned primitives, with weights normalised. A skinned primitive is not baked by its node's transform (the joints place it, as the specification says) and its submesh records the skin. `assets.describe` shows skins and clips.
 
 ## How a frame is posed
 
@@ -35,8 +37,18 @@ The renderer uploads the joint matrices of every posed instance into one storage
 
 A blending layer moves each masked node the clip animates toward the clip's transform by `weight` (1 replaces, 0.5 sits halfway), so a wave on `spine` leaves the legs to the walk below. An additive layer takes the clip's change since its first frame (translation difference, rotation in the node's own frame, scale ratio), scales it by `weight`, and adds it onto the pose so far, so a breath or a lean sits on any base clip without replacing it; two copies of a 30-degree nod add to 60 degrees. Layers advance with the tick like the base clip, pause with `animation.stop` and with their own `playing`, and a non-looping layer stops on its last frame and emits `animation.finished` with its `layer` index. `animation.pose` lists the layers with their times and weights; `layers.0.weight` is a numeric path for `world.pack` and tweens; the layers are part of the state hash and of saves.
 
+## Morph targets
+
+A glTF primitive's morph targets (blend shapes: per-vertex position and normal deltas, named by the mesh's `extras.targetNames`) are kept next to the geometry, baked like it, and drawn on the GPU: the renderer appends every morphed asset's deltas to one storage buffer and each instance carries up to eight weights in its object record, so the vertex stage adds the weighted deltas before skinning, in the scene, shadow and id passes alike, and morphed instances still instance. `render.stats.morphed` counts them.
+
+A clip's `weights` track drives the weights like any other channel (linear or step, blended in cross-fades, blended or added by an unmasked layer); the file's mesh `weights` are the defaults. The `Morph` component sets weights from script over the clip's: `animation.morph(face, { smile: 0.7 })` writes its `weights` list (target by name or index, weight), a `Morph` on an entity without an `Animator` poses the mesh by itself, and `weights.0.weight` is a numeric path for tweens. `animation.clips` lists the `targets`, `animation.pose` the weights in effect. The assets sample's arm has a `bulge` and a `lean` target, a `pulse` clip that plays the bulge, and the `Pulse` entity shows it.
+
+## Root motion
+
+A walk cycle authored in place moves nothing; one authored with its root travelling moves the mesh away from its entity. `Animator.root_motion` reads that travel out of the clip: the root node's translation is pinned to the clip's first frame in the pose, and its change over each tick (across a loop's wrap too) is `root_delta`, in the asset's space. Mode 1 applies it to the entity's `Transform` through its rotation and scale every tick, so the character goes where its animation says and turns with its transform; mode 2 pins the root and only reports `root_delta` for the script to apply, for a body the physics moves. `root` names the node; empty picks the clip's topmost node with a translation track. Only the base clip's root moves the entity (a cross-fade or a layer adds no motion), and only translation is read (a turn in the clip does not turn the entity). The assets sample's `Walker` paces on its `walk` clip, turned around by the script every three seconds.
+
 ## Limits
 
-Morph targets, root motion and inverse kinematics are not implemented; a layer's weight fades only by script (tween `layers.0.weight`). Node animations on unskinned meshes do not move anything yet (the geometry is baked): put a skin on what should move, or drive `Transform` from a script.
+Inverse kinematics is not implemented; root motion reads translation only; morph targets are eight per mesh on the GPU (the first eight are drawn when a file has more), deltas of position and normal (tangents are not morphed), and 8 MB of deltas per session; a layer's weight fades only by script (tween `layers.0.weight`). Node animations on unskinned meshes do not move anything yet (the geometry is baked): put a skin on what should move, or drive `Transform` from a script.
 
 `tests/evidence/rendering/animation.png` is the assets sample at half a second: the arm (a generated two-joint mesh, `samples/assets/assets/arm.glb`) bent to +45 degrees by its `wave` clip.

@@ -6,7 +6,8 @@ test("clips, play, stop and pose through the SDK", () => {
     const arm = world.spawn("Arm", { components: { Transform: {}, MeshRenderer: { mesh: "samples/assets/assets/arm.glb" } } });
     const info = animation.clips(arm);
     expect(info.skinned).toBe(true);
-    expect(info.clips.map((c) => c.name)).toEqual(["wave", "nod"]);
+    expect(info.clips.map((c) => c.name)).toEqual(["wave", "nod", "pulse", "walk"]);
+    expect(info.targets).toEqual(["bulge", "lean"]);
     const state = animation.play(arm, "nod", { speed: 2, loop: false });
     expect(state.clip).toBe("nod");
     expect(state.playing).toBe(true);
@@ -38,4 +39,10 @@ test("clips, play, stop and pose through the SDK", () => {
     expect(animation.layers(arm).map((l) => l.clip)).toEqual(["nod", "wave"]);
     expect(animation.removeLayer(arm, "nod").layers.map((l) => l.clip)).toEqual(["wave"]);
     expect(animation.removeLayer(arm, 0).layers.length).toBe(0);
+    // Morph weights by name, kept across calls; root motion modes.
+    expect(animation.morph(arm, { bulge: 0.5 }).weights).toEqual([{ target: "bulge", weight: 0.5 }]);
+    expect(animation.morph(arm, { lean: 1, bulge: 0.25 }).weights).toEqual([{ target: "bulge", weight: 0.25 }, { target: "lean", weight: 1 }]);
+    expect(animation.rootMotion(arm, 1).root_motion).toBe(1);
+    expect(animation.rootMotion(arm, 2, "root").root).toBe("root");
+    expect(animation.rootMotion(arm, 0).root_motion).toBe(0);
 });

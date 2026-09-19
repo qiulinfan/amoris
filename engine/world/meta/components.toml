@@ -126,6 +126,14 @@ fields = [
 ]
 
 [[record]]
+name = "MorphWeight"
+doc = "One morph target weight set by script (docs/design/animation.md, Morph targets): the target by name or index, and the weight that replaces the clip's for it."
+fields = [
+    { name = "target", type = "string", default = "", doc = "Target name from the asset (animation.clips lists them), or its index as a string." },
+    { name = "weight", type = "f32", default = 0.0, doc = "0 leaves the vertices where the mesh has them, 1 moves them fully to the target." },
+]
+
+[[record]]
 name = "AnimationLayer"
 doc = "One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers."
 fields = [
@@ -154,6 +162,9 @@ fields = [
     { name = "from_clip", type = "string", default = "", doc = "The clip fading out (keeps playing at its own time until the fade ends); empty when none." },
     { name = "from_time", type = "f32", default = 0.0, doc = "Seconds into from_clip, advanced by the engine." },
     { name = "layers", type = "list:AnimationLayer", doc = "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them)." },
+    { name = "root_motion", type = "i32", default = 0, doc = "0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion)." },
+    { name = "root", type = "string", default = "", doc = "The node whose translation is the root motion; empty picks the clip's topmost node with a translation track." },
+    { name = "root_delta", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The root's translation change this tick in the asset's space while root_motion is on (written by the engine)." },
 ]
 
 [[component]]
@@ -201,6 +212,7 @@ fields = [
     { name = "gravity_scale", type = "f32", default = 1.0, doc = "Multiplier on world gravity." },
     { name = "sleeping", type = "bool", default = false, doc = "Set by the engine when the body came to rest; cleared when touched." },
     { name = "lock_rotation", type = "bool", default = false, doc = "Never rotate (characters on capsules stay upright)." },
+    { name = "ccd", type = "bool", default = false, doc = "Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision)." },
 ]
 
 [[component]]
@@ -229,6 +241,7 @@ fields = [
     { name = "angle", type = "f32", default = 0.0, doc = "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step." },
     { name = "translation", type = "f32", default = 0.0, doc = "Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step." },
     { name = "speed", type = "f32", default = 0.0, doc = "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's." },
+    { name = "collide_connected", type = "bool", default = true, doc = "Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them." },
 ]
 
 [[component]]
@@ -247,8 +260,10 @@ fields = [
     { name = "kinematic", type = "bool", default = false, doc = "Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it." },
     { name = "one_way", type = "bool", default = false, doc = "Kinematic bodies: catch bodies from above only (a lift that rises through the floor)." },
     { name = "step", type = "f32", default = 0.5, doc = "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope)." },
-    { name = "riding", type = "entity", default = 0, doc = "The kinematic body this one stands on and moves with; 0 when none (written by the engine)." },
+    { name = "riding", type = "entity", default = 0, doc = "The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine)." },
     { name = "on_slope", type = "i32", default = 0, doc = "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)." },
+    { name = "mass", type = "f32", default = 1.0, doc = "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies)." },
+    { name = "collide_bodies", type = "bool", default = true, doc = "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body)." },
 ]
 
 [[component]]
@@ -262,6 +277,7 @@ fields = [
     { name = "mesh", type = "string", default = "", doc = "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh." },
     { name = "layer", type = "u32", default = 1, doc = "Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them." },
     { name = "mask", type = "u32", default = 4294967295, doc = "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes." },
+    { name = "group", type = "i32", default = 0, doc = "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)." },
 ]
 
 [[component]]
@@ -302,5 +318,12 @@ fields = [
     { name = "corner", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The point the agent is heading for: the next corner of its path, or the goal (written by the engine)." },
     { name = "distance", type = "f32", default = 0.0, doc = "Length of the remaining path (written by the engine)." },
     { name = "neighbours", type = "i32", default = 0, doc = "Agents and obstacles the avoidance considered this tick (written by the engine)." },
+]
+
+[[component]]
+name = "Morph"
+doc = "Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name."
+fields = [
+    { name = "weights", type = "list:MorphWeight", doc = "The targets and their weights." },
 ]
 

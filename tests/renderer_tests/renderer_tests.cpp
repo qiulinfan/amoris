@@ -113,9 +113,10 @@ TEST_CASE("glTF meshes and textures render; missing assets are marked", "[render
     for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
-    REQUIRE(stats["meshes"] == 7);                 // ground, crate, pyramid, the skinned arm, the missing one, the plate, the orb
+    REQUIRE(stats["meshes"] == 9);  // the scene's entities with meshes, the Walker and the Pulse arm included                 // ground, crate, pyramid, the skinned arm, the missing one, the plate, the orb
     REQUIRE(stats["draw_calls"].get<int>() == 8);  // crate has two submeshes (two nodes share one material -> still two draws); the arm is one skinned draw
-    REQUIRE(stats["skinned"] == 1);
+    REQUIRE(stats["skinned"] == 3);   // the Arm, the Walker and the Pulse arm
+    REQUIRE(stats["morphed"] == 1);   // the Pulse arm, its bulge weight already above zero
     REQUIRE(stats["assets"]["meshes"] == 4);
     REQUIRE(stats["assets"]["textures"] == 4);     // checker and the plate's three maps
     REQUIRE(stats["materials"].get<int>() >= 3);       // checker, the plate's maps, the default white set

@@ -68,7 +68,37 @@ TEST_CASE("a skinned glb keeps joints, weights, the skeleton and its clips", "[a
     REQUIRE(mesh.skins[0].inverse_bind[1].at(3, 1) == Catch::Approx(-1.0f));   // tip bind pose is 1 up
     REQUIRE(mesh.submeshes.size() == 1);
     REQUIRE(mesh.submeshes[0].skin == 0);
-    REQUIRE(mesh.animations.size() == 2);
+    REQUIRE(mesh.animations.size() == 4);
+    // Morph targets: two named targets with deltas parallel to the vertices, a weights track on
+    // the pulse clip (two values per key) and the walk clip's root translation track.
+    REQUIRE(mesh.morph_targets.size() == 2);
+    REQUIRE(mesh.morph_targets[0].name == "bulge");
+    REQUIRE(mesh.morph_targets[1].name == "lean");
+    REQUIRE(mesh.morph_targets[0].positions.size() == mesh.vertices.size());
+    REQUIRE(mesh.morph_targets[1].normals.size() == mesh.vertices.size());
+    REQUIRE(mesh.morph_target("lean") == 1);
+    REQUIRE(mesh.morph_target("1") == 1);
+    REQUIRE(mesh.morph_target("smile") == -1);
+    REQUIRE(mesh.default_weights == std::vector<float>({0.0f, 0.0f}));
+    {
+        float bulge_max = 0, lean_max = 0;
+        for (const Vec3& d : mesh.morph_targets[0].positions) bulge_max = std::max(bulge_max, std::hypot(d.x, d.z));
+        for (const Vec3& d : mesh.morph_targets[1].positions) lean_max = std::max(lean_max, d.x);
+        REQUIRE(bulge_max == Catch::Approx(0.15f * std::sqrt(2.0f)).margin(1e-4));
+        REQUIRE(lean_max == Catch::Approx(0.5f).margin(1e-4));
+    }
+    const assets::AnimationClip* pulse = mesh.clip("pulse");
+    REQUIRE(pulse != nullptr);
+    REQUIRE(pulse->channels.size() == 1);
+    REQUIRE(pulse->channels[0].path == 3);
+    REQUIRE(pulse->channels[0].width == 2);
+    REQUIRE(pulse->channels[0].values == std::vector<float>({0, 0, 1, 0, 0, 0}));
+    const assets::AnimationClip* walk = mesh.clip("walk");
+    REQUIRE(walk != nullptr);
+    REQUIRE(walk->channels.size() == 2);
+    REQUIRE(walk->channels[0].path == 0);
+    REQUIRE(walk->channels[0].node == 1);
+    REQUIRE(walk->channels[0].values.back() == 1.0f);
     REQUIRE(mesh.clip("wave") != nullptr);
     REQUIRE(mesh.clip("wave")->duration == Catch::Approx(1.0f));
     REQUIRE(mesh.clip("wave")->channels[0].path == 1);
@@ -86,7 +116,8 @@ TEST_CASE("a skinned glb keeps joints, weights, the skeleton and its clips", "[a
     REQUIRE(mesh.aabb_max.y == Catch::Approx(2.0f));
     Json d = mesh.describe();
     REQUIRE(d["skinned"] == true);
-    REQUIRE(d["animations"].size() == 2);
+    REQUIRE(d["animations"].size() == 4);
+    REQUIRE(d["targets"] == Json::array({"bulge", "lean"}));
 }
 
 TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", "[assets][tilemap]") {

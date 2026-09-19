@@ -1111,7 +1111,9 @@ Result<Json> Session::animation_command(std::string_view op, const Json& p) {
             for (int j : s.joints) joints.push_back(mesh->nodes[static_cast<std::size_t>(j)].name);
             skins.push_back(Json{{"name", s.name}, {"joints", joints}});
         }
-        return Json{{"mesh", mesh->path}, {"clips", clips}, {"skins", skins}, {"skinned", mesh->skinned()}};
+        Json targets = Json::array();
+        for (const auto& t : mesh->morph_targets) targets.push_back(t.name);
+        return Json{{"mesh", mesh->path}, {"clips", clips}, {"skins", skins}, {"skinned", mesh->skinned()}, {"targets", targets}};
     }
     if (op == "play" || op == "stop" || op == "pose" || op == "layer") {
         if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
@@ -1237,6 +1239,21 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
         Json bits = Json::object();
         for (std::size_t i = 0; i < physics_layers_.size(); ++i) bits[physics_layers_[i]] = 1u << i;
         return Json{{"names", physics_layers_}, {"bits", bits}};
+    }
+    if (op == "ignore") {
+        // An exception for one pair: they never collide, until told otherwise or one is gone.
+        if (!p.contains("a") || !p.contains("b")) return fail("bad_args", "'a' and 'b' are required (entities)");
+        const world::EntityId a = resolve_entity(p["a"]), b = resolve_entity(p["b"]);
+        if (!world_->alive(a) || !world_->alive(b)) return fail("no_such_entity", "no entity for {} or {}", p["a"].dump(), p["b"].dump());
+        if (a == b) return fail("bad_args", "a pair needs two different entities");
+        const bool ignore = opt<bool>(p, "ignore", true);
+        physics_->ignore(a, b, ignore);
+        return Json{{"a", world_->path(a)}, {"b", world_->path(b)}, {"ignored", ignore}, {"exceptions", physics_->ignored().size()}};
+    }
+    if (op == "ignored") {
+        Json out = Json::array();
+        for (const auto& [a, b] : physics_->ignored()) out.push_back(Json{{"a", world_->path(a)}, {"b", world_->path(b)}, {"a_id", a}, {"b_id", b}});
+        return out;
     }
     // Queries take a layer mask: only shapes on a layer in it answer (all layers by default).
     auto mask_of = [&]() -> std::uint32_t {
@@ -2066,7 +2083,9 @@ Status Session::frame() {
     (void)presented_before;
 #endif
     pace_timer_.lap();
-    if (options_.headless && options_.frames < 0 && !options_.serve && frames_ >= 3600) quit_ = true;
+    // A headless run without a frame budget and without a controller would run forever: stop it
+    // after a minute of simulated time. A served run belongs to its controller (`quit` ends it).
+    if (options_.headless && options_.frames < 0 && options_.serve < 0 && frames_ >= 3600) quit_ = true;
     return {};
 }
 
@@ -2665,7 +2684,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "render.stats", "render.pick", "render.project", "render.unproject", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

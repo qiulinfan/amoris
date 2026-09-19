@@ -18,6 +18,7 @@ struct Pose {
     std::string mesh;                             // asset path the pose belongs to
     std::vector<Mat4> globals;                    // one per node of the asset (file space)
     std::vector<std::vector<Mat4>> joints;        // per skin: global * inverse bind, one per joint
+    std::vector<float> weights;                   // one per morph target of the asset (empty when it has none)
 };
 
 class Animation {
@@ -34,6 +35,10 @@ class Animation {
     static void blend(const assets::Mesh& mesh, const assets::AnimationClip* a, float time_a, const assets::AnimationClip* b, float time_b, float weight, Pose& out);
     // The node names of a layer mask ("spine, head" -> spine, head); empty for an empty mask.
     static std::vector<std::string> mask_names(std::string_view mask);
+    // The root motion node: the named node, else the clip's topmost node with a translation track; -1 for none.
+    static int root_node(const assets::Mesh& mesh, const assets::AnimationClip* clip, std::string_view name);
+    // The root node's translation at `time` from the clip (its rest translation without a track).
+    static Vec3 root_translation(const assets::Mesh& mesh, const assets::AnimationClip* clip, int node, float time);
 
    private:
     std::map<world::EntityId, Pose> poses_;

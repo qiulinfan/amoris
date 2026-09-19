@@ -2,4 +2,4 @@ name = "runtime_tests"
 kind = "test"
 description = "End-to-end tests: run the hello sample headless in-process, check determinism, captures and the report shape. `pocket test` bundles samples/ before running."
 sources = ["*.cpp"]
-private_deps = ["pocket_app", "catch2"]
+private_deps = ["pocket_app", "catch2", "httplib"]

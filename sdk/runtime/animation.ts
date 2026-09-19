@@ -1,7 +1,7 @@
 // Skeletal animation of glTF assets (docs/design/animation.md): the Animator component does the
 // playing; these calls set it up, layer clips over it and read the pose back.
-import { command, type EntityRef, type Vec3 } from "./world";
-import type { AnimationLayer, Components } from "./generated/components";
+import { command, world, type EntityRef, type Vec3 } from "./world";
+import type { AnimationLayer, Components, MorphWeight } from "./generated/components";
 
 export interface ClipInfo {
     name: string;
@@ -49,13 +49,34 @@ export interface PoseInfo {
     time?: number;
     blend?: { from: string; from_time: number; weight: number; remaining: number };
     layers?: Array<{ index: number; clip: string; time: number; weight: number; mask: string; additive: boolean; playing: boolean }>;
+    /** The morph target weights in effect, when the asset has targets. */
+    weights?: Array<{ target: string; weight: number }>;
+    root_motion?: number;
+    root?: string;
+    root_delta?: Vec3;
 }
 
 export const animation = {
-    /** The clips and skins of an entity's mesh asset (or of a mesh path). */
-    clips(target: EntityRef | { mesh: string }): { mesh: string; clips: ClipInfo[]; skins: Array<{ name: string; joints: string[] }>; skinned: boolean } {
+    /** The clips, skins and morph targets of an entity's mesh asset (or of a mesh path). */
+    clips(target: EntityRef | { mesh: string }): { mesh: string; clips: ClipInfo[]; skins: Array<{ name: string; joints: string[] }>; skinned: boolean; targets: string[] } {
         const params = typeof target === "object" && target !== null && "mesh" in target ? target : { entity: target };
-        return command("animation.clips", params) as { mesh: string; clips: ClipInfo[]; skins: Array<{ name: string; joints: string[] }>; skinned: boolean };
+        return command("animation.clips", params) as { mesh: string; clips: ClipInfo[]; skins: Array<{ name: string; joints: string[] }>; skinned: boolean; targets: string[] };
+    },
+    /** Set morph target weights by target name (or index as a string) on the entity's Morph component, keeping the others (docs/design/animation.md, Morph targets). */
+    morph(entity: EntityRef, weights: Record<string, number>): Components["Morph"] {
+        const list: MorphWeight[] = [...(world.get(entity, "Morph")?.weights ?? [])];
+        for (const [target, weight] of Object.entries(weights)) {
+            const i = list.findIndex((w) => w.target === target);
+            if (i >= 0) list[i] = { target, weight };
+            else list.push({ target, weight });
+        }
+        world.set(entity, "Morph", { weights: list });
+        return world.get(entity, "Morph")!;
+    },
+    /** Root motion: 0 off; 1 the clip's root translation moves the Transform; 2 the root is pinned and root_delta reported for the script to apply. `root` names the node (empty: the clip's topmost translated node). */
+    rootMotion(entity: EntityRef, mode: 0 | 1 | 2, root = ""): Components["Animator"] {
+        world.set(entity, "Animator", { root_motion: mode, root });
+        return world.get(entity, "Animator")!;
     },
     /** Play a clip (default: the asset's first) on an entity with a MeshRenderer; returns the Animator. */
     play(entity: EntityRef, clip?: string, options: PlayAnimationOptions = {}): Components["Animator"] {

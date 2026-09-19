@@ -19,7 +19,10 @@ import os
 import random
 import subprocess
 import sys
+import threading
 import urllib.request
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 
 class PocketError(RuntimeError):
@@ -80,10 +83,22 @@ class PocketEnv:
                 raise RuntimeError("the runtime exited before it listened")
             if '"listening"' in line:
                 self.url = json.loads(line)["url"]
+        # The runtime keeps logging to stderr; a full pipe would block it, so a thread drains it
+        # and keeps the last lines for error messages (`env.log`).
+        self.log = deque(maxlen=200)
+        self._drain = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._drain.start()
         self._next_id = 0
         self.seed = seed
         self.max_ticks = max_ticks
         self.last = None
+
+    def _drain_stderr(self):
+        try:
+            for line in self.process.stderr:
+                self.log.append(line.rstrip("\n"))
+        except (ValueError, OSError):
+            pass
 
     # ---- the interface ----
     def describe(self):
@@ -120,8 +135,14 @@ class PocketEnv:
         self._next_id += 1
         body = json.dumps({"id": self._next_id, "method": method, "params": params or {}}).encode()
         req = urllib.request.Request(self.url + "/rpc", data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=600) as r:
-            reply = json.loads(r.read())
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                reply = json.loads(r.read())
+        except OSError as e:   # refused, reset, timed out: say whether the runtime is still there
+            code = self.process.poll()
+            if code is not None:
+                raise RuntimeError(f"the runtime exited with code {code} during {method}; last log lines:\n" + "\n".join(list(self.log)[-10:])) from e
+            raise RuntimeError(f"no reply to {method} from the runtime (pid {self.process.pid}): {e}") from e
         if "error" in reply:
             raise PocketError(reply["error"])
         return reply.get("result")
@@ -137,7 +158,53 @@ class PocketEnv:
             except subprocess.TimeoutExpired:
                 self.process.kill()
         if self.process.stderr is not None:
+            try:
+                self._drain.join(timeout=2)
+            except RuntimeError:
+                pass
             self.process.stderr.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class PocketEnvPool:
+    """Several runtimes playing the same project side by side, one episode each at a time.
+
+    Every call fans out to the environments in threads (each one blocks on its own HTTP call, the
+    runtimes run in parallel) and returns one result per environment, in order.
+    """
+
+    def __init__(self, project, n, **kwargs):
+        self.envs = [PocketEnv(project, **kwargs) for _ in range(max(1, n))]
+        self._pool = ThreadPoolExecutor(max_workers=len(self.envs))
+
+    def __len__(self):
+        return len(self.envs)
+
+    def _fan(self, fn, args_per_env):
+        return list(self._pool.map(lambda pair: fn(pair[0], *pair[1]), zip(self.envs, args_per_env)))
+
+    def reset(self, seeds=None, max_ticks=None):
+        """Start an episode in every environment; `seeds` gives one per environment (the env's own when None)."""
+        seeds = list(seeds) if seeds is not None else [None] * len(self.envs)
+        return self._fan(lambda env, seed: env.reset(seed=seed, max_ticks=max_ticks), [(s,) for s in seeds])
+
+    def step(self, actions, ticks=1):
+        """Act in every environment: `actions` is one action dict per environment (or one dict for all)."""
+        if isinstance(actions, dict) or actions is None:
+            actions = [actions] * len(self.envs)
+        return self._fan(lambda env, act: env.step(act, ticks=ticks), [(a,) for a in actions])
+
+    def observe(self):
+        return self._fan(lambda env: env.observe(), [() for _ in self.envs])
+
+    def close(self):
+        self._fan(lambda env: env.close(), [() for _ in self.envs])
+        self._pool.shutdown()
 
     def __enter__(self):
         return self

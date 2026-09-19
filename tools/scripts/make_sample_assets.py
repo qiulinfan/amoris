@@ -261,7 +261,10 @@ def glb(positions, normals, uvs, indices, material, nodes, texture_uri=None, ima
 def skinned_arm():
     """A two-joint arm: a square column from y=0 to y=2 weighted between a root joint at the base
     and a tip joint at y=1, with a 'wave' clip that swings the tip joint about Z (-45 to +45
-    degrees over a second) and a 'nod' clip that tilts the root."""
+    degrees over a second), a 'nod' clip that tilts the root, two morph targets ('bulge' doubles
+    the middle ring's radius, 'lean' shifts the top toward +X), a 'pulse' clip that plays the
+    bulge weight 0 -> 1 -> 0 over a second, and a 'walk' clip whose root moves one unit along +Z
+    per second while the tip waves (root motion)."""
     levels = [0.0, 0.5, 1.0, 1.5, 2.0]
     half = 0.15
     ring = [(-half, -half), (half, -half), (half, half), (-half, half)]
@@ -302,12 +305,22 @@ def skinned_arm():
     wave_q = [quat_z(-45), quat_z(45), quat_z(-45)]
     nod_t = [0.0, 0.75, 1.5]
     nod_q = [quat_x(0), quat_x(30), quat_x(0)]
+    # Morph targets: deltas parallel to the positions.
+    bulge = [((x, 0.0, z) if abs(y - 1.0) < 1e-6 else (0.0, 0.0, 0.0)) for (x, y, z) in positions]
+    lean = [((0.5 * (y - 1.0), 0.0, 0.0) if y > 1.0 else (0.0, 0.0, 0.0)) for (x, y, z) in positions]
+    pulse_t = [0.0, 0.5, 1.0]
+    pulse_w = [(0.0,), (0.0,), (1.0,), (0.0,), (0.0,), (0.0,)]   # per key: bulge, lean
+    walk_t = [0.0, 1.0]
+    walk_v = [(0.0, 0.0, 0.0), (0.0, 0.0, 1.0)]
     blobs = [
         ("POS", pack("<fff", positions), 34962), ("NRM", pack("<fff", normals), 34962), ("UV", pack("<ff", uvs), 34962),
         ("JNT", pack("<HHHH", joints), 34962), ("WGT", pack("<ffff", weights), 34962),
         ("IDX", b"".join(struct.pack("<H", i) for i in indices), 34963),
         ("IBM", pack("<16f", ibm), None), ("WT", pack("<f", [(t,) for t in wave_t]), None), ("WQ", pack("<ffff", wave_q), None),
         ("NT", pack("<f", [(t,) for t in nod_t]), None), ("NQ", pack("<ffff", nod_q), None),
+        ("MT0", pack("<fff", bulge), 34962), ("MT1", pack("<fff", lean), 34962),
+        ("PT", pack("<f", [(t,) for t in pulse_t]), None), ("PW", pack("<f", pulse_w), None),
+        ("WKT", pack("<f", [(t,) for t in walk_t]), None), ("WKV", pack("<fff", walk_v), None),
     ]
     buf, views, index_of = b"", [], {}
     for name, data, target in blobs:
@@ -335,6 +348,12 @@ def skinned_arm():
         {"bufferView": index_of["WQ"], "componentType": 5126, "count": len(wave_q), "type": "VEC4"},
         {"bufferView": index_of["NT"], "componentType": 5126, "count": len(nod_t), "type": "SCALAR", "min": [nod_t[0]], "max": [nod_t[-1]]},
         {"bufferView": index_of["NQ"], "componentType": 5126, "count": len(nod_q), "type": "VEC4"},
+        {"bufferView": index_of["MT0"], "componentType": 5126, "count": len(bulge), "type": "VEC3", "min": [min(d[i] for d in bulge) for i in range(3)], "max": [max(d[i] for d in bulge) for i in range(3)]},
+        {"bufferView": index_of["MT1"], "componentType": 5126, "count": len(lean), "type": "VEC3", "min": [min(d[i] for d in lean) for i in range(3)], "max": [max(d[i] for d in lean) for i in range(3)]},
+        {"bufferView": index_of["PT"], "componentType": 5126, "count": len(pulse_t), "type": "SCALAR", "min": [pulse_t[0]], "max": [pulse_t[-1]]},
+        {"bufferView": index_of["PW"], "componentType": 5126, "count": len(pulse_w), "type": "SCALAR"},
+        {"bufferView": index_of["WKT"], "componentType": 5126, "count": len(walk_t), "type": "SCALAR", "min": [walk_t[0]], "max": [walk_t[-1]]},
+        {"bufferView": index_of["WKV"], "componentType": 5126, "count": len(walk_v), "type": "VEC3"},
     ]
     doc = {
         "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
@@ -345,12 +364,16 @@ def skinned_arm():
             {"name": "root", "translation": [0, 0, 0], "children": [2]},
             {"name": "tip", "translation": [0, 1, 0]},
         ],
-        "meshes": [{"name": "arm", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 5, "material": 0}]}],
+        "meshes": [{"name": "arm", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 5, "material": 0, "targets": [{"POSITION": 11}, {"POSITION": 12}]}],
+                    "weights": [0.0, 0.0], "extras": {"targetNames": ["bulge", "lean"]}}],
         "materials": [{"name": "arm", "pbrMetallicRoughness": {"baseColorFactor": [0.9, 0.55, 0.3, 1], "metallicFactor": 0, "roughnessFactor": 0.7}}],
         "skins": [{"name": "arm", "joints": [1, 2], "inverseBindMatrices": 6}],
         "animations": [
             {"name": "wave", "samplers": [{"input": 7, "output": 8, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 2, "path": "rotation"}}]},
             {"name": "nod", "samplers": [{"input": 9, "output": 10, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]},
+            {"name": "pulse", "samplers": [{"input": 13, "output": 14, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 0, "path": "weights"}}]},
+            {"name": "walk", "samplers": [{"input": 15, "output": 16, "interpolation": "LINEAR"}, {"input": 7, "output": 8, "interpolation": "LINEAR"}],
+             "channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}}, {"sampler": 1, "target": {"node": 2, "path": "rotation"}}]},
         ],
         "buffers": [{"byteLength": len(buf)}],
         "bufferViews": views,

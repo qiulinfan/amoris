@@ -2,7 +2,8 @@
 // along X then Y, and stop at the solid cells of a TileMap and at kinematic bodies (platforms);
 // one-way tiles and platforms stop them from above only; slope tiles are floors whose height
 // rises across the cell; small steps are climbed. Deterministic, in entity order, on the fixed
-// tick.
+// tick. Dynamic bodies then push each other apart and stack (docs/design/tilemaps.md, Bodies
+// against bodies).
 #pragma once
 
 #include <pocket/assets/assets.hpp>
@@ -21,6 +22,9 @@ struct Stats2D {
     std::uint32_t platforms = 0;  // kinematic bodies
     std::uint32_t riding = 0;     // bodies carried by a platform this step
     std::uint32_t stepped = 0;    // edges climbed without a jump this step
+    std::uint32_t pairs = 0;      // overlapping pairs of dynamic bodies resolved this step
+    std::uint32_t stacked = 0;    // bodies standing on other dynamic bodies this step
+    std::uint32_t pushed = 0;     // sideways pushes between bodies this step
 };
 
 class Physics2D {

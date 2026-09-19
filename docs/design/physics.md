@@ -21,6 +21,10 @@ Every pair of shapes collides: sphere-sphere, sphere-box (closest point on the b
 
 `Collider.layer` is the bits of the layers a shape is on (bit 0 by default) and `Collider.mask` the bits it interacts with (all by default): two shapes collide, touch as a trigger or answer a query only when each is on a layer the other's mask includes, so a projectile on layer 4 with a mask that leaves out its own layer flies through other projectiles, and an enemy that masks out the player's layer walks through the player while still standing on the ground. `[physics] layers = ["arena", "bodies", "marble"]` in `project.toml` names the bits in order; `physics.layers` returns the names and their bits, `physics.raycast` and `physics.overlap` take a `mask` (bits, or a list of names), and the SDK's `physics.layerMask("enemy", "world")` builds one. Names are documentation: the engine only sees bits.
 
+## Groups and exceptions
+
+Layers decide by category; three rules decide for particular pairs. `Collider.group` follows Box2D's rule: two shapes in the same negative group never collide (a ragdoll's limbs, the parts of one vehicle), in the same positive group always collide whatever their layers, and 0 leaves it to the layers. `physics.ignore {a, b}` (`ignore: false` to undo, `physics.ignored` to list) is an exception for one pair, kept until one of the two is gone: a character and the crate it carries, a door and the frame it swings through. A `Joint` with `collide_connected = false` keeps its two bodies apart, so a chain's links or a hinge's leaves overlap where the joint holds them. A pair any of these keeps apart is skipped before the narrow phase and counted in `physics.stats.ignored`; queries ignore groups and exceptions, they only take masks. There is no callback per pair: a decision the rules cannot express is a layer change or an exception made when the pair matters.
+
 ## The step
 
 The step runs once per fixed tick, before the world's own systems, on every entity that has a `Transform`, a `RigidBody` and a `Collider`:
@@ -32,6 +36,10 @@ The step runs once per fixed tick, before the world's own systems, on every enti
 5. Emit `collision.begin`, `collision.end`, `trigger.enter`, `trigger.exit` (with cause links, so a chain of events reads back as a story) and `joint.broken`; write `Transform`, `Velocity` and `RigidBody.sleeping` back.
 
 Bodies that stay slow for half a second sleep: they are skipped by the solver and not integrated until a contact, a moving neighbor, a script write to their velocity or a joint that is violated or attached to something that moves wakes them.
+
+## Continuous collision
+
+A body moving more than half its size in one step can cross a thin shape between two steps. `RigidBody.ccd = true` asks for a sweep: before the step integrates the body, its bounding sphere is cast along the step's motion (a ray from its center, the sphere's radius taken off the hit distance) against every static and kinematic shape it may collide with (layers, groups and exceptions apply), and when the nearest hit is closer than the motion the body stops a skin short of the surface, its velocity into it reflected by its restitution, the rest of the step's motion dropped; the contact solver takes over next step. A `physics.ccd` event names the body, what it hit, the point, the normal and the speed, and `physics.stats.ccd_hits` counts the sweeps that stopped something. Bodies moving less than half their size per step are not swept, so the flag costs nothing on a resting body. The sweep is the bounding sphere's, not the exact shape's: a swept box stops where its sphere would; and dynamic bodies are not swept against each other, so two bullets can still cross. `samples/physics` fires a pellet with `ccd` and a dud without at a pane of glass 4 cm thick at 80 m/s: the pellet is held, the dud crosses.
 
 ## Joints
 
@@ -51,12 +59,13 @@ Joints are solved with the contacts (effective mass with the bodies' inverse ine
 - `physics.raycast {origin, direction, max_distance, include_triggers, mask}`: the nearest hit (entity, point, normal, distance), against boxes, spheres, capsules and mesh triangles (both faces, the normal turned toward the ray) on the layers of `mask`.
 - `physics.overlap {center, radius, mask}`: the entities whose shapes overlap a sphere, on the layers of `mask`.
 - `physics.layers`: the project's layer names and their bits.
+- `physics.ignore {a, b, ignore}` and `physics.ignored`: an exception for one pair, and the exceptions standing.
 - `physics.contacts`: every contact of the last step (pair, point, normal, depth, trigger flag); the SDK's `onContacts` receives the same list each tick.
 - `physics.joints`: every joint solved in the last step with its target, kind, rest length, current anchor distance and force; hinges add `angle`, `speed`, `torque` and `at_limit` (-1 lower, 1 upper, 2 locked); sliders add `translation`, `speed`, `motor_force` and `at_limit`.
-- `physics.stats`: body, awake, pair, contact and joint counts, begins and ends, broken joints, mesh colliders and their triangles, gravity; `physics.gravity {gravity}` sets it.
+- `physics.stats`: body, awake, pair, contact and joint counts, begins and ends, broken joints, mesh colliders and their triangles, `ccd_hits`, pairs `ignored` and the `exceptions` standing, gravity; `physics.gravity {gravity}` sets it.
 
 The SDK's `physics` object wraps them (`raycast`, `overlap`, `contacts`, `joints`, `stats`, `setGravity`, `setVelocity`). Kinematic bodies (`kind = 2`) move by their `Velocity` and push dynamic bodies without being pushed back; scripts move platforms and doors that way.
 
 ## What is not there
 
-Continuous collision for very fast small bodies (they can pass through thin walls), and per-pair filtering beyond layers (a callback deciding for two particular bodies). 2D platformer physics against tile maps is its own system (`docs/design/tilemaps.md`). `samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that snaps when kicked, a capsule log, a hatch on a limited hinge, a motor-driven paddle, a marble rolling down a mesh-collider bowl, a lift on a motorised slider, a bob on a spring) and `tests/physics_tests` are the reference for what works.
+Continuous collision between two dynamic bodies, or of exact shapes (the sweep is the bounding sphere's), and a callback deciding per pair (groups, exceptions and joints cover the cases). 2D platformer physics against tile maps is its own system (`docs/design/tilemaps.md`). `samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that snaps when kicked, a capsule log, a hatch on a limited hinge, a motor-driven paddle, a marble rolling down a mesh-collider bowl, a lift on a motorised slider, a bob on a spring) and `tests/physics_tests` are the reference for what works.

@@ -31,6 +31,7 @@ struct RenderStats {
     std::uint32_t sprites = 0;        // of which sprites
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
+    std::uint32_t morphed = 0;        // of which drawn with morph target weights
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after an edit, over the renderer's life
     int msaa = 1;                     // samples per pixel of the color pass (1 or 4)

@@ -54,4 +54,4 @@ Tiled JSON maps (`.tmj`) load through `AssetStore::tilemap` with their tile laye
 
 ## Skins and animations
 
-A file's node hierarchy, skins (joints, inverse bind matrices) and animation clips are kept next to the baked geometry; skinned primitives keep their bind-space vertices with joints and weights and are posed at runtime by the `Animator` component (`animation.md`). `assets.describe` lists `skins` and `animations` with their durations.
+A file's node hierarchy, skins (joints, inverse bind matrices), animation clips and morph targets (position and normal deltas, named by `extras.targetNames`) are kept next to the baked geometry; skinned primitives keep their bind-space vertices with joints and weights and are posed at runtime by the `Animator` component, targets are weighed by clips or the `Morph` component (`animation.md`). `assets.describe` lists `skins`, `animations` with their durations, and `targets`.

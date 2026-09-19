@@ -86,8 +86,16 @@ export const physics = {
     contacts(): Array<{ a: string; b: string; point: Vec3; normal: Vec3; depth: number; trigger: boolean }> {
         return command("physics.contacts");
     },
-    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; gravity: Vec3; layers: string[] } {
+    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; ccd_hits: number; ignored: number; exceptions: number; gravity: Vec3; layers: string[] } {
         return command("physics.stats");
+    },
+    /** Keep one pair of bodies from ever colliding (or let them again with ignore = false); the exception lasts until one of them is gone. */
+    ignore(a: EntityRef, b: EntityRef, ignore = true): { a: string; b: string; ignored: boolean; exceptions: number } {
+        return command("physics.ignore", { a, b, ignore });
+    },
+    /** The pairs kept apart by physics.ignore. */
+    ignored(): Array<{ a: string; b: string; a_id: Entity; b_id: Entity }> {
+        return command("physics.ignored");
     },
     /** Every joint solved in the last step, with the force it carried. */
     joints(): JointState[] {

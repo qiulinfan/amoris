@@ -70,10 +70,20 @@ struct Skin {
 
 struct AnimationChannel {
     int node = -1;
-    int path = 0;              // 0 translation, 1 rotation, 2 scale
+    int path = 0;              // 0 translation, 1 rotation, 2 scale, 3 morph target weights
+    int width = 3;             // values per key: 3, 4, or the number of targets for weights
     bool step = false;         // STEP interpolation; otherwise linear (cubic splines read their values)
     std::vector<float> times;
-    std::vector<float> values; // 3 per key (translation, scale) or 4 (rotation xyzw)
+    std::vector<float> values; // width per key
+};
+
+// A morph target (blend shape): per-vertex position and normal deltas parallel to Mesh::vertices
+// (zero where the target does not touch a primitive), weighted by a clip's weights track or by
+// the Morph component (docs/design/animation.md, Morph targets).
+struct MorphTarget {
+    std::string name;
+    std::vector<Vec3> positions;
+    std::vector<Vec3> normals;
 };
 
 struct AnimationClip {
@@ -94,8 +104,12 @@ struct Mesh {
     std::vector<Node> nodes;
     std::vector<Skin> skins;
     std::vector<AnimationClip> animations;
+    std::vector<MorphTarget> morph_targets;
+    std::vector<float> default_weights;     // one per target, from the file's mesh weights (zeros otherwise)
     [[nodiscard]] bool skinned() const { return !skin_vertices.empty(); }
     [[nodiscard]] const AnimationClip* clip(std::string_view name) const;
+    // A target's index by name, or by its index written as a string; -1 when there is none.
+    [[nodiscard]] int morph_target(std::string_view name) const;
     [[nodiscard]] Json describe() const;
 };
 

@@ -37,4 +37,17 @@ onTick((t) => {
 expose("yaw", () => Number(yaw.toFixed(3)));
 expose("arm.clip", () => armClip);
 expose("arm.time", () => Number((world.get(world.find("Arm") ?? 0, "Animator")?.time ?? 0).toFixed(3)));
+// The Walker paces: its walk clip carries it along its own +Z through root motion, and every
+// three seconds the script turns it around (docs/design/animation.md, Root motion).
+let walkerTurns = 0;
+onTick(({ tick }) => {
+    const walker = world.find("Walker");
+    if (walker === undefined || tick === 0 || tick % 180 !== 0) return;
+    walkerTurns++;
+    const half = (walkerTurns * Math.PI) / 2;
+    world.set(walker, "Transform", { rotation: { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) } });
+});
+expose("walker.z", () => Number((world.get(world.find("Walker") ?? 0, "Transform")?.position.z ?? 0).toFixed(3)));
+expose("walker.turns", () => walkerTurns);
+expose("pulse.bulge", () => { const p = world.find("Pulse"); return p === undefined ? 0 : Number((animation.pose(p).weights?.[0]?.weight ?? 0).toFixed(3)); });
 expose("missing", () => (command<{ assets?: { missing?: string[] } }>("render.stats").assets?.missing ?? []).length);

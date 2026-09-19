@@ -1,7 +1,7 @@
 // In the browser there is no listening socket: agents and pages drive the runtime through the
 // exported pocket_command function instead (docs/web.md).
 #ifdef __EMSCRIPTEN__
-#include "server.hpp"
+#include <pocket/app/server.hpp>
 
 namespace pocket::app {
 

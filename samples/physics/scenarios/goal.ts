@@ -50,3 +50,15 @@ scenario("the lift rises to its stop and the bob settles at its spring's stretch
         expect(g.count("joint.limit")).toBeGreaterThan(0);
     }, "lift at its upper stop, bob stretched by its weight");
 });
+
+scenario("the pellet with continuous collision stops at the pane and the dud crosses it", (g) => {
+    g.wait(1);
+    g.check(() => {
+        expect(g.state<number>("pelletX")).toBeLessThan(9);          // held on the near face (the pane is at x 9)
+        expect(g.state<number>("pelletX")).toBeGreaterThan(8.5);
+        expect(g.state<boolean>("dudCrossed")).toBe(true);           // through the pane between two steps
+        expect(g.state<number>("ccdHits")).toBe(1);
+        expect(g.count("physics.ccd")).toBe(1);
+    }, "pellet held, dud through");
+});
+

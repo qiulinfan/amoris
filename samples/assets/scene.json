@@ -81,6 +81,55 @@
       }
     },
     {
+      "name": "Walker",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": -2.4,
+            "y": 0,
+            "z": -1.5
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/arm.glb",
+          "color": {
+            "r": 0.55,
+            "g": 0.75,
+            "b": 0.95,
+            "a": 1
+          }
+        },
+        "Animator": {
+          "clip": "walk",
+          "root_motion": 1
+        }
+      }
+    },
+    {
+      "name": "Pulse",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 3.2,
+            "y": 0,
+            "z": 0.4
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/arm.glb",
+          "color": {
+            "r": 0.95,
+            "g": 0.6,
+            "b": 0.85,
+            "a": 1
+          }
+        },
+        "Animator": {
+          "clip": "pulse"
+        }
+      }
+    },
+    {
       "name": "Missing",
       "components": {
         "Transform": {

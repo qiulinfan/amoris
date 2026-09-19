@@ -20,7 +20,7 @@ namespace {
 constexpr std::uint32_t kMaxPointLights = 8;
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 208;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 256;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -45,6 +45,8 @@ struct alignas(16) ObjectUniforms {
     float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
     float pbr[4];             // metallic, roughness, normal scale, 1 when a normal map is bound
     float emissive[4];        // linear RGB added after lighting, w unused
+    std::uint32_t morph[4];   // x: first vec4 of the asset's morph deltas, y: vertices per target, z: targets weighed (0: none)
+    float morph_weights[8];   // one per target, up to eight
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -92,10 +94,31 @@ struct Object {
     uv_rect: vec4f,
     pbr: vec4f,
     emissive: vec4f,
+    morph: vec4u,
+    morph_weights: array<vec4f, 2>,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 @group(1) @binding(1) var<storage, read> joints: array<mat4x4f>;
+// Morph target deltas of every morphed asset: per target, per vertex, a position delta then a
+// normal delta (vec4 each), starting at object.morph.x for the instance's asset.
+@group(1) @binding(2) var<storage, read> morphs: array<vec4f>;
+fn morph_position(object: Object, vid: u32, p: vec3f) -> vec3f {
+    var out = p;
+    for (var t = 0u; t < object.morph.z; t = t + 1u) {
+        let w = object.morph_weights[t / 4u][t % 4u];
+        if (w != 0.0) { out = out + w * morphs[object.morph.x + (t * object.morph.y + vid) * 2u].xyz; }
+    }
+    return out;
+}
+fn morph_normal(object: Object, vid: u32, n: vec3f) -> vec3f {
+    var out = n;
+    for (var t = 0u; t < object.morph.z; t = t + 1u) {
+        let w = object.morph_weights[t / 4u][t % 4u];
+        if (w != 0.0) { out = out + w * morphs[object.morph.x + (t * object.morph.y + vid) * 2u + 1u].xyz; }
+    }
+    return normalize(out);
+}
 @group(2) @binding(0) var base_tex: texture_2d<f32>;
 @group(2) @binding(1) var base_samp: sampler;
 @group(2) @binding(2) var mr_tex: texture_2d<f32>;
@@ -112,13 +135,13 @@ struct VsOut {
     @location(5) @interpolate(flat) instance: u32,
 };
 
-@vertex fn vs(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
+@vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
     let object = objects[instance];
     var out: VsOut;
-    let world = object.model * vec4f(position, 1.0);
+    let world = object.model * vec4f(morph_position(object, vid, position), 1.0);
     out.clip = frame.view_proj * world;
     out.world_pos = world.xyz;
-    out.normal = normalize((object.normal * vec4f(normal, 0.0)).xyz);
+    out.normal = normalize((object.normal * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.color = object.color;
     out.id = object.id.x;
@@ -127,9 +150,9 @@ struct VsOut {
 }
 
 // Shadow pass: depth only, from the sun.
-@vertex fn vs_shadow(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
+@vertex fn vs_shadow(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
     let object = objects[instance];
-    return frame.light_view_proj * (object.model * vec4f(position, 1.0));
+    return frame.light_view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
 }
 
 // Skinned meshes: the joint matrices of this instance start at object.id.z in the joints array.
@@ -137,14 +160,14 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     return joints[base + j.x] * w.x + joints[base + j.y] * w.y + joints[base + j.z] * w.z + joints[base + j.w] * w.w;
 }
 
-@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> VsOut {
+@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> VsOut {
     let object = objects[instance];
     let model = object.model * skin_matrix(object.id.z, j, w);
     var out: VsOut;
-    let world = model * vec4f(position, 1.0);
+    let world = model * vec4f(morph_position(object, vid, position), 1.0);
     out.clip = frame.view_proj * world;
     out.world_pos = world.xyz;
-    out.normal = normalize((model * vec4f(normal, 0.0)).xyz);
+    out.normal = normalize((model * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.color = object.color;
     out.id = object.id.x;
@@ -152,10 +175,10 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     return out;
 }
 
-@vertex fn vs_shadow_skinned(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> @builtin(position) vec4f {
+@vertex fn vs_shadow_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> @builtin(position) vec4f {
     let object = objects[instance];
     let model = object.model * skin_matrix(object.id.z, j, w);
-    return frame.light_view_proj * (model * vec4f(position, 1.0));
+    return frame.light_view_proj * (model * vec4f(morph_position(object, vid, position), 1.0));
 }
 
 struct FsOut {
@@ -299,6 +322,8 @@ struct GpuMesh {
     Vec3 aabb_min, aabb_max;
 };
 constexpr std::uint32_t kMaxJoints = 16384;  // joint matrices per frame across every skinned instance
+constexpr std::uint32_t kMaxMorphVec4 = 524288;  // morph deltas (position + normal vec4 per target and vertex) across every asset: 8 MB
+constexpr std::uint32_t kMaxMorphTargets = 8;    // targets weighed per instance
 
 void to_array(const Mat4& m, float* out) { std::memcpy(out, m.m, sizeof(float) * 16); }
 
@@ -323,6 +348,9 @@ struct Renderer::Impl {
     WGPUBuffer joint_buffer = nullptr;
     std::vector<float> joint_staging;  // 16 floats per matrix
     std::uint32_t joint_count = 0;
+    WGPUBuffer morph_buffer = nullptr;  // every morphed asset's deltas, appended as assets load
+    std::uint32_t morph_used = 0;       // vec4s of it in use
+    bool morph_full_warned = false;
     const Animation* animation = nullptr;  // poses for the frame being drawn
     WGPURenderPipeline sprite_pipeline = nullptr;
     WGPURenderPipeline line_pipeline = nullptr;
@@ -380,6 +408,7 @@ struct Renderer::Impl {
         GpuMesh gpu;
         std::vector<assets::Submesh> submeshes;
         std::vector<assets::Material> materials;
+        std::uint32_t morph_base = 0, morph_targets = 0, morph_vertices = 0;  // the asset's deltas in the morph buffer
     };
     std::map<std::string, AssetMesh> asset_meshes;
     // Tile layers as static meshes: key "map|layer|tile_size" -> submeshes per tileset texture.
@@ -463,6 +492,7 @@ struct Renderer::Impl {
         if (skinned_pipeline) wgpuRenderPipelineRelease(skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
         if (joint_buffer) wgpuBufferRelease(joint_buffer);
+        if (morph_buffer) wgpuBufferRelease(morph_buffer);
         if (layout) wgpuPipelineLayoutRelease(layout);
         if (object_bgl) wgpuBindGroupLayoutRelease(object_bgl);
         if (frame_bgl) wgpuBindGroupLayoutRelease(frame_bgl);
@@ -728,7 +758,7 @@ struct Renderer::Impl {
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
-        WGPUBindGroupLayoutEntry oe[2]{};
+        WGPUBindGroupLayoutEntry oe[3]{};
         oe[0].binding = 0;
         oe[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
         oe[0].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
@@ -739,9 +769,14 @@ struct Renderer::Impl {
         oe[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
         oe[1].buffer.hasDynamicOffset = false;
         oe[1].buffer.minBindingSize = sizeof(float) * 16;
+        oe[2].binding = 2;
+        oe[2].visibility = WGPUShaderStage_Vertex;
+        oe[2].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        oe[2].buffer.hasDynamicOffset = false;
+        oe[2].buffer.minBindingSize = sizeof(float) * 4;
         WGPUBindGroupLayoutDescriptor od{};
         od.label = rhi::str("pocket.object");
-        od.entryCount = 2;
+        od.entryCount = 3;
         od.entries = oe;
         object_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &od);
 
@@ -848,6 +883,7 @@ struct Renderer::Impl {
         if (!shadow_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned shadow pipeline creation failed");
         joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16);
         joint_staging.resize(static_cast<std::size_t>(kMaxJoints) * 16);
+        morph_buffer = device->create_buffer("pocket.morphs", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxMorphVec4) * sizeof(float) * 4);
 
         frame_buffer = device->create_buffer("pocket.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
         object_buffer = device->create_buffer("pocket.objects", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kObjectStride) * kMaxObjects);
@@ -908,17 +944,20 @@ struct Renderer::Impl {
         sbd.entries = sbe;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
 
-        WGPUBindGroupEntry obe[2]{};
+        WGPUBindGroupEntry obe[3]{};
         obe[0].binding = 0;
         obe[0].buffer = object_buffer;
         obe[0].size = static_cast<std::uint64_t>(kObjectStride) * kMaxObjects;
         obe[1].binding = 1;
         obe[1].buffer = joint_buffer;
         obe[1].size = static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16;
+        obe[2].binding = 2;
+        obe[2].buffer = morph_buffer;
+        obe[2].size = static_cast<std::uint64_t>(kMaxMorphVec4) * sizeof(float) * 4;
         WGPUBindGroupDescriptor obd{};
         obd.label = rhi::str("pocket.object");
         obd.layout = object_bgl;
-        obd.entryCount = 2;
+        obd.entryCount = 3;
         obd.entries = obe;
         object_bg = wgpuDeviceCreateBindGroup(device->device(), &obd);
 
@@ -1074,6 +1113,34 @@ struct Renderer::Impl {
         am.gpu.aabb_max = src.aabb_max;
         am.submeshes = src.submeshes;
         am.materials = src.materials;
+        if (!src.morph_targets.empty()) {
+            // The targets' deltas appended to the morph buffer: per target, per vertex, position then normal.
+            const std::uint32_t targets = std::min<std::uint32_t>(static_cast<std::uint32_t>(src.morph_targets.size()), kMaxMorphTargets);
+            const std::uint32_t vertices = static_cast<std::uint32_t>(src.vertices.size());
+            const std::uint32_t needed = targets * vertices * 2;
+            if (morph_used + needed <= kMaxMorphVec4) {
+                std::vector<float> data(static_cast<std::size_t>(needed) * 4, 0.0f);
+                for (std::uint32_t t = 0; t < targets; ++t) {
+                    const assets::MorphTarget& mt = src.morph_targets[t];
+                    for (std::uint32_t v = 0; v < vertices; ++v) {
+                        float* p = data.data() + (static_cast<std::size_t>(t) * vertices + v) * 8;
+                        const Vec3 dp = v < mt.positions.size() ? mt.positions[v] : Vec3{0, 0, 0};
+                        const Vec3 dn = v < mt.normals.size() ? mt.normals[v] : Vec3{0, 0, 0};
+                        p[0] = dp.x; p[1] = dp.y; p[2] = dp.z; p[3] = 0;
+                        p[4] = dn.x; p[5] = dn.y; p[6] = dn.z; p[7] = 0;
+                    }
+                }
+                device->write_buffer(morph_buffer, static_cast<std::uint64_t>(morph_used) * sizeof(float) * 4, data.data(), static_cast<std::uint64_t>(needed) * sizeof(float) * 4);
+                am.morph_base = morph_used;
+                am.morph_targets = targets;
+                am.morph_vertices = vertices;
+                morph_used += needed;
+                if (src.morph_targets.size() > kMaxMorphTargets) log::warn("renderer", "{}: {} morph targets, the first {} are drawn", path, src.morph_targets.size(), kMaxMorphTargets);
+            } else if (!morph_full_warned) {
+                log::warn("renderer", "{}: the morph buffer is full ({} vec4 of {}); its targets are not drawn", path, morph_used, kMaxMorphVec4);
+                morph_full_warned = true;
+            }
+        }
         new_bounds.emplace_back(path, std::make_pair(src.aabb_min, src.aabb_max));
         auto [it, inserted] = asset_meshes.emplace(path, std::move(am));
         return &it->second;
@@ -1315,6 +1382,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     std::uint32_t count = 0;
     std::uint32_t entities = 0;
     std::uint32_t skinned_instances = 0;
+    std::uint32_t morphed_instances = 0;
     im.animation = animation;
     im.joint_count = 0;
     world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr, const world::WorldTransform& t) {
@@ -1347,6 +1415,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ++count;
         };
         ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
+        ou.morph[0] = ou.morph[1] = ou.morph[2] = ou.morph[3] = 0;
+        for (float& mw : ou.morph_weights) mw = 0;
         int kind = Impl::primitive_index(mr.mesh);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
@@ -1374,12 +1444,26 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 }
             }
         }
+        // Morph targets: the asset's deltas and this entity's weights (from its pose), when any is set.
+        bool morphed = false;
+        if (pose && am->morph_targets > 0) {
+            for (std::uint32_t t = 0; t < am->morph_targets && t < pose->weights.size(); ++t) {
+                ou.morph_weights[t] = pose->weights[t];
+                if (pose->weights[t] != 0) morphed = true;
+            }
+            if (morphed) {
+                ou.morph[0] = am->morph_base;
+                ou.morph[1] = am->morph_vertices;
+                ou.morph[2] = am->morph_targets;
+            }
+        }
         for (const assets::Submesh& sm : am->submeshes) {
             const assets::Material& mat = am->materials[std::min<std::size_t>(sm.material, am->materials.size() - 1)];
             Vec4 color{mr.color.r * mat.base_color.x, mr.color.g * mat.base_color.y, mr.color.b * mat.base_color.z, mr.color.a * mat.base_color.w};
             const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
             ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
             if (skinned) ++skinned_instances;
+            if (morphed) ++morphed_instances;
             push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, &mat, skinned);
         }
         ou.id[2] = 0;
@@ -1512,6 +1596,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.tile_rebuilds = im.tile_rebuilds;
     im.stats.msaa = im.msaa_applied;
     im.stats.skinned = skinned_instances;
+    im.stats.morphed = morphed_instances;
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
     im.stats.materials = static_cast<std::uint32_t>(im.material_groups.size());
@@ -1809,6 +1894,7 @@ Json Renderer::describe() const {
     j["sprites"] = s.sprites;
     j["particles"] = s.particles;
     j["skinned"] = s.skinned;
+    j["morphed"] = s.morphed;
     j["tile_layers"] = s.tile_layers;
     j["tile_rebuilds"] = s.tile_rebuilds;
     j["msaa"] = s.msaa;

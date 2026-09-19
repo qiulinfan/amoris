@@ -1,12 +1,20 @@
 #include <pocket/app/runtime.hpp>
+#include <pocket/app/server.hpp>
 #include <pocket/app/session.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
 
 #include <catch_amalgamated.hpp>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#include <httplib.h>
+#pragma clang diagnostic pop
+
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <thread>
 
 using namespace pocket;
 
@@ -214,7 +222,7 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     Json clips = s.command("animation.clips", Json{{"entity", "Arm"}}).value();
     INFO(clips.dump());
     REQUIRE(clips["skinned"] == true);
-    REQUIRE(clips["clips"].size() == 2);
+    REQUIRE(clips["clips"].size() == 4);
     REQUIRE(clips["skins"][0]["joints"] == Json::array({"root", "tip"}));
     REQUIRE(s.frame().has_value());
     // Frame 1 sampled time 1/60: the tip joint leans about -45 degrees around Z (axis toward +X).
@@ -226,7 +234,7 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     REQUIRE(pose0["joints"][1]["position"]["y"].get<double>() == Catch::Approx(1.0).margin(0.01));
     REQUIRE(pose0["joints"][1]["axis_y"]["x"].get<double>() > 0.6);
     Json rs = s.command("render.stats", Json::object()).value();
-    REQUIRE(rs["skinned"].get<int>() == 1);
+    REQUIRE(rs["skinned"].get<int>() == 3);  // the Arm, the Walker and the Pulse arm
     // Half a second later the swing has reached +45 degrees: the axis points toward -X.
     for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
     Json pose1 = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
@@ -603,7 +611,7 @@ TEST_CASE("a scenario bundle plays the game and reports its verdict", "[runtime]
     REQUIRE(s.frame().has_value());  // exposed state is sampled at the end of a tick
     Json state = s.command("state", Json::object()).value()["state"];
     INFO(state.dump());
-    REQUIRE(state["__scenarios"].size() == 7);
+    REQUIRE(state["__scenarios"].size() == 8);
     REQUIRE(state["__scenario"]["status"] == "running");
     REQUIRE_FALSE(s.quit_requested());
     int frames = 1;
@@ -1234,3 +1242,268 @@ TEST_CASE("the environment interface resets, acts and observes the sprites sampl
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("morph targets weigh vertices from a clip's weights track and from the Morph component", "[runtime][animation][morph]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json clips = s.command("animation.clips", Json{{"entity", "Pulse"}}).value();
+    INFO(clips.dump());
+    REQUIRE(clips["targets"] == Json::array({"bulge", "lean"}));
+    REQUIRE(clips["clips"].size() == 4);
+    Json described = s.command("assets.describe", Json{{"path", "assets/arm.glb"}}).value();
+    REQUIRE(described["targets"] == Json::array({"bulge", "lean"}));
+    // Half a second into the pulse clip the bulge weight is at its peak.
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    Json pose = s.command("animation.pose", Json{{"entity", "Pulse"}}).value();
+    INFO(pose.dump());
+    REQUIRE(pose["weights"].size() == 2);
+    REQUIRE(pose["weights"][0]["target"] == "bulge");
+    REQUIRE(pose["weights"][0]["weight"].get<double>() > 0.9);
+    REQUIRE(pose["weights"][1]["weight"].get<double>() == 0.0);
+    Json rs = s.command("render.stats", Json::object()).value();
+    REQUIRE(rs["morphed"].get<int>() >= 1);
+    Json st = s.command("state", Json::object()).value()["state"];
+    REQUIRE(st["pulse.bulge"].get<double>() > 0.9);
+    // The Morph component sets a target by name over the clip: the lean moves the arm's top toward +X.
+    REQUIRE(s.command("world.set", Json{{"entity", "Pulse"}, {"component", "Animator"}, {"value", Json{{"clip", ""}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Pulse"}, {"component", "Morph"}, {"value", Json{{"weights", Json::array({Json{{"target", "lean"}, {"weight", 1.0}}})}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    pose = s.command("animation.pose", Json{{"entity", "Pulse"}}).value();
+    REQUIRE(pose["weights"][0]["weight"].get<double>() == 0.0);
+    REQUIRE(pose["weights"][1]["weight"].get<double>() == 1.0);
+    // The mesh really leans: the top (bind space (0, 2, 0)) sits at +0.5 in X; picking there hits Pulse and the old top is empty.
+    Json proj_lean = s.command("render.project", Json{{"point", {{"x", 3.2 + 0.5}, {"y", 1.95}, {"z", 0.4}}}}).value();
+    REQUIRE(proj_lean["visible"] == true);
+    Json pick_lean = s.command("render.pick", Json{{"x", proj_lean["x"]}, {"y", proj_lean["y"]}}).value();
+    INFO(pick_lean.dump());
+    REQUIRE(pick_lean["name"] == "Pulse");
+    Json proj_old = s.command("render.project", Json{{"point", {{"x", 3.2 - 0.05}, {"y", 1.95}, {"z", 0.4}}}}).value();
+    Json pick_old = s.command("render.pick", Json{{"x", proj_old["x"]}, {"y", proj_old["y"]}}).value();
+    REQUIRE(pick_old["name"] != "Pulse");
+    // An unknown target is ignored; the weight by index works too.
+    REQUIRE(s.command("world.set", Json{{"entity", "Pulse"}, {"component", "Morph"}, {"value", Json{{"weights", Json::array({Json{{"target", "smile"}, {"weight", 1.0}}, Json{{"target", "0"}, {"weight", 0.25}}})}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    pose = s.command("animation.pose", Json{{"entity", "Pulse"}}).value();
+    REQUIRE(pose["weights"][0]["weight"].get<double>() == 0.25);
+    REQUIRE(pose["weights"][1]["weight"].get<double>() == 0.0);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("root motion carries the entity by the clip's root translation and pins the pose", "[runtime][animation][root]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto z = [&]() { return s.command("world.get", Json{{"entity", "Walker"}, {"component", "Transform"}}).value()["position"]["z"].get<double>(); };
+    REQUIRE(z() == Catch::Approx(-1.5));
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    // One second of the walk clip: one unit along the entity's +Z; the root joint stays with the entity.
+    REQUIRE(z() == Catch::Approx(-0.5).margin(0.02));
+    Json anim = s.command("world.get", Json{{"entity", "Walker"}, {"component", "Animator"}}).value();
+    REQUIRE(anim["root_delta"]["z"].get<double>() == Catch::Approx(1.0 / 60.0).margin(1e-4));
+    Json pose = s.command("animation.pose", Json{{"entity", "Walker"}}).value();
+    INFO(pose.dump());
+    REQUIRE(pose["root"] == "root");
+    REQUIRE(pose["root_motion"] == 1);
+    REQUIRE(pose["joints"][0]["position"]["z"].get<double>() == Catch::Approx(z()).margin(0.02));
+    // Across the loop's wrap the motion is continuous: half a second more is half a unit more.
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(z() == Catch::Approx(0.0).margin(0.03));
+    // Mode 2 pins the root and reports the delta without moving the entity.
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Animator"}, {"value", Json{{"root_motion", 2}}}}).has_value());
+    const double before = z();
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(z() == Catch::Approx(before));
+    anim = s.command("world.get", Json{{"entity", "Walker"}, {"component", "Animator"}}).value();
+    REQUIRE(anim["root_delta"]["z"].get<double>() == Catch::Approx(1.0 / 60.0).margin(1e-4));
+    // Off: the root's translation moves the mesh again and the delta is zero.
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Animator"}, {"value", Json{{"root_motion", 0}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    anim = s.command("world.get", Json{{"entity", "Walker"}, {"component", "Animator"}}).value();
+    REQUIRE(anim["root_delta"]["z"].get<double>() == 0.0);
+    // Turned around by the sample script at tick 180, the walker comes back the other way.
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Animator"}, {"value", Json{{"root_motion", 1}}}}).has_value());
+    for (int i = 0; i < 70; ++i) REQUIRE(s.frame().has_value());  // past tick 180
+    const double turned = z();
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(z() < turned - 0.4);
+    REQUIRE(s.command("state", Json::object()).value()["state"]["walker.turns"] == 1);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("physics exceptions are commands and the pellet with ccd is held by the pane", "[runtime][physics][ccd]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "physics";
+    o.bundle = root() / "build" / "ts" / "physics.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json ig = s.command("physics.ignore", Json{{"a", "Link1"}, {"b", "Link2"}}).value();
+    REQUIRE(ig["ignored"] == true);
+    REQUIRE(ig["exceptions"] == 1);
+    Json list = s.command("physics.ignored", Json::object()).value();
+    REQUIRE(list.size() == 1);
+    REQUIRE(list[0]["a"] == "/Link1");
+    REQUIRE(s.command("physics.stats", Json::object()).value()["exceptions"] == 1);
+    REQUIRE(s.command("physics.ignore", Json{{"a", "Link1"}, {"b", "Link2"}, {"ignore", false}}).value()["exceptions"] == 0);
+    REQUIRE(s.command("physics.ignore", Json{{"a", "Link1"}, {"b", "Link1"}}).error().code == "bad_args");
+    REQUIRE(s.command("physics.ignore", Json{{"a", "Link1"}, {"b", "Nobody"}}).error().code == "no_such_entity");
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json st = s.command("state", Json::object()).value()["state"];
+    INFO(st.dump());
+    REQUIRE(st["pelletX"].get<double>() < 9.0);
+    REQUIRE(st["pelletX"].get<double>() > 8.5);
+    REQUIRE(st["dudCrossed"] == true);
+    REQUIRE(st["ccdHits"] == 1);
+    Json hits = s.command("events.since", Json{{"seq", 0}, {"type", "physics.ccd"}, {"limit", 10}}).value()["events"];
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits[0]["data"]["other"] == "/Pane");
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("2D bodies stack on each other, push each other by mass and stop at walls", "[runtime][body2d][bodies2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto spawn = [&](const char* name, double x, double y, Json body) {
+        Json b = Json{{"size", Json{{"x", 0.3}, {"y", 0.3}}}};
+        for (auto& [k, v] : body.items()) b[k] = v;
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", 0}}}}}, {"Body2D", b}}}}).has_value());
+    };
+    auto body = [&](const char* path) { return s.command("world.get", Json{{"entity", path}, {"component", "Body2D"}}).value(); };
+    auto pos = [&](const char* path) { Json t = s.command("world.get", Json{{"entity", path}, {"component", "Transform"}}).value(); return Vec3{t["position"]["x"].get<float>(), t["position"]["y"].get<float>(), 0}; };
+    auto push = [&](const char* path, double vx) { REQUIRE(s.command("world.set", Json{{"entity", path}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", vx}}}}}}).has_value()); };
+    // A crate dropped onto another stands on it, once, and rides it when it moves.
+    spawn("Lower", 1.5, -3.2, Json::object());
+    spawn("Upper", 1.5, -1.0, Json::object());
+    // A ghost falls through the body under it.
+    spawn("Base", -1.0, -3.2, Json::object());
+    spawn("Ghost", -1.0, -1.0, Json{{"collide_bodies", false}});
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    INFO(body("Upper").dump() << " at " << pos("Upper").x << "," << pos("Upper").y);
+    REQUIRE(pos("Upper").y == Catch::Approx(-2.6f).margin(0.02f));  // on the lower crate's top (-2.9) plus its half height
+    REQUIRE(body("Upper")["grounded"] == true);
+    REQUIRE(body("Upper")["riding"].get<std::uint64_t>() == s.command("world.find", Json{{"path", "Lower"}}).value().get<std::uint64_t>());
+    REQUIRE(pos("Lower").y == Catch::Approx(-3.2f).margin(0.02f));
+    REQUIRE(pos("Ghost").y == Catch::Approx(-3.2f).margin(0.02f));  // through the base, on the ground
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["body2d.landed"].get<int>() == 5);                  // the player's and the four crates' landings, once each
+    Json st = s.command("physics.stats", Json::object()).value()["tiles"];
+    INFO(st.dump());
+    REQUIRE(st["stacked"].get<int>() == 1);
+    REQUIRE(st["pairs"].get<int>() >= 1);
+    for (int i = 0; i < 30; ++i) {
+        push("Lower", 2.0);
+        REQUIRE(s.frame().has_value());
+    }
+    INFO("lower " << pos("Lower").x << " upper " << pos("Upper").x);
+    REQUIRE(pos("Lower").x > 2.3f);
+    REQUIRE(std::fabs(pos("Upper").x - pos("Lower").x) < 0.08f);     // carried along
+    push("Lower", 0.0);
+    REQUIRE(hist["body2d.landed"].get<int>() == s.command("events.histogram", Json::object()).value()["body2d.landed"].get<int>());  // no landings while riding
+    // A light pusher moves a light crate ahead of it, barely moves a heavy one, and stops when the crate is against a wall.
+    spawn("Crate", -4.0, -3.2, Json::object());
+    spawn("Pusher", -5.0, -3.2, Json::object());
+    spawn("Heavy", 5.0, -3.2, Json{{"mass", 100.0}});
+    spawn("Pusher2", 4.0, -3.2, Json::object());
+    // (On the flat ground left of the start: the hill and the ledge are to the right, the lift's rail further left.)
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wall"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -6.0}, {"y", -3.0}, {"z", 0}}}}}, {"Body2D", Json{{"kinematic", true}, {"size", Json{{"x", 0.2}, {"y", 0.5}}}}}}}}).has_value());
+    spawn("Cornered", -6.55, -3.2, Json::object());                  // its right side a twentieth from the wall's face at x -6.2
+    spawn("Pusher3", -7.4, -3.2, Json::object());
+    REQUIRE(s.frame().has_value());
+    for (int i = 0; i < 60; ++i) {
+        push("Pusher", 3.0);
+        push("Pusher2", 3.0);
+        push("Pusher3", 3.0);
+        REQUIRE(s.frame().has_value());
+    }
+    INFO("crate " << pos("Crate").x << " pusher " << pos("Pusher").x << " heavy " << pos("Heavy").x << " pusher2 " << pos("Pusher2").x << " cornered " << pos("Cornered").x << " pusher3 " << pos("Pusher3").x);
+    REQUIRE(pos("Crate").x > -2.8f);                                  // shoved along at half the pusher's speed: equal masses share the way
+    REQUIRE(pos("Pusher").x < pos("Crate").x - 0.55f);               // behind it, touching
+    REQUIRE(pos("Heavy").x < 5.15f);                                  // a hundred times heavier: barely moved
+    REQUIRE(pos("Pusher2").x == Catch::Approx(pos("Heavy").x - 0.6f).margin(0.02f));
+    REQUIRE(pos("Cornered").x < -6.499f);                             // held by the wall (its face at -6.2, the crate's half width 0.3)
+    REQUIRE(pos("Cornered").x > -6.56f);
+    REQUIRE(pos("Pusher3").x == Catch::Approx(pos("Cornered").x - 0.6f).margin(0.02f));
+    REQUIRE(body("Cornered")["on_wall"].get<int>() == 1);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["tiles"]["pushed"].get<int>() >= 2);
+    REQUIRE(s.finish().has_value());
+}
+
+
+TEST_CASE("the control server answers over HTTP, runs past 3600 frames and fails requests left at shutdown", "[runtime][serve]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    o.serve = 0;
+    app::Session s(o);
+    REQUIRE(s.start());
+    auto server = std::make_unique<app::ControlServer>(s, 0);
+    REQUIRE(server->start());
+    REQUIRE(server->port() > 0);
+    httplib::Client client("127.0.0.1", server->port());
+    client.set_read_timeout(120, 0);
+    auto post = [&](const char* body) {
+        auto res = client.Post("/rpc", body, "application/json");
+        return res ? Json::parse(res->body, nullptr, false) : Json{{"transport", "no reply"}};
+    };
+    // A request runs on the main thread when it pumps. 3601 ticks pass the cap that ends a
+    // headless run without a controller: a served run is its controller's to end.
+    Json reply;
+    std::thread t([&] { reply = post(R"({"id":1,"method":"step","params":{"ticks":3601}})"); });
+    while (server->describe()["handled"].get<std::uint64_t>() < 1) server->pump(50);
+    t.join();
+    INFO(reply.dump());
+    REQUIRE(reply["result"]["frames"] == 3601);
+    REQUIRE_FALSE(s.finished());
+    // A request queued after the last pump: shutting the server down answers it with an error
+    // instead of hanging the client (and the shutdown, which joins the handler threads).
+    Json late;
+    std::thread t2([&] { late = post(R"({"id":2,"method":"state","params":{}})"); });
+    for (int i = 0; i < 2000 && server->describe()["queued"].get<std::size_t>() < 1; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    REQUIRE(server->describe()["queued"] == 1);
+    server.reset();
+    t2.join();
+    INFO(late.dump());
+    REQUIRE(late["error"]["data"]["code"] == "shutting_down");
+    REQUIRE(s.command("quit", Json::object()).has_value());
+    REQUIRE(s.finished());
+    REQUIRE(s.finish());
+
+    // Without a controller the cap still ends a headless run, so no run hangs forever.
+    auto o2 = hello_options(-1);
+    app::Session s2(o2);
+    REQUIRE(s2.start());
+    REQUIRE(s2.command("step", Json{{"ticks", 3599}}, "test").has_value());
+    REQUIRE_FALSE(s2.finished());
+    REQUIRE(s2.command("step", Json{{"ticks", 1}}, "test").has_value());
+    REQUIRE(s2.finished());
+    REQUIRE(s2.finish());
+}

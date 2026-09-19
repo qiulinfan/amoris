@@ -149,6 +149,9 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `from_clip` | string | "" | The clip fading out (keeps playing at its own time until the fade ends); empty when none. |
 | `from_time` | f32 | 0.0 | Seconds into from_clip, advanced by the engine. |
 | `layers` | list:AnimationLayer | [] | Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). |
+| `root_motion` | i32 | 0 | 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). |
+| `root` | string | "" | The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. |
+| `root_delta` | vec3 | [0.0, 0.0, 0.0] | The root's translation change this tick in the asset's space while root_motion is on (written by the engine). |
 
 ## ParticleEmitter
 
@@ -198,6 +201,7 @@ Physics body. Dynamic bodies fall and collide; static bodies never move; kinemat
 | `gravity_scale` | f32 | 1.0 | Multiplier on world gravity. |
 | `sleeping` | bool | false | Set by the engine when the body came to rest; cleared when touched. |
 | `lock_rotation` | bool | false | Never rotate (characters on capsules stay upright). |
+| `ccd` | bool | false | Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision). |
 
 ## Joint
 
@@ -227,6 +231,7 @@ Connects this body to another body, to any entity as a fixed point, or to a poin
 | `angle` | f32 | 0.0 | Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step. |
 | `translation` | f32 | 0.0 | Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step. |
 | `speed` | f32 | 0.0 | The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's. |
+| `collide_connected` | bool | true | Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them. |
 
 ## Body2D
 
@@ -246,8 +251,10 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 | `kinematic` | bool | false | Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it. |
 | `one_way` | bool | false | Kinematic bodies: catch bodies from above only (a lift that rises through the floor). |
 | `step` | f32 | 0.5 | The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope). |
-| `riding` | entity | 0 | The kinematic body this one stands on and moves with; 0 when none (written by the engine). |
+| `riding` | entity | 0 | The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine). |
 | `on_slope` | i32 | 0 | 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). |
+| `mass` | f32 | 1.0 | Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies). |
+| `collide_bodies` | bool | true | Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). |
 
 ## Collider
 
@@ -262,6 +269,7 @@ Collision shape centered on the entity (plus offset). Box half extents come from
 | `mesh` | string | "" | For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh. |
 | `layer` | u32 | 1 | Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them. |
 | `mask` | u32 | 4294967295 | Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes. |
+| `group` | i32 | 0 | Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions). |
 
 ## AudioSource
 
@@ -306,9 +314,26 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 | `distance` | f32 | 0.0 | Length of the remaining path (written by the engine). |
 | `neighbours` | i32 | 0 | Agents and obstacles the avoidance considered this tick (written by the engine). |
 
+## Morph
+
+Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `weights` | list:MorphWeight | [] | The targets and their weights. |
+
 # Records
 
 The values held by list fields. An element takes these defaults for the fields a patch leaves out.
+
+## MorphWeight
+
+One morph target weight set by script (docs/design/animation.md, Morph targets): the target by name or index, and the weight that replaces the clip's for it.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `target` | string | "" | Target name from the asset (animation.clips lists them), or its index as a string. |
+| `weight` | f32 | 0.0 | 0 leaves the vertices where the mesh has them, 1 moves them fully to the target. |
 
 ## AnimationLayer
 

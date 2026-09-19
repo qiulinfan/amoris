@@ -54,6 +54,28 @@ void scalar_from_json(const Json& j, const char* key, T& v) {
 
 }  // namespace
 
+void to_json(Json& j, const MorphWeight& v) {
+    j = Json::object();
+    j["target"] = v.target;
+    j["weight"] = v.weight;
+}
+
+void from_json(const Json& j, MorphWeight& v) {
+    scalar_from_json(j, "target", v.target);
+    scalar_from_json(j, "weight", v.weight);
+}
+
+void hash_record(StateHasherRef& h, const MorphWeight& v) {
+    h.str(v.target);
+    h.f32(v.weight);
+}
+
+std::size_t numeric_span(MorphWeight& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "weight") { *out = &v.weight; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const AnimationLayer& v) {
     j = Json::object();
     j["clip"] = v.clip;
@@ -557,6 +579,9 @@ void to_json(Json& j, const Animator& v) {
     j["from_time"] = v.from_time;
     j["layers"] = Json::array();
     for (const auto& x : v.layers) { Json e; to_json(e, x); j["layers"].push_back(std::move(e)); }
+    j["root_motion"] = v.root_motion;
+    j["root"] = v.root;
+    vec_to_json(j["root_delta"], v.root_delta);
 }
 
 void from_json(const Json& j, Animator& v) {
@@ -574,6 +599,9 @@ void from_json(const Json& j, Animator& v) {
         v.layers.clear();
         for (const Json& e : j["layers"]) { AnimationLayer x; from_json(e, x); v.layers.push_back(std::move(x)); }
     }
+    scalar_from_json(j, "root_motion", v.root_motion);
+    scalar_from_json(j, "root", v.root);
+    if (j.is_object() && j.contains("root_delta")) vec_from_json(j["root_delta"], v.root_delta);
 }
 
 void hash_component(StateHasherRef& h, const Animator& v) {
@@ -589,6 +617,11 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.from_time);
     h.i64(static_cast<std::int64_t>(v.layers.size()));
     for (const auto& x : v.layers) hash_record(h, x);
+    h.i64(static_cast<std::int64_t>(v.root_motion));
+    h.str(v.root);
+    h.f32(v.root_delta.x);
+    h.f32(v.root_delta.y);
+    h.f32(v.root_delta.z);
 }
 
 std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
@@ -603,6 +636,10 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
         std::size_t index = 0;
         if (list_index(rest, index) && index < v.layers.size()) return numeric_span(v.layers[index], rest, out);
     }
+    if (path == "root_delta") { *out = &v.root_delta.x; return 3; }
+    if (path == "root_delta.x") { *out = &v.root_delta.x; return 1; }
+    if (path == "root_delta.y") { *out = &v.root_delta.y; return 1; }
+    if (path == "root_delta.z") { *out = &v.root_delta.z; return 1; }
     return 0;
 }
 
@@ -759,6 +796,7 @@ void to_json(Json& j, const RigidBody& v) {
     j["gravity_scale"] = v.gravity_scale;
     j["sleeping"] = v.sleeping;
     j["lock_rotation"] = v.lock_rotation;
+    j["ccd"] = v.ccd;
 }
 
 void from_json(const Json& j, RigidBody& v) {
@@ -771,6 +809,7 @@ void from_json(const Json& j, RigidBody& v) {
     scalar_from_json(j, "gravity_scale", v.gravity_scale);
     scalar_from_json(j, "sleeping", v.sleeping);
     scalar_from_json(j, "lock_rotation", v.lock_rotation);
+    scalar_from_json(j, "ccd", v.ccd);
 }
 
 void hash_component(StateHasherRef& h, const RigidBody& v) {
@@ -783,6 +822,7 @@ void hash_component(StateHasherRef& h, const RigidBody& v) {
     h.f32(v.gravity_scale);
     h.u8(v.sleeping ? 1 : 0);
     h.u8(v.lock_rotation ? 1 : 0);
+    h.u8(v.ccd ? 1 : 0);
 }
 
 std::size_t numeric_span(RigidBody& v, std::string_view path, float** out) {
@@ -820,6 +860,7 @@ void to_json(Json& j, const Joint& v) {
     j["angle"] = v.angle;
     j["translation"] = v.translation;
     j["speed"] = v.speed;
+    j["collide_connected"] = v.collide_connected;
 }
 
 void from_json(const Json& j, Joint& v) {
@@ -845,6 +886,7 @@ void from_json(const Json& j, Joint& v) {
     scalar_from_json(j, "angle", v.angle);
     scalar_from_json(j, "translation", v.translation);
     scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "collide_connected", v.collide_connected);
 }
 
 void hash_component(StateHasherRef& h, const Joint& v) {
@@ -880,6 +922,7 @@ void hash_component(StateHasherRef& h, const Joint& v) {
     h.f32(v.angle);
     h.f32(v.translation);
     h.f32(v.speed);
+    h.u8(v.collide_connected ? 1 : 0);
 }
 
 std::size_t numeric_span(Joint& v, std::string_view path, float** out) {
@@ -936,6 +979,8 @@ void to_json(Json& j, const Body2D& v) {
     j["step"] = v.step;
     j["riding"] = v.riding;
     j["on_slope"] = v.on_slope;
+    j["mass"] = v.mass;
+    j["collide_bodies"] = v.collide_bodies;
 }
 
 void from_json(const Json& j, Body2D& v) {
@@ -953,6 +998,8 @@ void from_json(const Json& j, Body2D& v) {
     scalar_from_json(j, "step", v.step);
     scalar_from_json(j, "riding", v.riding);
     scalar_from_json(j, "on_slope", v.on_slope);
+    scalar_from_json(j, "mass", v.mass);
+    scalar_from_json(j, "collide_bodies", v.collide_bodies);
 }
 
 void hash_component(StateHasherRef& h, const Body2D& v) {
@@ -973,6 +1020,8 @@ void hash_component(StateHasherRef& h, const Body2D& v) {
     h.f32(v.step);
     h.i64(static_cast<std::int64_t>(v.riding));
     h.i64(static_cast<std::int64_t>(v.on_slope));
+    h.f32(v.mass);
+    h.u8(v.collide_bodies ? 1 : 0);
 }
 
 std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
@@ -989,6 +1038,7 @@ std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
     if (path == "offset.x") { *out = &v.offset.x; return 1; }
     if (path == "offset.y") { *out = &v.offset.y; return 1; }
     if (path == "step") { *out = &v.step; return 1; }
+    if (path == "mass") { *out = &v.mass; return 1; }
     return 0;
 }
 
@@ -1001,6 +1051,7 @@ void to_json(Json& j, const Collider& v) {
     j["mesh"] = v.mesh;
     j["layer"] = v.layer;
     j["mask"] = v.mask;
+    j["group"] = v.group;
 }
 
 void from_json(const Json& j, Collider& v) {
@@ -1011,6 +1062,7 @@ void from_json(const Json& j, Collider& v) {
     scalar_from_json(j, "mesh", v.mesh);
     scalar_from_json(j, "layer", v.layer);
     scalar_from_json(j, "mask", v.mask);
+    scalar_from_json(j, "group", v.group);
 }
 
 void hash_component(StateHasherRef& h, const Collider& v) {
@@ -1025,6 +1077,7 @@ void hash_component(StateHasherRef& h, const Collider& v) {
     h.str(v.mesh);
     h.i64(static_cast<std::int64_t>(v.layer));
     h.i64(static_cast<std::int64_t>(v.mask));
+    h.i64(static_cast<std::int64_t>(v.group));
 }
 
 std::size_t numeric_span(Collider& v, std::string_view path, float** out) {
@@ -1177,6 +1230,34 @@ std::size_t numeric_span(NavAgent& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Morph& v) {
+    j = Json::object();
+    j["weights"] = Json::array();
+    for (const auto& x : v.weights) { Json e; to_json(e, x); j["weights"].push_back(std::move(e)); }
+}
+
+void from_json(const Json& j, Morph& v) {
+    if (j.is_object() && j.contains("weights") && j["weights"].is_array()) {
+        v.weights.clear();
+        for (const Json& e : j["weights"]) { MorphWeight x; from_json(e, x); v.weights.push_back(std::move(x)); }
+    }
+}
+
+void hash_component(StateHasherRef& h, const Morph& v) {
+    h.i64(static_cast<std::int64_t>(v.weights.size()));
+    for (const auto& x : v.weights) hash_record(h, x);
+}
+
+std::size_t numeric_span(Morph& v, std::string_view path, float** out) {
+    (void)v;
+    if (path.starts_with("weights.")) {
+        std::string_view rest = path.substr(8);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.weights.size()) return numeric_span(v.weights[index], rest, out);
+    }
+    return 0;
+}
+
 namespace {
 
 constexpr std::array<FieldInfo, 3> kTransformFields = {{
@@ -1254,7 +1335,7 @@ constexpr std::array<FieldInfo, 6> kTileMapFields = {{
     FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this."},
     FieldInfo{"visible", "bool", "Whether the map is drawn."},
 }};
-constexpr std::array<FieldInfo, 11> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 14> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)."},
     FieldInfo{"playing", "bool", "Whether time advances."},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished)."},
@@ -1266,6 +1347,9 @@ constexpr std::array<FieldInfo, 11> kAnimatorFields = {{
     FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none."},
     FieldInfo{"from_time", "f32", "Seconds into from_clip, advanced by the engine."},
     FieldInfo{"layers", "list:AnimationLayer", "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them)."},
+    FieldInfo{"root_motion", "i32", "0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion)."},
+    FieldInfo{"root", "string", "The node whose translation is the root motion; empty picks the clip's topmost node with a translation track."},
+    FieldInfo{"root_delta", "vec3", "The root's translation change this tick in the asset's space while root_motion is on (written by the engine)."},
 }};
 constexpr std::array<FieldInfo, 17> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
@@ -1290,7 +1374,7 @@ constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},
     FieldInfo{"max", "vec3", "Maximum corner."},
 }};
-constexpr std::array<FieldInfo, 9> kRigidBodyFields = {{
+constexpr std::array<FieldInfo, 10> kRigidBodyFields = {{
     FieldInfo{"kind", "i32", "0 dynamic, 1 static, 2 kinematic."},
     FieldInfo{"mass", "f32", "Kilograms; ignored for static bodies."},
     FieldInfo{"restitution", "f32", "Bounciness 0..1."},
@@ -1300,8 +1384,9 @@ constexpr std::array<FieldInfo, 9> kRigidBodyFields = {{
     FieldInfo{"gravity_scale", "f32", "Multiplier on world gravity."},
     FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched."},
     FieldInfo{"lock_rotation", "bool", "Never rotate (characters on capsules stay upright)."},
+    FieldInfo{"ccd", "bool", "Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision)."},
 }};
-constexpr std::array<FieldInfo, 22> kJointFields = {{
+constexpr std::array<FieldInfo, 23> kJointFields = {{
     FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target)."},
     FieldInfo{"target", "string", "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor."},
     FieldInfo{"anchor", "vec3", "Attachment point on this body, in its local frame."},
@@ -1324,8 +1409,9 @@ constexpr std::array<FieldInfo, 22> kJointFields = {{
     FieldInfo{"angle", "f32", "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step."},
     FieldInfo{"translation", "f32", "Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step."},
     FieldInfo{"speed", "f32", "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's."},
+    FieldInfo{"collide_connected", "bool", "Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them."},
 }};
-constexpr std::array<FieldInfo, 14> kBody2DFields = {{
+constexpr std::array<FieldInfo, 16> kBody2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second; scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
     FieldInfo{"max_fall", "f32", "Fastest downward speed."},
@@ -1338,10 +1424,12 @@ constexpr std::array<FieldInfo, 14> kBody2DFields = {{
     FieldInfo{"kinematic", "bool", "Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it."},
     FieldInfo{"one_way", "bool", "Kinematic bodies: catch bodies from above only (a lift that rises through the floor)."},
     FieldInfo{"step", "f32", "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope)."},
-    FieldInfo{"riding", "entity", "The kinematic body this one stands on and moves with; 0 when none (written by the engine)."},
+    FieldInfo{"riding", "entity", "The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine)."},
     FieldInfo{"on_slope", "i32", "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)."},
+    FieldInfo{"mass", "f32", "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies)."},
+    FieldInfo{"collide_bodies", "bool", "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body)."},
 }};
-constexpr std::array<FieldInfo, 7> kColliderFields = {{
+constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)."},
     FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules."},
     FieldInfo{"offset", "vec3", "Local offset of the shape center."},
@@ -1349,6 +1437,7 @@ constexpr std::array<FieldInfo, 7> kColliderFields = {{
     FieldInfo{"mesh", "string", "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh."},
     FieldInfo{"layer", "u32", "Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them."},
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
+    FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
 constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
@@ -1378,8 +1467,11 @@ constexpr std::array<FieldInfo, 13> kNavAgentFields = {{
     FieldInfo{"distance", "f32", "Length of the remaining path (written by the engine)."},
     FieldInfo{"neighbours", "i32", "Agents and obstacles the avoidance considered this tick (written by the engine)."},
 }};
+constexpr std::array<FieldInfo, 1> kMorphFields = {{
+    FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
+}};
 
-constexpr std::array<ComponentInfo, 21> kComponents = {{
+constexpr std::array<ComponentInfo, 22> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1401,6 +1493,7 @@ constexpr std::array<ComponentInfo, 21> kComponents = {{
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
     ComponentInfo{"NavObstacle", "A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.", true, kNavObstacleFields},
     ComponentInfo{"NavAgent", "A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.", true, kNavAgentFields},
+    ComponentInfo{"Morph", "Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name.", true, kMorphFields},
 }};
 
 }  // namespace

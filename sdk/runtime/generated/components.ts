@@ -6,6 +6,14 @@ export interface Vec4 { x: number; y: number; z: number; w: number }
 export interface Quat { x: number; y: number; z: number; w: number }
 export interface Color { r: number; g: number; b: number; a: number }
 
+/** One morph target weight set by script (docs/design/animation.md, Morph targets): the target by name or index, and the weight that replaces the clip's for it. */
+export interface MorphWeight {
+    /** Target name from the asset (animation.clips lists them), or its index as a string. */
+    target: string;
+    /** 0 leaves the vertices where the mesh has them, 1 moves them fully to the target. */
+    weight: number;
+}
+
 /** One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers. */
 export interface AnimationLayer {
     /** Clip name from the asset (animation.clips lists them). */
@@ -200,6 +208,12 @@ export interface Animator {
     from_time: number;
     /** Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). */
     layers: AnimationLayer[];
+    /** 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). */
+    root_motion: number;
+    /** The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. */
+    root: string;
+    /** The root's translation change this tick in the asset's space while root_motion is on (written by the engine). */
+    root_delta: Vec3;
 }
 
 /** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once. */
@@ -268,6 +282,8 @@ export interface RigidBody {
     sleeping: boolean;
     /** Never rotate (characters on capsules stay upright). */
     lock_rotation: boolean;
+    /** Continuous collision: each step the body sweeps its bounding sphere along its motion and stops at the first static or kinematic shape it would cross, so thin walls hold at any speed (docs/design/physics.md, Continuous collision). */
+    ccd: boolean;
 }
 
 /** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
@@ -316,6 +332,8 @@ export interface Joint {
     translation: number;
     /** The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's. */
     speed: number;
+    /** Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them. */
+    collide_connected: boolean;
 }
 
 /** A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity. */
@@ -344,10 +362,14 @@ export interface Body2D {
     one_way: boolean;
     /** The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope). */
     step: number;
-    /** The kinematic body this one stands on and moves with; 0 when none (written by the engine). */
+    /** The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine). */
     riding: number;
     /** 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). */
     on_slope: number;
+    /** Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass, so a heavy crate barely moves when a light body walks into it (docs/design/tilemaps.md, Bodies against bodies). */
+    mass: number;
+    /** Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). */
+    collide_bodies: boolean;
 }
 
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
@@ -366,6 +388,8 @@ export interface Collider {
     layer: number;
     /** Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes. */
     mask: number;
+    /** Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions). */
+    group: number;
 }
 
 /** A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots. */
@@ -424,6 +448,12 @@ export interface NavAgent {
     neighbours: number;
 }
 
+/** Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name. */
+export interface Morph {
+    /** The targets and their weights. */
+    weights: MorphWeight[];
+}
+
 export interface Components {
     Transform: Transform;
     WorldTransform: WorldTransform;
@@ -446,11 +476,12 @@ export interface Components {
     AudioSource: AudioSource;
     NavObstacle: NavObstacle;
     NavAgent: NavAgent;
+    Morph: Morph;
 }
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "NavObstacle", "NavAgent"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -465,24 +496,27 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [] },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
-    RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false },
-    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0 },
-    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0 },
-    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295 },
+    RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
+    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
+    Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true },
+    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
     NavObstacle: { radius: 0.5, enabled: true },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0 },
+    Morph: { weights: [] },
 };
 
 /** Records: the values inside list fields, with their defaults. */
 export interface Records {
+    MorphWeight: MorphWeight;
     AnimationLayer: AnimationLayer;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
+    MorphWeight: { target: "", weight: 0 },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
 };
 

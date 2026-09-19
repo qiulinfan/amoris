@@ -27,6 +27,9 @@ struct Body {
     bool trigger = false;
     bool lock_rotation = false;
     bool sleeping = false;
+    bool ccd = false;      // sweep along the motion before integrating (fast small bodies)
+    bool swept = false;    // this step's motion was already applied by the sweep
+    int group = 0;         // same negative group: never collide; same positive: always; 0: the layers decide
     std::uint32_t layer = 1, mask = 0xFFFFFFFFu;  // collision layers: a pair interacts when each is on a layer the other's mask includes
     float inv_mass = 0;
     float restitution = 0, friction = 0;
@@ -727,6 +730,8 @@ bool ray_capsule(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
     return found;
 }
 
+bool ray_body(Vec3 o, Vec3 dir, const Body& b, float reach, float& t, Vec3& normal);
+
 bool ray_box(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
     Mat4 rot = Mat4::rotation(b.rotation);
     Mat4 inv = rot.inverse_affine();
@@ -764,6 +769,8 @@ struct Physics::Impl {
     std::vector<Contact> contacts;
     std::vector<JointInfo> joint_infos;
     std::set<std::pair<EntityId, EntityId>> touching;  // pairs in contact last step
+    std::set<std::pair<EntityId, EntityId>> ignored;   // exceptions: pairs that never collide (ordered ids)
+    std::set<std::pair<EntityId, EntityId>> joined;    // pairs a joint with collide_connected = false keeps apart, this step
     std::map<EntityId, float> sleep_timers;             // persists across steps (bodies are regathered)
     std::map<EntityId, int> limit_states;               // hinge limit state per joint, for joint.limit events
     std::map<std::pair<EntityId, EntityId>, std::uint64_t> pair_cause;  // begin event seq per pair
@@ -809,6 +816,8 @@ struct Physics::Impl {
             b.trigger = col.is_trigger;
             b.layer = col.layer;
             b.mask = col.mask;
+            b.group = col.group;
+            b.ccd = rb.ccd;
             b.sleeping = rb.sleeping;
             b.inv_mass = (rb.kind == 0 && rb.mass > 0) ? 1.0f / rb.mass : 0.0f;
             b.restitution = rb.restitution;
@@ -859,6 +868,67 @@ struct Physics::Impl {
 
 Physics::Physics(Settings settings) : impl_(std::make_unique<Impl>()) { impl_->settings = settings; }
 Physics::~Physics() = default;
+namespace {
+
+// A ray against one body's shape, whatever it is: the nearest hit under `reach`, with the normal
+// facing the ray (mesh triangles: both faces, down the tree).
+bool ray_body(Vec3 o, Vec3 dir, const Body& b, float reach, float& t, Vec3& normal) {
+    if (b.shape == 3) {
+        const MeshShape* ms = b.mesh;
+        if (!ms) return false;
+        bool hit = false;
+        std::vector<std::uint32_t> stack{0};
+        while (!stack.empty()) {
+            const MeshShape::Node& node = ms->nodes[stack.back()];
+            stack.pop_back();
+            if (!ray_aabb(o, dir, node.min, node.max, reach)) continue;
+            if (node.count == 0) {
+                stack.push_back(node.left);
+                stack.push_back(node.right);
+                continue;
+            }
+            for (std::uint32_t k = node.first; k < node.first + node.count; ++k) {
+                std::uint32_t tri = ms->order[k];
+                float th = 0;
+                if (!ray_triangle(o, dir, ms->v[ms->tri[tri][0]], ms->v[ms->tri[tri][1]], ms->v[ms->tri[tri][2]], th)) continue;
+                if (th >= reach) continue;
+                reach = th;
+                hit = true;
+                t = th;
+                normal = dot(ms->n[tri], dir) > 0 ? -ms->n[tri] : ms->n[tri];
+            }
+        }
+        return hit;
+    }
+    if (b.shape == 2) return ray_capsule(o, dir, b, t, normal) && t < reach;
+    if (b.shape == 1) {
+        if (!ray_sphere(o, dir, b.position, b.half.x, t) || t >= reach) return false;
+        normal = normalize(o + dir * t - b.position);
+        return true;
+    }
+    return ray_box(o, dir, b, t, normal) && t < reach;
+}
+
+float bounding_radius(const Body& b) {
+    if (b.shape == 1) return b.half.x;
+    if (b.shape == 2) return b.half.x + b.half.y;
+    return length(b.half);
+}
+
+std::pair<EntityId, EntityId> ordered(EntityId a, EntityId b) { return a < b ? std::pair{a, b} : std::pair{b, a}; }
+
+}  // namespace
+
+void Physics::ignore(EntityId a, EntityId b, bool ignore) {
+    if (a == 0 || b == 0 || a == b) return;
+    if (ignore) impl_->ignored.insert(ordered(a, b));
+    else impl_->ignored.erase(ordered(a, b));
+}
+
+std::vector<std::pair<EntityId, EntityId>> Physics::ignored() const {
+    return {impl_->ignored.begin(), impl_->ignored.end()};
+}
+
 Settings& Physics::settings() { return impl_->settings; }
 void Physics::set_assets(assets::AssetStore* assets) {
     impl_->assets = assets;
@@ -897,6 +967,27 @@ void Physics::step(world::World& w, double dt_d) {
         update_aabb(b);
         b.inv_inertia_world = inertia_inverse(b);
     }
+    // Pairs kept apart on purpose: exceptions whose bodies are gone are dropped; joints that say
+    // their two bodies do not collide are noted for this step.
+    for (auto it = im.ignored.begin(); it != im.ignored.end();) it = (w.alive(it->first) && w.alive(it->second)) ? std::next(it) : im.ignored.erase(it);
+    im.joined.clear();
+    w.ecs().each([&](flecs::entity e, const world::Joint& j) {
+        if (j.collide_connected || j.target.empty()) return;
+        const EntityId t = w.find(j.target);
+        if (t != 0 && t != e.id()) im.joined.insert(ordered(e.id(), t));
+    });
+    // Whether two bodies may touch: the same negative group never, the same positive group always,
+    // otherwise the layers; then the exceptions and the joints.
+    auto allowed = [&](const Body& a, const Body& b) {
+        if (a.group != 0 && a.group == b.group) {
+            if (a.group < 0) return false;
+        } else if (!(a.layer & b.mask) || !(b.layer & a.mask)) {
+            return false;
+        }
+        if (!im.ignored.empty() && im.ignored.contains(ordered(a.id, b.id))) return false;
+        if (!im.joined.empty() && im.joined.contains(ordered(a.id, b.id))) return false;
+        return true;
+    };
     // 2. Broadphase: sort and sweep on x.
     std::vector<std::size_t> order(im.bodies.size());
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
@@ -908,10 +999,10 @@ void Physics::step(world::World& w, double dt_d) {
             const Body& b = im.bodies[order[j]];
             if (b.aabb_min.x > a.aabb_max.x) break;
             if (a.kind != 0 && b.kind != 0) continue;  // nothing dynamic
-            if (!(a.layer & b.mask) || !(b.layer & a.mask)) continue;  // layers keep them apart
             auto moving = [](const Body& x) { return (x.kind == 0 && !x.sleeping) || (x.kind == 2 && (x.velocity.x != 0 || x.velocity.y != 0 || x.velocity.z != 0)); };
             if (!moving(a) && !moving(b)) continue;
             if (!aabb_overlap(a, b)) continue;
+            if (!allowed(a, b)) { im.stats.ignored++; continue; }  // layers, groups, exceptions or a joint keep them apart
             im.stats.pairs++;
             std::size_t ia = order[i], ib = order[j];
             if (im.bodies[ia].id > im.bodies[ib].id) std::swap(ia, ib);
@@ -1430,12 +1521,50 @@ void Physics::step(world::World& w, double dt_d) {
         else if (info.kind == 3) (void)w.set(info.entity, "Joint", Json{{"force", info.force}, {"translation", info.translation}, {"speed", info.speed}});
         else (void)w.set(info.entity, "Joint", Json{{"force", info.force}});
     }
+    // Continuous collision: a body that asked for it sweeps its bounding sphere along this step's
+    // motion, against the static and kinematic shapes it may touch, and stops a skin short of the
+    // first one it would cross, its velocity into the surface reflected by its restitution; the
+    // rest of the step's motion is dropped and the contact solver takes over next step.
+    for (Body& b : im.bodies) {
+        b.swept = false;
+        if (!b.ccd || b.kind != 0 || b.sleeping || b.trigger) continue;
+        const Vec3 motion = b.velocity * dt;
+        const float dist = length(motion);
+        const float radius = bounding_radius(b);
+        if (dist <= radius * 0.5f) continue;  // slow for its size: the discrete step is enough
+        const Vec3 dir = motion * (1.0f / dist);
+        const Vec3 swept_min{std::min(b.aabb_min.x, b.aabb_min.x + motion.x), std::min(b.aabb_min.y, b.aabb_min.y + motion.y), std::min(b.aabb_min.z, b.aabb_min.z + motion.z)};
+        const Vec3 swept_max{std::max(b.aabb_max.x, b.aabb_max.x + motion.x), std::max(b.aabb_max.y, b.aabb_max.y + motion.y), std::max(b.aabb_max.z, b.aabb_max.z + motion.z)};
+        float best = dist + radius;
+        Vec3 best_n;
+        EntityId hit_id = 0;
+        for (const Body& o : im.bodies) {
+            if (&o == &b || o.kind == 0 || o.trigger) continue;
+            if (o.aabb_min.x > swept_max.x || o.aabb_max.x < swept_min.x || o.aabb_min.y > swept_max.y || o.aabb_max.y < swept_min.y || o.aabb_min.z > swept_max.z || o.aabb_max.z < swept_min.z) continue;
+            if (!allowed(b, o)) continue;
+            float t = 0;
+            Vec3 n;
+            if (!ray_body(b.position, dir, o, best, t, n)) continue;
+            best = t;
+            best_n = n;
+            hit_id = o.id;
+        }
+        if (hit_id == 0 || best - radius >= dist) continue;
+        const float travel = std::max(best - radius - s.slop, 0.0f);
+        b.position += dir * travel;
+        const float vn = dot(b.velocity, best_n);
+        if (vn < 0) b.velocity -= best_n * (vn * (1.0f + b.restitution));
+        b.swept = true;
+        b.touched = true;
+        im.stats.ccd_hits++;
+        w.events().emit(w.tick_index(), "physics.ccd", b.id, Json{{"path", w.path(b.id)}, {"other", w.path(hit_id)}, {"point", {{"x", (b.position + dir * (best - travel)).x}, {"y", (b.position + dir * (best - travel)).y}, {"z", (b.position + dir * (best - travel)).z}}}, {"normal", {{"x", best_n.x}, {"y", best_n.y}, {"z", best_n.z}}}, {"speed", -vn}});
+    }
     // 4. Integrate, project out remaining penetration, sleep.
     for (Body& b : im.bodies) {
         if (b.kind == 1) continue;
         if (b.kind == 0 && b.sleeping) continue;
         if (b.lock_rotation) b.angular = {};
-        b.position += b.velocity * dt;
+        if (!b.swept) b.position += b.velocity * dt;
         float w_len = length(b.angular);
         if (w_len > 1e-6f) b.rotation = normalize(Quat::from_axis_angle(b.angular, w_len * dt) * b.rotation);
         if (b.kind == 0) {
@@ -1770,6 +1899,9 @@ Json Physics::describe() const {
     j["broken"] = s.broken;
     j["meshes"] = s.meshes;
     j["triangles"] = s.triangles;
+    j["ccd_hits"] = s.ccd_hits;
+    j["ignored"] = s.ignored;
+    j["exceptions"] = impl_->ignored.size();
     j["gravity"] = Json{{"x", impl_->settings.gravity.x}, {"y", impl_->settings.gravity.y}, {"z", impl_->settings.gravity.z}};
     return j;
 }

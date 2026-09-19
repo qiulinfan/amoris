@@ -41,7 +41,7 @@ Levels come from Tiled maps drawn by the `TileMap` component and questioned thro
 
 ## Physics
 
-`Body2D` gives a sprite a box that falls, lands, is stopped by walls, passes one-way planks from below, walks slopes and steps, and rides kinematic platforms, against a `TileMap` (`docs/design/tilemaps.md`). Dynamic bodies do not collide with each other; scripts check distances for pickups and hits.
+`Body2D` gives a sprite a box that falls, lands, is stopped by walls, passes one-way planks from below, walks slopes and steps, and rides kinematic platforms, against a `TileMap` (`docs/design/tilemaps.md`). Dynamic bodies push each other apart and stack; scripts check distances for pickups and hits.
 
 ## Not yet
 

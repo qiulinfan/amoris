@@ -73,3 +73,26 @@ scenario("a jump onto the lift is carried up", (g) => {
     g.until(() => g.state<number>("player.y") > -1.5, { timeout: 5, label: "carried up" });
     g.check(() => expect(g.state("player.riding")).toBe("/Lift"), "still riding");
 });
+
+scenario("two crates stack and the player pushes the stack along", (g) => {
+    g.check(() => {
+        for (const [name, y] of [["CrateA", -3.2], ["CrateB", -1.0]] as const) {
+            world.spawn(name, { components: { Transform: { position: { x: -1.5, y, z: 0 } }, Sprite: { texture: "assets/tiles.png", size: { x: 0.6, y: 0.6 }, uv: { x: 0.2, y: 0, z: 0.4, w: 1 }, layer: 1, filter: "nearest" }, Body2D: { size: { x: 0.3, y: 0.3 }, mass: 0.5 } } });
+        }
+    }, "two crates spawned, one above the other");
+    g.wait(1);
+    g.check(() => {
+        const a = world.get("CrateA", "Transform")!.position, b = world.get("CrateB", "Transform")!.position;
+        expect(Math.abs(b.y - (a.y + 0.6)) < 0.02).toBe(true);           // the upper stands on the lower
+        expect(world.get("CrateB", "Body2D")!.riding).toBe(world.find("CrateA"));
+        expect(world.get("CrateB", "Body2D")!.grounded).toBe(true);
+    }, "stacked");
+    g.hold("move_x", 1.0, -1);                                            // walk left into the stack
+    g.check(() => {
+        const a = world.get("CrateA", "Transform")!.position, b = world.get("CrateB", "Transform")!.position;
+        expect(a.x).toBeLessThan(-2.5);                                   // the stack was pushed along
+        expect(Math.abs(b.x - a.x) < 0.1).toBe(true);                     // the top crate rode the bottom one
+        expect(g.state<number>("player.x")).toBeGreaterThan(a.x);         // the player stayed behind it
+    }, "pushed along, the top crate riding");
+});
+

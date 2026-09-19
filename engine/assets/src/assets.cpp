@@ -47,7 +47,20 @@ Json Mesh::describe() const {
     Json an = Json::array();
     for (const auto& a : animations) an.push_back(Json{{"name", a.name}, {"duration", a.duration}, {"channels", a.channels.size()}});
     j["animations"] = an;
+    Json targets = Json::array();
+    for (const auto& t : morph_targets) targets.push_back(t.name);
+    j["targets"] = targets;
+    if (!default_weights.empty()) j["default_weights"] = default_weights;
     return j;
+}
+
+int Mesh::morph_target(std::string_view name) const {
+    for (std::size_t i = 0; i < morph_targets.size(); ++i) if (morph_targets[i].name == name) return static_cast<int>(i);
+    if (!name.empty() && std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        const int i = std::atoi(std::string(name).c_str());
+        if (i >= 0 && static_cast<std::size_t>(i) < morph_targets.size()) return i;
+    }
+    return -1;
 }
 
 const AnimationClip* Mesh::clip(std::string_view name) const {
@@ -671,27 +684,54 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             if (node < 0 || node >= static_cast<int>(mesh.nodes.size()) || si < 0 || si >= static_cast<int>(samplers.size())) continue;
             AnimationChannel c;
             c.node = node;
+            int width = 3;
             if (path == "translation") c.path = 0;
-            else if (path == "rotation") c.path = 1;
+            else if (path == "rotation") { c.path = 1; width = 4; }
             else if (path == "scale") c.path = 2;
-            else continue;  // morph target weights are not supported
+            else if (path == "weights") {
+                // Morph target weights: one scalar per target per key, the targets being those of
+                // the node's mesh (every primitive of a mesh has the same number).
+                c.path = 3;
+                const Json& node_j = nodes[static_cast<std::size_t>(node)];
+                const Json& meshes_j = g.doc.value("meshes", Json::array());
+                const int mi = node_j.value("mesh", -1);
+                width = 0;
+                if (mi >= 0 && mi < static_cast<int>(meshes_j.size())) {
+                    const Json& prims = meshes_j[static_cast<std::size_t>(mi)].value("primitives", Json::array());
+                    if (!prims.empty()) width = static_cast<int>(prims[0].value("targets", Json::array()).size());
+                }
+                if (width <= 0) continue;
+            } else {
+                continue;
+            }
+            c.width = width;
             const Json& sampler = samplers[static_cast<std::size_t>(si)];
             std::string interp = sampler.value("interpolation", "LINEAR");
             c.step = interp == "STEP";
             const bool cubic = interp == "CUBICSPLINE";
             POCKET_TRY(in, g.accessor(sampler.value("input", -1)));
             POCKET_TRY(out, g.accessor(sampler.value("output", -1)));
-            const int width = c.path == 1 ? 4 : 3;
-            if (out.components != width) return fail("bad_gltf", "{}: animation '{}' output has {} components for {}", display_path, clip.name, out.components, path);
             const std::size_t per_key = cubic ? 3 : 1;
-            if (out.count < in.count * per_key) return fail("bad_gltf", "{}: animation '{}' has fewer outputs than keys", display_path, clip.name);
+            if (c.path == 3) {
+                if (out.components != 1) return fail("bad_gltf", "{}: animation '{}' weights output must be SCALAR", display_path, clip.name);
+                if (out.count < in.count * per_key * static_cast<std::size_t>(width)) return fail("bad_gltf", "{}: animation '{}' has fewer weight outputs than keys", display_path, clip.name);
+            } else {
+                if (out.components != width) return fail("bad_gltf", "{}: animation '{}' output has {} components for {}", display_path, clip.name, out.components, path);
+                if (out.count < in.count * per_key) return fail("bad_gltf", "{}: animation '{}' has fewer outputs than keys", display_path, clip.name);
+            }
             std::size_t ics = component_size(in.component_type), ocs = component_size(out.component_type);
             for (std::size_t k = 0; k < in.count; ++k) {
                 float t = read_float(in.data + k * in.stride, in.component_type, in.normalized);
                 c.times.push_back(t);
                 clip.duration = std::max(clip.duration, t);
-                const std::uint8_t* vp = out.data + (k * per_key + (cubic ? 1 : 0)) * out.stride;
-                for (int w = 0; w < width; ++w) c.values.push_back(read_float(vp + static_cast<std::size_t>(w) * ocs, out.component_type, out.normalized));
+                if (c.path == 3) {
+                    // Scalars: the key's block of `width` values (a cubic key holds in-tangents, values, out-tangents).
+                    const std::size_t first = (k * per_key + (cubic ? 1 : 0)) * static_cast<std::size_t>(width);
+                    for (int w = 0; w < width; ++w) c.values.push_back(read_float(out.data + (first + static_cast<std::size_t>(w)) * out.stride, out.component_type, out.normalized));
+                } else {
+                    const std::uint8_t* vp = out.data + (k * per_key + (cubic ? 1 : 0)) * out.stride;
+                    for (int w = 0; w < width; ++w) c.values.push_back(read_float(vp + static_cast<std::size_t>(w) * ocs, out.component_type, out.normalized));
+                }
             }
             (void)ics;
             if (!c.times.empty()) clip.channels.push_back(std::move(c));
@@ -728,7 +768,51 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                 }
                 std::uint32_t base = static_cast<std::uint32_t>(mesh.vertices.size());
                 if (jnt) mesh.skin_vertices.resize(base);  // zeros for any unskinned geometry before this
+                // Morph targets: the primitive's targets by index become the mesh's (their deltas
+                // baked like the geometry), named by the mesh's extras.targetNames when it has them.
+                struct TargetAccessors { std::optional<Accessor> pos, nrm; };
+                std::vector<TargetAccessors> targets;
+                {
+                    const Json& mesh_j = meshes[static_cast<std::size_t>(mi)];
+                    const Json& names = mesh_j.contains("extras") && mesh_j["extras"].is_object() ? mesh_j["extras"].value("targetNames", Json::array()) : Json::array();
+                    const Json& tj = prim.value("targets", Json::array());
+                    for (std::size_t t = 0; t < tj.size(); ++t) {
+                        TargetAccessors ta;
+                        if (tj[t].contains("POSITION")) { POCKET_TRY(a, g.accessor(tj[t]["POSITION"].get<int>())); ta.pos = a; }
+                        if (tj[t].contains("NORMAL")) { POCKET_TRY(a, g.accessor(tj[t]["NORMAL"].get<int>())); ta.nrm = a; }
+                        targets.push_back(ta);
+                        if (mesh.morph_targets.size() <= t) {
+                            MorphTarget mt;
+                            mt.name = t < names.size() && names[t].is_string() ? names[t].get<std::string>() : "target" + std::to_string(t);
+                            mesh.morph_targets.push_back(std::move(mt));
+                        }
+                    }
+                    if (!tj.empty() && mesh.default_weights.empty() && mesh_j.contains("weights") && mesh_j["weights"].is_array()) {
+                        for (const Json& wv : mesh_j["weights"]) mesh.default_weights.push_back(wv.is_number() ? wv.get<float>() : 0.0f);
+                    }
+                }
+                for (auto& mt : mesh.morph_targets) { mt.positions.resize(base); mt.normals.resize(base); }
                 for (std::size_t v = 0; v < pos.count; ++v) {
+                    for (std::size_t t = 0; t < mesh.morph_targets.size(); ++t) {
+                        Vec3 dp{0, 0, 0}, dn{0, 0, 0};
+                        if (t < targets.size()) {
+                            if (targets[t].pos && v < targets[t].pos->count) {
+                                const Accessor& a = *targets[t].pos;
+                                const std::uint8_t* ap = a.data + v * a.stride;
+                                const std::size_t acs = component_size(a.component_type);
+                                dp = bake.transform_dir(Vec3{read_float(ap, a.component_type, a.normalized), read_float(ap + acs, a.component_type, a.normalized), read_float(ap + 2 * acs, a.component_type, a.normalized)});
+                            }
+                            if (targets[t].nrm && v < targets[t].nrm->count) {
+                                const Accessor& a = *targets[t].nrm;
+                                const std::uint8_t* ap = a.data + v * a.stride;
+                                const std::size_t acs = component_size(a.component_type);
+                                Vec4 n4 = normal_m * Vec4{read_float(ap, a.component_type, a.normalized), read_float(ap + acs, a.component_type, a.normalized), read_float(ap + 2 * acs, a.component_type, a.normalized), 0};
+                                dn = {n4.x, n4.y, n4.z};
+                            }
+                        }
+                        mesh.morph_targets[t].positions.push_back(dp);
+                        mesh.morph_targets[t].normals.push_back(dn);
+                    }
                     MeshVertex mv;
                     const std::uint8_t* pp = pos.data + v * pos.stride;
                     std::size_t cs = component_size(pos.component_type);
@@ -803,6 +887,8 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
     };
     Mat4 identity;
     for (int r : roots) POCKET_TRY_VOID(visit(r, identity, 0));
+    for (auto& mt : mesh.morph_targets) { mt.positions.resize(mesh.vertices.size()); mt.normals.resize(mesh.vertices.size()); }
+    if (!mesh.morph_targets.empty()) mesh.default_weights.resize(mesh.morph_targets.size(), 0.0f);
     if (!any_geometry) return fail("bad_gltf", "{}: no triangle geometry", display_path);
     if (!mesh.skin_vertices.empty()) mesh.skin_vertices.resize(mesh.vertices.size());
     for (const Skin& s : mesh.skins) {
