@@ -45,6 +45,12 @@ struct Grid {
     bool diagonal = true;
     float max_step = 0.4f;
     float agent_radius = 0;                  // the radius the grid was baked for; obstacles grow by it
+    // The cells' shape on a tile map: 0 squares (orthogonal maps and ground grids), 1 isometric
+    // diamonds on the square lattice, 2 staggered diamonds, 3 hexagons; the tile's size, a
+    // hexagon's flat side and the stagger come from the map, in world units (docs/design/navigation.md, Grids).
+    int layout = 0;
+    float tile_w = 0, tile_h = 0, hex_side = 0;
+    bool stagger_y = true, stagger_odd = true;
     std::vector<std::uint8_t> walkable;      // row-major: the level
     std::vector<std::uint8_t> blocked;       // row-major: the moment (cells under obstacles); empty when none
     std::vector<float> ground;               // XZ grids: ground height per cell

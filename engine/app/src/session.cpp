@@ -140,6 +140,14 @@ Status Session::start() {
     POCKET_TRY(renderer, renderer::Renderer::create(*device_));
     renderer_ = std::move(renderer);
     particles_ = std::make_unique<renderer::Particles>();
+    particles_->set_collider([this](Vec3 from, Vec3 to) -> std::optional<renderer::ParticleContact> {
+        const Vec3 d = to - from;
+        const float len = length(d);
+        if (len < 1e-6f || !physics_) return std::nullopt;
+        auto hit = physics_->raycast(*world_, from, d * (1.0f / len), len, false);
+        if (!hit || hit->entity == 0) return std::nullopt;
+        return renderer::ParticleContact{hit->point, hit->normal};
+    });
     animation_ = std::make_unique<renderer::Animation>();
 
     // Pocket UI needs a font. `pocket` records the path of the bundled Noto Sans CJK in the

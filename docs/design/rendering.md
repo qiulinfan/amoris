@@ -19,13 +19,17 @@
 
 `MeshRenderer.color` tints, `texture` multiplies, glTF materials bring their base color and texture (`docs/design/assets.md`). A missing asset is drawn as a magenta cube and named in `render.stats.assets.missing`.
 
+## Translucent meshes
+
+A mesh whose color alpha is under 1 (the `MeshRenderer` color, multiplied by the material's base color alpha) or whose glTF material has `alphaMode: BLEND` is translucent: it draws after every opaque mesh, far to near by its entity's depth along the camera, with the same lit shading alpha blended over what is behind it, depth tested but not written, so translucent things never hide each other and an opaque wall in front still hides them. It casts a shadow and writes its id like any other mesh (`render.pick` finds it; the wall in front of it wins as it does on screen). `render.stats.translucent` counts them; `runtime_tests` (`[translucent]`) holds a half-red pane over the hello scene and reads the pixel.
+
 ## Comparing frames
 
 `render.compare {path, tolerance?, threshold?, diff?, update?}` holds the last frame against a reference PNG in the project: a pixel differs when a channel is off by more than `threshold` (16 of 255), and the frame matches when at most `tolerance` (0.01) of the pixels differ. The answer carries `match`, `differing`, `fraction`, the `bounds` rectangle of the differing pixels, and `diff` when a PNG of the differences was asked for (the differing pixels in red over the dimmed reference), so an agent can say where a frame changed and look. A missing reference is written from the frame and reported as `written` (the first run records, later runs compare; delete the file to record again), and `update: true` rewrites it. Scenarios use it as a step (`g.match(path, options)`, `docs/design/scenarios.md`), so a level's look is checked like its score is, and `render.compare(path, options)` is the same call from a script. Frames are deterministic on one machine (the same GPU draws the same pixels for the same world), so a tolerance is for other GPUs and drivers, not for the engine.
 
 ## Not yet
 
-Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, transparency sorting for meshes (sprites and particles sort; meshes draw in material order), post-processing. Each is a renderer-internal change: the commands and components stay.
+Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, order-independent transparency (translucent meshes sort by their entity's depth, so two that interleave draw in one order), glTF alpha masks (`MASK` draws opaque), post-processing. Each is a renderer-internal change: the commands and components stay.
 
 ## Debug lines
 

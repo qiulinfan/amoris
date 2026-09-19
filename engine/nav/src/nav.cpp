@@ -27,11 +27,66 @@ float link_cost(const Grid& g, std::size_t a, std::size_t b) {
 
 // Orthogonal neighbours, diagonals between two free orthogonal cells (no corner cutting), the
 // cell's extra links.
+// Whether a row (or column) of a staggered or hexagonal map is the shifted one.
+bool stagger_index(const Grid& g, int i) { return (i % 2 != 0) == g.stagger_odd; }
+
+// The distance between two cells' centers in cells: the step cost on grids whose cells are not squares.
+float center_distance(const Grid& g, int ax, int ay, int bx, int by) {
+    const Vec3 a = g.center_of(ax, ay), b = g.center_of(bx, by);
+    const float dx = b.x - a.x, dy = g.plane == 0 ? b.z - a.z : b.y - a.y;
+    return std::hypot(dx, dy) / g.cell;
+}
+
 template <typename F>
 void for_neighbours(const Grid& g, int x, int y, F&& f) {
+    const std::size_t from = g.index(x, y);
+    if (g.layout >= 2) {
+        // Staggered diamonds and hexagons: the two cells across an edge in each of the rows (or
+        // columns) beside this one, picked by the stagger; hexagons add the two along the row (or
+        // column), which share an edge too; diamonds touch those only at a corner, so they and the
+        // two straight across two rows join with `diagonal`, and only between two free edge
+        // neighbours (no corner cutting). Costs are the distances between centers.
+        auto visit = [&](int nx, int ny) {
+            if (!g.walkable_at(nx, ny)) return;
+            const std::size_t to = g.index(nx, ny);
+            if (!step_ok(g, from, to)) return;
+            f(to, center_distance(g, x, y, nx, ny));
+        };
+        const bool shifted = g.stagger_y ? stagger_index(g, y) : stagger_index(g, x);
+        int ex[4], ey[4];
+        if (g.stagger_y) {
+            const int a = shifted ? x : x - 1, b = shifted ? x + 1 : x;
+            ex[0] = a; ey[0] = y - 1; ex[1] = b; ey[1] = y - 1; ex[2] = a; ey[2] = y + 1; ex[3] = b; ey[3] = y + 1;
+        } else {
+            const int a = shifted ? y : y - 1, b = shifted ? y + 1 : y;
+            ex[0] = x - 1; ey[0] = a; ex[1] = x - 1; ey[1] = b; ex[2] = x + 1; ey[2] = a; ex[3] = x + 1; ey[3] = b;
+        }
+        for (int i = 0; i < 4; ++i) visit(ex[i], ey[i]);
+        const int ax = g.stagger_y ? 1 : 0, ay = g.stagger_y ? 0 : 1;
+        if (g.layout == 3) {
+            visit(x + ax, y + ay);
+            visit(x - ax, y - ay);
+        } else if (g.diagonal) {
+            auto corner = [&](int nx, int ny, int i0, int i1) {
+                if (g.walkable_at(ex[i0], ey[i0]) && g.walkable_at(ex[i1], ey[i1])) visit(nx, ny);
+            };
+            if (g.stagger_y) {
+                corner(x + 1, y, 1, 3);
+                corner(x - 1, y, 0, 2);
+                corner(x, y - 2, 0, 1);
+                corner(x, y + 2, 2, 3);
+            } else {
+                corner(x, y + 1, 1, 3);
+                corner(x, y - 1, 0, 2);
+                corner(x - 2, y, 0, 1);
+                corner(x + 2, y, 2, 3);
+            }
+        }
+        if (!g.links.empty()) for (int to : g.links[from]) f(static_cast<std::size_t>(to), link_cost(g, from, static_cast<std::size_t>(to)));
+        return;
+    }
     static constexpr int dx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static constexpr int dy[8] = {0, 0, 1, -1, 1, -1, 1, -1};
-    const std::size_t from = g.index(x, y);
     for (int i = 0; i < (g.diagonal ? 8 : 4); ++i) {
         const int nx = x + dx[i], ny = y + dy[i];
         if (!g.walkable_at(nx, ny)) continue;
@@ -41,7 +96,7 @@ void for_neighbours(const Grid& g, int x, int y, F&& f) {
             if (!g.walkable_at(x + dx[i], y) || !g.walkable_at(x, y + dy[i])) continue;
             if (!step_ok(g, from, g.index(x + dx[i], y)) || !step_ok(g, from, g.index(x, y + dy[i]))) continue;
         }
-        f(to, i >= 4 ? kSqrt2 : 1.0f);
+        f(to, g.layout == 1 ? center_distance(g, x, y, nx, ny) : (i >= 4 ? kSqrt2 : 1.0f));
     }
     if (!g.links.empty()) for (int to : g.links[from]) f(static_cast<std::size_t>(to), link_cost(g, from, static_cast<std::size_t>(to)));
 }
@@ -49,6 +104,7 @@ void for_neighbours(const Grid& g, int x, int y, F&& f) {
 float heuristic(const Grid& g, std::size_t a, std::size_t b) {
     const int ax = static_cast<int>(a % static_cast<std::size_t>(g.width)), ay = static_cast<int>(a / static_cast<std::size_t>(g.width));
     const int bx = static_cast<int>(b % static_cast<std::size_t>(g.width)), by = static_cast<int>(b / static_cast<std::size_t>(g.width));
+    if (g.layout != 0) return center_distance(g, ax, ay, bx, by);   // the straight line, never more than the steps
     const float dx = static_cast<float>(std::abs(bx - ax)), dy = static_cast<float>(std::abs(by - ay));
     if (g.diagonal) return std::max(dx, dy) + (kSqrt2 - 1.0f) * std::min(dx, dy);
     return dx + dy;
@@ -74,7 +130,7 @@ bool line_of_sight(const Grid& g, int ax, int ay, int bx, int by) {
             if (!step_ok(g, prev, cur)) return false;
             // A diagonal crossing between two cells must have a free orthogonal neighbour on each side.
             const int px = static_cast<int>(prev % static_cast<std::size_t>(g.width)), py = static_cast<int>(prev / static_cast<std::size_t>(g.width));
-            if (px != cx && py != cy && !g.walkable_at(px, cy) && !g.walkable_at(cx, py)) return false;
+            if (g.layout == 0 && px != cx && py != cy && !g.walkable_at(px, cy) && !g.walkable_at(cx, py)) return false;
             prev = cur;
         }
     }
@@ -83,7 +139,48 @@ bool line_of_sight(const Grid& g, int ax, int ay, int bx, int by) {
 
 }  // namespace
 
+namespace {
+// Tile maps that are not orthogonal keep their lattice but place cells as the map draws them
+// (docs/design/tilemaps.md, Orientations), in map units: x right and y down from the map's top-left.
+
+Vec2 layout_corner(const Grid& g, int x, int y) {   // the top-left of a cell's box
+    if (g.layout == 1) return {(static_cast<float>(x - y) + static_cast<float>(g.height - 1)) * g.tile_w * 0.5f, static_cast<float>(x + y) * g.tile_h * 0.5f};
+    if (g.stagger_y) return {static_cast<float>(x) * g.tile_w + (stagger_index(g, y) ? g.tile_w * 0.5f : 0.0f), static_cast<float>(y) * (g.tile_h + g.hex_side) * 0.5f};
+    return {static_cast<float>(x) * (g.tile_w + g.hex_side) * 0.5f, static_cast<float>(y) * g.tile_h + (stagger_index(g, x) ? g.tile_h * 0.5f : 0.0f)};
+}
+
+void layout_cell(const Grid& g, float px, float py, int& x, int& y) {   // the cell under a point, allowed outside the grid
+    if (g.layout == 1) {
+        const float ux = (px - static_cast<float>(g.height) * g.tile_w * 0.5f) / g.tile_w, uy = py / g.tile_h;
+        x = static_cast<int>(std::floor(uy + ux));
+        y = static_cast<int>(std::floor(uy - ux));
+        return;
+    }
+    // The cell whose center is nearest among the box grid's guess and its neighbours; a diamond's
+    // distances are measured with the axes scaled to the tile.
+    const float sx = g.layout == 3 ? 1.0f : 1.0f / g.tile_w, sy = g.layout == 3 ? 1.0f : 1.0f / g.tile_h;
+    int gx, gy;
+    if (g.stagger_y) { gy = static_cast<int>(std::floor(py / ((g.tile_h + g.hex_side) * 0.5f))); gx = static_cast<int>(std::floor((px - (stagger_index(g, gy) ? g.tile_w * 0.5f : 0.0f)) / g.tile_w)); }
+    else { gx = static_cast<int>(std::floor(px / ((g.tile_w + g.hex_side) * 0.5f))); gy = static_cast<int>(std::floor((py - (stagger_index(g, gx) ? g.tile_h * 0.5f : 0.0f)) / g.tile_h)); }
+    float best = std::numeric_limits<float>::max();
+    x = gx;
+    y = gy;
+    for (int cy = gy - 1; cy <= gy + 1; ++cy) {
+        for (int cx = gx - 1; cx <= gx + 1; ++cx) {
+            const Vec2 c = layout_corner(g, cx, cy);
+            const float dx = (px - (c.x + g.tile_w * 0.5f)) * sx, dy = (py - (c.y + g.tile_h * 0.5f)) * sy;
+            const float d = dx * dx + dy * dy;
+            if (d < best) { best = d; x = cx; y = cy; }
+        }
+    }
+}
+}  // namespace
+
 Vec3 Grid::center_of(int x, int y) const {
+    if (layout != 0 && plane == 1) {
+        const Vec2 c = layout_corner(*this, x, y);
+        return {origin.x + c.x + tile_w * 0.5f, origin.y - (c.y + tile_h * 0.5f), depth};
+    }
     const float cx = origin.x + (static_cast<float>(x) + 0.5f) * cell;
     if (plane == 0) return {cx, ground.empty() ? origin.y : ground[index(x, y)], origin.z + (static_cast<float>(y) + 0.5f) * cell};
     return {cx, origin.y - (static_cast<float>(y) + 0.5f) * cell, depth};
@@ -91,6 +188,10 @@ Vec3 Grid::center_of(int x, int y) const {
 
 bool Grid::cell_of(Vec3 p, int& x, int& y) const {
     if (cell <= 0 || width <= 0) return false;
+    if (layout != 0 && plane == 1) {
+        layout_cell(*this, p.x - origin.x, origin.y - p.y, x, y);
+        return inside(x, y);
+    }
     x = static_cast<int>(std::floor((p.x - origin.x) / cell));
     y = plane == 0 ? static_cast<int>(std::floor((p.z - origin.z) / cell)) : static_cast<int>(std::floor((origin.y - p.y) / cell));
     return inside(x, y);
@@ -178,7 +279,7 @@ Status Nav::bake_tilemap(const world::World& w, assets::AssetStore& assets, Enti
     if (!tmc) return fail("no_tilemap", "entity {} has no TileMap", map_entity);
     if (p.mode != "topdown" && p.mode != "platformer") return fail("bad_args", "mode must be topdown or platformer");
     POCKET_TRY(map, assets.tilemap(tmc->map));
-    if (!map->orthogonal()) return fail("bad_tilemap", "{} is {}: only orthogonal maps bake to a grid (their cells are the grid's)", tmc->map, map->orientation);
+    if (!map->orthogonal() && p.mode == "platformer") return fail("bad_tilemap", "{} is {}: platformer grids need an orthogonal map (rows of floor and gravity down its columns)", tmc->map, map->orientation);
     Vec3 origin{0, 0, 0};
     if (const auto* wt = w.try_get<world::WorldTransform>(map_entity)) origin = wt->position;
     else if (const auto* t = w.try_get<world::Transform>(map_entity)) origin = t->position;
@@ -189,6 +290,15 @@ Status Nav::bake_tilemap(const world::World& w, assets::AssetStore& assets, Enti
     g.height = map->height;
     g.origin = origin;
     g.depth = origin.z;
+    // Cells that are not squares keep the map's geometry, in world units (the map draws with a
+    // uniform scale of tile_size per tile width).
+    g.layout = map->orthogonal() ? 0 : map->orientation == "isometric" ? 1 : map->orientation == "staggered" ? 2 : 3;
+    const float unit = g.cell / static_cast<float>(std::max(map->tile_width, 1));
+    g.tile_w = static_cast<float>(map->tile_width) * unit;
+    g.tile_h = static_cast<float>(map->tile_height) * unit;
+    g.hex_side = static_cast<float>(map->hex_side) * unit;
+    g.stagger_y = map->stagger_y;
+    g.stagger_odd = map->stagger_odd;
     const bool platformer = p.mode == "platformer";
     g.diagonal = !platformer && p.diagonal;
     const std::size_t n = static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
@@ -255,8 +365,12 @@ std::optional<Vec3> Nav::nearest(Vec3 p, float max_radius) const {
     const Grid& g = grid_;
     int cx, cy;
     // Cell coordinates of the point, allowed outside the grid for the scan.
-    cx = static_cast<int>(std::floor((p.x - g.origin.x) / g.cell));
-    cy = g.plane == 0 ? static_cast<int>(std::floor((p.z - g.origin.z) / g.cell)) : static_cast<int>(std::floor((g.origin.y - p.y) / g.cell));
+    if (g.layout != 0 && g.plane == 1) {
+        layout_cell(g, p.x - g.origin.x, g.origin.y - p.y, cx, cy);
+    } else {
+        cx = static_cast<int>(std::floor((p.x - g.origin.x) / g.cell));
+        cy = g.plane == 0 ? static_cast<int>(std::floor((p.z - g.origin.z) / g.cell)) : static_cast<int>(std::floor((g.origin.y - p.y) / g.cell));
+    }
     const int r = std::max(0, static_cast<int>(std::ceil(max_radius / g.cell)));
     float best = max_radius * max_radius;
     std::optional<Vec3> out;
@@ -395,6 +509,7 @@ Json Nav::describe() const {
     const Grid& g = grid_;
     j["agent_radius"] = g.agent_radius;
     j["plane"] = g.plane == 0 ? "xz" : "xy";
+    j["layout"] = g.layout == 0 ? "square" : g.layout == 1 ? "isometric" : g.layout == 2 ? "staggered" : "hexagonal";
     j["width"] = g.width;
     j["height"] = g.height;
     j["cell"] = g.cell;
@@ -1010,7 +1125,7 @@ std::size_t NavMesh::portal_count() const {
 void Nav::build_mesh() {
     const Grid& g = grid_;
     NavMesh m;
-    if (g.width <= 0 || g.height <= 0 || !g.links.empty()) { mesh_ = std::move(m); return; }
+    if (g.width <= 0 || g.height <= 0 || !g.links.empty() || g.layout != 0) { mesh_ = std::move(m); return; }   // rectangles cover square lattices only
     m.cell_poly.assign(g.walkable.size(), -1);
     auto ok = [&](int x, int y) { return g.inside(x, y) && g.walkable[g.index(x, y)] != 0; };
     for (int y = 0; y < g.height; ++y) {

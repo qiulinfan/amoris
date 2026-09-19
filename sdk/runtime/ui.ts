@@ -177,6 +177,8 @@ export interface StyleProps {
     fit?: "contain" | "cover" | "fill";
     /** The part of the picture shown, as u0, v0, u1, v1 in 0..1 with v down, for sheets. */
     uv?: [number, number, number, number];
+    /** Nine-slice borders in picture pixels (left, top, right, bottom, or one number for all): the corners keep their size, the edges stretch, the middle fills the box; `fit` is ignored. */
+    slice?: [number, number, number, number] | number;
     borderColor?: ColorValue;
     border?: number;
     radius?: number;
@@ -582,12 +584,14 @@ export function Panel(props: { title?: string; children?: unknown; flex?: number
         h("box", { flexGrow: 1, flexShrink: 1, padding: props.padding ?? 6, gap: props.gap ?? 4, overflow: props.scroll ? "scroll" : "hidden", direction: props.direction ?? "column" }, props.children));
 }
 
-export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; flex?: number; name?: string; disabled?: boolean }): VNode {
+export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean }): VNode {
     return h("input", {
         name: props.name,
         value: props.value,
         placeholder: props.placeholder,
         width: props.width,
+        height: props.height,
+        multiline: props.multiline,
         flex: props.flex,
         disabled: props.disabled,
         color: theme.text,

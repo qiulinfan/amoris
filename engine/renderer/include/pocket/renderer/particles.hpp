@@ -11,6 +11,9 @@
 #include <map>
 #include <vector>
 
+#include <functional>
+#include <optional>
+
 namespace pocket::renderer {
 
 struct Particle {
@@ -18,8 +21,15 @@ struct Particle {
     Vec3 velocity;
     float age = 0;
     float life = 1;
-    bool resting = false;   // landed on the emitter's floor (bounce spent)
-    bool touched = false;   // met the floor at least once
+    bool resting = false;   // landed on the emitter's floor or a body (bounce spent)
+    bool touched = false;   // met the floor or a body at least once
+    float rest_y = 0;       // where a resting particle is held
+};
+
+// What a particle's ray met between two points: the surface point and its normal.
+struct ParticleContact {
+    Vec3 point;
+    Vec3 normal;
 };
 
 struct EmitterPool {
@@ -46,8 +56,12 @@ class Particles {
     // Deterministic fold of every live particle (count, positions, ages), for state hashes.
     [[nodiscard]] std::uint64_t hash() const;
     [[nodiscard]] const std::map<world::EntityId, EmitterPool>& pools() const { return pools_; }
+    // Where colliding particles ask what they hit: a ray from `from` to `to` in world space,
+    // nullopt for nothing. The runtime plugs the physics in; without a collider, `collide` does nothing.
+    void set_collider(std::function<std::optional<ParticleContact>(Vec3 from, Vec3 to)> collider) { collider_ = std::move(collider); }
 
    private:
+    std::function<std::optional<ParticleContact>(Vec3 from, Vec3 to)> collider_;
     EmitterPool& pool_for(world::EntityId id, const world::ParticleEmitter& e);
     static void spawn(EmitterPool& pool, const world::ParticleEmitter& e, const world::WorldTransform& t, int count);
     std::map<world::EntityId, EmitterPool> pools_;

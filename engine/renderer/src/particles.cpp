@@ -61,19 +61,46 @@ void Particles::step(const world::World& world, float dt) {
         const float keep = std::max(0.0f, 1.0f - e.drag * dt);
         const float slide = std::max(0.0f, 1.0f - e.floor_friction * dt);
         const float floor_y = e.world_space ? e.floor : e.floor - t.position.y;   // the floor in the particles' own space
+        const Vec3 origin = e.world_space ? Vec3{0, 0, 0} : t.position;   // particles of a local emitter live relative to it
         for (Particle& p : pool.alive) {
             p.age += dt;
             if (p.resting) {
-                // On the floor: held there, sliding to a stop.
+                // On the floor or a surface: held there, sliding to a stop.
                 p.velocity.y = 0.0f;
                 p.velocity.x *= slide * keep;
                 p.velocity.z *= slide * keep;
                 p.position += p.velocity * dt;
-                p.position.y = floor_y;
+                p.position.y = p.rest_y;
                 continue;
             }
+            const Vec3 was = p.position;
             p.velocity = (p.velocity + e.gravity * dt) * keep;
             p.position += p.velocity * dt;
+            // Bodies: a ray from where the particle was to where it goes; on a hit it is put on the
+            // surface and bounces off it, or rests there once the bounce is spent and the surface faces up.
+            if (e.collide && collider_) {
+                if (const auto c = collider_(was + origin, p.position + origin)) {
+                    const Vec3 n = c->normal;
+                    p.position = c->point - origin + n * 0.002f;
+                    if (!p.touched) { p.touched = true; pool.landed++; }
+                    const float into = -dot(p.velocity, n);
+                    // A bounce that would not rise a couple of centimetres is spent: the particle
+                    // rests instead of ticking against the surface for the rest of its life.
+                    const float settle = std::sqrt(2.0f * length(e.gravity) * 0.02f);
+                    if (into > 0.0f) {
+                        if (e.bounce > 0.0f && into * e.bounce > 0.05f && into * e.bounce > settle) {
+                            p.velocity = p.velocity + n * (into * (1.0f + e.bounce));
+                        } else if (n.y > 0.7f) {
+                            p.velocity = Vec3{0, 0, 0};
+                            p.resting = true;
+                            p.rest_y = p.position.y;
+                        } else {
+                            p.velocity = p.velocity + n * into;   // slides along the wall
+                        }
+                    }
+                    continue;
+                }
+            }
             // The floor: a particle that went through it comes back to it, bouncing with the
             // speed it keeps, or resting there once the bounce is spent.
             if (p.position.y < floor_y) {
@@ -85,6 +112,7 @@ void Particles::step(const world::World& world, float dt) {
                 } else {
                     p.velocity.y = 0.0f;
                     p.resting = true;
+                    p.rest_y = floor_y;
                 }
             }
         }

@@ -1,6 +1,7 @@
 #include <pocket/nav/nav.hpp>
 #include <pocket/physics/physics.hpp>
 
+#include <fstream>
 #include <catch_amalgamated.hpp>
 
 #include <cmath>
@@ -593,4 +594,84 @@ TEST_CASE("the navmesh covers open ground with one rectangle, routes through a g
     REQUIRE(nav.mesh().empty());
     REQUIRE(nav.path({0.5f, -0.5f, 0}, {5.5f, -2.5f, 0})->mesh == false);
     REQUIRE(nav.describe()["mesh"]["polygons"] == 0);
+}
+
+namespace {
+// A small map of one orientation with a wall of solid tiles down column 3, open in the last `open_rows` rows.
+std::string wall_map(const char* orientation, int w, int h, int tile_w, int tile_h, int hex_side, const char* stagger_axis, const char* stagger_index, int open_rows) {
+    Json data = Json::array();
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) data.push_back(x == 3 && y < h - open_rows ? 1 : 0);
+    Json doc = {{"type", "map"}, {"version", "1.10"}, {"orientation", orientation}, {"renderorder", "right-down"}, {"width", w}, {"height", h}, {"tilewidth", tile_w}, {"tileheight", tile_h}, {"infinite", false}, {"nextlayerid", 2}, {"nextobjectid", 1},
+                {"tilesets", Json::array({{{"firstgid", 1}, {"name", "t"}, {"image", "t.png"}, {"imagewidth", tile_w}, {"imageheight", tile_h}, {"tilewidth", tile_w}, {"tileheight", tile_h}, {"columns", 1}, {"tilecount", 1},
+                                           {"tiles", Json::array({{{"id", 0}, {"properties", Json::array({{{"name", "solid"}, {"type", "bool"}, {"value", true}}})}}})}}})},
+                {"layers", Json::array({{{"id", 1}, {"type", "tilelayer"}, {"name", "walls"}, {"width", w}, {"height", h}, {"x", 0}, {"y", 0}, {"opacity", 1}, {"visible", true}, {"data", data}}})}};
+    if (hex_side > 0) doc["hexsidelength"] = hex_side;
+    if (stagger_axis) { doc["staggeraxis"] = stagger_axis; doc["staggerindex"] = stagger_index; }
+    return doc.dump();
+}
+}  // namespace
+
+TEST_CASE("hexagonal, staggered and isometric maps bake to grids whose cells sit where the map draws them", "[nav][hexgrid]") {
+    const std::filesystem::path dir = root() / "build" / "test-out" / "nav-layouts";
+    std::filesystem::create_directories(dir);
+    // Staggered diamonds touch along a row only at a corner, and a corner is never cut past a
+    // wall, so their wall opens three rows: the way around goes up through the diamonds' edges.
+    struct Case { const char* file; std::string text; const char* layout; int open_rows; };
+    const Case cases[] = {
+        {"hex.tmj", wall_map("hexagonal", 7, 6, 32, 32, 16, "y", "odd", 1), "hexagonal", 1},
+        {"hexcol.tmj", wall_map("hexagonal", 7, 6, 32, 32, 16, "x", "even", 1), "hexagonal", 1},
+        {"stag.tmj", wall_map("staggered", 7, 6, 64, 32, 0, "y", "odd", 3), "staggered", 3},
+        {"iso.tmj", wall_map("isometric", 7, 6, 64, 32, 0, nullptr, nullptr, 1), "isometric", 1},
+    };
+    for (const Case& c : cases) {
+        DYNAMIC_SECTION(c.file) {
+            {
+                std::ofstream f(dir / c.file);
+                f << c.text;
+            }
+            World w;
+            assets::AssetStore store(dir);
+            const EntityId map = w.spawn("Map", 0, Json{{"Transform", {{"position", {{"x", 1.0f}, {"y", 2.0f}, {"z", 0}}}}}, {"TileMap", {{"map", c.file}, {"tile_size", 0.5}}}}).value();
+            nav::Nav n;
+            nav::TileBakeParams tp;
+            tp.mode = "topdown";
+            REQUIRE(n.bake_tilemap(w, store, map, tp, 1).has_value());
+            const nav::Grid& g = n.grid();
+            REQUIRE(n.describe()["layout"] == c.layout);
+            REQUIRE(g.cell == Catch::Approx(0.5f));
+            REQUIRE(g.walkable_count() == static_cast<std::size_t>(7 * 6 - (6 - c.open_rows)));
+            REQUIRE(n.mesh().polys.empty());   // rectangles cover square lattices only
+            // Every cell's center maps back to the cell, and centers of neighbours in a row are a tile apart.
+            for (int y = 0; y < g.height; ++y) {
+                for (int x = 0; x < g.width; ++x) {
+                    int cx = -1, cy = -1;
+                    REQUIRE(g.cell_of(g.center_of(x, y), cx, cy));
+                    REQUIRE(cx == x);
+                    REQUIRE(cy == y);
+                }
+            }
+            const Vec3 c00 = g.center_of(0, 0), c10 = g.center_of(1, 0), c01 = g.center_of(0, 1);
+            INFO(c.file << " c00 " << c00.x << "," << c00.y << " c10 " << c10.x << "," << c10.y << " c01 " << c01.x << "," << c01.y);
+            REQUIRE(c00.y <= 2.0f);
+            REQUIRE(c10.x > c00.x);
+            REQUIRE(c01.y < c00.y);
+            // Across the wall: only the last row is open, so the path goes down, across and up, in steps no longer than a neighbour's.
+            auto path = n.path(g.center_of(0, 0), g.center_of(6, 0)).value();
+            INFO(c.file << " length " << path.length << " points " << path.points.size() << " expanded " << path.expanded);
+            REQUIRE_FALSE(path.partial);
+            REQUIRE(path.points.size() >= 3);
+            const float straight = length(g.center_of(6, 0) - g.center_of(0, 0));
+            REQUIRE(path.length > straight);
+            REQUIRE(path.length < straight * 4.0f);
+            auto cells = n.path(g.center_of(0, 0), g.center_of(6, 0), false).value();   // unsmoothed: every step a neighbour
+            const float neighbour = std::max({length(g.center_of(1, 0) - g.center_of(0, 0)), length(g.center_of(0, 1) - g.center_of(0, 0)), length(g.center_of(1, 1) - g.center_of(0, 0)), length(g.center_of(0, 2) - g.center_of(0, 0))});
+            for (std::size_t i = 1; i < cells.points.size(); ++i) REQUIRE(length(cells.points[i] - cells.points[i - 1]) <= neighbour * 1.01f);
+            REQUIRE(n.reachable(g.center_of(0, 0), g.center_of(6, 5)));
+            REQUIRE(n.nearest(Vec3{-5, 2, 0}, 20.0f).has_value());
+            // Platformer grids need rows of floor: refused here.
+            nav::TileBakeParams pf;
+            pf.mode = "platformer";
+            REQUIRE(n.bake_tilemap(w, store, map, pf, 2).error().code == "bad_tilemap");
+        }
+    }
 }

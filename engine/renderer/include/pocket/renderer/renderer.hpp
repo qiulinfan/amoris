@@ -32,6 +32,7 @@ struct RenderStats {
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
     std::uint32_t morphed = 0;        // of which drawn with morph target weights
+    std::uint32_t translucent = 0;    // of which alpha blended (a color alpha under 1, or a glTF BLEND material), drawn after the opaque meshes far to near
     std::uint32_t moving_parts = 0;   // submeshes placed by an animated node (moving parts)
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
     std::uint32_t image_layers = 0;   // image layers drawn (a picture placed in map pixels, repeated across the map when asked)

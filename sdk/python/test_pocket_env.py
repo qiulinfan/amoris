@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pocket_env import PocketEnv, PocketEnvPool, PocketError, play  # noqa: E402
 from train_example import train  # noqa: E402
 from policy_example import act, train as train_policy  # noqa: E402
+from planner_example import plan  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "scripts"))
 from agent_eval import run as run_benchmark  # noqa: E402
 
@@ -87,6 +88,16 @@ class SpritesEpisodes(unittest.TestCase):
         self.assertEqual(len(result["weights"]["move"]), 6)
         self.assertGreaterEqual(result["best"], 0.0)
         self.assertIn("-2.3", result["per_start"])
+
+    def test_planner_looks_ahead_by_replay(self):
+        # Four decisions of lookahead over two runtimes: the first coin is 1.2 units to the right,
+        # so a plan that tries each macro and keeps the best collects at least one, and the
+        # committed plan replayed from the start reaches the same score (determinism).
+        result = plan("sprites", decisions=4, hold=15, horizon=15, envs=2, seed=1, max_ticks=300, log=lambda *_: None)
+        self.assertEqual(result["decisions"], len(result["history"]))
+        self.assertGreaterEqual(result["score"], 1)
+        self.assertEqual(result["score"], result["steps"][-1]["score"])
+        self.assertTrue(all(m in [{"move_x": 1}, {"move_x": -1}, {"move_x": 1, "jump": True}, {"move_x": -1, "jump": True}, {}] for m in result["history"]))
 
     def test_agent_benchmark_reference_passes_and_null_fails(self):
         # The harness checks itself: its own solutions pass, an empty runner does not.

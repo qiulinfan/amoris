@@ -241,6 +241,7 @@ fields = [
     { name = "stretch", type = "f32", default = 0.0, doc = "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square." },
     { name = "child", type = "entity", default = 0, doc = "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none." },
     { name = "child_count", type = "i32", default = 8, doc = "Particles the child emits at each death." },
+    { name = "collide", type = "bool", default = false, doc = "Particles hit the physics bodies: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md)." },
 ]
 
 [[component]]

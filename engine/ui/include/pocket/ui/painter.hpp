@@ -47,6 +47,10 @@ class Painter {
     // Draw an image: a texture view (RGBA, sampled linearly) stretched over the rect, u0..u1 and
     // v0..v1 (0..1, v down) picking the part of it shown, tinted by color, corners rounded by radius.
     void image(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, Color tint, float radius = 0);
+    // Draw an image in nine slices: the part of the texture from (u0, v0) to (u1, v1), `pw` by
+    // `ph` pixels, split `left`, `top`, `right` and `bottom` pixels from its edges; the corners
+    // keep their pixel size (one point each), the edges stretch along, the middle fills the rest.
+    void image_sliced(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, float pw, float ph, float left, float top, float right, float bottom, Color tint);
     // Draw one line of text with its baseline placed so the text box starts at (x, y).
     // Returns the advance width in points.
     float text(float x, float y, std::string_view text, float size_points, Color color);

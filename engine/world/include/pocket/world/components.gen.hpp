@@ -306,6 +306,7 @@ struct ParticleEmitter {
     float stretch = 0.0f;
     std::uint64_t child = 0;
     std::int32_t child_count = 8;
+    bool collide = false;
     constexpr bool operator==(const ParticleEmitter&) const = default;
 };
 void to_json(Json& j, const ParticleEmitter& v);

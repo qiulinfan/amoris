@@ -858,6 +858,7 @@ void to_json(Json& j, const ParticleEmitter& v) {
     j["stretch"] = v.stretch;
     j["child"] = v.child;
     j["child_count"] = v.child_count;
+    j["collide"] = v.collide;
 }
 
 void from_json(const Json& j, ParticleEmitter& v) {
@@ -884,6 +885,7 @@ void from_json(const Json& j, ParticleEmitter& v) {
     scalar_from_json(j, "stretch", v.stretch);
     scalar_from_json(j, "child", v.child);
     scalar_from_json(j, "child_count", v.child_count);
+    scalar_from_json(j, "collide", v.collide);
 }
 
 void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
@@ -923,6 +925,7 @@ void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
     h.f32(v.stretch);
     h.i64(static_cast<std::int64_t>(v.child));
     h.i64(static_cast<std::int64_t>(v.child_count));
+    h.u8(v.collide ? 1 : 0);
 }
 
 std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out) {
@@ -1648,7 +1651,7 @@ constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine)."},
     FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick)."},
 }};
-constexpr std::array<FieldInfo, 23> kParticleEmitterFields = {{
+constexpr std::array<FieldInfo, 24> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
     FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate."},
     FieldInfo{"rate", "f32", "Particles per second while emitting."},
@@ -1672,6 +1675,7 @@ constexpr std::array<FieldInfo, 23> kParticleEmitterFields = {{
     FieldInfo{"stretch", "f32", "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square."},
     FieldInfo{"child", "entity", "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none."},
     FieldInfo{"child_count", "i32", "Particles the child emits at each death."},
+    FieldInfo{"collide", "bool", "Particles hit the physics bodies: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md)."},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},

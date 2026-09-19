@@ -45,6 +45,7 @@ struct Node {
     std::string image;               // a project-relative picture drawn over the background
     std::string fit = "contain";     // contain (inside, proportions kept), cover (cropped to fill), fill (stretched)
     float uv[4] = {0, 0, 1, 1};      // the part of the picture shown: u0, v0, u1, v1
+    float slice[4] = {0, 0, 0, 0};   // nine-slice borders in picture pixels: left, top, right, bottom (all 0: none)
     Color border_color{0, 0, 0, 0};
     float border_width = 0;
     float radius = 0;
@@ -61,6 +62,8 @@ struct Node {
     std::string value;       // input
     std::string placeholder;
     int caret = 0;
+    bool multiline = false;  // input: Return is a new line (with meta or ctrl it commits), Up and Down move by lines
+    int first_line = 0;      // multiline input: the first line shown, kept so the caret's line stays in view
     std::uint32_t listeners = 0;
     // Layout results (absolute, points)
     Rect rect;
@@ -121,6 +124,16 @@ std::string color_hex(Color c) {
     char buf[16];
     std::snprintf(buf, sizeof buf, "#%02x%02x%02x%s", static_cast<int>(std::lround(c.r * 255)), static_cast<int>(std::lround(c.g * 255)), static_cast<int>(std::lround(c.b * 255)), c.a < 0.999f ? std::to_string(static_cast<int>(std::lround(c.a * 100))).insert(0, "@").c_str() : "");
     return buf;
+}
+
+// The bounds of the line a byte offset is on, for multi-line inputs.
+std::size_t line_start_of(const std::string& v, std::size_t at) {
+    const std::size_t nl = at == 0 ? std::string::npos : v.rfind('\n', at - 1);
+    return nl == std::string::npos ? 0 : nl + 1;
+}
+std::size_t line_end_of(const std::string& v, std::size_t at) {
+    const std::size_t nl = v.find('\n', at);
+    return nl == std::string::npos ? v.size() : nl;
 }
 
 std::size_t utf8_prev(const std::string& s, std::size_t i) {
@@ -193,7 +206,8 @@ struct Document::Impl {
         float line_h = m.line_height / self->scale;
         float max_w = wm == YGMeasureModeUndefined ? 1e9f : w;
         std::vector<std::string> lines;
-        self->wrap(text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines);
+        if (n->type == "input" && n->multiline) split_lines(text, lines);
+        else self->wrap(text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines);
         float widest = 0;
         for (const auto& l : lines) widest = std::max(widest, self->font.measure(l, px) / self->scale);
         if (lines.empty()) lines.push_back("");
@@ -201,8 +215,20 @@ struct Document::Impl {
         n->measured_width = max_w;
         YGSize size;
         size.width = wm == YGMeasureModeExactly ? w : std::min(std::ceil(widest) + (n->type == "input" ? 2.0f : 0.0f), max_w);
-        size.height = std::ceil(line_h * static_cast<float>(lines.size()));
+        size.height = std::ceil(line_h * static_cast<float>(lines.size())) + (n->type == "input" && n->multiline ? 4.0f : 0.0f);
         return size;
+    }
+
+    // A value's lines, split at newlines (the last line may be empty when the value ends with one).
+    static void split_lines(const std::string& text, std::vector<std::string>& lines) {
+        lines.clear();
+        std::size_t start = 0;
+        for (;;) {
+            const std::size_t nl = text.find('\n', start);
+            if (nl == std::string::npos) { lines.push_back(text.substr(start)); break; }
+            lines.push_back(text.substr(start, nl - start));
+            start = nl + 1;
+        }
     }
 
     void wrap(const std::string& text, float size_points, float max_width, std::vector<std::string>& lines) const {
@@ -290,6 +316,11 @@ struct Document::Impl {
             else if (k == "image") n.image = v.is_string() ? v.get<std::string>() : "";
             else if (k == "fit") n.fit = v.is_string() ? v.get<std::string>() : "contain";
             else if (k == "uv") { if (v.is_array() && v.size() == 4) for (std::size_t i = 0; i < 4; ++i) n.uv[i] = v[i].is_number() ? v[i].get<float>() : n.uv[i]; }
+            else if (k == "slice") {
+                if (v.is_array() && v.size() == 4) for (std::size_t i = 0; i < 4; ++i) n.slice[i] = v[i].is_number() ? std::max(0.0f, v[i].get<float>()) : 0.0f;
+                else if (v.is_number()) for (float& e : n.slice) e = std::max(0.0f, v.get<float>());
+                else for (float& e : n.slice) e = 0;
+            }
             else if (k == "borderColor") n.border_color = parse_color(v, n.border_color);
             else if (k == "border" || k == "borderWidth") { n.border_width = v.is_number() ? v.get<float>() : 0.0f; YGNodeStyleSetBorder(y, YGEdgeAll, n.border_width); }
             else if (k == "radius" || k == "borderRadius") n.radius = v.get<float>();
@@ -301,6 +332,7 @@ struct Document::Impl {
             else if (k == "text") { n.text = v.is_string() ? v.get<std::string>() : v.dump(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "value") { n.value = v.is_string() ? v.get<std::string>() : v.dump(); n.caret = static_cast<int>(n.value.size()); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "placeholder") n.placeholder = v.get<std::string>();
+            else if (k == "multiline") { n.multiline = v.is_boolean() && v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "name") n.name = v.get<std::string>();
             else if (k == "disabled") n.disabled = v.get<bool>();
             else if (k == "on") {
@@ -350,7 +382,10 @@ struct Document::Impl {
                 Rect box = r;
                 float u0 = n.uv[0], v0 = n.uv[1], u1 = n.uv[2], v1 = n.uv[3];
                 const float pw = src.width * (u1 - u0), ph = src.height * (v1 - v0);
-                if (n.fit == "contain" && pw > 0 && ph > 0) {
+                if (n.slice[0] > 0 || n.slice[1] > 0 || n.slice[2] > 0 || n.slice[3] > 0) {
+                    // Nine slices fill the box whatever `fit` says: a frame keeps its corners.
+                    p.image_sliced(r, src.view, u0, v0, u1, v1, pw, ph, n.slice[0], n.slice[1], n.slice[2], n.slice[3], Color{1, 1, 1, op});
+                } else if (n.fit == "contain" && pw > 0 && ph > 0) {
                     const float s = std::min(r.w / pw, r.h / ph);
                     box = {r.x + (r.w - pw * s) * 0.5f, r.y + (r.h - ph * s) * 0.5f, pw * s, ph * s};
                 } else if (n.fit == "cover" && pw > 0 && ph > 0) {
@@ -359,7 +394,7 @@ struct Document::Impl {
                     const float cu = (u0 + u1) * 0.5f, cv = (v0 + v1) * 0.5f;
                     u0 = cu - vw * 0.5f; u1 = cu + vw * 0.5f; v0 = cv - vh * 0.5f; v1 = cv + vh * 0.5f;
                 }
-                p.image(box, src.view, u0, v0, u1, v1, Color{1, 1, 1, op}, n.radius);
+                if (n.slice[0] <= 0 && n.slice[1] <= 0 && n.slice[2] <= 0 && n.slice[3] <= 0) p.image(box, src.view, u0, v0, u1, v1, Color{1, 1, 1, op}, n.radius);
             }
         }
         if (n.border_width > 0 && n.border_color.a > 0) p.border(r, n.border_color.with_alpha(op), n.border_width, n.radius);
@@ -367,7 +402,33 @@ struct Document::Impl {
             Rect inner{r.x + YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) + n.border_width, r.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width, r.w - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - YGNodeLayoutGetPadding(n.yoga, YGEdgeRight) - 2 * n.border_width, r.h - YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) - YGNodeLayoutGetPadding(n.yoga, YGEdgeBottom) - 2 * n.border_width};
             p.push_clip(inner);
             float lh = p.line_height(n.font_size);
-            if (n.type == "input") {
+            if (n.type == "input" && n.multiline) {
+                // Lines from the top, the first shown chosen so the caret's line is in view; the caret on its line.
+                bool placeholder = n.value.empty();
+                Color c = placeholder ? n.color.with_alpha(0.45f * op) : n.color.with_alpha(op);
+                std::vector<std::string> lines;
+                split_lines(placeholder ? n.placeholder : n.value, lines);
+                const std::size_t caret = static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size())));
+                int caret_line = 0;
+                std::size_t line_start = 0;
+                for (std::size_t i = 0; i < caret && i < n.value.size(); ++i) if (n.value[i] == '\n') { ++caret_line; line_start = i + 1; }
+                const int visible = std::max(1, static_cast<int>(std::floor((inner.h - 4) / std::max(lh, 1.0f))));
+                if (caret_line < n.first_line) n.first_line = caret_line;
+                if (caret_line >= n.first_line + visible) n.first_line = caret_line - visible + 1;
+                n.first_line = std::clamp(n.first_line, 0, std::max(0, static_cast<int>(lines.size()) - 1));
+                float ty = inner.y + 2;
+                for (std::size_t i = static_cast<std::size_t>(n.first_line); i < lines.size() && ty < inner.y + inner.h; ++i) {
+                    p.text(inner.x + 1, ty, lines[i], n.font_size, c);
+                    ty += lh;
+                }
+                if (focused == n.id && !placeholder) {
+                    const float cx = inner.x + 1 + p.measure(n.value.substr(line_start, caret - line_start), n.font_size);
+                    const float cy = inner.y + 2 + static_cast<float>(caret_line - n.first_line) * lh;
+                    p.rect({cx, cy + 1, 1, lh - 2}, n.color.with_alpha(op));
+                } else if (focused == n.id) {
+                    p.rect({inner.x + 1, inner.y + 3, 1, lh - 2}, n.color.with_alpha(op));
+                }
+            } else if (n.type == "input") {
                 bool placeholder = n.value.empty();
                 const std::string& shown = placeholder ? n.placeholder : n.value;
                 Color c = placeholder ? n.color.with_alpha(0.45f * op) : n.color.with_alpha(op);
@@ -439,7 +500,11 @@ struct Document::Impl {
         if (!n.name.empty()) out << " " << n.name;
         if (o.layout) out << " [" << std::lround(n.rect.x) << "," << std::lround(n.rect.y) << " " << std::lround(n.rect.w) << "x" << std::lround(n.rect.h) << "]";
         if (n.type == "text") out << " \"" << (n.text.size() > 60 ? n.text.substr(0, 57) + "..." : n.text) << "\"";
-        if (n.type == "input") out << " value=\"" << n.value << "\"" << (n.placeholder.empty() ? "" : " placeholder=\"" + n.placeholder + "\"");
+        if (n.type == "input") {
+            std::string shown = n.value;
+            for (std::size_t at = shown.find('\n'); at != std::string::npos; at = shown.find('\n', at + 2)) shown.replace(at, 1, "\\n");
+            out << " value=\"" << shown << "\"" << (n.placeholder.empty() ? "" : " placeholder=\"" + n.placeholder + "\"") << (n.multiline ? " multiline" : "");
+        }
         if (o.styles && n.background.a > 0) out << " bg=" << color_hex(n.background);
         if (n.listeners) {
             out << " on=";
@@ -762,11 +827,33 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                         consumed = true;
                     } else if (ev.key_name == "Left") { caret = utf8_prev(v, caret); consumed = true; }
                     else if (ev.key_name == "Right") { caret = utf8_next(v, caret); consumed = true; }
-                    else if (ev.key_name == "Home") { caret = 0; consumed = true; }
-                    else if (ev.key_name == "End") { caret = v.size(); consumed = true; }
-                    else if (ev.key_name == "Return" || ev.key_name == "Keypad Enter") {
-                        NodeId ct = im.listener_target(im.focused, kChange);
-                        if (ct) emit(ct, "change", Json{{"value", v}});
+                    else if (ev.key_name == "Home") { caret = n->multiline ? line_start_of(v, caret) : 0; consumed = true; }
+                    else if (ev.key_name == "End") { caret = n->multiline ? line_end_of(v, caret) : v.size(); consumed = true; }
+                    else if (n->multiline && (ev.key_name == "Up" || ev.key_name == "Down")) {
+                        // The same column on the line above or below (or the ends when there is none).
+                        const std::size_t ls = line_start_of(v, caret), col = caret - ls;
+                        if (ev.key_name == "Up") {
+                            if (ls == 0) caret = 0;
+                            else { const std::size_t ps = line_start_of(v, ls - 1); caret = std::min(ps + col, ls - 1); }
+                        } else {
+                            const std::size_t le = line_end_of(v, caret);
+                            if (le >= v.size()) caret = v.size();
+                            else { const std::size_t ns = le + 1; caret = std::min(ns + col, line_end_of(v, ns)); }
+                        }
+                        consumed = true;
+                    } else if (ev.key_name == "Return" || ev.key_name == "Keypad Enter") {
+                        bool commit = !n->multiline;
+                        for (const Json& m : platform::mods_to_json(ev.mods)) if (m == "meta" || m == "ctrl") commit = true;
+                        if (commit) {
+                            NodeId ct = im.listener_target(im.focused, kChange);
+                            if (ct) emit(ct, "change", Json{{"value", v}});
+                        } else {
+                            v.insert(caret, "\n");
+                            ++caret;
+                            if (YGNodeHasMeasureFunc(n->yoga)) YGNodeMarkDirty(n->yoga);
+                            NodeId it = im.listener_target(im.focused, kInput);
+                            if (it) emit(it, "input", Json{{"value", v}});
+                        }
                         consumed = true;
                     } else if (ev.key_name == "Escape") { set_focus_to(0); consumed = true; }
                     n->caret = static_cast<int>(caret);
@@ -842,7 +929,7 @@ Json Document::describe(NodeId id) const {
     j["children"] = n->children;
     j["rect"] = Json{{"x", n->rect.x}, {"y", n->rect.y}, {"w", n->rect.w}, {"h", n->rect.h}};
     if (n->type == "text") j["text"] = n->text;
-    if (n->type == "input") { j["value"] = n->value; j["placeholder"] = n->placeholder; j["caret"] = n->caret; }
+    if (n->type == "input") { j["value"] = n->value; j["placeholder"] = n->placeholder; j["caret"] = n->caret; if (n->multiline) j["multiline"] = true; }
     j["visible"] = n->visible;
     j["focused"] = impl_->focused == id;
     if (n->scroll) { j["scrollTop"] = n->scroll_y; j["contentHeight"] = n->content_height; }
@@ -851,6 +938,7 @@ Json Document::describe(NodeId id) const {
     if (!n->image.empty()) {
         j["image"] = n->image;
         j["fit"] = n->fit;
+        if (n->slice[0] > 0 || n->slice[1] > 0 || n->slice[2] > 0 || n->slice[3] > 0) j["slice"] = Json::array({n->slice[0], n->slice[1], n->slice[2], n->slice[3]});
     }
     return j;
 }

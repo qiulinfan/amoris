@@ -913,7 +913,7 @@ TEST_CASE("animated tiles show the frame the simulation clock is at", "[runtime]
     for (const Json& l : s.command("tilemap.tile", Json{{"entity", "Level"}, {"tile_x", 0}, {"tile_y", 8}}).value()["layers"]) if (l["layer"] == "ground") REQUIRE_FALSE(l.contains("frame"));
 }
 
-TEST_CASE("an isometric map is drawn, asked, and left alone by bodies and the grid", "[runtime][tilemap][isomap]") {
+TEST_CASE("an isometric map is drawn, asked, walked by the grid and left alone by bodies", "[runtime][tilemap][isomap]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
     o.bundle = root() / "build" / "ts" / "sprites.js";
@@ -961,8 +961,11 @@ TEST_CASE("an isometric map is drawn, asked, and left alone by bodies and the gr
     Json drop = s.command("world.get", Json{{"entity", "Drop"}, {"component", "Transform"}}).value();
     REQUIRE(drop["position"]["y"].get<double>() < -1.75);
     REQUIRE(s.command("world.get", Json{{"entity", "Drop"}, {"component", "Body2D"}}).value()["grounded"] == false);
-    // And the grid does not bake from it.
-    REQUIRE(s.command("nav.bake", Json{{"entity", "Iso"}, {"mode", "topdown"}}).error().code == "bad_tilemap");
+    // The top-down grid bakes from it as a grid of diamonds (the platformer mode refuses).
+    Json baked = s.command("nav.bake", Json{{"entity", "Iso"}, {"mode", "topdown"}}).value();
+    REQUIRE(baked["layout"] == "isometric");
+    REQUIRE(baked["walkable"].get<int>() == 7);   // five cells hold the solid tile
+    REQUIRE(s.command("nav.bake", Json{{"entity", "Iso"}, {"mode", "platformer"}}).error().code == "bad_tilemap");
 }
 
 TEST_CASE("an entity's copy of a map is edited apart from the map and outlives a reload", "[runtime][tilemap][mapcopy]") {
@@ -2633,5 +2636,137 @@ TEST_CASE("an interface box draws a project image, fitted, cropped or stretched,
     c = s.command("capture", Json::object()).value();
     INFO(c["center_pixel"].dump() << " vs plain " << plain.dump());
     for (int i = 0; i < 3; ++i) REQUIRE(px(c["center_pixel"], i) == Catch::Approx(px(plain, i)).margin(2));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a mesh with alpha under one is drawn translucent over what is behind it, after the opaque meshes", "[runtime][render][translucent]") {
+    app::Session s(hello_options(200));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const Json plain = s.command("capture", Json::object()).value()["center_pixel"];
+    const auto px = [](const Json& p, int i) { return p[i].get<int>(); };
+    // A red pane between the camera (0, 2.5, 7, looking at the ball) and the scene, over the middle of the frame.
+    Json pane;
+    pane["name"] = "Pane";
+    pane["components"]["Transform"] = Json{{"position", {{"x", 0.0}, {"y", 1.5}, {"z", 3.0}}}, {"scale", {{"x", 3.0}, {"y", 3.0}, {"z", 0.05}}}};
+    pane["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", {{"r", 1.0}, {"g", 0.0}, {"b", 0.0}, {"a", 0.5}}}};
+    REQUIRE(s.command("world.spawn", pane).has_value());
+    REQUIRE(s.frame().has_value());
+    Json half = s.command("capture", Json::object()).value();
+    INFO("plain " << plain.dump() << " half " << half["center_pixel"].dump() << " stats " << half["render"].dump());
+    REQUIRE(half["render"]["translucent"] == 1);
+    // Half red over the scene: redder than the scene, but the scene still shows (green and blue not gone).
+    REQUIRE(px(half["center_pixel"], 0) > px(plain, 0) + 20);
+    REQUIRE(px(half["center_pixel"], 1) > 8);
+    REQUIRE(px(half["center_pixel"], 2) > 8);
+    // Opaque, the pane hides the scene: red, nothing of the scene's green and blue.
+    REQUIRE(s.command("world.set", Json{{"entity", "Pane"}, {"component", "MeshRenderer"}, {"value", Json{{"color", {{"r", 1.0}, {"g", 0.0}, {"b", 0.0}, {"a", 1.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json opaque = s.command("capture", Json::object()).value();
+    INFO("opaque " << opaque["center_pixel"].dump());
+    REQUIRE(opaque["render"]["translucent"] == 0);
+    REQUIRE(px(opaque["center_pixel"], 0) > px(half["center_pixel"], 0));
+    REQUIRE(px(opaque["center_pixel"], 1) < 8);
+    REQUIRE(px(opaque["center_pixel"], 2) < 8);
+    // Behind an opaque wall, a translucent mesh does not show: the depth test still applies to it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Pane"}, {"component", "MeshRenderer"}, {"value", Json{{"color", {{"r", 1.0}, {"g", 0.0}, {"b", 0.0}, {"a", 0.5}}}}}}).has_value());
+    Json wall;
+    wall["name"] = "Wall";
+    wall["components"]["Transform"] = Json{{"position", {{"x", 0.0}, {"y", 1.5}, {"z", 4.0}}}, {"scale", {{"x", 3.0}, {"y", 3.0}, {"z", 0.05}}}};
+    wall["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", {{"r", 0.0}, {"g", 0.0}, {"b", 1.0}, {"a", 1.0}}}};
+    REQUIRE(s.command("world.spawn", wall).has_value());
+    REQUIRE(s.frame().has_value());
+    Json walled = s.command("capture", Json::object()).value();
+    INFO("walled " << walled["center_pixel"].dump());
+    REQUIRE(px(walled["center_pixel"], 2) > px(walled["center_pixel"], 0) + 20);   // the blue wall, no red over it
+    // The pane is still picked through its id.
+    Json pick = s.command("render.pick", Json{{"x", 64}, {"y", 36}}).value();   // the frame is 128 by 72
+    REQUIRE(pick["name"] == "Wall");
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("colliding particles land on the physics bodies and the rest fall through", "[runtime][particles][collide]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "physics";
+    o.bundle = root() / "build" / "ts" / "physics.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // The ground's top under (2, 3, 2): what the sparks should come to rest on.
+    Json ray = s.command("physics.raycast", Json{{"origin", {{"x", 2.0}, {"y", 3.0}, {"z", 2.0}}}, {"direction", {{"x", 0.0}, {"y", -1.0}, {"z", 0.0}}}, {"max_distance", 10.0}}).value();
+    INFO(ray.dump());
+    REQUIRE(ray["path"] == "/Ground");
+    const double top = ray["point"]["y"].get<double>();
+    auto emitter = [&](const char* name, bool collide) {
+        Json fields = Json{{"emitting", false}, {"gravity", {{"x", 0}, {"y", -10}, {"z", 0}}}, {"lifetime", {{"x", 8}, {"y", 8}}}, {"speed", {{"x", 0.5}, {"y", 0.5}}}, {"direction", {{"x", 0}, {"y", -1}, {"z", 0}}}, {"spread", 10}, {"bounce", 0.2}, {"collide", collide}};
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", {{"x", 2.0}, {"y", 3.0}, {"z", 2.0}}}}}, {"ParticleEmitter", fields}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+        REQUIRE(s.command("particles.burst", Json{{"entity", name}, {"count", 30}}).has_value());
+    };
+    emitter("Dust", true);
+    emitter("Ghost", false);
+    for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());   // two seconds: a fall of three units takes under one
+    Json dust = s.command("particles.list", Json{{"entity", "Dust"}, {"limit", 100}}).value()["particles"];
+    Json ghost = s.command("particles.list", Json{{"entity", "Ghost"}, {"limit", 100}}).value()["particles"];
+    REQUIRE(dust.size() == 30);
+    REQUIRE(ghost.size() == 30);
+    int resting = 0;
+    for (const Json& p : dust) {
+        INFO(p.dump());
+        REQUIRE(p["position"]["y"].get<double>() >= top - 0.02);   // never through the ground
+        REQUIRE(p["position"]["y"].get<double>() <= top + 0.3);
+        resting += p["resting"] == true;
+    }
+    REQUIRE(resting == 30);
+    for (const Json& p : ghost) REQUIRE(p["position"]["y"].get<double>() < top - 2.0);   // through it, still falling
+    Json stats = s.command("particles.stats", Json::object()).value();
+    for (const Json& pl : stats["pools"]) {
+        if (pl["entity"] == s.command("world.find", Json{{"path", "Dust"}}).value()) REQUIRE(pl["landed"] == 30);
+    }
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a sliced image keeps its corners and stretches its middle", "[runtime][ui][image][slice]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // The first two tiles of the sheet (grass, dirt: 32 by 16 px) over a 200 by 16 box across the
+    // middle of the window, sliced 4 px on the left and 20 on the right: the middle 8 px of grass
+    // stretch over 176 points, so the window's center shows grass; the dirt tile filled instead
+    // shows dirt there.
+    Json ops = Json::array();
+    ops.push_back(Json::array({"create", 60, "box"}));
+    ops.push_back(Json::array({"set", 60, Json{{"position", "absolute"}, {"left", 60}, {"top", 82}, {"width", 200}, {"height", 16}, {"image", "assets/tiles.png"}, {"uv", Json::array({0.0, 0.0, 2.0 / 7.0, 1.0})}, {"slice", Json::array({4, 0, 20, 0})}, {"name", "frame"}}}));
+    ops.push_back(Json::array({"append", 1, 60}));
+    REQUIRE(s.command("ui.apply", Json{{"ops", ops}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json c = s.command("capture", Json::object()).value();
+    const auto px = [&](const Json& p, int i) { return p[i].get<int>(); };
+    INFO("sliced " << c["center_pixel"].dump());
+    REQUIRE(px(c["center_pixel"], 0) < 110);   // grass: (70..90, 160..180, 70)
+    REQUIRE(px(c["center_pixel"], 1) > 140);
+    Json d = s.command("ui.describe", Json{{"id", 60}}).value();
+    REQUIRE(d["slice"] == Json::array({4, 0, 20, 0}));
+    REQUIRE(s.command("ui.apply", Json{{"ops", Json::array({Json::array({"set", 60, Json{{"slice", 0}, {"fit", "fill"}, {"uv", Json::array({1.0 / 7.0, 0.0, 2.0 / 7.0, 1.0})}}})})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    c = s.command("capture", Json::object()).value();
+    INFO("filled " << c["center_pixel"].dump());
+    REQUIRE(px(c["center_pixel"], 0) > 115);   // dirt: (130..145, 90..105, 50)
+    REQUIRE(px(c["center_pixel"], 1) < 120);
     REQUIRE(s.finish().has_value());
 }

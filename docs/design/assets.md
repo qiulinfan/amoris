@@ -46,7 +46,7 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 ## Not yet
 
-Morph targets, animation blending, KHR extensions (texture transform, materials variants, draco), mipmaps and anisotropic filtering, normal/metallic-roughness/emissive maps, sRGB-correct shading, instantiating a glTF node tree as entities (today one file is one drawable), hot reload driven by file watching (assets change only through `assets.reload`), and audio or font assets through the same store.
+KHR extensions (texture transform, materials variants, draco), mipmaps and anisotropic filtering, sRGB-correct shading, alpha masks (`alphaMode: MASK` draws opaque; `BLEND` draws translucent, `docs/design/rendering.md`), instantiating a glTF node tree as entities (today one file is one drawable), and audio or font assets through the same store.
 
 ## Tile maps
 

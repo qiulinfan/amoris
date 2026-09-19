@@ -350,6 +350,26 @@ void Painter::border(const Rect& r, Color color, float thickness, float radius) 
     impl_->box(r, color, radius, 3.0f, thickness);
 }
 
+void Painter::image_sliced(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, float pw, float ph, float left, float top, float right, float bottom, Color tint) {
+    if (!view || pw <= 0 || ph <= 0 || r.w <= 0 || r.h <= 0) return;
+    // Slices no wider than the picture, and corners no wider than the box (scaled down together when it is small).
+    left = std::clamp(left, 0.0f, pw); right = std::clamp(right, 0.0f, pw - left);
+    top = std::clamp(top, 0.0f, ph); bottom = std::clamp(bottom, 0.0f, ph - top);
+    const float kx = left + right > r.w ? r.w / (left + right) : 1.0f, ky = top + bottom > r.h ? r.h / (top + bottom) : 1.0f;
+    const float xs[4] = {r.x, r.x + left * kx, r.x + r.w - right * kx, r.x + r.w};
+    const float ys[4] = {r.y, r.y + top * ky, r.y + r.h - bottom * ky, r.y + r.h};
+    const float du = (u1 - u0) / pw, dv = (v1 - v0) / ph;
+    const float us[4] = {u0, u0 + left * du, u1 - right * du, u1};
+    const float vs[4] = {v0, v0 + top * dv, v1 - bottom * dv, v1};
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            const Rect cell{xs[col], ys[row], xs[col + 1] - xs[col], ys[row + 1] - ys[row]};
+            if (cell.w <= 0 || cell.h <= 0) continue;
+            image(cell, view, us[col], vs[row], us[col + 1], vs[row + 1], tint, 0);
+        }
+    }
+}
+
 void Painter::image(const Rect& r_points, WGPUTextureView view, float u0, float v0, float u1, float v1, Color tint, float radius_points) {
     Impl& im = *impl_;
     if (!view) return;

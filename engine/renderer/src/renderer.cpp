@@ -344,6 +344,8 @@ struct Renderer::Impl {
     WGPUPipelineLayout layout = nullptr;
     WGPURenderPipeline pipeline = nullptr;
     WGPURenderPipeline skinned_pipeline = nullptr;
+    WGPURenderPipeline blend_pipeline = nullptr;           // the lit shading alpha blended, no depth writes
+    WGPURenderPipeline blend_skinned_pipeline = nullptr;
     WGPURenderPipeline shadow_skinned_pipeline = nullptr;
     WGPUBuffer joint_buffer = nullptr;
     std::vector<float> joint_staging;  // 16 floats per matrix
@@ -500,6 +502,8 @@ struct Renderer::Impl {
         if (line_buffer) wgpuBufferRelease(line_buffer);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
         if (skinned_pipeline) wgpuRenderPipelineRelease(skinned_pipeline);
+        if (blend_pipeline) wgpuRenderPipelineRelease(blend_pipeline);
+        if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
         if (joint_buffer) wgpuBufferRelease(joint_buffer);
         if (morph_buffer) wgpuBufferRelease(morph_buffer);
@@ -559,7 +563,7 @@ struct Renderer::Impl {
     }
 
     void release_scene_pipelines() {
-        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_sprite_pipeline}) {
+        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
         }
@@ -612,6 +616,26 @@ struct Renderer::Impl {
         rpd.vertex.buffers = vbls;
         skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!skinned_pipeline) return fail("gpu_pipeline_failed", "skinned pipeline creation failed");
+        // Translucent meshes: the same lit shading blended over what is behind, depth tested but
+        // not written (so they never hide each other), drawn after the opaque ones far to near.
+        WGPUBlendState mesh_blend{};
+        mesh_blend.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+        mesh_blend.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+        targets[0].blend = &mesh_blend;
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
+        ds.depthCompare = WGPUCompareFunction_LessEqual;
+        rpd.label = rhi::str("pocket.mesh.blend.skinned");
+        blend_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!blend_skinned_pipeline) return fail("gpu_pipeline_failed", "translucent skinned pipeline creation failed");
+        rpd.label = rhi::str("pocket.mesh.blend");
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
+        blend_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!blend_pipeline) return fail("gpu_pipeline_failed", "translucent pipeline creation failed");
+        targets[0].blend = nullptr;
+        ds.depthWriteEnabled = WGPUOptionalBool_True;
+        ds.depthCompare = WGPUCompareFunction_Less;
         rpd.vertex.entryPoint = rhi::str("vs");
         rpd.vertex.bufferCount = 1;
         rpd.vertex.buffers = &vbl;
@@ -1468,12 +1492,15 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         WGPUBindGroup material;
         ObjectUniforms object;
         bool skinned = false;
+        bool blend = false;   // translucent: after every opaque draw, far to near
+        float depth = 0;      // along the camera's forward, for that order
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
     std::uint32_t entities = 0;
     std::uint32_t skinned_instances = 0;
     std::uint32_t morphed_instances = 0;
+    std::uint32_t translucent_instances = 0;
     std::uint32_t moving_parts = 0;
     im.animation = animation;
     im.joint_count = 0;
@@ -1503,7 +1530,11 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ou.emissive[2] = mr.emissive.b + (mat ? mat->emissive.z : 0.0f);
             ou.emissive[3] = 0;
             WGPUBindGroup group = im.material_for(tex, mr_map, normal_map, em_map, false);
-            draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned});
+            const bool blend = color.w < 0.999f || (mat && mat->blend);
+            const Vec3 to_cam = t.position - im.camera.position;
+            const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
+            draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned, blend, depth});
+            if (blend) ++translucent_instances;
             ++count;
         };
         ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
@@ -1574,6 +1605,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ou.id[2] = 0;
     });
     std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
+        if (a.blend != b.blend) return !a.blend;            // opaque first
+        if (a.blend) return a.depth > b.depth;              // translucent far to near
         if (a.skinned != b.skinned) return !a.skinned;
         if (a.texture != b.texture) return a.texture < b.texture;
         if (a.mesh != b.mesh) return a.mesh < b.mesh;
@@ -1765,6 +1798,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.particles = particle_count;
     im.stats.tile_layers = tile_layers;
     im.stats.image_layers = image_layers;
+    im.stats.translucent = translucent_instances;
     im.stats.tile_rebuilds = im.tile_rebuilds;
     im.stats.tile_frames = im.tile_frames;
     im.stats.msaa = im.msaa_applied;
@@ -1797,23 +1831,28 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     ds.stencilStoreOp = WGPUStoreOp_Undefined;
     ds.stencilReadOnly = true;
     // Instanced runs of equal mesh, submesh and material; the same loop serves both passes.
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned) {
+    // The blend pipelines are given for the color pass only: the shadow and id passes draw a
+    // translucent mesh like any other (it casts a shadow and is picked).
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr) {
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
-        bool current_skinned = false;
+        bool current_skinned = false, current_blend = false;
         wgpuRenderPassEncoderSetPipeline(pass, plain);
         std::size_t i = 0;
         while (i < draws.size()) {
             const Draw& d = draws[i];
+            const bool blend = d.blend && blend_plain != nullptr;
             std::size_t run = 1;
             while (i + run < draws.size()) {
                 const Draw& n = draws[i + run];
-                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned) break;
+                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned || n.blend != d.blend) break;
+                if (blend && n.depth != d.depth) break;   // translucent instances keep their far-to-near order
                 ++run;
             }
-            if (d.skinned != current_skinned) {
-                wgpuRenderPassEncoderSetPipeline(pass, d.skinned ? skinned : plain);
+            if (d.skinned != current_skinned || blend != current_blend) {
+                wgpuRenderPassEncoderSetPipeline(pass, blend ? (d.skinned ? blend_skinned : blend_plain) : (d.skinned ? skinned : plain));
                 current_skinned = d.skinned;
+                current_blend = blend;
                 current_mesh = nullptr;
             }
             if (d.gpu != current_mesh) {
@@ -1929,7 +1968,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline);
     }
     if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.stats.draw_calls);
     if (debug && !debug->vertices().empty()) {
@@ -2065,6 +2104,7 @@ Json Renderer::describe() const {
     j["shadow_draws"] = s.shadow_draws;
     j["shadows"] = s.shadows;
     j["instances"] = s.instances;
+    j["translucent"] = s.translucent;
     j["sprites"] = s.sprites;
     j["particles"] = s.particles;
     j["skinned"] = s.skinned;

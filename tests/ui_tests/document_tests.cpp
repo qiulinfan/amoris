@@ -347,3 +347,60 @@ TEST_CASE("tab walks the focus through inputs and buttons, and Return presses th
     events = f.doc->handle_events({tab}, text_wanted);
     REQUIRE(f.doc->focused() == 43);
 }
+
+TEST_CASE("a multi-line input takes Return as a new line, moves by lines and commits with the modifier", "[ui][multiline]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 45, "input"], ["set", 45, {"position": "absolute", "left": 10, "top": 10, "width": 150, "height": 60, "multiline": true, "name": "notes", "on": ["input", "change"]}], ["append", 1, 45]
+    ])"));
+    f.layout();
+    bool text_wanted = false;
+    auto events = f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 20), mouse(platform::EventType::MouseUp, 20, 20)}, text_wanted);
+    REQUIRE(f.doc->focused() == 45);
+    platform::Event t;
+    t.type = platform::EventType::Text;
+    t.text = "ab";
+    platform::Event key;
+    key.type = platform::EventType::KeyDown;
+    key.key_name = "Return";
+    events = f.doc->handle_events({t, key}, text_wanted);
+    REQUIRE(events.size() == 2);
+    REQUIRE(events[1]["type"] == "input");
+    REQUIRE(events[1]["value"] == "ab\n");
+    t.text = "cd";
+    f.doc->handle_events({t}, text_wanted);
+    Json d = f.doc->describe(45);
+    REQUIRE(d["value"] == "ab\ncd");
+    REQUIRE(d["caret"] == 5);
+    REQUIRE(d["multiline"] == true);
+    // Up keeps the column on the line above; Home and End work along the line; Down comes back.
+    key.key_name = "Up";
+    f.doc->handle_events({key}, text_wanted);
+    REQUIRE(f.doc->describe(45)["caret"] == 2);
+    key.key_name = "Home";
+    f.doc->handle_events({key}, text_wanted);
+    REQUIRE(f.doc->describe(45)["caret"] == 0);
+    key.key_name = "End";
+    f.doc->handle_events({key}, text_wanted);
+    REQUIRE(f.doc->describe(45)["caret"] == 2);
+    key.key_name = "Down";
+    f.doc->handle_events({key}, text_wanted);
+    REQUIRE(f.doc->describe(45)["caret"] == 5);
+    // The modifier commits; the snapshot shows the newline escaped.
+    key.key_name = "Return";
+    key.mods = platform::mods_from_json(Json::array({"meta"}));
+    events = f.doc->handle_events({key}, text_wanted);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "change");
+    REQUIRE(events[0]["value"] == "ab\ncd");
+    ui::SnapshotOptions so;
+    std::string snap = f.doc->snapshot(so);
+    INFO(snap);
+    REQUIRE(snap.find("value=\"ab\\ncd\"") != std::string::npos);
+    REQUIRE(snap.find("multiline") != std::string::npos);
+    // Measured height grows with the lines when no height is set.
+    f.apply(Json::parse(R"([["create", 46, "input"], ["set", 46, {"position": "absolute", "left": 10, "top": 100, "width": 150, "multiline": true, "value": "one\ntwo\nthree"}], ["append", 1, 46]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(46).h > f.doc->rect_of(45).h * 0.5f);
+    REQUIRE(f.doc->rect_of(46).h >= 3 * 13);
+}

@@ -37,6 +37,7 @@ Json Mesh::describe() const {
         if (!m.emissive_texture.empty()) mj["emissive_texture"] = m.emissive_texture;
         if (m.emissive.x > 0 || m.emissive.y > 0 || m.emissive.z > 0) mj["emissive"] = Json{{"r", m.emissive.x}, {"g", m.emissive.y}, {"b", m.emissive.z}};
         if (m.double_sided) mj["double_sided"] = true;
+        if (m.blend) mj["blend"] = true;
         mats.push_back(mj);
     }
     j["materials"] = mats;
@@ -919,6 +920,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         Material mat;
         mat.name = m.value("name", "");
         mat.double_sided = m.value("doubleSided", false);
+        mat.blend = m.value("alphaMode", "OPAQUE") == "BLEND";
         if (m.contains("pbrMetallicRoughness")) {
             const Json& pbr = m["pbrMetallicRoughness"];
             if (pbr.contains("baseColorFactor") && pbr["baseColorFactor"].size() == 4) {
