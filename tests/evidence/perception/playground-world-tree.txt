@@ -1,0 +1,13 @@
+world: 12 entities, 3 roots, tick 240
+- Level #493 [Transform pos=(0,0,0) | WorldTransform]
+  - Ground #494 [Transform pos=(0,-0.5,0) scl=(20,1,20) | WorldTransform | MeshRenderer color=(0.35,0.4,0.3,1) | Bounds]
+  - Player #495 [Transform pos=(0,0.5,0) | WorldTransform | Health current=80 | MeshRenderer color=(0.2,0.6,0.9,1) | Bounds]
+    - Lamp #496 [Transform pos=(0,1.5,0) | WorldTransform | Light kind=1 intensity=2 range=6]
+  - Enemy_3 #503 [Transform pos=(-0.727,0.5,-1.695) | WorldTransform | Velocity lin=(0.985,0,2.298) | Health current=30 max=30 | MeshRenderer mesh="sphere" color=(0.9,0.25,0.2,1) | Bounds]
+    - Marker #504 [Transform pos=(0,0.9,0) scl=(0.2,0.2,0.2) | WorldTransform | MeshRenderer color=(1,0.9,0.2,1) | Bounds]
+  - Enemy #4294967795 [Transform pos=(1.562,0.5,3.79) | WorldTransform | Velocity lin=(-0.952,0,-2.311) | Health current=30 max=30 | MeshRenderer mesh="sphere" color=(0.9,0.25,0.2,1) | Bounds]
+    - Marker #4294967796 [Transform pos=(0,0.9,0) scl=(0.2,0.2,0.2) | WorldTransform | MeshRenderer color=(1,0.9,0.2,1) | Bounds]
+  - Enemy_4 #505 [Transform pos=(2.411,0.5,-5.362) | WorldTransform | Velocity lin=(-1.025,0,2.28) | Health current=30 max=30 | MeshRenderer mesh="sphere" color=(0.9,0.25,0.2,1) | Bounds]
+    - Marker #506 [Transform pos=(0,0.9,0) scl=(0.2,0.2,0.2) | WorldTransform | MeshRenderer color=(1,0.9,0.2,1) | Bounds]
+- Sun #497 [Transform pos=(0,0,0) rot=(-0.383,0,0,0.924) | WorldTransform | Light]
+- Camera #498 [Transform pos=(0,5,11) rot=(-0.191,0,0,0.982) | WorldTransform | Camera fov_degrees=50]

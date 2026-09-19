@@ -1,0 +1,3 @@
+transcript ticks 0-239 (2 segments)
+t0-1 (2 ticks): missing rising 0->1, yaw rising 0.01->0.02 | events: entity.spawnedx6(/Ground,/Crate,/Pyramid,/Missing)
+t2-239 (238 ticks): yaw rising 0.03->2.4

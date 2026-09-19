@@ -66,6 +66,24 @@ void hash_component(StateHasherRef& h, const Transform& v) {
     h.f32(v.scale.z);
 }
 
+std::size_t numeric_span(Transform& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "position") { *out = &v.position.x; return 3; }
+    if (path == "position.x") { *out = &v.position.x; return 1; }
+    if (path == "position.y") { *out = &v.position.y; return 1; }
+    if (path == "position.z") { *out = &v.position.z; return 1; }
+    if (path == "rotation") { *out = &v.rotation.x; return 4; }
+    if (path == "rotation.x") { *out = &v.rotation.x; return 1; }
+    if (path == "rotation.y") { *out = &v.rotation.y; return 1; }
+    if (path == "rotation.z") { *out = &v.rotation.z; return 1; }
+    if (path == "rotation.w") { *out = &v.rotation.w; return 1; }
+    if (path == "scale") { *out = &v.scale.x; return 3; }
+    if (path == "scale.x") { *out = &v.scale.x; return 1; }
+    if (path == "scale.y") { *out = &v.scale.y; return 1; }
+    if (path == "scale.z") { *out = &v.scale.z; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const WorldTransform& v) {
     j = Json::object();
     vec_to_json(j["position"], v.position);
@@ -92,6 +110,24 @@ void hash_component(StateHasherRef& h, const WorldTransform& v) {
     h.f32(v.scale.z);
 }
 
+std::size_t numeric_span(WorldTransform& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "position") { *out = &v.position.x; return 3; }
+    if (path == "position.x") { *out = &v.position.x; return 1; }
+    if (path == "position.y") { *out = &v.position.y; return 1; }
+    if (path == "position.z") { *out = &v.position.z; return 1; }
+    if (path == "rotation") { *out = &v.rotation.x; return 4; }
+    if (path == "rotation.x") { *out = &v.rotation.x; return 1; }
+    if (path == "rotation.y") { *out = &v.rotation.y; return 1; }
+    if (path == "rotation.z") { *out = &v.rotation.z; return 1; }
+    if (path == "rotation.w") { *out = &v.rotation.w; return 1; }
+    if (path == "scale") { *out = &v.scale.x; return 3; }
+    if (path == "scale.x") { *out = &v.scale.x; return 1; }
+    if (path == "scale.y") { *out = &v.scale.y; return 1; }
+    if (path == "scale.z") { *out = &v.scale.z; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Velocity& v) {
     j = Json::object();
     vec_to_json(j["linear"], v.linear);
@@ -112,6 +148,19 @@ void hash_component(StateHasherRef& h, const Velocity& v) {
     h.f32(v.angular.z);
 }
 
+std::size_t numeric_span(Velocity& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "linear") { *out = &v.linear.x; return 3; }
+    if (path == "linear.x") { *out = &v.linear.x; return 1; }
+    if (path == "linear.y") { *out = &v.linear.y; return 1; }
+    if (path == "linear.z") { *out = &v.linear.z; return 1; }
+    if (path == "angular") { *out = &v.angular.x; return 3; }
+    if (path == "angular.x") { *out = &v.angular.x; return 1; }
+    if (path == "angular.y") { *out = &v.angular.y; return 1; }
+    if (path == "angular.z") { *out = &v.angular.z; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Health& v) {
     j = Json::object();
     j["current"] = v.current;
@@ -128,6 +177,13 @@ void hash_component(StateHasherRef& h, const Health& v) {
     h.f32(v.max);
 }
 
+std::size_t numeric_span(Health& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "current") { *out = &v.current; return 1; }
+    if (path == "max") { *out = &v.max; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Lifetime& v) {
     j = Json::object();
     j["seconds"] = v.seconds;
@@ -139,6 +195,12 @@ void from_json(const Json& j, Lifetime& v) {
 
 void hash_component(StateHasherRef& h, const Lifetime& v) {
     h.f32(v.seconds);
+}
+
+std::size_t numeric_span(Lifetime& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "seconds") { *out = &v.seconds; return 1; }
+    return 0;
 }
 
 void to_json(Json& j, const Camera& v) {
@@ -161,6 +223,14 @@ void hash_component(StateHasherRef& h, const Camera& v) {
     h.f32(v.near);
     h.f32(v.far);
     h.u8(v.active ? 1 : 0);
+}
+
+std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "fov_degrees") { *out = &v.fov_degrees; return 1; }
+    if (path == "near") { *out = &v.near; return 1; }
+    if (path == "far") { *out = &v.far; return 1; }
+    return 0;
 }
 
 void to_json(Json& j, const Light& v) {
@@ -188,6 +258,18 @@ void hash_component(StateHasherRef& h, const Light& v) {
     h.f32(v.range);
 }
 
+std::size_t numeric_span(Light& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "intensity") { *out = &v.intensity; return 1; }
+    if (path == "range") { *out = &v.range; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const MeshRenderer& v) {
     j = Json::object();
     j["mesh"] = v.mesh;
@@ -213,6 +295,16 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.u8(v.visible ? 1 : 0);
 }
 
+std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Bounds& v) {
     j = Json::object();
     vec_to_json(j["min"], v.min);
@@ -231,6 +323,19 @@ void hash_component(StateHasherRef& h, const Bounds& v) {
     h.f32(v.max.x);
     h.f32(v.max.y);
     h.f32(v.max.z);
+}
+
+std::size_t numeric_span(Bounds& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "min") { *out = &v.min.x; return 3; }
+    if (path == "min.x") { *out = &v.min.x; return 1; }
+    if (path == "min.y") { *out = &v.min.y; return 1; }
+    if (path == "min.z") { *out = &v.min.z; return 1; }
+    if (path == "max") { *out = &v.max.x; return 3; }
+    if (path == "max.x") { *out = &v.max.x; return 1; }
+    if (path == "max.y") { *out = &v.max.y; return 1; }
+    if (path == "max.z") { *out = &v.max.z; return 1; }
+    return 0;
 }
 
 void to_json(Json& j, const RigidBody& v) {
@@ -267,6 +372,17 @@ void hash_component(StateHasherRef& h, const RigidBody& v) {
     h.u8(v.sleeping ? 1 : 0);
 }
 
+std::size_t numeric_span(RigidBody& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "mass") { *out = &v.mass; return 1; }
+    if (path == "restitution") { *out = &v.restitution; return 1; }
+    if (path == "friction") { *out = &v.friction; return 1; }
+    if (path == "linear_damping") { *out = &v.linear_damping; return 1; }
+    if (path == "angular_damping") { *out = &v.angular_damping; return 1; }
+    if (path == "gravity_scale") { *out = &v.gravity_scale; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Collider& v) {
     j = Json::object();
     j["shape"] = v.shape;
@@ -291,6 +407,57 @@ void hash_component(StateHasherRef& h, const Collider& v) {
     h.f32(v.offset.y);
     h.f32(v.offset.z);
     h.u8(v.is_trigger ? 1 : 0);
+}
+
+std::size_t numeric_span(Collider& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 3; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "size.z") { *out = &v.size.z; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const AudioSource& v) {
+    j = Json::object();
+    j["clip"] = v.clip;
+    j["volume"] = v.volume;
+    j["pitch"] = v.pitch;
+    j["loop"] = v.loop;
+    j["autoplay"] = v.autoplay;
+    j["playing"] = v.playing;
+    j["voice"] = v.voice;
+}
+
+void from_json(const Json& j, AudioSource& v) {
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "volume", v.volume);
+    scalar_from_json(j, "pitch", v.pitch);
+    scalar_from_json(j, "loop", v.loop);
+    scalar_from_json(j, "autoplay", v.autoplay);
+    scalar_from_json(j, "playing", v.playing);
+    scalar_from_json(j, "voice", v.voice);
+}
+
+void hash_component(StateHasherRef& h, const AudioSource& v) {
+    h.str(v.clip);
+    h.f32(v.volume);
+    h.f32(v.pitch);
+    h.u8(v.loop ? 1 : 0);
+    h.u8(v.autoplay ? 1 : 0);
+    h.u8(v.playing ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.voice));
+}
+
+std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "volume") { *out = &v.volume; return 1; }
+    if (path == "pitch") { *out = &v.pitch; return 1; }
+    return 0;
 }
 
 namespace {
@@ -354,8 +521,17 @@ constexpr std::array<FieldInfo, 4> kColliderFields = {{
     FieldInfo{"offset", "vec3", "Local offset of the shape center."},
     FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response."},
 }};
+constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
+    FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
+    FieldInfo{"volume", "f32", "Linear gain, 0..4."},
+    FieldInfo{"pitch", "f32", "Playback rate multiplier."},
+    FieldInfo{"loop", "bool", "Restart when the clip ends."},
+    FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
+    FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
+    FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
+}};
 
-constexpr std::array<ComponentInfo, 11> kComponents = {{
+constexpr std::array<ComponentInfo, 12> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -367,6 +543,7 @@ constexpr std::array<ComponentInfo, 11> kComponents = {{
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
+    ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
 }};
 
 }  // namespace

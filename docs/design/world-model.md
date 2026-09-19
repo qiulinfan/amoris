@@ -56,3 +56,11 @@ The renderer writes an entity id into a second render target for every fragment.
 ## What is not there yet
 
 Typed-array access for hot component data (scripts currently pay one JSON round trip per call), the MCP wrapper (planned as `pocket mcp`, a thin stdio bridge to `/rpc`).
+
+## Scenes and prefabs
+
+A scene file (`scene.json`, `{"format": "pocket-scene", "entities": [...]}`) lists root entities with their serialized components and nested `children`. The same shape is a prefab: `world.instantiate {prefab: "prefabs/enemy.json", parent, name?, components?}` spawns the fragment under a parent, merging `components` onto the root (a partial patch, like `world.set`) and optionally renaming it; it returns the created roots and propagates world transforms immediately. `world.save_prefab {entity, path}` writes an entity and its descendants back as a fragment, and `world.load {path}` swaps in another scene file (levels). Prefab files are parsed once per session and re-read after a save. `pocket new <name>` creates a project with a scene, a crate prefab and a script that drops crates from it.
+
+## Typed arrays for hot loops
+
+Every world command moves JSON, which is right for an agent and for most gameplay and wrong for three thousand entities updated every tick. `world.pack {component, fields, with?, without?, name?, under?}` copies the requested numeric fields (float scalars, vectors, quaternions, colors, or one member such as `position.y`) of every matching entity into a `Float32Array` shared with the engine (`stride` floats per entity, offsets in `layout`) and their ids into a `Float64Array`; scripts edit the floats in place and `world.unpack` writes them back in one command. The buffers live in the engine and are only re-shared when they grow, so a tick costs two commands regardless of the entity count. `samples/swarm` moves 3000 cubes both ways and exposes the milliseconds each path takes; integers, booleans and strings are not packable (use `world.set`).

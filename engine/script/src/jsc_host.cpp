@@ -216,6 +216,9 @@ class JscHost final : public ScriptHost {
     void share_f32(std::string_view name, float* data, std::size_t count) override {
         share(name, kJSTypedArrayTypeFloat32Array, data, count * sizeof(float));
     }
+    void share_f64(std::string_view name, double* data, std::size_t count) override {
+        share(name, kJSTypedArrayTypeFloat64Array, data, count * sizeof(double));
+    }
     void share_u32(std::string_view name, std::uint32_t* data, std::size_t count) override {
         share(name, kJSTypedArrayTypeUint32Array, data, count * sizeof(std::uint32_t));
     }

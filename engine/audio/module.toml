@@ -1,0 +1,7 @@
+name = "pocket_audio"
+kind = "static_library"
+description = "Sound: WAV clips decoded through SDL, a deterministic voice model advanced by the simulation tick (so headless runs, tests and agents see the same play/stop/finish state as a window), and a software mixer that feeds an SDL3 audio stream when a device exists."
+sources = ["src/**/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core"]
+private_deps = ["sdl3"]

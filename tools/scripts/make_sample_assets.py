@@ -9,6 +9,7 @@ Everything is produced from code so the repository carries no third-party binari
   flat ones), a plain green material.
 
 Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samples/assets/assets)
+       python3 tools/scripts/make_sample_assets.py --sounds [dir]   WAV clips for samples/audio/assets
 """
 import base64
 import json
@@ -121,7 +122,43 @@ def write_gltf_embedded(path, doc, buf):
         json.dump(doc, f, separators=(",", ":"))
 
 
+def wav(path, samples, rate=22050, channels=1):
+    """16-bit PCM WAV from float samples in [-1, 1]."""
+    import math
+    data = b"".join(struct.pack("<h", int(max(-1.0, min(1.0, s)) * 32767)) for s in samples)
+    header = b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE" + b"fmt " + struct.pack("<IHHIIHH", 16, 1, channels, rate, rate * channels * 2, channels * 2, 16) + b"data" + struct.pack("<I", len(data))
+    with open(path, "wb") as f:
+        f.write(header + data)
+
+
+def make_sounds(out):
+    import math
+    os.makedirs(out, exist_ok=True)
+    rate = 22050
+    # beep: 440 Hz sine, 0.3 s with a short fade.
+    n = int(rate * 0.3)
+    beep = [math.sin(2 * math.pi * 440 * i / rate) * min(1.0, (n - i) / (rate * 0.05)) * 0.6 for i in range(n)]
+    wav(os.path.join(out, "beep.wav"), beep, rate)
+    # hum: two detuned sines, 1 s, loops cleanly (integer cycles).
+    n = rate
+    hum = [(math.sin(2 * math.pi * 110 * i / rate) + 0.5 * math.sin(2 * math.pi * 165 * i / rate)) * 0.25 for i in range(n)]
+    wav(os.path.join(out, "hum.wav"), hum, rate)
+    # click: 30 ms of decaying noise from a fixed LCG so the file is reproducible.
+    n = int(rate * 0.03)
+    seed = 12345
+    click = []
+    for i in range(n):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        click.append(((seed / 0x7FFFFFFF) * 2 - 1) * (1 - i / n) * 0.8)
+    wav(os.path.join(out, "click.wav"), click, rate)
+    for name in ("beep.wav", "hum.wav", "click.wav"):
+        print(name, os.path.getsize(os.path.join(out, name)), "bytes")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--sounds":
+        make_sounds(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "audio", "assets"))
+        return
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "assets", "assets")
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "checker.png"), "wb") as f:

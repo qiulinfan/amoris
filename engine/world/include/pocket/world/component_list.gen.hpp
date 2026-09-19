@@ -12,4 +12,5 @@
     X(MeshRenderer) \
     X(Bounds) \
     X(RigidBody) \
-    X(Collider)
+    X(Collider) \
+    X(AudioSource)

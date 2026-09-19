@@ -1,0 +1,9 @@
+{
+  "format": "pocket-scene",
+  "entities": [
+    { "name": "Enemy", "components": { "Transform": { "position": { "x": 0, "y": 0.5, "z": 0 } }, "MeshRenderer": { "mesh": "sphere", "color": { "r": 0.9, "g": 0.25, "b": 0.2, "a": 1 } }, "Health": { "current": 30, "max": 30 } },
+      "children": [
+        { "name": "Marker", "components": { "Transform": { "position": { "x": 0, "y": 0.9, "z": 0 }, "scale": { "x": 0.2, "y": 0.2, "z": 0.2 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 1, "g": 0.9, "b": 0.2, "a": 1 } } } }
+      ] }
+  ]
+}

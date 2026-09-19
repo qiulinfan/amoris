@@ -89,6 +89,13 @@ enum Command {
     Graph,
     /// Serve the Model Context Protocol over stdio: build, test, run and drive live sessions.
     Mcp,
+    /// Create a project: project.toml, a scene, a prefab, assets/ and a first script.
+    New {
+        name: String,
+        /// Parent directory (default projects/).
+        #[arg(long, default_value = "projects")]
+        dir: PathBuf,
+    },
     /// Pack a project into a self-contained folder (dist/<name>) that runs without the repository.
     Pack {
         target: String,
@@ -165,6 +172,7 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),
+        Command::New { name, dir } => commands::new_project(&ws, &name, &dir),
         Command::Pack { target, config, out, zip } => pack::pack(&ws, &config, &target, out.as_deref(), zip),
         Command::Editor { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, true) } else { commands::editor(&ws, &config, &target, &args) },
         Command::Mcp => {

@@ -116,3 +116,17 @@ Collision shape centered on the entity (plus offset). Box half extents come from
 | `offset` | vec3 | [0.0, 0.0, 0.0] | Local offset of the shape center. |
 | `is_trigger` | bool | false | Overlap events only, no collision response. |
 
+## AudioSource
+
+A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `clip` | string | "" | Project-relative WAV path such as assets/hum.wav. |
+| `volume` | f32 | 1.0 | Linear gain, 0..4. |
+| `pitch` | f32 | 1.0 | Playback rate multiplier. |
+| `loop` | bool | false | Restart when the clip ends. |
+| `autoplay` | bool | false | Start playing as soon as the component exists. |
+| `playing` | bool | false | Whether a voice is currently playing this source (written by the engine). |
+| `voice` | u32 | 0 | Id of the playing voice, 0 when silent (written by the engine). |
+

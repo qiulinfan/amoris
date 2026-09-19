@@ -16,12 +16,15 @@ What exists on the `agent-first` branch, how to verify it, and what is next. Eve
 | Assets: glTF 2.0 reader (.glb/.gltf, baked nodes, materials), stb_image decoding, AssetStore with project-relative paths, `assets.list/describe/reload/stats`, missing assets drawn magenta and reported | `engine/assets`, `docs/design/assets.md` | `assets_tests`, `renderer_tests` (`[assets]`) |
 | Physics: boxes and spheres, sequential impulses, sleeping, triggers, raycast, contact events | `engine/physics` | `physics_tests` |
 | Runtime: session with one command surface for scripts, HTTP JSON-RPC (`--serve`, `--paused`, `step`), input journal record/replay, reports with state hash, transcript, captures | `engine/app`, `engine/runtime` | `runtime_tests`, evidence transcripts |
-| SDK: `pocket` module (lifecycle, expose, log), `world`, `events`, `render`, `physics`, `transcript`, in-engine `test` | `sdk/runtime` | `tests/ts` |
+| SDK: `pocket` module (lifecycle, expose, log, onFrame), `world` (with prefabs: instantiate/savePrefab/loadScene), `events`, `render`, `physics`, `audio`, `ui`, `transcript`, in-engine `test` | `sdk/runtime` | `tests/ts` |
+| Typed arrays: `world.pack` / `world.unpack` share Float32/Float64 buffers with scripts for per-tick updates of thousands of entities; `samples/swarm` reports the cost of both paths | `engine/world`, `sdk/runtime/world.ts` | `tests/ts/world.test.ts`, `docs/evidence/swarm.md` |
+| Authoring: `pocket new <name>` scaffolds a runnable project (scene, crate prefab, WASD script with exposed state); prefabs and scene files by path through `world.instantiate` / `world.save_prefab` / `world.load {path}` | `tools/pocket/src/commands.rs`, `engine/world` | `runtime_tests` (`[prefab]`), `tests/ts/world.test.ts` |
 | Pocket UI: FreeType text (Noto Sans CJK), batched 2D painter, retained element tree with Yoga flexbox, hit testing, focus and text input, scrolling, text snapshots and synthetic input for agents, scene viewport; TSX with signals and a diffing reconciler; script contexts for editor + project | `engine/ui`, `sdk/runtime/ui.ts`, `docs/design/pocket-ui.md` | `ui_tests`, `tests/ts/ui.test.tsx`, `tests/evidence/ui/` |
 | Hot reload: `pocket run <project> --watch` and `pocket editor <project> --watch` rebundle on source changes and call `project.reload` over the control server; a bundle error keeps the previous scripts | `tools/pocket/src/watch.rs`, `project.reload` in `engine/app` | manual session in `tests/evidence/editor/watch.txt` |
 | Editor: `pocket editor <project>`; a TSX program in its own script context with toolbar (play/pause/step/stop, save, spawn, delete), hierarchy, scene pane (pick, orbit, zoom), schema-driven inspector, console/events/transcript; operable headless by agents | `editor/`, `docs/editor.md` | `runtime_tests` (`[editor]`), `tests/evidence/editor/` |
+| Audio: WAV clips via SDL, tick-driven voices (deterministic positions, loop/finish events), software mixer into an SDL3 stream, `AudioSource` component with autoplay, `audio.*` commands and SDK | `engine/audio`, `docs/design/audio.md` | `audio_tests` |
 | Packaging: `pocket pack <project> [--zip]` builds a self-contained folder (runtime, bundle, config, scene, assets, font, launcher) that runs and serves agents without the repository | `tools/pocket/src/pack.rs`, `docs/packaging.md` | CI packs `assets` and runs it headless |
-| Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal), ui (HUD, buttons, pause menu in TSX), assets (glTF crate and pyramid, checker texture, a missing asset) | `samples/` | headless runs in evidence |
+| Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal), ui (HUD, buttons, pause menu in TSX), assets (glTF crate and pyramid, checker texture, a missing asset), audio (looping hum, beeps, landing clicks) | `samples/` | headless runs in evidence |
 | Agent interface: `pocket mcp` with build/test/run tools and live sessions | `tools/pocket/src/mcp.rs`, `docs/mcp.md` | `tests/evidence/m3/mcp-session.txt` |
 
 ## Verify
@@ -46,6 +49,6 @@ The `transcript` field of any report, `GET /tree` on a served runtime, and the `
 ## Next
 
 1. Editor depth: undo/redo, gizmos, multi-selection, layout persistence; HarfBuzz shaping for the UI.
-2. Typed-array component views for hot loops (scripts pay one JSON round trip per call today).
+2. Input mapping (actions, gamepads), tweening helpers, editor undo and gizmos.
 3. Agent eval suite and the perception-efficiency benchmark from `docs/design/agent-perception.md`.
 4. Web export (M6). Asset loading and packaging are done; skins, animations and PBR maps are not.

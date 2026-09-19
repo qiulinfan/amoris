@@ -27,6 +27,8 @@ struct ComponentOps {
     void (*remove)(flecs::entity);
     void (*hash)(StateHasherRef&, flecs::entity);
     Json (*defaults)();
+    std::size_t (*span)(flecs::entity, std::string_view, float**);  // numeric field floats (mutable)
+    void (*modified)(flecs::entity);
 };
 
 #define POCKET_OPS(C)                                                                                   \
@@ -37,7 +39,9 @@ struct ComponentOps {
         [](flecs::entity e, const Json& j) { C v = e.has<C>() ? e.get<C>() : C{}; from_json(j, v); e.set<C>(v); }, \
         [](flecs::entity e) { e.remove<C>(); },                                                         \
         [](StateHasherRef& h, flecs::entity e) { hash_component(h, e.get<C>()); },                      \
-        []() { Json j; to_json(j, C{}); return j; }},
+        []() { Json j; to_json(j, C{}); return j; },                                                    \
+        [](flecs::entity e, std::string_view path, float** out) { return numeric_span(e.get_mut<C>(), path, out); }, \
+        [](flecs::entity e) { e.modified<C>(); }},
 
 const std::vector<ComponentOps>& ops_table() {
     static const std::vector<ComponentOps> table = [] {
@@ -610,6 +614,99 @@ Json World::schema() {
     return j;
 }
 
+Result<World::PackInfo> World::pack(std::string_view component, const std::vector<std::string>& fields, const QueryOptions& options, std::vector<float>& data, std::vector<double>& ids) const {
+    const ComponentOps* op = find_ops(component);
+    if (!op) return fail("no_such_component", "unknown component '{}'", component);
+    if (fields.empty()) return fail("bad_args", "pack needs at least one field");
+    PackInfo info;
+    // Field sizes from the default value.
+    {
+        flecs::entity probe = impl_->ecs.entity();
+        op->set(probe, Json::object());
+        for (const auto& f : fields) {
+            float* p = nullptr;
+            std::size_t n = op->span(probe, f, &p);
+            if (n == 0) { probe.destruct(); return fail("bad_args", "{}.{} is not a numeric float field", component, f); }
+            info.layout.emplace_back(f, info.stride);
+            info.stride += n;
+        }
+        probe.destruct();
+    }
+    // Match like query() does (tree order, with/without/name/under/limit) but copy floats
+    // straight out of the components instead of building JSON rows.
+    std::vector<const ComponentOps*> with, without;
+    for (const auto& n : options.with) {
+        const ComponentOps* o = find_ops(n);
+        if (!o) return fail("no_such_component", "unknown component '{}'", n);
+        with.push_back(o);
+    }
+    for (const auto& n : options.without) {
+        const ComponentOps* o = find_ops(n);
+        if (!o) return fail("no_such_component", "unknown component '{}'", n);
+        without.push_back(o);
+    }
+    data.clear();
+    ids.clear();
+    std::vector<EntityId> starts = options.under ? children(options.under) : roots();
+    int count = 0;
+    bool truncated = false;
+    for (EntityId r : starts) {
+        if (truncated) break;
+        impl_->visit(r, 0, [&](EntityId id, int) {
+            if (truncated) return false;
+            flecs::entity e = impl_->ecs.entity(id);
+            if (!op->has(e)) return true;
+            for (auto* o : with) if (!o->has(e)) return true;
+            for (auto* o : without) if (o->has(e)) return true;
+            if (!options.name.empty() && !glob_match(options.name, name(id))) return true;
+            if (count >= options.limit) { truncated = true; return false; }
+            ids.push_back(static_cast<double>(id));
+            for (const auto& f : fields) {
+                float* p = nullptr;
+                std::size_t n = op->span(e, f, &p);
+                data.insert(data.end(), p, p + n);
+            }
+            ++count;
+            return true;
+        });
+    }
+    info.count = static_cast<std::size_t>(count);
+    return info;
+}
+
+Status World::unpack(std::string_view component, const std::vector<std::string>& fields, const double* ids, std::size_t count, const float* data) {
+    const ComponentOps* op = find_ops(component);
+    if (!op) return fail("no_such_component", "unknown component '{}'", component);
+    std::size_t written = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        auto id = static_cast<EntityId>(ids[i]);
+        flecs::entity e = impl_->ecs.entity(id);
+        const float* src = data;
+        bool ok = live(e) && op->has(e);
+        std::size_t stride = 0;
+        for (const auto& f : fields) {
+            float* p = nullptr;
+            std::size_t n = 0;
+            if (ok) n = op->span(e, f, &p);
+            else {
+                // Measure on a probe so the stride stays consistent for dead rows.
+                flecs::entity probe = impl_->ecs.entity();
+                op->set(probe, Json::object());
+                n = op->span(probe, f, &p);
+                probe.destruct();
+                p = nullptr;
+            }
+            if (n == 0) return fail("bad_args", "{}.{} is not a numeric float field", component, f);
+            if (p) std::copy_n(src + stride, n, p);
+            stride += n;
+        }
+        data += stride;
+        if (ok) { op->modified(e); ++written; }
+    }
+    (void)written;
+    return {};
+}
+
 void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
 
 void World::tick(double dt) {
@@ -675,7 +772,7 @@ std::uint64_t World::hash() const {
     return h.digest();
 }
 
-Json World::save() const {
+Json World::save_entity_json(EntityId id) const {
     std::function<Json(EntityId)> save_entity = [&](EntityId id) {
         flecs::entity e = impl_->ecs.entity(id);
         Json j;
@@ -693,13 +790,55 @@ Json World::save() const {
         }
         return j;
     };
+    return save_entity(id);
+}
+
+Json World::save() const {
     Json scene;
     scene["format"] = "pocket-scene";
     scene["version"] = 1;
     Json entities = Json::array();
-    for (EntityId r : roots()) entities.push_back(save_entity(r));
+    for (EntityId r : roots()) entities.push_back(save_entity_json(r));
     scene["entities"] = entities;
     return scene;
+}
+
+Json World::save_subtree(EntityId id) const {
+    Json scene;
+    scene["format"] = "pocket-scene";
+    scene["version"] = 1;
+    Json entities = Json::array();
+    if (alive(id)) entities.push_back(save_entity_json(id));
+    scene["entities"] = entities;
+    return scene;
+}
+
+Result<std::vector<EntityId>> World::instantiate(const Json& fragment, EntityId parent, const Json& overrides, std::string_view root_name, std::uint64_t cause) {
+    if (!fragment.is_object() || !fragment.contains("entities") || !fragment["entities"].is_array()) return fail("bad_scene", "a prefab is an object with an 'entities' array");
+    if (fragment.value("format", "pocket-scene") != "pocket-scene") return fail("bad_scene", "unknown scene format");
+    if (parent != 0 && !alive(parent)) return fail("no_such_entity", "parent {} is not alive", parent);
+    std::vector<EntityId> created;
+    std::function<Status(const Json&, EntityId, bool)> load_entity = [&](const Json& j, EntityId p, bool is_root) -> Status {
+        if (!j.is_object()) return fail("bad_scene", "entity entries must be objects");
+        std::string n = j.value("name", "");
+        if (is_root && !root_name.empty()) n = std::string(root_name);
+        Json comps = j.contains("components") && j["components"].is_object() ? j["components"] : Json::object();
+        if (is_root && overrides.is_object()) {
+            for (auto& [cname, patch] : overrides.items()) {
+                if (comps.contains(cname) && comps[cname].is_object() && patch.is_object()) comps[cname].merge_patch(patch);
+                else comps[cname] = patch;
+            }
+        }
+        POCKET_TRY(id, spawn(n, p, comps, cause));
+        if (is_root) created.push_back(id);
+        if (j.contains("children")) {
+            for (const auto& c : j["children"]) POCKET_TRY_VOID(load_entity(c, id, false));
+        }
+        return {};
+    };
+    for (const auto& e : fragment["entities"]) POCKET_TRY_VOID(load_entity(e, parent, true));
+    for (EntityId r : created) impl_->propagate(impl_->ecs.entity(r), parent ? impl_->ecs.entity(parent).try_get<WorldTransform>() : nullptr);
+    return created;
 }
 
 Status World::load(const Json& scene, bool clear_first) {

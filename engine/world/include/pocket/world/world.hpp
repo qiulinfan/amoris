@@ -94,6 +94,15 @@ class World {
     // Simulation -----------------------------------------------------------------------------
     // Runs the built-in systems (motion, lifetime, transform propagation) for one tick.
     void tick(double dt);
+    // Typed-array access for hot loops: copy numeric fields of one component for every matching
+    // entity into a flat float array (stride = sum of field sizes) plus their ids, and back.
+    struct PackInfo {
+        std::size_t count = 0;
+        std::size_t stride = 0;
+        std::vector<std::pair<std::string, std::size_t>> layout;  // field -> offset within the stride
+    };
+    Result<PackInfo> pack(std::string_view component, const std::vector<std::string>& fields, const QueryOptions& options, std::vector<float>& data, std::vector<double>& ids) const;
+    Status unpack(std::string_view component, const std::vector<std::string>& fields, const double* ids, std::size_t count, const float* data);
     // Local bounds of an asset mesh (by MeshRenderer.mesh path) so Bounds can be computed for it.
     void set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max);
     [[nodiscard]] std::int64_t tick_index() const;
@@ -104,6 +113,12 @@ class World {
     // Scenes ---------------------------------------------------------------------------------
     [[nodiscard]] Json save() const;
     Status load(const Json& scene, bool clear_first = true);
+    // Spawn a scene fragment (a prefab) under `parent`; `overrides` merge onto each root's components
+    // and `root_name` renames a single root. Returns the created roots.
+    Result<std::vector<EntityId>> instantiate(const Json& fragment, EntityId parent = 0, const Json& overrides = Json::object(), std::string_view root_name = "", std::uint64_t cause = 0);
+    // One entity with its descendants as a scene fragment (a prefab file's content).
+    [[nodiscard]] Json save_subtree(EntityId id) const;
+    [[nodiscard]] Json save_entity_json(EntityId id) const;
     void clear();
 
     [[nodiscard]] EventLog& events();

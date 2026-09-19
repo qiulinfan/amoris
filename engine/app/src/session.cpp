@@ -149,6 +149,11 @@ Status Session::start() {
     physics_ = std::make_unique<physics::Physics>();
     assets_ = std::make_unique<assets::AssetStore>(options_.project_dir);
     renderer_->set_assets(assets_.get());
+    audio::Config ac;
+    ac.project_dir = options_.project_dir;
+    ac.headless = options_.headless;
+    POCKET_TRY(audio, audio::Audio::create(ac));
+    audio_ = std::move(audio);
     if (project_.contains("physics") && project_["physics"].is_object()) {
         const Json& ph = project_["physics"];
         if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
@@ -194,6 +199,8 @@ void Session::bind_natives() {
         return nullptr;
     });
     host_->bind("random", [this](const Json&) -> Result<Json> { return rng_.next_double(); });
+    // Wall-clock milliseconds since the session started, for measuring script cost (never for gameplay).
+    host_->bind("now", [this](const Json&) -> Result<Json> { return total_.ms(); });
     host_->bind("info", [this](const Json&) -> Result<Json> {
         Json j;
         j["tickRate"] = options_.tick_rate;
@@ -280,6 +287,7 @@ void Session::run_tick() {
         dispatch("contacts", contacts);
     }
     world_->tick(clock_.tick_seconds);
+    if (audio_) tick_audio(clock_.tick_seconds);
     Json s = dispatch("state", nullptr);
     if (!s.is_object()) s = Json::object();
     last_state_ = s;
@@ -304,6 +312,7 @@ Status Session::run_ticks(int ticks) {
 }
 
 Status Session::render_frame() {
+    if (audio_) audio_->pump();
     auto frame = device_->begin_frame();
     if (!frame) return fail(frame.error());
     if (auto r = renderer_->render(*frame, *world_, clear_); !r) {
@@ -639,6 +648,101 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         return Json{{"ok", true}, {"version", assets_->version()}};
     }
     return fail("unknown_command", "unknown assets command '{}'", op);
+}
+
+Result<Json> Session::audio_command(std::string_view op, const Json& p) {
+    audio::Audio& a = *audio_;
+    auto voice_json = [](const audio::VoiceInfo& v) {
+        Json j;
+        j["id"] = v.id;
+        j["clip"] = v.clip;
+        j["position"] = v.position;
+        j["duration"] = v.duration;
+        j["volume"] = v.volume;
+        j["pitch"] = v.pitch;
+        j["pan"] = v.pan;
+        j["loop"] = v.loop;
+        j["entity"] = v.entity;
+        j["tag"] = v.tag;
+        j["loops_done"] = v.loops_done;
+        return j;
+    };
+    if (op == "play") {
+        std::string clip = opt<std::string>(p, "clip", "");
+        if (clip.empty()) return fail("bad_args", "play needs a clip path");
+        audio::PlayOptions o;
+        o.volume = static_cast<float>(opt<double>(p, "volume", 1.0));
+        o.pitch = static_cast<float>(opt<double>(p, "pitch", 1.0));
+        o.pan = static_cast<float>(opt<double>(p, "pan", 0.0));
+        o.loop = opt<bool>(p, "loop", false);
+        o.tag = opt<std::string>(p, "tag", "");
+        if (p.contains("entity") && !p["entity"].is_null()) o.entity = resolve_entity(p["entity"]);
+        POCKET_TRY(id, a.play(clip, o));
+        world_->events().emit(clock_.tick, "audio.started", o.entity, Json{{"clip", clip}, {"voice", id}, {"loop", o.loop}}, 0, "audio");
+        return Json{{"voice", id}, {"clip", clip}};
+    }
+    if (op == "stop") {
+        std::uint32_t n = 0;
+        if (p.contains("voice") && p["voice"].is_number()) n = a.stop(p["voice"].get<std::uint32_t>());
+        else if (p.contains("clip") && p["clip"].is_string()) n = a.stop_clip(p["clip"].get<std::string>());
+        else if (p.contains("tag") && p["tag"].is_string()) n = a.stop_tag(p["tag"].get<std::string>());
+        else n = a.stop_all();
+        return Json{{"stopped", n}};
+    }
+    if (op == "set") {
+        POCKET_TRY_VOID(a.set(static_cast<std::uint32_t>(opt<int>(p, "voice", 0)), p));
+        return Json{{"ok", true}};
+    }
+    if (op == "list") {
+        Json arr = Json::array();
+        for (const auto& v : a.voices()) arr.push_back(voice_json(v));
+        return arr;
+    }
+    if (op == "clips") return a.clips();
+    if (op == "stats") return a.describe();
+    if (op == "master") {
+        if (p.contains("volume") && p["volume"].is_number()) a.set_master_volume(p["volume"].get<float>());
+        if (p.contains("muted") && p["muted"].is_boolean()) a.set_muted(p["muted"].get<bool>());
+        return Json{{"master_volume", a.master_volume()}, {"muted", a.muted()}};
+    }
+    return fail("unknown_command", "unknown audio command '{}'", op);
+}
+
+// AudioSource components start their voices; voices report back; finished voices clear `playing`.
+void Session::tick_audio(double dt) {
+    world::World& w = *world_;
+    std::vector<std::pair<world::EntityId, world::AudioSource>> updates;
+    w.ecs().each([&](flecs::entity e, const world::AudioSource& src) {
+        if (src.autoplay && !src.playing && src.voice == 0 && !src.clip.empty()) {
+            audio::PlayOptions o;
+            o.volume = src.volume;
+            o.pitch = src.pitch;
+            o.loop = src.loop;
+            o.entity = e.id();
+            auto id = audio_->play(src.clip, o);
+            world::AudioSource next = src;
+            if (id) {
+                next.playing = true;
+                next.voice = *id;
+                w.events().emit(clock_.tick, "audio.started", e.id(), Json{{"clip", src.clip}, {"voice", *id}, {"loop", src.loop}}, 0, "audio");
+            } else {
+                next.autoplay = false;  // do not retry every tick; the error is logged once
+                log::warn("audio", "{}: {}", w.path(e.id()), id.error().to_string());
+            }
+            updates.emplace_back(e.id(), next);
+        }
+    });
+    for (auto& [id, next] : updates) w.ecs().entity(id).set<world::AudioSource>(next);
+    for (const audio::VoiceEvent& ev : audio_->tick(dt)) {
+        w.events().emit(clock_.tick, ev.type, ev.voice.entity, Json{{"clip", ev.voice.clip}, {"voice", ev.voice.id}, {"loops", ev.voice.loops_done}}, 0, "audio");
+        if (ev.type == "audio.finished" && ev.voice.entity) {
+            flecs::entity e = w.ecs().entity(ev.voice.entity);
+            if (e.is_alive() && e.has<world::AudioSource>()) {
+                world::AudioSource next = e.get<world::AudioSource>();
+                if (next.voice == ev.voice.id) { next.playing = false; next.voice = 0; e.set<world::AudioSource>(next); }
+            }
+        }
+    }
 }
 
 Result<Json> Session::ui_command(std::string_view op, const Json& p) {
@@ -1048,8 +1152,122 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     if (op == "schema") return world::World::schema();
     if (op == "save") return w.save();
     if (op == "load") {
-        POCKET_TRY_VOID(w.load(p.value("scene", Json::object()), opt<bool>(p, "clear", true)));
+        // An inline scene object, or a scene file by project-relative path.
+        Json scene = p.value("scene", Json::object());
+        std::string path = opt<std::string>(p, "path", "");
+        if (!path.empty()) {
+            std::filesystem::path base = std::filesystem::weakly_canonical(options_.project_dir);
+            std::filesystem::path full = std::filesystem::weakly_canonical(base / path);
+            auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
+            if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", path);
+            POCKET_TRY(text, fs::read_text(full));
+            scene = Json::parse(text, nullptr, false);
+            if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON", path);
+        }
+        POCKET_TRY_VOID(w.load(scene, opt<bool>(p, "clear", true)));
+        if (!path.empty()) w.events().emit(clock_.tick, "scene.loaded", 0, Json{{"path", path}, {"entities", w.entity_count()}}, 0, std::string(source));
         return Json{{"entities", w.entity_count()}};
+    }
+    if (op == "instantiate") {
+        Json fragment = p.value("scene", Json());
+        std::string prefab = opt<std::string>(p, "prefab", "");
+        if (!prefab.empty()) {
+            std::filesystem::path base = std::filesystem::weakly_canonical(options_.project_dir);
+            std::filesystem::path full = std::filesystem::weakly_canonical(base / prefab);
+            auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
+            if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", prefab);
+            auto it = prefab_cache_.find(prefab);
+            if (it == prefab_cache_.end()) {
+                POCKET_TRY(text, fs::read_text(full));
+                Json parsed = Json::parse(text, nullptr, false);
+                if (parsed.is_discarded()) return fail("bad_scene", "{} is not valid JSON", prefab);
+                it = prefab_cache_.emplace(prefab, std::move(parsed)).first;
+            }
+            fragment = it->second;
+        }
+        if (fragment.is_null()) return fail("bad_args", "instantiate needs a prefab path or a scene object");
+        world::EntityId parent = 0;
+        if (p.contains("parent") && !p["parent"].is_null()) {
+            parent = resolve_entity(p["parent"]);
+            if (!w.alive(parent)) return fail("no_such_entity", "no entity for {}", p["parent"].dump());
+        }
+        Json overrides = p.contains("components") && p["components"].is_object() ? p["components"] : Json::object();
+        std::uint64_t cause = static_cast<std::uint64_t>(opt<double>(p, "cause", 0));
+        POCKET_TRY(roots, w.instantiate(fragment, parent, overrides, opt<std::string>(p, "name", ""), cause));
+        Json j;
+        j["roots"] = roots;
+        if (!prefab.empty()) j["prefab"] = prefab;
+        return j;
+    }
+    if (op == "pack") {
+        // Numeric fields of one component for every matching entity, into Float32Array
+        // __pocket.__pack_data (stride floats per entity) and Float64Array __pocket.__pack_ids.
+        std::string component = opt<std::string>(p, "component", "");
+        std::vector<std::string> fields = string_list(p, "fields");
+        world::QueryOptions q;
+        q.with = string_list(p, "with");
+        q.without = string_list(p, "without");
+        q.name = opt<std::string>(p, "name", "");
+        q.limit = opt<int>(p, "limit", 1000000);
+        if (p.contains("under") && !p["under"].is_null()) q.under = resolve_entity(p["under"]);
+        std::vector<float> data;
+        std::vector<double> ids;
+        POCKET_TRY(info, w.pack(component, fields, q, data, ids));
+        // Grow shared buffers by doubling; a script may still reference an old buffer, so old
+        // storage is retired instead of freed.
+        if (data.size() > pack_data_capacity_) {
+            std::size_t cap = std::max<std::size_t>(data.size(), std::max<std::size_t>(pack_data_capacity_ * 2, 1024));
+            if (!pack_data_.empty()) retired_data_.push_back(std::move(pack_data_));
+            pack_data_ = std::vector<float>(cap, 0.0f);
+            pack_data_capacity_ = cap;
+            host_->share_f32("__pack_data", pack_data_.data(), cap);
+        }
+        if (ids.size() > pack_ids_capacity_) {
+            std::size_t cap = std::max<std::size_t>(ids.size(), std::max<std::size_t>(pack_ids_capacity_ * 2, 256));
+            if (!pack_ids_.empty()) retired_ids_.push_back(std::move(pack_ids_));
+            pack_ids_ = std::vector<double>(cap, 0.0);
+            pack_ids_capacity_ = cap;
+            host_->share_f64("__pack_ids", pack_ids_.data(), cap);
+        }
+        std::copy(data.begin(), data.end(), pack_data_.begin());
+        std::copy(ids.begin(), ids.end(), pack_ids_.begin());
+        last_pack_ = info;
+        last_pack_component_ = component;
+        last_pack_fields_ = fields;
+        Json j;
+        j["count"] = info.count;
+        j["stride"] = info.stride;
+        Json layout = Json::object();
+        for (auto& [f, off] : info.layout) layout[f] = off;
+        j["layout"] = layout;
+        return j;
+    }
+    if (op == "unpack") {
+        // Write the shared buffers back for the rows of the last pack (or a given count).
+        if (last_pack_component_.empty()) return fail("bad_args", "nothing packed yet");
+        std::string component = opt<std::string>(p, "component", last_pack_component_);
+        std::vector<std::string> fields = p.contains("fields") ? string_list(p, "fields") : last_pack_fields_;
+        auto count = static_cast<std::size_t>(opt<int>(p, "count", static_cast<int>(last_pack_.count)));
+        if (count > pack_ids_capacity_ || count * last_pack_.stride > pack_data_capacity_) return fail("bad_args", "count exceeds the packed buffers");
+        POCKET_TRY_VOID(w.unpack(component, fields, pack_ids_.data(), count, pack_data_.data()));
+        return Json{{"count", count}};
+    }
+    if (op == "save_prefab") {
+        POCKET_TRY(id, need_entity("entity"));
+        std::string rel = opt<std::string>(p, "path", "");
+        if (rel.empty()) return fail("bad_args", "save_prefab needs a path such as prefabs/enemy.json");
+        std::filesystem::path base = std::filesystem::weakly_canonical(options_.project_dir);
+        std::filesystem::path full = std::filesystem::weakly_canonical(base / rel);
+        auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
+        if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", rel);
+        Json fragment = w.save_subtree(id);
+        std::filesystem::create_directories(full.parent_path());
+        POCKET_TRY_VOID(fs::write_text(full, fragment.dump(2) + "\n"));
+        prefab_cache_.erase(rel);
+        std::size_t count = 0;
+        std::function<void(const Json&)> count_entities = [&](const Json& e) { ++count; if (e.contains("children")) for (auto& c : e["children"]) count_entities(c); };
+        for (auto& e : fragment["entities"]) count_entities(e);
+        return Json{{"path", full.string()}, {"entities", count}};
     }
     if (op == "clear") {
         w.clear();
@@ -1095,6 +1313,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("assets.")) return assets_command(name.substr(7), p);
+    if (name.starts_with("audio.")) return audio_command(name.substr(6), p);
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
@@ -1163,7 +1382,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }
@@ -1179,6 +1398,7 @@ Json Session::report() {
     if (device_) report["gpu"] = device_->describe();
     if (renderer_) report["render"] = renderer_->describe();
     if (physics_) report["physics"] = physics_->describe();
+    if (audio_) report["audio"] = audio_->describe();
     if (ui_) report["ui"] = ui_->stats();
     if (host_) report["script"] = host_->describe();
     report["frames"] = frames_;

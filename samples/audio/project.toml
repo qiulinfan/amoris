@@ -1,0 +1,8 @@
+name = "audio"
+entry = "scripts/main.ts"
+scene = "scene.json"
+
+[window]
+width = 800
+height = 450
+title = "Pocket audio sample"

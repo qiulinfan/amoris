@@ -124,6 +124,24 @@ export interface Collider {
     is_trigger: boolean;
 }
 
+/** A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots. */
+export interface AudioSource {
+    /** Project-relative WAV path such as assets/hum.wav. */
+    clip: string;
+    /** Linear gain, 0..4. */
+    volume: number;
+    /** Playback rate multiplier. */
+    pitch: number;
+    /** Restart when the clip ends. */
+    loop: boolean;
+    /** Start playing as soon as the component exists. */
+    autoplay: boolean;
+    /** Whether a voice is currently playing this source (written by the engine). */
+    playing: boolean;
+    /** Id of the playing voice, 0 when silent (written by the engine). */
+    voice: number;
+}
+
 export interface Components {
     Transform: Transform;
     WorldTransform: WorldTransform;
@@ -136,11 +154,12 @@ export interface Components {
     Bounds: Bounds;
     RigidBody: RigidBody;
     Collider: Collider;
+    AudioSource: AudioSource;
 }
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Bounds", "RigidBody", "Collider"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Bounds", "RigidBody", "Collider", "AudioSource"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -155,6 +174,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },
+    AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

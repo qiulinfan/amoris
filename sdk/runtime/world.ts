@@ -7,7 +7,7 @@ import type { ComponentName, Components } from "./generated/components";
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
 
-declare const __pocket: { command(name: string, params?: unknown): unknown };
+declare const __pocket: { command(name: string, params?: unknown): unknown; __pack_data?: Float32Array; __pack_ids?: Float64Array };
 
 /** Entity handle (a stable id) or a path such as "/Level/Player" or a bare name. */
 export type Entity = number;
@@ -25,6 +25,15 @@ export interface SpawnOptions {
     components?: ComponentPatch;
     /** Sequence number of the event that caused this spawn, for the causal log. */
     cause?: number;
+}
+
+export interface Packed {
+    count: number;
+    stride: number;
+    /** Offset of each field within one entity's stride. */
+    layout: Record<string, number>;
+    data: Float32Array;
+    ids: Float64Array;
 }
 
 export interface TreeOptions {
@@ -115,6 +124,40 @@ export const world = {
     },
     summary(): { tick: number; entities: number; roots: number; components: Record<string, number>; events: number; hash: string } {
         return command("world.summary");
+    },
+    /**
+     * Spawn a prefab (a scene fragment file under the project, or an inline scene object) and
+     * return its root entity. `components` merge onto the root; `parent` places it in the tree.
+     */
+    instantiate(prefab: string | Scene, options: { parent?: EntityRef; name?: string; components?: ComponentPatch; cause?: number } = {}): Entity {
+        const params: Record<string, unknown> = { parent: options.parent, name: options.name, components: options.components, cause: options.cause };
+        if (typeof prefab === "string") params.prefab = prefab;
+        else params.scene = prefab;
+        return command<{ roots: Entity[] }>("world.instantiate", params).roots[0];
+    },
+    /** Write an entity and its descendants as a prefab file under the project directory. */
+    savePrefab(entity: EntityRef, path: string): { path: string; entities: number } {
+        return command("world.save_prefab", { entity, path });
+    },
+    /** Load a scene file by project-relative path (replacing the world unless clear is false). */
+    loadScene(path: string, clear = true): number {
+        return command<{ entities: number }>("world.load", { path, clear }).entities;
+    },
+    /**
+     * Numeric fields of one component for every matching entity as typed arrays shared with the
+     * engine: `data` holds `stride` floats per entity in field order (see `layout`), `ids` the
+     * entity ids. Edit `data` in place and call `unpack()` to write it back. The views are valid
+     * until the next `pack()`.
+     */
+    pack(component: ComponentName, fields: string[], options: { with?: ComponentName[]; without?: ComponentName[]; name?: string; under?: EntityRef; limit?: number } = {}): Packed {
+        const r = command<{ count: number; stride: number; layout: Record<string, number> }>("world.pack", { component, fields, ...options });
+        const data = __pocket.__pack_data as Float32Array;
+        const ids = __pocket.__pack_ids as Float64Array;
+        return { count: r.count, stride: r.stride, layout: r.layout, data: data.subarray(0, r.count * r.stride), ids: ids.subarray(0, r.count) };
+    },
+    /** Write the packed `data` back to the entities of the last `pack()` (or the first `count` rows). */
+    unpack(count?: number): void {
+        command("world.unpack", { count });
     },
     save(): Scene {
         return command<Scene>("world.save");

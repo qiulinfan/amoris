@@ -1,4 +1,5 @@
 #include <pocket/app/runtime.hpp>
+#include <pocket/app/session.hpp>
 #include <pocket/core/core.hpp>
 
 #include <catch_amalgamated.hpp>
@@ -114,4 +115,48 @@ TEST_CASE("script errors are reported, not fatal", "[runtime]") {
     REQUIRE((*r)["errors"].size() >= 1);
     REQUIRE((*r)["errors"][0]["code"] == "script_error");
     REQUIRE((*r)["errors"][0]["message"].get<std::string>().find("boom") != std::string::npos);
+}
+
+TEST_CASE("prefab files instantiate, save and reload through the session", "[runtime][prefab]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 64;
+    o.height = 64;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    auto inst = s.command("world.instantiate", Json{{"prefab", "prefabs/enemy.json"}, {"parent", "/Level"}, {"name", "Boss"}, {"components", Json{{"Health", Json{{"max", 300}, {"current", 300}}}}}});
+    REQUIRE(inst.has_value());
+    REQUIRE((*inst)["roots"].size() == 1);
+    auto boss = (*inst)["roots"][0].get<world::EntityId>();
+    Json d = s.command("world.describe", Json{{"entity", boss}}).value();
+    REQUIRE(d["path"] == "/Level/Boss");
+    REQUIRE(d["children"].size() == 1);
+    REQUIRE(d["children"][0]["name"] == "Marker");
+    REQUIRE(d["components"]["Health"]["max"] == 300);
+    REQUIRE(d["components"]["MeshRenderer"]["mesh"] == "sphere");
+    // Save the boss as a new prefab (under the project), instantiate it back, then remove the file.
+    std::string rel = "prefabs/_boss_test.json";
+    Json saved = s.command("world.save_prefab", Json{{"entity", boss}, {"path", rel}}).value();
+    REQUIRE(saved["entities"] == 2);
+    auto again = s.command("world.instantiate", Json{{"prefab", rel}}).value();
+    REQUIRE(again["roots"].size() == 1);
+    REQUIRE(s.command("world.describe", Json{{"entity", again["roots"][0]}}).value()["components"]["Health"]["max"] == 300);
+    std::filesystem::remove(o.project_dir / rel);
+    // Bad inputs are errors, not crashes.
+    REQUIRE_FALSE(s.command("world.instantiate", Json{{"prefab", "../../README.md"}}).has_value());
+    REQUIRE_FALSE(s.command("world.instantiate", Json{{"prefab", "prefabs/nope.json"}}).has_value());
+    REQUIRE_FALSE(s.command("world.instantiate", Json{{"scene", Json{{"entities", 5}}}}).has_value());
+    // Loading a scene by path replaces the world and emits scene.loaded.
+    std::size_t before = s.world().entity_count();
+    REQUIRE(before > 4);
+    Json loaded = s.command("world.load", Json{{"path", "scene.json"}}).value();
+    REQUIRE(loaded["entities"].get<std::size_t>() < before);
+    Json hist = s.command("events.histogram", Json::object()).value();
+    REQUIRE(hist["scene.loaded"] == 1);
+    REQUIRE(s.finish().has_value());
 }

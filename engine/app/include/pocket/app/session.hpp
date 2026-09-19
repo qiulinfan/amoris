@@ -4,6 +4,7 @@
 
 #include <pocket/app/runtime.hpp>
 #include <pocket/assets/assets.hpp>
+#include <pocket/audio/audio.hpp>
 #include <pocket/core/core.hpp>
 #include <pocket/physics/physics.hpp>
 #include <pocket/platform/platform.hpp>
@@ -17,6 +18,7 @@
 #include <pocket/world/world.hpp>
 
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,6 +50,7 @@ class Session {
     [[nodiscard]] renderer::Renderer& renderer() { return *renderer_; }
     [[nodiscard]] physics::Physics& physics() { return *physics_; }
     [[nodiscard]] assets::AssetStore& assets() { return *assets_; }
+    [[nodiscard]] audio::Audio& audio() { return *audio_; }
     [[nodiscard]] ui::Document* ui() { return ui_.get(); }
     [[nodiscard]] std::int64_t tick() const { return clock_.tick; }
     Status finish();                      // dispatch "stop", capture, close journal
@@ -72,6 +75,8 @@ class Session {
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
     Result<Json> assets_command(std::string_view op, const Json& p);
+    Result<Json> audio_command(std::string_view op, const Json& p);
+    void tick_audio(double dt);
     Status render_frame();
 
     Options options_;
@@ -82,12 +87,23 @@ class Session {
     std::unique_ptr<renderer::Renderer> renderer_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<assets::AssetStore> assets_;
+    std::unique_ptr<audio::Audio> audio_;
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
     std::unique_ptr<ui::Painter> painter_;
     std::unique_ptr<ui::Document> ui_;
     std::filesystem::path font_path_;
     std::vector<std::string> bundle_names_;
+    std::map<std::string, Json> prefab_cache_;  // parsed prefab files by project-relative path
+    // Typed-array packing buffers shared with scripts (never freed while a script may hold them).
+    std::vector<float> pack_data_;
+    std::vector<double> pack_ids_;
+    std::vector<std::vector<float>> retired_data_;
+    std::vector<std::vector<double>> retired_ids_;
+    std::size_t pack_data_capacity_ = 0, pack_ids_capacity_ = 0;
+    world::World::PackInfo last_pack_;
+    std::string last_pack_component_;
+    std::vector<std::string> last_pack_fields_;
     TickClock clock_;
     StateHasher hasher_;
     Stopwatch total_;

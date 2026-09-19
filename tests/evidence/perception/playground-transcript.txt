@@ -1,0 +1,2 @@
+transcript ticks 0-239 (1 segments)
+t0-239 (240 ticks): enemies rising 0->3, hits rising 0->2, killed rising 0->2, player.health falling 100->80 | events: component.addedx5 enemy.spawnedx5 entity.destroyedx4(/Level/Enemy,/Level/Enemy/Marker,/Level/Enemy_2,/Level/Enemy_2/Marker) entity.spawnedx16(/Level,/Level/Ground,/Level/Player,/Level/Player/Lamp) player.hitx2

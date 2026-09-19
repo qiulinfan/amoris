@@ -26,6 +26,8 @@ struct Transform {
 };
 void to_json(Json& j, const Transform& v);
 void from_json(const Json& j, Transform& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Transform& v, std::string_view path, float** out);
 
 /// World-space transform computed from the Transform hierarchy every tick. Read only.
 struct WorldTransform {
@@ -36,6 +38,8 @@ struct WorldTransform {
 };
 void to_json(Json& j, const WorldTransform& v);
 void from_json(const Json& j, WorldTransform& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(WorldTransform& v, std::string_view path, float** out);
 
 /// Linear and angular velocity. The built-in motion system integrates Transform from it every tick.
 struct Velocity {
@@ -45,6 +49,8 @@ struct Velocity {
 };
 void to_json(Json& j, const Velocity& v);
 void from_json(const Json& j, Velocity& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Velocity& v, std::string_view path, float** out);
 
 /// Hit points. Gameplay decides what zero means; the engine only stores and reports it.
 struct Health {
@@ -54,6 +60,8 @@ struct Health {
 };
 void to_json(Json& j, const Health& v);
 void from_json(const Json& j, Health& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Health& v, std::string_view path, float** out);
 
 /// Seconds remaining before the entity is destroyed by the lifetime system.
 struct Lifetime {
@@ -62,6 +70,8 @@ struct Lifetime {
 };
 void to_json(Json& j, const Lifetime& v);
 void from_json(const Json& j, Lifetime& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Lifetime& v, std::string_view path, float** out);
 
 /// Perspective camera. The renderer uses the first active camera.
 struct Camera {
@@ -73,6 +83,8 @@ struct Camera {
 };
 void to_json(Json& j, const Camera& v);
 void from_json(const Json& j, Camera& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Camera& v, std::string_view path, float** out);
 
 /// A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
 struct Light {
@@ -84,6 +96,8 @@ struct Light {
 };
 void to_json(Json& j, const Light& v);
 void from_json(const Json& j, Light& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Light& v, std::string_view path, float** out);
 
 /// Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.
 struct MeshRenderer {
@@ -95,6 +109,8 @@ struct MeshRenderer {
 };
 void to_json(Json& j, const MeshRenderer& v);
 void from_json(const Json& j, MeshRenderer& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out);
 
 /// Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.
 struct Bounds {
@@ -104,6 +120,8 @@ struct Bounds {
 };
 void to_json(Json& j, const Bounds& v);
 void from_json(const Json& j, Bounds& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Bounds& v, std::string_view path, float** out);
 
 /// Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).
 struct RigidBody {
@@ -119,6 +137,8 @@ struct RigidBody {
 };
 void to_json(Json& j, const RigidBody& v);
 void from_json(const Json& j, RigidBody& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(RigidBody& v, std::string_view path, float** out);
 
 /// Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
 struct Collider {
@@ -130,6 +150,24 @@ struct Collider {
 };
 void to_json(Json& j, const Collider& v);
 void from_json(const Json& j, Collider& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Collider& v, std::string_view path, float** out);
+
+/// A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.
+struct AudioSource {
+    std::string clip = "";
+    float volume = 1.0f;
+    float pitch = 1.0f;
+    bool loop = false;
+    bool autoplay = false;
+    bool playing = false;
+    std::uint32_t voice = 0;
+    constexpr bool operator==(const AudioSource&) const = default;
+};
+void to_json(Json& j, const AudioSource& v);
+void from_json(const Json& j, AudioSource& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(AudioSource& v, std::string_view path, float** out);
 
 struct FieldInfo {
     std::string_view name;
@@ -159,5 +197,6 @@ void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
+void hash_component(struct StateHasherRef& h, const AudioSource& v);
 
 }  // namespace pocket::world

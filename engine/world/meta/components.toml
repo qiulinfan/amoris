@@ -109,3 +109,16 @@ fields = [
     { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Local offset of the shape center." },
     { name = "is_trigger", type = "bool", default = false, doc = "Overlap events only, no collision response." },
 ]
+
+[[component]]
+name = "AudioSource"
+doc = "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots."
+fields = [
+    { name = "clip", type = "string", default = "", doc = "Project-relative WAV path such as assets/hum.wav." },
+    { name = "volume", type = "f32", default = 1.0, doc = "Linear gain, 0..4." },
+    { name = "pitch", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
+    { name = "loop", type = "bool", default = false, doc = "Restart when the clip ends." },
+    { name = "autoplay", type = "bool", default = false, doc = "Start playing as soon as the component exists." },
+    { name = "playing", type = "bool", default = false, doc = "Whether a voice is currently playing this source (written by the engine)." },
+    { name = "voice", type = "u32", default = 0, doc = "Id of the playing voice, 0 when silent (written by the engine)." },
+]

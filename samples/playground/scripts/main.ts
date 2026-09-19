@@ -24,13 +24,10 @@ onTick(({ tick, dt, time }) => {
         nextSpawn = time + 0.75;
         const angle = random() * Math.PI * 2;
         const dist = 6 + random() * 2;
-        const id = world.spawn("Enemy", {
+        // Enemies come from a prefab file; only the position differs per spawn.
+        const id = world.instantiate("prefabs/enemy.json", {
             parent: "/Level",
-            components: {
-                Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist } },
-                MeshRenderer: { mesh: "sphere", color: { r: 0.9, g: 0.25, b: 0.2, a: 1 } },
-                Health: { current: 30, max: 30 },
-            },
+            components: { Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist } } },
         });
         const spawnSeq = events.lastSeq();
         enemies.set(id, { spawnSeq });

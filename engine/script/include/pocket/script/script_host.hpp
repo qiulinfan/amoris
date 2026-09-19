@@ -38,6 +38,7 @@ class ScriptHost {
     // Expose engine memory as __pocket.<name> (Float32Array / Uint32Array / Uint8Array). No copy;
     // the memory must outlive the host.
     virtual void share_f32(std::string_view name, float* data, std::size_t count) = 0;
+    virtual void share_f64(std::string_view name, double* data, std::size_t count) = 0;
     virtual void share_u32(std::string_view name, std::uint32_t* data, std::size_t count) = 0;
     virtual void share_u8(std::string_view name, std::uint8_t* data, std::size_t count) = 0;
     // Call a global function with JSON arguments; returns its JSON result (undefined -> null).

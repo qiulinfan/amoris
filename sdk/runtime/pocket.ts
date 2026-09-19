@@ -6,6 +6,7 @@
 
 declare const __pocket: {
     log(level: string, message: string, fields?: string): void;
+    now(): number;
     setClearColor(r: number, g: number, b: number, a?: number): void;
     random(): number;
     info(): RuntimeInfo;
@@ -13,12 +14,14 @@ declare const __pocket: {
 };
 
 export { world, render, command, transcript } from "./world";
-export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity } from "./world";
+export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity, Packed } from "./world";
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
 export { events } from "./events";
 export type { WorldEvent } from "./events";
 export { physics, onContacts } from "./physics";
+export { audio } from "./audio";
+export type { PlayOptions, Voice } from "./audio";
 export type { RayHit, Contact } from "./physics";
 import { dispatchContacts } from "./physics";
 import { dispatchUiEvents, flushUi, unmountContext } from "./ui";
@@ -183,6 +186,12 @@ export function runtime(): RuntimeInfo {
 
 export function isKeyDown(key: string): boolean {
     return keysDown.has(key);
+}
+
+// performance.now() for measuring script cost; gameplay must use tick time, never this.
+{
+    const g = globalThis as { performance?: { now(): number } };
+    if (g.performance === undefined) g.performance = { now: () => __pocket.now() };
 }
 
 /** HSV (0..1) to linear RGB. */

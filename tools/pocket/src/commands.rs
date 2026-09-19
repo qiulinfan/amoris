@@ -220,6 +220,84 @@ pub fn editor(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Re
     Ok(rep)
 }
 
+/// `pocket new <name>`: a runnable project with a scene, a prefab and a script that already
+/// exposes state, so `pocket run <name>` and `pocket editor <name>` work immediately.
+pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
+    let t0 = Instant::now();
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        bail!("project names use letters, digits, '-' and '_'");
+    }
+    let base = if dir.is_absolute() { dir.to_path_buf() } else { ws.root.join(dir) };
+    let project = base.join(name);
+    if project.exists() {
+        bail!("{} already exists", project.display());
+    }
+    std::fs::create_dir_all(project.join("scripts"))?;
+    std::fs::create_dir_all(project.join("assets"))?;
+    std::fs::create_dir_all(project.join("prefabs"))?;
+    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n"))?;
+    std::fs::write(project.join("scene.json"), r#"{
+  "format": "pocket-scene",
+  "entities": [
+    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 20, "y": 1, "z": 20 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.35, "g": 0.4, "b": 0.32, "a": 1 } }, "RigidBody": { "kind": 0 }, "Collider": { "shape": 0 } } },
+    { "name": "Player", "components": { "Transform": { "position": { "x": 0, "y": 0.5, "z": 0 } }, "MeshRenderer": { "mesh": "sphere", "color": { "r": 0.2, "g": 0.6, "b": 0.9, "a": 1 } }, "Health": { "current": 100, "max": 100 } } },
+    { "name": "Sun", "components": { "Transform": { "rotation": { "x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89 } }, "Light": { "kind": 0, "intensity": 1.2 } } },
+    { "name": "Camera", "components": { "Transform": { "position": { "x": 0, "y": 6, "z": 10 }, "rotation": { "x": -0.26, "y": 0, "z": 0, "w": 0.97 } }, "Camera": {} } }
+  ]
+}
+"#)?;
+    std::fs::write(project.join("prefabs").join("crate.json"), r#"{
+  "format": "pocket-scene",
+  "entities": [
+    { "name": "Crate", "components": { "Transform": { "position": { "x": 0, "y": 3, "z": 0 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.8, "g": 0.55, "b": 0.25, "a": 1 } }, "RigidBody": { "kind": 1, "mass": 1 }, "Collider": { "shape": 0 } } }
+  ]
+}
+"#)?;
+    std::fs::write(project.join("scripts").join("main.ts"), format!(r#"// {name}: move the player with WASD, drop crates with Space. Every value that matters is exposed,
+// so `pocket run {name} -- --headless --frames 300 --json` reports it and an agent can read it.
+import {{ events, expose, isKeyDown, log, onInput, onStart, onTick, world }} from "pocket";
+
+let player = 0;
+let crates = 0;
+let x = 0;
+let z = 0;
+
+onStart(() => {{
+    player = world.find("Player") ?? 0;
+    log("{name} started", {{ entities: world.summary().entities }});
+}});
+
+onTick((t) => {{
+    const speed = 4;
+    if (isKeyDown("A")) x -= speed * t.dt;
+    if (isKeyDown("D")) x += speed * t.dt;
+    if (isKeyDown("W")) z -= speed * t.dt;
+    if (isKeyDown("S")) z += speed * t.dt;
+    if (player) world.set(player, "Transform", {{ position: {{ x, y: 0.5, z }} }});
+}});
+
+onInput((input) => {{
+    for (const e of input) {{
+        if (e.ui !== undefined) continue;
+        if (e.type === "key_down" && e.key === "Space" && !e.repeat) {{
+            const id = world.instantiate("prefabs/crate.json", {{ components: {{ Transform: {{ position: {{ x, y: 3, z }} }} }} }});
+            crates++;
+            events.emit("crate.dropped", {{ id, x, z }}, {{ subject: id }});
+        }}
+    }}
+}});
+
+expose("player.x", () => Number(x.toFixed(3)));
+expose("player.z", () => Number(z.toFixed(3)));
+expose("crates", () => crates);
+"#))?;
+    std::fs::write(project.join("assets").join(".gitkeep"), "")?;
+    let mut rep = Report::success("new", format!("created {} (run: pocket run {name}; editor: pocket editor {name})", project.display()));
+    rep.data = json!({ "project": project, "files": ["project.toml", "scene.json", "prefabs/crate.json", "scripts/main.ts", "assets/"] });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
+}
+
 pub struct BundleResult {
     pub out: PathBuf,
     pub modules: Vec<String>,

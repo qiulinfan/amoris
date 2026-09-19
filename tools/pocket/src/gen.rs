@@ -185,7 +185,7 @@ fn gen_hpp(comps: &[Component]) -> Result<String> {
             o.push_str(&format!("    {} {}{};\n", info.cpp, f.name, if info.components.is_empty() { format!(" = {}", cpp_default(f)?) } else { cpp_default(f)? }));
         }
         o.push_str(&format!("    constexpr bool operator==(const {}&) const = default;\n}};\n", c.name));
-        o.push_str(&format!("void to_json(Json& j, const {0}& v);\nvoid from_json(const Json& j, {0}& v);\n\n", c.name));
+        o.push_str(&format!("void to_json(Json& j, const {0}& v);\nvoid from_json(const Json& j, {0}& v);\n// Floats behind a numeric field path (\"position\", \"position.x\", \"color\"); 0 when the path is not numeric.\nstd::size_t numeric_span({0}& v, std::string_view path, float** out);\n\n", c.name));
     }
     o.push_str("struct FieldInfo {\n    std::string_view name;\n    std::string_view type;\n    std::string_view doc;\n};\n\nstruct ComponentInfo {\n    std::string_view name;\n    std::string_view doc;\n    bool serialized;\n    std::span<const FieldInfo> fields;\n};\n\n");
     o.push_str("/// Every component known to the engine, in metadata order.\nstd::span<const ComponentInfo> component_infos();\n\n");
@@ -243,6 +243,20 @@ fn gen_cpp(comps: &[Component]) -> Result<String> {
             }
         }
         o.push_str("}\n\n");
+        // numeric_span: typed-array packing addresses float fields by path without JSON.
+        o.push_str(&format!("std::size_t numeric_span({}& v, std::string_view path, float** out) {{\n    (void)v;\n", c.name));
+        for f in &c.fields {
+            let info = type_info(&f.ty)?;
+            if f.ty == "f32" {
+                o.push_str(&format!("    if (path == \"{0}\") {{ *out = &v.{0}; return 1; }}\n", f.name));
+            } else if !info.components.is_empty() {
+                o.push_str(&format!("    if (path == \"{0}\") {{ *out = &v.{0}.{1}; return {2}; }}\n", f.name, info.components[0], info.components.len()));
+                for comp in info.components {
+                    o.push_str(&format!("    if (path == \"{0}.{1}\") {{ *out = &v.{0}.{1}; return 1; }}\n", f.name, comp));
+                }
+            }
+        }
+        o.push_str("    return 0;\n}\n\n");
     }
     o.push_str("namespace {\n\n");
     for c in comps {
