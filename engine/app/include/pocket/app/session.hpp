@@ -98,6 +98,8 @@ class Session {
     [[nodiscard]] Json perf() const;
     void release_expired_holds();
     void tick_audio(double dt);
+    // A spatial voice's volume and pan from its entity's place against the camera (docs/design/audio.md, Where a sound is).
+    void place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range);
     Status render_frame();
 
     Options options_;
@@ -132,6 +134,8 @@ class Session {
     renderer::DebugDraw debug_draw_;
     std::unique_ptr<assets::AssetStore> assets_;
     std::unique_ptr<audio::Audio> audio_;
+    struct SpatialVoice { world::EntityId entity = 0; float volume = 1, near = 1, range = 20; };
+    std::map<std::uint32_t, SpatialVoice> spatial_voices_;   // one-shots placed by their entity every tick until they end
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
     std::unique_ptr<ui::Painter> painter_;

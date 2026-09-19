@@ -1936,8 +1936,15 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         o.loop = opt<bool>(p, "loop", false);
         o.tag = opt<std::string>(p, "tag", "");
         if (p.contains("entity") && !p["entity"].is_null()) o.entity = resolve_entity(p["entity"]);
+        // A spatial one-shot follows its entity: placed now and every tick until it ends.
+        const bool spatial = opt<bool>(p, "spatial", false);
+        if (spatial && o.entity == 0) return fail("bad_args", "a spatial voice needs an entity to be heard from");
         POCKET_TRY(id, a.play(clip, o));
-        world_->events().emit(clock_.tick, "audio.started", o.entity, Json{{"clip", clip}, {"voice", id}, {"loop", o.loop}}, 0, "audio");
+        if (spatial) {
+            spatial_voices_[id] = SpatialVoice{o.entity, o.volume, static_cast<float>(opt<double>(p, "near", 1.0)), static_cast<float>(opt<double>(p, "range", 20.0))};
+            place_voice(id, o.entity, o.volume, spatial_voices_[id].near, spatial_voices_[id].range);
+        }
+        world_->events().emit(clock_.tick, "audio.started", o.entity, Json{{"clip", clip}, {"voice", id}, {"loop", o.loop}, {"spatial", spatial}}, 0, "audio");
         return Json{{"voice", id}, {"clip", clip}};
     }
     if (op == "stop") {
@@ -1967,6 +1974,23 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown audio command '{}'", op);
 }
 
+// The listener is the camera of the last frame; a spatial voice's gain falls from full within
+// `near` to nothing at `range`, and it pans toward the side its entity is on, most of the way.
+void Session::place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range) {
+    const auto* wt = world_->try_get<world::WorldTransform>(entity);
+    if (!wt) return;
+    const renderer::CameraView& cam = renderer_->camera();
+    const Vec3 to = wt->position - cam.position;
+    const float d = length(to);
+    const float span = std::max(range - near, 1e-3f);
+    const float gain = std::clamp((range - d) / span, 0.0f, 1.0f);
+    Vec3 right = cross(cam.forward, Vec3{0, 1, 0});
+    if (length(right) < 1e-4f) right = Vec3{1, 0, 0};
+    right = normalize(right);
+    const float pan = d > 1e-4f ? std::clamp(dot(to * (1.0f / d), right), -1.0f, 1.0f) * 0.8f : 0.0f;
+    (void)audio_->set(voice, Json{{"volume", base_volume * gain}, {"pan", pan}});
+}
+
 // AudioSource components start their voices; voices report back; finished voices clear `playing`.
 void Session::tick_audio(double dt) {
     world::World& w = *world_;
@@ -1989,11 +2013,18 @@ void Session::tick_audio(double dt) {
                 log::warn("audio", "{}: {}", w.path(e.id()), id.error().to_string());
             }
             updates.emplace_back(e.id(), next);
+        } else if (src.spatial && src.playing && src.voice != 0) {
+            place_voice(src.voice, e.id(), src.volume, src.near, src.range);
         }
     });
-    for (auto& [id, next] : updates) w.ecs().entity(id).set<world::AudioSource>(next);
+    for (auto& [id, next] : updates) {
+        w.ecs().entity(id).set<world::AudioSource>(next);
+        if (next.spatial && next.playing && next.voice != 0) place_voice(next.voice, id, next.volume, next.near, next.range);
+    }
+    for (auto& [voice, sp] : spatial_voices_) place_voice(voice, sp.entity, sp.volume, sp.near, sp.range);
     for (const audio::VoiceEvent& ev : audio_->tick(dt)) {
         w.events().emit(clock_.tick, ev.type, ev.voice.entity, Json{{"clip", ev.voice.clip}, {"voice", ev.voice.id}, {"loops", ev.voice.loops_done}}, 0, "audio");
+        if (ev.type == "audio.finished") spatial_voices_.erase(ev.voice.id);
         if (ev.type == "audio.finished" && ev.voice.entity) {
             flecs::entity e = w.ecs().entity(ev.voice.entity);
             if (e.is_alive() && e.has<world::AudioSource>()) {
@@ -2382,7 +2413,31 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             parent = resolve_entity(p["parent"]);
             if (!w.alive(parent)) return fail("no_such_entity", "no parent for {}", p["parent"].dump());
         }
+        // keep_world: the entity stays where it is in the world, its local transform taking up the
+        // difference between the old parent's frame and the new one's (the editor's way).
+        if (opt<bool>(p, "keep_world", false) && w.has(id, "Transform")) {
+            w.update_transforms();
+            const auto* wt = w.try_get<world::WorldTransform>(id);
+            const auto* pw = parent != 0 ? w.try_get<world::WorldTransform>(parent) : nullptr;
+            if (wt) {
+                world::Transform local;
+                if (pw) {
+                    const Quat inv{-pw->rotation.x, -pw->rotation.y, -pw->rotation.z, pw->rotation.w};   // the parent's rotation undone
+                    const Vec3 rel = inv.rotate(wt->position - pw->position);
+                    auto safe = [](float v) { return std::fabs(v) > 1e-8f ? v : 1e-8f; };
+                    local.position = {rel.x / safe(pw->scale.x), rel.y / safe(pw->scale.y), rel.z / safe(pw->scale.z)};
+                    local.rotation = normalize(inv * wt->rotation);
+                    local.scale = {wt->scale.x / safe(pw->scale.x), wt->scale.y / safe(pw->scale.y), wt->scale.z / safe(pw->scale.z)};
+                } else {
+                    local.position = wt->position;
+                    local.rotation = wt->rotation;
+                    local.scale = wt->scale;
+                }
+                w.ecs().entity(id).set<world::Transform>(local);
+            }
+        }
         POCKET_TRY_VOID(w.reparent(id, parent));
+        w.update_transforms();
         return Json{{"path", w.path(id)}};
     }
     if (op == "rename") {

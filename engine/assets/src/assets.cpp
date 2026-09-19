@@ -233,6 +233,7 @@ Status TileMap::remove_layer(std::string_view name) {
     for (; k < layers.size(); ++k) if (layers[k].name == name) break;
     if (k == layers.size()) return fail("unknown_layer", "{} has no tile layer '{}'", path, name);
     layers.erase(layers.begin() + static_cast<std::ptrdiff_t>(k));
+    for (ImageLayer& il : image_layers) if (il.before > static_cast<int>(k)) --il.before;   // the pictures keep their place among the rest
     ++revision;
     if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
         // The k-th tile layer of the document, in document order with groups flattened.
@@ -267,6 +268,12 @@ Status TileMap::move_layer(std::string_view name, std::size_t index) {
     TileLayer moving = std::move(layers[k]);
     layers.erase(layers.begin() + static_cast<std::ptrdiff_t>(k));
     layers.insert(layers.begin() + static_cast<std::ptrdiff_t>(index), std::move(moving));
+    for (ImageLayer& il : image_layers) {
+        // A picture keeps its place among the tile layers around it: one leaving the set before it
+        // or joining it moves the count by one.
+        if (static_cast<int>(k) < il.before && static_cast<int>(index) >= il.before) --il.before;
+        else if (static_cast<int>(k) >= il.before && static_cast<int>(index) < il.before) ++il.before;
+    }
     ++revision;
     for (TileLayer& l : layers) ++l.revision;   // every layer's draw order moved: the meshes are keyed by it
     if (source.is_object() && source.contains("layers") && source["layers"].is_array()) {
@@ -563,6 +570,9 @@ Json TileMap::describe() const {
     Json os = Json::array();
     for (const ObjectLayer& o : object_layers) os.push_back(Json{{"name", o.name}, {"objects", o.objects.size()}});
     j["object_layers"] = os;
+    Json is = Json::array();
+    for (const ImageLayer& il : image_layers) is.push_back(Json{{"name", il.name}, {"id", il.id}, {"image", il.image}, {"offset_x", il.offset_x}, {"offset_y", il.offset_y}, {"repeat_x", il.repeat_x}, {"repeat_y", il.repeat_y}, {"opacity", il.opacity}, {"visible", il.visible}, {"before", il.before}, {"properties", il.properties}});
+    j["image_layers"] = is;
     j["properties"] = properties;
     return j;
 }
@@ -672,7 +682,30 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
             map.object_layers.push_back(std::move(ol));
             return {};
         }
-        return {};  // image layers and unknown kinds are ignored
+        if (type == "imagelayer") {
+            ImageLayer il;
+            il.name = l.value("name", "");
+            il.id = l.value("id", 0);
+            const std::string image = l.value("image", "");
+            if (!image.empty()) il.image = (base / image).lexically_normal().generic_string();
+            il.offset_x = l.value("offsetx", 0.0f) + l.value("x", 0.0f);
+            il.offset_y = l.value("offsety", 0.0f) + l.value("y", 0.0f);
+            il.opacity = l.value("opacity", 1.0f);
+            il.visible = l.value("visible", true);
+            il.repeat_x = l.value("repeatx", false);
+            il.repeat_y = l.value("repeaty", false);
+            if (const std::string tint = l.value("tintcolor", ""); tint.size() == 7 || tint.size() == 9) {
+                // "#rrggbb" or "#aarrggbb"
+                auto hex = [&](std::size_t at) { return static_cast<float>(std::stoi(tint.substr(at, 2), nullptr, 16)) / 255.0f; };
+                const bool alpha = tint.size() == 9;
+                il.tint = {hex(alpha ? 3 : 1), hex(alpha ? 5 : 3), hex(alpha ? 7 : 5), alpha ? hex(1) : 1.0f};
+            }
+            il.properties = properties_of(l);
+            il.before = static_cast<int>(map.layers.size());
+            map.image_layers.push_back(std::move(il));
+            return {};
+        }
+        return {};  // unknown kinds are ignored
     };
     for (const Json& l : doc.value("layers", Json::array())) POCKET_TRY_VOID(read_layer(l));
     map.source = std::move(doc);
@@ -1389,7 +1422,7 @@ Json AssetStore::list() const {
         for (const auto& p : paths) {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : ext == ".tmj" ? "tilemap" : "other";
+            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" ? "audio" : "other";
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
             f["kind"] = kind;

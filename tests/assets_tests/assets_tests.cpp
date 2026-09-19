@@ -205,9 +205,9 @@ TEST_CASE("a tile map is edited in memory and written back as Tiled JSON", "[ass
     REQUIRE(*map.set("ground", 0, 0, 2u | assets::TileMap::kFlipH) == 0);
     // The document keeps everything it had; only the layer data follows the edits.
     Json doc = map.to_json();
-    REQUIRE(doc["nextlayerid"] == 6);
-    REQUIRE(doc["layers"][0]["data"][7 * 20 + 3] == 1);
-    REQUIRE(doc["layers"][0]["data"][0] == (2u | assets::TileMap::kFlipH));
+    REQUIRE(doc["nextlayerid"] == 7);
+    REQUIRE(doc["layers"][1]["data"][7 * 20 + 3] == 1);   // the sky picture comes first in the file
+    REQUIRE(doc["layers"][1]["data"][0] == (2u | assets::TileMap::kFlipH));
     auto again = assets::parse_tilemap(doc.dump(), "again.tmj");
     REQUIRE(again.has_value());
     REQUIRE(again->layers.size() == 4);
@@ -435,4 +435,62 @@ TEST_CASE("glTF material maps are read with their factors", "[assets][pbr]") {
     REQUIRE(crate.has_value());
     REQUIRE((*crate)->materials[0].normal_texture.empty());
     REQUIRE((*crate)->materials[0].texture == "assets/checker.png");
+}
+
+TEST_CASE("image layers are read with their place among the tile layers and follow layer edits", "[tilemap][imagelayer]") {
+    const char* text = R"({"type":"map","version":"1.10","orientation":"orthogonal","renderorder":"right-down","width":2,"height":2,"tilewidth":16,"tileheight":16,"infinite":false,"nextlayerid":4,"nextobjectid":1,
+        "tilesets":[{"firstgid":1,"name":"t","image":"t.png","imagewidth":16,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":1,"tilecount":1}],
+        "layers":[
+            {"id":1,"type":"tilelayer","name":"a","width":2,"height":2,"x":0,"y":0,"opacity":1,"visible":true,"data":[0,0,0,0]},
+            {"id":2,"type":"imagelayer","name":"bg","image":"art/bg.png","x":0,"y":0,"offsetx":8,"offsety":4,"opacity":0.5,"visible":true,"repeatx":true,"repeaty":false,"tintcolor":"#80ff0000"},
+            {"id":3,"type":"tilelayer","name":"b","width":2,"height":2,"x":0,"y":0,"opacity":1,"visible":true,"data":[0,0,0,0]}
+        ]})";
+    auto parsed = assets::parse_tilemap(text, "maps/x.tmj");
+    REQUIRE(parsed.has_value());
+    assets::TileMap& map = *parsed;
+    REQUIRE(map.layers.size() == 2);
+    REQUIRE(map.image_layers.size() == 1);
+    const assets::ImageLayer& bg = map.image_layers[0];
+    REQUIRE(bg.name == "bg");
+    REQUIRE(bg.image == "maps/art/bg.png");   // next to the map
+    REQUIRE(bg.offset_x == 8);
+    REQUIRE(bg.offset_y == 4);
+    REQUIRE(bg.opacity == Catch::Approx(0.5));
+    REQUIRE(bg.repeat_x);
+    REQUIRE_FALSE(bg.repeat_y);
+    REQUIRE(bg.tint.x == Catch::Approx(1.0));
+    REQUIRE(bg.tint.y == Catch::Approx(0.0));
+    REQUIRE(bg.tint.w == Catch::Approx(128.0 / 255.0));
+    REQUIRE(bg.before == 1);                  // after "a", under "b"
+    Json d = map.describe();
+    REQUIRE(d["image_layers"].size() == 1);
+    REQUIRE(d["image_layers"][0]["before"] == 1);
+    // Tile layers moved around it: "b" brought to the front puts both before the picture.
+    REQUIRE(map.move_layer("b", 0).has_value());
+    REQUIRE(map.image_layers[0].before == 2);
+    REQUIRE(map.move_layer("b", 1).has_value());   // a, b: still both before it
+    REQUIRE(map.image_layers[0].before == 2);
+    REQUIRE(map.remove_layer("a").has_value());
+    REQUIRE(map.image_layers[0].before == 1);
+    REQUIRE(map.add_layer("c", true, 1.0f, Json::object()).has_value());   // appended after everything
+    REQUIRE(map.image_layers[0].before == 1);
+    // The picture stays in the document, so a save keeps it.
+    Json doc = map.to_json();
+    int pictures = 0;
+    for (const Json& l : doc["layers"]) pictures += l.value("type", "") == "imagelayer";
+    REQUIRE(pictures == 1);
+    auto again = assets::parse_tilemap(doc.dump(), "maps/again.tmj");
+    REQUIRE(again.has_value());
+    REQUIRE(again->image_layers.size() == 1);
+    REQUIRE(again->image_layers[0].before == 1);
+    // The sample's sky: first in the file, so it draws under every tile layer, repeated across the level.
+    assets::AssetStore store(root() / "samples" / "sprites");
+    auto level = store.tilemap("assets/level.tmj");
+    REQUIRE(level.has_value());
+    REQUIRE((*level)->image_layers.size() == 1);
+    REQUIRE((*level)->image_layers[0].name == "sky");
+    REQUIRE((*level)->image_layers[0].image == "assets/sky.png");
+    REQUIRE((*level)->image_layers[0].before == 0);
+    REQUIRE((*level)->image_layers[0].repeat_x);
+    REQUIRE(store.describe("assets/level.tmj")["image_layers"][0]["name"] == "sky");
 }

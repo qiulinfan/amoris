@@ -1581,7 +1581,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         std::int32_t sub = 0;            // file order of the layer within its map
     };
     std::vector<SpriteDraw> sprites;
-    std::uint32_t tile_layers = 0;
+    std::uint32_t tile_layers = 0, image_layers = 0, image_quads = 0;
     // Tile maps: every visible layer of the map is one mesh (per tileset texture), drawn unlit.
     world.ecs().each([&](flecs::entity e, const world::TileMap& tmc, const world::WorldTransform& t) {
         if (!tmc.visible || tmc.map.empty() || !im.assets) return;
@@ -1605,13 +1605,50 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ou.color[0] = tmc.color.r; ou.color[1] = tmc.color.g; ou.color[2] = tmc.color.b; ou.color[3] = tmc.color.a * layer.opacity;
             for (const auto& part : lm->parts) {
                 if (count + sprites.size() >= kMaxObjects) return;
-                sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->gpu, part.first, part.count, this_index});
+                sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->gpu, part.first, part.count, 2 * this_index + 1});
             }
             for (const auto& part : lm->anim_parts) {
                 if (count + sprites.size() >= kMaxObjects) return;
-                sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->anim, part.first, part.count, this_index});
+                sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->anim, part.first, part.count, 2 * this_index + 1});
             }
             ++tile_layers;
+        }
+        // Image layers: one picture each, placed in map pixels like a tile and repeated across the
+        // map's extent when the file asks, drawn among the tile layers in file order (a picture
+        // after `before` tile layers sorts between them: tile layers take the odd slots).
+        if (tmc.layer.empty()) {
+            const float ts = tmc.tile_size > 0 ? tmc.tile_size : 1.0f;
+            const bool ortho = (*map)->orthogonal();
+            const float sx = ts / static_cast<float>(std::max((*map)->tile_width, 1)), sy = ortho ? ts / static_cast<float>(std::max((*map)->tile_height, 1)) : sx;
+            const Vec2 extent = (*map)->pixel_size();
+            for (const assets::ImageLayer& il : (*map)->image_layers) {
+                if (!il.visible || il.image.empty()) continue;
+                auto img = im.assets->image(il.image);
+                if (!img) { im.report_missing(il.image, img.error().message); continue; }
+                const float iw = static_cast<float>((*img)->width), ih = static_cast<float>((*img)->height);
+                if (iw <= 0 || ih <= 0) continue;
+                int kx0 = 0, kx1 = 0, ky0 = 0, ky1 = 0;   // copies along each axis, inclusive
+                if (il.repeat_x) { kx0 = static_cast<int>(std::floor(-il.offset_x / iw)); kx1 = std::min(static_cast<int>(std::ceil((extent.x - il.offset_x) / iw)) - 1, kx0 + 255); }
+                if (il.repeat_y) { ky0 = static_cast<int>(std::floor(-il.offset_y / ih)); ky1 = std::min(static_cast<int>(std::ceil((extent.y - il.offset_y) / ih)) - 1, ky0 + 255); }
+                ObjectUniforms iu = ou;
+                iu.id[0] = 0;   // a picture is backdrop: render.pick sees through it, so an empty cell still picks nothing
+                iu.color[0] = tmc.color.r * il.tint.x; iu.color[1] = tmc.color.g * il.tint.y; iu.color[2] = tmc.color.b * il.tint.z; iu.color[3] = tmc.color.a * il.tint.w * il.opacity;
+                WGPUBindGroup material = im.texture_for(il.image, true);
+                bool drawn = false;
+                for (int ky = ky0; ky <= ky1; ++ky) {
+                    for (int kx = kx0; kx <= kx1; ++kx) {
+                        if (count + sprites.size() >= kMaxObjects) return;
+                        const float left = (il.offset_x + static_cast<float>(kx) * iw) * sx, top = -(il.offset_y + static_cast<float>(ky) * ih) * sy;
+                        const Mat4 quad = model * Mat4::translation({left + iw * sx * 0.5f, top - ih * sy * 0.5f, 0}) * Mat4::scale({iw * sx, ih * sy, 1});
+                        to_array(quad, iu.model);
+                        to_array(transpose(quad.inverse_affine()), iu.normal);
+                        sprites.push_back({il.image, material, tmc.order, depth, iu, nullptr, 0, 0, 2 * il.before});
+                        ++image_quads;
+                        drawn = true;
+                    }
+                }
+                if (drawn) ++image_layers;
+            }
         }
     });
     world.ecs().each([&](flecs::entity e, const world::Sprite& sp, const world::WorldTransform& t) {
@@ -1707,9 +1744,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (total > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(total) * kObjectStride);
     im.stats.meshes = entities;
     im.stats.instances = total;
-    im.stats.sprites = static_cast<std::uint32_t>(sprites.size()) - particle_count - tile_layers_parts(sprites);
+    im.stats.sprites = static_cast<std::uint32_t>(sprites.size()) - particle_count - tile_layers_parts(sprites) - image_quads;
     im.stats.particles = particle_count;
     im.stats.tile_layers = tile_layers;
+    im.stats.image_layers = image_layers;
     im.stats.tile_rebuilds = im.tile_rebuilds;
     im.stats.tile_frames = im.tile_frames;
     im.stats.msaa = im.msaa_applied;
@@ -2016,6 +2054,7 @@ Json Renderer::describe() const {
     j["morphed"] = s.morphed;
     j["moving_parts"] = s.moving_parts;
     j["tile_layers"] = s.tile_layers;
+    j["image_layers"] = s.image_layers;
     j["tile_rebuilds"] = s.tile_rebuilds;
     j["tile_frames"] = s.tile_frames;
     j["msaa"] = s.msaa;

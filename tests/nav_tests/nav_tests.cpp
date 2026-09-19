@@ -474,6 +474,56 @@ TEST_CASE("agents walk to their goals, pass each other, go around obstacles and 
     REQUIRE(list[0]["state"].get<int>() == 2);
 }
 
+TEST_CASE("an agent steps out of a moving cart's way before it arrives", "[nav][agents][obstacles][moving]") {
+    // A cart crosses the corridor at 3 per second on X while the agent walks up Z through its path.
+    // With the cart's velocity in the avoidance the two never overlap; the cart is moved by hand
+    // (its Transform written each tick), so the velocity comes from where it went since last tick.
+    World w;
+    nav::Nav n;
+    n.set_grid(open_grid(16, 16));
+    const EntityId walker = w.spawn("Walker", 0, Json{{"Transform", {{"position", {{"x", 8.0f}, {"y", 0}, {"z", 1.5f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 8.0f}, {"y", 0}, {"z", 14.5f}}}, {"speed", 2.0}, {"radius", 0.4}}}}).value();
+    const EntityId cart = w.spawn("Cart", 0, Json{{"Transform", {{"position", {{"x", 1.0f}, {"y", 0}, {"z", 6.0f}}}}}, {"NavObstacle", {{"radius", 0.8}}}}).value();
+    auto pos = [&](EntityId id) { return w.try_get<Transform>(id)->position; };
+    float nearest = 1e9f;
+    int tick = 0, moving_seen = 0;
+    for (; tick < 600 && w.try_get<NavAgent>(walker)->state != 2; ++tick) {
+        // The cart drives across at 3 per second; it meets the agent's line at x = 8 after about 2.3 s,
+        // when the walker (2 per second from z 1.5) is at about z 6, right in its path.
+        Transform ct = *w.try_get<Transform>(cart);
+        ct.position.x = 1.0f + 3.0f * static_cast<float>(tick) / 60.0f;
+        w.set_typed<Transform>(cart, ct);
+        w.set_tick_index(tick);
+        n.step(w, 1.0f / 60.0f);
+        moving_seen += n.crowd_stats().moving_obstacles;
+        nearest = std::min(nearest, std::hypot(pos(walker).x - pos(cart).x, pos(walker).z - pos(cart).z));
+    }
+    INFO("ticks " << tick << " nearest " << nearest << " walker " << pos(walker).x << "," << pos(walker).z << " cart x " << pos(cart).x);
+    REQUIRE(w.try_get<NavAgent>(walker)->state == 2);
+    REQUIRE(nearest > 1.2f);                 // radii 0.4 + 0.8: never overlapped
+    REQUIRE(moving_seen > 100);              // the cart's velocity was seen on nearly every tick
+    REQUIRE(n.describe()["moving_obstacles"].is_number());
+    // The same crossing with the cart's velocity hidden (a Velocity component reading zero while the
+    // Transform is written by hand, so the obstacle reads as standing still) comes closer: the
+    // anticipation, not the blocked cells, is what keeps them apart.
+    World w2;
+    nav::Nav n2;
+    n2.set_grid(open_grid(16, 16));
+    const EntityId walker2 = w2.spawn("Walker", 0, Json{{"Transform", {{"position", {{"x", 8.0f}, {"y", 0}, {"z", 1.5f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 8.0f}, {"y", 0}, {"z", 14.5f}}}, {"speed", 2.0}, {"radius", 0.4}}}}).value();
+    const EntityId cart2 = w2.spawn("Cart", 0, Json{{"Transform", {{"position", {{"x", 1.0f}, {"y", 0}, {"z", 6.0f}}}}}, {"NavObstacle", {{"radius", 0.8}}}, {"Velocity", Json::object()}}).value();
+    float nearest2 = 1e9f;
+    for (int t = 0; t < 600 && w2.try_get<NavAgent>(walker2)->state != 2; ++t) {
+        Transform ct = *w2.try_get<Transform>(cart2);
+        ct.position.x = 1.0f + 3.0f * static_cast<float>(t) / 60.0f;
+        w2.set_typed<Transform>(cart2, ct);
+        w2.set_tick_index(t);
+        n2.step(w2, 1.0f / 60.0f);
+        const auto& p = w2.try_get<Transform>(walker2)->position;
+        nearest2 = std::min(nearest2, std::hypot(p.x - ct.position.x, p.z - ct.position.z));
+    }
+    INFO("without anticipation nearest " << nearest2);
+    REQUIRE(nearest2 < nearest);
+}
+
 TEST_CASE("the navmesh covers open ground with one rectangle, routes through a gap and yields to obstacles and steps", "[nav][mesh]") {
     // Open ground: one polygon, a straight path, one node expanded.
     nav::Nav nav;

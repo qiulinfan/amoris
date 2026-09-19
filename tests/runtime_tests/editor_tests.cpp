@@ -279,6 +279,27 @@ TEST_CASE("editor gizmo drags the selection along a world axis", "[editor]") {
     Json back = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
     REQUIRE(back["scale"] == before["scale"]);
     REQUIRE(back["rotation"]["y"].get<double>() == Catch::Approx(before["rotation"]["y"].get<double>()).margin(1e-5));
+    // One axis at a time: SX doubles x alone; RZ turns a half turn about world Z, which flips the
+    // ramp's roll (it starts rolled about Z) into a rotation whose z weight is large.
+    ok(s.idle_frame());
+    Json sxq = ok(s.command("ui.query", Json{{"name", "gizmo:scale_x"}}));
+    REQUIRE(sxq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", sxq[0]["id"]}, {"dx", 139}, {"dy", 0}, {"steps", 5}}));
+    Json wide = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(wide["scale"]["x"].get<double>() == Catch::Approx(before["scale"]["x"].get<double>() * 2.0).epsilon(0.02));
+    REQUIRE(wide["scale"]["y"].get<double>() == Catch::Approx(before["scale"]["y"].get<double>()).margin(1e-6));
+    REQUIRE(wide["scale"]["z"].get<double>() == Catch::Approx(before["scale"]["z"].get<double>()).margin(1e-6));
+    ok(s.idle_frame());
+    Json rzq = ok(s.command("ui.query", Json{{"name", "gizmo:rotate_z"}}));
+    REQUIRE(rzq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", rzq[0]["id"]}, {"dx", 314}, {"dy", 0}, {"steps", 5}}));
+    Json rolled = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    INFO(rolled.dump());
+    REQUIRE(std::abs(rolled["rotation"]["z"].get<double>()) > 0.9);
+    REQUIRE(std::abs(rolled["rotation"]["y"].get<double>()) < 0.1);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}))["scale"] == before["scale"]);
 
     // Shift-click extends the selection; the toolbar reports the count through the inspector title.
     ok(s.idle_frame());
@@ -288,6 +309,118 @@ TEST_CASE("editor gizmo drags the selection along a world axis", "[editor]") {
     INFO(snap);
     REQUIRE(snap.find("(+1 more)") != std::string::npos);
     ok(s.finish());
+}
+
+TEST_CASE("editor reparents by dragging a hierarchy row onto another", "[editor][reparent]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    Json ramp = ok(s.command("ui.query", Json{{"name", "entity:Ramp"}}));
+    Json ground = ok(s.command("ui.query", Json{{"name", "entity:Ground"}}));
+    REQUIRE(ramp.size() == 1);
+    REQUIRE(ground.size() == 1);
+    const world::EntityId ramp_id = ok(s.command("world.find", Json{{"path", "Ramp"}})).get<world::EntityId>();
+    const world::EntityId ground_id = ok(s.command("world.find", Json{{"path", "Ground"}})).get<world::EntityId>();
+    REQUIRE(ok(s.command("world.describe", Json{{"entity", ramp_id}})).value("parent", world::EntityId{0}) == 0);
+    // Dragged from its row's center onto the Ground row's center.
+    const double dy = (ground[0]["rect"]["y"].get<double>() + ground[0]["rect"]["h"].get<double>() / 2) - (ramp[0]["rect"]["y"].get<double>() + ramp[0]["rect"]["h"].get<double>() / 2);
+    ok(s.command("ui.drag", Json{{"id", ramp[0]["id"]}, {"dx", 0}, {"dy", dy}, {"steps", 6}}));
+    ok(s.idle_frame());
+    Json d = ok(s.command("world.describe", Json{{"entity", ramp_id}}));
+    INFO(d.dump());
+    REQUIRE(d.value("parent", world::EntityId{0}) == ground_id);
+    REQUIRE(d["path"] == "/Ground/Ramp");
+    // Its world placement stayed where it was: the local transform absorbed Ground's scale and position.
+    {
+        const Json wt = ok(s.command("world.get", Json{{"entity", ramp_id}, {"component", "WorldTransform"}}));
+        INFO(wt.dump());
+        REQUIRE(wt["position"]["x"].get<double>() == Catch::Approx(-4.0).margin(1e-3));
+        REQUIRE(wt["position"]["y"].get<double>() == Catch::Approx(0.3).margin(1e-3));
+        REQUIRE(wt["scale"]["x"].get<double>() == Catch::Approx(6.0).margin(1e-3));
+    }
+    // Undo puts it back at the root; redo under Ground again.
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.describe", Json{{"entity", ramp_id}})).value("parent", world::EntityId{0}) == 0);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.describe", Json{{"entity", ramp_id}})).value("parent", world::EntityId{0}) == ground_id);
+    // Ground cannot go under its own child.
+    ok(s.idle_frame());
+    ground = ok(s.command("ui.query", Json{{"name", "entity:Ground"}}));
+    ramp = ok(s.command("ui.query", Json{{"name", "entity:Ramp"}}));
+    const double back = (ramp[0]["rect"]["y"].get<double>() + ramp[0]["rect"]["h"].get<double>() / 2) - (ground[0]["rect"]["y"].get<double>() + ground[0]["rect"]["h"].get<double>() / 2);
+    ok(s.command("ui.drag", Json{{"id", ground[0]["id"]}, {"dx", 0}, {"dy", back}, {"steps", 6}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.describe", Json{{"entity", ground_id}})).value("parent", world::EntityId{0}) == 0);
+}
+
+TEST_CASE("editor lists the project's assets and places one dropped on the scene", "[editor][assets]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tab:assets")}}));
+    ok(s.idle_frame());
+    Json row = ok(s.command("ui.query", Json{{"name", "asset:assets/bowl.glb"}}));
+    REQUIRE(row.size() == 1);
+    // A click describes the file.
+    ok(s.command("ui.click", Json{{"id", row[0]["id"]}}));
+    ok(s.idle_frame());
+    {
+        std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 12}}))["text"].get<std::string>();
+        INFO(snap);
+        REQUIRE(snap.find("assets/bowl.glb:") != std::string::npos);
+        REQUIRE(snap.find("vertices") != std::string::npos);
+    }
+    REQUIRE_FALSE(ok(s.command("world.find", Json{{"path", "bowl"}})).is_number());
+    // Dragged onto the middle of the scene pane, it becomes an entity on the ground under the pointer.
+    Json vp = ok(s.command("ui.query", Json{{"name", "viewport"}}));
+    REQUIRE(vp.size() == 1);
+    row = ok(s.command("ui.query", Json{{"name", "asset:assets/bowl.glb"}}));
+    const double cx = vp[0]["rect"]["x"].get<double>() + vp[0]["rect"]["w"].get<double>() / 2, cy = vp[0]["rect"]["y"].get<double>() + vp[0]["rect"]["h"].get<double>() / 2;
+    const double dx = cx - (row[0]["rect"]["x"].get<double>() + row[0]["rect"]["w"].get<double>() / 2), dy = cy - (row[0]["rect"]["y"].get<double>() + row[0]["rect"]["h"].get<double>() / 2);
+    ok(s.command("ui.drag", Json{{"id", row[0]["id"]}, {"dx", dx}, {"dy", dy}, {"steps", 6}}));
+    ok(s.idle_frame());
+    Json found = ok(s.command("world.find", Json{{"path", "bowl"}}));
+    INFO(found.dump());
+    REQUIRE(found.is_number());
+    const world::EntityId id = found.get<world::EntityId>();
+    REQUIRE(ok(s.command("world.get", Json{{"entity", id}, {"component", "MeshRenderer"}}))["mesh"] == "assets/bowl.glb");
+    {
+        Json root = ok(s.command("ui.describe", Json{{"id", 1}}));
+        const double scale = root["rect"]["w"].get<double>() > 0 ? 1024.0 / root["rect"]["w"].get<double>() : 1.0;
+        Json ray = ok(s.command("render.unproject", Json{{"x", cx * scale}, {"y", cy * scale}, {"plane", "xz"}, {"at", 0}}));
+        INFO(ray.dump());
+        REQUIRE(ray["hit"] == true);
+        Json t = ok(s.command("world.get", Json{{"entity", id}, {"component", "Transform"}}));
+        INFO(t.dump());
+        REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(ray["point"]["x"].get<double>()).margin(1e-3));
+        REQUIRE(t["position"]["y"].get<double>() == Catch::Approx(0.0).margin(1e-3));
+        REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(ray["point"]["z"].get<double>()).margin(1e-3));
+    }
+    // The hierarchy shows it selected; undo removes it, redo brings it back with the same mesh.
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "entity:bowl"}})).size() == 1);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE_FALSE(ok(s.command("world.find", Json{{"path", "bowl"}})).is_number());
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "bowl"}, {"component", "MeshRenderer"}}))["mesh"] == "assets/bowl.glb");
+    // A second drop gets a name of its own.
+    row = ok(s.command("ui.query", Json{{"name", "asset:assets/bowl.glb"}}));
+    const double dx2 = cx - (row[0]["rect"]["x"].get<double>() + row[0]["rect"]["w"].get<double>() / 2), dy2 = cy - (row[0]["rect"]["y"].get<double>() + row[0]["rect"]["h"].get<double>() / 2);
+    ok(s.command("ui.drag", Json{{"id", row[0]["id"]}, {"dx", dx2}, {"dy", dy2}, {"steps", 6}}));
+    ok(s.idle_frame());
+    INFO(ok(s.command("ui.query", Json{{"name", "notice"}})).dump());
+    REQUIRE(ok(s.command("world.find", Json{{"path", "bowl 2"}})).is_number());
+    // Dropped back on the list, nothing is placed.
+    ok(s.command("ui.drag", Json{{"id", row[0]["id"]}, {"dx", 0}, {"dy", -4}, {"steps", 3}}));
+    ok(s.idle_frame());
+    REQUIRE_FALSE(ok(s.command("world.find", Json{{"path", "bowl 3"}})).is_number());
+    ok(s.finish());
+    std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");   // the layout file the tab click wrote
 }
 
 TEST_CASE("editor snaps gizmo moves, turns and scales to the grid", "[editor][snap]") {
@@ -303,6 +436,21 @@ TEST_CASE("editor snaps gizmo moves, turns and scales to the grid", "[editor][sn
     auto transform = [&]() { return ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}})); };
     auto multiple_of = [](double v, double step) { return std::abs(v / step - std::round(v / step)) < 1e-4; };
     const Json before = transform();
+    // The step cycles 0.1, 0.25, 0.5, 1, 2 and is kept with the layout; two clicks from the default half unit make it two units.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "snap_step")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "snap_step")}}));
+    ok(s.idle_frame());
+    {
+        Json bq = ok(s.command("ui.query", Json{{"name", "snap_step"}}));
+        REQUIRE(bq.size() == 1);
+        Json saved = ok(s.command("project.read", Json{{"path", ".pocket/editor.json"}}));
+        INFO(bq.dump());
+        INFO(saved.dump());
+        INFO(ok(s.command("ui.query", Json{{"name", "snap"}})).dump());
+        REQUIRE(Json::parse(saved["text"].get<std::string>())["snap_step"] == 2);
+    }
+    for (int i = 0; i < 3; ++i) { ok(s.command("ui.click", Json{{"id", find_named(s, "snap_step")}})); ok(s.idle_frame()); }   // round to the half unit again
     // A move along X lands on a half unit; the other axes are left alone.
     Json cq = ok(s.command("ui.query", Json{{"name", "gizmo:plane"}}));
     Json xq = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));

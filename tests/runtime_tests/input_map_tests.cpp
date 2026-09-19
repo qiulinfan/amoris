@@ -28,7 +28,60 @@ platform::Event pad_axis(const char* name, float value) {
     return e;
 }
 
+platform::Event mouse_move(float dx, float dy) {
+    platform::Event e;
+    e.type = platform::EventType::MouseMove;
+    e.dx = dx;
+    e.dy = dy;
+    return e;
+}
+
+platform::Event wheel(float dx, float dy) {
+    platform::Event e;
+    e.type = platform::EventType::MouseWheel;
+    e.dx = dx;
+    e.dy = dy;
+    return e;
+}
+
 }  // namespace
+
+TEST_CASE("mouse motion and wheel are axes read as deltas over a tick", "[input][mouse]") {
+    app::InputMap m;
+    REQUIRE(m.configure(Json{{"look_x", Json{{"axis", Json::array({"mouse:x", "pad:rightx"})}, {"deadzone", 0.0}}}, {"look_y", Json{{"axis", Json::array({"mouse:y"})}, {"deadzone", 0.0}}}, {"zoom", Json{{"axis", Json::array({"wheel:y"})}, {"deadzone", 0.0}}}}).has_value());
+    // Two moves in one tick add up: 30 + 20 pixels right is half deflection; 10 pixels down is a tenth.
+    m.apply(mouse_move(30, 10));
+    m.apply(mouse_move(20, 0));
+    Json s = m.snapshot();
+    REQUIRE(s["look_x"]["value"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(s["look_y"]["value"].get<double>() == Catch::Approx(0.1));
+    REQUIRE(s["look_x"]["down"] == false);
+    // The tick that read them spends them.
+    m.consume_edges();
+    s = m.snapshot();
+    REQUIRE(s["look_x"]["value"].get<double>() == 0.0);
+    REQUIRE(s["look_y"]["value"].get<double>() == 0.0);
+    // Past a hundred pixels the value is clamped, and `down` follows past half; the pad's stick
+    // competes by magnitude and holds its value across ticks.
+    m.apply(mouse_move(-250, 0));
+    s = m.snapshot();
+    REQUIRE(s["look_x"]["value"].get<double>() == Catch::Approx(-1.0));
+    REQUIRE(s["look_x"]["down"] == true);
+    REQUIRE(s["look_x"]["pressed"] == true);
+    m.consume_edges();
+    m.apply(pad_axis("rightx", 0.3f));
+    m.apply(mouse_move(10, 0));
+    s = m.snapshot();
+    REQUIRE(s["look_x"]["value"].get<double>() == Catch::Approx(0.3));
+    m.consume_edges();
+    REQUIRE(m.snapshot()["look_x"]["value"].get<double>() == Catch::Approx(0.3));   // the stick stays where it is
+    // A wheel notch is full deflection, spent the same way.
+    m.apply(wheel(0, 1));
+    REQUIRE(m.snapshot()["zoom"]["value"].get<double>() == Catch::Approx(1.0));
+    m.consume_edges();
+    REQUIRE(m.snapshot()["zoom"]["value"].get<double>() == 0.0);
+    REQUIRE(m.describe()["look_x"]["axis"] == Json::array({"mouse:x", "pad:rightx"}));
+}
 
 TEST_CASE("input map edges last until consumed", "[input]") {
     app::InputMap m;

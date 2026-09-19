@@ -3,7 +3,7 @@
 import { render, world } from "pocket";
 import type { Quat, Vec3 } from "pocket";
 
-export type Axis = "x" | "y" | "z" | "plane" | "rotate" | "scale";
+export type Axis = "x" | "y" | "z" | "plane" | "rotate" | "rotate_x" | "rotate_z" | "scale" | "scale_x" | "scale_y" | "scale_z";
 
 export interface GizmoLayout {
     /** Pixel positions of the entity origin and the three axis tips. */
@@ -82,6 +82,12 @@ export function multiplyQuat(a: Quat, b: Quat): Quat {
 }
 
 /** Rotation of `radians` around the world Y axis. */
+/** A turn of `radians` about one world axis. */
+export function axisQuat(axis: "x" | "y" | "z", radians: number): Quat {
+    const h = radians / 2, sn = Math.sin(h);
+    return { x: axis === "x" ? sn : 0, y: axis === "y" ? sn : 0, z: axis === "z" ? sn : 0, w: Math.cos(h) };
+}
+
 export function yawQuat(radians: number): Quat {
     return { x: 0, y: Math.sin(radians / 2), z: 0, w: Math.cos(radians / 2) };
 }

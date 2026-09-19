@@ -12,7 +12,7 @@ move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", 
 jump   = ["Space", "pad:a"]
 ```
 
-or from a script (`input.map({...})`) or an agent (`input.map {actions}`); redefining keeps the live state of actions that already existed. Bindings are SDL scancode names (`Space`, `Left`, `A`), `pad:<button>` (`a`, `b`, `x`, `y`, `dpad_up`, `left_shoulder`, ...) and `pad:<axis>` (`leftx`, `lefty`, `rightx`, `righty`, `left_trigger`, `right_trigger`). A button contributes its sign; an axis contributes its value past the dead zone (0.15 by default, rescaled); the larger magnitude wins and the result is clamped to -1..1. `down` means any button is held or an axis is past half.
+or from a script (`input.map({...})`) or an agent (`input.map {actions}`); redefining keeps the live state of actions that already existed. Bindings are SDL scancode names (`Space`, `Left`, `A`), `pad:<button>` (`a`, `b`, `x`, `y`, `dpad_up`, `left_shoulder`, ...), `pad:<axis>` (`leftx`, `lefty`, `rightx`, `righty`, `left_trigger`, `right_trigger`), and the mouse as axes: `mouse:x` and `mouse:y` are its motion over the tick (a hundred pixels is full deflection, +y down the screen), `wheel:x` and `wheel:y` its wheel (a notch is full), all spent by the tick that read them, so `look_x = { axis: ["mouse:x", "pad:rightx"], deadzone: 0 }` is mouse look on either device. A button contributes its sign; an axis contributes its value past the dead zone (0.15 by default, rescaled; set it to 0 for the mouse); the larger magnitude wins and the result is clamped to -1..1. `down` means any button is held or an axis is past half.
 
 ## Every frame
 
@@ -24,4 +24,4 @@ The platform layer turns SDL keyboard and gamepad events into the normalized eve
 
 ## Not yet
 
-Rebinding UI in the editor, rumble, per-player maps for local multiplayer, mouse-delta actions (mouse look reads `onInput` deltas directly), and touch.
+Rebinding UI in the editor, rumble, per-player maps for local multiplayer, and touch.

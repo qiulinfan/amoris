@@ -426,6 +426,9 @@ struct AudioSource {
     float pitch = 1.0f;
     bool loop = false;
     bool autoplay = false;
+    bool spatial = false;
+    float near = 1.0f;
+    float range = 20.0f;
     bool playing = false;
     std::uint32_t voice = 0;
     constexpr bool operator==(const AudioSource&) const = default;

@@ -11,13 +11,17 @@ Sound in Pocket follows the same rule as everything else: the state an agent can
 
 ## Component
 
-`AudioSource { clip, volume, pitch, loop, autoplay, playing, voice }`: put it in a scene with `autoplay` and the engine starts the clip the first tick it sees the component, then keeps `playing` and `voice` current (a finished non-looping clip clears them). One-shots come from scripts.
+`AudioSource { clip, volume, pitch, loop, autoplay, spatial, near, range, playing, voice }`: put it in a scene with `autoplay` and the engine starts the clip the first tick it sees the component, then keeps `playing` and `voice` current (a finished non-looping clip clears them); `spatial` makes it heard from where the entity is (below). One-shots come from scripts.
+
+## Where a sound is
+
+A source with `spatial` is heard from where its entity is: every tick the engine takes the entity's world position against the listener, the camera of the last frame, and sets the voice's volume to the source's, full within `near` of the camera and falling in a straight line to nothing at `range`, and its pan toward the side the entity is on (most of the way, so a sound straight to the right still reaches the left ear). A one-shot follows its entity the same way: `audio.play {clip, entity, spatial: true, near?, range?}` places the voice now and every tick until it ends. The placement goes through `audio.set`, so `audio.list` shows the volume and pan a spatial voice has right now, and a headless run places its voices the same way a window does (the mixer never runs, the numbers do). A source without `spatial` keeps the volume and pan it was given.
 
 ## Commands and SDK
 
 | Command | SDK | Purpose |
 |---|---|---|
-| `audio.play {clip, volume?, pitch?, pan?, loop?, entity?, tag?}` | `audio.play(clip, options)` | Start a voice; returns its id. |
+| `audio.play {clip, volume?, pitch?, pan?, loop?, entity?, tag?, spatial?, near?, range?}` | `audio.play(clip, options)` | Start a voice; returns its id. A spatial one follows its entity. |
 | `audio.stop {voice | clip | tag | all}` | `audio.stop(id | {clip} | {tag})` | Stop voices; returns how many. |
 | `audio.set {voice, volume?, pitch?, pan?, loop?}` | `audio.set(id, params)` | Change a playing voice. |
 | `audio.list` | `audio.voices()` | Every voice with position and duration in seconds. |
@@ -27,4 +31,4 @@ Sound in Pocket follows the same rule as everything else: the state an agent can
 
 ## Not yet
 
-Compressed formats (OGG/MP3), 3D attenuation from entity positions (pan and volume are explicit today), effects buses, streaming long clips, and audio in the state hash (voices are deterministic but kept out of the hash like the interface).
+Compressed formats (OGG/MP3), occlusion and reverb (a spatial source is distance and side only, a wall between does nothing), a listener other than the camera, effects buses, streaming long clips, and audio in the state hash (voices are deterministic but kept out of the hash like the interface).

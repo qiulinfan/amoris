@@ -1320,6 +1320,9 @@ void to_json(Json& j, const AudioSource& v) {
     j["pitch"] = v.pitch;
     j["loop"] = v.loop;
     j["autoplay"] = v.autoplay;
+    j["spatial"] = v.spatial;
+    j["near"] = v.near;
+    j["range"] = v.range;
     j["playing"] = v.playing;
     j["voice"] = v.voice;
 }
@@ -1330,6 +1333,9 @@ void from_json(const Json& j, AudioSource& v) {
     scalar_from_json(j, "pitch", v.pitch);
     scalar_from_json(j, "loop", v.loop);
     scalar_from_json(j, "autoplay", v.autoplay);
+    scalar_from_json(j, "spatial", v.spatial);
+    scalar_from_json(j, "near", v.near);
+    scalar_from_json(j, "range", v.range);
     scalar_from_json(j, "playing", v.playing);
     scalar_from_json(j, "voice", v.voice);
 }
@@ -1340,6 +1346,9 @@ void hash_component(StateHasherRef& h, const AudioSource& v) {
     h.f32(v.pitch);
     h.u8(v.loop ? 1 : 0);
     h.u8(v.autoplay ? 1 : 0);
+    h.u8(v.spatial ? 1 : 0);
+    h.f32(v.near);
+    h.f32(v.range);
     h.u8(v.playing ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.voice));
 }
@@ -1348,6 +1357,8 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     (void)v;
     if (path == "volume") { *out = &v.volume; return 1; }
     if (path == "pitch") { *out = &v.pitch; return 1; }
+    if (path == "near") { *out = &v.near; return 1; }
+    if (path == "range") { *out = &v.range; return 1; }
     return 0;
 }
 
@@ -1715,12 +1726,15 @@ constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
-constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
+constexpr std::array<FieldInfo, 10> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
     FieldInfo{"volume", "f32", "Linear gain, 0..4."},
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
     FieldInfo{"loop", "bool", "Restart when the clip ends."},
     FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
+    FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
+    FieldInfo{"near", "f32", "Distance within which a spatial source plays at its full volume."},
+    FieldInfo{"range", "f32", "Distance at which a spatial source is silent."},
     FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};

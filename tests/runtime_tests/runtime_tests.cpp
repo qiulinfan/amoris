@@ -786,7 +786,8 @@ TEST_CASE("sprites draw unlit through an orthographic camera and are picked by s
     INFO(stats.dump());
     REQUIRE(stats["sprites"].get<int>() == 10);  // the player, six coins, the lift, the ball and the puck; the ground is a tile map
     REQUIRE(stats["tile_layers"].get<int>() == 4);         // ground, deco, platforms and water layers of level.tmj
-    REQUIRE(stats["draw_calls"].get<int>() <= 7);           // runs per texture, split by layer (four tile layers among them)
+    REQUIRE(stats["image_layers"].get<int>() == 1);        // the sky, repeated across the level in one run of quads
+    REQUIRE(stats["draw_calls"].get<int>() <= 8);           // runs per texture, split by layer (four tile layers and the sky among them)
     // The map answers what is where: solid ground under the player, air above, the ledge at (13,6).
     Json below = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", 0.0}, {"y", -3.6}}).value();
     REQUIRE(below["solid"] == true);
@@ -1740,6 +1741,65 @@ TEST_CASE("per-joint IK limits give one joint its own most and least bend", "[ru
     p = pose();
     REQUIRE(p["ik"]["reached"] == true);
     REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(11.46).margin(0.5));
+}
+
+TEST_CASE("a spatial source is heard from where its entity is: quieter with distance, panned to its side", "[runtime][audio][spatial]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "audio";
+    o.bundle = root() / "build" / "ts" / "audio.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The camera at the origin looking down -Z: +X is its right.
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"rotation", {{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ping"}, {"components", Json{{"Transform", Json{{"position", {{"x", 8}, {"y", 0}, {"z", 0}}}}}, {"AudioSource", Json{{"clip", "assets/hum.wav"}, {"autoplay", true}, {"loop", true}, {"volume", 1.0}, {"spatial", true}, {"near", 1.0}, {"range", 10.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    auto voice = [&]() {
+        for (const Json& v : s.command("audio.list", Json::object()).value()) if (v["clip"] == "assets/hum.wav" && v["entity"] != 0) return v;
+        return Json(nullptr);
+    };
+    Json v = voice();
+    INFO(v.dump());
+    REQUIRE(!v.is_null());
+    // Eight units off to the right of a ten-unit range: about a fifth of the volume, panned right.
+    REQUIRE(v["volume"].get<double>() == Catch::Approx((10.0 - 8.0) / 9.0).margin(0.02));
+    REQUIRE(v["pan"].get<double>() > 0.5);
+    // Two units to the left: nearly full, panned left.
+    REQUIRE(s.command("world.set", Json{{"entity", "Ping"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", -2}, {"y", 0}, {"z", 0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    v = voice();
+    REQUIRE(v["volume"].get<double>() == Catch::Approx((10.0 - 2.0) / 9.0).margin(0.02));
+    REQUIRE(v["pan"].get<double>() < -0.5);
+    // Within `near`, straight ahead: full and centered; beyond `range`: silent.
+    REQUIRE(s.command("world.set", Json{{"entity", "Ping"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -0.5}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    v = voice();
+    REQUIRE(v["volume"].get<double>() == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(std::fabs(v["pan"].get<double>()) < 0.05);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ping"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -40}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(voice()["volume"].get<double>() == Catch::Approx(0.0).margin(0.001));
+    // A spatial one-shot follows its entity too, and needs one.
+    REQUIRE(s.command("audio.play", Json{{"clip", "assets/beep.wav"}, {"spatial", true}}).error().code == "bad_args");
+    REQUIRE(s.command("world.set", Json{{"entity", "Ping"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 4}, {"y", 0}, {"z", 0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json shot = s.command("audio.play", Json{{"clip", "assets/beep.wav"}, {"entity", "Ping"}, {"spatial", true}, {"range", 8.0}, {"volume", 0.5}}).value();
+    REQUIRE(s.frame().has_value());
+    Json bv(nullptr);
+    for (const Json& x : s.command("audio.list", Json::object()).value()) if (x["id"] == shot["voice"]) bv = x;
+    INFO(bv.dump());
+    REQUIRE(!bv.is_null());
+    REQUIRE(bv["volume"].get<double>() == Catch::Approx(0.5 * (8.0 - 4.0) / 7.0).margin(0.02));
+    REQUIRE(bv["pan"].get<double>() > 0.5);
 }
 
 TEST_CASE("particles land on a floor, burst a child where they die and stretch along their motion", "[runtime][particles][floor][child][stretch]") {

@@ -34,6 +34,7 @@ struct RenderStats {
     std::uint32_t morphed = 0;        // of which drawn with morph target weights
     std::uint32_t moving_parts = 0;   // submeshes placed by an animated node (moving parts)
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
+    std::uint32_t image_layers = 0;   // image layers drawn (a picture placed in map pixels, repeated across the map when asked)
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after an edit, over the renderer's life
     std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     int msaa = 1;                     // samples per pixel of the color pass (1 or 4)

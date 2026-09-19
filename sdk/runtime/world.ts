@@ -109,8 +109,9 @@ export const world = {
     roots(): Entity[] {
         return command<Entity[]>("world.roots");
     },
-    reparent(entity: EntityRef, parent: EntityRef | null): void {
-        command("world.reparent", { entity, parent });
+    /** Move an entity under another (null: to the root); `keepWorld` leaves it where it stands in the world, its local transform taking up the difference. */
+    reparent(entity: EntityRef, parent: EntityRef | null, options: { keepWorld?: boolean } = {}): void {
+        command("world.reparent", { entity, parent, keep_world: options.keepWorld ?? false });
     },
     rename(entity: EntityRef, name: string): void {
         command("world.rename", { entity, name });

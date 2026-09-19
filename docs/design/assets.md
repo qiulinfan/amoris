@@ -37,7 +37,7 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 | Command | Purpose |
 |---|---|
-| `assets.list` | Files under `assets/` with kind (mesh, image, other), size, and whether they are loaded. |
+| `assets.list` | Files under `assets/` with kind (mesh, image, tilemap, audio, other), size, and whether they are loaded. |
 | `assets.describe {path}` | A mesh's vertices, triangles, submeshes, nodes, materials and bounds; an image's size. Loads it if needed. |
 | `assets.reload {path?}` | Forget decoded data (one path or all) and drop GPU copies; the next frame reloads from disk. |
 | `assets.stats` | Counts of loaded meshes, images and failures plus the renderer's view. |

@@ -8,6 +8,10 @@ export interface PlayOptions {
     pan?: number;
     entity?: number;
     tag?: string;
+    /** Heard from where `entity` is: full within `near` of the camera, silent at `range`, panned to its side (docs/design/audio.md). */
+    spatial?: boolean;
+    near?: number;
+    range?: number;
 }
 
 export interface Voice {

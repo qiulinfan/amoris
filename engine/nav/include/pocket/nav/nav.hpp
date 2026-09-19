@@ -67,11 +67,13 @@ struct Obstacle {
     world::EntityId id = 0;
     Vec3 position;
     float radius = 0.5f;
+    Vec3 velocity;   // units per second: what the agents' avoidance expects it to do next (step() fills it in)
 };
 
 // What the last step() did with the world's NavAgent and NavObstacle entities.
 struct CrowdStats {
     int agents = 0, moving = 0, arrived = 0, stuck = 0, obstacles = 0, blocked = 0, replans = 0, avoiding = 0, queuing = 0, detours = 0;   // detours: followers walking a path to a slot out of sight, this tick
+    int moving_obstacles = 0;   // obstacles with a velocity this tick (a Velocity component, or a position that changed)
 };
 
 // The walkable cells covered by rectangles that share edges (docs/design/navigation.md, Navmesh):
@@ -155,6 +157,7 @@ class Nav {
     Grid grid_;
     NavMesh mesh_;
     std::vector<Obstacle> obstacles_;
+    std::map<world::EntityId, Vec3> obstacle_was_;   // where each NavObstacle stood last tick, for the velocity of one moved by hand
     std::map<world::EntityId, AgentRun> runs_;
     std::map<world::EntityId, Lead> leads_;
     CrowdStats crowd_;

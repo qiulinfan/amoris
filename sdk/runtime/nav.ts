@@ -41,6 +41,8 @@ export interface NavInfo {
     agent_radius?: number;
     /** NavObstacle entities applied this tick and the cells under them. */
     obstacles: number;
+    /** Obstacles with a velocity this tick (a Velocity component, or a position that changed since the last tick). */
+    moving_obstacles: number;
     blocked: number;
     /** NavAgent entities moved this tick, by state, and how many replanned or deviated to avoid something. */
     agents: number;

@@ -8,7 +8,7 @@ import type { ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } 
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
 import * as history from "./history";
-import { axisDelta, layoutFor, multiplyQuat, planeDelta, yawQuat } from "./gizmo";
+import { axisDelta, axisQuat, layoutFor, multiplyQuat, planeDelta } from "./gizmo";
 import type { Axis, GizmoLayout } from "./gizmo";
 import type { Vec3 } from "pocket";
 
@@ -18,6 +18,9 @@ interface LogRow { seq: number; tick?: number; level: string; cat: string; msg: 
 interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 interface Layout { hierarchy: number; inspector: number; bottom: number }
+interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "other"; bytes: number; loaded: boolean }
+type Tab = "console" | "events" | "transcript" | "assets";
+const TABS: Tab[] = ["console", "events", "transcript", "assets"];
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
 const LAYOUT_PATH = ".pocket/editor.json";
@@ -30,9 +33,11 @@ const selection = signal<number[]>([]);   // ordered; the last one is the primar
 const playing = signal(false);
 const paused = signal(true);
 const overlays = signal(false);   // colliders and joints drawn as lines in the scene pane
-const snap = signal(false);       // gizmo drags land on the grid: half units, 15 degrees, quarter scales
-const SNAP_MOVE = 0.5, SNAP_ANGLE = Math.PI / 12, SNAP_SCALE = 0.25;
-const tab = signal<"console" | "events" | "transcript">("console");
+const snap = signal(false);       // gizmo drags land on the grid: snapStep units, 15 degrees, quarter scales
+const snapStep = signal(0.5);     // the grid a snapped move lands on, cycled by the toolbar
+const SNAP_STEPS = [0.1, 0.25, 0.5, 1, 2];
+const SNAP_ANGLE = Math.PI / 12, SNAP_SCALE = 0.25;
+const tab = signal<Tab>("console");
 const status = signal({ tick: 0, hash: "", entities: 0, frames: 0 });
 const rows = signal<TreeRow[]>([]);
 const described = signal<Described | null>(null);
@@ -45,6 +50,9 @@ const layout = signal<Layout>({ ...DEFAULT_LAYOUT });
 const gizmo = signal<GizmoView | null>(null);
 const historyVersion = signal(0);
 const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
+const assetRows = signal<AssetRow[]>([]);      // the project's assets/ folder, shown by the Assets tab
+const assetPick = signal("");                  // the asset whose description is shown
+const assetInfo = signal("");
 
 let editScene: unknown = null;
 let orbit: Orbit | undefined;
@@ -129,6 +137,7 @@ function refreshBottom(): void {
     const t = tab();
     if (t === "console") logs.set(command<LogRow[]>("log.tail", { n: 40 }));
     else if (t === "events") recentEvents.set(command<WorldEvent[]>("events.recent", { n: 40 }));
+    else if (t === "assets") assetRows.set(command<AssetRow[]>("assets.list"));
     else transcriptText.set(command<{ text: string }>("transcript", { max_lines: 30 }).text);
 }
 
@@ -136,10 +145,11 @@ function refreshBottom(): void {
 function loadLayout(): void {
     try {
         const r = command<{ text: string }>("project.read", { path: LAYOUT_PATH });
-        const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: "console" | "events" | "transcript"; snap?: boolean };
+        const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: Tab; snap?: boolean; snap_step?: number };
         if (j.layout) layout.set({ ...DEFAULT_LAYOUT, ...j.layout });
-        if (j.tab === "console" || j.tab === "events" || j.tab === "transcript") tab.set(j.tab);
+        if (j.tab !== undefined && TABS.includes(j.tab)) tab.set(j.tab);
         if (j.snap === true) snap.set(true);
+        if (typeof j.snap_step === "number" && SNAP_STEPS.includes(j.snap_step)) snapStep.set(j.snap_step);
     } catch {
         // No saved layout yet.
     }
@@ -147,7 +157,7 @@ function loadLayout(): void {
 
 function saveLayout(): void {
     try {
-        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab(), snap: snap() } });
+        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab(), snap: snap(), snap_step: snapStep() } });
     } catch (e) {
         notice.set(`Layout not saved: ${String(e)}`);
     }
@@ -439,6 +449,124 @@ function TileBrush(props: { id: number }) {
     );
 }
 
+/** A hierarchy row dragged onto another becomes its child; dropped on the panel's own background it
+ * becomes a root. One undoable edit; a row dropped on itself or its own descendant is left alone. */
+function dropRow(id: number, e: UiEvent): void {
+    if (e.x === undefined || e.y === undefined || !alive(id)) return;
+    // The named box under the pointer, or the nearest named one above it (a row's label is not the row).
+    let under = "";
+    for (let node = ui.hit(e.x, e.y), hops = 0; node && hops < 16; ++hops) {
+        const d = ui.describe(node) as { name?: string; parent?: number };
+        const name = d.name ?? "";
+        if (name.startsWith("entity:") || name === "hierarchy") { under = name; break; }
+        node = d.parent ?? 0;
+    }
+    if (!under) return;
+    let parent = 0;
+    let where = "the root";
+    if (under.startsWith("entity:")) {
+        const row = rows().find((r) => `entity:${r.name}` === under);
+        if (!row || row.id === id) return;
+        parent = row.id;
+        where = row.name;
+    } else if (under !== "hierarchy") {
+        return;   // dropped somewhere else: not a move
+    }
+    // Its own descendants are not a home for it.
+    for (let p = parent; p !== 0;) {
+        if (p === id) { notice.set("An entity cannot go under its own child"); return; }
+        p = world.describe(p).parent ?? 0;
+    }
+    const before = world.describe(id).parent ?? 0;
+    if (before === parent) return;
+    const name = world.describe(id).name;
+    const move = (to: number) => {
+        command("world.reparent", { entity: id, parent: to === 0 ? null : to, keep_world: true });   // it stays where it stands
+        command("world.update_transforms");
+        refreshHierarchy();
+        refreshSelected();
+    };
+    history.perform(`move ${name} under ${where}`, () => move(parent), () => move(before));
+    historyVersion.update((v) => v + 1);
+    notice.set(`${name} moved under ${where}`);
+}
+
+// ------------------------------------------------------------------------------------ assets
+/** One line about an asset, from assets.describe. */
+function describeAsset(path: string): string {
+    try {
+        const d = command<Record<string, unknown>>("assets.describe", { path });
+        if (typeof d.error === "string") return d.error;
+        if (d.kind === "mesh") {
+            const clips = Array.isArray(d.clips) ? d.clips.length : 0;
+            return `${String(d.vertices)} vertices, ${String(d.triangles)} triangles, ${String(d.submeshes)} submeshes, ${String(d.nodes)} nodes${clips > 0 ? `, ${clips} clips` : ""}`;
+        }
+        if (d.kind === "tilemap") {
+            const layers = Array.isArray(d.layers) ? d.layers.length : 0;
+            return `${String(d.orientation)} ${String(d.width)}x${String(d.height)} tiles of ${String(d.tile_width)}x${String(d.tile_height)} px, ${layers} layers`;
+        }
+        if (d.kind === "image") return `${String(d.width)}x${String(d.height)} px`;
+        return "";
+    } catch (e) {
+        return String(e);
+    }
+}
+
+function pickAsset(row: AssetRow): void {
+    assetPick.set(row.path);
+    assetInfo.set(row.kind === "mesh" || row.kind === "image" || row.kind === "tilemap" ? describeAsset(row.path) : `${row.kind}, ${row.bytes} bytes`);
+}
+
+/** The components an asset becomes when placed: a mesh on the ground plane, a sprite or a map in
+ * the XY plane, a sound where it was dropped. Nothing for a file the runtime does not read. */
+function assetComponents(row: AssetRow): { components: Record<string, unknown>; plane: "xz" | "xy" } | null {
+    if (row.kind === "mesh") return { components: { MeshRenderer: { mesh: row.path } }, plane: "xz" };
+    if (row.kind === "tilemap") return { components: { TileMap: { map: row.path } }, plane: "xy" };
+    if (row.kind === "audio") return { components: { AudioSource: { clip: row.path } }, plane: "xz" };
+    if (row.kind === "image") {
+        // One unit on its longer side, the aspect kept.
+        let size = { x: 1, y: 1 };
+        try {
+            const d = command<{ width?: number; height?: number }>("assets.describe", { path: row.path });
+            if (d.width && d.height) size = { x: d.width / Math.max(d.width, d.height), y: d.height / Math.max(d.width, d.height) };
+        } catch {
+            // Undecodable: a unit square still shows the missing image.
+        }
+        return { components: { Sprite: { texture: row.path, size } }, plane: "xy" };
+    }
+    return null;
+}
+
+/** An asset row dropped on the scene pane: an entity under the pointer, one undoable edit. */
+function placeAsset(row: AssetRow, e: UiEvent): void {
+    if (e.x === undefined || e.y === undefined) return;
+    // Inside the scene pane (by its rectangle: the gizmo's handles float over it and must not count as elsewhere).
+    if (e.x < viewportRect.x || e.x >= viewportRect.x + viewportRect.w || e.y < viewportRect.y || e.y >= viewportRect.y + viewportRect.h) return;
+    const made = assetComponents(row);
+    if (!made) { notice.set(`${row.path}: nothing in the runtime reads this kind of file`); return; }
+    const s = pixelScale();
+    const ray = render.unproject(e.x * s, e.y * s, made.plane, 0);
+    const position = ray.hit && ray.point ? ray.point : { x: 0, y: 0, z: 0 };
+    const stem = (row.path.split("/").pop() ?? row.path).replace(/\.[^.]+$/, "");
+    const name = uniqueName(stem, siblingNames(undefined));
+    const ref = { id: 0, fragment: undefined as Scene | undefined };
+    edit(
+        `Place ${name}`,
+        () => {
+            ref.id = ref.fragment ? world.instantiate(ref.fragment) : world.spawn(name, { components: { Transform: { position }, ...made.components } as never });
+            refreshHierarchy();
+            select(ref.id);
+        },
+        () => {
+            ref.fragment = world.save(ref.id);
+            world.destroy(ref.id);
+            select(0);
+            refreshHierarchy();
+        },
+    );
+    notice.set(`${name} placed at ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}${ray.hit ? "" : " (the pointer's ray misses the plane)"}`);
+}
+
 function onViewportDown(e: UiEvent): void {
     endStroke();
     const painting = tileMapSelected();
@@ -528,23 +656,30 @@ function gizmoDrag(e: UiEvent): void {
     // Every drag is applied from the transforms at its start, so snapping rounds the whole move
     // (with Snap on: positions to half units on the dragged axes, turns to 15 degrees, scales to quarters).
     const snapping = snap();
-    if (dragState.axis === "rotate") {
-        // Horizontal drag turns the selection around the world Y axis, 100 px per radian.
+    const axis = dragState.axis;
+    if (axis === "rotate" || axis === "rotate_x" || axis === "rotate_z") {
+        // Horizontal drag turns the selection around a world axis (R: Y, RX: X, RZ: Z), 100 px per radian.
         dragState.turned += dx * 0.01;
-        const q = yawQuat(snapping ? snapTo(dragState.turned, SNAP_ANGLE) : dragState.turned);
+        const about = axis === "rotate" ? "y" : axis === "rotate_x" ? "x" : "z";
+        const q = axisQuat(about, snapping ? snapTo(dragState.turned, SNAP_ANGLE) : dragState.turned);
         for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { rotation: multiplyQuat(q, before.rotation) });
-    } else if (dragState.axis === "scale") {
-        // Drag right to grow, left to shrink; uniform, relative to the size at the start of the drag.
+    } else if (axis === "scale" || axis === "scale_x" || axis === "scale_y" || axis === "scale_z") {
+        // Drag right to grow, left to shrink, relative to the size at the start of the drag: S on
+        // every axis, SX, SY, SZ on one.
         dragState.scaled = Math.max(0.01, dragState.scaled * Math.exp(dx * 0.005));
         const k = dragState.scaled;
-        const scaled = (v: number) => (snapping ? Math.max(SNAP_SCALE, snapTo(v * k, SNAP_SCALE)) : v * k);
-        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { scale: { x: scaled(before.scale.x), y: scaled(before.scale.y), z: scaled(before.scale.z) } });
+        const scaled = (v: number, a: "x" | "y" | "z") => {
+            if (axis !== "scale" && axis !== `scale_${a}`) return v;
+            return snapping ? Math.max(SNAP_SCALE, snapTo(v * k, SNAP_SCALE)) : v * k;
+        };
+        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { scale: { x: scaled(before.scale.x, "x"), y: scaled(before.scale.y, "y"), z: scaled(before.scale.z, "z") } });
     } else {
-        const delta = dragState.axis === "plane" ? planeDelta(selected(), dx, dy) : axisDelta(dragState.layout, dragState.axis, dx, dy);
+        const delta = axis === "plane" ? planeDelta(selected(), dx, dy) : axisDelta(dragState.layout, axis, dx, dy);
         const m = dragState.moved;
         m.x += delta.x; m.y += delta.y; m.z += delta.z;
-        const onAxis = (a: "x" | "y" | "z") => dragState!.axis === "plane" || dragState!.axis === a;
-        const at = (v: number, a: "x" | "y" | "z") => (snapping && onAxis(a) ? snapTo(v + m[a], SNAP_MOVE) : v + m[a]);
+        const onAxis = (a: "x" | "y" | "z") => axis === "plane" || axis === a;
+        const step = snapStep();
+        const at = (v: number, a: "x" | "y" | "z") => (snapping && onAxis(a) ? snapTo(v + m[a], step) : v + m[a]);
         for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { position: { x: at(before.position.x, "x"), y: at(before.position.y, "y"), z: at(before.position.z, "z") } });
     }
     command("world.update_transforms");   // paused: no tick will do it before the handles are placed
@@ -630,7 +765,15 @@ function toggleOverlays(): void {
 function toggleSnap(): void {
     snap.set(!snap());
     saveLayout();
-    notice.set(snap() ? "Snap on: moves to half units, turns to 15 degrees, scales to quarters" : "Snap off");
+    notice.set(snap() ? `Snap on: moves to ${snapStep()} units, turns to 15 degrees, scales to quarters` : "Snap off");
+}
+
+/** The next grid step for snapped moves: 0.1, 0.25, 0.5, 1, 2 units, round and round. */
+function cycleSnapStep(): void {
+    const i = SNAP_STEPS.indexOf(snapStep());
+    snapStep.set(SNAP_STEPS[(i + 1) % SNAP_STEPS.length]);
+    saveLayout();
+    notice.set(`Snap step ${snapStep()} units`);
 }
 
 function Toolbar() {
@@ -648,13 +791,14 @@ function Toolbar() {
             <Button label="Undo" name="undo" onClick={doUndo} disabled={!history.canUndo()} />
             <Button label="Redo" name="redo" onClick={doRedo} disabled={!history.canRedo()} />
             <box width={12} />
-            <Button label="Save scene" name="save" onClick={saveScene} disabled={!info.scene} />
+            <Button label="Save" name="save" onClick={saveScene} disabled={!info.scene} />
             <Button label="Spawn" name="spawn" onClick={spawnEntity} />
-            <Button label="Duplicate" name="duplicate" onClick={duplicateSelected} disabled={selection().length === 0} />
+            <Button label="Clone" name="duplicate" onClick={duplicateSelected} disabled={selection().length === 0} />
             <Button label="Delete" name="delete" onClick={deleteSelected} disabled={selection().length === 0} />
             <box width={12} />
             <Button label={overlays() ? "Overlays: on" : "Overlays"} name="overlays" onClick={toggleOverlays} />
             <Button label={snap() ? "Snap: on" : "Snap"} name="snap" onClick={toggleSnap} />
+            <Button label={`${snapStep()}`} name="snap_step" onClick={cycleSnapStep} />
             <box flex={1} />
             <Label text={`tick ${s.tick}`} muted name="tick" />
             <Label text={`${s.entities} entities`} muted name="entities" />
@@ -670,7 +814,7 @@ function Hierarchy() {
         <Panel title={`Hierarchy (${list.length})`} width={layout().hierarchy} scroll name="hierarchy" padding={2} gap={0}>
             {list.length === 0 ? <Label text="No entities. Press Play or Spawn." muted wrap /> : null}
             {list.map((r) => (
-                <box key={r.id} onClick={(e) => select(r.id, e.mods?.includes("shift") || e.mods?.includes("meta") || e.mods?.includes("ctrl") ? "toggle" : "replace")} padding={[3, 6]} radius={3} background={sel.includes(r.id) ? theme.accent : null} name={`entity:${r.name}`}>
+                <box key={r.id} onClick={(e) => select(r.id, e.mods?.includes("shift") || e.mods?.includes("meta") || e.mods?.includes("ctrl") ? "toggle" : "replace")} onDrag={() => undefined} onDragEnd={(e) => dropRow(r.id, e)} padding={[3, 6]} radius={3} background={sel.includes(r.id) ? theme.accent : null} name={`entity:${r.name}`}>
                     <Label text={`${"  ".repeat(r.depth)}${r.name}`} color={sel.includes(r.id) ? theme.accentText : theme.text} />
                 </box>
             ))}
@@ -780,6 +924,20 @@ function Bottom() {
         body = logs().map((l) => <Label key={l.seq} text={`${l.tick !== undefined ? `[${l.tick}] ` : ""}${l.level} ${l.cat}: ${l.msg}`} size={12} color={l.level === "error" ? theme.danger : l.level === "warn" ? "#f0c060" : theme.text} />);
     } else if (t === "events") {
         body = recentEvents().map((e) => <Label key={e.seq} text={`#${e.seq} t${e.tick} ${e.type}${e.subject ? ` @${e.subject}` : ""}${e.cause ? ` <- #${e.cause}` : ""} ${e.data ? JSON.stringify(e.data) : ""}`} size={12} />);
+    } else if (t === "assets") {
+        const list = assetRows();
+        const picked = assetPick();
+        body = [
+            <Label key="hint" text={list.length === 0 ? "No files under assets/." : picked ? `${picked}: ${assetInfo()}` : "Click a file to describe it; drag one onto the scene to place it."} muted size={12} name="asset-info" wrap />,
+            ...list.map((r) => (
+                <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" padding={[2, 6]} gap={8} radius={3} background={picked === r.path ? theme.accent : null} onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)}>
+                    <Label text={r.path} size={12} color={picked === r.path ? theme.accentText : theme.text} />
+                    <Label text={r.kind} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
+                    <Label text={r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
+                    {r.loaded ? <Label text="loaded" size={12} color={picked === r.path ? theme.accentText : theme.ok} /> : null}
+                </box>
+            )),
+        ];
     } else {
         body = transcriptText().split("\n").map((line, i) => <Label key={i} text={line} size={12} />);
     }
@@ -789,6 +947,7 @@ function Bottom() {
                 {tabButton("console", "Console")}
                 {tabButton("events", "Events")}
                 {tabButton("transcript", "Transcript")}
+                {tabButton("assets", "Assets")}
                 <box flex={1} />
                 <Label text={notice()} muted size={12} name="notice" />
             </Row>
@@ -799,14 +958,16 @@ function Bottom() {
     );
 }
 
-/** Translate gizmo: absolute children of the main row, painted over the scene pane. */
+/** The gizmo: absolute children of the main row, painted over the scene pane. Move handles at
+ * the axis tips and the center; turns about Y, X and Z below to the left (R, RX, RZ); scales,
+ * uniform and per axis, below to the right (S, SX, SY, SZ). */
 function GizmoHandles() {
     const g = gizmo();
     if (!g) return null;
     const handle = (axis: Axis, p: { x: number; y: number }, color: string, label: string) => (
         <box key={axis} name={`gizmo:${axis}`} position="absolute" left={p.x - 9} top={p.y - 9} width={18} height={18} radius={axis === "plane" ? 3 : 9} background={color} borderColor="#000000" border={1} justify="center" align="center"
             onMouseDown={() => gizmoDown(axis)} onDrag={gizmoDrag} onDragEnd={gizmoEnd}>
-            <Label text={label} size={10} color="#101010" />
+            <Label text={label} size={label.length > 1 ? 8 : 10} color="#101010" />
         </box>
     );
     return [
@@ -815,7 +976,12 @@ function GizmoHandles() {
         handle("y", g.y, "#50c050", "Y"),
         handle("z", g.z, "#5080f0", "Z"),
         handle("rotate", { x: g.center.x - 30, y: g.center.y + 30 }, "#f0a030", "R"),
+        handle("rotate_x", { x: g.center.x - 54, y: g.center.y + 30 }, "#f0a030", "RX"),
+        handle("rotate_z", { x: g.center.x - 30, y: g.center.y + 54 }, "#f0a030", "RZ"),
         handle("scale", { x: g.center.x + 30, y: g.center.y + 30 }, "#c080f0", "S"),
+        handle("scale_x", { x: g.center.x + 54, y: g.center.y + 30 }, "#c080f0", "SX"),
+        handle("scale_y", { x: g.center.x + 30, y: g.center.y + 54 }, "#c080f0", "SY"),
+        handle("scale_z", { x: g.center.x + 54, y: g.center.y + 54 }, "#c080f0", "SZ"),
     ];
 }
 

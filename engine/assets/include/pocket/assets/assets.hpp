@@ -173,6 +173,21 @@ struct ObjectLayer {
     Json properties;
 };
 
+// A Tiled image layer: one picture placed in map pixels, drawn among the tile layers in file
+// order, repeated across the map's extent when the file asks (docs/design/tilemaps.md, Drawing).
+struct ImageLayer {
+    std::string name;
+    int id = 0;
+    std::string image;                 // project-relative, resolved next to the map; empty draws nothing
+    float offset_x = 0, offset_y = 0;  // pixels, the picture's top-left from the map's
+    float opacity = 1;
+    bool visible = true;
+    bool repeat_x = false, repeat_y = false;
+    Vec4 tint{1, 1, 1, 1};             // Tiled's tintcolor, multiplied in
+    Json properties;
+    int before = 0;                    // tile layers that precede it in the file: it draws after them, under the rest
+};
+
 struct TileMap {
     static constexpr std::uint32_t kFlipH = 0x80000000u, kFlipV = 0x40000000u, kFlipD = 0x20000000u, kIdMask = 0x1FFFFFFFu;
     std::string path;
@@ -187,6 +202,7 @@ struct TileMap {
     std::vector<TileSet> tilesets;
     std::vector<TileLayer> layers;
     std::vector<ObjectLayer> object_layers;
+    std::vector<ImageLayer> image_layers;
     Json properties;
     Json source;                 // the parsed Tiled document, kept so edits can be written back
     std::uint64_t revision = 0;  // bumped by every edit; renderers rebuild a layer whose revision moved

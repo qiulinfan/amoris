@@ -390,6 +390,7 @@ Json Nav::describe() const {
     j["avoiding"] = crowd_.avoiding;
     j["queuing"] = crowd_.queuing;
     j["detours"] = crowd_.detours;
+    j["moving_obstacles"] = crowd_.moving_obstacles;
     if (!baked()) return j;
     const Grid& g = grid_;
     j["agent_radius"] = g.agent_radius;
@@ -502,14 +503,26 @@ void Nav::reapply_obstacles() {
 void Nav::step(world::World& w, float dt) {
     const std::uint64_t tick = static_cast<std::uint64_t>(std::max<std::int64_t>(w.tick_index(), 0));
     crowd_ = CrowdStats{};
-    // The obstacles of this tick: every enabled NavObstacle at its world position.
+    // The obstacles of this tick: every enabled NavObstacle at its world position, with the velocity
+    // the agents should expect of it: its Velocity component when it has one, else where it went
+    // since last tick (a cart moved by a script or a tween), so a moving obstacle is met where it
+    // will be, not where it is.
     std::vector<Obstacle> obstacles;
+    std::map<world::EntityId, Vec3> was;
+    crowd_.moving_obstacles = 0;
     w.ecs().each([&](flecs::entity e, const world::NavObstacle& o, const world::Transform& t) {
-        if (!o.enabled) return;
         Vec3 p = t.position;
         if (const auto* wt = w.try_get<world::WorldTransform>(e.id())) p = wt->position;
-        obstacles.push_back({e.id(), p, std::max(o.radius, 0.0f)});
+        was[e.id()] = p;
+        if (!o.enabled) return;
+        Vec3 v;
+        if (const auto* vel = w.try_get<world::Velocity>(e.id())) v = vel->linear;
+        else if (const auto it = obstacle_was_.find(e.id()); it != obstacle_was_.end() && dt > 0) v = (p - it->second) * (1.0f / dt);
+        if (length(v) > 1e-4f) crowd_.moving_obstacles++;
+        else v = Vec3{};
+        obstacles.push_back({e.id(), p, std::max(o.radius, 0.0f), v});
     });
+    obstacle_was_ = std::move(was);
     set_obstacles(std::move(obstacles));
     crowd_.obstacles = static_cast<int>(obstacles_.size());
     crowd_.blocked = static_cast<int>(grid_.blocked_count());
@@ -719,9 +732,10 @@ void Nav::step(world::World& w, float dt) {
         }
         for (const Obstacle& o : obstacles_) {
             const P2 rel = sub(p2(plane, o.position), p);
+            const P2 ov = p2(plane, o.velocity);
             const float dist = len2(rel);
-            if (dist > reach + o.radius) continue;
-            near.push_back({rel, P2{}, a.radius + o.radius, dist, false});
+            if (dist > reach + o.radius + len2(ov) * kHorizon) continue;   // a fast one arrives from further away
+            near.push_back({rel, ov, a.radius + o.radius, dist, false});
         }
         if (near.empty()) continue;
         std::sort(near.begin(), near.end(), [](const Near& x, const Near& y) { return x.dist < y.dist; });

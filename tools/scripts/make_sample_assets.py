@@ -138,6 +138,16 @@ def sprite_tiles(tile=16):
     return png(w, h, px)
 
 
+def sprite_sky(width=32, height=160):
+    """A column of sky: deep blue at the top to pale at the horizon, repeated across the level as
+    an image layer behind the tiles."""
+    px = bytearray()
+    for y in range(height):
+        t = y / (height - 1)
+        px += bytes((int(58 + (169 - 58) * t), int(95 + (208 - 95) * t), int(154 + (245 - 154) * t), 255)) * width
+    return png(width, height, px)
+
+
 def checker(size=64, cells=8):
     px = bytearray()
     for y in range(size):
@@ -563,7 +573,7 @@ def sprites_level():
                         "properties": [{"name": "bob", "type": "float", "value": 0.3}]})
     return {
         "type": "map", "version": "1.10", "tiledversion": "1.11.0", "orientation": "orthogonal", "renderorder": "right-down",
-        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 6, "nextobjectid": 8,
+        "width": w, "height": h, "tilewidth": 16, "tileheight": 16, "infinite": False, "nextlayerid": 7, "nextobjectid": 8,
         "properties": [{"name": "title", "type": "string", "value": "coins"}],
         "tilesets": [{"firstgid": 1, "name": "tiles", "image": "tiles.png", "imagewidth": 112, "imageheight": 16, "tilewidth": 16, "tileheight": 16,
                       "columns": 7, "tilecount": 7, "spacing": 0, "margin": 0,
@@ -574,6 +584,7 @@ def sprites_level():
                                 {"id": 4, "properties": [{"name": "slope", "type": "int", "value": -1}]},
                                 {"id": 5, "animation": [{"tileid": 5, "duration": 400}, {"tileid": 6, "duration": 400}]}]}],
         "layers": [
+            {"id": 6, "type": "imagelayer", "name": "sky", "image": "sky.png", "x": 0, "y": 0, "offsetx": 0, "offsety": 0, "opacity": 1, "visible": True, "repeatx": True, "repeaty": False},
             {"id": 1, "type": "tilelayer", "name": "ground", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": ground},
             {"id": 2, "type": "tilelayer", "name": "deco", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": deco,
              "properties": [{"name": "solid", "type": "bool", "value": True}]},
@@ -586,7 +597,7 @@ def sprites_level():
 
 def make_sprites(out):
     os.makedirs(out, exist_ok=True)
-    for name, data in (("player.png", sprite_player_sheet()), ("coin.png", sprite_coin_sheet()), ("tiles.png", sprite_tiles())):
+    for name, data in (("player.png", sprite_player_sheet()), ("coin.png", sprite_coin_sheet()), ("tiles.png", sprite_tiles()), ("sky.png", sprite_sky())):
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")

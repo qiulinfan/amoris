@@ -490,6 +490,12 @@ export interface AudioSource {
     loop: boolean;
     /** Start playing as soon as the component exists. */
     autoplay: boolean;
+    /** Heard from where the entity is: the volume falls from full within `near` of the listener (the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). */
+    spatial: boolean;
+    /** Distance within which a spatial source plays at its full volume. */
+    near: number;
+    /** Distance at which a spatial source is silent. */
+    range: number;
     /** Whether a voice is currently playing this source (written by the engine). */
     playing: boolean;
     /** Id of the playing voice, 0 when silent (written by the engine). */
@@ -601,7 +607,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
-    AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
+    AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, playing: false, voice: 0 },
     NavObstacle: { radius: 0.5, enabled: true },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },

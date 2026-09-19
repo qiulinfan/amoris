@@ -34,12 +34,12 @@ class InputMap {
 
    private:
     struct Binding {
-        std::string source;  // "Space", "pad:a", "pad:leftx"
+        std::string source;  // "Space", "pad:a", "pad:leftx", "mouse:x", "wheel:y"
         float sign = 1.0f;   // +1 positive, -1 negative
     };
     struct Action {
         std::vector<Binding> buttons;  // keys and pad buttons
-        std::vector<Binding> axes;     // pad axes
+        std::vector<Binding> axes;     // pad axes, and the mouse's motion and wheel (deltas over the tick)
         float deadzone = 0.15f;
         // State
         std::map<std::string, float> active;  // source -> contribution while held
@@ -48,6 +48,7 @@ class InputMap {
         float value = 0;
     };
     void recompute(Action& a);
+    void apply_delta(const std::string& source, float amount);
     std::map<std::string, Action> actions_;
 };
 

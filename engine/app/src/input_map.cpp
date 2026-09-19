@@ -7,9 +7,16 @@ namespace pocket::app {
 
 namespace {
 
+// Pad sticks and triggers; the mouse's motion and wheel are axes too, read as deltas over a
+// tick: a hundred pixels of motion (or one notch of the wheel) is full deflection.
 bool is_axis(const std::string& s) {
+    if (s == "mouse:x" || s == "mouse:y" || s == "wheel:x" || s == "wheel:y") return true;
     return s.starts_with("pad:") && (s.ends_with("x") || s.ends_with("y") || s.find("trigger") != std::string::npos) && s != "pad:x" && s != "pad:y";
 }
+
+bool is_delta(const std::string& s) { return s.starts_with("mouse:") || s.starts_with("wheel:"); }
+
+constexpr float kMousePixelsPerUnit = 100.0f;
 
 }  // namespace
 
@@ -81,6 +88,15 @@ void InputMap::apply(const platform::Event& event) {
         case EventType::KeyUp: source = event.key_name; button = true; is_down = false; break;
         case EventType::PadButton: source = "pad:" + event.key_name; button = true; is_down = event.pressed; break;
         case EventType::PadAxis: source = "pad:" + event.key_name; axis = true; axis_value = event.value; break;
+        case EventType::MouseMove:
+            // Two sources at once, each accumulated over the tick; +y is down the screen.
+            apply_delta("mouse:x", event.dx / kMousePixelsPerUnit);
+            apply_delta("mouse:y", event.dy / kMousePixelsPerUnit);
+            return;
+        case EventType::MouseWheel:
+            apply_delta("wheel:x", event.dx);
+            apply_delta("wheel:y", event.dy);
+            return;
         default: return;
     }
     for (auto& [name, a] : actions_) {
@@ -104,8 +120,28 @@ void InputMap::apply(const platform::Event& event) {
     }
 }
 
+void InputMap::apply_delta(const std::string& source, float amount) {
+    if (amount == 0.0f) return;
+    for (auto& [name, a] : actions_) {
+        bool touched = false;
+        for (const Binding& b : a.axes) {
+            if (b.source != source) continue;
+            a.axis_values[source] += amount * b.sign;
+            touched = true;
+        }
+        if (touched) recompute(a);
+    }
+}
+
 void InputMap::consume_edges() {
-    for (auto& [name, a] : actions_) { a.pressed = false; a.released = false; }
+    for (auto& [name, a] : actions_) {
+        a.pressed = false;
+        a.released = false;
+        // A delta source is spent by the tick that read it.
+        bool touched = false;
+        for (auto& [src, v] : a.axis_values) if (is_delta(src) && v != 0.0f) { v = 0.0f; touched = true; }
+        if (touched) recompute(a);
+    }
 }
 
 Json InputMap::snapshot() const {
