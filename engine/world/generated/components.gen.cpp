@@ -393,6 +393,7 @@ std::size_t numeric_span(Light& v, std::string_view path, float** out) {
 void to_json(Json& j, const MeshRenderer& v) {
     j = Json::object();
     j["mesh"] = v.mesh;
+    j["node"] = v.node;
     vec_to_json(j["color"], v.color);
     j["texture"] = v.texture;
     j["metallic"] = v.metallic;
@@ -405,6 +406,7 @@ void to_json(Json& j, const MeshRenderer& v) {
 
 void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "mesh", v.mesh);
+    scalar_from_json(j, "node", v.node);
     if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
     scalar_from_json(j, "texture", v.texture);
     scalar_from_json(j, "metallic", v.metallic);
@@ -417,6 +419,7 @@ void from_json(const Json& j, MeshRenderer& v) {
 
 void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.str(v.mesh);
+    h.str(v.node);
     h.f32(v.color.r);
     h.f32(v.color.g);
     h.f32(v.color.b);
@@ -1269,6 +1272,47 @@ std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const TopDown2D& v) {
+    j = Json::object();
+    vec_to_json(j["velocity"], v.velocity);
+    j["radius"] = v.radius;
+    j["map"] = v.map;
+    j["blocked_x"] = v.blocked_x;
+    j["blocked_y"] = v.blocked_y;
+    j["tile_x"] = v.tile_x;
+    j["tile_y"] = v.tile_y;
+}
+
+void from_json(const Json& j, TopDown2D& v) {
+    if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
+    scalar_from_json(j, "radius", v.radius);
+    scalar_from_json(j, "map", v.map);
+    scalar_from_json(j, "blocked_x", v.blocked_x);
+    scalar_from_json(j, "blocked_y", v.blocked_y);
+    scalar_from_json(j, "tile_x", v.tile_x);
+    scalar_from_json(j, "tile_y", v.tile_y);
+}
+
+void hash_component(StateHasherRef& h, const TopDown2D& v) {
+    h.f32(v.velocity.x);
+    h.f32(v.velocity.y);
+    h.f32(v.radius);
+    h.str(v.map);
+    h.u8(v.blocked_x ? 1 : 0);
+    h.u8(v.blocked_y ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.tile_x));
+    h.i64(static_cast<std::int64_t>(v.tile_y));
+}
+
+std::size_t numeric_span(TopDown2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "velocity") { *out = &v.velocity.x; return 2; }
+    if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
+    if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
+    if (path == "radius") { *out = &v.radius; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Collider& v) {
     j = Json::object();
     j["shape"] = v.shape;
@@ -1570,8 +1614,9 @@ constexpr std::array<FieldInfo, 4> kLightFields = {{
     FieldInfo{"intensity", "f32", "Multiplier applied to color."},
     FieldInfo{"range", "f32", "Point light range in meters."},
 }};
-constexpr std::array<FieldInfo, 9> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 10> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
+    FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
     FieldInfo{"color", "color", "Base color, linear RGB; multiplies the asset's material color."},
     FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
     FieldInfo{"metallic", "f32", "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives)."},
@@ -1743,6 +1788,15 @@ constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
     FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed."},
 }};
+constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
+    FieldInfo{"velocity", "vec2", "Units per second along X and Y."},
+    FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width)."},
+    FieldInfo{"map", "string", "Path or name of the TileMap entity to collide with; empty takes the first one."},
+    FieldInfo{"blocked_x", "bool", "The X move was stopped by a solid cell this tick (written by the engine)."},
+    FieldInfo{"blocked_y", "bool", "The Y move was stopped by a solid cell this tick (written by the engine)."},
+    FieldInfo{"tile_x", "i32", "The map cell under the center, -1 outside the map (written by the engine)."},
+    FieldInfo{"tile_y", "i32", "The map cell under the center, -1 outside the map (written by the engine)."},
+}};
 constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)."},
     FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules."},
@@ -1795,7 +1849,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 25> kComponents = {{
+constexpr std::array<ComponentInfo, 26> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1815,6 +1869,7 @@ constexpr std::array<ComponentInfo, 25> kComponents = {{
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
+    ComponentInfo{"TopDown2D", "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).", true, kTopDown2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
     ComponentInfo{"AudioListener", "Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera.", true, kAudioListenerFields},

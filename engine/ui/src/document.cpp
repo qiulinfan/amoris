@@ -62,6 +62,7 @@ struct Node {
     std::string value;       // input
     std::string placeholder;
     int caret = 0;
+    int anchor = -1;         // input: the other end of the selection (byte offset), -1 for none
     bool multiline = false;  // input: Return is a new line (with meta or ctrl it commits), Up and Down move by lines
     int first_line = 0;      // multiline input: the first line shown, kept so the caret's line stays in view
     std::uint32_t listeners = 0;
@@ -155,6 +156,21 @@ std::size_t utf8_next(const std::string& s, std::size_t i) {
 struct Document::Impl {
     Font& font;
     std::function<Document::ImageSource(const std::string&)> image_source;
+    std::function<std::string()> clipboard_get_fn;
+    std::function<void(const std::string&)> clipboard_set_fn;
+    std::string clipboard_local;   // used when no OS clipboard is wired
+    std::string clipboard_get() const { return clipboard_get_fn ? clipboard_get_fn() : clipboard_local; }
+    void clipboard_set(const std::string& s) { clipboard_local = s; if (clipboard_set_fn) clipboard_set_fn(s); }
+    // The selection of an input as [a, b) byte offsets, when there is one.
+    static bool selection_of(const Node& n, std::size_t& a, std::size_t& b) {
+        const std::size_t caret = static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size())));
+        if (n.anchor < 0) return false;
+        const std::size_t anchor = std::min(static_cast<std::size_t>(n.anchor), n.value.size());
+        if (anchor == caret) return false;
+        a = std::min(anchor, caret);
+        b = std::max(anchor, caret);
+        return true;
+    }
     std::map<NodeId, Node> nodes;
     NodeId root_id = 1;
     YGConfigRef config = nullptr;
@@ -333,7 +349,7 @@ struct Document::Impl {
             else if (k == "value") {
                 // The same value again (a re-render echoing what was typed) keeps the caret where it is.
                 std::string nv = v.is_string() ? v.get<std::string>() : v.dump();
-                if (nv != n.value) { n.value = std::move(nv); n.caret = static_cast<int>(n.value.size()); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
+                if (nv != n.value) { n.value = std::move(nv); n.caret = static_cast<int>(n.value.size()); n.anchor = -1; if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             }
             else if (k == "placeholder") n.placeholder = v.get<std::string>();
             else if (k == "multiline") { n.multiline = v.is_boolean() && v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
@@ -421,9 +437,22 @@ struct Document::Impl {
                 if (caret_line >= n.first_line + visible) n.first_line = caret_line - visible + 1;
                 n.first_line = std::clamp(n.first_line, 0, std::max(0, static_cast<int>(lines.size()) - 1));
                 float ty = inner.y + 2;
+                std::size_t sel_a = 0, sel_b = 0;
+                const bool selected = !placeholder && selection_of(n, sel_a, sel_b);
+                std::size_t ls = 0;
+                for (std::size_t i = 0; i < static_cast<std::size_t>(n.first_line) && i < lines.size(); ++i) ls += lines[i].size() + 1;
                 for (std::size_t i = static_cast<std::size_t>(n.first_line); i < lines.size() && ty < inner.y + inner.h; ++i) {
+                    const std::size_t le = ls + lines[i].size();
+                    if (selected && sel_a <= le && sel_b > ls) {
+                        // The selected part of this line, with a little past the end when the selection runs on.
+                        const std::size_t a = std::max(sel_a, ls), b = std::min(sel_b, le);
+                        const float x0 = inner.x + 1 + p.measure(lines[i].substr(0, a - ls), n.font_size);
+                        const float x1 = inner.x + 1 + p.measure(lines[i].substr(0, b - ls), n.font_size) + (sel_b > le ? 4.0f : 0.0f);
+                        p.rect({x0, ty, std::max(x1 - x0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
+                    }
                     p.text(inner.x + 1, ty, lines[i], n.font_size, c);
                     ty += lh;
+                    ls = le + 1;
                 }
                 if (focused == n.id && !placeholder) {
                     const float cx = inner.x + 1 + p.measure(n.value.substr(line_start, caret - line_start), n.font_size);
@@ -437,6 +466,12 @@ struct Document::Impl {
                 const std::string& shown = placeholder ? n.placeholder : n.value;
                 Color c = placeholder ? n.color.with_alpha(0.45f * op) : n.color.with_alpha(op);
                 float ty = inner.y + (inner.h - lh) * 0.5f;
+                std::size_t sel_a = 0, sel_b = 0;
+                if (!placeholder && selection_of(n, sel_a, sel_b)) {
+                    const float x0 = inner.x + 1 + p.measure(n.value.substr(0, sel_a), n.font_size);
+                    const float x1 = inner.x + 1 + p.measure(n.value.substr(0, sel_b), n.font_size);
+                    p.rect({x0, ty, std::max(x1 - x0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
+                }
                 p.text(inner.x + 1, ty, shown, n.font_size, c);
                 if (focused == n.id) {
                     float cx = inner.x + 1 + p.measure(n.value.substr(0, static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size())))), n.font_size);
@@ -540,6 +575,11 @@ Document::Document(Font& font) : impl_(std::make_unique<Impl>(font)) {
     YGConfigSetContext(impl_->config, impl_.get());
 }
 Document::~Document() = default;
+
+void Document::set_clipboard(std::function<std::string()> get, std::function<void(const std::string&)> set) {
+    impl_->clipboard_get_fn = std::move(get);
+    impl_->clipboard_set_fn = std::move(set);
+}
 
 void Document::set_image_source(std::function<ImageSource(const std::string&)> source) {
     impl_->image_source = std::move(source);
@@ -718,6 +758,29 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
         if (mods) j["mods"] = platform::mods_to_json(mods);
         return j;
     };
+    // The byte offset in an input nearest a point: in a text area, on the line under it.
+    auto caret_at = [&](const Node& n, float x, float y) -> std::size_t {
+        float px = n.font_size * im.scale;
+        float local = (x - n.rect.x - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - n.border_width - 1) * im.scale;
+        std::size_t from = 0, to = n.value.size();
+        if (n.multiline) {
+            const float lh = im.font.metrics(px).line_height / im.scale;
+            const float top = n.rect.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width + 2;
+            const int line = n.first_line + static_cast<int>(std::floor(std::max(0.0f, y - top) / std::max(lh, 1.0f)));
+            for (int i = 0; i < line; ++i) { const std::size_t nl = n.value.find('\n', from); if (nl == std::string::npos) break; from = nl + 1; }
+            to = line_end_of(n.value, from);
+        }
+        std::size_t best = to, prev = from;
+        float prev_w = 0;
+        for (std::size_t i = from; i <= to; i = utf8_next(n.value, i)) {
+            float w = im.font.measure(n.value.substr(from, i - from), px);
+            if (w >= local) { best = (i > from && w - local > local - prev_w) ? prev : i; break; }
+            prev = i;
+            prev_w = w;
+            if (i >= to) break;
+        }
+        return best;
+    };
     auto set_focus_to = [&](NodeId id) {
         if (im.focused == id) return;
         if (im.focused) {
@@ -749,6 +812,11 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     im.hovered = h;
                 }
                 if (im.pressed) {
+                    if (Node* pn = im.get(im.pressed); pn && pn->type == "input" && !pn->disabled && im.focused == im.pressed) {
+                        // Dragging inside an input selects from where the press put the caret.
+                        if (pn->anchor < 0) pn->anchor = pn->caret;
+                        pn->caret = static_cast<int>(caret_at(*pn, ev.x, ev.y));
+                    }
                     NodeId dt = im.listener_target(im.pressed, kDrag);
                     if (dt) {
                         im.dragging = true;
@@ -765,28 +833,14 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                 im.dragging = false;
                 Node* n = im.get(h);
                 if (n && n->type == "input" && !n->disabled) {
+                    const bool was_focused = im.focused == h;
                     set_focus_to(h);
-                    // Place the caret at the boundary nearest the click; in a text area, on the line under it.
-                    float px = n->font_size * im.scale;
-                    float local = (ev.x - n->rect.x - YGNodeLayoutGetPadding(n->yoga, YGEdgeLeft) - n->border_width - 1) * im.scale;
-                    std::size_t from = 0, to = n->value.size();
-                    if (n->multiline) {
-                        const float lh = im.font.metrics(px).line_height / im.scale;
-                        const float top = n->rect.y + YGNodeLayoutGetPadding(n->yoga, YGEdgeTop) + n->border_width + 2;
-                        const int line = n->first_line + static_cast<int>(std::floor(std::max(0.0f, ev.y - top) / std::max(lh, 1.0f)));
-                        for (int i = 0; i < line; ++i) { const std::size_t nl = n->value.find('\n', from); if (nl == std::string::npos) break; from = nl + 1; }
-                        to = line_end_of(n->value, from);
-                    }
-                    std::size_t best = to, prev = from;
-                    float prev_w = 0;
-                    for (std::size_t i = from; i <= to; i = utf8_next(n->value, i)) {
-                        float w = im.font.measure(n->value.substr(from, i - from), px);
-                        if (w >= local) { best = (i > from && w - local > local - prev_w) ? prev : i; break; }
-                        prev = i;
-                        prev_w = w;
-                        if (i >= to) break;
-                    }
-                    n->caret = static_cast<int>(best);
+                    // The caret goes to the boundary nearest the click (in a text area, on the line under
+                    // it); with Shift the selection extends from where it was.
+                    const bool shift = (ev.mods & platform::kModShift) != 0;
+                    if (shift && was_focused) { if (n->anchor < 0) n->anchor = n->caret; }
+                    else n->anchor = -1;
+                    n->caret = static_cast<int>(caret_at(*n, ev.x, ev.y));
                 } else {
                     set_focus_to(0);
                 }
@@ -834,45 +888,72 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                 if (n && n->type == "input" && !n->disabled) {
                     std::string& v = n->value;
                     auto caret = static_cast<std::size_t>(std::clamp(n->caret, 0, static_cast<int>(v.size())));
-                    if (ev.key_name == "Backspace") {
-                        if (caret > 0) { std::size_t p = utf8_prev(v, caret); v.erase(p, caret - p); caret = p; }
+                    const bool shift = (ev.mods & platform::kModShift) != 0;
+                    const bool cmd = (ev.mods & (platform::kModMeta | platform::kModCtrl)) != 0;
+                    std::size_t sel_a = caret, sel_b = caret;
+                    const bool has_sel = Impl::selection_of(*n, sel_a, sel_b);
+                    bool edited = false;   // the value changed: relayout and an input event
+                    auto erase_selection = [&]() { v.erase(sel_a, sel_b - sel_a); caret = sel_a; n->anchor = -1; edited = true; };
+                    const bool moving = ev.key_name == "Left" || ev.key_name == "Right" || ev.key_name == "Home" || ev.key_name == "End" || (n->multiline && (ev.key_name == "Up" || ev.key_name == "Down"));
+                    if (moving) {
+                        // Shift extends the selection from where the caret was; without it a selection collapses.
+                        if (shift && n->anchor < 0) n->anchor = static_cast<int>(caret);
+                        if (ev.key_name == "Left") caret = !shift && has_sel ? sel_a : utf8_prev(v, caret);
+                        else if (ev.key_name == "Right") caret = !shift && has_sel ? sel_b : utf8_next(v, caret);
+                        else if (ev.key_name == "Home") caret = n->multiline ? line_start_of(v, caret) : 0;
+                        else if (ev.key_name == "End") caret = n->multiline ? line_end_of(v, caret) : v.size();
+                        else {
+                            // The same column on the line above or below (or the ends when there is none).
+                            const std::size_t ls = line_start_of(v, caret), col = caret - ls;
+                            if (ev.key_name == "Up") {
+                                if (ls == 0) caret = 0;
+                                else { const std::size_t ps = line_start_of(v, ls - 1); caret = std::min(ps + col, ls - 1); }
+                            } else {
+                                const std::size_t le = line_end_of(v, caret);
+                                if (le >= v.size()) caret = v.size();
+                                else { const std::size_t ns = le + 1; caret = std::min(ns + col, line_end_of(v, ns)); }
+                            }
+                        }
+                        if (!shift) n->anchor = -1;
+                        consumed = true;
+                    } else if (ev.key_name == "Backspace") {
+                        if (has_sel) erase_selection();
+                        else if (caret > 0) { std::size_t p = utf8_prev(v, caret); v.erase(p, caret - p); caret = p; edited = true; }
                         consumed = true;
                     } else if (ev.key_name == "Delete") {
-                        if (caret < v.size()) v.erase(caret, utf8_next(v, caret) - caret);
+                        if (has_sel) erase_selection();
+                        else if (caret < v.size()) { v.erase(caret, utf8_next(v, caret) - caret); edited = true; }
                         consumed = true;
-                    } else if (ev.key_name == "Left") { caret = utf8_prev(v, caret); consumed = true; }
-                    else if (ev.key_name == "Right") { caret = utf8_next(v, caret); consumed = true; }
-                    else if (ev.key_name == "Home") { caret = n->multiline ? line_start_of(v, caret) : 0; consumed = true; }
-                    else if (ev.key_name == "End") { caret = n->multiline ? line_end_of(v, caret) : v.size(); consumed = true; }
-                    else if (n->multiline && (ev.key_name == "Up" || ev.key_name == "Down")) {
-                        // The same column on the line above or below (or the ends when there is none).
-                        const std::size_t ls = line_start_of(v, caret), col = caret - ls;
-                        if (ev.key_name == "Up") {
-                            if (ls == 0) caret = 0;
-                            else { const std::size_t ps = line_start_of(v, ls - 1); caret = std::min(ps + col, ls - 1); }
-                        } else {
-                            const std::size_t le = line_end_of(v, caret);
-                            if (le >= v.size()) caret = v.size();
-                            else { const std::size_t ns = le + 1; caret = std::min(ns + col, line_end_of(v, ns)); }
+                    } else if (cmd && ev.key_name == "A") {
+                        n->anchor = 0;
+                        caret = v.size();
+                        consumed = true;
+                    } else if (cmd && (ev.key_name == "C" || ev.key_name == "X")) {
+                        if (has_sel) {
+                            im.clipboard_set(v.substr(sel_a, sel_b - sel_a));
+                            if (ev.key_name == "X") erase_selection();
                         }
                         consumed = true;
+                    } else if (cmd && ev.key_name == "V") {
+                        std::string text = im.clipboard_get();
+                        if (!n->multiline) std::replace(text.begin(), text.end(), '\n', ' ');
+                        if (has_sel) erase_selection();
+                        if (!text.empty()) { v.insert(caret, text); caret += text.size(); edited = true; }
+                        consumed = true;
                     } else if (ev.key_name == "Return" || ev.key_name == "Keypad Enter") {
-                        bool commit = !n->multiline;
-                        for (const Json& m : platform::mods_to_json(ev.mods)) if (m == "meta" || m == "ctrl") commit = true;
-                        if (commit) {
+                        if (!n->multiline || cmd) {
                             NodeId ct = im.listener_target(im.focused, kChange);
                             if (ct) emit(ct, "change", Json{{"value", v}});
                         } else {
+                            if (has_sel) erase_selection();
                             v.insert(caret, "\n");
                             ++caret;
-                            if (YGNodeHasMeasureFunc(n->yoga)) YGNodeMarkDirty(n->yoga);
-                            NodeId it = im.listener_target(im.focused, kInput);
-                            if (it) emit(it, "input", Json{{"value", v}});
+                            edited = true;
                         }
                         consumed = true;
                     } else if (ev.key_name == "Escape") { set_focus_to(0); consumed = true; }
                     n->caret = static_cast<int>(caret);
-                    if (consumed && (ev.key_name == "Backspace" || ev.key_name == "Delete")) {
+                    if (edited) {
                         if (YGNodeHasMeasureFunc(n->yoga)) YGNodeMarkDirty(n->yoga);
                         NodeId it = im.listener_target(im.focused, kInput);
                         if (it) emit(it, "input", Json{{"value", v}});
@@ -916,6 +997,8 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                 Node* n = im.get(im.focused);
                 if (n && n->type == "input" && !n->disabled) {
                     auto caret = static_cast<std::size_t>(std::clamp(n->caret, 0, static_cast<int>(n->value.size())));
+                    if (std::size_t a = 0, b = 0; Impl::selection_of(*n, a, b)) { n->value.erase(a, b - a); caret = a; }
+                    n->anchor = -1;
                     n->value.insert(caret, ev.text);
                     n->caret = static_cast<int>(caret + ev.text.size());
                     if (YGNodeHasMeasureFunc(n->yoga)) YGNodeMarkDirty(n->yoga);
@@ -944,7 +1027,13 @@ Json Document::describe(NodeId id) const {
     j["children"] = n->children;
     j["rect"] = Json{{"x", n->rect.x}, {"y", n->rect.y}, {"w", n->rect.w}, {"h", n->rect.h}};
     if (n->type == "text") j["text"] = n->text;
-    if (n->type == "input") { j["value"] = n->value; j["placeholder"] = n->placeholder; j["caret"] = n->caret; if (n->multiline) j["multiline"] = true; }
+    if (n->type == "input") {
+        j["value"] = n->value;
+        j["placeholder"] = n->placeholder;
+        j["caret"] = n->caret;
+        if (n->multiline) j["multiline"] = true;
+        if (std::size_t a = 0, b = 0; Impl::selection_of(*n, a, b)) j["selection"] = Json::array({a, b});
+    }
     j["visible"] = n->visible;
     j["focused"] = impl_->focused == id;
     if (n->scroll) { j["scrollTop"] = n->scroll_y; j["contentHeight"] = n->content_height; }

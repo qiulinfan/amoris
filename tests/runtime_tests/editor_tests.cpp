@@ -483,6 +483,24 @@ TEST_CASE("editor's Input tab rebinds actions live, undoably, and saves them to 
         ok(s.command("ui.click", Json{{"id", find_named(s, "action:dash:remove")}}));
         ok(s.idle_frame());
         REQUIRE_FALSE(ok(s.command("input.describe", Json::object())).contains("dash"));
+        // Press takes the next key as the part's keyboard binding; pad bindings stay; Escape cancels; undo restores.
+        Json was = ok(s.command("input.describe", Json::object()))["jump"]["positive"];
+        ok(s.command("ui.click", Json{{"id", find_named(s, "action:jump:positive:press")}}));
+        ok(s.idle_frame());
+        ok(s.command("ui.key", Json{{"key", "K"}}));
+        ok(s.idle_frame());
+        Json now = ok(s.command("input.describe", Json::object()))["jump"]["positive"];
+        INFO(was.dump() << " -> " << now.dump());
+        REQUIRE(now == Json::array({"K", "pad:a"}));
+        REQUIRE(ok(s.command("ui.describe", Json{{"id", find_named(s, "action:jump:positive")}}))["value"] == "K, pad:a");
+        ok(s.command("ui.click", Json{{"id", find_named(s, "action:jump:negative:press")}}));
+        ok(s.idle_frame());
+        ok(s.command("ui.key", Json{{"key", "Escape"}}));
+        ok(s.idle_frame());
+        REQUIRE_FALSE(ok(s.command("input.describe", Json::object()))["jump"].contains("negative"));
+        ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+        ok(s.idle_frame());
+        REQUIRE(ok(s.command("input.describe", Json::object()))["jump"]["positive"] == was);
         ok(s.finish());
     }
     // The saved file is the map of the next run, in place of project.toml's.

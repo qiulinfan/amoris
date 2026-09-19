@@ -120,6 +120,8 @@ export interface Light {
 export interface MeshRenderer {
     /** cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). */
     mesh: string;
+    /** Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole. */
+    node: string;
     /** Base color, linear RGB; multiplies the asset's material color. */
     color: Color;
     /** Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. */
@@ -462,6 +464,24 @@ export interface Body2D {
     friction: number;
 }
 
+/** A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform). */
+export interface TopDown2D {
+    /** Units per second along X and Y. */
+    velocity: Vec2;
+    /** How far ahead of the center, along the move, the cell must be open (the body's half width). */
+    radius: number;
+    /** Path or name of the TileMap entity to collide with; empty takes the first one. */
+    map: string;
+    /** The X move was stopped by a solid cell this tick (written by the engine). */
+    blocked_x: boolean;
+    /** The Y move was stopped by a solid cell this tick (written by the engine). */
+    blocked_y: boolean;
+    /** The map cell under the center, -1 outside the map (written by the engine). */
+    tile_x: number;
+    /** The map cell under the center, -1 outside the map (written by the engine). */
+    tile_y: number;
+}
+
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
 export interface Collider {
     /** 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other). */
@@ -584,6 +604,7 @@ export interface Components {
     RigidBody: RigidBody;
     Joint: Joint;
     Body2D: Body2D;
+    TopDown2D: TopDown2D;
     Collider: Collider;
     AudioSource: AudioSource;
     AudioListener: AudioListener;
@@ -594,7 +615,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -605,7 +626,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
-    MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true },
+    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
@@ -617,6 +638,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
+    TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, playing: false, voice: 0 },
     AudioListener: { enabled: true },

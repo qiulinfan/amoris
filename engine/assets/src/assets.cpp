@@ -43,6 +43,16 @@ Json Mesh::describe() const {
     }
     j["materials"] = mats;
     j["aabb"] = Json{{"min", Json::array({aabb_min.x, aabb_min.y, aabb_min.z})}, {"max", Json::array({aabb_max.x, aabb_max.y, aabb_max.z})}};
+    // The nodes that carry geometry, by name (or index when unnamed), in node order: what MeshRenderer.node takes.
+    Json parts = Json::array();
+    std::vector<bool> seen(nodes.size(), false);
+    for (const Submesh& sm : submeshes) {
+        if (sm.origin < 0 || static_cast<std::size_t>(sm.origin) >= nodes.size() || seen[static_cast<std::size_t>(sm.origin)]) continue;
+        seen[static_cast<std::size_t>(sm.origin)] = true;
+        const std::string& name = nodes[static_cast<std::size_t>(sm.origin)].name;
+        parts.push_back(name.empty() ? std::to_string(sm.origin) : name);
+    }
+    j["parts"] = parts;
     j["moving_parts"] = moving_parts();
     j["skinned"] = skinned();
     Json sk = Json::array();
@@ -63,6 +73,15 @@ int Mesh::morph_target(std::string_view name) const {
     if (!name.empty() && std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; })) {
         const int i = std::atoi(std::string(name).c_str());
         if (i >= 0 && static_cast<std::size_t>(i) < morph_targets.size()) return i;
+    }
+    return -1;
+}
+
+int Mesh::node_index(std::string_view name) const {
+    for (std::size_t i = 0; i < nodes.size(); ++i) if (!nodes[i].name.empty() && nodes[i].name == name) return static_cast<int>(i);
+    if (!name.empty() && std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        const int i = std::atoi(std::string(name).c_str());
+        if (i >= 0 && static_cast<std::size_t>(i) < nodes.size()) return i;
     }
     return -1;
 }
@@ -1203,6 +1222,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                 Submesh sm;
                 sm.skin = jnt ? skin_index : -1;
                 sm.node = part ? ni : -1;
+                sm.origin = ni;
                 sm.first_index = static_cast<std::uint32_t>(mesh.indices.size());
                 if (prim.contains("indices")) {
                     POCKET_TRY(idx, g.accessor(prim["indices"].get<int>()));

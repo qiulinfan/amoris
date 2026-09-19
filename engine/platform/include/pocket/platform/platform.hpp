@@ -83,6 +83,9 @@ class Platform {
     // Enable or disable OS text input (composition, Text events).
     void set_text_input(bool enabled);
     [[nodiscard]] bool text_input() const;
+    // The OS clipboard as text (empty when headless or when it holds no text).
+    [[nodiscard]] std::string clipboard_text() const;
+    void set_clipboard_text(const std::string& text);
 
    private:
     Platform();

@@ -49,6 +49,8 @@ struct Submesh {
     // stay in the node's own space and the pose places them (docs/design/animation.md, Moving
     // parts); -1 for geometry baked into the file's space.
     int node = -1;
+    // The node whose mesh instance produced this geometry (whether baked or not); -1 for none.
+    int origin = -1;
 };
 
 // Skinning data of one vertex, parallel to Mesh::vertices (zeros for unskinned geometry).
@@ -120,6 +122,8 @@ struct Mesh {
     [[nodiscard]] const AnimationClip* clip(std::string_view name) const;
     // A target's index by name, or by its index written as a string; -1 when there is none.
     [[nodiscard]] int morph_target(std::string_view name) const;
+    // A node's index by name, or by its index written as a string; -1 when there is none.
+    [[nodiscard]] int node_index(std::string_view name) const;
     [[nodiscard]] Json describe() const;
 };
 

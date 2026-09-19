@@ -54,6 +54,7 @@ const brush = signal<{ layer: string; gid: number } | null>(null);   // tile pai
 const actions = signal<Record<string, ActionBindings>>({});   // the input map, shown and edited by the Input tab
 const newAction = signal("");    // the Input tab's new-action name and keys, until Add
 const newKeys = signal("");
+const capture = signal<{ name: string; part: "positive" | "negative" | "axis" } | null>(null);   // the Input tab's Press: the next key or pad button rebinds this part
 const assetRows = signal<AssetRow[]>([]);      // the project's assets/ folder, shown by the Assets tab
 const assetPick = signal("");                  // the asset whose description is shown
 const assetInfo = signal("");
@@ -524,6 +525,21 @@ function rebind(name: string, part: "positive" | "negative" | "axis", text: stri
     notice.set(`${name} ${part}: ${list.length > 0 ? list.join(", ") : "nothing"}`);
 }
 
+/** The Input tab's Press: the next key (or pad button) replaces the part's keyboard keys; pad and mouse bindings stay. */
+function pressFor(name: string, part: "positive" | "negative" | "axis"): void {
+    capture.set({ name, part });
+    notice.set(`Press a key or pad button for ${name} ${part} (Escape cancels).`);
+}
+
+function captured(binding: string | null): void {
+    const cap = capture();
+    if (!cap) return;
+    capture.set(null);
+    if (binding === null) { notice.set("Rebind cancelled."); return; }
+    const kept = (actions()[cap.name]?.[cap.part] ?? []).filter((k) => k.startsWith("pad:") || k.startsWith("mouse:"));
+    rebind(cap.name, cap.part, [binding, ...kept.filter((k) => k !== binding)].join(", "));
+}
+
 function addAction(name: string, keys: string): void {
     const clean = name.trim();
     const list = splitBindings(keys);
@@ -819,6 +835,11 @@ onFrame(() => {
 
 onInput((events) => {
     for (const e of events) {
+        if (capture() !== null) {
+            // The Input tab's Press waits for a key or pad button.
+            if (e.type === "key_down" && e.ui === undefined && e.key !== undefined) { captured(e.key === "Escape" ? null : e.key); continue; }
+            if (e.type === "pad_button" && e.pressed && e.button !== undefined) { captured(`pad:${e.button}`); continue; }
+        }
         if (e.ui !== undefined && e.type !== "key_down") continue;
         if (e.type === "key_down" && e.ui === undefined) {
             const cmd = e.mods?.includes("meta") || e.mods?.includes("ctrl");
@@ -1007,8 +1028,12 @@ function Bottom() {
     } else if (t === "input") {
         const map = actions();
         const names = Object.keys(map).sort();
+        const cap = capture();
         const field = (name: string, part: "positive" | "negative" | "axis") => (
-            <TextInput value={(map[name]?.[part] ?? []).join(", ")} width={150} name={`action:${name}:${part}`} onChange={(v) => rebind(name, part, v)} />
+            <Row gap={2}>
+                <TextInput value={(map[name]?.[part] ?? []).join(", ")} width={128} name={`action:${name}:${part}`} onChange={(v) => rebind(name, part, v)} />
+                <Button label={cap && cap.name === name && cap.part === part ? "..." : "Press"} small primary={cap !== null && cap.name === name && cap.part === part} name={`action:${name}:${part}:press`} onClick={() => pressFor(name, part)} />
+            </Row>
         );
         body = [
             <Row key="head" gap={8}>

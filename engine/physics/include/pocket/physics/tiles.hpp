@@ -26,6 +26,7 @@ struct Stats2D {
     std::uint32_t stacked = 0;    // bodies standing on other dynamic bodies this step
     std::uint32_t pushed = 0;     // sideways pushes between bodies this step
     std::uint32_t bounces = 0;    // impacts a body's restitution turned into a bounce this step
+    std::uint32_t movers = 0;     // top-down movers (TopDown2D) stepped
 };
 
 class Physics2D {

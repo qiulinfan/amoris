@@ -33,6 +33,10 @@ Images decode through stb_image (PNG, JPEG, BMP, TGA, GIF frames, PSD, HDR to 8-
 
 The mesh pipeline samples one base color texture per draw (group 2: texture + sampler, linear filtering, repeat) multiplied by the object color; a 1x1 white texture stands in when there is none. Primitives carry texture coordinates (cube per face, sphere equirectangular, plane 0..1, cylinder unwrapped). glTF meshes upload once per path; each material becomes a draw with its base color, metallic-roughness, normal and emissive maps in one bind group, and draws are sorted by material then mesh so bind changes are rare and the order is stable. A mesh that cannot be loaded is drawn as a magenta cube and listed under `render.stats.assets.missing` every frame, with one warning in the log, so a wrong path is visible instead of silent.
 
+## Node trees
+
+A glTF file draws as one thing by default: its nodes are baked into the file's space and one `MeshRenderer` shows them all. `world.instantiate {mesh: "assets/house.glb", position}` (`world.instantiateMesh` in scripts) makes the file's node tree into entities instead: one root named after the file, one entity per node with the node's own translation, rotation and scale (a node authored as a matrix is taken apart), and on every node that carries geometry a `MeshRenderer` whose `node` names it (`assets.describe` lists those names as `parts`; an unnamed node goes by its index). Such an entity draws that node alone, its baked geometry moved back into the node's space, so the picture is the same as the whole file's until the parts are moved, renamed, given colors or picked one by one. Skinned files are refused (their joints place them, so they stay one drawable); the moving parts of an animated file draw where the entity puts them, not where the clip would.
+
 ## Commands
 
 | Command | Purpose |
@@ -46,7 +50,7 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 ## Not yet
 
-KHR extensions (texture transform, materials variants, draco), anisotropic filtering, sRGB-correct shading (`alphaMode: MASK` cuts out and `BLEND` draws translucent, `docs/design/rendering.md`), instantiating a glTF node tree as entities (today one file is one drawable), and audio or font assets through the same store.
+KHR extensions (texture transform, materials variants, draco), anisotropic filtering, sRGB-correct shading (`alphaMode: MASK` cuts out and `BLEND` draws translucent, `docs/design/rendering.md`), and audio or font assets through the same store.
 
 ## Tile maps
 

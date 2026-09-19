@@ -24,4 +24,4 @@ The platform layer turns SDL keyboard and gamepad events into the normalized eve
 
 ## Not yet
 
-Rebinding by pressing a key (the editor's Input tab takes key names typed in), rumble, per-player maps for local multiplayer, and touch.
+Rumble, per-player maps for local multiplayer, and touch.

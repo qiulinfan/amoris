@@ -416,6 +416,8 @@ struct Renderer::Impl {
         GpuMesh gpu;
         std::vector<assets::Submesh> submeshes;
         std::vector<Mat4> rest;   // per submesh: where its node rests, for a moving part drawn without a pose
+        std::vector<Mat4> unbake; // per submesh: the inverse of its node's rest for baked geometry, so a node draws in its own space
+        std::vector<std::string> node_names;   // the file's nodes by index, for MeshRenderer.node
         std::vector<assets::Material> materials;
         std::uint32_t morph_base = 0, morph_targets = 0, morph_vertices = 0;  // the asset's deltas in the morph buffer
     };
@@ -1186,7 +1188,11 @@ struct Renderer::Impl {
         am.gpu.indices = device->create_buffer(path.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, src.indices.size() * sizeof(std::uint32_t), src.indices.data());
         if (src.skinned()) am.gpu.skin = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, src.skin_vertices.size() * sizeof(assets::SkinVertex), src.skin_vertices.data());
         am.gpu.index_count = static_cast<std::uint32_t>(src.indices.size());
-        for (const assets::Submesh& sm : src.submeshes) am.rest.push_back(src.rest_global(sm.node));
+        for (const assets::Submesh& sm : src.submeshes) {
+            am.rest.push_back(src.rest_global(sm.node));
+            am.unbake.push_back(sm.origin >= 0 && sm.node < 0 && sm.skin < 0 ? src.rest_global(sm.origin).inverse_affine() : Mat4::identity());
+        }
+        for (const assets::Node& n : src.nodes) am.node_names.push_back(n.name);
         am.gpu.aabb_min = src.aabb_min;
         am.gpu.aabb_max = src.aabb_max;
         am.submeshes = src.submeshes;
@@ -1596,6 +1602,20 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             push(&gm, 0, gm.index_count, "", {1, 0, 1, 1}, "cube", nullptr);
             return;
         }
+        // One node drawn alone (MeshRenderer.node): its geometry moved back into the node's own
+        // space, so the entity's transform places it as the node's would.
+        int only = -1;
+        if (!mr.node.empty()) {
+            for (std::size_t ni = 0; ni < am->node_names.size(); ++ni) if (!am->node_names[ni].empty() && am->node_names[ni] == mr.node) { only = static_cast<int>(ni); break; }
+            if (only < 0 && std::all_of(mr.node.begin(), mr.node.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+                const int idx = std::atoi(mr.node.c_str());
+                if (idx >= 0 && static_cast<std::size_t>(idx) < am->node_names.size()) only = idx;
+            }
+            if (only < 0) {
+                im.report_missing(mr.mesh + "#" + mr.node, "no such node in the file");
+                return;
+            }
+        }
         // A posed skin: its joint matrices go into the joint buffer once per entity and skin.
         const Pose* pose = animation ? animation->pose(e.id()) : nullptr;
         std::vector<std::uint32_t> joint_base(pose ? pose->joints.size() : 0, kMaxJoints);
@@ -1625,22 +1645,27 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         }
         for (std::size_t si = 0; si < am->submeshes.size(); ++si) {
             const assets::Submesh& sm = am->submeshes[si];
+            if (only >= 0 && sm.origin != only) continue;
             const assets::Material& mat = am->materials[std::min<std::size_t>(sm.material, am->materials.size() - 1)];
             Vec4 color{mr.color.r * mat.base_color.x, mr.color.g * mat.base_color.y, mr.color.b * mat.base_color.z, mr.color.a * mat.base_color.w};
             const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
             ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
             if (skinned) ++skinned_instances;
             if (morphed) ++morphed_instances;
-            // A moving part: placed by its node's matrix from the pose (its rest without one).
+            // A moving part: placed by its node's matrix from the pose (its rest without one). A node
+            // drawn alone is the entity itself: baked geometry is moved back into the node's space.
             const bool part = sm.node >= 0;
-            if (part) {
-                const Mat4 placed = model * (pose && static_cast<std::size_t>(sm.node) < pose->globals.size() ? pose->globals[static_cast<std::size_t>(sm.node)] : am->rest[si]);
+            const bool alone = only >= 0;
+            if (part || alone) {
+                Mat4 placed = model;
+                if (alone) { if (!part) placed = model * am->unbake[si]; }
+                else placed = model * (pose && static_cast<std::size_t>(sm.node) < pose->globals.size() ? pose->globals[static_cast<std::size_t>(sm.node)] : am->rest[si]);
                 to_array(placed, ou.model);
                 to_array(transpose(placed.inverse_affine()), ou.normal);
-                ++moving_parts;
+                if (part) ++moving_parts;
             }
             push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, &mat, skinned);
-            if (part) {
+            if (part || alone) {
                 to_array(model, ou.model);
                 to_array(transpose(model.inverse_affine()), ou.normal);
             }

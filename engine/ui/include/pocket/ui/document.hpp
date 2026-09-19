@@ -45,6 +45,9 @@ class Document {
         float width = 0, height = 0;
     };
     void set_image_source(std::function<ImageSource(const std::string&)> source);
+    // Where inputs copy to and paste from (the OS clipboard when a window exists); without it the
+    // document keeps its own text, so headless runs cut and paste deterministically.
+    void set_clipboard(std::function<std::string()> get, std::function<void(const std::string&)> set);
     // Apply a batch of operations: [["create", id, type], ["set", id, props], ["append", parent, id, index?],
     // ["remove", id], ["text", id, string], ["clear", id]]. Stops at the first invalid op.
     Status apply(const Json& ops);

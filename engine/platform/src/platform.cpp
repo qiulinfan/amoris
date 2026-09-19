@@ -360,6 +360,19 @@ void Platform::set_text_input(bool enabled) {
 
 bool Platform::text_input() const { return impl_->text_input; }
 
+std::string Platform::clipboard_text() const {
+    if (impl_->config.headless) return {};
+    char* text = SDL_GetClipboardText();
+    std::string out = text ? text : "";
+    SDL_free(text);
+    return out;
+}
+
+void Platform::set_clipboard_text(const std::string& text) {
+    if (impl_->config.headless) return;
+    SDL_SetClipboardText(text.c_str());
+}
+
 Json Platform::describe() const {
     Json j;
     j["headless"] = impl_->config.headless;

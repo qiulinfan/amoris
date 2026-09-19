@@ -411,3 +411,72 @@ TEST_CASE("a multi-line input takes Return as a new line, moves by lines and com
     REQUIRE(f.doc->rect_of(46).h > f.doc->rect_of(45).h * 0.5f);
     REQUIRE(f.doc->rect_of(46).h >= 3 * 13);
 }
+
+TEST_CASE("inputs select with Shift, the mouse and Cmd+A, and cut, copy and paste through the clipboard", "[ui][selection]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 47, "input"], ["set", 47, {"position": "absolute", "left": 10, "top": 10, "width": 200, "height": 24, "value": "hello world", "name": "line", "on": ["input"]}], ["append", 1, 47],
+        ["create", 48, "input"], ["set", 48, {"position": "absolute", "left": 10, "top": 60, "width": 200, "height": 60, "multiline": true, "value": "ab\ncd", "name": "area"}], ["append", 1, 48]
+    ])"));
+    f.layout();
+    bool text_wanted = false;
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 22), mouse(platform::EventType::MouseUp, 20, 22)}, text_wanted);
+    REQUIRE(f.doc->focused() == 47);
+    auto key = [](const char* name, int mods = 0) {
+        platform::Event e;
+        e.type = platform::EventType::KeyDown;
+        e.key_name = name;
+        e.mods = mods;
+        return e;
+    };
+    // Shift+Right five times from the start selects "hello"; describe shows the byte range.
+    f.doc->handle_events({key("Home"), key("Right", platform::kModShift), key("Right", platform::kModShift), key("Right", platform::kModShift), key("Right", platform::kModShift), key("Right", platform::kModShift)}, text_wanted);
+    REQUIRE(f.doc->describe(47)["selection"] == Json::array({0, 5}));
+    REQUIRE(f.doc->describe(47)["caret"] == 5);
+    // Copy, go to the end, paste: the word again; an input event reports the value.
+    auto events = f.doc->handle_events({key("C", platform::kModMeta), key("End"), key("V", platform::kModMeta)}, text_wanted);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "input");
+    REQUIRE(events[0]["value"] == "hello worldhello");
+    REQUIRE_FALSE(f.doc->describe(47).contains("selection"));
+    // A plain arrow collapses a selection to its side.
+    f.doc->handle_events({key("Home"), key("Right", platform::kModShift), key("Right", platform::kModShift), key("Left")}, text_wanted);
+    REQUIRE(f.doc->describe(47)["caret"] == 0);
+    REQUIRE_FALSE(f.doc->describe(47).contains("selection"));
+    // Typing replaces the selection; Cmd+A selects everything; Backspace removes it; cut and paste round-trip.
+    f.doc->handle_events({key("Right", platform::kModShift), key("Right", platform::kModShift)}, text_wanted);
+    platform::Event t;
+    t.type = platform::EventType::Text;
+    t.text = "J";
+    f.doc->handle_events({t}, text_wanted);
+    REQUIRE(f.doc->describe(47)["value"] == "Jllo worldhello");
+    f.doc->handle_events({key("A", platform::kModMeta)}, text_wanted);
+    REQUIRE(f.doc->describe(47)["selection"] == Json::array({0, 15}));
+    f.doc->handle_events({key("X", platform::kModCtrl)}, text_wanted);
+    REQUIRE(f.doc->describe(47)["value"] == "");
+    f.doc->handle_events({key("V", platform::kModCtrl)}, text_wanted);
+    REQUIRE(f.doc->describe(47)["value"] == "Jllo worldhello");
+    f.doc->handle_events({key("A", platform::kModMeta), key("Backspace")}, text_wanted);
+    REQUIRE(f.doc->describe(47)["value"] == "");
+    // The mouse: a drag selects from the press; Shift+click extends from the caret.
+    f.apply(Json::parse(R"([["set", 47, {"value": "hello world"}]])"));
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 12, 22), mouse(platform::EventType::MouseMove, 60, 22), mouse(platform::EventType::MouseUp, 60, 22)}, text_wanted);
+    Json dragged = f.doc->describe(47);
+    INFO(dragged.dump());
+    REQUIRE(dragged.contains("selection"));
+    REQUIRE(dragged["selection"][0] == 0);
+    REQUIRE(dragged["selection"][1].get<int>() >= 3);
+    platform::Event shift_click = mouse(platform::EventType::MouseDown, 12, 22);
+    shift_click.mods = platform::kModShift;
+    f.doc->handle_events({key("End"), shift_click, mouse(platform::EventType::MouseUp, 12, 22)}, text_wanted);
+    REQUIRE(f.doc->describe(47)["selection"] == Json::array({0, 11}));
+    // A text area selects across lines and pastes lines; a single line pastes them as spaces.
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 70), mouse(platform::EventType::MouseUp, 20, 70)}, text_wanted);
+    REQUIRE(f.doc->focused() == 48);
+    f.doc->handle_events({key("A", platform::kModMeta)}, text_wanted);
+    REQUIRE(f.doc->describe(48)["selection"] == Json::array({0, 5}));
+    f.doc->handle_events({key("C", platform::kModMeta), key("End"), key("Return"), key("V", platform::kModMeta)}, text_wanted);
+    REQUIRE(f.doc->describe(48)["value"] == "ab\ncd\nab\ncd");
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 22), mouse(platform::EventType::MouseUp, 20, 22), key("A", platform::kModMeta), key("V", platform::kModMeta)}, text_wanted);
+    REQUIRE(f.doc->describe(47)["value"] == "ab cd");
+}

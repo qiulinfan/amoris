@@ -150,6 +150,7 @@ std::size_t numeric_span(Light& v, std::string_view path, float** out);
 /// Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.
 struct MeshRenderer {
     std::string mesh = "cube";
+    std::string node = "";
     Color4 color{0.8f, 0.8f, 0.8f, 1.0f};
     std::string texture = "";
     float metallic = -1.0f;
@@ -404,6 +405,22 @@ void from_json(const Json& j, Body2D& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Body2D& v, std::string_view path, float** out);
 
+/// A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
+struct TopDown2D {
+    Vec2 velocity{0.0f, 0.0f};
+    float radius = 0.3f;
+    std::string map = "";
+    bool blocked_x = false;
+    bool blocked_y = false;
+    std::int32_t tile_x = -1;
+    std::int32_t tile_y = -1;
+    constexpr bool operator==(const TopDown2D&) const = default;
+};
+void to_json(Json& j, const TopDown2D& v);
+void from_json(const Json& j, TopDown2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(TopDown2D& v, std::string_view path, float** out);
+
 /// Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
 struct Collider {
     std::int32_t shape = 0;
@@ -533,6 +550,7 @@ void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
+void hash_component(struct StateHasherRef& h, const TopDown2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
 void hash_component(struct StateHasherRef& h, const AudioListener& v);

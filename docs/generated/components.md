@@ -79,11 +79,13 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `mesh` | string | "cube" | cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
+| `node` | string | "" | Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole. |
 | `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color, linear RGB; multiplies the asset's material color. |
 | `texture` | string | "" | Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. |
 | `metallic` | f32 | -1.0 | 0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives). |
 | `roughness` | f32 | -1.0 | 0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives). |
 | `emissive` | color | [0.0, 0.0, 0.0, 1.0] | Light the surface gives off regardless of lighting, added to the asset material's emissive color. |
+| `cutoff` | f32 | 0.0 | Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none. |
 | `normal_map` | string | "" | Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 
@@ -303,6 +305,20 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 | `collide_bodies` | bool | true | Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body). |
 | `restitution` | f32 | 0.0 | Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). |
 | `friction` | f32 | 0.0 | Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed. |
+
+## TopDown2D
+
+A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `velocity` | vec2 | [0.0, 0.0] | Units per second along X and Y. |
+| `radius` | f32 | 0.3 | How far ahead of the center, along the move, the cell must be open (the body's half width). |
+| `map` | string | "" | Path or name of the TileMap entity to collide with; empty takes the first one. |
+| `blocked_x` | bool | false | The X move was stopped by a solid cell this tick (written by the engine). |
+| `blocked_y` | bool | false | The Y move was stopped by a solid cell this tick (written by the engine). |
+| `tile_x` | i32 | -1 | The map cell under the center, -1 outside the map (written by the engine). |
+| `tile_y` | i32 | -1 | The map cell under the center, -1 outside the map (written by the engine). |
 
 ## Collider
 

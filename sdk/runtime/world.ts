@@ -136,6 +136,14 @@ export const world = {
         else params.scene = prefab;
         return command<{ roots: Entity[] }>("world.instantiate", params).roots[0];
     },
+    /**
+     * A glTF file's node tree as entities under one root: one entity per node with the node's own
+     * transform, the nodes with geometry drawing themselves alone (`MeshRenderer.node`), so the
+     * file's parts move apart. Skinned files are refused (their joints place them). Returns the root.
+     */
+    instantiateMesh(path: string, options: { parent?: EntityRef; name?: string; position?: Vec3; cause?: number } = {}): Entity {
+        return command<{ roots: Entity[] }>("world.instantiate", { mesh: path, parent: options.parent, name: options.name, position: options.position, cause: options.cause }).roots[0];
+    },
     /** Write an entity and its descendants as a prefab file under the project directory. */
     savePrefab(entity: EntityRef, path: string): { path: string; entities: number } {
         return command("world.save_prefab", { entity, path });

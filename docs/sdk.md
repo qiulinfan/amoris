@@ -19,7 +19,7 @@ Gameplay reads only `t.dt` and never the wall clock, which is what makes runs re
 
 ## World
 
-`world.spawn(name, { parent, components })`, `world.get(entity, "Transform")`, `world.set(entity, "Transform", { position: { x: 1 } })` (a partial patch), `world.has`, `world.remove`, `world.destroy`, `world.find("/Player")`, `world.children`, `world.reparent(entity, parent, { keepWorld })` (with `keepWorld` the entity stays where it stands), `world.rename`, `world.describe`, `world.query({ with: ["Health"], fields: ["Transform.position"] })`, `world.tree()` (the AI-native text view), `world.summary()`. Prefabs: `world.instantiate("prefabs/enemy.json", { parent, components })` and `world.savePrefab(entity, path)`; scenes: `world.save()`, `world.load(scene)`, `world.loadScene(path)`. Component names and field types come from `sdk/runtime/generated/components.ts` (`docs/design/world-model.md`). For thousands of entities, `world.pack` / `world.unpack` move numbers as typed arrays instead of JSON.
+`world.spawn(name, { parent, components })`, `world.instantiateMesh(path, { position })` (a glTF file's nodes as entities, `docs/design/assets.md`), `world.get(entity, "Transform")`, `world.set(entity, "Transform", { position: { x: 1 } })` (a partial patch), `world.has`, `world.remove`, `world.destroy`, `world.find("/Player")`, `world.children`, `world.reparent(entity, parent, { keepWorld })` (with `keepWorld` the entity stays where it stands), `world.rename`, `world.describe`, `world.query({ with: ["Health"], fields: ["Transform.position"] })`, `world.tree()` (the AI-native text view), `world.summary()`. Prefabs: `world.instantiate("prefabs/enemy.json", { parent, components })` and `world.savePrefab(entity, path)`; scenes: `world.save()`, `world.load(scene)`, `world.loadScene(path)`. Component names and field types come from `sdk/runtime/generated/components.ts` (`docs/design/world-model.md`). For thousands of entities, `world.pack` / `world.unpack` move numbers as typed arrays instead of JSON.
 
 ## Events
 
@@ -75,7 +75,7 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Physics, audio, interface
 
-`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component (`docs/design/physics.md`); the `Body2D` component for platformers against tile maps (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
+`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component (`docs/design/physics.md`); the `Body2D` component for platformers against tile maps and `TopDown2D` for top-down movers on maps of any orientation (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
 
 ## Scenarios
 

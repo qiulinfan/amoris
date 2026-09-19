@@ -208,6 +208,75 @@ TEST_CASE("input actions carry edges across frames and release held keys", "[run
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a glTF file's nodes become entities that draw their own parts", "[runtime][assets][nodetree]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    const std::filesystem::path ref = o.project_dir / ".pocket" / "crate-whole.png";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{ref};
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // The sample's camera off and one of our own far from its moving things, looking at the whole file.
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"active", false}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "TreeCam"}, {"components", Json{{"Transform", Json{{"position", {{"x", 100.0}, {"y", 0.6}, {"z", 4.0}}}}}, {"Camera", Json::object()}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Whole"}, {"components", Json{{"Transform", Json{{"position", {{"x", 100.0}, {"y", 0.0}, {"z", 0.0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/crate.glb"}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json vis = s.command("render.visible", Json::object()).value();
+    INFO(vis.dump());
+    bool whole_seen = false;
+    for (const Json& v : vis["visible"]) if (v.value("name", "") == "Whole") whole_seen = true;
+    REQUIRE(whole_seen);
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/crate-whole.png"}, {"update", true}}).value()["written"] == true);
+    // The same file as a tree of entities: the parts by name, the small crate where the file puts it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Whole"}, {"component", "MeshRenderer"}, {"value", Json{{"visible", false}}}}).has_value());
+    REQUIRE(s.command("assets.describe", Json{{"path", "assets/crate.glb"}}).value()["parts"] == Json::array({"crate", "crate_small"}));
+    Json inst = s.command("world.instantiate", Json{{"mesh", "assets/crate.glb"}, {"name", "Tree"}, {"position", {{"x", 100.0}, {"y", 0.0}, {"z", 0.0}}}}).value();
+    INFO(inst.dump());
+    REQUIRE(inst["roots"].size() == 1);
+    REQUIRE(s.command("world.children", Json{{"entity", "Tree"}}).value().size() == 2);
+    Json small_t = s.command("world.get", Json{{"entity", "crate_small"}, {"component", "Transform"}}).value();
+    REQUIRE(small_t["position"]["x"].get<double>() == Catch::Approx(1.5));
+    REQUIRE(small_t["scale"]["x"].get<double>() == Catch::Approx(0.5));
+    Json small_m = s.command("world.get", Json{{"entity", "crate_small"}, {"component", "MeshRenderer"}}).value();
+    REQUIRE(small_m["node"] == "crate_small");
+    REQUIRE(small_m["mesh"] == "assets/crate.glb");
+    // It draws the same picture, each part its own entity on screen.
+    REQUIRE(s.frame().has_value());
+    Json same = s.command("render.compare", Json{{"path", ".pocket/crate-whole.png"}}).value();
+    INFO(same.dump());
+    REQUIRE(same["fraction"].get<double>() < 0.002);
+    vis = s.command("render.visible", Json::object()).value();
+    bool big = false, small = false;
+    for (const Json& v : vis["visible"]) { if (v.value("name", "") == "crate") big = true; if (v.value("name", "") == "crate_small") small = true; }
+    REQUIRE(big);
+    REQUIRE(small);
+    // A part moved apart changes the picture.
+    REQUIRE(s.command("world.set", Json{{"entity", "crate_small"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 1.5}, {"y", 1.2}, {"z", 0.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json moved = s.command("render.compare", Json{{"path", ".pocket/crate-whole.png"}}).value();
+    INFO(moved.dump());
+    REQUIRE(moved["fraction"].get<double>() > 0.002);
+    // A skinned file stays one drawable; an unknown node draws nothing and is reported.
+    auto bad = s.command("world.instantiate", Json{{"mesh", "assets/arm.glb"}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().code == "unsupported");
+    REQUIRE(s.command("world.set", Json{{"entity", "crate_small"}, {"component", "MeshRenderer"}, {"value", Json{{"node", "lid"}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    bool reported = false;
+    for (const Json& m : stats["assets"]["missing"]) if (m.get<std::string>().find("#lid") != std::string::npos) reported = true;
+    REQUIRE(reported);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[runtime][animation]") {
     app::Options o;
     o.project_dir = root() / "samples" / "assets";
@@ -966,6 +1035,73 @@ TEST_CASE("an isometric map is drawn, asked, walked by the grid and left alone b
     REQUIRE(baked["layout"] == "isometric");
     REQUIRE(baked["walkable"].get<int>() == 7);   // five cells hold the solid tile
     REQUIRE(s.command("nav.bake", Json{{"entity", "Iso"}, {"mode", "platformer"}}).error().code == "bad_tilemap");
+}
+
+TEST_CASE("a top-down mover is stopped by solid cells on isometric and orthogonal maps", "[runtime][tilemap][topdown]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    // The same 4 by 3 isometric map as above: row 0 is open but its first cell, row 1 solid, row 2 open.
+    const std::filesystem::path file = o.project_dir / "assets" / "iso-test.tmj";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        std::ofstream out(file);
+        out << R"({"width":4,"height":3,"tilewidth":32,"tileheight":16,"orientation":"isometric","tilesets":[{"firstgid":1,"name":"tiles","image":"tiles.png","imagewidth":80,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":5,"tilecount":5,"tiles":[{"id":0,"properties":[{"name":"solid","type":"bool","value":true}]}]}],"layers":[{"id":1,"type":"tilelayer","name":"floor","width":4,"height":3,"data":[1,2,3,4,1,1,1,1,2,2,2,2]}]})";
+    }
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Iso"}, {"components", Json{{"Transform", Json{{"position", {{"x", 100}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", "assets/iso-test.tmj"}, {"tile_size", 1.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    // The center of cell (1, 0), from the map's own geometry.
+    Json cell = s.command("tilemap.cell", Json{{"entity", "Iso"}, {"x", 102.0}, {"y", -0.5}}).value();
+    INFO(cell.dump());
+    REQUIRE(cell["tile_x"] == 1);
+    REQUIRE(cell["tile_y"] == 0);
+    const double cx = cell["center"]["x"].get<double>(), cy = cell["center"]["y"].get<double>();
+    // From the upper part of the diamond, down lies the solid row: the walker moves, stops short of it (its
+    // radius touching the cell below) and reports the block and its cell.
+    const double y0 = cy + 0.2;
+    REQUIRE(s.command("world.spawn", Json{{"name", "Walker"}, {"components", Json{{"Transform", Json{{"position", {{"x", cx}, {"y", y0}, {"z", 0}}}}}, {"TopDown2D", Json{{"velocity", {{"x", 0.0}, {"y", -3.0}}}, {"radius", 0.2}, {"map", "Iso"}}}}}}).has_value());
+    // To the right the row is open: the runner keeps going.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Runner"}, {"components", Json{{"Transform", Json{{"position", {{"x", cx}, {"y", y0}, {"z", 0}}}}}, {"TopDown2D", Json{{"velocity", {{"x", 3.0}, {"y", 0.0}}}, {"radius", 0.2}, {"map", "Iso"}}}}}}).has_value());
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json walker = s.command("world.get", Json{{"entity", "Walker"}, {"component", "Transform"}}).value();
+    Json wb = s.command("world.get", Json{{"entity", "Walker"}, {"component", "TopDown2D"}}).value();
+    INFO("walker " << walker.dump() << " " << wb.dump());
+    REQUIRE(wb["blocked_y"] == true);
+    REQUIRE(wb["blocked_x"] == false);
+    REQUIRE(walker["position"]["y"].get<double>() > cy - 0.5);   // stopped within its own cell
+    REQUIRE(walker["position"]["y"].get<double>() < y0 - 0.1);   // but it did move down first
+    REQUIRE(wb["tile_x"] == 1);
+    REQUIRE(wb["tile_y"] == 0);
+    REQUIRE(s.command("tilemap.cell", Json{{"entity", "Iso"}, {"x", walker["position"]["x"]}, {"y", walker["position"]["y"]}}).value()["tile_y"] == 0);
+    Json runner = s.command("world.get", Json{{"entity", "Runner"}, {"component", "Transform"}}).value();
+    Json rb = s.command("world.get", Json{{"entity", "Runner"}, {"component", "TopDown2D"}}).value();
+    INFO("runner " << runner.dump() << " " << rb.dump());
+    REQUIRE(rb["blocked_x"] == false);
+    REQUIRE(runner["position"]["x"].get<double>() == Catch::Approx(cx + 3.0).margin(0.06));
+    REQUIRE(rb["tile_x"] == -1);   // off the map by now
+    // On the sample's orthogonal level a cart driven into the ground below the player stops on it.
+    Json player = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value();
+    REQUIRE(s.command("world.spawn", Json{{"name", "Cart"}, {"components", Json{{"Transform", Json{{"position", {{"x", player["position"]["x"]}, {"y", player["position"]["y"]}, {"z", 0}}}}}, {"TopDown2D", Json{{"velocity", {{"x", 0.0}, {"y", -3.0}}}, {"radius", 0.25}, {"map", "Level"}}}}}}).has_value());
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json cart = s.command("world.get", Json{{"entity", "Cart"}, {"component", "Transform"}}).value();
+    Json cb = s.command("world.get", Json{{"entity", "Cart"}, {"component", "TopDown2D"}}).value();
+    INFO("cart " << cart.dump() << " " << cb.dump());
+    REQUIRE(cb["blocked_y"] == true);
+    REQUIRE(cart["position"]["y"].get<double>() > player["position"]["y"].get<double>() - 1.5);
+    REQUIRE(cb["tile_x"].get<int>() >= 0);
+    REQUIRE(cb["tile_y"].get<int>() >= 0);
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Level"}, {"tile_x", cb["tile_x"]}, {"tile_y", cb["tile_y"]}}).value()["solid"] == false);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["tiles"]["movers"] == 3);
+    REQUIRE(s.finish().has_value());
 }
 
 TEST_CASE("an entity's copy of a map is edited apart from the map and outlives a reload", "[runtime][tilemap][mapcopy]") {

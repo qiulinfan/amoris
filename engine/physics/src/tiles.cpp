@@ -39,17 +39,72 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
     stats_ = Stats2D{};
     // Maps by entity: resolved once per step.
     struct MapEntry { world::EntityId id; MapView view; };
-    std::vector<MapEntry> maps;
+    std::vector<MapEntry> maps, all_maps;   // the platformer's orthogonal maps; every map for the top-down movers
     w.ecs().each([&](flecs::entity e, const world::TileMap& tm) {
         auto m = assets.tilemap(tm.map);
         if (!m) return;
-        if (!(*m)->orthogonal()) return;   // the platformer sees orthogonal maps only (docs/design/tilemaps.md, Orientations)
         MapView v;
         v.map = *m;
         v.ts = tm.tile_size > 0 ? tm.tile_size : 1.0f;
         if (const auto* wt = e.try_get<world::WorldTransform>()) v.origin = wt->position;
         else if (const auto* t = e.try_get<world::Transform>()) v.origin = t->position;
+        all_maps.push_back({e.id(), v});
+        if (!(*m)->orthogonal()) return;   // the platformer sees orthogonal maps only (docs/design/tilemaps.md, Orientations)
         maps.push_back({e.id(), v});
+    });
+    // Top-down movers: a point with a radius, moved by its velocity in steps no longer than the
+    // radius, each step along X then Y dropped when the cell ahead of the center is solid. The
+    // cell under a point comes from the map's own geometry, so any orientation works.
+    auto cell_under = [](const MapView& v, float wx, float wy, int& cx, int& cy) {
+        if (v.map->orthogonal()) {
+            cx = v.col(wx);
+            cy = v.row(wy);
+        } else {
+            const float sx = v.ts / static_cast<float>(v.map->tile_width);
+            (void)v.map->cell_at_pixel((wx - v.origin.x) / sx, (v.origin.y - wy) / sx, cx, cy);
+        }
+        return cx >= 0 && cy >= 0 && cx < v.map->width && cy < v.map->height;
+    };
+    auto solid_under = [&](const MapView& v, float wx, float wy) {
+        int cx = 0, cy = 0;
+        return cell_under(v, wx, wy, cx, cy) && v.map->solid_at(cx, cy);
+    };
+    std::vector<std::pair<world::EntityId, world::TopDown2D>> mover_writes;
+    std::vector<std::pair<world::EntityId, Vec3>> mover_positions;
+    w.ecs().each([&](flecs::entity e, const world::TopDown2D& mover_in, const world::Transform& t) {
+        world::TopDown2D b = mover_in;
+        stats_.movers++;
+        const MapView* mv = nullptr;
+        if (!b.map.empty()) {
+            world::EntityId mid = w.find(b.map);
+            for (const MapEntry& m : all_maps) if (m.id == mid) mv = &m.view;
+        } else if (!all_maps.empty()) {
+            mv = &all_maps.front().view;
+        }
+        Vec3 pos = t.position;
+        b.blocked_x = false;
+        b.blocked_y = false;
+        const float radius = std::max(b.radius, 0.0f);
+        const bool stuck = mv && solid_under(*mv, pos.x, pos.y);   // placed inside a wall: free to move out
+        const float dx = b.velocity.x * dt, dy = b.velocity.y * dt;
+        const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(dx), std::fabs(dy)) / std::max(radius, 0.05f))));
+        const float sx = dx / static_cast<float>(steps), sy = dy / static_cast<float>(steps);
+        for (int i = 0; i < steps; ++i) {
+            if (sx != 0 && !b.blocked_x) {
+                if (mv && !stuck && solid_under(*mv, pos.x + sx + (sx > 0 ? radius : -radius), pos.y)) { b.blocked_x = true; stats_.blocked++; }
+                else pos.x += sx;
+            }
+            if (sy != 0 && !b.blocked_y) {
+                if (mv && !stuck && solid_under(*mv, pos.x, pos.y + sy + (sy > 0 ? radius : -radius))) { b.blocked_y = true; stats_.blocked++; }
+                else pos.y += sy;
+            }
+        }
+        int cx = -1, cy = -1;
+        if (!mv || !cell_under(*mv, pos.x, pos.y, cx, cy)) { cx = -1; cy = -1; }
+        b.tile_x = cx;
+        b.tile_y = cy;
+        mover_positions.emplace_back(e.id(), pos);
+        mover_writes.emplace_back(e.id(), b);
     });
     struct Landing { world::EntityId id; float speed; };
     std::vector<Landing> landings;
@@ -497,6 +552,12 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         t.position = pos;
         w.set_typed<world::Transform>(id, t);
     }
+    for (auto& [id, b] : mover_writes) w.set_typed<world::TopDown2D>(id, b);
+    for (auto& [id, pos] : mover_positions) {
+        world::Transform t = *w.try_get<world::Transform>(id);
+        t.position = pos;
+        w.set_typed<world::Transform>(id, t);
+    }
     for (const Landing& l : landings) {
         stats_.landings++;
         w.events().emit(w.tick_index(), "body2d.landed", l.id, Json{{"path", w.path(l.id)}, {"speed", l.speed}});
@@ -508,7 +569,7 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
 }
 
 Json Physics2D::describe() const {
-    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}, {"pairs", stats_.pairs}, {"stacked", stats_.stacked}, {"pushed", stats_.pushed}, {"bounces", stats_.bounces}};
+    return Json{{"bodies", stats_.bodies}, {"grounded", stats_.grounded}, {"landings", stats_.landings}, {"blocked", stats_.blocked}, {"platforms", stats_.platforms}, {"riding", stats_.riding}, {"stepped", stats_.stepped}, {"pairs", stats_.pairs}, {"stacked", stats_.stacked}, {"pushed", stats_.pushed}, {"bounces", stats_.bounces}, {"movers", stats_.movers}};
 }
 
 }  // namespace pocket::physics
