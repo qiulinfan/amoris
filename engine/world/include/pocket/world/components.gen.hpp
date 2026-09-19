@@ -31,6 +31,19 @@ void from_json(const Json& j, MorphWeight& v);
 std::size_t numeric_span(MorphWeight& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const MorphWeight& v);
 
+/// The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry.
+struct IKLimit {
+    std::string joint = "";
+    float min_bend = 0.0f;
+    float max_bend = 180.0f;
+    constexpr bool operator==(const IKLimit&) const = default;
+};
+void to_json(Json& j, const IKLimit& v);
+void from_json(const Json& j, IKLimit& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(IKLimit& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const IKLimit& v);
+
 /// One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers.
 struct AnimationLayer {
     std::string clip = "";
@@ -235,6 +248,7 @@ struct IK {
     std::string target_entity = "";
     std::string pole_entity = "";
     float max_bend = 180.0f;
+    std::vector<IKLimit> limits = {};
     float weight = 1.0f;
     std::int32_t iterations = 8;
     float tolerance = 0.001f;

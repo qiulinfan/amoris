@@ -17,6 +17,8 @@ export interface IKOptions {
     pole?: string;
     /** Degrees any joint of the chain may bend from the bone above it (default 180: free). */
     maxBend?: number;
+    /** Per-joint bends by node name, each with a least and a most; joints without an entry take maxBend. */
+    limits?: Array<{ joint: string; minBend?: number; maxBend?: number }>;
     weight?: number;
     iterations?: number;
     tolerance?: number;
@@ -90,7 +92,7 @@ export interface PoseInfo {
     /** The root's yaw change this tick in radians, when root rotation is on. */
     root_delta_yaw?: number;
     /** The IK chain's state, when the entity has an IK component: the effector in world space and its distance to the target. */
-    ik?: { end: string; bones: number; weight: number; error: number; reached: boolean; bend: number; max_bend: number; effector?: Vec3 };
+    ik?: { end: string; bones: number; weight: number; error: number; reached: boolean; bend: number; max_bend: number; limits: number; effector?: Vec3 };
     look_at?: { node: string; angle: number; weight: number; max_angle: number; speed: number; aim: Vec3 };
 }
 
@@ -118,12 +120,13 @@ export const animation = {
     },
     /** Solve an IK chain on the entity's skinned mesh every tick (sets its IK component); the pose reports the effector and the error. */
     ik(entity: EntityRef, options: IKOptions): Components["IK"] {
-        const { target, pole, maxBend, ...rest } = options;
+        const { target, pole, maxBend, limits, ...rest } = options;
         const value: Partial<Components["IK"]> = { ...rest };
         if (typeof target === "string") value.target_entity = target;
         else if (target) { value.target = target; value.target_entity = ""; }
         if (pole !== undefined) value.pole_entity = pole;
         if (maxBend !== undefined) value.max_bend = maxBend;
+        if (limits !== undefined) value.limits = limits.map((l) => ({ joint: l.joint, min_bend: l.minBend ?? 0, max_bend: l.maxBend ?? 180 }));
         world.set(entity, "IK", value);
         return world.get(entity, "IK")!;
     },

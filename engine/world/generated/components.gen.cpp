@@ -76,6 +76,32 @@ std::size_t numeric_span(MorphWeight& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const IKLimit& v) {
+    j = Json::object();
+    j["joint"] = v.joint;
+    j["min_bend"] = v.min_bend;
+    j["max_bend"] = v.max_bend;
+}
+
+void from_json(const Json& j, IKLimit& v) {
+    scalar_from_json(j, "joint", v.joint);
+    scalar_from_json(j, "min_bend", v.min_bend);
+    scalar_from_json(j, "max_bend", v.max_bend);
+}
+
+void hash_record(StateHasherRef& h, const IKLimit& v) {
+    h.str(v.joint);
+    h.f32(v.min_bend);
+    h.f32(v.max_bend);
+}
+
+std::size_t numeric_span(IKLimit& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "min_bend") { *out = &v.min_bend; return 1; }
+    if (path == "max_bend") { *out = &v.max_bend; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const AnimationLayer& v) {
     j = Json::object();
     j["clip"] = v.clip;
@@ -659,6 +685,8 @@ void to_json(Json& j, const IK& v) {
     j["target_entity"] = v.target_entity;
     j["pole_entity"] = v.pole_entity;
     j["max_bend"] = v.max_bend;
+    j["limits"] = Json::array();
+    for (const auto& x : v.limits) { Json e; to_json(e, x); j["limits"].push_back(std::move(e)); }
     j["weight"] = v.weight;
     j["iterations"] = v.iterations;
     j["tolerance"] = v.tolerance;
@@ -675,6 +703,10 @@ void from_json(const Json& j, IK& v) {
     scalar_from_json(j, "target_entity", v.target_entity);
     scalar_from_json(j, "pole_entity", v.pole_entity);
     scalar_from_json(j, "max_bend", v.max_bend);
+    if (j.is_object() && j.contains("limits") && j["limits"].is_array()) {
+        v.limits.clear();
+        for (const Json& e : j["limits"]) { IKLimit x; from_json(e, x); v.limits.push_back(std::move(x)); }
+    }
     scalar_from_json(j, "weight", v.weight);
     scalar_from_json(j, "iterations", v.iterations);
     scalar_from_json(j, "tolerance", v.tolerance);
@@ -695,6 +727,8 @@ void hash_component(StateHasherRef& h, const IK& v) {
     h.str(v.target_entity);
     h.str(v.pole_entity);
     h.f32(v.max_bend);
+    h.i64(static_cast<std::int64_t>(v.limits.size()));
+    for (const auto& x : v.limits) hash_record(h, x);
     h.f32(v.weight);
     h.i64(static_cast<std::int64_t>(v.iterations));
     h.f32(v.tolerance);
@@ -714,6 +748,11 @@ std::size_t numeric_span(IK& v, std::string_view path, float** out) {
     if (path == "target.y") { *out = &v.target.y; return 1; }
     if (path == "target.z") { *out = &v.target.z; return 1; }
     if (path == "max_bend") { *out = &v.max_bend; return 1; }
+    if (path.starts_with("limits.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.limits.size()) return numeric_span(v.limits[index], rest, out);
+    }
     if (path == "weight") { *out = &v.weight; return 1; }
     if (path == "tolerance") { *out = &v.tolerance; return 1; }
     if (path == "error") { *out = &v.error; return 1; }
@@ -1522,7 +1561,7 @@ constexpr std::array<FieldInfo, 16> kAnimatorFields = {{
     FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion)."},
     FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 13> kIKFields = {{
+constexpr std::array<FieldInfo, 14> kIKFields = {{
     FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints)."},
     FieldInfo{"bones", "i32", "How many bones the chain has, counted up from `end` (2 for a limb: upper and lower)."},
     FieldInfo{"tip", "vec3", "The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y."},
@@ -1530,6 +1569,7 @@ constexpr std::array<FieldInfo, 13> kIKFields = {{
     FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
     FieldInfo{"pole_entity", "string", "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has."},
     FieldInfo{"max_bend", "f32", "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false."},
+    FieldInfo{"limits", "list:IKLimit", "Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend."},
     FieldInfo{"weight", "f32", "How much of the solve applies: 0 the posed chain, 1 the solved one."},
     FieldInfo{"iterations", "i32", "FABRIK passes per tick (each is a backward and a forward sweep)."},
     FieldInfo{"tolerance", "f32", "The solve stops once the effector is this close to the target, in meters."},

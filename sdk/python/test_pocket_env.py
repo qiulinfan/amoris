@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pocket_env import PocketEnv, PocketEnvPool, PocketError, play  # noqa: E402
 from train_example import train  # noqa: E402
 from policy_example import act, train as train_policy  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "scripts"))
+from agent_eval import run as run_benchmark  # noqa: E402
 
 
 class SpritesEpisodes(unittest.TestCase):
@@ -85,6 +87,14 @@ class SpritesEpisodes(unittest.TestCase):
         self.assertEqual(len(result["weights"]["move"]), 6)
         self.assertGreaterEqual(result["best"], 0.0)
         self.assertIn("-2.3", result["per_start"])
+
+    def test_agent_benchmark_reference_passes_and_null_fails(self):
+        # The harness checks itself: its own solutions pass, an empty runner does not.
+        ref = run_benchmark("reference", ["spawn_named", "tile_edit", "count_overlap", "expose_count"], log=lambda *_: None)
+        self.assertEqual(ref["passed"], 4, ref)
+        null = run_benchmark("null", ["spawn_named", "count_overlap"], log=lambda *_: None)
+        self.assertEqual(null["passed"], 0, null)
+        self.assertEqual(null["tasks"][1]["answer"], None)
 
     def test_play_helper(self):
         rows = play("sprites", policy="right", episodes=1, ticks=240, step=4, seed=1)

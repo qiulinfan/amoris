@@ -14,6 +14,8 @@
 8. **Fast loops.** Hot reload of scripts, shaders and assets; incremental builds measured in seconds; tests filterable to one case.
 9. **Bounded power.** Scripts run in a sandbox with an explicit capability surface; tools operate within the project directory; secrets never live in project files.
 
+Whether an agent can act on all this is measured, not assumed: `docs/agent-eval.md` describes the benchmark, eight tasks a program solves through the interface above, with the harness's own solutions and an empty runner as the two reference points.
+
 ## For engine contributors
 
 Decision records, design documents and evidence directories are the memory both humans and agents work from. A change is not done until its evidence is in the repository.

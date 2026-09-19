@@ -134,6 +134,15 @@ fields = [
 ]
 
 [[record]]
+name = "IKLimit"
+doc = "The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry."
+fields = [
+    { name = "joint", type = "string", default = "", doc = "The joint's node name." },
+    { name = "min_bend", type = "f32", default = 0.0, doc = "The least the joint bends: a knee kept from locking straight." },
+    { name = "max_bend", type = "f32", default = 180.0, doc = "The most the joint bends." },
+]
+
+[[record]]
 name = "AnimationLayer"
 doc = "One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers."
 fields = [
@@ -180,6 +189,7 @@ fields = [
     { name = "target_entity", type = "string", default = "", doc = "An entity (name or path) whose world position is the target; empty uses target." },
     { name = "pole_entity", type = "string", default = "", doc = "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has." },
     { name = "max_bend", type = "f32", default = 180.0, doc = "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false." },
+    { name = "limits", type = "list:IKLimit", doc = "Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend." },
     { name = "weight", type = "f32", default = 1.0, doc = "How much of the solve applies: 0 the posed chain, 1 the solved one." },
     { name = "iterations", type = "i32", default = 8, doc = "FABRIK passes per tick (each is a backward and a forward sweep)." },
     { name = "tolerance", type = "f32", default = 0.001, doc = "The solve stops once the effector is this close to the target, in meters." },

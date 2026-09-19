@@ -168,6 +168,7 @@ Inverse kinematics on a chain of the entity's skinned mesh: after the clips and 
 | `target_entity` | string | "" | An entity (name or path) whose world position is the target; empty uses target. |
 | `pole_entity` | string | "" | An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has. |
 | `max_bend` | f32 | 180.0 | The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false. |
+| `limits` | list:IKLimit | [] | Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend. |
 | `weight` | f32 | 1.0 | How much of the solve applies: 0 the posed chain, 1 the solved one. |
 | `iterations` | i32 | 8 | FABRIK passes per tick (each is a backward and a forward sweep). |
 | `tolerance` | f32 | 0.001 | The solve stops once the effector is this close to the target, in meters. |
@@ -378,6 +379,16 @@ One morph target weight set by script (docs/design/animation.md, Morph targets):
 |---|---|---|---|
 | `target` | string | "" | Target name from the asset (animation.clips lists them), or its index as a string. |
 | `weight` | f32 | 0.0 | 0 leaves the vertices where the mesh has them, 1 moves them fully to the target. |
+
+## IKLimit
+
+The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `joint` | string | "" | The joint's node name. |
+| `min_bend` | f32 | 0.0 | The least the joint bends: a knee kept from locking straight. |
+| `max_bend` | f32 | 180.0 | The most the joint bends. |
 
 ## AnimationLayer
 

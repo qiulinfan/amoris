@@ -14,6 +14,16 @@ export interface MorphWeight {
     weight: number;
 }
 
+/** The bend one joint of an IK chain may have, in degrees, measured between its bone and the bone above it (docs/design/animation.md, Inverse kinematics): the chain's `max_bend` is the default for the joints without an entry. */
+export interface IKLimit {
+    /** The joint's node name. */
+    joint: string;
+    /** The least the joint bends: a knee kept from locking straight. */
+    min_bend: number;
+    /** The most the joint bends. */
+    max_bend: number;
+}
+
 /** One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers. */
 export interface AnimationLayer {
     /** Clip name from the asset (animation.clips lists them). */
@@ -236,6 +246,8 @@ export interface IK {
     pole_entity: string;
     /** The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false. */
     max_bend: number;
+    /** Per-joint bends, by node name, each with a least and a most; joints without an entry take max_bend. */
+    limits: IKLimit[];
     /** How much of the solve applies: 0 the posed chain, 1 the solved one. */
     weight: number;
     /** FABRIK passes per tick (each is a backward and a forward sweep). */
@@ -567,7 +579,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
     Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
-    IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
+    IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
@@ -584,11 +596,13 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
 /** Records: the values inside list fields, with their defaults. */
 export interface Records {
     MorphWeight: MorphWeight;
+    IKLimit: IKLimit;
     AnimationLayer: AnimationLayer;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     MorphWeight: { target: "", weight: 0 },
+    IKLimit: { joint: "", min_bend: 0, max_bend: 180 },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
 };
 

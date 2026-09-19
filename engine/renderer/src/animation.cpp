@@ -287,6 +287,20 @@ float angle_between(Vec3 a, Vec3 b) {
     return std::acos(std::clamp(dot(a, b), -1.0f, 1.0f));
 }
 
+// A unit direction kept at least `min_rad` from the unit `ref`: one closer is turned away from ref
+// along its own sideways component, or along `hint` when it lies on ref (a knee kept from locking).
+Vec3 clamp_floor(Vec3 dir, Vec3 ref, float min_rad, Vec3 hint) {
+    if (min_rad <= 0.0f) return dir;
+    const float c = std::clamp(dot(dir, ref), -1.0f, 1.0f);
+    if (std::acos(c) >= min_rad) return dir;
+    Vec3 perp = dir - ref * c;
+    if (length(perp) < 1e-6f) perp = hint - ref * dot(hint, ref);
+    if (length(perp) < 1e-6f) perp = cross(ref, {0, 0, 1});
+    if (length(perp) < 1e-6f) perp = cross(ref, {1, 0, 0});
+    perp = normalize(perp);
+    return normalize(ref * std::cos(min_rad) + perp * std::sin(min_rad));
+}
+
 // FABRIK on the chain of `bones` joints ending at `end`: joint positions are moved to reach the
 // target (backward from the effector, forward from the base, the pole applied to the middle
 // joints, every bone kept within `max_bend` of the one above it), then every joint is turned so
@@ -318,10 +332,22 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
     std::vector<Vec3> q = p;
     const Vec3 base = p[0];
     const float tol = std::max(ik.tolerance, 0.0f);
-    // The bend limit: each bone stays within max_bend of the one above it. Above the first joint
-    // is its parent's bone, or, without a parent (or one at the same point), the posed first bone.
-    const float max_bend = std::clamp(ik.max_bend, 0.0f, 180.0f) * 3.14159265f / 180.0f;
-    const bool limited = ik.max_bend < 180.0f;
+    // The bend limits: each bone stays within its joint's least and most bend of the one above it
+    // (the joint's own entry in `limits`, else the chain's max_bend). Above the first joint is its
+    // parent's bone, or, without a parent (or one at the same point), the posed first bone.
+    const float deg = 3.14159265f / 180.0f;
+    std::vector<float> lo(n, 0.0f), hi(n, std::clamp(ik.max_bend, 0.0f, 180.0f) * deg);
+    for (std::size_t i = 0; i < n; ++i) {
+        for (const world::IKLimit& lim : ik.limits) {
+            if (lim.joint != mesh.nodes[chain[i]].name) continue;
+            lo[i] = std::clamp(lim.min_bend, 0.0f, 180.0f) * deg;
+            hi[i] = std::clamp(lim.max_bend, 0.0f, 180.0f) * deg;
+            if (hi[i] < lo[i]) hi[i] = lo[i];
+        }
+    }
+    bool limited = ik.max_bend < 180.0f;
+    for (std::size_t i = 0; i < n; ++i) limited = limited || lo[i] > 0.0f || hi[i] < 180.0f * deg;
+    const Vec3 bend_hint = has_pole ? safe_dir(pole - base) : Vec3{0, 0, 1};
     Vec3 above = safe_dir(p[1] - p[0]);
     if (const int parent = mesh.nodes[chain[0]].parent; parent >= 0 && static_cast<std::size_t>(parent) < cur.globals.size()) {
         const Vec3 pp = cur.globals[static_cast<std::size_t>(parent)].transform_point({0, 0, 0});
@@ -332,7 +358,10 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
         q[0] = base;
         for (std::size_t i = 0; i < n; ++i) {
             Vec3 dir = safe_dir(want(i));
-            if (limited) dir = clamp_cone(dir, i == 0 ? above : safe_dir(q[i] - q[i - 1]), max_bend);
+            if (limited) {
+                const Vec3 ref = i == 0 ? above : safe_dir(q[i] - q[i - 1]);
+                dir = clamp_floor(clamp_cone(dir, ref, hi[i]), ref, lo[i], bend_hint);
+            }
             q[i + 1] = q[i] + dir * d[i];
         }
     };
@@ -352,7 +381,16 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             float a = 0.0f, b = 0.0f;
             for (std::size_t i = 0; i < k; ++i) a += d[i];
             for (std::size_t i = k; i < n; ++i) b += d[i];
-            const float along = std::clamp((dist * dist + a * a - b * b) / (2.0f * dist), -a, a);
+            // The fold the target asks of the middle joint, kept within that joint's bends: a fold
+            // outside them gives the reach the joint allows instead, and the effector lands on the
+            // line to the target that much short of it (or beyond a least bend's straightening).
+            float reach = dist;
+            if (a > 1e-6f && b > 1e-6f) {
+                const float needed = std::acos(std::clamp((dist * dist - a * a - b * b) / (2.0f * a * b), -1.0f, 1.0f));
+                const float fold = std::clamp(needed, lo[k], hi[k]);
+                if (fold != needed) reach = std::sqrt(std::max(a * a + b * b + 2.0f * a * b * std::cos(fold), 0.0f));
+            }
+            const float along = std::clamp((reach * reach + a * a - b * b) / (2.0f * reach), -a, a);
             const float r = std::sqrt(std::max(a * a - along * along, 0.0f));
             Vec3 side{0, 0, 0};
             if (has_pole) side = (pole - base) - axis * dot(pole - base, axis);
@@ -361,18 +399,28 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             if (length(side) < 1e-6f) side = cross(axis, {1, 0, 0});
             side = normalize(side);
             const Vec3 mid = base + axis * along + side * r;
+            const Vec3 aim = base + axis * reach;   // where the effector lands: the target, or short of it
             float acc = 0.0f;
             for (std::size_t i = 1; i < k; ++i) { acc += d[i - 1]; q[i] = base + (mid - base) * (a > 0 ? acc / a : 0.0f); }
             q[k] = mid;
             acc = 0.0f;
-            for (std::size_t i = k + 1; i < n; ++i) { acc += d[i - 1]; q[i] = mid + (target - mid) * (b > 0 ? acc / b : 0.0f); }
+            for (std::size_t i = k + 1; i < n; ++i) { acc += d[i - 1]; q[i] = mid + (aim - mid) * (b > 0 ? acc / b : 0.0f); }
+            q[n] = aim;
+        }
+        // The seed, with its limits applied once, is the two-bone answer; the passes refine longer
+        // chains but can wander when the limits keep the target out of reach, so the better of the
+        // two is kept.
+        std::vector<Vec3> seed = q;
+        if (limited) {
+            forward([&](std::size_t i) { return q[i + 1] - q[i]; });
+            seed = q;
         }
         for (int it = 0; it < std::clamp(ik.iterations, 1, 64); ++it) {
             if ((it > 0 || !limited) && length(q[n] - target) <= tol) break;   // a limited chain gets at least one limited sweep
             q[n] = target;
             for (std::size_t i = n; i-- > 0;) {
                 Vec3 bone = safe_dir(q[i + 1] - q[i]);
-                if (limited && i + 1 < n) bone = clamp_cone(bone, safe_dir(q[i + 2] - q[i + 1]), max_bend);   // the bend at joint i+1
+                if (limited && i + 1 < n) bone = clamp_floor(clamp_cone(bone, safe_dir(q[i + 2] - q[i + 1]), hi[i + 1]), safe_dir(q[i + 2] - q[i + 1]), lo[i + 1], bend_hint);   // the bend at joint i+1
                 q[i] = q[i + 1] - bone * d[i];
             }
             if (has_pole) {
@@ -380,6 +428,7 @@ void solve_ik(const world::World& world, world::EntityId self, const assets::Mes
             }
             forward([&](std::size_t i) { return q[i + 1] - q[i]; });
         }
+        if (limited && length(seed[n] - target) < length(q[n] - target)) q = seed;
     }
     const float w = std::clamp(ik.weight, 0.0f, 1.0f);
     for (std::size_t i = 0; i < n; ++i) {
@@ -764,7 +813,7 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
         }
     }
     if (const auto* ik = world.try_get<world::IK>(id)) {
-        Json k{{"end", ik->end}, {"bones", ik->bones}, {"weight", ik->weight}, {"error", ik->error}, {"reached", ik->reached}, {"bend", ik->bend}, {"max_bend", ik->max_bend}};
+        Json k{{"end", ik->end}, {"bones", ik->bones}, {"weight", ik->weight}, {"error", ik->error}, {"reached", ik->reached}, {"bend", ik->bend}, {"max_bend", ik->max_bend}, {"limits", ik->limits.size()}};
         const int end = node_index(mesh, ik->end);
         if (end >= 0) {
             const auto ei = static_cast<std::size_t>(end);

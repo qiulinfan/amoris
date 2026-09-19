@@ -1544,6 +1544,51 @@ TEST_CASE("a bend limit keeps every joint of an IK chain within its cone", "[run
     REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(90.0).margin(1.0));
 }
 
+TEST_CASE("per-joint IK limits give one joint its own most and least bend", "[runtime][animation][ik][iklimit][ikjoint]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto v = [](const Json& j) { return Vec3{j["x"].get<float>(), j["y"].get<float>(), j["z"].get<float>()}; };
+    auto pose = [&]() { return s.command("animation.pose", Json{{"entity", "Knee"}}).value(); };
+    // The chain is free (max_bend 180) but the tip joint alone may bend 45 degrees at most: the
+    // folded target under the base is missed, the fold stopping at the tip's own limit.
+    Json spawn = Json{{"name", "Knee"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"IK", Json{{"end", "tip"}, {"bones", 2}, {"tip", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"target", {{"x", 0.0}, {"y", 0.6}, {"z", 0.3}}}, {"limits", Json::array({Json{{"joint", "tip"}, {"max_bend", 45.0}}})}}}}}};
+    REQUIRE(s.command("world.spawn", spawn).has_value());
+    REQUIRE(s.frame().has_value());
+    Json p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["limits"] == 1);
+    REQUIRE(p["ik"]["reached"] == false);
+    REQUIRE(p["ik"]["bend"].get<double>() <= 45.5);
+    REQUIRE(p["ik"]["bend"].get<double>() >= 40.0);
+    REQUIRE(length(v(p["ik"]["effector"])) == Catch::Approx(2.0 * std::cos(45.0 * 3.14159265 / 360.0)).margin(0.05));   // two unit bones 45 degrees apart
+    // A least bend: the target almost straight up is within reach, but the tip must keep 30
+    // degrees, so the effector stops short by the difference.
+    REQUIRE(s.command("world.set", Json{{"entity", "Knee"}, {"component", "IK"}, {"value", Json{{"target", {{"x", 0.0}, {"y", 1.99}, {"z", 0.0}}}, {"limits", Json::array({Json{{"joint", "tip"}, {"min_bend", 30.0}}})}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    INFO(p.dump());
+    REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(30.0).margin(1.0));
+    REQUIRE(length(v(p["ik"]["effector"])) == Catch::Approx(2.0 * std::cos(30.0 * 3.14159265 / 360.0)).margin(0.02));
+    REQUIRE(p["ik"]["error"].get<double>() == Catch::Approx(1.99 - 2.0 * std::cos(30.0 * 3.14159265 / 360.0)).margin(0.02));
+    REQUIRE(p["ik"]["reached"] == false);
+    // Without the entry the same target is reached with an eleven-degree bend (two unit bones
+    // spanning 1.99: cos of the fold is (1.99^2 - 2) / 2).
+    REQUIRE(s.command("world.set", Json{{"entity", "Knee"}, {"component", "IK"}, {"value", Json{{"limits", Json::array()}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pose();
+    REQUIRE(p["ik"]["reached"] == true);
+    REQUIRE(p["ik"]["bend"].get<double>() == Catch::Approx(11.46).margin(0.5));
+}
+
 TEST_CASE("a look-at with a speed turns toward its target a little each tick", "[runtime][animation][lookat][lookatspeed]") {
     app::Options o;
     o.project_dir = root() / "samples" / "assets";
