@@ -342,7 +342,7 @@ float Painter::text(float x, float y, std::string_view text, float size_points, 
         const Glyph& g = sg.glyph;
         if (!g.empty) {
             float gx = pen + sg.x + g.bearing_x;
-            float gy = baseline - g.bearing_y;
+            float gy = baseline - g.bearing_y + sg.y;
             Vertex v{};
             v.r = color.r; v.g = color.g; v.b = color.b; v.a = color.a;
             v.mode = 1.0f;

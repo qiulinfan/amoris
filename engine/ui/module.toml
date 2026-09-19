@@ -4,4 +4,4 @@ description = "Pocket UI (ADR 0004): a 2D batch painter on the RHI (anti-aliased
 sources = ["src/**/*.cpp"]
 public_include = ["include"]
 public_deps = ["pocket_core", "pocket_rhi", "pocket_platform"]
-private_deps = ["freetype", "yoga"]
+private_deps = ["freetype", "harfbuzz", "yoga"]

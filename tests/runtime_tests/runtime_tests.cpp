@@ -197,3 +197,88 @@ TEST_CASE("input actions carry edges across frames and release held keys", "[run
     REQUIRE_FALSE(s.command("input.hold", Json{{"action", "fly"}}).has_value());
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("sprites draw unlit through an orthographic camera and are picked by shape", "[runtime][sprites]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["sprites"].get<int>() == 47);            // 40 tiles + player + 6 coins
+    REQUIRE(stats["draw_calls"].get<int>() <= 6);           // runs per texture, split by layer
+    // The player sits at (0,-3); with ortho_size 5 over 180 px that is 90 + 3/5*90 = 144 px down.
+    Json pr = s.command("render.project", Json{{"entity", "Player"}}).value();
+    REQUIRE(pr["visible"] == true);
+    REQUIRE(pr["x"].get<double>() == Catch::Approx(160).margin(1));
+    REQUIRE(pr["y"].get<double>() == Catch::Approx(144).margin(1));
+    Json pick = s.command("render.pick", Json{{"x", 160}, {"y", 144}}).value();
+    REQUIRE(pick["name"] == "Player");
+    // The transparent corner of the player's square shows what is behind it (the sky: nothing).
+    Json corner = s.command("render.pick", Json{{"x", 160 - 8}, {"y", 144 - 8}}).value();
+    REQUIRE(corner["id"] == 0);
+    // Walk right for a second: the player moves, a coin is collected, the HUD says so.
+    REQUIRE(s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 60}}).has_value());
+    for (int i = 0; i < 70; ++i) REQUIRE(s.frame().has_value());
+    Json st = s.command("state", Json::object()).value();
+    INFO(st.dump());
+    REQUIRE(st["state"]["player.x"].get<double>() > 4.0);
+    REQUIRE(st["state"]["score"].get<int>() >= 1);
+    std::string snap = s.command("ui.snapshot", Json{{"depth", 4}}).value()["text"].get<std::string>();
+    REQUIRE(snap.find("Score 1") != std::string::npos);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("save slots hold the world and script state and load back exactly", "[runtime][saves]") {
+    auto o = hello_options(1000);
+    o.save_dir = root() / "build" / "test-out" / "saves";
+    std::filesystem::remove_all(o.save_dir);
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json before = s.command("state", Json::object()).value();
+    Json w = s.command("save.write", Json{{"slot", "checkpoint-1"}, {"data", Json{{"label", "after one second"}}}}).value();
+    INFO(w.dump());
+    REQUIRE(std::filesystem::exists(o.save_dir / "checkpoint-1.json"));
+    REQUIRE(w["entities"] == 4);
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json later = s.command("state", Json::object()).value();
+    REQUIRE(later["world_hash"] != before["world_hash"]);
+    REQUIRE(later["state"]["bounces"] != before["state"]["bounces"]);
+    Json l = s.command("save.read", Json{{"slot", "checkpoint-1"}}).value();
+    INFO(l.dump());
+    REQUIRE(l["saved_tick"] == 60);
+    REQUIRE(l["data"]["label"] == "after one second");
+    Json after = s.command("state", Json::object()).value();
+    INFO(after.dump());
+    REQUIRE(after["world_hash"] == before["world_hash"]);
+    REQUIRE(after["state"] == before["state"]);
+    // The game goes on from the loaded point: the next second bounces the same number of times.
+    for (int i = 0; i < 60; ++i) REQUIRE(s.frame().has_value());
+    Json resumed = s.command("state", Json::object()).value();
+    REQUIRE(resumed["state"]["bounces"] == later["state"]["bounces"]);
+    REQUIRE(resumed["state"]["ball.y"] == later["state"]["ball.y"]);
+    Json list = s.command("save.list", Json::object()).value();
+    REQUIRE(list.size() == 1);
+    REQUIRE(list[0]["slot"] == "checkpoint-1");
+    REQUIRE(list[0]["tick"] == 60);
+    REQUIRE(list[0]["data"]["label"] == "after one second");
+    REQUIRE_FALSE(s.command("save.read", Json{{"slot", "nope"}}).has_value());
+    REQUIRE_FALSE(s.command("save.write", Json{{"slot", "../escape"}}).has_value());
+    REQUIRE(s.command("save.delete", Json{{"slot", "checkpoint-1"}}).value()["deleted"] == true);
+    REQUIRE(s.command("save.list", Json::object()).value().empty());
+    Json events = s.command("events.recent", Json{{"n", 50}}).value();
+    bool saw_written = false, saw_loaded = false;
+    for (const auto& e : events) { if (e["type"] == "save.written") saw_written = true; if (e["type"] == "save.loaded") saw_loaded = true; }
+    REQUIRE(saw_written);
+    REQUIRE(saw_loaded);
+    REQUIRE(s.finish().has_value());
+}

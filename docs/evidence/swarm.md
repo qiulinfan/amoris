@@ -24,3 +24,14 @@ Reproduce:
 ```
 
 `tests/evidence/swarm/swarm.png` is the release capture at 960x540.
+
+## Rendering the swarm
+
+The same 3000 cubes drawn two ways (release build, headless 960x540, Apple M5, `perf` command averages over 300 frames):
+
+| Renderer | Draw calls | Render ms/frame |
+|---|---|---|
+| One draw per entity, per-object uniform with a dynamic offset | 3000 | 0.90 |
+| Instanced: one storage buffer of objects, `instance_index` per row, one draw per (mesh, submesh, material) run | 1 | 0.35 |
+
+The script side of this sample (8.4 ms, half of it the deliberately slow JSON path) is what the frame is made of; the renderer is not the cost at this size. `perf` reports every phase (`frame`, `poll`, `tick`, `script`, `physics`, `world`, `state`, `render`) so the next bottleneck is a number too.

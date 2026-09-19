@@ -47,9 +47,11 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket run hello --watch                                   # window + hot reload when scripts change
 ./.pocket/pocket run assets -- --headless --frames 20 --json          # glTF meshes and textures (docs/design/assets.md)
 ./.pocket/pocket pack assets --zip                                   # dist/assets/ + dist/assets.zip (docs/packaging.md)
+./.pocket/pocket run sprites -- --headless --frames 120 --json        # a 2D game: sprites, orthographic camera (docs/design/sprites.md)
 ./.pocket/pocket run audio -- --headless --frames 300 --json          # voices and audio events without a sound card (docs/design/audio.md)
 ./.pocket/pocket run swarm -- --headless --frames 120 --json          # 3000 entities per tick through typed arrays (tick.ms in state)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)
+# where the time goes: the perf command (script, physics, world, state, render ms per phase)
 ./.pocket/pocket editor physics --watch                              # the same inside the editor
 ./.pocket/pocket graph                 # module graph
 ```

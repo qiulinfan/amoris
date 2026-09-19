@@ -10,6 +10,7 @@ const char* primitive_name(int kind) {
         case Primitive::Sphere: return "sphere";
         case Primitive::Plane: return "plane";
         case Primitive::Cylinder: return "cylinder";
+        case Primitive::Quad: return "quad";
     }
     return "cube";
 }
@@ -65,6 +66,15 @@ MeshData make_plane() {
     return m;
 }
 
+MeshData make_quad() {
+    MeshData m;
+    m.vertices = {{{-0.5f, -0.5f, 0}, {0, 0, 1}, {0, 1}}, {{0.5f, -0.5f, 0}, {0, 0, 1}, {1, 1}}, {{0.5f, 0.5f, 0}, {0, 0, 1}, {1, 0}}, {{-0.5f, 0.5f, 0}, {0, 0, 1}, {0, 0}}};
+    m.indices = {0, 1, 2, 0, 2, 3};
+    m.aabb_min = {-0.5f, -0.5f, 0};
+    m.aabb_max = {0.5f, 0.5f, 0};
+    return m;
+}
+
 MeshData make_cylinder(int segments) {
     MeshData m;
     // Side.
@@ -103,6 +113,7 @@ MeshData make_primitive(int kind) {
         case Primitive::Sphere: return make_sphere();
         case Primitive::Plane: return make_plane();
         case Primitive::Cylinder: return make_cylinder();
+        case Primitive::Quad: return make_quad();
         case Primitive::Cube: break;
     }
     return make_cube();
@@ -112,6 +123,9 @@ void primitive_bounds(int kind, Vec3& out_min, Vec3& out_max) {
     if (static_cast<Primitive>(kind) == Primitive::Plane) {
         out_min = {-0.5f, 0, -0.5f};
         out_max = {0.5f, 0, 0.5f};
+    } else if (static_cast<Primitive>(kind) == Primitive::Quad) {
+        out_min = {-0.5f, -0.5f, 0};
+        out_max = {0.5f, 0.5f, 0};
     } else {
         out_min = {-0.5f, -0.5f, -0.5f};
         out_max = {0.5f, 0.5f, 0.5f};

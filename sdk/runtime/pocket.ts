@@ -129,6 +129,49 @@ export function onInput(handler: (events: InputEvent[]) => void): void {
 }
 
 /**
+ * Contribute script state to a save slot (`saves.write`): return a JSON object. The world itself
+ * (every entity and component) is saved by the engine; this is for values that live only in
+ * script variables. Several handlers merge into one object per script context.
+ */
+export function onSave(handler: () => Record<string, unknown>): void {
+    own.save.push(handler);
+}
+
+/** Receive the object saved by `onSave` handlers when a slot is loaded (`saves.load`). */
+export function onLoad(handler: (data: Record<string, unknown>) => void): void {
+    own.load.push(handler);
+}
+
+export interface SaveInfo {
+    slot: string;
+    bytes: number;
+    /** Seconds since the epoch. */
+    modified: number;
+    tick?: number;
+    entities?: number;
+    data?: unknown;
+}
+
+/** Save slots: the whole world plus `onSave` state, one file per slot in the user's data directory. */
+export const saves = {
+    write(slot: string, data?: unknown): { slot: string; path: string; bytes: number; entities: number } {
+        return __pocket.command("save.write", { slot, data }) as { slot: string; path: string; bytes: number; entities: number };
+    },
+    load(slot: string): { slot: string; entities: number; saved_tick: number; data?: unknown } {
+        return __pocket.command("save.read", { slot }) as { slot: string; entities: number; saved_tick: number; data?: unknown };
+    },
+    list(): SaveInfo[] {
+        return __pocket.command("save.list") as SaveInfo[];
+    },
+    remove(slot: string): boolean {
+        return (__pocket.command("save.delete", { slot }) as { deleted: boolean }).deleted;
+    },
+    dir(): string {
+        return (__pocket.command("save.dir") as { path: string }).path;
+    },
+};
+
+/**
  * Publish an observable value. Exposed values are read after every tick, folded into the
  * deterministic state hash, and returned in run reports. This is how the engine (and agents)
  * see gameplay as numbers instead of pixels.
@@ -231,6 +274,26 @@ export function isActive(): boolean {
             return undefined;
         case "state":
             return collectState();
+        case "save": {
+            const out: Record<string, unknown> = {};
+            for (const [name, h] of registry.contexts) {
+                if (!registry.active.has(name) || h.save.length === 0) continue;
+                const merged: Record<string, unknown> = {};
+                for (const f of h.save) Object.assign(merged, f());
+                out[name] = merged;
+            }
+            return out;
+        }
+        case "load": {
+            const data = (arg ?? {}) as Record<string, Record<string, unknown>>;
+            for (const [name, h] of registry.contexts) {
+                if (!registry.active.has(name)) continue;
+                const part = data[name];
+                if (part === undefined) continue;
+                for (const f of h.load) f(part);
+            }
+            return undefined;
+        }
         case "input": {
             const events = arg as InputEvent[];
             for (const e of events) {

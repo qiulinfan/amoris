@@ -9,6 +9,7 @@
 #include <pocket/core/result.hpp>
 
 #include <array>
+#include <filesystem>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -48,6 +49,8 @@ Json mods_to_json(int mods);              // ["shift", "meta"]
 int mods_from_json(const Json& json);     // names array or bit number
 
 const char* event_type_name(EventType type);
+// Per-user writable directory for an application (SDL's preference path), created if needed.
+std::filesystem::path user_data_dir(const std::string& org, const std::string& app);
 Json event_to_json(const Event& event);
 Event event_from_json(const Json& json);  // inverse of event_to_json (journals, synthetic input)
 

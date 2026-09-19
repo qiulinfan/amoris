@@ -48,10 +48,14 @@ export interface Lifetime {
     seconds: number;
 }
 
-/** Perspective camera. The renderer uses the first active camera. */
+/** The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention). */
 export interface Camera {
-    /** Vertical field of view in degrees. */
+    /** Vertical field of view in degrees (perspective). */
     fov_degrees: number;
+    /** Parallel projection: no perspective, sizes do not shrink with distance. */
+    orthographic: boolean;
+    /** Half of the visible height in world units when orthographic. */
+    ortho_size: number;
     /** Near clip distance. */
     near: number;
     /** Far clip distance. */
@@ -74,13 +78,37 @@ export interface Light {
 
 /** Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured. */
 export interface MeshRenderer {
-    /** cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). */
+    /** cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). */
     mesh: string;
     /** Base color, linear RGB; multiplies the asset's material color. */
     color: Color;
     /** Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. */
     texture: string;
     /** Whether the mesh is drawn. */
+    visible: boolean;
+}
+
+/** A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z. */
+export interface Sprite {
+    /** Project-relative image (png, jpg). Empty draws a solid color. */
+    texture: string;
+    /** Width and height in world units. */
+    size: Vec2;
+    /** Tint and opacity, multiplied into the texture. */
+    color: Color;
+    /** Point of the image at the entity's origin: (0,0) bottom-left, (0.5,0.5) center, (1,1) top-right. */
+    anchor: Vec2;
+    /** Draw order among sprites; higher is drawn later (on top). */
+    layer: number;
+    /** Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets. */
+    uv: Vec4;
+    /** Mirror horizontally. */
+    flip_x: boolean;
+    /** Mirror vertically. */
+    flip_y: boolean;
+    /** Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles). */
+    filter: string;
+    /** Whether the sprite is drawn. */
     visible: boolean;
 }
 
@@ -151,6 +179,7 @@ export interface Components {
     Camera: Camera;
     Light: Light;
     MeshRenderer: MeshRenderer;
+    Sprite: Sprite;
     Bounds: Bounds;
     RigidBody: RigidBody;
     Collider: Collider;
@@ -159,7 +188,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Bounds", "RigidBody", "Collider", "AudioSource"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "Bounds", "RigidBody", "Collider", "AudioSource"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -168,9 +197,10 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Velocity: { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } },
     Health: { current: 100, max: 100 },
     Lifetime: { seconds: 1 },
-    Camera: { fov_degrees: 60, near: 0.1, far: 1000, active: true },
+    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
     MeshRenderer: { mesh: "cube", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", visible: true },
+    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },

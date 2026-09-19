@@ -78,6 +78,10 @@ class Session {
     Result<Json> assets_command(std::string_view op, const Json& p);
     Result<Json> audio_command(std::string_view op, const Json& p);
     Result<Json> input_command(std::string_view op, const Json& p);
+    Result<Json> save_command(std::string_view op, const Json& p);
+    [[nodiscard]] std::filesystem::path save_dir() const;
+    // Wall-clock cost of each phase since start (the `perf` command and report.timings).
+    [[nodiscard]] Json perf() const;
     void release_expired_holds();
     void tick_audio(double dt);
     Status render_frame();
@@ -130,6 +134,13 @@ class Session {
     bool stopped_ = false;
     bool warmed_up_ = false;     // windowed: first successful present seen (or grace period over)
     Stopwatch warmup_timer_;
+    struct PhaseStats {
+        double total_ms = 0, max_ms = 0, last_ms = 0;
+        std::uint64_t samples = 0;
+        void add(double ms) { total_ms += ms; last_ms = ms; if (ms > max_ms) max_ms = ms; ++samples; }
+        [[nodiscard]] Json json() const;
+    };
+    PhaseStats perf_frame_, perf_poll_, perf_tick_, perf_script_, perf_physics_, perf_world_, perf_state_, perf_render_;
     Stopwatch pace_timer_;
     Json capture_info_;
 };

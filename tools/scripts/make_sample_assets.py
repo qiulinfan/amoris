@@ -10,6 +10,7 @@ Everything is produced from code so the repository carries no third-party binari
 
 Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samples/assets/assets)
        python3 tools/scripts/make_sample_assets.py --sounds [dir]   WAV clips for samples/audio/assets
+       python3 tools/scripts/make_sample_assets.py --sprites [dir]  PNG sprites for samples/sprites/assets
 """
 import base64
 import json
@@ -24,6 +25,55 @@ def png(width, height, rgba):
     def chunk(tag, data):
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+
+
+def sprite_player(size=32):
+    """A rounded ship: a filled circle body, a lighter cockpit dot, transparent corners."""
+    px = bytearray()
+    c = (size - 1) / 2
+    for y in range(size):
+        for x in range(size):
+            dx, dy = x - c, y - c
+            d = (dx * dx + dy * dy) ** 0.5
+            if d <= c - 0.5:
+                if (dx * dx + (dy + 5) * (dy + 5)) ** 0.5 < 5:
+                    px += bytes((240, 240, 255, 255))   # cockpit
+                elif d > c - 3:
+                    px += bytes((40, 60, 120, 255))     # outline
+                else:
+                    px += bytes((90, 150, 240, 255))    # body
+            else:
+                px += bytes((0, 0, 0, 0))
+    return png(size, size, px)
+
+
+def sprite_coin(size=16):
+    px = bytearray()
+    c = (size - 1) / 2
+    for y in range(size):
+        for x in range(size):
+            d = ((x - c) ** 2 + (y - c) ** 2) ** 0.5
+            if d <= c - 0.5:
+                inner = d < c - 3
+                px += bytes((250, 210, 60, 255) if inner else (200, 140, 20, 255))
+            else:
+                px += bytes((0, 0, 0, 0))
+    return png(size, size, px)
+
+
+def sprite_tiles(tile=16):
+    """Two tiles side by side: grass (left) and dirt (right), each 16x16, for uv sub-rectangles."""
+    w, h = tile * 2, tile
+    px = bytearray()
+    for y in range(h):
+        for x in range(w):
+            if x < tile:
+                shade = 20 if (x * 7 + y * 13) % 5 == 0 else 0
+                px += bytes((70 + shade, 160 + shade, 70, 255)) if y > 2 else bytes((120, 200, 90, 255))
+            else:
+                shade = 15 if (x * 5 + y * 3) % 7 == 0 else 0
+                px += bytes((130 + shade, 90 + shade, 50, 255))
+    return png(w, h, px)
 
 
 def checker(size=64, cells=8):
@@ -155,7 +205,18 @@ def make_sounds(out):
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
 
 
+def make_sprites(out):
+    os.makedirs(out, exist_ok=True)
+    for name, data in (("player.png", sprite_player()), ("coin.png", sprite_coin()), ("tiles.png", sprite_tiles())):
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
+        print(name, os.path.getsize(os.path.join(out, name)), "bytes")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--sprites":
+        make_sprites(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "sprites", "assets"))
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "--sounds":
         make_sounds(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "audio", "assets"))
         return

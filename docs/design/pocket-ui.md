@@ -58,4 +58,8 @@ Handlers registered by a bundle live in a per-context registry on `globalThis` (
 
 ## Not yet
 
-HarfBuzz shaping (complex scripts, kerning), images and icons, nine-slice, animations, a text area (multi-line editing), keyboard focus traversal (Tab), IME candidate placement, and golden-image comparison in CI. Each of these slots into the element model without changing the commands.
+Images and icons, nine-slice, animations, a text area (multi-line editing), keyboard focus traversal (Tab), IME candidate placement, and golden-image comparison in CI. Each of these slots into the element model without changing the commands.
+
+## Text
+
+Text is shaped by HarfBuzz with the font's own OpenType tables (contextual forms, ligatures, kerning, mark placement; right-to-left runs come out in visual order) and rasterized by FreeType into one glyph atlas keyed by glyph index. `Font::shape` returns positioned glyphs with their source byte offsets, which is what the painter draws and what text inputs use to place the caret; `Font::measure` is the run's advance, cached per string and size because layout asks for it often. One font per runtime for now: a project that needs Arabic, Devanagari or Thai sets `font` in `project.toml` to a face that has them (the Arabic test uses Noto Sans Arabic).

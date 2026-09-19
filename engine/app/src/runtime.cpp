@@ -29,6 +29,7 @@ std::string usage() {
   --editor <bundle>     load an editor bundle (script context "editor") before the project bundle
   --record <file>       write an input journal for replay
   --replay <file>       replay an input journal (use with --headless for exact reproduction)
+  --save-dir <dir>      where save slots are written and read (default: the user data directory)
 )";
 }
 
@@ -71,6 +72,7 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--editor") { POCKET_TRY(v, need(i, "--editor")); o.editor_bundle = v; ++i; }
         else if (a == "--record") { POCKET_TRY(v, need(i, "--record")); o.record = v; ++i; }
         else if (a == "--replay") { POCKET_TRY(v, need(i, "--replay")); o.replay = v; ++i; }
+        else if (a == "--save-dir") { POCKET_TRY(v, need(i, "--save-dir")); o.save_dir = v; ++i; }
         else if (a == "--help" || a == "-h") return fail("help", "{}", usage());
         else return fail("bad_args", "unknown argument '{}'", a);
     }

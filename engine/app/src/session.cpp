@@ -5,6 +5,7 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <format>
@@ -275,8 +276,12 @@ void Session::run_tick() {
     t["dt"] = clock_.tick_seconds;
     t["time"] = clock_.sim_seconds();
     if (input_map_.size() > 0) t["actions"] = input_map_.snapshot();
+    Stopwatch tick_sw;
+    Stopwatch sw;
     dispatch("tick", t);
+    perf_script_.add(sw.ms());
     input_map_.consume_edges();
+    sw = Stopwatch{};
     physics_->step(*world_, clock_.tick_seconds);
     if (!physics_->contacts().empty()) {
         Json contacts = Json::array();
@@ -292,8 +297,12 @@ void Session::run_tick() {
         }
         dispatch("contacts", contacts);
     }
+    perf_physics_.add(sw.ms());
+    sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
     if (audio_) tick_audio(clock_.tick_seconds);
+    perf_world_.add(sw.ms());
+    sw = Stopwatch{};
     Json s = dispatch("state", nullptr);
     if (!s.is_object()) s = Json::object();
     last_state_ = s;
@@ -307,8 +316,36 @@ void Session::run_tick() {
         hasher_.f32(clear_.b);
         tick_hashes_.push_back(hasher_.digest());
     }
+    perf_state_.add(sw.ms());
+    perf_tick_.add(tick_sw.ms());
     clock_.tick++;
     ticks_++;
+}
+
+Json Session::PhaseStats::json() const {
+    Json j;
+    j["avg_ms"] = samples ? total_ms / static_cast<double>(samples) : 0.0;
+    j["max_ms"] = max_ms;
+    j["last_ms"] = last_ms;
+    j["total_ms"] = total_ms;
+    j["samples"] = samples;
+    return j;
+}
+
+Json Session::perf() const {
+    Json j;
+    j["frames"] = frames_;
+    j["ticks"] = ticks_;
+    j["elapsed_ms"] = total_.ms();
+    j["frame"] = perf_frame_.json();
+    j["poll"] = perf_poll_.json();
+    j["render"] = perf_render_.json();
+    j["tick"] = perf_tick_.json();
+    j["script"] = perf_script_.json();
+    j["physics"] = perf_physics_.json();
+    j["world"] = perf_world_.json();
+    j["state"] = perf_state_.json();
+    return j;
 }
 
 Status Session::run_ticks(int ticks) {
@@ -466,7 +503,10 @@ Status Session::idle_frame() {
     host_->drain_microtasks();
     world_->update_transforms();
     if (errors_.empty()) {
-        if (auto r = render_frame(); !r) {
+        Stopwatch render_sw;
+        auto r = render_frame();
+        perf_render_.add(render_sw.ms());
+        if (!r) {
             record_error(r.error());
             return fail(r.error());
         }
@@ -689,6 +729,101 @@ void Session::release_expired_holds() {
         }
     }
     if (!ups.empty()) inject_events(std::move(ups));
+}
+
+std::filesystem::path Session::save_dir() const {
+    if (!options_.save_dir.empty()) return options_.save_dir;
+    if (const char* env = std::getenv("POCKET_SAVE_DIR"); env && *env) return env;
+    if (project_.contains("saves") && project_["saves"].is_string()) return options_.project_dir / project_["saves"].get<std::string>();
+    return platform::user_data_dir("pocket", name_.empty() ? "project" : name_);
+}
+
+Result<Json> Session::save_command(std::string_view op, const Json& p) {
+    // Save slots: the world as a scene plus whatever scripts return from onSave, one JSON file
+    // per slot in the project's user data directory (or --save-dir / POCKET_SAVE_DIR).
+    std::filesystem::path dir = save_dir();
+    auto slot_path = [&](std::string& slot) -> Result<std::filesystem::path> {
+        slot = opt<std::string>(p, "slot", "");
+        if (slot.empty() || slot.size() > 64) return fail("bad_args", "save needs a slot name (1-64 characters: letters, digits, '-', '_')");
+        for (char c : slot) if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_')) return fail("bad_args", "slot '{}' has characters other than letters, digits, '-', '_'", slot);
+        return dir / (slot + ".json");
+    };
+    if (op == "dir") return Json{{"path", dir.string()}};
+    if (op == "write") {
+        std::string slot;
+        POCKET_TRY(path, slot_path(slot));
+        Json save;
+        save["format"] = "pocket-save";
+        save["version"] = 1;
+        save["project"] = name_;
+        save["tick"] = clock_.tick;
+        save["sim_seconds"] = clock_.sim_seconds();
+        save["scene"] = world_->save();
+        Json script = dispatch("save", nullptr);
+        save["script"] = script.is_object() ? script : Json::object();
+        if (p.contains("data")) save["data"] = p["data"];
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::string text = save.dump(2) + "\n";
+        POCKET_TRY_VOID(fs::write_text(path, text));
+        world_->events().emit(clock_.tick, "save.written", 0, Json{{"slot", slot}, {"entities", world_->entity_count()}}, 0, "save");
+        return Json{{"slot", slot}, {"path", path.string()}, {"bytes", text.size()}, {"entities", world_->entity_count()}};
+    }
+    if (op == "read") {
+        std::string slot;
+        POCKET_TRY(path, slot_path(slot));
+        if (!std::filesystem::exists(path)) return fail("no_such_save", "no save slot '{}' in {}", slot, dir.string());
+        POCKET_TRY(text, fs::read_text(path));
+        Json save = Json::parse(text, nullptr, false);
+        if (save.is_discarded() || !save.is_object() || save.value("format", "") != "pocket-save") return fail("bad_save", "{} is not a Pocket save", path.string());
+        POCKET_TRY_VOID(world_->load(save.value("scene", Json::object()), true));
+        world_->update_transforms();
+        dispatch("load", save.value("script", Json::object()));
+        Json s = dispatch("state", nullptr);
+        if (s.is_object()) last_state_ = s;
+        world_->events().emit(clock_.tick, "save.loaded", 0, Json{{"slot", slot}, {"entities", world_->entity_count()}, {"saved_tick", save.value("tick", 0)}}, 0, "save");
+        Json j;
+        j["slot"] = slot;
+        j["entities"] = world_->entity_count();
+        j["saved_tick"] = save.value("tick", 0);
+        j["saved_sim_seconds"] = save.value("sim_seconds", 0.0);
+        if (save.contains("data")) j["data"] = save["data"];
+        return j;
+    }
+    if (op == "list") {
+        Json out = Json::array();
+        std::error_code ec;
+        if (std::filesystem::exists(dir, ec)) {
+            std::vector<std::filesystem::path> files;
+            for (const auto& e : std::filesystem::directory_iterator(dir, ec)) if (e.path().extension() == ".json") files.push_back(e.path());
+            std::sort(files.begin(), files.end());
+            for (const auto& f : files) {
+                Json j;
+                j["slot"] = f.stem().string();
+                j["bytes"] = std::filesystem::file_size(f, ec);
+                auto t = std::filesystem::last_write_time(f, ec);
+                j["modified"] = std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
+                if (auto text = fs::read_text(f)) {
+                    Json save = Json::parse(*text, nullptr, false);
+                    if (save.is_object()) {
+                        j["tick"] = save.value("tick", 0);
+                        j["entities"] = save.contains("scene") && save["scene"].is_object() && save["scene"].contains("entities") ? save["scene"]["entities"].size() : 0;
+                        if (save.contains("data")) j["data"] = save["data"];
+                    }
+                }
+                out.push_back(j);
+            }
+        }
+        return out;
+    }
+    if (op == "delete") {
+        std::string slot;
+        POCKET_TRY(path, slot_path(slot));
+        std::error_code ec;
+        bool existed = std::filesystem::remove(path, ec);
+        return Json{{"slot", slot}, {"deleted", existed}};
+    }
+    return fail("unknown_command", "unknown save command '{}'", op);
 }
 
 Result<Json> Session::input_command(std::string_view op, const Json& p) {
@@ -1080,9 +1215,12 @@ Status Session::frame() {
             return {};
         }
     }
+    Stopwatch frame_sw;
     Json input_events = Json::array();
     int ticks = 1;
+    Stopwatch poll_sw;
     POCKET_TRY(has_frame, poll_input(input_events, ticks, true));
+    perf_poll_.add(poll_sw.ms());
     if (!has_frame) return {};
     if (platform_->quit_requested()) return {};
     if (!input_events.empty()) dispatch("input", input_events);
@@ -1091,12 +1229,16 @@ Status Session::frame() {
     host_->drain_microtasks();
     std::uint64_t presented_before = device_->presented_frames();
     if (errors_.empty()) {
-        if (auto r = render_frame(); !r) {
+        Stopwatch render_sw;
+        auto r = render_frame();
+        perf_render_.add(render_sw.ms());
+        if (!r) {
             record_error(r.error());
             return fail(r.error());
         }
     }
     frames_++;
+    perf_frame_.add(frame_sw.ms());
     if (device_->has_surface() && device_->presented_frames() == presented_before) {
         // Occluded or hidden window: nothing throttles the loop, so pace it at the tick rate to
         // keep real-time simulation sensible and the CPU idle.
@@ -1422,9 +1564,11 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("assets.")) return assets_command(name.substr(7), p);
     if (name.starts_with("audio.")) return audio_command(name.substr(6), p);
     if (name.starts_with("input.")) return input_command(name.substr(6), p);
+    if (name.starts_with("save.")) return save_command(name.substr(5), p);
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
+    if (name == "perf") return perf();
     if (name == "state") {
         Json j;
         j["tick"] = clock_.tick;
@@ -1490,7 +1634,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }
@@ -1549,6 +1693,7 @@ Json Session::report() {
     report["log_tail"] = tail;
     if (!errors_.empty()) report["errors"] = errors_;
     report["elapsed_ms"] = total_.ms();
+    report["timings"] = perf();
     return report;
 }
 

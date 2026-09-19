@@ -173,7 +173,7 @@ export const world = {
 
 /** Rendering queries: what is on screen, and where. */
 export const render = {
-    stats(): { draw_calls: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
+    stats(): { draw_calls: number; instances: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
         return command("render.stats");
     },
     /** Entity under a pixel of the last frame (undefined for background). */

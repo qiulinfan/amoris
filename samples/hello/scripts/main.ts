@@ -3,7 +3,7 @@
 // Nothing here reads the wall clock or a pixel. The ball's height and bounce count are exposed,
 // so `pocket run hello --headless --frames 120 --json` reports them as numbers and a stable hash,
 // and the same numbers drive the sphere you see in the window.
-import { expose, hsvToRgb, log, onStart, onTick, random, runtime, setClearColor, world } from "pocket";
+import { expose, hsvToRgb, log, onLoad, onSave, onStart, onTick, random, runtime, setClearColor, world } from "pocket";
 import { Ball } from "./ball";
 
 const ball = new Ball(3.0);
@@ -27,6 +27,14 @@ onTick(({ tick, dt }) => {
     world.set(sphere, "Transform", { position: { y: ball.y + 0.5 } });
     const [r, g, b] = hsvToRgb(hue, 0.45, 0.55);
     setClearColor(r, g, b, 1);
+});
+
+// Save slots: the engine saves the world; script-only state goes through onSave / onLoad.
+onSave(() => ({ hue, ball: { ...ball } }));
+onLoad((data) => {
+    hue = data.hue as number;
+    Object.assign(ball, data.ball as object);
+    sphere = world.find("/Ball") ?? sphere;
 });
 
 expose("hue", () => Number(hue.toFixed(4)));

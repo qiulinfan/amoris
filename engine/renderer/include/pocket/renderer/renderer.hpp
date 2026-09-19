@@ -15,7 +15,9 @@
 namespace pocket::renderer {
 
 struct RenderStats {
-    std::uint32_t draw_calls = 0;
+    std::uint32_t draw_calls = 0;     // instanced draws issued
+    std::uint32_t instances = 0;      // objects drawn (one per entity, or per glTF material)
+    std::uint32_t sprites = 0;        // of which sprites
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;
     bool has_camera = false;
@@ -41,6 +43,7 @@ struct CameraView {
     Mat4 view;
     Mat4 proj;
     Vec3 position;
+    Vec3 forward{0, 0, -1};   // world-space view direction
 };
 
 class Renderer {

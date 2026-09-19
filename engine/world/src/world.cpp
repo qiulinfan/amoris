@@ -157,6 +157,7 @@ struct World::Impl {
     flecs::query<Transform, Velocity> motion;
     flecs::query<Lifetime> lifetime;
     flecs::query<const MeshRenderer, const WorldTransform> bounds;
+    flecs::query<const Sprite, const WorldTransform> sprite_bounds;
 
     Impl() {
         ecs_log_set_level(-1);
@@ -168,6 +169,7 @@ struct World::Impl {
         motion = ecs.query_builder<Transform, Velocity>().without<RigidBody>().build();
         lifetime = ecs.query<Lifetime>();
         bounds = ecs.query<const MeshRenderer, const WorldTransform>();
+        sprite_bounds = ecs.query<const Sprite, const WorldTransform>();
     }
 
     void forget_root(EntityId id) {
@@ -709,8 +711,50 @@ Status World::unpack(std::string_view component, const std::vector<std::string>&
 
 void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
 
+void World::update_bounds() {
+    // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives).
+    // Adding Bounds is a structural change, so the writes are deferred until the query ends.
+    impl_->ecs.defer_begin();
+    impl_->bounds.each([this](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
+        Vec3 lo{-0.5f, -0.5f, -0.5f}, hi{0.5f, 0.5f, 0.5f};
+        if (mr.mesh == "plane") { lo.y = 0; hi.y = 0; }
+        else if (auto it = impl_->mesh_bounds.find(mr.mesh); it != impl_->mesh_bounds.end()) { lo = it->second.first; hi = it->second.second; }
+        Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
+        Bounds b;
+        bool first = true;
+        for (int i = 0; i < 8; ++i) {
+            Vec3 corner{(i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z};
+            Vec3 p = m.transform_point(corner);
+            if (first) { b.min = b.max = p; first = false; continue; }
+            b.min = {std::min(b.min.x, p.x), std::min(b.min.y, p.y), std::min(b.min.z, p.z)};
+            b.max = {std::max(b.max.x, p.x), std::max(b.max.y, p.y), std::max(b.max.z, p.z)};
+        }
+        const Bounds* current = e.try_get<Bounds>();
+        if (!current || !(*current == b)) e.set<Bounds>(b);
+    });
+    // Sprites: the unit quad scaled by size and shifted by the anchor, flat in local XY.
+    impl_->sprite_bounds.each([](flecs::entity e, const Sprite& sp, const WorldTransform& wt) {
+        Vec3 lo{(0.0f - sp.anchor.x) * sp.size.x, (0.0f - sp.anchor.y) * sp.size.y, 0};
+        Vec3 hi{(1.0f - sp.anchor.x) * sp.size.x, (1.0f - sp.anchor.y) * sp.size.y, 0};
+        Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
+        Bounds b;
+        bool first = true;
+        for (int i = 0; i < 4; ++i) {
+            Vec3 corner{(i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, 0};
+            Vec3 p = m.transform_point(corner);
+            if (first) { b.min = b.max = p; first = false; continue; }
+            b.min = {std::min(b.min.x, p.x), std::min(b.min.y, p.y), std::min(b.min.z, p.z)};
+            b.max = {std::max(b.max.x, p.x), std::max(b.max.y, p.y), std::max(b.max.z, p.z)};
+        }
+        const Bounds* current = e.try_get<Bounds>();
+        if (!current || !(*current == b)) e.set<Bounds>(b);
+    });
+    impl_->ecs.defer_end();
+}
+
 void World::update_transforms() {
     for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
+    update_bounds();
 }
 
 void World::tick(double dt) {
@@ -734,27 +778,7 @@ void World::tick(double dt) {
     }
     // Transform propagation in tree order.
     for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
-    // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives).
-    // Adding Bounds is a structural change, so the writes are deferred until the query ends.
-    impl_->ecs.defer_begin();
-    impl_->bounds.each([this](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
-        Vec3 lo{-0.5f, -0.5f, -0.5f}, hi{0.5f, 0.5f, 0.5f};
-        if (mr.mesh == "plane") { lo.y = 0; hi.y = 0; }
-        else if (auto it = impl_->mesh_bounds.find(mr.mesh); it != impl_->mesh_bounds.end()) { lo = it->second.first; hi = it->second.second; }
-        Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
-        Bounds b;
-        bool first = true;
-        for (int i = 0; i < 8; ++i) {
-            Vec3 corner{(i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z};
-            Vec3 p = m.transform_point(corner);
-            if (first) { b.min = b.max = p; first = false; continue; }
-            b.min = {std::min(b.min.x, p.x), std::min(b.min.y, p.y), std::min(b.min.z, p.z)};
-            b.max = {std::max(b.max.x, p.x), std::max(b.max.y, p.y), std::max(b.max.z, p.z)};
-        }
-        const Bounds* current = e.try_get<Bounds>();
-        if (!current || !(*current == b)) e.set<Bounds>(b);
-    });
-    impl_->ecs.defer_end();
+    update_bounds();
     impl_->tick++;
 }
 

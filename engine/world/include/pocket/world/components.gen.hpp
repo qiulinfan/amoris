@@ -73,9 +73,11 @@ void from_json(const Json& j, Lifetime& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(Lifetime& v, std::string_view path, float** out);
 
-/// Perspective camera. The renderer uses the first active camera.
+/// The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
 struct Camera {
     float fov_degrees = 60.0f;
+    bool orthographic = false;
+    float ortho_size = 5.0f;
     float near = 0.1f;
     float far = 1000.0f;
     bool active = true;
@@ -111,6 +113,25 @@ void to_json(Json& j, const MeshRenderer& v);
 void from_json(const Json& j, MeshRenderer& v);
 // Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
 std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out);
+
+/// A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.
+struct Sprite {
+    std::string texture = "";
+    Vec2 size{1.0f, 1.0f};
+    Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    Vec2 anchor{0.5f, 0.5f};
+    std::int32_t layer = 0;
+    Vec4 uv{0.0f, 0.0f, 1.0f, 1.0f};
+    bool flip_x = false;
+    bool flip_y = false;
+    std::string filter = "linear";
+    bool visible = true;
+    constexpr bool operator==(const Sprite&) const = default;
+};
+void to_json(Json& j, const Sprite& v);
+void from_json(const Json& j, Sprite& v);
+// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+std::size_t numeric_span(Sprite& v, std::string_view path, float** out);
 
 /// Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.
 struct Bounds {
@@ -194,6 +215,7 @@ void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
+void hash_component(struct StateHasherRef& h, const Sprite& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);

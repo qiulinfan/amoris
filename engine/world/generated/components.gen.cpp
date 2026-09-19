@@ -206,6 +206,8 @@ std::size_t numeric_span(Lifetime& v, std::string_view path, float** out) {
 void to_json(Json& j, const Camera& v) {
     j = Json::object();
     j["fov_degrees"] = v.fov_degrees;
+    j["orthographic"] = v.orthographic;
+    j["ortho_size"] = v.ortho_size;
     j["near"] = v.near;
     j["far"] = v.far;
     j["active"] = v.active;
@@ -213,6 +215,8 @@ void to_json(Json& j, const Camera& v) {
 
 void from_json(const Json& j, Camera& v) {
     scalar_from_json(j, "fov_degrees", v.fov_degrees);
+    scalar_from_json(j, "orthographic", v.orthographic);
+    scalar_from_json(j, "ortho_size", v.ortho_size);
     scalar_from_json(j, "near", v.near);
     scalar_from_json(j, "far", v.far);
     scalar_from_json(j, "active", v.active);
@@ -220,6 +224,8 @@ void from_json(const Json& j, Camera& v) {
 
 void hash_component(StateHasherRef& h, const Camera& v) {
     h.f32(v.fov_degrees);
+    h.u8(v.orthographic ? 1 : 0);
+    h.f32(v.ortho_size);
     h.f32(v.near);
     h.f32(v.far);
     h.u8(v.active ? 1 : 0);
@@ -228,6 +234,7 @@ void hash_component(StateHasherRef& h, const Camera& v) {
 std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
     (void)v;
     if (path == "fov_degrees") { *out = &v.fov_degrees; return 1; }
+    if (path == "ortho_size") { *out = &v.ortho_size; return 1; }
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "far") { *out = &v.far; return 1; }
     return 0;
@@ -302,6 +309,75 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "color.g") { *out = &v.color.g; return 1; }
     if (path == "color.b") { *out = &v.color.b; return 1; }
     if (path == "color.a") { *out = &v.color.a; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Sprite& v) {
+    j = Json::object();
+    j["texture"] = v.texture;
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["color"], v.color);
+    vec_to_json(j["anchor"], v.anchor);
+    j["layer"] = v.layer;
+    vec_to_json(j["uv"], v.uv);
+    j["flip_x"] = v.flip_x;
+    j["flip_y"] = v.flip_y;
+    j["filter"] = v.filter;
+    j["visible"] = v.visible;
+}
+
+void from_json(const Json& j, Sprite& v) {
+    scalar_from_json(j, "texture", v.texture);
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    if (j.is_object() && j.contains("anchor")) vec_from_json(j["anchor"], v.anchor);
+    scalar_from_json(j, "layer", v.layer);
+    if (j.is_object() && j.contains("uv")) vec_from_json(j["uv"], v.uv);
+    scalar_from_json(j, "flip_x", v.flip_x);
+    scalar_from_json(j, "flip_y", v.flip_y);
+    scalar_from_json(j, "filter", v.filter);
+    scalar_from_json(j, "visible", v.visible);
+}
+
+void hash_component(StateHasherRef& h, const Sprite& v) {
+    h.str(v.texture);
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.anchor.x);
+    h.f32(v.anchor.y);
+    h.i64(static_cast<std::int64_t>(v.layer));
+    h.f32(v.uv.x);
+    h.f32(v.uv.y);
+    h.f32(v.uv.z);
+    h.f32(v.uv.w);
+    h.u8(v.flip_x ? 1 : 0);
+    h.u8(v.flip_y ? 1 : 0);
+    h.str(v.filter);
+    h.u8(v.visible ? 1 : 0);
+}
+
+std::size_t numeric_span(Sprite& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "anchor") { *out = &v.anchor.x; return 2; }
+    if (path == "anchor.x") { *out = &v.anchor.x; return 1; }
+    if (path == "anchor.y") { *out = &v.anchor.y; return 1; }
+    if (path == "uv") { *out = &v.uv.x; return 4; }
+    if (path == "uv.x") { *out = &v.uv.x; return 1; }
+    if (path == "uv.y") { *out = &v.uv.y; return 1; }
+    if (path == "uv.z") { *out = &v.uv.z; return 1; }
+    if (path == "uv.w") { *out = &v.uv.w; return 1; }
     return 0;
 }
 
@@ -483,8 +559,10 @@ constexpr std::array<FieldInfo, 2> kHealthFields = {{
 constexpr std::array<FieldInfo, 1> kLifetimeFields = {{
     FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero."},
 }};
-constexpr std::array<FieldInfo, 4> kCameraFields = {{
-    FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees."},
+constexpr std::array<FieldInfo, 6> kCameraFields = {{
+    FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees (perspective)."},
+    FieldInfo{"orthographic", "bool", "Parallel projection: no perspective, sizes do not shrink with distance."},
+    FieldInfo{"ortho_size", "f32", "Half of the visible height in world units when orthographic."},
     FieldInfo{"near", "f32", "Near clip distance."},
     FieldInfo{"far", "f32", "Far clip distance."},
     FieldInfo{"active", "bool", "Whether this camera renders."},
@@ -496,10 +574,22 @@ constexpr std::array<FieldInfo, 4> kLightFields = {{
     FieldInfo{"range", "f32", "Point light range in meters."},
 }};
 constexpr std::array<FieldInfo, 4> kMeshRendererFields = {{
-    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
+    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"color", "color", "Base color, linear RGB; multiplies the asset's material color."},
     FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
+}};
+constexpr std::array<FieldInfo, 10> kSpriteFields = {{
+    FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color."},
+    FieldInfo{"size", "vec2", "Width and height in world units."},
+    FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture."},
+    FieldInfo{"anchor", "vec2", "Point of the image at the entity's origin: (0,0) bottom-left, (0.5,0.5) center, (1,1) top-right."},
+    FieldInfo{"layer", "i32", "Draw order among sprites; higher is drawn later (on top)."},
+    FieldInfo{"uv", "vec4", "Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets."},
+    FieldInfo{"flip_x", "bool", "Mirror horizontally."},
+    FieldInfo{"flip_y", "bool", "Mirror vertically."},
+    FieldInfo{"filter", "string", "Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles)."},
+    FieldInfo{"visible", "bool", "Whether the sprite is drawn."},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},
@@ -531,15 +621,16 @@ constexpr std::array<FieldInfo, 7> kAudioSourceFields = {{
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};
 
-constexpr std::array<ComponentInfo, 12> kComponents = {{
+constexpr std::array<ComponentInfo, 13> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
     ComponentInfo{"Health", "Hit points. Gameplay decides what zero means; the engine only stores and reports it.", true, kHealthFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
-    ComponentInfo{"Camera", "Perspective camera. The renderer uses the first active camera.", true, kCameraFields},
+    ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
+    ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},

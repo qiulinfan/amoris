@@ -1,6 +1,7 @@
 #include <pocket/platform/platform.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 
 #include <pocket/core/log.hpp>
@@ -49,6 +50,20 @@ Event event_from_json(const Json& j) {
     if (j.contains("axis") && j["axis"].is_string()) e.key_name = j["axis"].get<std::string>();
     if (j.contains("name") && j["name"].is_string()) e.text = j["name"].get<std::string>();
     return e;
+}
+
+std::filesystem::path user_data_dir(const std::string& org, const std::string& app) {
+    if (char* p = SDL_GetPrefPath(org.c_str(), app.c_str())) {
+        std::filesystem::path out(p);
+        SDL_free(p);
+        return out;
+    }
+    const char* home = std::getenv("HOME");
+    std::filesystem::path base = home ? std::filesystem::path(home) / ".local" / "share" : std::filesystem::temp_directory_path();
+    std::filesystem::path out = base / org / app;
+    std::error_code ec;
+    std::filesystem::create_directories(out, ec);
+    return out;
 }
 
 Json mods_to_json(int mods) {

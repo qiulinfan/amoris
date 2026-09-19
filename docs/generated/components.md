@@ -50,11 +50,13 @@ Seconds remaining before the entity is destroyed by the lifetime system.
 
 ## Camera
 
-Perspective camera. The renderer uses the first active camera.
+The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `fov_degrees` | f32 | 60.0 | Vertical field of view in degrees. |
+| `fov_degrees` | f32 | 60.0 | Vertical field of view in degrees (perspective). |
+| `orthographic` | bool | false | Parallel projection: no perspective, sizes do not shrink with distance. |
+| `ortho_size` | f32 | 5.0 | Half of the visible height in world units when orthographic. |
 | `near` | f32 | 0.1 | Near clip distance. |
 | `far` | f32 | 1000.0 | Far clip distance. |
 | `active` | bool | true | Whether this camera renders. |
@@ -76,10 +78,27 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mesh` | string | "cube" | cube, sphere, plane, cylinder, or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
+| `mesh` | string | "cube" | cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
 | `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color, linear RGB; multiplies the asset's material color. |
 | `texture` | string | "" | Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. |
 | `visible` | bool | true | Whether the mesh is drawn. |
+
+## Sprite
+
+A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `texture` | string | "" | Project-relative image (png, jpg). Empty draws a solid color. |
+| `size` | vec2 | [1.0, 1.0] | Width and height in world units. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Tint and opacity, multiplied into the texture. |
+| `anchor` | vec2 | [0.5, 0.5] | Point of the image at the entity's origin: (0,0) bottom-left, (0.5,0.5) center, (1,1) top-right. |
+| `layer` | i32 | 0 | Draw order among sprites; higher is drawn later (on top). |
+| `uv` | vec4 | [0.0, 0.0, 1.0, 1.0] | Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets. |
+| `flip_x` | bool | false | Mirror horizontally. |
+| `flip_y` | bool | false | Mirror vertically. |
+| `filter` | string | "linear" | Texture sampling: linear (smooth) or nearest (crisp pixels, no bleeding between sheet tiles). |
+| `visible` | bool | true | Whether the sprite is drawn. |
 
 ## Bounds
 

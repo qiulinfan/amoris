@@ -43,6 +43,20 @@ async function openAndClose() { open(); await wait(2); close(); }
 
 Tweens and timers advance with ticks, so they pause with the game, appear in transcripts and replay exactly. `tween.to` interpolates the numeric fields you name (rotations along the shortest arc) and leaves the rest alone; `repeat`, `yoyo`, `delay` and `cancel()` / `finish()` are there. `setTimeout` and `setInterval` exist and count simulation milliseconds.
 
+## Saving
+
+```ts
+import { saves, onSave, onLoad } from "pocket";
+
+onSave(() => ({ score, wave }));                 // script-only values; the world saves itself
+onLoad((d) => { score = d.score as number; wave = d.wave as number; });
+saves.write("slot-1", { label: "Forest, wave 3" });
+saves.list();                                   // [{ slot, modified, tick, entities, data }]
+saves.load("slot-1");
+```
+
+A slot is one JSON file (the scene plus the `onSave` objects per script context) in the user's data directory for the project (`saves.dir()`; `--save-dir` or `POCKET_SAVE_DIR` override it, tests point it at a temp folder). Loading replaces the world and calls `onLoad`; the run's tick counter keeps counting. `save.written` and `save.loaded` appear in the event log.
+
 ## Physics, audio, interface
 
 `physics.raycast`, `physics.overlap`, `onContacts` (`docs/roadmap.md` M4); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).

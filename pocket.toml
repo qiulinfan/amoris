@@ -65,6 +65,25 @@ libs = ["lib/libfreetype.a"]
 license = "FTL"
 
 [[dependencies]]
+name = "harfbuzz"
+version = "12.3.0"
+kind = "cmake"
+url = "https://github.com/harfbuzz/harfbuzz/releases/download/12.3.0/harfbuzz-12.3.0.tar.xz"
+sha256 = "8660ebd3c27d9407fc8433b5d172bafba5f0317cb0bb4339f28e5370c93d42b7"
+cmake_args = ["-DBUILD_SHARED_LIBS=OFF", "-DHB_HAVE_FREETYPE=OFF", "-DHB_HAVE_GLIB=OFF", "-DHB_HAVE_ICU=OFF", "-DHB_HAVE_CORETEXT=OFF", "-DHB_BUILD_SUBSET=OFF", "-DHB_BUILD_UTILS=OFF", "-DHB_BUILD_TESTS=OFF", "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"]
+include_dirs = ["include/harfbuzz"]
+libs = ["lib/libharfbuzz.a"]
+license = "MIT"
+
+[[dependencies]]
+name = "noto-sans-arabic"
+version = "2.010"
+kind = "file"
+url = "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansArabic/full/ttf/NotoSansArabic-Regular.ttf"
+sha256 = "7ed3fe069312aceac454f17cf613a30f95271d6ed7ce58005ed4d016bd3823d7"
+license = "OFL-1.1"
+
+[[dependencies]]
 name = "noto-sans-cjk"
 version = "2.004"
 kind = "file"

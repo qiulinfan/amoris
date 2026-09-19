@@ -4,9 +4,12 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <hb.h>
+#include <hb-ot.h>
 
 #include <cstring>
 #include <map>
+#include <unordered_map>
 
 namespace pocket::ui {
 
@@ -45,6 +48,10 @@ struct Font::Impl {
     rhi::Device* device = nullptr;
     FT_Library library = nullptr;
     FT_Face face = nullptr;
+    hb_blob_t* hb_blob = nullptr;
+    hb_face_t* hb_face = nullptr;
+    hb_font_t* hb_font = nullptr;
+    hb_buffer_t* hb_buf = nullptr;
     std::string family;
     std::uint32_t atlas_size = 1024;
     std::vector<std::uint8_t> atlas;  // CPU copy
@@ -53,13 +60,18 @@ struct Font::Impl {
     std::vector<Shelf> shelves;
     bool dirty = false;
     std::uint32_t dirty_y0 = 0, dirty_y1 = 0;
-    std::map<std::pair<std::uint32_t, int>, Glyph> glyphs;  // (codepoint, size*64)
+    std::map<std::pair<std::uint32_t, int>, Glyph> glyphs;  // (glyph index, size*64)
     std::map<int, TextMetrics> metrics_cache;
+    std::unordered_map<std::string, float> measure_cache;   // text + size key -> width
     int current_size = -1;
 
     ~Impl() {
         if (view) wgpuTextureViewRelease(view);
         if (texture) wgpuTextureRelease(texture);
+        if (hb_buf) hb_buffer_destroy(hb_buf);
+        if (hb_font) hb_font_destroy(hb_font);
+        if (hb_face) hb_face_destroy(hb_face);
+        if (hb_blob) hb_blob_destroy(hb_blob);
         if (face) FT_Done_Face(face);
         if (library) FT_Done_FreeType(library);
     }
@@ -68,6 +80,11 @@ struct Font::Impl {
         int key = static_cast<int>(px * 64.0f);
         if (key == current_size) return;
         FT_Set_Char_Size(face, 0, static_cast<FT_F26Dot6>(key), 72, 72);
+        // HarfBuzz positions come back in 26.6 pixels when the scale is px * 64.
+        if (hb_font) {
+            hb_font_set_scale(hb_font, key, key);
+            hb_font_set_ppem(hb_font, static_cast<unsigned>(px), static_cast<unsigned>(px));
+        }
         current_size = key;
     }
 
@@ -159,6 +176,13 @@ Result<std::unique_ptr<Font>> Font::load(rhi::Device& device, const std::string&
     if (FT_Init_FreeType(&im.library) != 0) return fail("font_init_failed", "FT_Init_FreeType failed");
     if (FT_New_Face(im.library, path.c_str(), 0, &im.face) != 0) return fail("font_load_failed", "cannot load font {}", path);
     im.family = im.face->family_name ? im.face->family_name : "unknown";
+    // HarfBuzz reads the same file with its own OpenType functions; FreeType only rasterizes.
+    im.hb_blob = hb_blob_create_from_file_or_fail(path.c_str());
+    if (!im.hb_blob) return fail("font_load_failed", "cannot read font {} for shaping", path);
+    im.hb_face = hb_face_create(im.hb_blob, 0);
+    im.hb_font = hb_font_create(im.hb_face);
+    hb_ot_font_set_funcs(im.hb_font);
+    im.hb_buf = hb_buffer_create();
     POCKET_TRY_VOID(im.create_texture(1024));
     im.dirty_y0 = 0;
     im.dirty_y1 = im.atlas_size;
@@ -181,13 +205,18 @@ TextMetrics Font::metrics(float px_size) {
 
 const Glyph& Font::glyph(std::uint32_t codepoint, float px_size) {
     Impl& im = *impl_;
+    FT_UInt index = FT_Get_Char_Index(im.face, codepoint);
+    if (index == 0 && codepoint != ' ') index = FT_Get_Char_Index(im.face, 0xFFFD);
+    return glyph_by_index(index, px_size);
+}
+
+const Glyph& Font::glyph_by_index(std::uint32_t index, float px_size) {
+    Impl& im = *impl_;
     int key = static_cast<int>(px_size * 64.0f);
-    auto k = std::make_pair(codepoint, key);
+    auto k = std::make_pair(index, key);
     if (auto it = im.glyphs.find(k); it != im.glyphs.end()) return it->second;
     im.set_size(px_size);
     Glyph g;
-    FT_UInt index = FT_Get_Char_Index(im.face, codepoint);
-    if (index == 0 && codepoint != ' ') index = FT_Get_Char_Index(im.face, 0xFFFD);
     if (FT_Load_Glyph(im.face, index, FT_LOAD_RENDER | FT_LOAD_TARGET_LIGHT) == 0) {
         FT_GlyphSlot slot = im.face->glyph;
         g.advance = static_cast<float>(slot->advance.x) / 64.0f;
@@ -222,7 +251,7 @@ const Glyph& Font::glyph(std::uint32_t codepoint, float px_size) {
                 g.v1 = static_cast<float>(y + slot->bitmap.rows) / s;
                 g.empty = false;
             } else {
-                log::warn("ui", "font atlas full; glyph U+{:04X} dropped", codepoint);
+                log::warn("ui", "font atlas full; glyph #{} dropped", index);
             }
         }
     }
@@ -230,35 +259,62 @@ const Glyph& Font::glyph(std::uint32_t codepoint, float px_size) {
 }
 
 std::vector<ShapedGlyph> Font::shape(std::string_view text, float px_size) {
+    Impl& im = *impl_;
     std::vector<ShapedGlyph> out;
+    if (text.empty()) return out;
+    im.set_size(px_size);
+    // Line breaks and tabs keep their byte offsets (callers index the source string) but shape
+    // as spaces; a line break then advances nothing.
+    std::string cleaned(text);
+    for (char& c : cleaned) if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+    hb_buffer_clear_contents(im.hb_buf);
+    hb_buffer_add_utf8(im.hb_buf, cleaned.data(), static_cast<int>(cleaned.size()), 0, static_cast<int>(cleaned.size()));
+    hb_buffer_guess_segment_properties(im.hb_buf);
+    hb_buffer_set_cluster_level(im.hb_buf, HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+    hb_shape(im.hb_font, im.hb_buf, nullptr, 0);
+    unsigned n = 0;
+    hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(im.hb_buf, &n);
+    hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(im.hb_buf, &n);
+    FT_UInt fallback = FT_Get_Char_Index(im.face, 0xFFFD);
     float pen = 0;
-    std::size_t i = 0;
-    while (i < text.size()) {
-        std::size_t start = i;
-        std::uint32_t cp = decode_utf8(text, i);
-        if (cp == '\n' || cp == '\r') continue;
-        if (cp == '\t') cp = ' ';
+    out.reserve(n);
+    for (unsigned i = 0; i < n; ++i) {
+        std::size_t cluster = infos[i].cluster;
         ShapedGlyph sg;
-        sg.codepoint = cp;
-        sg.glyph = glyph(cp, px_size);
-        sg.x = pen;
-        sg.byte_offset = start;
-        pen += sg.glyph.advance;
+        std::size_t at = cluster;
+        sg.codepoint = at < text.size() ? decode_utf8(text, at) : 0;
+        if (sg.codepoint == '\n' || sg.codepoint == '\r') continue;
+        sg.glyph_index = infos[i].codepoint;
+        if (sg.glyph_index == 0 && sg.codepoint != ' ' && fallback != 0) sg.glyph_index = fallback;
+        sg.glyph = glyph_by_index(sg.glyph_index, px_size);
+        sg.x = pen + static_cast<float>(pos[i].x_offset) / 64.0f;
+        sg.y = -static_cast<float>(pos[i].y_offset) / 64.0f;
+        sg.byte_offset = cluster;
+        pen += static_cast<float>(pos[i].x_advance) / 64.0f;
         out.push_back(sg);
     }
     return out;
 }
 
 float Font::measure(std::string_view text, float px_size) {
-    float pen = 0;
-    std::size_t i = 0;
-    while (i < text.size()) {
-        std::uint32_t cp = decode_utf8(text, i);
-        if (cp == '\n' || cp == '\r') continue;
-        if (cp == '\t') cp = ' ';
-        pen += glyph(cp, px_size).advance;
+    Impl& im = *impl_;
+    if (text.empty()) return 0;
+    std::string key(text);
+    key.push_back('\0');
+    key += std::to_string(static_cast<int>(px_size * 64.0f));
+    if (auto it = im.measure_cache.find(key); it != im.measure_cache.end()) return it->second;
+    std::vector<ShapedGlyph> run = shape(text, px_size);
+    float width = 0;
+    if (!run.empty()) {
+        // The run's advance: pen position after the last glyph.
+        im.set_size(px_size);
+        unsigned n = 0;
+        hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(im.hb_buf, &n);
+        for (unsigned i = 0; i < n; ++i) width += static_cast<float>(pos[i].x_advance) / 64.0f;
     }
-    return pen;
+    if (im.measure_cache.size() > 8192) im.measure_cache.clear();
+    im.measure_cache.emplace(std::move(key), width);
+    return width;
 }
 
 WGPUTextureView Font::atlas_view() {

@@ -6,6 +6,7 @@
 #include <catch_amalgamated.hpp>
 
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 
 using namespace pocket;
@@ -124,4 +125,59 @@ TEST_CASE("painter draws rectangles, borders and text into a capture", "[ui]") {
     REQUIRE(p.draw_count() >= 2);
     std::filesystem::create_directories(root() / "build" / "test-out");
     (void)fs::write_bytes(root() / "build" / "test-out" / "painter.raw", img->rgba.data(), img->rgba.size());
+}
+
+TEST_CASE("shaping joins arabic letters and ligates latin pairs", "[ui][shaping]") {
+    rhi::Config rc;
+    rc.width = 64;
+    rc.height = 64;
+    auto device = rhi::Device::create(rc);
+    REQUIRE(device.has_value());
+    rhi::Device& d = **device;
+    // Arabic: four letters (seen, lam, alef, meem) shaped as one run take contextual forms and
+    // come out right-to-left in visual order.
+    std::filesystem::path arabic = root() / ".pocket" / "deps" / "noto-sans-arabic-2.010" / "NotoSansArabic-Regular.ttf";
+    auto af = ui::Font::load(d, arabic.string());
+    REQUIRE(af.has_value());
+    const std::string word = "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85";  // سلام
+    auto joined = (*af)->shape(word, 24);
+    std::string dump;
+    for (const auto& sg : joined) dump += "#" + std::to_string(sg.glyph_index) + "@" + std::to_string(sg.byte_offset) + " ";
+    INFO("joined run: " << dump);
+    REQUIRE(joined.size() <= 4);
+    float isolated = 0;
+    std::vector<std::uint32_t> isolated_ids;
+    std::string idump;
+    for (std::size_t i = 0; i < word.size(); i += 2) {
+        auto one = (*af)->shape(word.substr(i, 2), 24);
+        REQUIRE(one.size() == 1);
+        isolated_ids.push_back(one[0].glyph_index);
+        idump += "#" + std::to_string(one[0].glyph_index) + " ";
+        isolated += (*af)->measure(word.substr(i, 2), 24);
+    }
+    INFO("isolated: " << idump);
+    // Seen, lam and alef take joined forms; the meem after a non-joining alef stays isolated.
+    int changed = 0;
+    for (const auto& sg : joined) {
+        REQUIRE(sg.glyph_index != 0);
+        if (std::find(isolated_ids.begin(), isolated_ids.end(), sg.glyph_index) == isolated_ids.end()) ++changed;
+    }
+    REQUIRE(changed >= 3);
+    REQUIRE((*af)->measure(word, 24) < isolated);
+    // Right-to-left comes out in visual order: the first glyph drawn (leftmost) is the last letter (meem).
+    REQUIRE(joined.front().byte_offset == 6);
+    REQUIRE(joined.back().byte_offset == 0);
+    // Latin in the CJK face: kerning never widens a pair, and byte offsets survive shaping.
+    auto lf = ui::Font::load(d, font_path().string());
+    REQUIRE(lf.has_value());
+    REQUIRE((*lf)->measure("AV", 32) <= (*lf)->measure("A", 32) + (*lf)->measure("V", 32) + 0.01f);
+    auto hello = (*lf)->shape("Hi 世界", 20);
+    REQUIRE(hello.size() == 5);
+    REQUIRE(hello[3].byte_offset == 3);
+    REQUIRE(hello[4].byte_offset == 6);
+    REQUIRE(hello[4].x > hello[3].x);
+    // A line break inside a run shapes to nothing but keeps offsets for what follows.
+    auto lines = (*lf)->shape("a\nb", 20);
+    REQUIRE(lines.size() == 2);
+    REQUIRE(lines[1].byte_offset == 2);
 }

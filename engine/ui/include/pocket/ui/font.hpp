@@ -26,9 +26,11 @@ struct Glyph {
 
 struct ShapedGlyph {
     std::uint32_t codepoint = 0;
+    std::uint32_t glyph_index = 0;  // glyph id in the font after shaping (ligatures, contextual forms)
     Glyph glyph;
     float x = 0;   // pen offset within the run
-    std::size_t byte_offset = 0;  // start of the codepoint in the source string
+    float y = 0;   // vertical offset (marks), screen down
+    std::size_t byte_offset = 0;  // start of the cluster in the source string
 };
 
 struct TextMetrics {
@@ -52,7 +54,10 @@ class Font {
     [[nodiscard]] TextMetrics metrics(float px_size);
     // Glyph for a codepoint at a pixel size, rasterized and uploaded if needed.
     const Glyph& glyph(std::uint32_t codepoint, float px_size);
-    // Lay out a run of text on one line (no wrapping); positions are in pixels from the pen.
+    // Glyph by font glyph index (what shaping produces).
+    const Glyph& glyph_by_index(std::uint32_t index, float px_size);
+    // Shape a run of text on one line with HarfBuzz (OpenType: contextual forms, ligatures,
+    // kerning, marks; right-to-left runs come out in visual order); positions are in pixels.
     std::vector<ShapedGlyph> shape(std::string_view text, float px_size);
     [[nodiscard]] float measure(std::string_view text, float px_size);
     // Upload pending atlas changes; returns the texture view to bind.

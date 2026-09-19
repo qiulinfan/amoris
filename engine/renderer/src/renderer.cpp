@@ -16,8 +16,10 @@ namespace pocket::renderer {
 namespace {
 
 constexpr std::uint32_t kMaxPointLights = 8;
-constexpr std::uint32_t kObjectStride = 256;  // uniform buffer offset alignment
-constexpr std::uint32_t kMaxObjects = 4096;
+// Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
+// with the same mesh and material is one instanced draw.
+constexpr std::uint32_t kObjectStride = 176;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
     float view_proj[16];
@@ -34,8 +36,10 @@ struct alignas(16) ObjectUniforms {
     float model[16];
     float normal[16];
     float color[4];
-    std::uint32_t id[4];
+    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit)
+    float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
 };
+static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
 constexpr const char* kMeshWgsl = R"WGSL(
 struct Frame {
@@ -53,9 +57,10 @@ struct Object {
     normal: mat4x4f,
     color: vec4f,
     id: vec4u,
+    uv_rect: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(1) @binding(0) var<uniform> object: Object;
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
 @group(2) @binding(0) var base_tex: texture_2d<f32>;
 @group(2) @binding(1) var base_samp: sampler;
 
@@ -64,15 +69,20 @@ struct VsOut {
     @location(0) world_pos: vec3f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
+    @location(3) color: vec4f,
+    @location(4) @interpolate(flat) id: u32,
 };
 
-@vertex fn vs(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
+@vertex fn vs(@builtin(instance_index) instance: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
+    let object = objects[instance];
     var out: VsOut;
     let world = object.model * vec4f(position, 1.0);
     out.clip = frame.view_proj * world;
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(normal, 0.0)).xyz);
-    out.uv = uv;
+    out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
+    out.color = object.color;
+    out.id = object.id.x;
     return out;
 }
 
@@ -101,10 +111,20 @@ struct FsOut {
         let pndl = max(dot(n, pl), 0.0);
         light += frame.point_color[i].rgb * pndl * att * att;
     }
-    let base = textureSample(base_tex, base_samp, in.uv) * object.color;
+    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
     var out: FsOut;
     out.color = vec4f(base.rgb * light, base.a);
-    out.id = object.id.x;
+    out.id = in.id;
+    return out;
+}
+
+// Sprites: no lighting, alpha blended, transparent pixels leave no id behind.
+@fragment fn fs_unlit(in: VsOut) -> FsOut {
+    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    if (base.a < 0.02) { discard; }
+    var out: FsOut;
+    out.color = base;
+    out.id = in.id;
     return out;
 }
 )WGSL";
@@ -134,6 +154,7 @@ struct Renderer::Impl {
     WGPUBindGroupLayout object_bgl = nullptr;
     WGPUPipelineLayout layout = nullptr;
     WGPURenderPipeline pipeline = nullptr;
+    WGPURenderPipeline sprite_pipeline = nullptr;
     WGPUBuffer frame_buffer = nullptr;
     WGPUBuffer object_buffer = nullptr;
     WGPUBindGroup frame_bg = nullptr;
@@ -141,15 +162,17 @@ struct Renderer::Impl {
     WGPUTexture id_texture = nullptr;
     WGPUTextureView id_view = nullptr;
     std::uint32_t id_width = 0, id_height = 0;
-    std::array<GpuMesh, 4> meshes{};
+    std::array<GpuMesh, kPrimitiveCount> meshes{};
     // Assets: glTF meshes and images uploaded on first use.
     assets::AssetStore* assets = nullptr;
     WGPUBindGroupLayout material_bgl = nullptr;
     WGPUSampler sampler = nullptr;
+    WGPUSampler nearest_sampler = nullptr;   // pixel art: no filtering, no bleeding between sheet tiles
     struct GpuTexture {
         WGPUTexture texture = nullptr;
         WGPUTextureView view = nullptr;
         WGPUBindGroup bind_group = nullptr;
+        WGPUBindGroup bind_group_nearest = nullptr;
     };
     GpuTexture white;
     std::map<std::string, GpuTexture> textures;
@@ -170,6 +193,7 @@ struct Renderer::Impl {
 
     void release_texture(GpuTexture& t) {
         if (t.bind_group) wgpuBindGroupRelease(t.bind_group);
+        if (t.bind_group_nearest) wgpuBindGroupRelease(t.bind_group_nearest);
         if (t.view) wgpuTextureViewRelease(t.view);
         if (t.texture) wgpuTextureRelease(t.texture);
         t = GpuTexture{};
@@ -190,6 +214,7 @@ struct Renderer::Impl {
         release_assets();
         release_texture(white);
         if (sampler) wgpuSamplerRelease(sampler);
+        if (nearest_sampler) wgpuSamplerRelease(nearest_sampler);
         if (material_bgl) wgpuBindGroupLayoutRelease(material_bgl);
         for (auto& m : meshes) {
             if (m.vertices) wgpuBufferRelease(m.vertices);
@@ -201,6 +226,7 @@ struct Renderer::Impl {
         if (frame_bg) wgpuBindGroupRelease(frame_bg);
         if (object_buffer) wgpuBufferRelease(object_buffer);
         if (frame_buffer) wgpuBufferRelease(frame_buffer);
+        if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
         if (layout) wgpuPipelineLayoutRelease(layout);
         if (object_bgl) wgpuBindGroupLayoutRelease(object_bgl);
@@ -253,8 +279,8 @@ struct Renderer::Impl {
         WGPUBindGroupLayoutEntry oe{};
         oe.binding = 0;
         oe.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-        oe.buffer.type = WGPUBufferBindingType_Uniform;
-        oe.buffer.hasDynamicOffset = true;
+        oe.buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        oe.buffer.hasDynamicOffset = false;
         oe.buffer.minBindingSize = sizeof(ObjectUniforms);
         WGPUBindGroupLayoutDescriptor od{};
         od.label = rhi::str("pocket.object");
@@ -333,9 +359,22 @@ struct Renderer::Impl {
         rpd.fragment = &fs;
         pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!pipeline) return fail("gpu_pipeline_failed", "mesh pipeline creation failed");
+        // Sprites: same layout and vertex path, unlit fragment, alpha blend, no depth writes,
+        // both faces (a sprite seen from behind is still a sprite).
+        WGPUBlendState blend{};
+        blend.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+        blend.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+        targets[0].blend = &blend;
+        fs.entryPoint = rhi::str("fs_unlit");
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
+        ds.depthCompare = WGPUCompareFunction_LessEqual;
+        rpd.label = rhi::str("pocket.sprite");
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
 
         frame_buffer = device->create_buffer("pocket.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
-        object_buffer = device->create_buffer("pocket.objects", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kObjectStride) * kMaxObjects);
+        object_buffer = device->create_buffer("pocket.objects", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kObjectStride) * kMaxObjects);
         object_staging.resize(static_cast<std::size_t>(kObjectStride) * kMaxObjects);
 
         WGPUBindGroupEntry fbe{};
@@ -352,7 +391,7 @@ struct Renderer::Impl {
         WGPUBindGroupEntry obe{};
         obe.binding = 0;
         obe.buffer = object_buffer;
-        obe.size = sizeof(ObjectUniforms);
+        obe.size = static_cast<std::uint64_t>(kObjectStride) * kMaxObjects;
         WGPUBindGroupDescriptor obd{};
         obd.label = rhi::str("pocket.object");
         obd.layout = object_bgl;
@@ -372,11 +411,18 @@ struct Renderer::Impl {
         sd.lodMaxClamp = 32;
         sd.maxAnisotropy = 1;
         sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        sd.label = rhi::str("pocket.material.nearest");
+        sd.magFilter = WGPUFilterMode_Nearest;
+        sd.minFilter = WGPUFilterMode_Nearest;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.addressModeU = WGPUAddressMode_ClampToEdge;
+        sd.addressModeV = WGPUAddressMode_ClampToEdge;
+        nearest_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
         const std::uint8_t white_px[4] = {255, 255, 255, 255};
         POCKET_TRY(w, upload_texture("pocket.white", 1, 1, white_px));
         white = w;
 
-        for (int k = 0; k < 4; ++k) {
+        for (int k = 0; k < kPrimitiveCount; ++k) {
             MeshData data = make_primitive(k);
             GpuMesh& gm = meshes[static_cast<std::size_t>(k)];
             gm.vertices = device->create_buffer(primitive_name(k), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, data.vertices.size() * sizeof(Vertex), data.vertices.data());
@@ -429,6 +475,8 @@ struct Renderer::Impl {
         bd.entryCount = 2;
         bd.entries = entries;
         t.bind_group = wgpuDeviceCreateBindGroup(device->device(), &bd);
+        entries[1].sampler = nearest_sampler;
+        t.bind_group_nearest = wgpuDeviceCreateBindGroup(device->device(), &bd);
         return t;
     }
 
@@ -442,23 +490,24 @@ struct Renderer::Impl {
     }
 
     // The bind group for an image path (the white texture when empty or unavailable).
-    WGPUBindGroup texture_for(const std::string& path) {
-        if (path.empty()) return white.bind_group;
-        if (auto it = textures.find(path); it != textures.end()) return it->second.bind_group;
-        if (!assets) { report_missing(path, "no asset store"); return white.bind_group; }
-        if (failed.contains(path)) { note_missing(path); return white.bind_group; }
+    WGPUBindGroup texture_for(const std::string& path, bool nearest = false) {
+        auto pick = [&](const GpuTexture& t) { return nearest ? t.bind_group_nearest : t.bind_group; };
+        if (path.empty()) return pick(white);
+        if (auto it = textures.find(path); it != textures.end()) return pick(it->second);
+        if (!assets) { report_missing(path, "no asset store"); return pick(white); }
+        if (failed.contains(path)) { note_missing(path); return pick(white); }
         auto img = assets->image(path);
         if (!img) {
             report_missing(path, img.error().message);
-            return white.bind_group;
+            return pick(white);
         }
         auto t = upload_texture(path.c_str(), (*img)->width, (*img)->height, (*img)->rgba.data());
         if (!t) {
             report_missing(path, t.error().message);
-            return white.bind_group;
+            return pick(white);
         }
         textures[path] = *t;
-        return t->bind_group;
+        return pick(*t);
     }
 
     // A glTF mesh by project path, uploaded on first use; null when unavailable.
@@ -493,6 +542,7 @@ struct Renderer::Impl {
         if (name == "sphere" || name == "1") return 1;
         if (name == "plane" || name == "2") return 2;
         if (name == "cylinder" || name == "3") return 3;
+        if (name == "quad" || name == "4") return 4;
         return -1;
     }
 
@@ -516,13 +566,21 @@ struct Renderer::Impl {
             cv.view = Mat4::look_at(ct.position, target, {0, 1, 0});
             cv.proj = Mat4::perspective(radians(60), aspect, 0.1f, 1000.0f);
             cv.position = ct.position;
+            cv.forward = normalize(target - ct.position);
             return cv;
         }
         Vec3 forward = ct.rotation.rotate({0, 0, -1});
         Vec3 up = ct.rotation.rotate({0, 1, 0});
         cv.view = Mat4::look_at(ct.position, ct.position + forward, up);
-        cv.proj = Mat4::perspective(radians(cam.fov_degrees), aspect, cam.near, cam.far);
+        if (cam.orthographic) {
+            float half_h = std::max(0.001f, cam.ortho_size);
+            float half_w = half_h * aspect;
+            cv.proj = Mat4::orthographic(-half_w, half_w, -half_h, half_h, cam.near, cam.far);
+        } else {
+            cv.proj = Mat4::perspective(radians(cam.fov_degrees), aspect, cam.near, cam.far);
+        }
         cv.position = ct.position;
+        cv.forward = forward;
         return cv;
     }
 };
@@ -594,14 +652,16 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.point_lights = points;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
-    // Gather draws: one per primitive entity, one per material of a glTF entity. Sorted by
-    // texture then mesh so bind changes are rare and the order is deterministic.
+    // Gather one object per primitive entity and one per material of a glTF entity, sorted by
+    // texture, mesh and submesh so equal runs become single instanced draws and the order is
+    // deterministic.
     struct Draw {
         std::string texture;
         std::string mesh;
         const GpuMesh* gpu;
-        std::uint32_t first, count, offset;
+        std::uint32_t first, count;
         WGPUBindGroup material;
+        ObjectUniforms object;
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
@@ -617,10 +677,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key) {
             if (count >= kMaxObjects) return;
             ou.color[0] = color.x; ou.color[1] = color.y; ou.color[2] = color.z; ou.color[3] = color.w;
-            std::memcpy(im.object_staging.data() + static_cast<std::size_t>(count) * kObjectStride, &ou, sizeof ou);
-            draws.push_back({tex, mesh_key, gpu, first, n, count * kObjectStride, im.texture_for(tex)});
+            draws.push_back({tex, mesh_key, gpu, first, n, im.texture_for(tex), ou});
             ++count;
         };
+        ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
         int kind = Impl::primitive_index(mr.mesh);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
@@ -640,9 +700,49 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh);
         }
     });
-    std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) { return a.texture != b.texture ? a.texture < b.texture : a.mesh < b.mesh; });
-    if (count > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(count) * kObjectStride);
+    std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
+        if (a.texture != b.texture) return a.texture < b.texture;
+        if (a.mesh != b.mesh) return a.mesh < b.mesh;
+        return a.first < b.first;
+    });
+    for (std::size_t i = 0; i < draws.size(); ++i) std::memcpy(im.object_staging.data() + i * kObjectStride, &draws[i].object, sizeof(ObjectUniforms));
+    // Sprites: unlit quads after every mesh, by layer then far to near, in runs per texture.
+    struct SpriteDraw {
+        std::string texture;
+        WGPUBindGroup material;
+        std::int32_t layer;
+        float depth;
+        ObjectUniforms object;
+    };
+    std::vector<SpriteDraw> sprites;
+    world.ecs().each([&](flecs::entity e, const world::Sprite& sp, const world::WorldTransform& t) {
+        if (!sp.visible || count + sprites.size() >= kMaxObjects) return;
+        Mat4 model = Mat4::trs(t.position, t.rotation, t.scale) * Mat4::translation({(0.5f - sp.anchor.x) * sp.size.x, (0.5f - sp.anchor.y) * sp.size.y, 0}) * Mat4::scale({sp.size.x, sp.size.y, 1});
+        ObjectUniforms ou{};
+        to_array(model, ou.model);
+        to_array(transpose(model.inverse_affine()), ou.normal);
+        ou.color[0] = sp.color.r; ou.color[1] = sp.color.g; ou.color[2] = sp.color.b; ou.color[3] = sp.color.a;
+        ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
+        ou.id[1] = 1;
+        float u0 = sp.uv.x, v0 = sp.uv.y, u1 = sp.uv.z, v1 = sp.uv.w;
+        if (sp.flip_x) std::swap(u0, u1);
+        if (sp.flip_y) std::swap(v0, v1);
+        ou.uv_rect[0] = u0; ou.uv_rect[1] = v0; ou.uv_rect[2] = u1; ou.uv_rect[3] = v1;
+        Vec3 d = t.position - im.camera.position;
+        float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
+        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, depth, ou});
+    });
+    std::stable_sort(sprites.begin(), sprites.end(), [](const SpriteDraw& a, const SpriteDraw& b) {
+        if (a.layer != b.layer) return a.layer < b.layer;
+        if (a.depth != b.depth) return a.depth > b.depth;
+        return a.texture < b.texture;
+    });
+    for (std::size_t i = 0; i < sprites.size(); ++i) std::memcpy(im.object_staging.data() + (static_cast<std::size_t>(count) + i) * kObjectStride, &sprites[i].object, sizeof(ObjectUniforms));
+    std::uint32_t total = count + static_cast<std::uint32_t>(sprites.size());
+    if (total > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(total) * kObjectStride);
     im.stats.meshes = entities;
+    im.stats.instances = total;
+    im.stats.sprites = static_cast<std::uint32_t>(sprites.size());
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
 
@@ -678,9 +778,20 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetPipeline(pass, im.pipeline);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
-        for (const Draw& d : draws) {
+        std::size_t i = 0;
+        while (i < draws.size()) {
+            const Draw& d = draws[i];
+            // A run of objects with the same mesh, submesh and material is one instanced draw;
+            // instance_index selects each one's row in the object buffer.
+            std::size_t run = 1;
+            while (i + run < draws.size()) {
+                const Draw& n = draws[i + run];
+                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material) break;
+                ++run;
+            }
             if (d.gpu != current_mesh) {
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, d.gpu->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
@@ -690,9 +801,26 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 wgpuRenderPassEncoderSetBindGroup(pass, 2, d.material, 0, nullptr);
                 current_material = d.material;
             }
-            wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 1, &d.offset);
-            wgpuRenderPassEncoderDrawIndexed(pass, d.count, 1, d.first, 0, 0);
+            wgpuRenderPassEncoderDrawIndexed(pass, d.count, static_cast<std::uint32_t>(run), d.first, 0, static_cast<std::uint32_t>(i));
             im.stats.draw_calls++;
+            i += run;
+        }
+    }
+    if (!sprites.empty()) {
+        const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
+        wgpuRenderPassEncoderSetPipeline(pass, im.sprite_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quad.vertices, 0, WGPU_WHOLE_SIZE);
+        wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+        std::size_t i = 0;
+        while (i < sprites.size()) {
+            std::size_t run = 1;
+            while (i + run < sprites.size() && sprites[i + run].material == sprites[i].material) ++run;
+            wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
+            wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
+            im.stats.draw_calls++;
+            i += run;
         }
     }
     wgpuRenderPassEncoderEnd(pass);
@@ -787,6 +915,8 @@ Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
     Json j;
     j["draw_calls"] = s.draw_calls;
+    j["instances"] = s.instances;
+    j["sprites"] = s.sprites;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;
     j["has_camera"] = s.has_camera;

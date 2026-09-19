@@ -43,7 +43,10 @@ TEST_CASE("playground renders meshes and an id buffer", "[renderer]") {
     REQUIRE(stats["has_camera"] == true);
     REQUIRE(stats["has_sun"] == true);
     REQUIRE(stats["point_lights"].get<int>() >= 1);
-    REQUIRE(stats["draw_calls"].get<int>() >= 3);
+    // Four visible meshes in two instanced draws (cubes share one).
+    REQUIRE(stats["instances"].get<int>() >= 3);
+    REQUIRE(stats["draw_calls"].get<int>() >= 1);
+    REQUIRE(stats["draw_calls"].get<int>() < stats["instances"].get<int>());
 
     Json ids = s.command("render.ids", Json{{"path", (root() / "build" / "test-out" / "playground-ids.png").string()}}).value();
     INFO(ids.dump());

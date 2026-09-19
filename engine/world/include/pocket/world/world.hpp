@@ -94,8 +94,9 @@ class World {
     // Simulation -----------------------------------------------------------------------------
     // Runs the built-in systems (motion, lifetime, transform propagation) for one tick.
     void tick(double dt);
-    // Recompute WorldTransform from the Transform hierarchy without ticking (edits while paused).
+    // Recompute WorldTransform and Bounds from the Transform hierarchy without ticking (edits while paused, loads).
     void update_transforms();
+    void update_bounds();
     // Typed-array access for hot loops: copy numeric fields of one component for every matching
     // entity into a flat float array (stride = sum of field sizes) plus their ids, and back.
     struct PackInfo {

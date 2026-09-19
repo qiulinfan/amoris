@@ -10,6 +10,8 @@ export interface Handlers {
     tick: Array<(t: Tick) => void>;
     frame: Array<(f: Frame) => void>;
     input: Array<(events: InputEvent[]) => void>;
+    save: Array<() => Record<string, unknown>>;
+    load: Array<(data: Record<string, unknown>) => void>;
     exposed: Map<string, () => unknown>;
 }
 
@@ -29,7 +31,7 @@ export const registry: Registry = (() => {
 export function contextHandlers(name: string): Handlers {
     let h = registry.contexts.get(name);
     if (h === undefined) {
-        h = { start: [], stop: [], tick: [], frame: [], input: [], exposed: new Map() };
+        h = { start: [], stop: [], tick: [], frame: [], input: [], save: [], load: [], exposed: new Map() };
         registry.contexts.set(name, h);
     }
     return h;

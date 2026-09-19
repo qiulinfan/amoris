@@ -9,6 +9,10 @@ What exists on the `agent-first` branch, how to verify it, and what is next. Eve
 | Build tool `pocket` (Rust): manifests, toolchain discovery, Ninja graph, `compile_commands.json`, dependency fetch with sha256 and CMake foreign builds, oxc TypeScript bundler, codegen, `--json` everywhere, MCP server | `tools/pocket` | every command below |
 | Core: `Result`/`Error` on `std::expected`, JSONL logging with a ring, fixed tick clock, PCG32, state hasher, math, filesystem | `engine/core` | `core_tests` |
 | Platform: SDL3 window, normalized keyboard/mouse/gamepad events, OS text input, headless mode | `engine/platform` | runtime tests, windowed runs |
+| Text shaping: HarfBuzz (OpenType contextual forms, ligatures, kerning, marks, RTL visual order) feeding the FreeType atlas by glyph index; measurement cache | `engine/ui/src/font.cpp`, `docs/design/pocket-ui.md` | `ui_tests` (`[shaping]`) |
+| Save slots: `save.write/read/list/delete/dir` (scene + `onSave` script state per context + caller data, one JSON per slot in the OS user data directory or `--save-dir`), `saves` SDK, `save.written/loaded` events | `Session::save_command`, `sdk/runtime/pocket.ts`, `docs/sdk.md` | `runtime_tests` (`[saves]`) |
+| 2D: the `Sprite` component (textured unit quad in XY, size, anchor, tint, layer, sheet sub-rectangle, flips), unlit and alpha blended after meshes in layer order through the instanced path, orthographic cameras, bounds and picking by shape | `engine/renderer` (sprite pipeline), `engine/world` (Sprite bounds), `samples/sprites`, `docs/design/sprites.md` | `runtime_tests` (`[sprites]`) |
+| Instanced rendering: per-object data in one storage buffer indexed by `instance_index`, one draw per run of equal mesh/submesh/material (3000 cubes: 3000 draws to 1, 0.90 ms to 0.35 ms); `perf` command and `report.timings` with wall-clock averages per phase | `engine/renderer`, `Session::perf` | `renderer_tests`, `docs/evidence/swarm.md` |
 | Editor depth: undo/redo of every edit, multi-selection, move/rotate/scale gizmo handles agents can drag, resizable panes with the layout saved per project, keyboard shortcuts, modifier keys on events | `editor/history.ts`, `editor/gizmo.ts`, `editor/main.tsx`, `docs/editor.md` | `runtime_tests` (`[editor]`) |
 | Scripting helpers: tweens (numbers and component fields, easing, repeat/yoyo/delay) and timers (`after`, `every`, `wait`, the setTimeout family) on the simulation clock | `sdk/runtime/tween.ts`, `sdk/runtime/timer.ts`, `docs/sdk.md` | `tests/ts/tween.test.ts` |
 | Input actions: action maps (keys, pad buttons, axes with dead zones) from project.toml or scripts, per-frame edges in every tick, synthetic holds for agents that the journal records | `engine/app/input_map`, `sdk/runtime/input.ts`, `docs/design/input.md` | `runtime_tests` (`[input]`), `tests/ts/world.test.ts` |
@@ -51,6 +55,6 @@ The `transcript` field of any report, `GET /tree` on a served runtime, and the `
 
 ## Next
 
-1. HarfBuzz shaping for the UI.
+1. Shadows and MSAA in the renderer.
 3. Agent eval suite and the perception-efficiency benchmark from `docs/design/agent-perception.md`.
 4. Web export (M6). Asset loading and packaging are done; skins, animations and PBR maps are not.
