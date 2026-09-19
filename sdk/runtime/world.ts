@@ -184,7 +184,7 @@ export interface VisibleEntity {
 
 /** Rendering queries: what is on screen, and where. */
 export const render = {
-    stats(): { draw_calls: number; shadow_draws: number; shadows: boolean; instances: number; sprites: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity } {
+    stats(): { draw_calls: number; shadow_draws: number; shadows: boolean; instances: number; sprites: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity; msaa: number; id_draws: number } {
         return command("render.stats");
     },
     /** Entity under a pixel of the last frame (undefined for background). */
@@ -202,6 +202,10 @@ export const render = {
      */
     unproject(x: number, y: number, plane: "xy" | "xz" | "yz" = "xy", at = 0): { origin: Vec3; direction: Vec3; hit: boolean; point?: Vec3; distance?: number } {
         return command("render.unproject", { x, y, plane, at }) as { origin: Vec3; direction: Vec3; hit: boolean; point?: Vec3; distance?: number };
+    },
+    /** Multisampling of the color pass: 1 (off) or 4; project.toml [render] msaa = 4 sets the default. Ids keep one sample per pixel. */
+    msaa(samples?: number): number {
+        return command("render.msaa", samples === undefined ? {} : { samples }).msaa;
     },
     /** Shadow map settings (on by default when a sun exists; project.toml [render] shadows = false turns it off). */
     shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {

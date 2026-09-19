@@ -63,7 +63,7 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Tile maps
 
-`tilemap.info(entity)`, `tilemap.cell(entity, x, y)`, `tilemap.tile(entity, at, layer?)`, `tilemap.solid(entity, at)`, `tilemap.objects(entity, layer?)` for Tiled maps drawn by the `TileMap` component; `tilemap.set(entity, at, tile, layer?)`, `tilemap.fill(entity, rect, tile, layer?)` and `tilemap.save(entity, path?)` edit the map at runtime and write it back (`docs/design/tilemaps.md`). `render.unproject(x, y, plane?, at?)` gives the world ray under a pixel and where it meets an axis plane.
+`tilemap.info(entity)`, `tilemap.cell(entity, x, y)`, `tilemap.tile(entity, at, layer?)`, `tilemap.solid(entity, at)`, `tilemap.objects(entity, layer?)` for Tiled maps drawn by the `TileMap` component; `tilemap.set(entity, at, tile, layer?)`, `tilemap.fill(entity, rect, tile, layer?)` and `tilemap.save(entity, path?)` edit the map at runtime and write it back (`docs/design/tilemaps.md`). `render.unproject(x, y, plane?, at?)` gives the world ray under a pixel and where it meets an axis plane. `nav.bake(options)`, `nav.bakeTilemap(entity, options)`, `nav.path(from, to)`, `nav.reachable`, `nav.nearest`, `nav.info`, `nav.clear` for walkability grids and A* paths (`docs/design/navigation.md`).
 
 ## Animation
 

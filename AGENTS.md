@@ -38,7 +38,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket test [--filter core] --json
 ./.pocket/pocket ts samples/hello      # bundle only
 ./.pocket/pocket gen [--check]         # regenerate code from engine/*/meta/*.toml
-./.pocket/pocket run playground -- --headless --serve 4711 --paused --json   # agent-driven session
+./.pocket/pocket run playground -- --headless --serve 4711 --paused --json   # agent-driven session; enemies path around pillars (docs/design/navigation.md)
 ./.pocket/pocket mcp                   # MCP server over stdio (see docs/mcp.md)
 ./.pocket/pocket run physics -- --headless --frames 600 --json   # physics sample report
 ./.pocket/pocket run ui -- --headless --serve 4711 --paused --json   # UI sample; ui.snapshot / ui.click over /rpc

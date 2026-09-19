@@ -340,3 +340,56 @@ TEST_CASE("material maps bend normals, make metals and glow", "[renderer][pbr]")
     REQUIRE(d["materials"][0]["emissive"]["r"].get<double>() == Catch::Approx(1.0));
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("MSAA smooths edges and keeps the ids through a pass of their own", "[renderer][msaa]") {
+    app::Session s(playground_options());
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 20; ++i) REQUIRE(s.frame().has_value());
+    // Hard transitions: pixels whose right neighbour differs by more than 60 in some channel. With
+    // MSAA an edge is spread over an in-between pixel, so many transitions become two soft steps.
+    auto hard_edges = [&]() {
+        auto img = s.device().capture();
+        REQUIRE(img.has_value());
+        int hard = 0;
+        for (std::uint32_t y = 0; y < img->height; ++y) {
+            for (std::uint32_t x = 0; x + 1 < img->width; ++x) {
+                const std::uint8_t* a = &img->rgba[(y * img->width + x) * 4];
+                const std::uint8_t* b = a + 4;
+                if (std::abs(int(a[0]) - int(b[0])) > 60 || std::abs(int(a[1]) - int(b[1])) > 60 || std::abs(int(a[2]) - int(b[2])) > 60) ++hard;
+            }
+        }
+        return hard;
+    };
+    Json plain = s.command("render.stats", Json::object()).value();
+    REQUIRE(plain["msaa"].get<int>() == 1);
+    REQUIRE(plain["id_draws"].get<int>() == 0);
+    const int hard_plain = hard_edges();
+    Json pr = s.command("render.project", Json{{"entity", "/Level/Player"}}).value();
+    REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["path"] == "/Level/Player");
+    REQUIRE(s.command("render.msaa", Json{{"samples", 4}}).value()["msaa"].get<int>() == 4);
+    REQUIRE(s.frame().has_value());
+    Json aa = s.command("render.stats", Json::object()).value();
+    INFO(aa.dump());
+    REQUIRE(aa["msaa"].get<int>() == 4);
+    REQUIRE(aa["id_draws"].get<int>() > 0);
+    REQUIRE(aa["draw_calls"].get<int>() == plain["draw_calls"].get<int>());
+    const int hard_aa = hard_edges();
+    INFO("hard edges: " << hard_plain << " without MSAA, " << hard_aa << " with");
+    REQUIRE(hard_plain > 50);
+    REQUIRE(hard_aa < hard_plain * 3 / 4);
+    // The ids still name the player under its projection, and the visible set is the same.
+    REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["path"] == "/Level/Player");
+    Json visible = s.command("render.visible", Json{{"limit", 20}}).value()["visible"];
+    bool player = false, ground = false;
+    for (const Json& v : visible) { if (v["path"] == "/Level/Player") player = true; if (v["path"] == "/Level/Ground") ground = true; }
+    REQUIRE(player);
+    REQUIRE(ground);
+    // Back to one sample: the shared pass again, no id draws.
+    REQUIRE(s.command("render.msaa", Json{{"samples", 1}}).value()["msaa"].get<int>() == 1);
+    REQUIRE(s.frame().has_value());
+    Json back = s.command("render.stats", Json::object()).value();
+    REQUIRE(back["msaa"].get<int>() == 1);
+    REQUIRE(back["id_draws"].get<int>() == 0);
+    REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["path"] == "/Level/Player");
+    REQUIRE(s.finish().has_value());
+}

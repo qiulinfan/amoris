@@ -4,7 +4,7 @@ This is the implementation counterpart of [agent-perception.md](agent-perception
 
 ## One source of truth for components
 
-`engine/world/meta/components.toml` declares every component: name, doc, fields with types, defaults and docs, and whether it is serialized. `pocket gen` (run automatically by `pocket build`) writes:
+`engine/world/meta/components.toml` declares every component: name, doc, fields with types, defaults and docs, and whether it is serialized. It also declares records, plain value types a component holds in a `list:<Record>` field (a JSON array, `std::vector` in C++, `Record[]` in TypeScript; a patch replaces the whole array, and `field.<index>.<name>` addresses an element's number). `pocket gen` (run automatically by `pocket build`) writes:
 
 | Output | Used by |
 |---|---|

@@ -34,7 +34,7 @@ The binary comes from `scripts/bootstrap.sh`. On a machine where Xcode itself is
 | `events_since` | The causal event log after a sequence number, with `cause` links; `runtime_command {method: "events.why", params: {seq}}` turns one event into its chain of causes. |
 | `capture`, `render_pick` | The last frame as PNG, the entity id buffer, the entity under a pixel. |
 | `ui_snapshot`, `ui_query`, `ui_click`, `ui_type`, `ui_key` | The interface as text, element lookup by name/text/type, and synthetic input through the same path a player's input takes (see `docs/design/pocket-ui.md`). With `runtime_start {editor: true}` the same tools operate the editor (`docs/editor.md`). |
-| `runtime_command` | Any other command (`world.spawn`, `world.set`, `events.emit`, `world.save`, `save.write`, `input.hold`, `perf`, `log.tail`, `render.visible`, `render.unproject`, `tilemap.set/fill/save`, `recorder.at/diff/track/first` when the session started with `history`, ...); `runtime_commands` lists them. |
+| `runtime_command` | Any other command (`world.spawn`, `world.set`, `events.emit`, `world.save`, `save.write`, `input.hold`, `perf`, `log.tail`, `render.visible`, `render.unproject`, `tilemap.set/fill/save`, `nav.bake/path/reachable/nearest`, `recorder.at/diff/track/first` when the session started with `history`, ...); `runtime_commands` lists them. |
 | `runtime_stop` | Quit the session and return its final report. |
 
 ## A session

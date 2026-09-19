@@ -77,7 +77,7 @@ fn tools_list() -> Value {
             "history": { "type": "integer", "description": "keep the last N ticks for recorder.at/diff/track/first (time travel)" }
         }), &["project"])),
         tool("runtime_stop", "Stop the running session and return its final JSON report.", obj_schema(json!({}), &[])),
-        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back) families plus state, step, capture, log.tail, report.", obj_schema(json!({
+        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back), nav.* (nav.bake a walkability grid, nav.path / nav.reachable / nav.nearest over it) families plus state, step, capture, log.tail, report.", obj_schema(json!({
             "method": { "type": "string" },
             "params": { "type": "object" }
         }), &["method"])),

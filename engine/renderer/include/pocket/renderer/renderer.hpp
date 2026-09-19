@@ -33,6 +33,8 @@ struct RenderStats {
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after an edit, over the renderer's life
+    int msaa = 1;                     // samples per pixel of the color pass (1 or 4)
+    std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;
@@ -86,6 +88,10 @@ class Renderer {
     // The world ray under a pixel of the last frame's viewport (false without a camera view).
     [[nodiscard]] bool unproject(float px, float py, Vec3& origin, Vec3& direction) const;
     void set_viewport(Viewport v);
+    // Multisampling of the color pass: 1 (off) or 4; takes effect at the next frame (the scene
+    // pipelines are rebuilt and the ids move to a pass of their own).
+    void set_msaa(int samples);
+    [[nodiscard]] int msaa() const;
     void set_shadows(ShadowSettings s);
     [[nodiscard]] ShadowSettings shadows() const;
     // Where glTF meshes and images come from (MeshRenderer.mesh / .texture paths). Optional.

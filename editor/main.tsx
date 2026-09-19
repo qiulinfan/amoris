@@ -317,7 +317,18 @@ function removeComponent(id: number, comp: ComponentName): void {
 function setField(entity: number, comp: ComponentName, field: string, sub: string | null, raw: string, type: string): void {
     let value: unknown = raw;
     if (type === "bool") value = raw === "true";
-    else if (type !== "string") {
+    else if (type === "json") {
+        try {
+            value = JSON.parse(raw);
+        } catch {
+            notice.set(`${comp}.${field}: not valid JSON`);
+            return;
+        }
+        if (!Array.isArray(value)) {
+            notice.set(`${comp}.${field}: expected a JSON array`);
+            return;
+        }
+    } else if (type !== "string") {
         const n = Number(raw);
         if (!Number.isFinite(n)) return;
         value = n;
@@ -326,7 +337,7 @@ function setField(entity: number, comp: ComponentName, field: string, sub: strin
     const before = world.get(entity, comp) as Record<string, unknown> | undefined;
     // Blur re-reports the input's value; an unchanged value is not an edit.
     const current = before === undefined ? undefined : sub === null ? before[field] : (before[field] as Record<string, unknown> | undefined)?.[sub];
-    if (current === value) return;
+    if (type === "json" ? JSON.stringify(current) === JSON.stringify(value) : current === value) return;
     try {
         edit(`Set ${comp}.${field}${sub ? "." + sub : ""}`, () => { world.set(entity, comp, patch as never); refreshSelected(); }, () => { if (before) world.set(entity, comp, before as never); refreshSelected(); });
     } catch (e) {
@@ -648,6 +659,16 @@ function Hierarchy() {
 }
 
 function fieldInputs(entity: number, comp: ComponentName, field: SchemaField, value: unknown) {
+    if (Array.isArray(value)) {
+        // A list field (records): edited as JSON, the whole array at once.
+        return (
+            <Row gap={4} key={field.name}>
+                <Label text={`${field.name} (${value.length})`} muted />
+                <box flex={1} />
+                <TextInput value={JSON.stringify(value)} width={180} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, "json")} />
+            </Row>
+        );
+    }
     if (value !== null && typeof value === "object") {
         const obj = value as Record<string, unknown>;
         return (

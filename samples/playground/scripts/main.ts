@@ -1,19 +1,24 @@
 // Playground: a scene file, entities spawned and driven from TypeScript, and a causal event log.
 //
-// Enemies spawn on a timer, move toward the player with a Velocity, and are "hit" when they get
-// close. Every hit is an event whose cause is the spawn event of that enemy, so an agent can ask
-// "why did the player lose health?" and get a chain, not a guess.
-import { events, expose, log, onStart, onTick, particles, random, setClearColor, tween, world } from "pocket";
+// Enemies spawn on a timer, walk toward the player along navigation paths around the pillars
+// (docs/design/navigation.md), and are "hit" when they get close. Every hit is an event whose
+// cause is the spawn event of that enemy, so an agent can ask "why did the player lose health?"
+// and get a chain, not a guess.
+import { events, expose, log, nav, onStart, onTick, particles, random, setClearColor, tween, world } from "pocket";
 
 const enemies = new Map<number, { spawnSeq: number }>();
 let nextSpawn = 0.5;
 let hits = 0;
 let killed = 0;
+let navCells = 0;
+let detours = 0;   // enemy ticks steered along a path with a corner in it
 
 onStart(() => {
     log("playground start", { entities: world.summary().entities });
     log("tree at start\n" + world.tree({ depth: 2 }));
     setClearColor(0.08, 0.09, 0.12, 1);
+    // The walkable ground between the pillars, from the static colliders in the scene.
+    navCells = nav.bake({ min: { x: -9.5, y: -1, z: -9.5 }, max: { x: 9.5, y: 2, z: 9.5 }, cell: 0.5, agent_radius: 0.35, agent_height: 1.0 }).walkable ?? 0;
     // A fountain in the corner: continuous particles falling back under gravity.
     world.spawn("Fountain", {
         parent: "/Level",
@@ -75,8 +80,18 @@ onTick(({ tick, dt, time }) => {
             killed++;
             continue;
         }
+        // Steer toward the next corner of the path around the pillars, straight at the player when clear.
+        let target = { x: playerPos.x, z: playerPos.z };
+        try {
+            const path = nav.path(t.position, playerPos);
+            if (path.points.length > 2) { detours++; target = { x: path.points[1].x, z: path.points[1].z }; }
+        } catch {
+            // off the grid (spawned outside it): head straight in
+        }
+        const tx = target.x - t.position.x, tz = target.z - t.position.z;
+        const td = Math.hypot(tx, tz) || 1;
         const speed = 2.5;
-        world.set(id, "Velocity", { linear: { x: (dx / d) * speed, y: 0, z: (dz / d) * speed } });
+        world.set(id, "Velocity", { linear: { x: (tx / td) * speed, y: 0, z: (tz / td) * speed } });
     }
 
     if (tick % 120 === 0 && tick > 0) {
@@ -85,6 +100,8 @@ onTick(({ tick, dt, time }) => {
 });
 
 expose("enemies", () => enemies.size);
+expose("nav.cells", () => navCells);
+expose("nav.detours", () => detours);
 expose("hits", () => hits);
 expose("killed", () => killed);
 expose("player.health", () => {

@@ -27,4 +27,15 @@ test("clips, play, stop and pose through the SDK", () => {
     expect(Math.abs(fading.fade - 0.3) < 1e-6).toBe(true);
     // Playing without a fade drops any fade in progress.
     expect(animation.play(arm, "wave").from_clip).toBe("");
+    // Layers: a clip over the base on part of the skeleton, updated by clip name, removed.
+    const layered = animation.layer(arm, { clip: "nod", mask: "root", weight: 0.5 });
+    expect(layered.layers.length).toBe(1);
+    expect(layered.layers[0].mask).toBe("root");
+    expect(layered.layers[0].additive).toBe(false);
+    expect(animation.layer(arm, { clip: "nod", weight: 1 }).layers[0].weight).toBe(1);
+    expect(animation.layer(arm, { clip: "wave", additive: true }).layers.length).toBe(2);
+    expect(() => animation.layer(arm, { clip: "wave", mask: "elbow" })).toThrow();
+    expect(animation.layers(arm).map((l) => l.clip)).toEqual(["nod", "wave"]);
+    expect(animation.removeLayer(arm, "nod").layers.map((l) => l.clip)).toEqual(["wave"]);
+    expect(animation.removeLayer(arm, 0).layers.length).toBe(0);
 });

@@ -1,6 +1,13 @@
 #include <pocket/physics/physics.hpp>
 
+#include <pocket/assets/assets.hpp>
+
 #include <catch_amalgamated.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
 
 using namespace pocket;
 using namespace pocket::world;
@@ -386,4 +393,118 @@ TEST_CASE("a hinge between two dynamic bodies keeps their axes aligned through a
     REQUIRE(min_align > 0.999f);
     REQUIRE(min_y < 0.7f);  // it swung down
     REQUIRE(p.joints()[0].target == block);
+}
+
+TEST_CASE("mesh colliders: a marble rolls to the bottom of a bowl, rays and overlaps see the triangles", "[physics][mesh]") {
+    const char* root = std::getenv("POCKET_ROOT");
+    REQUIRE(root != nullptr);
+    assets::AssetStore store(std::filesystem::path(root) / "samples" / "physics");
+    World w;
+    physics::Physics p;
+    p.set_assets(&store);
+    EntityId bowl = w.spawn("Bowl", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", {{"mesh", "assets/bowl.glb"}}}, {"RigidBody", {{"kind", 1}, {"friction", 0.4}}}, {"Collider", {{"shape", 3}}}}).value();
+    // Some linear damping stands in for rolling resistance, or the marble would swing in the bowl for a minute.
+    EntityId ball = body(w, "Ball", 1, {1.5f, 3.0f, 0.0f}, 0.25f, Json{{"restitution", 0.1}, {"friction", 0.4}, {"linear_damping", 0.6}});
+    run(p, w, 60);
+    REQUIRE(p.stats().meshes == 1);
+    REQUIRE(p.stats().triangles > 1000);
+    // After a second it sits on the slope (the surface is y = r^2 / 4), not under it.
+    const Transform* t = w.try_get<Transform>(ball);
+    INFO(t->position.x << " " << t->position.y << " " << t->position.z);
+    REQUIRE(t->position.y > 0.2f);
+    REQUIRE(t->position.y < 1.0f);
+    run(p, w, 540);
+    t = w.try_get<Transform>(ball);
+    INFO(t->position.x << " " << t->position.y << " " << t->position.z);
+    REQUIRE(std::hypot(t->position.x, t->position.z) < 0.35f);
+    REQUIRE(t->position.y == Catch::Approx(0.25f).margin(0.1f));
+    REQUIRE(w.events().histogram()["collision.begin"].get<int>() >= 1);
+    // Rays hit the surface where the bowl is: at r = 2 it is at y = 1, facing up and inward.
+    auto hit = p.raycast(w, {2, 5, 0}, {0, -1, 0}, 10);
+    REQUIRE(hit.has_value());
+    REQUIRE(hit->entity == bowl);
+    REQUIRE(hit->point.y == Catch::Approx(1.0f).margin(0.06f));
+    REQUIRE(hit->normal.y > 0.5f);
+    REQUIRE(hit->normal.x < -0.3f);
+    REQUIRE(p.raycast(w, {4, 5, 0}, {0, -1, 0}, 10).has_value() == false);  // beyond the rim
+    auto over = p.overlap_sphere(w, {2, 1.1f, 0}, 0.3f);
+    REQUIRE(std::find(over.begin(), over.end(), bowl) != over.end());
+    REQUIRE(p.overlap_sphere(w, {2, 3, 0}, 0.3f).empty());
+    // A box dropped on the slope slides down too and rests on the triangles.
+    EntityId box = body(w, "Box", 0, {-1.2f, 3.0f, 0.8f}, 0.3f, Json{{"restitution", 0.0}, {"friction", 0.2}, {"linear_damping", 0.3}});
+    run(p, w, 600);
+    t = w.try_get<Transform>(box);
+    INFO("box " << t->position.x << " " << t->position.y << " " << t->position.z);
+    REQUIRE(t->position.y > 0.2f);
+    REQUIRE(t->position.y < 1.2f);
+    REQUIRE(std::hypot(t->position.x, t->position.z) < 1.5f);
+    // A missing mesh file collides with nothing and is not counted.
+    w.spawn("Ghost", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0}, {"z", 5}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 3}, {"mesh", "assets/nope.glb"}}}});
+    run(p, w, 1);
+    REQUIRE(p.stats().meshes == 1);
+}
+
+TEST_CASE("a spring stretches under its load, swings and settles at its weight over its stiffness", "[physics][joint][spring]") {
+    World w;
+    physics::Physics p;
+    EntityId bob = body(w, "Bob", 1, {0, 4, 0}, 0.2f, Json{{"mass", 1.0}});
+    REQUIRE(w.set(bob, "Joint", Json{{"kind", 0}, {"target_anchor", {{"x", 0}, {"y", 5}, {"z", 0}}}, {"distance", 1.0}, {"stiffness", 50.0}, {"damping", 2.0}}).has_value());
+    float lowest = 10, highest = 0;
+    for (int i = 0; i < 120; ++i) {
+        run(p, w, 1);
+        float y = w.try_get<Transform>(bob)->position.y;
+        lowest = std::min(lowest, y);
+        highest = std::max(highest, y);
+    }
+    // Let go at the rest length it swings past the equilibrium (m g / k = 0.196 below) and back up.
+    INFO("lowest " << lowest << " highest " << highest);
+    REQUIRE(lowest < 4.0f - 0.25f);
+    REQUIRE(highest > 4.0f - 0.15f);
+    run(p, w, 600);
+    const Transform* t = w.try_get<Transform>(bob);
+    REQUIRE(t->position.y == Catch::Approx(4.0f - 9.81f / 50.0f).margin(0.02f));
+    REQUIRE(p.joints()[0].force == Catch::Approx(9.81f).margin(0.5f));
+    REQUIRE(w.try_get<Joint>(bob)->force == Catch::Approx(9.81f).margin(0.5f));
+    // A bungee (rope with stiffness) never pushes: started above its rest length it falls freely.
+    EntityId lifted = body(w, "Lifted", 1, {3, 4.5f, 0}, 0.2f, Json{{"mass", 1.0}});
+    REQUIRE(w.set(lifted, "Joint", Json{{"kind", 0}, {"rope", true}, {"target_anchor", {{"x", 3}, {"y", 5}, {"z", 0}}}, {"distance", 1.0}, {"stiffness", 50.0}, {"damping", 2.0}}).has_value());
+    run(p, w, 6);
+    REQUIRE(w.try_get<Velocity>(lifted)->linear.y == Catch::Approx(-9.81f * 0.1f).margin(0.05f));
+}
+
+TEST_CASE("a slider moves along its axis only, its motor lifts it to the stop and it reports the travel", "[physics][joint][slider]") {
+    World w;
+    physics::Physics p;
+    EntityId lift = w.spawn("Lift", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}, {"mass", 2.0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.6}, {"y", 0.1}, {"z", 0.6}}}}}}).value();
+    REQUIRE(w.set(lift, "Joint", Json{{"kind", 3}, {"target_anchor", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"axis", {{"x", 0}, {"y", 1}, {"z", 0}}}, {"limit", true}, {"lower", 0.0}, {"upper", 2.0}, {"motor_speed", 1.0}, {"motor_force", 100.0}}).has_value());
+    // A crate sits on the lift and rides up with it.
+    EntityId crate = body(w, "Crate", 0, {0.2f, 1.4f, 0}, 0.3f, Json{{"mass", 1.0}});
+    run(p, w, 60);
+    const Transform* t = w.try_get<Transform>(lift);
+    INFO(t->position.x << " " << t->position.y << " " << t->position.z);
+    REQUIRE(t->position.y == Catch::Approx(2.0f).margin(0.15f));  // one meter per second, a second in
+    REQUIRE(std::fabs(t->position.x) < 0.01f);
+    REQUIRE(std::fabs(t->position.z) < 0.01f);
+    REQUIRE(t->rotation.w > 0.9999f);
+    run(p, w, 120);
+    t = w.try_get<Transform>(lift);
+    REQUIRE(t->position.y == Catch::Approx(3.0f).margin(0.05f));  // stopped at the upper limit
+    const physics::JointInfo& j = p.joints()[0];
+    REQUIRE(j.kind == 3);
+    REQUIRE(j.translation == Catch::Approx(2.0f).margin(0.05f));
+    REQUIRE(j.limit_state == 1);
+    REQUIRE(w.try_get<Joint>(lift)->translation == Catch::Approx(2.0f).margin(0.05f));
+    REQUIRE(w.try_get<Transform>(crate)->position.y > 3.2f);  // rode up on the platform
+    REQUIRE(w.events().histogram()["joint.limit"].get<int>() >= 1);
+    // Reverse the motor: down to the lower stop; with the motor off the stop still holds it.
+    REQUIRE(w.set(lift, "Joint", Json{{"motor_speed", -1.0}}).has_value());
+    run(p, w, 180);
+    t = w.try_get<Transform>(lift);
+    INFO(t->position.x << " " << t->position.y << " " << t->position.z);
+    REQUIRE(t->position.y == Catch::Approx(1.0f).margin(0.05f));
+    REQUIRE(p.joints()[0].limit_state == -1);
+    REQUIRE(w.set(lift, "Joint", Json{{"motor_force", 0.0}}).has_value());
+    run(p, w, 60);
+    REQUIRE(w.try_get<Transform>(lift)->position.y == Catch::Approx(1.0f).margin(0.05f));
+    REQUIRE(std::fabs(w.try_get<Transform>(lift)->position.x) < 0.01f);
 }

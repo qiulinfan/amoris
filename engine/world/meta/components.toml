@@ -125,6 +125,20 @@ fields = [
     { name = "visible", type = "bool", default = true, doc = "Whether the map is drawn." },
 ]
 
+[[record]]
+name = "AnimationLayer"
+doc = "One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers."
+fields = [
+    { name = "clip", type = "string", default = "", doc = "Clip name from the asset (animation.clips lists them)." },
+    { name = "weight", type = "f32", default = 1.0, doc = "0..1: how much of the layer shows (the blend factor, or the scale of an additive change)." },
+    { name = "mask", type = "string", default = "", doc = "Node names, comma separated, whose subtrees the layer may move; empty means every node the clip animates." },
+    { name = "additive", type = "bool", default = false, doc = "Add the clip's change since its first frame onto the pose so far instead of blending toward the clip." },
+    { name = "playing", type = "bool", default = true, doc = "Whether the layer's time advances; animation.stop clears it with the base clip's." },
+    { name = "loop", type = "bool", default = true, doc = "Wrap at the end (else stop on the last frame and emit animation.finished with the layer index)." },
+    { name = "speed", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
+    { name = "time", type = "f32", default = 0.0, doc = "Seconds into the clip; advanced by the engine, writable to seek." },
+]
+
 [[component]]
 name = "Animator"
 doc = "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly."
@@ -139,6 +153,7 @@ fields = [
     { name = "fade_time", type = "f32", default = 0.0, doc = "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed." },
     { name = "from_clip", type = "string", default = "", doc = "The clip fading out (keeps playing at its own time until the fade ends); empty when none." },
     { name = "from_time", type = "f32", default = 0.0, doc = "Seconds into from_clip, advanced by the engine." },
+    { name = "layers", type = "list:AnimationLayer", doc = "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them)." },
 ]
 
 [[component]]
@@ -190,26 +205,30 @@ fields = [
 
 [[component]]
 name = "Joint"
-doc = "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed)."
+doc = "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed)."
 fields = [
-    { name = "kind", type = "i32", default = 0, doc = "0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only)." },
+    { name = "kind", type = "i32", default = 0, doc = "0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target)." },
     { name = "target", type = "string", default = "", doc = "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor." },
     { name = "anchor", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Attachment point on this body, in its local frame." },
     { name = "target_anchor", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Attachment point on the target in its local frame, or a world point when there is no target." },
     { name = "distance", type = "f32", default = -1.0, doc = "Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here." },
     { name = "rope", type = "bool", default = false, doc = "Distance joints only: pull when the anchors are farther than distance, never push." },
+    { name = "stiffness", type = "f32", default = 0.0, doc = "Distance joints: newtons per meter of stretch; above 0 the rod is a spring (a bungee with rope) instead of a rigid length." },
+    { name = "damping", type = "f32", default = 0.0, doc = "Springs: newton-seconds per meter, the drag on the stretch speed." },
     { name = "break_force", type = "f32", default = 0.0, doc = "Force (newtons) above which the joint breaks; 0 never breaks." },
     { name = "force", type = "f32", default = 0.0, doc = "Force the joint carried in the last step, written by the engine." },
-    { name = "axis", type = "vec3", default = [0.0, 0.0, 1.0], doc = "Hinge: the axis of rotation in this body's local frame." },
-    { name = "target_axis", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Hinge: the axis in the target's frame; zero takes the body's axis at the first step and writes it here." },
-    { name = "reference", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Hinge: a direction across the axis in the target's frame from which angle is measured; zero takes it at the first step and writes it here." },
-    { name = "limit", type = "bool", default = false, doc = "Hinge: keep angle between lower and upper (equal values lock the hinge)." },
-    { name = "lower", type = "f32", default = -1.5708, doc = "Hinge: lower angle limit in radians, when limit is set." },
-    { name = "upper", type = "f32", default = 1.5708, doc = "Hinge: upper angle limit in radians, when limit is set." },
-    { name = "motor_speed", type = "f32", default = 0.0, doc = "Hinge: the angular speed (radians per second) the motor drives the body to about the axis, relative to the target." },
+    { name = "axis", type = "vec3", default = [0.0, 0.0, 1.0], doc = "Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame." },
+    { name = "target_axis", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here." },
+    { name = "reference", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here." },
+    { name = "limit", type = "bool", default = false, doc = "Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them." },
+    { name = "lower", type = "f32", default = -1.5708, doc = "Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider." },
+    { name = "upper", type = "f32", default = 1.5708, doc = "Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider." },
+    { name = "motor_speed", type = "f32", default = 0.0, doc = "The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's." },
     { name = "motor_torque", type = "f32", default = 0.0, doc = "Hinge: the most torque the motor applies; 0 turns the motor off." },
+    { name = "motor_force", type = "f32", default = 0.0, doc = "Slider: the most force the motor applies along the axis; 0 turns the motor off." },
     { name = "angle", type = "f32", default = 0.0, doc = "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step." },
-    { name = "speed", type = "f32", default = 0.0, doc = "Hinge: the body's angular speed about the axis relative to the target, written by the engine every step." },
+    { name = "translation", type = "f32", default = 0.0, doc = "Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step." },
+    { name = "speed", type = "f32", default = 0.0, doc = "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's." },
 ]
 
 [[component]]
@@ -231,10 +250,11 @@ fields = [
 name = "Collider"
 doc = "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push."
 fields = [
-    { name = "shape", type = "i32", default = 0, doc = "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends)." },
+    { name = "shape", type = "i32", default = 0, doc = "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)." },
     { name = "size", type = "vec3", default = [0.5, 0.5, 0.5], doc = "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules." },
     { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Local offset of the shape center." },
     { name = "is_trigger", type = "bool", default = false, doc = "Overlap events only, no collision response." },
+    { name = "mesh", type = "string", default = "", doc = "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh." },
 ]
 
 [[component]]

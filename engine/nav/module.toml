@@ -1,0 +1,6 @@
+name = "pocket_nav"
+kind = "static_library"
+description = "Navigation: walkability grids baked from the static colliders (XZ) or from a tile map (XY, top-down or platformer with jump links), A* paths with string pulling, reachability and nearest-walkable queries for scripts and agents."
+sources = ["src/**/*.cpp"]
+public_include = ["include"]
+public_deps = ["pocket_core", "pocket_world", "pocket_physics", "pocket_assets"]

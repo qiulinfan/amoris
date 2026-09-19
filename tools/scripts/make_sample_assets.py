@@ -14,6 +14,7 @@ Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samp
 """
 import base64
 import json
+import math
 import os
 import struct
 import sys
@@ -449,7 +450,51 @@ def make_sprites(out):
     print("level.tmj", os.path.getsize(os.path.join(out, "level.tmj")), "bytes")
 
 
+def bowl(radius=2.5, k=0.25, rings=20, segments=48):
+    """A paraboloid bowl y = k * r^2 open to +Y: a mesh collider the physics sample's marble rolls
+    down. Normals from the analytic gradient, uvs from the footprint, front faces upward."""
+    positions, normals, uvs = [(0.0, 0.0, 0.0)], [(0.0, 1.0, 0.0)], [(0.5, 0.5)]
+    for i in range(1, rings + 1):
+        r = radius * i / rings
+        for j in range(segments):
+            a = 2 * math.pi * j / segments
+            x, z = r * math.cos(a), r * math.sin(a)
+            positions.append((x, k * r * r, z))
+            n = (-2 * k * x, 1.0, -2 * k * z)
+            l = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+            normals.append((n[0] / l, n[1] / l, n[2] / l))
+            uvs.append((x / (2 * radius) + 0.5, z / (2 * radius) + 0.5))
+    def idx(i, j):
+        return 0 if i == 0 else 1 + (i - 1) * segments + (j % segments)
+    def up(a, b, c):
+        # Wind so the face normal points to +Y (glTF front faces are counter-clockwise).
+        ax, ay, az = positions[a]
+        bx, by, bz = positions[b]
+        cx, cy, cz = positions[c]
+        ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az)
+        return (a, b, c) if ny >= 0 else (a, c, b)
+    indices = []
+    for j in range(segments):
+        indices.extend(up(0, idx(1, j), idx(1, j + 1)))
+    for i in range(1, rings):
+        for j in range(segments):
+            indices.extend(up(idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)))
+            indices.extend(up(idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)))
+    material = {"name": "bowl", "pbrMetallicRoughness": {"baseColorFactor": [0.55, 0.62, 0.7, 1], "metallicFactor": 0.1, "roughnessFactor": 0.6}}
+    return glb(positions, normals, uvs, indices, material, [{"name": "bowl"}])
+
+
+def make_physics(out):
+    os.makedirs(out, exist_ok=True)
+    doc, buf = bowl()
+    write_glb(os.path.join(out, "bowl.glb"), doc, buf)
+    print("bowl.glb", os.path.getsize(os.path.join(out, "bowl.glb")), "bytes")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--physics":
+        make_physics(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "physics", "assets"))
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "--sprites":
         make_sprites(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "sprites", "assets"))
         return

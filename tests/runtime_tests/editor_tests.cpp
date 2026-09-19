@@ -62,7 +62,7 @@ TEST_CASE("editor opens a project paused and shows its world", "[editor]") {
     s.set_paused(true);
     for (int i = 0; i < 3; ++i) ok(s.idle_frame());
     REQUIRE(s.tick() == 0);  // the project has not started: no ticks, no crates
-    REQUIRE(s.world().entity_count() == 19);
+    REQUIRE(s.world().entity_count() == 20);
     std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 3}}))["text"].get<std::string>();
     INFO(snap);
     REQUIRE(snap.find("toolbar") != std::string::npos);
@@ -121,7 +121,7 @@ TEST_CASE("editor inspector edits components and play/stop restores the scene", 
     ok(s.idle_frame());
     ok(s.command("ui.click", Json{{"id", find_named(s, "stop")}}));
     ok(s.idle_frame());
-    REQUIRE(s.world().entity_count() == 19);
+    REQUIRE(s.world().entity_count() == 20);
     t = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
     REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(1.25));
     Json contexts = ok(s.command("script.contexts", Json::object()));
@@ -130,7 +130,7 @@ TEST_CASE("editor inspector edits components and play/stop restores the scene", 
     ok(s.command("step", Json{{"ticks", 1}}));
     st = ok(s.command("state", Json::object()));
     REQUIRE_FALSE(st["state"].contains("dropped"));
-    REQUIRE(s.world().entity_count() == 19);  // stepping without the project spawns nothing
+    REQUIRE(s.world().entity_count() == 20);  // stepping without the project spawns nothing
     ok(s.finish());
 }
 
@@ -377,4 +377,25 @@ TEST_CASE("editor paints tiles in the scene pane and undoes the stroke", "[edito
     ok(s.command("ui.click", Json{{"x", px}, {"y", py}}));
     REQUIRE(gid_at(10, 5) == 0);
     ok(s.finish());
+}
+
+TEST_CASE("inspector shows list fields as JSON and takes them back", "[editor][layers]") {
+    app::Session s(editor_options("assets"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 20; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Arm")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 14}}))["text"].get<std::string>();
+    INFO(snap);
+    REQUIRE(snap.find("layers (0)") != std::string::npos);
+    // A layer added through the command shows up in the field once the inspector refreshes.
+    ok(s.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"mask", "root"}}));
+    for (int i = 0; i < 20; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Arm")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    snap = ok(s.command("ui.snapshot", Json{{"depth", 14}}))["text"].get<std::string>();
+    INFO(snap);
+    REQUIRE(snap.find("layers (1)") != std::string::npos);
+    REQUIRE(snap.find("\"clip\":\"nod\"") != std::string::npos);
 }

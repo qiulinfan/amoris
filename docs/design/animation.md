@@ -7,6 +7,8 @@ world.spawn("Hero", { components: { Transform: {}, MeshRenderer: { mesh: "assets
 animation.play(hero, "Run", { speed: 1.2 });          // a clip of the asset; loop is on by default
 animation.play(hero, "Jump", { loop: false });        // stops at its end with finished = true and animation.finished
 animation.play(hero, "Walk", { fade: 0.25 });         // cross-fades from whatever plays now over a quarter second
+animation.layer(hero, { clip: "Wave", mask: "spine" });   // the arms wave while the legs keep walking
+animation.layer(hero, { clip: "Breathe", additive: true, weight: 0.5 });   // a breath added onto whatever plays
 animation.clips(hero);                                // { clips: [{ name, duration }], skins: [{ joints }] }
 animation.pose(hero).joints.find((j) => j.name === "hand.R");   // world position and bone axis right now
 ```
@@ -27,8 +29,14 @@ The renderer uploads the joint matrices of every posed instance into one storage
 
 `animation.play(entity, clip, { fade })` keeps the outgoing clip in `Animator.from_clip` at its `from_time` and starts the new one; for `fade` seconds both clips are sampled and their node transforms blended (translations and scales linearly, rotations by shortest-path normalised lerp) with a smoothstep weight from the old to the new, then composed once. The outgoing clip keeps looping at the same speed, so a walk fading into a run keeps its feet moving. Nodes neither clip animates stay at rest; a node only one clip animates blends between that clip and the rest pose. When the fade ends the fields clear and the entity plays the new clip alone; playing without `fade` cuts. The fade counts simulated time, so it pauses with the game and replays exactly. A fade started during a fade drops the older clip (two clips blend at most).
 
+## Layers
+
+`Animator.layers` is a list of clips applied over the base clip (and over a cross-fade in progress), in order, each at its own `time`, `speed` and `loop`. `animation.layer(entity, {clip, mask, weight, additive, ...})` adds one, updates the layer already playing that clip, or takes an `index`; `{remove: true}` (or `animation.removeLayer`) takes it out. A layer's `mask` names nodes (comma separated) whose subtrees it may move; empty means every node the clip animates. `animation.layer` refuses clips and mask nodes the asset does not have.
+
+A blending layer moves each masked node the clip animates toward the clip's transform by `weight` (1 replaces, 0.5 sits halfway), so a wave on `spine` leaves the legs to the walk below. An additive layer takes the clip's change since its first frame (translation difference, rotation in the node's own frame, scale ratio), scales it by `weight`, and adds it onto the pose so far, so a breath or a lean sits on any base clip without replacing it; two copies of a 30-degree nod add to 60 degrees. Layers advance with the tick like the base clip, pause with `animation.stop` and with their own `playing`, and a non-looping layer stops on its last frame and emits `animation.finished` with its `layer` index. `animation.pose` lists the layers with their times and weights; `layers.0.weight` is a numeric path for `world.pack` and tweens; the layers are part of the state hash and of saves.
+
 ## Limits
 
-Morph targets, layered or additive blending (masks, more than two clips), root motion and inverse kinematics are not implemented. Node animations on unskinned meshes do not move anything yet (the geometry is baked): put a skin on what should move, or drive `Transform` from a script.
+Morph targets, root motion and inverse kinematics are not implemented; a layer's weight fades only by script (tween `layers.0.weight`). Node animations on unskinned meshes do not move anything yet (the geometry is baked): put a skin on what should move, or drive `Transform` from a script.
 
 `tests/evidence/rendering/animation.png` is the assets sample at half a second: the arm (a generated two-joint mesh, `samples/assets/assets/arm.glb`) bent to +45 degrees by its `wave` clip.

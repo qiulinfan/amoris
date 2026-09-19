@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pocket::world {
 
@@ -16,6 +17,25 @@ struct Color4 {
     float r = 1, g = 1, b = 1, a = 1;
     constexpr bool operator==(const Color4&) const = default;
 };
+
+// Records: the values held by list fields of components.
+/// One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers.
+struct AnimationLayer {
+    std::string clip = "";
+    float weight = 1.0f;
+    std::string mask = "";
+    bool additive = false;
+    bool playing = true;
+    bool loop = true;
+    float speed = 1.0f;
+    float time = 0.0f;
+    constexpr bool operator==(const AnimationLayer&) const = default;
+};
+void to_json(Json& j, const AnimationLayer& v);
+void from_json(const Json& j, AnimationLayer& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationLayer& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const AnimationLayer& v);
 
 /// Position, rotation and scale relative to the parent entity (or the world when there is no parent).
 struct Transform {
@@ -26,7 +46,7 @@ struct Transform {
 };
 void to_json(Json& j, const Transform& v);
 void from_json(const Json& j, Transform& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Transform& v, std::string_view path, float** out);
 
 /// World-space transform computed from the Transform hierarchy every tick. Read only.
@@ -38,7 +58,7 @@ struct WorldTransform {
 };
 void to_json(Json& j, const WorldTransform& v);
 void from_json(const Json& j, WorldTransform& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(WorldTransform& v, std::string_view path, float** out);
 
 /// Linear and angular velocity. The built-in motion system integrates Transform from it every tick.
@@ -49,7 +69,7 @@ struct Velocity {
 };
 void to_json(Json& j, const Velocity& v);
 void from_json(const Json& j, Velocity& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Velocity& v, std::string_view path, float** out);
 
 /// Hit points. Gameplay decides what zero means; the engine only stores and reports it.
@@ -60,7 +80,7 @@ struct Health {
 };
 void to_json(Json& j, const Health& v);
 void from_json(const Json& j, Health& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Health& v, std::string_view path, float** out);
 
 /// Seconds remaining before the entity is destroyed by the lifetime system.
@@ -70,7 +90,7 @@ struct Lifetime {
 };
 void to_json(Json& j, const Lifetime& v);
 void from_json(const Json& j, Lifetime& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Lifetime& v, std::string_view path, float** out);
 
 /// The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
@@ -85,7 +105,7 @@ struct Camera {
 };
 void to_json(Json& j, const Camera& v);
 void from_json(const Json& j, Camera& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Camera& v, std::string_view path, float** out);
 
 /// A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
@@ -98,7 +118,7 @@ struct Light {
 };
 void to_json(Json& j, const Light& v);
 void from_json(const Json& j, Light& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Light& v, std::string_view path, float** out);
 
 /// Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.
@@ -115,7 +135,7 @@ struct MeshRenderer {
 };
 void to_json(Json& j, const MeshRenderer& v);
 void from_json(const Json& j, MeshRenderer& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out);
 
 /// A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.
@@ -134,7 +154,7 @@ struct Sprite {
 };
 void to_json(Json& j, const Sprite& v);
 void from_json(const Json& j, Sprite& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Sprite& v, std::string_view path, float** out);
 
 /// Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.
@@ -151,7 +171,7 @@ struct SpriteAnimation {
 };
 void to_json(Json& j, const SpriteAnimation& v);
 void from_json(const Json& j, SpriteAnimation& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(SpriteAnimation& v, std::string_view path, float** out);
 
 /// Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back.
@@ -166,7 +186,7 @@ struct TileMap {
 };
 void to_json(Json& j, const TileMap& v);
 void from_json(const Json& j, TileMap& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(TileMap& v, std::string_view path, float** out);
 
 /// Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.
@@ -181,11 +201,12 @@ struct Animator {
     float fade_time = 0.0f;
     std::string from_clip = "";
     float from_time = 0.0f;
+    std::vector<AnimationLayer> layers = {};
     constexpr bool operator==(const Animator&) const = default;
 };
 void to_json(Json& j, const Animator& v);
 void from_json(const Json& j, Animator& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Animator& v, std::string_view path, float** out);
 
 /// Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once.
@@ -211,7 +232,7 @@ struct ParticleEmitter {
 };
 void to_json(Json& j, const ParticleEmitter& v);
 void from_json(const Json& j, ParticleEmitter& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out);
 
 /// Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.
@@ -222,7 +243,7 @@ struct Bounds {
 };
 void to_json(Json& j, const Bounds& v);
 void from_json(const Json& j, Bounds& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Bounds& v, std::string_view path, float** out);
 
 /// Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).
@@ -240,10 +261,10 @@ struct RigidBody {
 };
 void to_json(Json& j, const RigidBody& v);
 void from_json(const Json& j, RigidBody& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(RigidBody& v, std::string_view path, float** out);
 
-/// Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
+/// Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).
 struct Joint {
     std::int32_t kind = 0;
     std::string target = "";
@@ -251,6 +272,8 @@ struct Joint {
     Vec3 target_anchor{0.0f, 0.0f, 0.0f};
     float distance = -1.0f;
     bool rope = false;
+    float stiffness = 0.0f;
+    float damping = 0.0f;
     float break_force = 0.0f;
     float force = 0.0f;
     Vec3 axis{0.0f, 0.0f, 1.0f};
@@ -261,13 +284,15 @@ struct Joint {
     float upper = 1.5708f;
     float motor_speed = 0.0f;
     float motor_torque = 0.0f;
+    float motor_force = 0.0f;
     float angle = 0.0f;
+    float translation = 0.0f;
     float speed = 0.0f;
     constexpr bool operator==(const Joint&) const = default;
 };
 void to_json(Json& j, const Joint& v);
 void from_json(const Json& j, Joint& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Joint& v, std::string_view path, float** out);
 
 /// A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, moves along X then Y, resolves against solid cells (one-way tiles only from above), writes Transform.position and the contact flags, and emits body2d.landed. Scripts steer by writing velocity.
@@ -285,7 +310,7 @@ struct Body2D {
 };
 void to_json(Json& j, const Body2D& v);
 void from_json(const Json& j, Body2D& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Body2D& v, std::string_view path, float** out);
 
 /// Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.
@@ -294,11 +319,12 @@ struct Collider {
     Vec3 size{0.5f, 0.5f, 0.5f};
     Vec3 offset{0.0f, 0.0f, 0.0f};
     bool is_trigger = false;
+    std::string mesh = "";
     constexpr bool operator==(const Collider&) const = default;
 };
 void to_json(Json& j, const Collider& v);
 void from_json(const Json& j, Collider& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Collider& v, std::string_view path, float** out);
 
 /// A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.
@@ -314,7 +340,7 @@ struct AudioSource {
 };
 void to_json(Json& j, const AudioSource& v);
 void from_json(const Json& j, AudioSource& v);
-// Floats behind a numeric field path ("position", "position.x", "color"); 0 when the path is not numeric.
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(AudioSource& v, std::string_view path, float** out);
 
 struct FieldInfo {

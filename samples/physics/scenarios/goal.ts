@@ -23,3 +23,26 @@ scenario("the hatch drops to its stop and the paddle turns at its motor speed", 
         expect(physics.joints().find((j) => j.path === "/Hatch")?.at_limit).toBe(1);
     }, "hatch at its stop, paddle at speed");
 });
+
+scenario("the marble rolls down the bowl's triangles to its bottom and stays", (g) => {
+    g.until(() => g.state<number>("marbleOffset") < 0.3, { timeout: 4, label: "marble through the bottom" });
+    g.wait(7);   // it swings up the far side and back until the damping has taken the roll out
+    g.check(() => {
+        expect(g.state<number>("marbleOffset")).toBeLessThan(0.3);
+        expect(Math.abs(g.state<number>("marbleHeight") - 0.25)).toBeLessThan(0.12);
+        const hit = physics.raycast({ x: 2, y: 5, z: 8 }, { x: 0, y: -1, z: 0 }, 10);
+        expect(hit?.path).toBe("/Bowl");
+        expect(Math.abs((hit?.point.y ?? 0) - 1)).toBeLessThan(0.06);   // y = r^2 / 4 at r = 2
+    }, "marble resting at the bottom, rays see the bowl");
+});
+
+scenario("the lift rises to its stop and the bob settles at its spring's stretch", (g) => {
+    g.wait(6);
+    g.check(() => {
+        const lift = physics.joints().find((j) => j.path === "/Lift");
+        expect(Math.abs((lift?.translation ?? 0) - 2)).toBeLessThan(0.05);
+        expect(lift?.at_limit).toBe(1);
+        expect(Math.abs(g.state<number>("bobStretch") - 9.81 / 30)).toBeLessThan(0.05);
+        expect(g.count("joint.limit")).toBeGreaterThan(0);
+    }, "lift at its upper stop, bob stretched by its weight");
+});

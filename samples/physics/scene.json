@@ -600,6 +600,28 @@
       ]
     },
     {
+      "name": "Bowl",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 8
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/bowl.glb"
+        },
+        "RigidBody": {
+          "kind": 1,
+          "friction": 0.4
+        },
+        "Collider": {
+          "shape": 3
+        }
+      }
+    },
+    {
       "name": "Sun",
       "components": {
         "Transform": {

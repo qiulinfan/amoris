@@ -314,6 +314,96 @@ TEST_CASE("clips cross-fade and land on the new clip", "[runtime][animation]") {
     REQUIRE_FALSE(pb.contains("blend"));
 }
 
+TEST_CASE("animation layers mask, weigh and add clips over the base", "[runtime][animation][layers]") {
+    auto make = [] {
+        app::Options o;
+        o.project_dir = root() / "samples" / "assets";
+        o.bundle = root() / "build" / "ts" / "assets.js";
+        o.project_config = o.bundle.string() + ".project.json";
+        o.headless = true;
+        o.frames = 1000;
+        o.width = 160;
+        o.height = 90;
+        o.log_level = "warn";
+        return o;
+    };
+    auto axis = [](app::Session& s, int joint) { return s.command("animation.pose", Json{{"entity", "Arm"}}).value()["joints"][joint]["axis_y"]; };
+    // The scene plays "wave" (the tip about Z). "nod" tilts the root about X: 30 degrees at 0.75 s.
+    app::Session plain(make()), masked(make()), half(make()), full(make());
+    for (app::Session* s : {&plain, &masked, &half, &full}) REQUIRE(s->start().has_value());
+    // Errors: unknown clips and mask nodes are refused before anything changes.
+    REQUIRE(masked.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "sprint"}}).has_value() == false);
+    REQUIRE(masked.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"mask", "elbow"}}).error().code == "no_such_node");
+    REQUIRE(masked.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"remove", true}}).error().code == "no_such_layer");
+    // A mask of "tip" keeps nod (which moves the root) from moving anything; "root" lets it through.
+    Json m = masked.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"mask", "tip"}}).value();
+    REQUIRE(m["layers"].size() == 1);
+    REQUIRE(m["layers"][0]["clip"] == "nod");
+    REQUIRE(m["layers"][0]["mask"] == "tip");
+    REQUIRE(half.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"mask", "root"}, {"weight", 0.5}}).has_value());
+    REQUIRE(full.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"mask", " root "}}).has_value());
+    for (int i = 0; i < 45; ++i) {
+        for (app::Session* s : {&plain, &masked, &half, &full}) REQUIRE(s->frame().has_value());
+    }
+    Json root_plain = axis(plain, 0), root_masked = axis(masked, 0), root_half = axis(half, 0), root_full = axis(full, 0);
+    INFO("root plain " << root_plain.dump() << " masked " << root_masked.dump() << " half " << root_half.dump() << " full " << root_full.dump());
+    REQUIRE(root_plain["y"].get<double>() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(root_masked["y"].get<double>() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(root_full["y"].get<double>() == Catch::Approx(std::cos(30.0 * M_PI / 180.0)).margin(0.02));
+    REQUIRE(std::abs(root_full["z"].get<double>()) == Catch::Approx(std::sin(30.0 * M_PI / 180.0)).margin(0.02));
+    REQUIRE(root_half["y"].get<double>() == Catch::Approx(std::cos(15.0 * M_PI / 180.0)).margin(0.02));
+    // The base wave keeps its time underneath the layer (at 0.75 s it passes through 0 degrees),
+    // so the tip's axis follows the root's tilt; the pose lists the layer.
+    Json pose = full.command("animation.pose", Json{{"entity", "Arm"}}).value();
+    REQUIRE(pose["layers"].size() == 1);
+    REQUIRE(pose["layers"][0]["time"].get<double>() == Catch::Approx(0.75).margin(1e-3));
+    REQUIRE(pose["clip"] == "wave");
+    REQUIRE(pose["time"].get<double>() == Catch::Approx(0.75).margin(1e-3));
+    REQUIRE(std::abs(axis(full, 1)["z"].get<double>()) == Catch::Approx(0.5).margin(0.02));
+    REQUIRE(std::abs(axis(plain, 1)["z"].get<double>()) < 0.02);
+    // Additive: nod on top of nod doubles the tilt (the change since the clip's first frame).
+    app::Session once(make()), twice(make());
+    REQUIRE(once.start().has_value());
+    REQUIRE(twice.start().has_value());
+    REQUIRE(once.command("animation.play", Json{{"entity", "Arm"}, {"clip", "nod"}}).has_value());
+    REQUIRE(twice.command("animation.play", Json{{"entity", "Arm"}, {"clip", "nod"}}).has_value());
+    REQUIRE(twice.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"additive", true}}).has_value());
+    for (int i = 0; i < 45; ++i) {
+        REQUIRE(once.frame().has_value());
+        REQUIRE(twice.frame().has_value());
+    }
+    Json r1 = axis(once, 0), r2 = axis(twice, 0);
+    INFO("once " << r1.dump() << " twice " << r2.dump());
+    REQUIRE(r1["y"].get<double>() == Catch::Approx(std::cos(30.0 * M_PI / 180.0)).margin(0.02));
+    REQUIRE(r2["y"].get<double>() == Catch::Approx(std::cos(60.0 * M_PI / 180.0)).margin(0.02));
+    REQUIRE(std::abs(r2["z"].get<double>()) == Catch::Approx(std::sin(60.0 * M_PI / 180.0)).margin(0.02));
+    // Layer bookkeeping: a one-shot layer finishes with its index, stop pauses layers, remove drops them.
+    REQUIRE(twice.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "wave"}, {"loop", false}, {"speed", 4.0}, {"mask", "tip"}}).value()["layers"].size() == 2);
+    for (int i = 0; i < 20; ++i) REQUIRE(twice.frame().has_value());
+    Json a = twice.command("world.get", Json{{"entity", "Arm"}, {"component", "Animator"}}).value();
+    REQUIRE(a["layers"][1]["playing"] == false);
+    REQUIRE(a["layers"][1]["time"].get<double>() == Catch::Approx(1.0));
+    Json ev = twice.command("events.recent", Json{{"limit", 20}, {"type", "animation.finished"}}).value();
+    REQUIRE(ev.size() >= 1);
+    REQUIRE(ev.back()["data"]["layer"].get<int>() == 1);
+    REQUIRE(ev.back()["data"]["clip"] == "wave");
+    Json stopped = twice.command("animation.stop", Json{{"entity", "Arm"}}).value();
+    REQUIRE(stopped["layers"][0]["playing"] == false);
+    // Updating by clip name changes the layer in place; index 0 removal shifts the rest down.
+    REQUIRE(twice.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"weight", 0.25}}).value()["layers"][0]["weight"].get<double>() == Catch::Approx(0.25));
+    Json fewer = twice.command("animation.layer", Json{{"entity", "Arm"}, {"index", 0}, {"remove", true}}).value();
+    REQUIRE(fewer["layers"].size() == 1);
+    REQUIRE(fewer["layers"][0]["clip"] == "wave");
+    REQUIRE(twice.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "wave"}, {"remove", true}}).value()["layers"].empty());
+    // Typed access reaches into the list: layers.0.weight is a numeric path.
+    REQUIRE(twice.command("animation.layer", Json{{"entity", "Arm"}, {"clip", "nod"}, {"weight", 0.5}}).has_value());
+    Json packed = twice.command("world.pack", Json{{"component", "Animator"}, {"fields", Json::array({"layers.0.weight"})}, {"name", "Arm"}}).value();
+    INFO(packed.dump());
+    REQUIRE(packed["count"].get<int>() == 1);
+    REQUIRE(packed["stride"].get<int>() == 1);
+    REQUIRE(packed["layout"]["layers.0.weight"].get<int>() == 0);
+}
+
 TEST_CASE("particles spawn, draw, burst and hash deterministically", "[runtime][particles]") {
     auto make = [](std::uint64_t seed) {
         app::Options o;
@@ -398,7 +488,7 @@ TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime]
     REQUIRE(worst < 0.06f);
     Json joints = s.command("physics.joints", Json::object()).value();
     INFO(joints.dump());
-    REQUIRE(joints.size() == 6);  // three links, the lantern's rope, the hatch and the paddle
+    REQUIRE(joints.size() == 8);  // three links, the lantern's rope, the hatch, the paddle, the lift and the bob
     bool chain_loaded = false;
     for (const auto& j : joints) {
         if (j["path"] == "/Link1") {
@@ -409,17 +499,17 @@ TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime]
     }
     REQUIRE(chain_loaded);
     REQUIRE(s.command("world.has", Json{{"entity", "/Lantern"}, {"component", "Joint"}}).value() == true);
-    REQUIRE(s.command("physics.stats", Json::object()).value()["joints"].get<int>() == 6);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["joints"].get<int>() == 8);
     // The kick at tick 240 snaps the rope: the joint is gone, the event says so, the lantern falls.
     for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
     REQUIRE(s.command("world.has", Json{{"entity", "/Lantern"}, {"component", "Joint"}}).value() == false);
     Json hist = s.command("events.histogram", Json::object()).value();
     REQUIRE(hist["joint.broken"].get<int>() == 1);
-    REQUIRE(s.command("physics.joints", Json::object()).value().size() == 5);  // the rope is gone; the hinges stay
+    REQUIRE(s.command("physics.joints", Json::object()).value().size() == 7);  // the rope is gone; the hinges, the slider and the spring stay
     REQUIRE(length(position("/Lantern") - position("/Beam")) > 2.0f);  // flew off, no longer tethered at 1.5
     Json state = s.command("state", Json::object()).value()["state"];
     REQUIRE(state["ropeIntact"] == false);
-    REQUIRE(state["joints"].get<int>() == 5);
+    REQUIRE(state["joints"].get<int>() == 7);
     // The capsule log came to rest on its side.
     REQUIRE(position("/Log").y == Catch::Approx(0.35f).margin(0.05f));
 }
@@ -887,4 +977,56 @@ TEST_CASE("a perception benchmark answers through the instruments and meters wha
     REQUIRE(b["ticks"].get<int>() > 60);
     REQUIRE(b["frame_tokens"].get<int>() == b["ticks"].get<int>() * 692);   // 960x540 images at a token per 750 pixels
     REQUIRE(b["ratio"].get<double>() > 10.0);
+}
+
+TEST_CASE("the playground bakes a navigation grid and its enemies path around the pillars", "[runtime][nav]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 150; ++i) REQUIRE(s.frame().has_value());
+    Json info = s.command("nav.info", Json::object()).value();
+    INFO(info.dump());
+    REQUIRE(info["baked"] == true);
+    REQUIRE(info["source"] == "colliders");
+    REQUIRE(info["walkable"].get<int>() > 1000);
+    REQUIRE(info["walkable"].get<int>() < info["cells"].get<int>());
+    // A straight line from the south-east corner to the player crosses the south-east pillar; the
+    // path bends around it and never enters one (the pillars stand on the diagonals at (+-2.5, +-2.5)).
+    Json path = s.command("nav.path", Json{{"from", Json{{"x", 6.0}, {"y", 0.0}, {"z", 6.0}}}, {"to", "/Level/Player"}}).value();
+    INFO(path.dump());
+    REQUIRE(path["partial"] == false);
+    REQUIRE(path["points"].size() > 2);
+    for (const Json& pt : path["points"]) {
+        double x = pt["x"].get<double>(), z = pt["z"].get<double>();
+        bool in_pillar = std::fabs(std::fabs(x) - 2.5) < 0.95 && std::fabs(std::fabs(z) - 2.5) < 0.95;
+        REQUIRE_FALSE(in_pillar);
+    }
+    REQUIRE(path["length"].get<double>() > 8.5);
+    REQUIRE(s.command("nav.reachable", Json{{"from", Json{{"x", 6.0}, {"y", 0.0}, {"z", 6.0}}}, {"to", Json{{"x", 2.5}, {"y", 0.0}, {"z", 2.5}}}}).value()["reachable"] == false);
+    REQUIRE(s.command("nav.reachable", Json{{"from", Json{{"x", 6.0}, {"y", 0.0}, {"z", 6.0}}}, {"to", Json{{"x", -6.0}, {"y", 0.0}, {"z", -6.0}}}}).value()["reachable"] == true);
+    // The nearest walkable ground to a pillar's center is beside it, not its top (1.5 up).
+    Json near = s.command("nav.nearest", Json{{"point", Json{{"x", 2.5}, {"y", 0.0}, {"z", 2.5}}}, {"radius", 2.0}}).value();
+    REQUIRE_FALSE(near.is_null());
+    REQUIRE(std::hypot(near["x"].get<double>() - 2.5, near["z"].get<double>() - 2.5) > 0.9);
+    REQUIRE(near["y"].get<double>() == Catch::Approx(0.0).margin(0.01));
+    REQUIRE(s.command("nav.path", Json{{"from", Json{{"x", 60.0}, {"y", 0.0}, {"z", 0.0}}}, {"to", "/Level/Player"}}).error().code == "outside");
+    // The script steered enemies along paths with corners, and the overlay draws the grid and the paths.
+    Json st = s.command("state", Json::object()).value()["state"];
+    REQUIRE(st["nav.cells"].get<int>() == info["walkable"].get<int>());
+    REQUIRE(st["nav.detours"].get<int>() > 0);
+    REQUIRE(s.command("render.debug", Json{{"nav", true}}).value()["nav"] == true);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["debug_lines"].get<int>() > 1000);
+    bool baked_event = false;
+    for (const Json& e : s.command("events.since", Json{{"seq", 0}, {"type", "nav.baked"}, {"limit", 5}}).value()["events"]) baked_event = baked_event || e["data"]["source"] == "colliders";
+    REQUIRE(baked_event);
+    REQUIRE(s.finish().has_value());
 }

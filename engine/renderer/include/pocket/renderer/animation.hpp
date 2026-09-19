@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pocket::renderer {
@@ -31,6 +32,8 @@ class Animation {
     static void sample(const assets::Mesh& mesh, const assets::AnimationClip* clip, float time, Pose& out);
     // Sample two clips and blend their node transforms (weight 0 = a, 1 = b) before composing.
     static void blend(const assets::Mesh& mesh, const assets::AnimationClip* a, float time_a, const assets::AnimationClip* b, float time_b, float weight, Pose& out);
+    // The node names of a layer mask ("spine, head" -> spine, head); empty for an empty mask.
+    static std::vector<std::string> mask_names(std::string_view mask);
 
    private:
     std::map<world::EntityId, Pose> poses_;

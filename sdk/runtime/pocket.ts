@@ -15,14 +15,16 @@ declare const __pocket: {
 
 export { world, render, command, transcript } from "./world";
 export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity, Packed, VisibleEntity } from "./world";
-export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
-export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
+export type { ComponentName, Components, Records, AnimationLayer, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
+export { componentNames, componentDefaults, recordDefaults, derivedComponents } from "./generated/components";
 export { events } from "./events";
 export type { WorldEvent } from "./events";
 export { recorder } from "./recorder";
 export { scenario } from "./scenario";
 export type { ScenarioTools } from "./scenario";
 export { bench, imageTokens } from "./bench";
+export { nav } from "./nav";
+export type { NavPath, NavInfo, NavPoint } from "./nav";
 export type { BenchTools, BenchRecord } from "./bench";
 export { expect, ExpectationError } from "./expect";
 export { debug } from "./debug";

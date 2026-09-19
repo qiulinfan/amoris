@@ -24,7 +24,7 @@ export interface JointState {
     path: string;
     /** Path of the other body or fixed entity; empty for a world point. */
     target: string;
-    /** 0 distance (rod or rope), 1 ball, 2 hinge. */
+    /** 0 distance (rod, rope or spring), 1 ball, 2 hinge, 3 slider. */
     kind: number;
     /** Rest length of a distance joint. */
     length: number;
@@ -34,11 +34,15 @@ export interface JointState {
     force: number;
     /** Hinges: the body's rotation about the axis relative to the target (radians). */
     angle?: number;
-    /** Hinges: angular speed about the axis relative to the target (radians per second). */
+    /** Sliders: the body's anchor along the axis from the target's anchor (meters). */
+    translation?: number;
+    /** Hinges and sliders: speed relative to the target (radians per second about the axis, or meters per second along it). */
     speed?: number;
     /** Hinges: what the motor applied in the last step. */
     torque?: number;
-    /** Hinges: -1 at the lower limit, 1 at the upper, 2 locked, 0 free. */
+    /** Sliders: what the motor applied in the last step (newtons). */
+    motor_force?: number;
+    /** Hinges and sliders: -1 at the lower limit, 1 at the upper, 2 locked, 0 free. */
     at_limit?: number;
 }
 
@@ -67,7 +71,7 @@ export const physics = {
     contacts(): Array<{ a: string; b: string; point: Vec3; normal: Vec3; depth: number; trigger: boolean }> {
         return command("physics.contacts");
     },
-    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; gravity: Vec3 } {
+    stats(): { bodies: number; awake: number; pairs: number; contacts: number; begins: number; ends: number; joints: number; broken: number; meshes: number; triangles: number; gravity: Vec3 } {
         return command("physics.stats");
     },
     /** Every joint solved in the last step, with the force it carried. */

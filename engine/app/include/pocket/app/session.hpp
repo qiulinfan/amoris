@@ -7,6 +7,7 @@
 #include <pocket/assets/assets.hpp>
 #include <pocket/audio/audio.hpp>
 #include <pocket/core/core.hpp>
+#include <pocket/nav/nav.hpp>
 #include <pocket/physics/physics.hpp>
 #include <pocket/physics/tiles.hpp>
 #include <pocket/platform/platform.hpp>
@@ -81,6 +82,7 @@ class Session {
     void build_debug_draw();
     Result<Json> render_command(std::string_view op, const Json& p);
     Result<Json> physics_command(std::string_view op, const Json& p);
+    Result<Json> nav_command(std::string_view op, const Json& p);
     Result<Json> sprite_command(std::string_view op, const Json& p);
     Result<Json> particles_command(std::string_view op, const Json& p);
     Result<Json> animation_command(std::string_view op, const Json& p);
@@ -106,8 +108,10 @@ class Session {
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<physics::Physics2D> physics2d_;
+    nav::Nav nav_;
+    std::vector<std::vector<Vec3>> nav_paths_;  // the last paths asked for, drawn by the nav overlay
     world::Recorder recorder_;
-    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false; } debug_flags_;
+    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false, nav = false; } debug_flags_;
     struct DebugShape {
         int kind = 0;  // 0 line, 1 box, 2 sphere
         Vec3 a, b;     // line ends; box center + half; sphere center (radius in b.x)

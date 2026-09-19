@@ -1,8 +1,9 @@
 // Physics sample: boxes and spheres dropped onto a ground and a ramp, a trigger volume as the
 // goal, contacts reported as events, a pendulum chain of distance joints, a lantern on a rope
-// that snaps when kicked, a capsule log, a hatch on a limited hinge and a paddle turned by a
-// hinge motor. Everything an agent needs to know is in the exposed state and the event log: how
-// many bodies rest, which reached the goal, what collided with what, what each joint carries.
+// that snaps when kicked, a capsule log, a hatch on a limited hinge, a paddle turned by a hinge
+// motor, and a marble rolling down a bowl whose collider is the bowl's own triangles. Everything
+// an agent needs to know is in the exposed state and the event log: how many bodies rest, which
+// reached the goal, what collided with what, what each joint carries.
 import { events, expose, log, onContacts, onStart, onTick, physics, random, setClearColor, world } from "pocket";
 
 const spawned: number[] = [];
@@ -43,7 +44,37 @@ onStart(() => {
             Joint: { kind: 2, target_anchor: { x: 8, y: 1.5, z: 4 }, axis: { x: 0, y: 1, z: 0 }, motor_speed: 3, motor_torque: 4 },
         },
     });
-    log("physics sample", { bodies: physics.stats().bodies });
+    // A marble dropped off-center into the bowl (a mesh collider, assets/bowl.glb): it rolls down
+    // the triangles to the bottom; a little linear damping stands in for rolling resistance.
+    world.spawn("Marble", {
+        components: {
+            Transform: { position: { x: 1.6, y: 4, z: 8 }, scale: { x: 0.5, y: 0.5, z: 0.5 } },
+            MeshRenderer: { mesh: "sphere", color: { r: 0.95, g: 0.3, b: 0.35, a: 1 } },
+            RigidBody: { kind: 0, mass: 0.3, restitution: 0.1, friction: 0.4, linear_damping: 0.8 },
+            Collider: { shape: 1, size: { x: 0.25, y: 0.25, z: 0.25 } },
+        },
+    });
+    // A lift on a slider: it may only move up and down a two-meter rail, and its motor drives
+    // it up until the upper limit stops it. A bob hanging from a world point on a spring.
+    world.spawn("Lift", {
+        components: {
+            Transform: { position: { x: -10, y: 0.6, z: 8 }, scale: { x: 1.2, y: 0.2, z: 1.2 } },
+            MeshRenderer: { mesh: "cube", color: { r: 0.4, g: 0.75, b: 0.8, a: 1 } },
+            RigidBody: { kind: 0, mass: 2 },
+            Collider: { shape: 0, size: { x: 0.6, y: 0.1, z: 0.6 } },
+            Joint: { kind: 3, target_anchor: { x: -10, y: 0.6, z: 8 }, axis: { x: 0, y: 1, z: 0 }, limit: true, lower: 0, upper: 2, motor_speed: 0.5, motor_force: 60 },
+        },
+    });
+    world.spawn("Bob", {
+        components: {
+            Transform: { position: { x: -3, y: 4, z: -7 }, scale: { x: 0.4, y: 0.4, z: 0.4 } },
+            MeshRenderer: { mesh: "sphere", color: { r: 0.85, g: 0.85, b: 0.3, a: 1 } },
+            RigidBody: { kind: 0, mass: 1 },
+            Collider: { shape: 1, size: { x: 0.2, y: 0.2, z: 0.2 } },
+            Joint: { kind: 0, target_anchor: { x: -3, y: 5, z: -7 }, distance: 1, stiffness: 30, damping: 1.5 },
+        },
+    });
+    log("physics sample", { bodies: physics.stats().bodies, meshes: physics.stats().meshes });
 });
 
 onTick(({ time, tick, dt }) => {
@@ -99,6 +130,22 @@ expose("inGoal", () => inGoal.size);
 expose("firstInGoal", () => firstInGoal);
 expose("contacts", () => contactsThisTick);
 expose("ray", () => lastRayHit);
+// The marble's distance from the bowl's axis and its height over the bowl's bottom (0, 0, 8).
+expose("marbleOffset", () => {
+    const m = world.find("Marble");
+    const p = m === undefined ? undefined : world.get(m, "Transform")?.position;
+    return p ? Number(Math.hypot(p.x, p.z - 8).toFixed(3)) : 99;
+});
+expose("liftHeight", () => Number((physics.joints().find((j) => j.path === "/Lift")?.translation ?? 0).toFixed(3)));
+expose("bobStretch", () => {
+    const j = physics.joints().find((j) => j.path === "/Bob");
+    return j ? Number((j.current - j.length).toFixed(3)) : 0;
+});
+expose("marbleHeight", () => {
+    const m = world.find("Marble");
+    const p = m === undefined ? undefined : world.get(m, "Transform")?.position;
+    return p ? Number(p.y.toFixed(3)) : 99;
+});
 expose("lowest", () => {
     let low = 100;
     for (const r of world.query({ with: ["RigidBody", "Transform"], fields: ["Transform", "RigidBody"] })) {

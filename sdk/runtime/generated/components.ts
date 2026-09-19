@@ -6,6 +6,26 @@ export interface Vec4 { x: number; y: number; z: number; w: number }
 export interface Quat { x: number; y: number; z: number; w: number }
 export interface Color { r: number; g: number; b: number; a: number }
 
+/** One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers. */
+export interface AnimationLayer {
+    /** Clip name from the asset (animation.clips lists them). */
+    clip: string;
+    /** 0..1: how much of the layer shows (the blend factor, or the scale of an additive change). */
+    weight: number;
+    /** Node names, comma separated, whose subtrees the layer may move; empty means every node the clip animates. */
+    mask: string;
+    /** Add the clip's change since its first frame onto the pose so far instead of blending toward the clip. */
+    additive: boolean;
+    /** Whether the layer's time advances; animation.stop clears it with the base clip's. */
+    playing: boolean;
+    /** Wrap at the end (else stop on the last frame and emit animation.finished with the layer index). */
+    loop: boolean;
+    /** Playback rate multiplier. */
+    speed: number;
+    /** Seconds into the clip; advanced by the engine, writable to seek. */
+    time: number;
+}
+
 /** Position, rotation and scale relative to the parent entity (or the world when there is no parent). */
 export interface Transform {
     /** Local position in meters. */
@@ -178,6 +198,8 @@ export interface Animator {
     from_clip: string;
     /** Seconds into from_clip, advanced by the engine. */
     from_time: number;
+    /** Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). */
+    layers: AnimationLayer[];
 }
 
 /** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end. Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once. */
@@ -248,9 +270,9 @@ export interface RigidBody {
     lock_rotation: boolean;
 }
 
-/** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
+/** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
 export interface Joint {
-    /** 0 distance (rod, or rope when rope is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only). */
+    /** 0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target). */
     kind: number;
     /** Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. */
     target: string;
@@ -262,29 +284,37 @@ export interface Joint {
     distance: number;
     /** Distance joints only: pull when the anchors are farther than distance, never push. */
     rope: boolean;
+    /** Distance joints: newtons per meter of stretch; above 0 the rod is a spring (a bungee with rope) instead of a rigid length. */
+    stiffness: number;
+    /** Springs: newton-seconds per meter, the drag on the stretch speed. */
+    damping: number;
     /** Force (newtons) above which the joint breaks; 0 never breaks. */
     break_force: number;
     /** Force the joint carried in the last step, written by the engine. */
     force: number;
-    /** Hinge: the axis of rotation in this body's local frame. */
+    /** Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame. */
     axis: Vec3;
-    /** Hinge: the axis in the target's frame; zero takes the body's axis at the first step and writes it here. */
+    /** Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here. */
     target_axis: Vec3;
-    /** Hinge: a direction across the axis in the target's frame from which angle is measured; zero takes it at the first step and writes it here. */
+    /** Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here. */
     reference: Vec3;
-    /** Hinge: keep angle between lower and upper (equal values lock the hinge). */
+    /** Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them. */
     limit: boolean;
-    /** Hinge: lower angle limit in radians, when limit is set. */
+    /** Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider. */
     lower: number;
-    /** Hinge: upper angle limit in radians, when limit is set. */
+    /** Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider. */
     upper: number;
-    /** Hinge: the angular speed (radians per second) the motor drives the body to about the axis, relative to the target. */
+    /** The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's. */
     motor_speed: number;
     /** Hinge: the most torque the motor applies; 0 turns the motor off. */
     motor_torque: number;
+    /** Slider: the most force the motor applies along the axis; 0 turns the motor off. */
+    motor_force: number;
     /** Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step. */
     angle: number;
-    /** Hinge: the body's angular speed about the axis relative to the target, written by the engine every step. */
+    /** Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step. */
+    translation: number;
+    /** The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's. */
     speed: number;
 }
 
@@ -312,7 +342,7 @@ export interface Body2D {
 
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
 export interface Collider {
-    /** 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends). */
+    /** 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other). */
     shape: number;
     /** Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules. */
     size: Vec3;
@@ -320,6 +350,8 @@ export interface Collider {
     offset: Vec3;
     /** Overlap events only, no collision response. */
     is_trigger: boolean;
+    /** For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh. */
+    mesh: string;
 }
 
 /** A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots. */
@@ -379,14 +411,23 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0 },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [] },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false },
-    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, angle: 0, speed: 0 },
+    Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0 },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false },
-    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false },
+    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "" },
     AudioSource: { clip: "", volume: 1, pitch: 1, loop: false, autoplay: false, playing: false, voice: 0 },
+};
+
+/** Records: the values inside list fields, with their defaults. */
+export interface Records {
+    AnimationLayer: AnimationLayer;
+}
+
+export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
+    AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

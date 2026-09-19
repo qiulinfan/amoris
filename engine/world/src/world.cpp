@@ -619,26 +619,40 @@ Json World::schema() {
     return j;
 }
 
+namespace {
+
+// Floats behind each field: measured on the default value, or, for a list element the default
+// does not have, on the first candidate entity that has it. 0 when nothing answers.
+std::vector<std::size_t> field_sizes(flecs::world& ecs, const ComponentOps* op, const std::vector<std::string>& fields, const std::vector<EntityId>& candidates) {
+    std::vector<std::size_t> sizes(fields.size(), 0);
+    flecs::entity probe = ecs.entity();
+    op->set(probe, Json::object());
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        float* p = nullptr;
+        sizes[i] = op->span(probe, fields[i], &p);
+    }
+    probe.destruct();
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (sizes[i] != 0) continue;
+        for (EntityId id : candidates) {
+            flecs::entity e = ecs.entity(id);
+            if (!live(e) || !op->has(e)) continue;
+            float* p = nullptr;
+            if (std::size_t n = op->span(e, fields[i], &p); n != 0) {
+                sizes[i] = n;
+                break;
+            }
+        }
+    }
+    return sizes;
+}
+
+}  // namespace
+
 Result<World::PackInfo> World::pack(std::string_view component, const std::vector<std::string>& fields, const QueryOptions& options, std::vector<float>& data, std::vector<double>& ids) const {
     const ComponentOps* op = find_ops(component);
     if (!op) return fail("no_such_component", "unknown component '{}'", component);
     if (fields.empty()) return fail("bad_args", "pack needs at least one field");
-    PackInfo info;
-    // Field sizes from the default value.
-    {
-        flecs::entity probe = impl_->ecs.entity();
-        op->set(probe, Json::object());
-        for (const auto& f : fields) {
-            float* p = nullptr;
-            std::size_t n = op->span(probe, f, &p);
-            if (n == 0) { probe.destruct(); return fail("bad_args", "{}.{} is not a numeric float field", component, f); }
-            info.layout.emplace_back(f, info.stride);
-            info.stride += n;
-        }
-        probe.destruct();
-    }
-    // Match like query() does (tree order, with/without/name/under/limit) but copy floats
-    // straight out of the components instead of building JSON rows.
     std::vector<const ComponentOps*> with, without;
     for (const auto& n : options.with) {
         const ComponentOps* o = find_ops(n);
@@ -650,10 +664,9 @@ Result<World::PackInfo> World::pack(std::string_view component, const std::vecto
         if (!o) return fail("no_such_component", "unknown component '{}'", n);
         without.push_back(o);
     }
-    data.clear();
-    ids.clear();
+    // Match like query() does (tree order, with/without/name/under/limit).
+    std::vector<EntityId> matched;
     std::vector<EntityId> starts = options.under ? children(options.under) : roots();
-    int count = 0;
     bool truncated = false;
     for (EntityId r : starts) {
         if (truncated) break;
@@ -664,51 +677,62 @@ Result<World::PackInfo> World::pack(std::string_view component, const std::vecto
             for (auto* o : with) if (!o->has(e)) return true;
             for (auto* o : without) if (o->has(e)) return true;
             if (!options.name.empty() && !glob_match(options.name, name(id))) return true;
-            if (count >= options.limit) { truncated = true; return false; }
-            ids.push_back(static_cast<double>(id));
-            for (const auto& f : fields) {
-                float* p = nullptr;
-                std::size_t n = op->span(e, f, &p);
-                data.insert(data.end(), p, p + n);
-            }
-            ++count;
+            if (static_cast<int>(matched.size()) >= options.limit) { truncated = true; return false; }
+            matched.push_back(id);
             return true;
         });
     }
-    info.count = static_cast<std::size_t>(count);
+    // Field sizes from the default value, or from a matched entity for list elements.
+    std::vector<std::size_t> sizes = field_sizes(impl_->ecs, op, fields, matched);
+    PackInfo info;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (sizes[i] == 0) return fail("bad_args", "{}.{} is not a numeric float field", component, fields[i]);
+        info.layout.emplace_back(fields[i], info.stride);
+        info.stride += sizes[i];
+    }
+    // Copy floats straight out of the components instead of building JSON rows; a list element
+    // an entity lacks reads as zeros.
+    data.clear();
+    ids.clear();
+    for (EntityId id : matched) {
+        flecs::entity e = impl_->ecs.entity(id);
+        ids.push_back(static_cast<double>(id));
+        for (std::size_t i = 0; i < fields.size(); ++i) {
+            float* p = nullptr;
+            std::size_t n = op->span(e, fields[i], &p);
+            if (n == sizes[i] && p) data.insert(data.end(), p, p + n);
+            else data.insert(data.end(), sizes[i], 0.0f);
+        }
+    }
+    info.count = matched.size();
     return info;
 }
 
 Status World::unpack(std::string_view component, const std::vector<std::string>& fields, const double* ids, std::size_t count, const float* data) {
     const ComponentOps* op = find_ops(component);
     if (!op) return fail("no_such_component", "unknown component '{}'", component);
-    std::size_t written = 0;
-    for (std::size_t i = 0; i < count; ++i) {
-        auto id = static_cast<EntityId>(ids[i]);
-        flecs::entity e = impl_->ecs.entity(id);
-        const float* src = data;
-        bool ok = live(e) && op->has(e);
-        std::size_t stride = 0;
-        for (const auto& f : fields) {
-            float* p = nullptr;
-            std::size_t n = 0;
-            if (ok) n = op->span(e, f, &p);
-            else {
-                // Measure on a probe so the stride stays consistent for dead rows.
-                flecs::entity probe = impl_->ecs.entity();
-                op->set(probe, Json::object());
-                n = op->span(probe, f, &p);
-                probe.destruct();
-                p = nullptr;
-            }
-            if (n == 0) return fail("bad_args", "{}.{} is not a numeric float field", component, f);
-            if (p) std::copy_n(src + stride, n, p);
-            stride += n;
-        }
-        data += stride;
-        if (ok) { op->modified(e); ++written; }
+    std::vector<EntityId> given;
+    given.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) given.push_back(static_cast<EntityId>(ids[i]));
+    std::vector<std::size_t> sizes = field_sizes(impl_->ecs, op, fields, given);
+    std::size_t stride = 0;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (sizes[i] == 0) return fail("bad_args", "{}.{} is not a numeric float field", component, fields[i]);
+        stride += sizes[i];
     }
-    (void)written;
+    for (std::size_t i = 0; i < count; ++i) {
+        flecs::entity e = impl_->ecs.entity(given[i]);
+        if (!live(e) || !op->has(e)) continue;  // dead rows keep their stride
+        const float* src = data + i * stride;
+        std::size_t off = 0;
+        for (std::size_t j = 0; j < fields.size(); ++j) {
+            float* p = nullptr;
+            std::size_t n = op->span(e, fields[j], &p);
+            if (n == sizes[j] && p) std::copy_n(src + off, n, p);  // a missing list element is left alone
+            off += sizes[j];
+        }
+        op->modified(e);
+    }
     return {};
 }
 

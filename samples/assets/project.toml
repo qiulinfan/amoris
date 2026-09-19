@@ -6,3 +6,6 @@ scene = "scene.json"
 width = 960
 height = 540
 title = "Pocket assets sample"
+
+[render]
+msaa = 4

@@ -2,18 +2,21 @@
 //
 // Bodies are entities with RigidBody + Collider (+ Transform, + Velocity for motion). The step
 // runs in a fixed order: gravity and damping, broadphase on world AABBs (sorted by entity id so
-// runs are reproducible), narrowphase (sphere-sphere, sphere-box, box-box via SAT), a sequential
+// runs are reproducible), narrowphase (spheres, boxes, capsules and the triangles of mesh
+// colliders, boxes via SAT), a sequential
 // impulse solver with Baumgarte position correction, integration, sleeping. Contacts that begin
 // or end become events (collision.begin/end, trigger.enter/exit) so gameplay can react without
 // polling and agents can read what touched what.
 #pragma once
 
+#include <pocket/assets/assets.hpp>
 #include <pocket/core/json.hpp>
 #include <pocket/core/math.hpp>
 #include <pocket/core/result.hpp>
 #include <pocket/world/world.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -52,8 +55,9 @@ struct JointInfo {
     float force = 0;      // carried in the last step
     float angle = 0;      // hinge: rotation about the axis relative to the target (radians)
     float speed = 0;      // hinge: angular speed about the axis relative to the target
-    float torque = 0;     // hinge: what the motor applied in the last step
-    int limit_state = 0;  // hinge: -1 at the lower limit, 1 at the upper, 2 locked, 0 free
+    float torque = 0;     // hinge: what the motor applied in the last step (a slider: its motor's force)
+    int limit_state = 0;  // hinge or slider: -1 at the lower limit, 1 at the upper, 2 locked, 0 free
+    float translation = 0;  // slider: the body's anchor along the axis from the target's anchor (meters)
 };
 
 struct StepStats {
@@ -65,6 +69,8 @@ struct StepStats {
     std::uint32_t contacts = 0;
     std::uint32_t begins = 0;
     std::uint32_t ends = 0;
+    std::uint32_t meshes = 0;     // mesh colliders with triangles this step
+    std::uint32_t triangles = 0;  // their triangles, summed
 };
 
 class Physics {
@@ -74,6 +80,8 @@ class Physics {
     Physics(const Physics&) = delete;
     Physics& operator=(const Physics&) = delete;
 
+    // Where mesh colliders (Collider.shape 3) read their triangles from; without it they are skipped.
+    void set_assets(assets::AssetStore* assets);
     // Advance all bodies by dt. Emits events into world.events(). Call before World::tick.
     void step(world::World& world, double dt);
     [[nodiscard]] const std::vector<Contact>& contacts() const;  // of the last step
@@ -84,6 +92,10 @@ class Physics {
     [[nodiscard]] Result<RayHit> raycast(const world::World& world, Vec3 origin, Vec3 direction, float max_distance = 1000.0f, bool include_triggers = false) const;
     // Every collider overlapping a world-space sphere.
     [[nodiscard]] std::vector<world::EntityId> overlap_sphere(const world::World& world, Vec3 center, float radius) const;
+    // The same queries over the colliders a filter accepts (static ground only, no triggers, ...).
+    using Filter = std::function<bool(world::EntityId, const world::RigidBody&, const world::Collider&)>;
+    [[nodiscard]] Result<RayHit> raycast(const world::World& world, Vec3 origin, Vec3 direction, float max_distance, const Filter& accept) const;
+    [[nodiscard]] std::vector<world::EntityId> overlap_sphere(const world::World& world, Vec3 center, float radius, const Filter& accept) const;
     Settings& settings();
 
    private:

@@ -197,7 +197,7 @@ fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f
     return (diffuse * ndl + spec);
 }
 
-@fragment fn fs(in: VsOut) -> FsOut {
+fn shade(in: VsOut) -> vec4f {
     let object = objects[in.instance];
     // Derivatives and samples first: both must stay in uniform control flow.
     let dp1 = dpdx(in.world_pos);
@@ -249,20 +249,45 @@ fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f
         color += frame.point_color[i].rgb * brdf(n, v, pl, albedo, metallic, roughness) * att * att;
     }
     color += object.emissive.rgb * em;
+    return vec4f(color, base.a);
+}
+
+// One pass writes color and id together (no MSAA); with MSAA the color pass and the id pass are
+// separate, since an integer id target cannot be multisampled and resolved.
+@fragment fn fs(in: VsOut) -> FsOut {
     var out: FsOut;
-    out.color = vec4f(color, base.a);
+    out.color = shade(in);
     out.id = in.id;
     return out;
 }
+@fragment fn fs_color(in: VsOut) -> @location(0) vec4f {
+    return shade(in);
+}
+@fragment fn fs_id(in: VsOut) -> @location(0) u32 {
+    return in.id;
+}
 
 // Sprites: no lighting, alpha blended, transparent pixels leave no id behind.
+fn unlit(in: VsOut) -> vec4f {
+    return textureSample(base_tex, base_samp, in.uv) * in.color;
+}
 @fragment fn fs_unlit(in: VsOut) -> FsOut {
-    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    let base = unlit(in);
     if (base.a < 0.02) { discard; }
     var out: FsOut;
     out.color = base;
     out.id = in.id;
     return out;
+}
+@fragment fn fs_unlit_color(in: VsOut) -> @location(0) vec4f {
+    let base = unlit(in);
+    if (base.a < 0.02) { discard; }
+    return base;
+}
+@fragment fn fs_unlit_id(in: VsOut) -> @location(0) u32 {
+    let base = unlit(in);
+    if (base.a < 0.02) { discard; }
+    return in.id;
 }
 )WGSL";
 
@@ -320,6 +345,23 @@ struct Renderer::Impl {
     WGPUTexture id_texture = nullptr;
     WGPUTextureView id_view = nullptr;
     std::uint32_t id_width = 0, id_height = 0;
+    // MSAA: the scene draws into multisampled color and depth and resolves into the frame; the
+    // ids then come from their own single-sample pass with these pipelines.
+    int msaa = 1;          // requested (1 or 4)
+    int msaa_applied = 1;  // what the scene pipelines were built with
+    WGPUTexture ms_color = nullptr;
+    WGPUTextureView ms_color_view = nullptr;
+    WGPUTexture ms_depth = nullptr;
+    WGPUTextureView ms_depth_view = nullptr;
+    std::uint32_t ms_width = 0, ms_height = 0;
+    int ms_samples = 1;
+    WGPURenderPipeline id_pipeline = nullptr;
+    WGPURenderPipeline id_skinned_pipeline = nullptr;
+    WGPURenderPipeline id_sprite_pipeline = nullptr;
+    WGPUVertexAttribute mesh_attrs[3]{};
+    WGPUVertexAttribute skin_attrs[2]{};
+    WGPUVertexBufferLayout vbl{};
+    WGPUVertexBufferLayout vbls[2]{};
     std::array<GpuMesh, kPrimitiveCount> meshes{};
     // Assets: glTF meshes and images uploaded on first use.
     assets::AssetStore* assets = nullptr;
@@ -397,6 +439,10 @@ struct Renderer::Impl {
         }
         if (id_view) wgpuTextureViewRelease(id_view);
         if (id_texture) wgpuTextureRelease(id_texture);
+        release_msaa_targets();
+        if (id_pipeline) wgpuRenderPipelineRelease(id_pipeline);
+        if (id_skinned_pipeline) wgpuRenderPipelineRelease(id_skinned_pipeline);
+        if (id_sprite_pipeline) wgpuRenderPipelineRelease(id_sprite_pipeline);
         if (object_bg) wgpuBindGroupRelease(object_bg);
         if (frame_bg) wgpuBindGroupRelease(frame_bg);
         if (object_buffer) wgpuBufferRelease(object_buffer);
@@ -421,6 +467,209 @@ struct Renderer::Impl {
         if (object_bgl) wgpuBindGroupLayoutRelease(object_bgl);
         if (frame_bgl) wgpuBindGroupLayoutRelease(frame_bgl);
         if (shader) wgpuShaderModuleRelease(shader);
+    }
+
+    void release_msaa_targets() {
+        if (ms_color_view) wgpuTextureViewRelease(ms_color_view);
+        if (ms_color) wgpuTextureRelease(ms_color);
+        if (ms_depth_view) wgpuTextureViewRelease(ms_depth_view);
+        if (ms_depth) wgpuTextureRelease(ms_depth);
+        ms_color_view = nullptr;
+        ms_color = nullptr;
+        ms_depth_view = nullptr;
+        ms_depth = nullptr;
+        ms_width = ms_height = 0;
+        ms_samples = 1;
+    }
+
+    Status ensure_msaa_targets(std::uint32_t w, std::uint32_t h, int samples) {
+        if (samples <= 1) {
+            release_msaa_targets();
+            return {};
+        }
+        if (ms_color && ms_width == w && ms_height == h && ms_samples == samples) return {};
+        release_msaa_targets();
+        auto make = [&](const char* label, WGPUTextureFormat format, WGPUTexture& tex, WGPUTextureView& view) -> Status {
+            WGPUTextureDescriptor td{};
+            td.label = rhi::str(label);
+            td.usage = WGPUTextureUsage_RenderAttachment;
+            td.dimension = WGPUTextureDimension_2D;
+            td.size = {w, h, 1};
+            td.format = format;
+            td.mipLevelCount = 1;
+            td.sampleCount = static_cast<std::uint32_t>(samples);
+            tex = wgpuDeviceCreateTexture(device->device(), &td);
+            if (!tex) return fail("gpu_texture_failed", "cannot create {} ({} samples)", label, samples);
+            WGPUTextureViewDescriptor vd{};
+            vd.format = format;
+            vd.dimension = WGPUTextureViewDimension_2D;
+            vd.mipLevelCount = 1;
+            vd.arrayLayerCount = 1;
+            vd.aspect = WGPUTextureAspect_All;
+            vd.usage = td.usage;
+            view = wgpuTextureCreateView(tex, &vd);
+            return {};
+        };
+        POCKET_TRY_VOID(make("pocket.msaa.color", device->color_format(), ms_color, ms_color_view));
+        POCKET_TRY_VOID(make("pocket.msaa.depth", device->depth_format(), ms_depth, ms_depth_view));
+        ms_width = w;
+        ms_height = h;
+        ms_samples = samples;
+        return {};
+    }
+
+    void release_scene_pipelines() {
+        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_sprite_pipeline}) {
+            if (*p) wgpuRenderPipelineRelease(*p);
+            *p = nullptr;
+        }
+    }
+
+    // The scene pipelines for a sample count: with one sample, color and id share a pass (two
+    // targets); with more, the color pipelines are multisampled with one target and separate
+    // single-sample pipelines write the ids.
+    Status create_scene_pipelines(int samples) {
+        release_scene_pipelines();
+        const bool split = samples > 1;
+        WGPUColorTargetState targets[2]{};
+        targets[0].format = device->color_format();
+        targets[0].writeMask = WGPUColorWriteMask_All;
+        targets[1].format = WGPUTextureFormat_R32Uint;
+        targets[1].writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str(split ? "fs_color" : "fs");
+        fs.targetCount = split ? 1 : 2;
+        fs.targets = targets;
+        WGPUDepthStencilState ds{};
+        ds.format = device->depth_format();
+        ds.depthWriteEnabled = WGPUOptionalBool_True;
+        ds.depthCompare = WGPUCompareFunction_Less;
+        ds.stencilFront.compare = WGPUCompareFunction_Always;
+        ds.stencilBack.compare = WGPUCompareFunction_Always;
+        ds.stencilReadMask = 0xFFFFFFFF;
+        ds.stencilWriteMask = 0xFFFFFFFF;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.mesh");
+        rpd.layout = layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_Back;
+        rpd.depthStencil = &ds;
+        rpd.multisample.count = static_cast<std::uint32_t>(samples);
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!pipeline) return fail("gpu_pipeline_failed", "mesh pipeline creation failed");
+        // Skinned meshes: the same lit fragment, a vertex stage that blends joint matrices.
+        rpd.label = rhi::str("pocket.mesh.skinned");
+        rpd.vertex.entryPoint = rhi::str("vs_skinned");
+        rpd.vertex.bufferCount = 2;
+        rpd.vertex.buffers = vbls;
+        skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!skinned_pipeline) return fail("gpu_pipeline_failed", "skinned pipeline creation failed");
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
+        // Sprites: same layout and vertex path, unlit fragment, alpha blend, no depth writes,
+        // both faces (a sprite seen from behind is still a sprite).
+        WGPUBlendState blend{};
+        blend.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+        blend.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+        targets[0].blend = &blend;
+        fs.entryPoint = rhi::str(split ? "fs_unlit_color" : "fs_unlit");
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
+        ds.depthCompare = WGPUCompareFunction_LessEqual;
+        rpd.label = rhi::str("pocket.sprite");
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
+        // Debug lines: their own tiny shader over the frame uniform, alpha blended, depth tested
+        // without writing, and no id writes (a line over an entity leaves its id in place).
+        {
+            WGPUVertexAttribute lattrs[2]{};
+            lattrs[0].format = WGPUVertexFormat_Float32x3;
+            lattrs[0].offset = 0;
+            lattrs[0].shaderLocation = 0;
+            lattrs[1].format = WGPUVertexFormat_Float32x4;
+            lattrs[1].offset = sizeof(float) * 3;
+            lattrs[1].shaderLocation = 1;
+            WGPUVertexBufferLayout lvbl{};
+            lvbl.stepMode = WGPUVertexStepMode_Vertex;
+            lvbl.arrayStride = sizeof(DebugVertex);
+            lvbl.attributeCount = 2;
+            lvbl.attributes = lattrs;
+            WGPUColorTargetState ltargets[2] = {targets[0], targets[1]};
+            ltargets[1].writeMask = WGPUColorWriteMask_None;
+            WGPUFragmentState lfs{};
+            lfs.module = line_shader;
+            lfs.entryPoint = rhi::str("fs");
+            lfs.targetCount = split ? 1 : 2;
+            lfs.targets = ltargets;
+            WGPURenderPipelineDescriptor lrpd{};
+            lrpd.label = rhi::str("pocket.lines");
+            lrpd.layout = line_layout;
+            lrpd.vertex.module = line_shader;
+            lrpd.vertex.entryPoint = rhi::str("vs");
+            lrpd.vertex.bufferCount = 1;
+            lrpd.vertex.buffers = &lvbl;
+            lrpd.primitive.topology = WGPUPrimitiveTopology_LineList;
+            lrpd.primitive.frontFace = WGPUFrontFace_CCW;
+            lrpd.primitive.cullMode = WGPUCullMode_None;
+            lrpd.depthStencil = &ds;  // LessEqual, no writes (the sprite settings)
+            lrpd.multisample.count = static_cast<std::uint32_t>(samples);
+            lrpd.multisample.mask = 0xFFFFFFFFu;
+            lrpd.fragment = &lfs;
+            line_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &lrpd);
+            if (!line_pipeline) return fail("gpu_pipeline_failed", "line pipeline creation failed");
+        }
+        if (split) {
+            // The id pass: one R32Uint target, one sample, its own depth test, the same vertex paths.
+            WGPUColorTargetState idt{};
+            idt.format = WGPUTextureFormat_R32Uint;
+            idt.writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState ifs{};
+            ifs.module = shader;
+            ifs.entryPoint = rhi::str("fs_id");
+            ifs.targetCount = 1;
+            ifs.targets = &idt;
+            WGPUDepthStencilState ids = ds;
+            ids.depthWriteEnabled = WGPUOptionalBool_True;
+            ids.depthCompare = WGPUCompareFunction_Less;
+            WGPURenderPipelineDescriptor irpd = rpd;
+            irpd.label = rhi::str("pocket.ids.mesh");
+            irpd.fragment = &ifs;
+            irpd.depthStencil = &ids;
+            irpd.multisample.count = 1;
+            irpd.primitive.cullMode = WGPUCullMode_Back;
+            irpd.vertex.entryPoint = rhi::str("vs");
+            irpd.vertex.bufferCount = 1;
+            irpd.vertex.buffers = &vbl;
+            id_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
+            if (!id_pipeline) return fail("gpu_pipeline_failed", "id pipeline creation failed");
+            irpd.label = rhi::str("pocket.ids.skinned");
+            irpd.vertex.entryPoint = rhi::str("vs_skinned");
+            irpd.vertex.bufferCount = 2;
+            irpd.vertex.buffers = vbls;
+            id_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
+            if (!id_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned id pipeline creation failed");
+            irpd.label = rhi::str("pocket.ids.sprite");
+            ifs.entryPoint = rhi::str("fs_unlit_id");
+            ids.depthWriteEnabled = WGPUOptionalBool_False;
+            ids.depthCompare = WGPUCompareFunction_LessEqual;
+            irpd.primitive.cullMode = WGPUCullMode_None;
+            irpd.vertex.entryPoint = rhi::str("vs");
+            irpd.vertex.bufferCount = 1;
+            irpd.vertex.buffers = &vbl;
+            id_sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
+            if (!id_sprite_pipeline) return fail("gpu_pipeline_failed", "sprite id pipeline creation failed");
+        }
+        msaa_applied = samples;
+        return {};
     }
 
     Status ensure_id_target(std::uint32_t w, std::uint32_t h) {
@@ -527,150 +776,68 @@ struct Renderer::Impl {
         spld.bindGroupLayouts = sbgls;
         shadow_layout = wgpuDeviceCreatePipelineLayout(device->device(), &spld);
 
-        WGPUVertexAttribute attrs[3]{};
-        attrs[0].format = WGPUVertexFormat_Float32x3;
-        attrs[0].offset = 0;
-        attrs[0].shaderLocation = 0;
-        attrs[1].format = WGPUVertexFormat_Float32x3;
-        attrs[1].offset = sizeof(float) * 3;
-        attrs[1].shaderLocation = 1;
-        attrs[2].format = WGPUVertexFormat_Float32x2;
-        attrs[2].offset = sizeof(float) * 6;
-        attrs[2].shaderLocation = 2;
-        WGPUVertexBufferLayout vbl{};
+        mesh_attrs[0].format = WGPUVertexFormat_Float32x3;
+        mesh_attrs[0].offset = 0;
+        mesh_attrs[0].shaderLocation = 0;
+        mesh_attrs[1].format = WGPUVertexFormat_Float32x3;
+        mesh_attrs[1].offset = sizeof(float) * 3;
+        mesh_attrs[1].shaderLocation = 1;
+        mesh_attrs[2].format = WGPUVertexFormat_Float32x2;
+        mesh_attrs[2].offset = sizeof(float) * 6;
+        mesh_attrs[2].shaderLocation = 2;
+        vbl = WGPUVertexBufferLayout{};
         vbl.stepMode = WGPUVertexStepMode_Vertex;
         vbl.arrayStride = sizeof(Vertex);
         vbl.attributeCount = 3;
-        vbl.attributes = attrs;
-        WGPUVertexAttribute skin_attrs[2]{};
+        vbl.attributes = mesh_attrs;
         skin_attrs[0].format = WGPUVertexFormat_Uint16x4;
         skin_attrs[0].offset = 0;
         skin_attrs[0].shaderLocation = 3;
         skin_attrs[1].format = WGPUVertexFormat_Float32x4;
         skin_attrs[1].offset = sizeof(std::uint16_t) * 4;
         skin_attrs[1].shaderLocation = 4;
-        WGPUVertexBufferLayout vbls[2] = {vbl, {}};
+        vbls[0] = vbl;
+        vbls[1] = WGPUVertexBufferLayout{};
         vbls[1].stepMode = WGPUVertexStepMode_Vertex;
         vbls[1].arrayStride = sizeof(assets::SkinVertex);
         vbls[1].attributeCount = 2;
         vbls[1].attributes = skin_attrs;
 
-        WGPUColorTargetState targets[2]{};
-        targets[0].format = device->color_format();
-        targets[0].writeMask = WGPUColorWriteMask_All;
-        targets[1].format = WGPUTextureFormat_R32Uint;
-        targets[1].writeMask = WGPUColorWriteMask_All;
-        WGPUFragmentState fs{};
-        fs.module = shader;
-        fs.entryPoint = rhi::str("fs");
-        fs.targetCount = 2;
-        fs.targets = targets;
-        WGPUDepthStencilState ds{};
-        ds.format = device->depth_format();
-        ds.depthWriteEnabled = WGPUOptionalBool_True;
-        ds.depthCompare = WGPUCompareFunction_Less;
-        ds.stencilFront.compare = WGPUCompareFunction_Always;
-        ds.stencilBack.compare = WGPUCompareFunction_Always;
-        ds.stencilReadMask = 0xFFFFFFFF;
-        ds.stencilWriteMask = 0xFFFFFFFF;
+        // The line shader and layout live for the renderer's life; the pipelines follow the sample count.
+        POCKET_TRY(lm, device->create_shader("pocket.lines", kLineWgsl));
+        line_shader = lm;
+        WGPUBindGroupLayout lbgls[1] = {frame_bgl};
+        WGPUPipelineLayoutDescriptor lpld{};
+        lpld.label = rhi::str("pocket.lines");
+        lpld.bindGroupLayoutCount = 1;
+        lpld.bindGroupLayouts = lbgls;
+        line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
+        POCKET_TRY_VOID(create_scene_pipelines(msaa));
+
+        // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
+        // in the lookup handles acne.
+        WGPUDepthStencilState sds{};
+        sds.format = WGPUTextureFormat_Depth32Float;
+        sds.depthWriteEnabled = WGPUOptionalBool_True;
+        sds.depthCompare = WGPUCompareFunction_Less;
+        sds.stencilFront.compare = WGPUCompareFunction_Always;
+        sds.stencilBack.compare = WGPUCompareFunction_Always;
+        sds.stencilReadMask = 0xFFFFFFFF;
+        sds.stencilWriteMask = 0xFFFFFFFF;
         WGPURenderPipelineDescriptor rpd{};
-        rpd.label = rhi::str("pocket.mesh");
-        rpd.layout = layout;
+        rpd.label = rhi::str("pocket.shadow");
+        rpd.layout = shadow_layout;
         rpd.vertex.module = shader;
-        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.entryPoint = rhi::str("vs_shadow");
         rpd.vertex.bufferCount = 1;
         rpd.vertex.buffers = &vbl;
         rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
         rpd.primitive.frontFace = WGPUFrontFace_CCW;
-        rpd.primitive.cullMode = WGPUCullMode_Back;
-        rpd.depthStencil = &ds;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.depthStencil = &sds;
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
-        rpd.fragment = &fs;
-        pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!pipeline) return fail("gpu_pipeline_failed", "mesh pipeline creation failed");
-        // Skinned meshes: the same lit fragment, a vertex stage that blends joint matrices.
-        rpd.label = rhi::str("pocket.mesh.skinned");
-        rpd.vertex.entryPoint = rhi::str("vs_skinned");
-        rpd.vertex.bufferCount = 2;
-        rpd.vertex.buffers = vbls;
-        skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!skinned_pipeline) return fail("gpu_pipeline_failed", "skinned pipeline creation failed");
-        rpd.vertex.entryPoint = rhi::str("vs");
-        rpd.vertex.bufferCount = 1;
-        rpd.vertex.buffers = &vbl;
-        // Sprites: same layout and vertex path, unlit fragment, alpha blend, no depth writes,
-        // both faces (a sprite seen from behind is still a sprite).
-        WGPUBlendState blend{};
-        blend.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
-        blend.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
-        targets[0].blend = &blend;
-        fs.entryPoint = rhi::str("fs_unlit");
-        ds.depthWriteEnabled = WGPUOptionalBool_False;
-        ds.depthCompare = WGPUCompareFunction_LessEqual;
-        rpd.label = rhi::str("pocket.sprite");
-        rpd.primitive.cullMode = WGPUCullMode_None;
-        sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
-        // Debug lines: their own tiny shader over the frame uniform, alpha blended, depth tested
-        // without writing, and no id writes (a line over an entity leaves its id in place).
-        {
-            POCKET_TRY(lm, device->create_shader("pocket.lines", kLineWgsl));
-            line_shader = lm;
-            WGPUBindGroupLayout lbgls[1] = {frame_bgl};
-            WGPUPipelineLayoutDescriptor lpld{};
-            lpld.label = rhi::str("pocket.lines");
-            lpld.bindGroupLayoutCount = 1;
-            lpld.bindGroupLayouts = lbgls;
-            line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
-            WGPUVertexAttribute lattrs[2]{};
-            lattrs[0].format = WGPUVertexFormat_Float32x3;
-            lattrs[0].offset = 0;
-            lattrs[0].shaderLocation = 0;
-            lattrs[1].format = WGPUVertexFormat_Float32x4;
-            lattrs[1].offset = sizeof(float) * 3;
-            lattrs[1].shaderLocation = 1;
-            WGPUVertexBufferLayout lvbl{};
-            lvbl.stepMode = WGPUVertexStepMode_Vertex;
-            lvbl.arrayStride = sizeof(DebugVertex);
-            lvbl.attributeCount = 2;
-            lvbl.attributes = lattrs;
-            WGPUColorTargetState ltargets[2] = {targets[0], targets[1]};
-            ltargets[1].writeMask = WGPUColorWriteMask_None;
-            WGPUFragmentState lfs{};
-            lfs.module = line_shader;
-            lfs.entryPoint = rhi::str("fs");
-            lfs.targetCount = 2;
-            lfs.targets = ltargets;
-            WGPURenderPipelineDescriptor lrpd{};
-            lrpd.label = rhi::str("pocket.lines");
-            lrpd.layout = line_layout;
-            lrpd.vertex.module = line_shader;
-            lrpd.vertex.entryPoint = rhi::str("vs");
-            lrpd.vertex.bufferCount = 1;
-            lrpd.vertex.buffers = &lvbl;
-            lrpd.primitive.topology = WGPUPrimitiveTopology_LineList;
-            lrpd.primitive.frontFace = WGPUFrontFace_CCW;
-            lrpd.primitive.cullMode = WGPUCullMode_None;
-            lrpd.depthStencil = &ds;  // LessEqual, no writes (the sprite settings)
-            lrpd.multisample.count = 1;
-            lrpd.multisample.mask = 0xFFFFFFFFu;
-            lrpd.fragment = &lfs;
-            line_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &lrpd);
-            if (!line_pipeline) return fail("gpu_pipeline_failed", "line pipeline creation failed");
-        }
-        // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
-        // in the lookup handles acne.
-        WGPUDepthStencilState sds = ds;
-        sds.format = WGPUTextureFormat_Depth32Float;
-        sds.depthWriteEnabled = WGPUOptionalBool_True;
-        sds.depthCompare = WGPUCompareFunction_Less;
-        rpd.label = rhi::str("pocket.shadow");
-        rpd.layout = shadow_layout;
-        rpd.vertex.entryPoint = rhi::str("vs_shadow");
         rpd.fragment = nullptr;
-        rpd.depthStencil = &sds;
-        rpd.primitive.cullMode = WGPUCullMode_None;
         shadow_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!shadow_pipeline) return fail("gpu_pipeline_failed", "shadow pipeline creation failed");
         rpd.label = rhi::str("pocket.shadow.skinned");
@@ -1050,7 +1217,9 @@ std::uint32_t tile_layers_parts(const Draws& sprites) {
 
 Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug) {
     Impl& im = *impl_;
+    if (im.msaa != im.msaa_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa));
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
+    POCKET_TRY_VOID(im.ensure_msaa_targets(frame.width, frame.height, im.msaa_applied));
     im.last_width = frame.width;
     im.last_height = frame.height;
     // Clamp the requested viewport to the frame; an empty request means the whole frame.
@@ -1341,16 +1510,19 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.particles = particle_count;
     im.stats.tile_layers = tile_layers;
     im.stats.tile_rebuilds = im.tile_rebuilds;
+    im.stats.msaa = im.msaa_applied;
     im.stats.skinned = skinned_instances;
     im.stats.asset_meshes = static_cast<std::uint32_t>(im.asset_meshes.size());
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
     im.stats.materials = static_cast<std::uint32_t>(im.material_groups.size());
 
+    const bool split = im.msaa_applied > 1;  // color resolves from the multisampled target; ids get their own pass
     WGPURenderPassColorAttachment ca[2]{};
-    ca[0].view = frame.color;
+    ca[0].view = split ? im.ms_color_view : frame.color;
+    ca[0].resolveTarget = split ? frame.color : nullptr;
     ca[0].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     ca[0].loadOp = WGPULoadOp_Clear;
-    ca[0].storeOp = WGPUStoreOp_Store;
+    ca[0].storeOp = split ? WGPUStoreOp_Discard : WGPUStoreOp_Store;
     ca[0].clearValue = {clear.r, clear.g, clear.b, clear.a};
     ca[1].view = im.id_view;
     ca[1].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
@@ -1358,7 +1530,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     ca[1].storeOp = WGPUStoreOp_Store;
     ca[1].clearValue = {0, 0, 0, 0};
     WGPURenderPassDepthStencilAttachment ds{};
-    ds.view = frame.depth;
+    ds.view = split ? im.ms_depth_view : frame.depth;
     ds.depthLoadOp = WGPULoadOp_Clear;
     ds.depthStoreOp = WGPUStoreOp_Store;
     ds.depthClearValue = 1.0f;
@@ -1420,25 +1592,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderEnd(spass);
         wgpuRenderPassEncoderRelease(spass);
     }
-    WGPURenderPassDescriptor rp{};
-    rp.label = rhi::str("pocket.scene");
-    rp.colorAttachmentCount = 2;
-    rp.colorAttachments = ca;
-    rp.depthStencilAttachment = &ds;
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
-    if (im.applied.w != frame.width || im.applied.h != frame.height) {
-        wgpuRenderPassEncoderSetViewport(pass, static_cast<float>(im.applied.x), static_cast<float>(im.applied.y), static_cast<float>(im.applied.w), static_cast<float>(im.applied.h), 0.0f, 1.0f);
-        wgpuRenderPassEncoderSetScissorRect(pass, static_cast<std::uint32_t>(im.applied.x), static_cast<std::uint32_t>(im.applied.y), im.applied.w, im.applied.h);
-    }
-    if (!draws.empty()) {
-
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
-        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline);
-    }
-    if (!sprites.empty()) {
+    // Sprites and tile layers in draw order; the same loop serves the color pass and the id pass.
+    auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, std::uint32_t& counter) {
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
-        wgpuRenderPassEncoderSetPipeline(pass, im.sprite_pipeline);
+        wgpuRenderPassEncoderSetPipeline(pass, pipe);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quad.vertices, 0, WGPU_WHOLE_SIZE);
@@ -1454,7 +1611,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 bound = s.mesh;
                 wgpuRenderPassEncoderSetBindGroup(pass, 2, s.material, 0, nullptr);
                 wgpuRenderPassEncoderDrawIndexed(pass, s.count, 1, s.first, 0, count + static_cast<std::uint32_t>(i));
-                im.stats.draw_calls++;
+                counter++;
                 ++i;
                 continue;
             }
@@ -1467,10 +1624,55 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material) ++run;
             wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
             wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
-            im.stats.draw_calls++;
+            counter++;
             i += run;
         }
+    };
+    auto set_viewport = [&](WGPURenderPassEncoder pass) {
+        if (im.applied.w != frame.width || im.applied.h != frame.height) {
+            wgpuRenderPassEncoderSetViewport(pass, static_cast<float>(im.applied.x), static_cast<float>(im.applied.y), static_cast<float>(im.applied.w), static_cast<float>(im.applied.h), 0.0f, 1.0f);
+            wgpuRenderPassEncoderSetScissorRect(pass, static_cast<std::uint32_t>(im.applied.x), static_cast<std::uint32_t>(im.applied.y), im.applied.w, im.applied.h);
+        }
+    };
+    if (split) {
+        // The id pass first: single-sample ids and the frame's own depth buffer, no lines.
+        WGPURenderPassColorAttachment ica{};
+        ica.view = im.id_view;
+        ica.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ica.loadOp = WGPULoadOp_Clear;
+        ica.storeOp = WGPUStoreOp_Store;
+        ica.clearValue = {0, 0, 0, 0};
+        WGPURenderPassDepthStencilAttachment ids = ds;
+        ids.view = frame.depth;
+        WGPURenderPassDescriptor irp{};
+        irp.label = rhi::str("pocket.ids");
+        irp.colorAttachmentCount = 1;
+        irp.colorAttachments = &ica;
+        irp.depthStencilAttachment = &ids;
+        WGPURenderPassEncoder ipass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &irp);
+        set_viewport(ipass);
+        if (!draws.empty()) {
+            wgpuRenderPassEncoderSetBindGroup(ipass, 0, im.scene_bg, 0, nullptr);
+            wgpuRenderPassEncoderSetBindGroup(ipass, 1, im.object_bg, 0, nullptr);
+            draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline);
+        }
+        if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.stats.id_draws);
+        wgpuRenderPassEncoderEnd(ipass);
+        wgpuRenderPassEncoderRelease(ipass);
     }
+    WGPURenderPassDescriptor rp{};
+    rp.label = rhi::str("pocket.scene");
+    rp.colorAttachmentCount = split ? 1 : 2;
+    rp.colorAttachments = ca;
+    rp.depthStencilAttachment = &ds;
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+    set_viewport(pass);
+    if (!draws.empty()) {
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline);
+    }
+    if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.stats.draw_calls);
     if (debug && !debug->vertices().empty()) {
         const auto& verts = debug->vertices();
         if (verts.size() > im.line_capacity) {
@@ -1587,6 +1789,8 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
 }
 
 void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
+void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4
+int Renderer::msaa() const { return impl_->msaa; }
 void Renderer::set_shadows(ShadowSettings s) { impl_->shadows = s; }
 ShadowSettings Renderer::shadows() const { return impl_->shadows; }
 void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
@@ -1607,6 +1811,8 @@ Json Renderer::describe() const {
     j["skinned"] = s.skinned;
     j["tile_layers"] = s.tile_layers;
     j["tile_rebuilds"] = s.tile_rebuilds;
+    j["msaa"] = s.msaa;
+    j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;
