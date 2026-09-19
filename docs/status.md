@@ -16,7 +16,8 @@ What exists on the `agent-first` branch, how to verify it, and what is next. Eve
 | Physics: boxes and spheres, sequential impulses, sleeping, triggers, raycast, contact events | `engine/physics` | `physics_tests` |
 | Runtime: session with one command surface for scripts, HTTP JSON-RPC (`--serve`, `--paused`, `step`), input journal record/replay, reports with state hash, transcript, captures | `engine/app`, `engine/runtime` | `runtime_tests`, evidence transcripts |
 | SDK: `pocket` module (lifecycle, expose, log), `world`, `events`, `render`, `physics`, `transcript`, in-engine `test` | `sdk/runtime` | `tests/ts` |
-| Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal) | `samples/` | headless runs in evidence |
+| Pocket UI: FreeType text (Noto Sans CJK), batched 2D painter, retained element tree with Yoga flexbox, hit testing, focus and text input, scrolling, text snapshots and synthetic input for agents, scene viewport; TSX with signals and a diffing reconciler; script contexts for editor + project | `engine/ui`, `sdk/runtime/ui.ts`, `docs/design/pocket-ui.md` | `ui_tests`, `tests/ts/ui.test.tsx`, `tests/evidence/ui/` |
+| Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal), ui (HUD, buttons, pause menu in TSX) | `samples/` | headless runs in evidence |
 | Agent interface: `pocket mcp` with build/test/run tools and live sessions | `tools/pocket/src/mcp.rs`, `docs/mcp.md` | `tests/evidence/m3/mcp-session.txt` |
 
 ## Verify
@@ -26,6 +27,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # only when Xcode its
 ./scripts/bootstrap.sh
 ./.pocket/pocket test --json
 ./.pocket/pocket run physics -- --headless --frames 600 --json --capture out.png
+./.pocket/pocket run ui -- --headless --serve 4711 --paused --json   # then POST ui.snapshot / ui.click to /rpc
 ```
 
 The `transcript` field of any report, `GET /tree` on a served runtime, and the `world_tree`/`transcript` MCP tools are the quickest way to see what "agent-first" means in practice.
@@ -39,7 +41,7 @@ The `transcript` field of any report, `GET /tree` on a served runtime, and the `
 
 ## Next
 
-1. Pocket UI and the editor shell (ADR 0004): Yoga is vendored, FreeType and HarfBuzz are pinned but not fetched; nothing is implemented.
+1. The editor shell on Pocket UI (`pocket editor <project>`): hierarchy, scene pane, inspector from `world.schema`, play/pause/step, console and transcript, save scene.
 2. Typed-array component views for hot loops (scripts pay one JSON round trip per call today).
 3. Agent eval suite and the perception-efficiency benchmark from `docs/design/agent-perception.md`.
 4. Assets and packaging (M5), web export (M6).

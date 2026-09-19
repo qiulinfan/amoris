@@ -172,6 +172,13 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             log.push(format!("extract {} -> {}", file_name, pfx.display()));
             extract(&cache, &pfx, dep.strip_components)?;
         }
+        "file" => {
+            // A single file (a font, a data blob) installed as <prefix>/<file name>.
+            toolchain::ensure_dir(&pfx)?;
+            let dest = pfx.join(&file_name);
+            log.push(format!("install {} -> {}", file_name, dest.display()));
+            std::fs::copy(&cache, &dest).with_context(|| format!("copying {}", file_name))?;
+        }
         "cmake" => {
             let src = ws.pocket_dir().join("src").join(format!("{}-{}", dep.name, dep.version));
             let bld = ws.pocket_dir().join("build").join(format!("{}-{}", dep.name, dep.version));

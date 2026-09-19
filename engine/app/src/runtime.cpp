@@ -25,7 +25,8 @@ std::string usage() {
   --inspectable         allow Web Inspector to attach to the script engine
   --project-config <f>  JSON project settings (default <bundle>.project.json)
   --serve [PORT]        HTTP control server on 127.0.0.1 (PORT 0 or omitted: any free port)
-  --paused              start paused; advance with the `step` command
+  --paused              start paused; advance with the `step` command (a window keeps drawing)
+  --editor <bundle>     load an editor bundle (script context "editor") before the project bundle
   --record <file>       write an input journal for replay
   --replay <file>       replay an input journal (use with --headless for exact reproduction)
 )";
@@ -67,6 +68,7 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
             if (i + 1 < args.size() && !args[i + 1].empty() && std::isdigit(static_cast<unsigned char>(args[i + 1][0]))) { o.serve = std::stoi(args[i + 1]); ++i; }
         }
         else if (a == "--paused") o.paused = true;
+        else if (a == "--editor") { POCKET_TRY(v, need(i, "--editor")); o.editor_bundle = v; ++i; }
         else if (a == "--record") { POCKET_TRY(v, need(i, "--record")); o.record = v; ++i; }
         else if (a == "--replay") { POCKET_TRY(v, need(i, "--replay")); o.replay = v; ++i; }
         else if (a == "--help" || a == "-h") return fail("help", "{}", usage());
@@ -106,7 +108,14 @@ Result<Json> run(const Options& options) {
     while (!session.finished() && session.ok()) {
         if (server) server->pump(session.paused() ? 50 : 0);
         if (session.paused()) {
-            if (!server) break;  // paused without a controller would hang forever
+            // Paused: a window keeps polling input, running UI scripts and drawing (the editor
+            // lives here); headless sessions only serve commands, and without a controller a
+            // paused headless run would hang forever.
+            if (options.headless) {
+                if (!server) break;
+                continue;
+            }
+            if (auto r = session.idle_frame(); !r) break;
             continue;
         }
         if (auto r = session.frame(); !r) break;

@@ -84,6 +84,15 @@ enum Command {
     Graph,
     /// Serve the Model Context Protocol over stdio: build, test, run and drive live sessions.
     Mcp,
+    /// Open a project in the Pocket editor (a window with the scene, hierarchy, inspector and console).
+    Editor {
+        target: String,
+        #[arg(long, default_value = "debug")]
+        config: String,
+        /// Arguments passed to the runtime after `--` (for example --serve 7777 or --size 1600x1000).
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
     /// Regenerate code from component metadata (C++, TypeScript, docs).
     Gen {
         /// Fail if any generated file is out of date instead of writing it.
@@ -135,6 +144,7 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),
+        Command::Editor { target, config, args } => commands::editor(&ws, &config, &target, &args),
         Command::Mcp => {
             mcp::serve(&ws)?;
             Ok(report::Report::success("mcp", "stdio session ended"))

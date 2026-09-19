@@ -4,7 +4,10 @@
 
 #include <stb_image_write.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <format>
 #include <map>
 #include <thread>
 
@@ -124,6 +127,22 @@ Status Session::start() {
     POCKET_TRY(renderer, renderer::Renderer::create(*device_));
     renderer_ = std::move(renderer);
 
+    // Pocket UI needs a font. `pocket` records the path of the bundled Noto Sans CJK in the
+    // project config; POCKET_FONT overrides it. Without a font the ui.* commands report
+    // ui_unavailable and everything else works.
+    std::string font = project_.contains("font") && project_["font"].is_string() ? project_["font"].get<std::string>() : "";
+    if (const char* env = std::getenv("POCKET_FONT"); env && *env) font = env;
+    if (!font.empty() && std::filesystem::exists(font)) {
+        POCKET_TRY(loaded_font, ui::Font::load(*device_, font));
+        font_ = std::move(loaded_font);
+        POCKET_TRY(painter, ui::Painter::create(*device_, *font_));
+        painter_ = std::move(painter);
+        ui_ = std::make_unique<ui::Document>(*font_);
+        font_path_ = font;
+    } else {
+        log::warn("runtime", "ui disabled: no font found (project config 'font' or POCKET_FONT)");
+    }
+
     world_ = std::make_unique<world::World>();
     physics_ = std::make_unique<physics::Physics>();
     if (project_.contains("physics") && project_["physics"].is_object()) {
@@ -148,7 +167,13 @@ Status Session::start() {
 
     bind_natives();
     started_ = true;
-    if (auto r = host_->evaluate(bundle_src, options_.bundle.string()); !r) record_error(r.error());
+    (void)bundle_src;
+    // script.eval helper: indirect eval in the global scope, errors reported as values.
+    if (auto r = host_->evaluate("globalThis.__pocket_eval = function (src) { try { const v = (0, eval)(src); return v === undefined ? null : v; } catch (e) { return { error: String(e && e.stack ? e.stack : e) }; } };", "<pocket:eval>"); !r) record_error(r.error());
+    if (!options_.editor_bundle.empty()) {
+        if (auto r = load_bundle(options_.editor_bundle, "editor"); !r) record_error(r.error());
+    }
+    if (auto r = load_bundle(options_.bundle, "project"); !r) record_error(r.error());
     has_dispatch_ = host_->has_function("__pocket_dispatch");
     if (!has_dispatch_) log::warn("runtime", "bundle does not define __pocket_dispatch; scripts will not receive ticks");
     dispatch("start", Json::object());
@@ -190,9 +215,21 @@ void Session::bind_natives() {
     });
 }
 
-Json Session::dispatch(const char* kind, Json arg) {
+Status Session::load_bundle(const std::filesystem::path& path, const std::string& name) {
+    POCKET_TRY(src, fs::read_text(path));
+    // The SDK reads __pocket_bundle while the bundle evaluates and registers its handlers under
+    // that context, so several bundles (editor + project) share one script host.
+    POCKET_TRY_VOID(host_->evaluate(std::format("globalThis.__pocket_bundle = {};", Json(name).dump()), "<pocket:bundle>"));
+    POCKET_TRY_VOID(host_->evaluate(src, path.string()));
+    if (std::find(bundle_names_.begin(), bundle_names_.end(), name) == bundle_names_.end()) bundle_names_.push_back(name);
+    log::info("runtime", "loaded bundle {} as context '{}'", path.filename().string(), name);
+    return {};
+}
+
+Json Session::dispatch(const char* kind, Json arg, std::string_view context) {
     if (!has_dispatch_ || !errors_.empty()) return nullptr;
     Json args = Json::array({kind, std::move(arg)});
+    if (!context.empty()) args.push_back(std::string(context));
     auto r = host_->call("__pocket_dispatch", args);
     if (!r) {
         record_error(r.error());
@@ -257,7 +294,146 @@ Status Session::render_frame() {
         (void)device_->end_frame(*frame);
         return fail(r.error());
     }
+    if (ui_ && painter_ && ui_->node_count() > 1) {
+        float w = 0, h = 0, scale = 1;
+        ui_size(w, h, scale);
+        ui_->layout(w, h, scale);
+        painter_->begin(w, h, scale);
+        ui_->paint(*painter_);
+        if (auto r = painter_->flush(*frame); !r) {
+            (void)device_->end_frame(*frame);
+            return fail(r.error());
+        }
+    }
     POCKET_TRY_VOID(device_->end_frame(*frame));
+    return {};
+}
+
+void Session::ui_size(float& width, float& height, float& scale) const {
+    scale = platform_ ? platform_->pixel_density() : 1.0f;
+    if (!(scale > 0)) scale = 1.0f;
+    width = static_cast<float>(device_->width()) / scale;
+    height = static_cast<float>(device_->height()) / scale;
+}
+
+Json Session::frame_info() const {
+    Json j;
+    j["frame"] = frames_;
+    j["tick"] = clock_.tick;
+    j["time"] = clock_.sim_seconds();
+    j["dt"] = clock_.tick_seconds;
+    j["paused"] = paused_;
+    return j;
+}
+
+Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating) {
+    input_events = Json::array();
+    ticks = simulating ? 1 : 0;
+    std::vector<platform::Event> events;
+    if (journal_ && journal_->replaying) {
+        Json recorded = Json::array();
+        if (!journal_->next_frame(ticks, recorded)) return false;
+        (void)platform_->poll();
+        for (const Json& j : recorded) events.push_back(platform::event_from_json(j));
+        if (!simulating) ticks = 0;
+    } else {
+        events = platform_->poll();
+        for (auto& e : events) {
+            if (e.type == platform::EventType::Resize) {
+                if (auto r = device_->resize(static_cast<std::uint32_t>(e.width), static_cast<std::uint32_t>(e.height)); !r) record_error(r.error());
+            }
+        }
+        if (simulating && !options_.headless) {
+            double elapsed = frame_timer_.lap();
+            if (frames_ == 0) elapsed = clock_.tick_seconds;
+            ticks = clock_.advance(elapsed);
+        }
+        if (journal_ && journal_->recording) {
+            Json raw = Json::array();
+            for (auto& e : events) raw.push_back(platform::event_to_json(e));
+            journal_->record_frame(ticks, raw);
+        }
+    }
+    for (auto& e : events) input_events.push_back(platform::event_to_json(e));
+    if (ui_) {
+        float w = 0, h = 0, scale = 1;
+        ui_size(w, h, scale);
+        ui_->layout(w, h, scale);
+        bool wants_text = false;
+        std::vector<Json> ui_events = ui_->handle_events(events, wants_text);
+        platform_->set_text_input(wants_text);
+        // Tag input events that landed on the interface so gameplay code can ignore them.
+        for (std::size_t i = 0; i < events.size(); ++i) {
+            const platform::Event& e = events[i];
+            ui::NodeId target = 0;
+            switch (e.type) {
+                case platform::EventType::MouseMove:
+                case platform::EventType::MouseDown:
+                case platform::EventType::MouseUp: target = ui_->hit_test(e.x, e.y); break;
+                case platform::EventType::MouseWheel: target = ui_->hit_test(platform_->input().mouse_x, platform_->input().mouse_y); break;
+                case platform::EventType::KeyDown:
+                case platform::EventType::KeyUp:
+                case platform::EventType::Text: target = ui_->focused(); break;
+                default: break;
+            }
+            if (target) input_events[i]["ui"] = target;
+        }
+        if (!ui_events.empty()) dispatch("ui", Json(ui_events));
+    }
+    return true;
+}
+
+Json Session::inject_events(std::vector<platform::Event> events) {
+    Json out;
+    Json input_events = Json::array();
+    for (auto& e : events) input_events.push_back(platform::event_to_json(e));
+    Json ui_events = Json::array();
+    if (ui_) {
+        float w = 0, h = 0, scale = 1;
+        ui_size(w, h, scale);
+        ui_->layout(w, h, scale);
+        bool wants_text = false;
+        for (Json& e : ui_->handle_events(events, wants_text)) ui_events.push_back(std::move(e));
+        platform_->set_text_input(wants_text);
+        for (std::size_t i = 0; i < events.size(); ++i) {
+            const platform::Event& e = events[i];
+            ui::NodeId target = 0;
+            if (e.type == platform::EventType::MouseMove || e.type == platform::EventType::MouseDown || e.type == platform::EventType::MouseUp) target = ui_->hit_test(e.x, e.y);
+            else if (e.type == platform::EventType::KeyDown || e.type == platform::EventType::KeyUp || e.type == platform::EventType::Text) target = ui_->focused();
+            if (target) input_events[i]["ui"] = target;
+        }
+        if (!ui_events.empty()) dispatch("ui", ui_events);
+    }
+    if (!input_events.empty()) dispatch("input", input_events);
+    host_->drain_microtasks();
+    out["events"] = ui_events;
+    out["input"] = input_events;
+    if (ui_) out["focused"] = ui_->focused();
+    return out;
+}
+
+Status Session::idle_frame() {
+    if (!started_) return fail("not_started", "Session::start() was not called");
+    Json input_events;
+    int ticks = 0;
+    POCKET_TRY(has_frame, poll_input(input_events, ticks, false));
+    (void)has_frame;
+    if (platform_->quit_requested()) return {};
+    if (!input_events.empty()) dispatch("input", input_events);
+    dispatch("frame", frame_info());
+    host_->drain_microtasks();
+    if (errors_.empty()) {
+        if (auto r = render_frame(); !r) {
+            record_error(r.error());
+            return fail(r.error());
+        }
+    }
+    // Nothing else throttles a paused window: pace it at the tick rate.
+    double spent = pace_timer_.seconds();
+    double budget = clock_.tick_seconds;
+    if (spent < budget) std::this_thread::sleep_for(std::chrono::duration<double>(budget - spent));
+    pace_timer_.lap();
+    frame_timer_.lap();  // resuming must not simulate the time spent paused
     return {};
 }
 
@@ -400,7 +576,189 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         }
         return j;
     }
+    if (op == "viewport") {
+        // Points in, points out; the renderer works in pixels.
+        float w = 0, h = 0, scale = 1;
+        ui_size(w, h, scale);
+        if (p.contains("w") || p.contains("width")) {
+            renderer::Viewport v;
+            v.x = static_cast<std::int32_t>(std::lround(opt<double>(p, "x", 0) * scale));
+            v.y = static_cast<std::int32_t>(std::lround(opt<double>(p, "y", 0) * scale));
+            v.w = static_cast<std::uint32_t>(std::max(0.0, std::lround(opt<double>(p, "w", opt<double>(p, "width", 0)) * scale) * 1.0));
+            v.h = static_cast<std::uint32_t>(std::max(0.0, std::lround(opt<double>(p, "h", opt<double>(p, "height", 0)) * scale) * 1.0));
+            renderer_->set_viewport(v);
+        } else if (opt<bool>(p, "reset", false)) {
+            renderer_->set_viewport(renderer::Viewport{});
+        }
+        renderer::Viewport v = renderer_->viewport();
+        Json j;
+        j["x"] = v.x / scale;
+        j["y"] = v.y / scale;
+        j["w"] = v.w / scale;
+        j["h"] = v.h / scale;
+        j["pixels"] = Json{{"x", v.x}, {"y", v.y}, {"w", v.w}, {"h", v.h}};
+        j["full"] = v.w == 0 || v.h == 0;
+        return j;
+    }
     return fail("unknown_command", "unknown render command '{}'", op);
+}
+
+Result<Json> Session::ui_command(std::string_view op, const Json& p) {
+    if (!ui_) return fail("ui_unavailable", "Pocket UI is disabled: no font was found (run `pocket setup`)");
+    ui::Document& d = *ui_;
+    float w = 0, h = 0, scale = 1;
+    ui_size(w, h, scale);
+    auto layout = [&]() { d.layout(w, h, scale); };
+    auto node_id = [&](const char* key) -> ui::NodeId { return p.contains(key) && p[key].is_number() ? p[key].get<ui::NodeId>() : 0; };
+    if (op == "apply") {
+        POCKET_TRY_VOID(d.apply(p.contains("ops") ? p["ops"] : Json::array()));
+        return Json{{"nodes", d.node_count()}};
+    }
+    if (op == "snapshot") {
+        ui::SnapshotOptions so;
+        so.root = node_id("root");
+        so.depth = opt<int>(p, "depth", -1);
+        so.max_nodes = opt<int>(p, "max_nodes", 300);
+        so.layout = opt<bool>(p, "layout", true);
+        so.styles = opt<bool>(p, "styles", false);
+        layout();
+        return Json{{"text", d.snapshot(so)}, {"nodes", d.node_count()}};
+    }
+    if (op == "query") { layout(); return d.query(p); }
+    if (op == "describe") { layout(); return d.describe(node_id("id")); }
+    if (op == "hit") {
+        layout();
+        ui::NodeId id = d.hit_test(static_cast<float>(opt<double>(p, "x", 0)), static_cast<float>(opt<double>(p, "y", 0)));
+        Json j;
+        j["id"] = id;
+        if (id) j["node"] = d.describe(id);
+        return j;
+    }
+    if (op == "focus") { d.set_focus(node_id("id")); return Json{{"focused", d.focused()}}; }
+    if (op == "stats") { layout(); return d.stats(); }
+    // Synthetic input: the same path real input takes, so agents can drive the interface.
+    auto point = [&](float& x, float& y) -> Status {
+        layout();
+        if (ui::NodeId id = node_id("id")) {
+            if (!d.exists(id)) return fail("ui_no_such_node", "node {} does not exist", id);
+            ui::Rect r = d.rect_of(id);
+            x = r.x + r.w * 0.5f;
+            y = r.y + r.h * 0.5f;
+            return {};
+        }
+        if (!p.contains("x") || !p.contains("y")) return fail("bad_args", "give an element id or x/y in points");
+        x = static_cast<float>(p["x"].get<double>());
+        y = static_cast<float>(p["y"].get<double>());
+        return {};
+    };
+    if (op == "click") {
+        float x = 0, y = 0;
+        POCKET_TRY_VOID(point(x, y));
+        int button = opt<int>(p, "button", 1);
+        platform::Event move; move.type = platform::EventType::MouseMove; move.x = x; move.y = y;
+        platform::Event down; down.type = platform::EventType::MouseDown; down.x = x; down.y = y; down.button = button;
+        platform::Event up = down; up.type = platform::EventType::MouseUp;
+        return inject_events({move, down, up});
+    }
+    if (op == "wheel") {
+        float x = 0, y = 0;
+        POCKET_TRY_VOID(point(x, y));
+        platform::Event move; move.type = platform::EventType::MouseMove; move.x = x; move.y = y;
+        platform::Event wheel; wheel.type = platform::EventType::MouseWheel; wheel.dx = static_cast<float>(opt<double>(p, "dx", 0)); wheel.dy = static_cast<float>(opt<double>(p, "dy", -1));
+        return inject_events({move, wheel});
+    }
+    if (op == "type") {
+        std::string text = opt<std::string>(p, "text", "");
+        if (text.empty()) return fail("bad_args", "type needs text");
+        platform::Event t; t.type = platform::EventType::Text; t.text = text;
+        return inject_events({t});
+    }
+    if (op == "key") {
+        std::string key = opt<std::string>(p, "key", "");
+        if (key.empty()) return fail("bad_args", "key needs a key name such as Return, Backspace, Left");
+        platform::Event down; down.type = platform::EventType::KeyDown; down.key_name = key;
+        platform::Event up = down; up.type = platform::EventType::KeyUp;
+        return inject_events({down, up});
+    }
+    return fail("unknown_command", "unknown ui command '{}'", op);
+}
+
+Result<Json> Session::script_command(std::string_view op, const Json& p) {
+    if (op == "contexts") return Json(bundle_names_);
+    if (op == "reload") {
+        // Drop the context's handlers, re-evaluate its bundle from disk and start it again. The
+        // world is untouched: callers reload a scene first when they want a fresh start.
+        std::string name = opt<std::string>(p, "name", "project");
+        std::filesystem::path path = name == "editor" ? options_.editor_bundle : options_.bundle;
+        if (name != "editor" && name != "project") return fail("bad_args", "unknown script context '{}'", name);
+        if (path.empty()) return fail("bad_args", "no bundle for context '{}'", name);
+        dispatch("unload", name, name);
+        errors_.clear();
+        if (auto r = load_bundle(path, name); !r) { record_error(r.error()); return fail(r.error()); }
+        has_dispatch_ = host_->has_function("__pocket_dispatch");
+        dispatch("start", Json::object(), name);
+        Json j;
+        j["name"] = name;
+        j["bundle"] = path.string();
+        j["ok"] = errors_.empty();
+        return j;
+    }
+    if (op == "eval") {
+        std::string source = opt<std::string>(p, "source", "");
+        if (source.empty()) return fail("bad_args", "eval needs source");
+        // Evaluated by a helper installed before the bundles so results come back as JSON.
+        POCKET_TRY(v, host_->call("__pocket_eval", Json::array({source})));
+        host_->drain_microtasks();
+        return v;
+    }
+    return fail("unknown_command", "unknown script command '{}'", op);
+}
+
+Result<Json> Session::project_command(std::string_view op, const Json& p) {
+    auto inside_project = [&](const std::string& rel) -> Result<std::filesystem::path> {
+        if (rel.empty()) return fail("bad_args", "path is required");
+        std::filesystem::path base = std::filesystem::weakly_canonical(options_.project_dir);
+        std::filesystem::path full = std::filesystem::weakly_canonical(base / rel);
+        auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
+        if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", rel);
+        return full;
+    };
+    if (op == "info") {
+        Json j;
+        j["name"] = name_;
+        j["dir"] = options_.project_dir.string();
+        j["bundle"] = options_.bundle.string();
+        j["scene"] = project_.contains("scene") && project_["scene"].is_string() ? project_["scene"] : Json(nullptr);
+        j["font"] = font_path_.string();
+        j["editor_bundle"] = options_.editor_bundle.string();
+        j["contexts"] = bundle_names_;
+        j["headless"] = options_.headless;
+        j["window"] = Json{{"width", device_->width()}, {"height", device_->height()}};
+        return j;
+    }
+    if (op == "save_scene") {
+        std::string rel = opt<std::string>(p, "path", project_.contains("scene") && project_["scene"].is_string() ? project_["scene"].get<std::string>() : "");
+        if (rel.empty()) return fail("bad_args", "the project has no scene file; give a path");
+        POCKET_TRY(full, inside_project(rel));
+        Json scene = world_->save();
+        std::filesystem::create_directories(full.parent_path());
+        POCKET_TRY_VOID(fs::write_text(full, scene.dump(2) + "\n"));
+        world_->events().emit(clock_.tick, "scene.saved", 0, Json{{"path", rel}, {"entities", world_->entity_count()}}, 0, "editor");
+        return Json{{"path", full.string()}, {"entities", world_->entity_count()}};
+    }
+    if (op == "write") {
+        POCKET_TRY(full, inside_project(opt<std::string>(p, "path", "")));
+        std::string text = p.contains("text") && p["text"].is_string() ? p["text"].get<std::string>() : (p.contains("json") ? p["json"].dump(2) + "\n" : "");
+        std::filesystem::create_directories(full.parent_path());
+        POCKET_TRY_VOID(fs::write_text(full, text));
+        return Json{{"path", full.string()}, {"bytes", text.size()}};
+    }
+    if (op == "read") {
+        POCKET_TRY(full, inside_project(opt<std::string>(p, "path", "")));
+        POCKET_TRY(text, fs::read_text(full));
+        return Json{{"path", full.string()}, {"text", text}};
+    }
+    return fail("unknown_command", "unknown project command '{}'", op);
 }
 
 Status Session::frame() {
@@ -421,27 +779,13 @@ Status Session::frame() {
     }
     Json input_events = Json::array();
     int ticks = 1;
-    if (journal_ && journal_->replaying) {
-        if (!journal_->next_frame(ticks, input_events)) return {};
-        (void)platform_->poll();
-    } else {
-        auto events = platform_->poll();
-        for (auto& e : events) {
-            if (e.type == platform::EventType::Resize) {
-                if (auto r = device_->resize(static_cast<std::uint32_t>(e.width), static_cast<std::uint32_t>(e.height)); !r) record_error(r.error());
-            }
-            input_events.push_back(platform::event_to_json(e));
-        }
-        if (!options_.headless) {
-            double elapsed = frame_timer_.lap();
-            if (frames_ == 0) elapsed = clock_.tick_seconds;
-            ticks = clock_.advance(elapsed);
-        }
-        if (journal_ && journal_->recording) journal_->record_frame(ticks, input_events);
-    }
+    POCKET_TRY(has_frame, poll_input(input_events, ticks, true));
+    if (!has_frame) return {};
     if (platform_->quit_requested()) return {};
     if (!input_events.empty()) dispatch("input", input_events);
     POCKET_TRY_VOID(run_ticks(ticks));
+    dispatch("frame", frame_info());
+    host_->drain_microtasks();
     std::uint64_t presented_before = device_->presented_frames();
     if (errors_.empty()) {
         if (auto r = render_frame(); !r) {
@@ -647,6 +991,9 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
+    if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
+    if (name.starts_with("script.")) return script_command(name.substr(7), p);
+    if (name.starts_with("project.")) return project_command(name.substr(8), p);
     if (name == "state") {
         Json j;
         j["tick"] = clock_.tick;
@@ -712,7 +1059,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.reload", "script.contexts", "script.eval", "project.info", "project.save_scene", "project.write", "project.read", "render.viewport", "transcript", "physics.stats", "physics.raycast", "physics.overlap", "physics.contacts", "physics.gravity", "render.stats", "render.pick", "render.project", "render.ids", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "state", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }
@@ -728,6 +1075,7 @@ Json Session::report() {
     if (device_) report["gpu"] = device_->describe();
     if (renderer_) report["render"] = renderer_->describe();
     if (physics_) report["physics"] = physics_->describe();
+    if (ui_) report["ui"] = ui_->stats();
     if (host_) report["script"] = host_->describe();
     report["frames"] = frames_;
     report["ticks"] = ticks_;

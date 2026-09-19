@@ -41,6 +41,7 @@ struct Event {
 
 const char* event_type_name(EventType type);
 Json event_to_json(const Event& event);
+Event event_from_json(const Json& json);  // inverse of event_to_json (journals, synthetic input)
 
 struct InputState {
     std::array<bool, 512> keys{};
@@ -66,6 +67,9 @@ class Platform {
     [[nodiscard]] int pixel_height() const;
     [[nodiscard]] float pixel_density() const;
     [[nodiscard]] Json describe() const;
+    // Enable or disable OS text input (composition, Text events).
+    void set_text_input(bool enabled);
+    [[nodiscard]] bool text_input() const;
 
    private:
     Platform();

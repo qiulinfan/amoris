@@ -174,6 +174,52 @@ pub fn run(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Resul
     Ok(rep)
 }
 
+/// The UI font installed by `pocket setup` (the `file` dependency named noto-sans-cjk), if present.
+pub fn ui_font(ws: &Workspace) -> Option<PathBuf> {
+    let dep = ws.file.dependencies.iter().find(|d| d.name == "noto-sans-cjk")?;
+    let file_name = dep.url.rsplit('/').next()?;
+    let path = deps::prefix(ws, dep).join(file_name);
+    if path.is_file() { Some(path) } else { None }
+}
+
+/// `pocket editor <project>`: bundle the editor (editor/) and the project, then run the runtime
+/// with both bundles, paused, in a window.
+pub fn editor(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Result<Report> {
+    let t0 = Instant::now();
+    let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is not a project with project.toml"))?;
+    let editor_dir = ws.root.join("editor");
+    if !editor_dir.join("project.toml").exists() {
+        bail!("editor/project.toml is missing");
+    }
+    let runtime = "pocket_runtime";
+    let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
+    if !outcome.ok {
+        let mut rep = Report::failure("editor", "runtime build failed");
+        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
+        return Ok(rep);
+    }
+    let editor_bundle = bundle_project(ws, &editor_dir, None)?;
+    let bundle = bundle_project(ws, &project, None)?;
+    let exe = exe_path(ws, config, runtime)?;
+    let status = toolchain::command(exe.to_str().unwrap())
+        .arg("--project")
+        .arg(&project)
+        .arg("--bundle")
+        .arg(&bundle.out)
+        .arg("--editor")
+        .arg(&editor_bundle.out)
+        .arg("--paused")
+        .arg("--title")
+        .arg(format!("Pocket Editor - {}", project.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()))
+        .args(args)
+        .current_dir(&ws.root)
+        .status()?;
+    let mut rep = if status.success() { Report::success("editor", format!("editor exited 0 ({target})")) } else { Report::failure("editor", format!("editor exited {}", status.code().unwrap_or(-1))) };
+    rep.data = json!({ "exe": exe, "project": project, "bundle": bundle.out, "editor_bundle": editor_bundle.out, "exit_code": status.code() });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
+}
+
 pub struct BundleResult {
     pub out: PathBuf,
     pub modules: Vec<String>,
@@ -200,6 +246,9 @@ pub fn bundle_project(ws: &Workspace, project: &Path, out: Option<&Path>) -> Res
     if let serde_json::Value::Object(map) = &mut settings {
         map.insert("name".into(), serde_json::Value::String(name.clone()));
         map.insert("dir".into(), serde_json::Value::String(std::fs::canonicalize(project).unwrap_or(project.to_path_buf()).to_string_lossy().into_owned()));
+        if let Some(font) = ui_font(ws) {
+            map.insert("font".into(), serde_json::Value::String(font.to_string_lossy().into_owned()));
+        }
     }
     let settings_path = PathBuf::from(format!("{}.project.json", out.display()));
     std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
@@ -282,7 +331,7 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             eprintln!("--- {t} failed ---\n{}", tail(&text, 60));
         }
     }
-    // TypeScript tests: every tests/ts/*.test.ts is bundled and run headless for one frame; the
+    // TypeScript tests: every tests/ts/*.test.ts(x) is bundled and run headless for one frame; the
     // runner exposes its results as state.__tests.
     let ts_dir = ws.root.join("tests").join("ts");
     let mut ts_results = vec![];
@@ -295,10 +344,10 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             return Ok(rep);
         }
         let exe = exe_path(ws, config, runtime)?;
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&ts_dir)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.to_string_lossy().ends_with(".test.ts")).collect();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&ts_dir)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| { let n = p.to_string_lossy(); n.ends_with(".test.ts") || n.ends_with(".test.tsx") }).collect();
         files.sort();
         for f in files {
-            let stem = f.file_name().unwrap().to_string_lossy().replace(".test.ts", "");
+            let stem = f.file_name().unwrap().to_string_lossy().replace(".test.tsx", "").replace(".test.ts", "");
             let out = ws.root.join("build").join("ts").join("tests").join(format!("{stem}.js"));
             let started = Instant::now();
             let bundle = match bundle_project(ws, &f, Some(&out)) {
@@ -311,7 +360,7 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
                 }
             };
             let output = toolchain::command(exe.to_str().unwrap())
-                .args(["--headless", "--frames", "1", "--json", "--size", "64x64", "--log-level", "warn", "--bundle"])
+                .args(["--headless", "--frames", "1", "--json", "--size", "320x240", "--log-level", "warn", "--bundle"])
                 .arg(&bundle.out)
                 .current_dir(&ws.root)
                 .env("POCKET_ROOT", &ws.root)

@@ -37,6 +37,7 @@ struct Options {
     bool paused = false;                   // start paused; agents advance with `step`
     std::filesystem::path record;          // write an input journal
     std::filesystem::path replay;          // replay an input journal (headless-exact)
+    std::filesystem::path editor_bundle;   // evaluated before the project bundle as script context "editor"
 };
 
 std::string usage();

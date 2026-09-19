@@ -25,6 +25,12 @@ struct IdImage {
     std::vector<std::uint32_t> ids;  // entity id (low 32 bits) per pixel, 0 = background
 };
 
+// Sub-rectangle of the frame (pixels) that receives the scene; w == 0 means the whole frame.
+struct Viewport {
+    std::int32_t x = 0, y = 0;
+    std::uint32_t w = 0, h = 0;
+};
+
 struct CameraView {
     Mat4 view;
     Mat4 proj;
@@ -51,6 +57,10 @@ class Renderer {
     [[nodiscard]] const CameraView& camera() const;
     // Project a world point to pixel coordinates using the last frame's camera; false if behind.
     [[nodiscard]] bool project(Vec3 world_pos, float& out_x, float& out_y) const;
+    void set_viewport(Viewport v);
+    [[nodiscard]] Viewport viewport() const;
+    // The viewport actually used by the last frame (clamped to the frame).
+    [[nodiscard]] Viewport applied_viewport() const;
 
    private:
     Renderer();

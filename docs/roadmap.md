@@ -28,7 +28,7 @@ RHI decision (ADR 0002), mesh, material, light and camera, offscreen render targ
 
 ## M3: UI system and editor shell
 
-Status: the agent interface part is done (2026-09-18): `pocket mcp` serves build, test, headless runs and live paused sessions (tree, query, describe, schema, step, events, capture, pick, any runtime command) over the Model Context Protocol; evidence in `tests/evidence/m3/`, usage in `docs/mcp.md`. Pocket UI and the editor shell are not started.
+Status: the agent interface part is done (2026-09-18): `pocket mcp` serves build, test, headless runs and live paused sessions (tree, query, describe, schema, step, events, capture, pick, any runtime command) over the Model Context Protocol; evidence in `tests/evidence/m3/`, usage in `docs/mcp.md`. Pocket UI is done (2026-09-18): `engine/ui` (FreeType text, batched painter, Yoga element tree, hit testing, focus, text input, scrolling, `ui.*` commands with text snapshots and synthetic input), TSX with signals and a diffing reconciler in `sdk/runtime/ui.ts`, `samples/ui`, `docs/design/pocket-ui.md`, evidence in `tests/evidence/ui/`. HarfBuzz is not integrated yet (FreeType advances only). The editor shell is next.
 
 Pocket UI (ADR 0004): element tree with a DOM-like API, Yoga flexbox layout, CSS subset, FreeType and HarfBuzz text, the 2D batch renderer on the RHI, TSX components with signals, tree snapshots and selector queries, golden-image UI tests. Then the editor shell on top of it: docking, menus, document and command model, scene view, inspector generated from metadata, play and stop, an MCP server exposing the same commands as the CLI, evidence capture hooks as a product feature. No Dear ImGui at any milestone; before M3, verification is headless.
 

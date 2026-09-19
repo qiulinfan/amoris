@@ -136,6 +136,8 @@ struct Renderer::Impl {
     std::array<GpuMesh, 4> meshes{};
     RenderStats stats;
     CameraView camera;
+    Viewport viewport;   // requested
+    Viewport applied;    // used by the last frame
     std::uint32_t last_width = 0, last_height = 0;
     std::vector<std::uint8_t> object_staging;
 
@@ -350,7 +352,16 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
     im.last_width = frame.width;
     im.last_height = frame.height;
-    float aspect = frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.0f;
+    // Clamp the requested viewport to the frame; an empty request means the whole frame.
+    Viewport vp = im.viewport;
+    if (vp.w == 0 || vp.h == 0) vp = Viewport{0, 0, frame.width, frame.height};
+    std::int32_t x0 = std::clamp(vp.x, 0, static_cast<std::int32_t>(frame.width));
+    std::int32_t y0 = std::clamp(vp.y, 0, static_cast<std::int32_t>(frame.height));
+    std::int32_t x1 = std::clamp(vp.x + static_cast<std::int32_t>(vp.w), 0, static_cast<std::int32_t>(frame.width));
+    std::int32_t y1 = std::clamp(vp.y + static_cast<std::int32_t>(vp.h), 0, static_cast<std::int32_t>(frame.height));
+    if (x1 <= x0 || y1 <= y0) { x0 = 0; y0 = 0; x1 = static_cast<std::int32_t>(frame.width); y1 = static_cast<std::int32_t>(frame.height); }
+    im.applied = Viewport{x0, y0, static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)};
+    float aspect = im.applied.h > 0 ? static_cast<float>(im.applied.w) / static_cast<float>(im.applied.h) : 1.0f;
     im.stats = RenderStats{};
     im.camera = im.find_camera(world, aspect);
 
@@ -438,6 +449,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     rp.colorAttachments = ca;
     rp.depthStencilAttachment = &ds;
     WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+    if (im.applied.w != frame.width || im.applied.h != frame.height) {
+        wgpuRenderPassEncoderSetViewport(pass, static_cast<float>(im.applied.x), static_cast<float>(im.applied.y), static_cast<float>(im.applied.w), static_cast<float>(im.applied.h), 0.0f, 1.0f);
+        wgpuRenderPassEncoderSetScissorRect(pass, static_cast<std::uint32_t>(im.applied.x), static_cast<std::uint32_t>(im.applied.y), im.applied.w, im.applied.h);
+    }
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetPipeline(pass, im.pipeline);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
@@ -530,10 +545,14 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
     Vec4 clip = (im.camera.proj * im.camera.view) * Vec4{world_pos.x, world_pos.y, world_pos.z, 1};
     if (clip.w <= 0) return false;
     float nx = clip.x / clip.w, ny = clip.y / clip.w;
-    out_x = (nx * 0.5f + 0.5f) * static_cast<float>(im.last_width);
-    out_y = (1.0f - (ny * 0.5f + 0.5f)) * static_cast<float>(im.last_height);
+    out_x = static_cast<float>(im.applied.x) + (nx * 0.5f + 0.5f) * static_cast<float>(im.applied.w);
+    out_y = static_cast<float>(im.applied.y) + (1.0f - (ny * 0.5f + 0.5f)) * static_cast<float>(im.applied.h);
     return true;
 }
+
+void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
+Viewport Renderer::viewport() const { return impl_->viewport; }
+Viewport Renderer::applied_viewport() const { return impl_->applied; }
 
 Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
@@ -544,6 +563,8 @@ Json Renderer::describe() const {
     j["has_camera"] = s.has_camera;
     j["has_sun"] = s.has_sun;
     if (s.camera) j["camera"] = s.camera;
+    const Viewport& v = impl_->applied;
+    if (v.w != impl_->last_width || v.h != impl_->last_height) j["viewport"] = Json{{"x", v.x}, {"y", v.y}, {"w", v.w}, {"h", v.h}};
     return j;
 }
 

@@ -1,0 +1,5 @@
+name = "ui_tests"
+kind = "test"
+description = "Pocket UI tests: font loading and measurement, painter output verified through headless captures, and (later) layout, hit testing and snapshots."
+sources = ["*.cpp"]
+private_deps = ["pocket_ui", "catch2"]

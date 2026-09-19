@@ -12,6 +12,7 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | Yoga | 3.2.1 | MIT | vendored sources |
 | SDL3 | 3.4.16 | Zlib | fetched source, built with CMake by `pocket setup` |
 | wgpu-native | 29.0.1.1 | MIT or Apache-2.0 | fetched prebuilt archive |
-| FreeType | 2.14.3 | FTL or GPLv2 | fetched source, built with CMake (from M3) |
-| HarfBuzz | 14.4.0 | MIT (Old MIT) | fetched source, built with CMake (from M3) |
+| FreeType | 2.14.3 | FTL or GPLv2 | fetched source, built with CMake by `pocket setup` (no zlib/png/harfbuzz/brotli) |
+| HarfBuzz | 14.4.0 | MIT (Old MIT) | pinned, not yet fetched: text uses FreeType advances until shaping lands |
+| Noto Sans CJK SC | 2.004 | OFL 1.1 | fetched as a single file by `pocket setup`; the default UI font (Latin + Chinese, Japanese, Korean) |
 | JavaScriptCore | system | Apple system framework | linked as a framework; see ADR 0005 |

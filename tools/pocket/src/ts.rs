@@ -16,7 +16,7 @@ use oxc::codegen::Codegen;
 use oxc::parser::Parser;
 use oxc::semantic::SemanticBuilder;
 use oxc::span::{GetSpan, SourceType, Span};
-use oxc::transformer::{TransformOptions, Transformer};
+use oxc::transformer::{JsxRuntime, TransformOptions, Transformer};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -54,7 +54,11 @@ pub fn transform_to_js(path: &Path, source: &str) -> Result<String> {
     }
     let mut program = parsed.program;
     let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
-    let options = TransformOptions::default();
+    let mut options = TransformOptions::default();
+    // JSX compiles to calls into the Pocket UI SDK (`pocket/jsx-runtime`), never React.
+    options.jsx.runtime = JsxRuntime::Automatic;
+    options.jsx.import_source = Some("pocket".into());
+    options.jsx.jsx_plugin = true;
     let ret = Transformer::new(&allocator, path, &options).build_with_scoping(scoping, &mut program);
     if ret.diagnostics.has_errors() {
         let msgs: Vec<String> = ret.diagnostics.iter().map(|e| e.to_string()).collect();

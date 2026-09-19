@@ -21,6 +21,22 @@ const char* event_type_name(EventType type) {
     return "unknown";
 }
 
+Event event_from_json(const Json& j) {
+    Event e;
+    std::string t = j.is_object() ? j.value("type", "quit") : "quit";
+    e.type = t == "key_down" ? EventType::KeyDown : t == "key_up" ? EventType::KeyUp : t == "mouse_move" ? EventType::MouseMove : t == "mouse_down" ? EventType::MouseDown : t == "mouse_up" ? EventType::MouseUp : t == "mouse_wheel" ? EventType::MouseWheel : t == "resize" ? EventType::Resize : t == "text" ? EventType::Text : EventType::Quit;
+    if (!j.is_object()) return e;
+    e.key_name = j.contains("key") && j["key"].is_string() ? j["key"].get<std::string>() : "";
+    e.key = j.contains("code") && j["code"].is_number() ? j["code"].get<int>() : 0;
+    e.repeat = j.contains("repeat") && j["repeat"].is_boolean() && j["repeat"].get<bool>();
+    auto num = [&](const char* k) -> float { return j.contains(k) && j[k].is_number() ? j[k].get<float>() : 0.0f; };
+    e.x = num("x"); e.y = num("y"); e.dx = num("dx"); e.dy = num("dy");
+    e.button = j.contains("button") && j["button"].is_number() ? j["button"].get<int>() : 0;
+    e.width = static_cast<int>(num("width")); e.height = static_cast<int>(num("height"));
+    e.text = j.contains("text") && j["text"].is_string() ? j["text"].get<std::string>() : "";
+    return e;
+}
+
 Json event_to_json(const Event& e) {
     Json j;
     j["type"] = event_type_name(e.type);
@@ -62,6 +78,7 @@ struct Platform::Impl {
     bool quit = false;
     InputState input;
     int pixel_w = 0, pixel_h = 0;
+    bool text_input = false;
 
     ~Impl() {
         if (metal_view) SDL_Metal_DestroyView(metal_view);
@@ -170,6 +187,16 @@ void* Platform::metal_layer() const { return impl_->layer; }
 int Platform::pixel_width() const { return impl_->pixel_w; }
 int Platform::pixel_height() const { return impl_->pixel_h; }
 float Platform::pixel_density() const { return impl_->window ? SDL_GetWindowPixelDensity(impl_->window) : 1.0f; }
+
+void Platform::set_text_input(bool enabled) {
+    if (impl_->text_input == enabled) return;
+    impl_->text_input = enabled;
+    if (!impl_->window) return;
+    if (enabled) SDL_StartTextInput(impl_->window);
+    else SDL_StopTextInput(impl_->window);
+}
+
+bool Platform::text_input() const { return impl_->text_input; }
 
 Json Platform::describe() const {
     Json j;

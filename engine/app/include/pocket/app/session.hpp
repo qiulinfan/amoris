@@ -9,6 +9,9 @@
 #include <pocket/renderer/renderer.hpp>
 #include <pocket/rhi/device.hpp>
 #include <pocket/script/script_host.hpp>
+#include <pocket/ui/document.hpp>
+#include <pocket/ui/font.hpp>
+#include <pocket/ui/painter.hpp>
 #include <pocket/world/transcript.hpp>
 #include <pocket/world/world.hpp>
 
@@ -28,6 +31,7 @@ class Session {
 
     Status start();                       // create subsystems, load the scene, evaluate the bundle, dispatch "start"
     Status frame();                       // one frame: input, ticks, render
+    Status idle_frame();                  // paused frame: input, UI scripts and rendering, no simulation ticks
     Status run_ticks(int ticks);          // simulation only (used by `step` while paused)
     Result<Json> command(std::string_view name, const Json& params, std::string_view source = "agent");
     [[nodiscard]] Json report();          // snapshot of the run report
@@ -42,11 +46,20 @@ class Session {
     [[nodiscard]] rhi::Device& device() { return *device_; }
     [[nodiscard]] renderer::Renderer& renderer() { return *renderer_; }
     [[nodiscard]] physics::Physics& physics() { return *physics_; }
+    [[nodiscard]] ui::Document* ui() { return ui_.get(); }
     [[nodiscard]] std::int64_t tick() const { return clock_.tick; }
     Status finish();                      // dispatch "stop", capture, close journal
 
    private:
-    Json dispatch(const char* kind, Json arg);
+    Json dispatch(const char* kind, Json arg, std::string_view context = "");
+    Status load_bundle(const std::filesystem::path& path, const std::string& name);
+    Result<bool> poll_input(Json& input_events, int& ticks, bool simulating);  // false: replay exhausted
+    Json frame_info() const;
+    void ui_size(float& width, float& height, float& scale) const;
+    Json inject_events(std::vector<platform::Event> events);
+    Result<Json> ui_command(std::string_view op, const Json& p);
+    Result<Json> script_command(std::string_view op, const Json& p);
+    Result<Json> project_command(std::string_view op, const Json& p);
     void run_tick();
     void bind_natives();
     world::EntityId resolve_entity(const Json& v) const;
@@ -64,6 +77,11 @@ class Session {
     std::unique_ptr<renderer::Renderer> renderer_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<Journal> journal_;
+    std::unique_ptr<ui::Font> font_;
+    std::unique_ptr<ui::Painter> painter_;
+    std::unique_ptr<ui::Document> ui_;
+    std::filesystem::path font_path_;
+    std::vector<std::string> bundle_names_;
     TickClock clock_;
     StateHasher hasher_;
     Stopwatch total_;

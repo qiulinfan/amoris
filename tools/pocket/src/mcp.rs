@@ -94,6 +94,11 @@ fn tools_list() -> Value {
             "ids": { "type": "string", "description": "PNG path for the false-color id buffer" }
         }), &["path"])),
         tool("render_pick", "Entity under a pixel of the last frame.", obj_schema(json!({ "x": { "type": "number" }, "y": { "type": "number" } }), &["x", "y"])),
+        tool("ui_snapshot", "The interface as text: one line per element with type, id, name, rectangle, text or value, listeners, focus and scroll state. Read this instead of screenshots.", obj_schema(json!({ "depth": { "type": "integer" }, "max_nodes": { "type": "integer" }, "root": { "type": "integer" } }), &[])),
+        tool("ui_query", "Find interface elements by name, text substring or type (box, text, input).", obj_schema(json!({ "name": { "type": "string" }, "text": { "type": "string" }, "type": { "type": "string" } }), &[])),
+        tool("ui_click", "Click an interface element by id, or a point in window points. Goes through the same path as a player's click and returns the UI events it produced.", obj_schema(json!({ "id": { "type": "integer" }, "x": { "type": "number" }, "y": { "type": "number" } }), &[])),
+        tool("ui_type", "Type text into the focused input (ui_click it first).", obj_schema(json!({ "text": { "type": "string" } }), &["text"])),
+        tool("ui_key", "Press a key by name: Return, Backspace, Escape, Left, Right, Tab...", obj_schema(json!({ "key": { "type": "string" } }), &["key"])),
         tool("transcript", "The run so far compressed into segments where every exposed value keeps its trend, with the events of each segment grouped by type. Read this instead of stepping tick by tick.", obj_schema(json!({
             "since_tick": { "type": "integer", "default": 0 },
             "until_tick": { "type": "integer", "default": -1 },
@@ -233,6 +238,11 @@ impl<'a> McpServer<'a> {
             "events_since" => self.rpc("events.since", args).map(|v| Self::text_result(v, false)),
             "capture" => self.rpc("capture", args).map(|v| Self::text_result(v, false)),
             "render_pick" => self.rpc("render.pick", args).map(|v| Self::text_result(v, false)),
+            "ui_snapshot" => self.rpc("ui.snapshot", args).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false)),
+            "ui_query" => self.rpc("ui.query", args).map(|v| Self::text_result(v, false)),
+            "ui_click" => self.rpc("ui.click", args).map(|v| Self::text_result(v.get("events").cloned().unwrap_or(v), false)),
+            "ui_type" => self.rpc("ui.type", args).map(|v| Self::text_result(v.get("events").cloned().unwrap_or(v), false)),
+            "ui_key" => self.rpc("ui.key", args).map(|v| Self::text_result(v.get("events").cloned().unwrap_or(v), false)),
             "transcript" => self.rpc("transcript", args).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false)),
             other => bail!("unknown tool '{other}'"),
         }

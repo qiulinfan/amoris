@@ -54,6 +54,25 @@ frameworks = ["Metal", "QuartzCore", "CoreFoundation", "Foundation", "CoreGraphi
 license = "MIT OR Apache-2.0"
 
 [[dependencies]]
+name = "freetype"
+version = "2.14.3"
+kind = "cmake"
+url = "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz"
+sha256 = "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f"
+cmake_args = ["-DBUILD_SHARED_LIBS=OFF", "-DFT_DISABLE_ZLIB=ON", "-DFT_DISABLE_BZIP2=ON", "-DFT_DISABLE_PNG=ON", "-DFT_DISABLE_HARFBUZZ=ON", "-DFT_DISABLE_BROTLI=ON", "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"]
+include_dirs = ["include/freetype2"]
+libs = ["lib/libfreetype.a"]
+license = "FTL"
+
+[[dependencies]]
+name = "noto-sans-cjk"
+version = "2.004"
+kind = "file"
+url = "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+sha256 = "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"
+license = "OFL-1.1"
+
+[[dependencies]]
 name = "javascriptcore"
 version = "system"
 kind = "system"
