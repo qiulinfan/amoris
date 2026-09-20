@@ -560,6 +560,10 @@ Json TileMap::describe() const {
     Json j;
     j["path"] = path;
     j["kind"] = "tilemap";
+    if (infinite) {
+        j["infinite"] = true;
+        j["origin"] = Json{{"x", chunk_x}, {"y", chunk_y}};   // where the box starts, in Tiled's tile coordinates
+    }
     j["orientation"] = orientation;
     if (orientation == "hexagonal") j["hex_side"] = hex_side;
     if (orientation == "hexagonal" || orientation == "staggered") {
@@ -613,6 +617,35 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
     map.stagger_y = doc.value("staggeraxis", "y") != "x";
     map.stagger_odd = doc.value("staggerindex", "odd") != "even";
     map.properties = properties_of(doc);
+    map.infinite = doc.value("infinite", false);
+    if (map.infinite) {
+        if (map.orientation != "orthogonal") return fail("bad_tilemap", "{}: infinite maps are read for orthogonal maps only", display_path);
+        // The box around every chunk of every tile layer: the map's size, with cells and objects shifted so it starts at (0, 0).
+        int minx = std::numeric_limits<int>::max(), miny = std::numeric_limits<int>::max(), maxx = std::numeric_limits<int>::min(), maxy = std::numeric_limits<int>::min();
+        std::function<void(const Json&)> scan = [&](const Json& l) {
+            if (!l.is_object()) return;
+            if (l.value("type", "tilelayer") == "group") {
+                for (const Json& c : l.value("layers", Json::array())) scan(c);
+                return;
+            }
+            for (const Json& c : l.value("chunks", Json::array())) {
+                if (!c.is_object()) continue;
+                const int x = c.value("x", 0), y = c.value("y", 0), w = c.value("width", 0), h = c.value("height", 0);
+                if (w <= 0 || h <= 0) continue;
+                minx = std::min(minx, x);
+                miny = std::min(miny, y);
+                maxx = std::max(maxx, x + w);
+                maxy = std::max(maxy, y + h);
+            }
+        };
+        for (const Json& l : doc.value("layers", Json::array())) scan(l);
+        if (maxx > minx && maxy > miny) {
+            map.chunk_x = minx;
+            map.chunk_y = miny;
+            map.width = maxx - minx;
+            map.height = maxy - miny;
+        }
+    }
     if (map.width <= 0 || map.height <= 0 || map.tile_width <= 0 || map.tile_height <= 0) return fail("bad_tilemap", "{}: width, height, tilewidth and tileheight must be positive", display_path);
     if (map.hex_side < 0 || (map.orientation == "hexagonal" && map.hex_side > (map.stagger_y ? map.tile_height : map.tile_width))) return fail("bad_tilemap", "{}: hexsidelength must lie between 0 and the tile's extent along the stagger axis", display_path);
     std::filesystem::path base = std::filesystem::path(display_path).parent_path();
@@ -668,6 +701,33 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
             layer.offset_x = l.value("offsetx", 0.0f);
             layer.offset_y = l.value("offsety", 0.0f);
             layer.properties = properties_of(l);
+            if (l.contains("chunks") && l["chunks"].is_array()) {
+                // An infinite map's layer: its chunks laid into the box around them all.
+                layer.width = map.width;
+                layer.height = map.height;
+                layer.gids.assign(static_cast<std::size_t>(map.width) * static_cast<std::size_t>(map.height), 0u);
+                for (const Json& c : l["chunks"]) {
+                    if (!c.is_object()) continue;
+                    if (c.value("encoding", "csv") != "csv" || c.contains("compression")) return fail("bad_tilemap", "{}: layer '{}' must use csv encoding (base64 and compression are not supported)", display_path, layer.name);
+                    const int cx = c.value("x", 0) - map.chunk_x, cy = c.value("y", 0) - map.chunk_y, cw = c.value("width", 0), ch = c.value("height", 0);
+                    const Json& data = c.value("data", Json::array());
+                    if (cw <= 0 || ch <= 0 || !data.is_array() || data.size() != static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch)) return fail("bad_tilemap", "{}: layer '{}' has a chunk whose data does not match its size", display_path, layer.name);
+                    for (int y = 0; y < ch; ++y) {
+                        for (int x = 0; x < cw; ++x) {
+                            const Json& g = data[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) + static_cast<std::size_t>(x)];
+                            if (!g.is_number()) return fail("bad_tilemap", "{}: layer '{}' has a non-numeric tile", display_path, layer.name);
+                            const int mx = cx + x, my = cy + y;
+                            if (mx < 0 || my < 0 || mx >= map.width || my >= map.height) continue;
+                            layer.gids[static_cast<std::size_t>(my) * static_cast<std::size_t>(map.width) + static_cast<std::size_t>(mx)] = static_cast<std::uint32_t>(g.get<double>());
+                        }
+                    }
+                }
+                for (std::uint32_t g : layer.gids) {
+                    if (g != 0 && !map.tileset_for(g)) return fail("bad_tilemap", "{}: layer '{}' uses gid {} that no tileset covers", display_path, layer.name, g & TileMap::kIdMask);
+                }
+                map.layers.push_back(std::move(layer));
+                return {};
+            }
             if (l.value("encoding", "csv") != "csv" || l.contains("compression")) return fail("bad_tilemap", "{}: layer '{}' must use csv encoding (base64 and compression are not supported)", display_path, layer.name);
             const Json& data = l.value("data", Json::array());
             if (!data.is_array() || data.size() != static_cast<std::size_t>(layer.width) * static_cast<std::size_t>(layer.height)) return fail("bad_tilemap", "{}: layer '{}' data does not match {}x{}", display_path, layer.name, layer.width, layer.height);
@@ -693,6 +753,10 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
                 mo.type = o.contains("type") ? o.value("type", "") : o.value("class", "");
                 mo.x = o.value("x", 0.0f);
                 mo.y = o.value("y", 0.0f);
+                if (map.infinite) {   // into the box's own pixel space
+                    mo.x -= static_cast<float>(map.chunk_x * map.tile_width);
+                    mo.y -= static_cast<float>(map.chunk_y * map.tile_height);
+                }
                 mo.width = o.value("width", 0.0f);
                 mo.height = o.value("height", 0.0f);
                 mo.gid = o.value("gid", 0u);
@@ -711,6 +775,10 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
             if (!image.empty()) il.image = (base / image).lexically_normal().generic_string();
             il.offset_x = l.value("offsetx", 0.0f) + l.value("x", 0.0f);
             il.offset_y = l.value("offsety", 0.0f) + l.value("y", 0.0f);
+            if (map.infinite) {
+                il.offset_x -= static_cast<float>(map.chunk_x * map.tile_width);
+                il.offset_y -= static_cast<float>(map.chunk_y * map.tile_height);
+            }
             il.opacity = l.value("opacity", 1.0f);
             il.visible = l.value("visible", true);
             il.repeat_x = l.value("repeatx", false);

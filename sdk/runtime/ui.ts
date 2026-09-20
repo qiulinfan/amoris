@@ -80,8 +80,8 @@ export const ui = {
         cmd("ui.focus", { id });
     },
     /** Synthetic click on an element (by id) or a point, routed like real input. */
-    click(target: number | { x: number; y: number }, button = 1): UiEvent[] {
-        const params = typeof target === "number" ? { id: target, button } : { ...target, button };
+    click(target: number | { x: number; y: number }, button = 1, clicks = 1): UiEvent[] {
+        const params = typeof target === "number" ? { id: target, button, clicks } : { ...target, button, clicks };
         return cmd<{ events: UiEvent[] }>("ui.click", params).events;
     },
     type(text: string): UiEvent[] {
@@ -179,6 +179,8 @@ export interface StyleProps {
     uv?: [number, number, number, number];
     /** Nine-slice borders in picture pixels (left, top, right, bottom, or one number for all): the corners keep their size, the edges stretch, the middle fills the box; `fit` is ignored. */
     slice?: [number, number, number, number] | number;
+    /** How the picture is sampled when scaled: "linear" (soft, the default) or "nearest" (each pixel a crisp block, for pixel art). */
+    filter?: "linear" | "nearest";
     borderColor?: ColorValue;
     border?: number;
     radius?: number;
@@ -584,7 +586,7 @@ export function Panel(props: { title?: string; children?: unknown; flex?: number
         h("box", { flexGrow: 1, flexShrink: 1, padding: props.padding ?? 6, gap: props.gap ?? 4, overflow: props.scroll ? "scroll" : "hidden", direction: props.direction ?? "column" }, props.children));
 }
 
-export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean }): VNode {
+export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean; wrap?: boolean }): VNode {
     return h("input", {
         name: props.name,
         value: props.value,
@@ -592,6 +594,7 @@ export function TextInput(props: { value: string; onChange?: (value: string) => 
         width: props.width,
         height: props.height,
         multiline: props.multiline,
+        textWrap: props.wrap,
         flex: props.flex,
         disabled: props.disabled,
         color: theme.text,

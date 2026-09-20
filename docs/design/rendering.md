@@ -9,11 +9,12 @@
 3. Objects: one row per `MeshRenderer` entity (one per material for glTF meshes) and one per `Sprite`, written into a single storage buffer (`model`, normal matrix, color, entity id, uv rectangle). Rows are sorted by texture, mesh and submesh; each run of equal mesh, submesh and material is one instanced draw, `instance_index` selecting the row. Three thousand cubes are one draw (`docs/evidence/swarm.md`).
 4. Shadow pass: a 2048x2048 depth map from the sun's orthographic view, fitted to a sphere around every entity with `Bounds`. Every mesh casts.
 5. Scene pass: the color target plus an `R32Uint` id target and a depth buffer. With MSAA on (`[render] msaa = 4` or `render.msaa {samples: 4}`) the colors are drawn four samples per pixel and resolved into the frame, and the ids come from a pass of their own at one sample per pixel, since an integer target cannot be multisampled; `render.stats` reports `msaa` and the `id_draws` of that pass. Meshes are lit with a metallic-roughness model (Lambert diffuse, GGX specular with Schlick's Fresnel and Smith's masking, ambient reflected by dielectrics and metals in their own colors, point lights with quadratic falloff) and shadowed by a 3x3 comparison filter with a slope-scaled bias. Sprites follow, unlit and alpha blended, sorted by layer then far to near, without depth writes.
-6. The id target is what `render.pick`, `render.ids` and the editor's click-to-select read; `render.project` maps world points to pixels of the same frame.
+6. Bloom, when it is on (`render.bloom {enabled: true}` or `[render] bloom = true`): what is brighter than the threshold goes into a half-size texture, is blurred across and down by a nine-tap gaussian, and is added back onto the frame, so lights, emissive surfaces and white sprites glow; four small draws, counted in `draw_calls`, and `render.stats` reports `bloom`.
+7. The id target is what `render.pick`, `render.ids` and the editor's click-to-select read; `render.project` maps world points to pixels of the same frame.
 
 ## Settings and stats
 
-`render.shadows {enabled, strength, bias}` (or `[render] shadows = false` in `project.toml`) controls the shadow map; `render.msaa {samples}` (or `[render] msaa = 4`) turns multisampling on or off; `render.stats` reports `draw_calls`, `shadow_draws`, `instances`, `sprites`, lights and assets; `perf` reports the render time beside the other phases.
+`render.shadows {enabled, strength, bias}` (or `[render] shadows = false` in `project.toml`) controls the shadow map; `render.msaa {samples}` (or `[render] msaa = 4`) turns multisampling on or off; `render.bloom {enabled, threshold, strength, radius}` (or `[render] bloom = true` with `bloom_threshold`, `bloom_strength`, `bloom_radius`) turns the glow on and shapes it (threshold 0.8, strength 0.6 and radius 1 by default; a `MeshRenderer` with a white `emissive` glows at any threshold); `capture {pixel: {x, y}}` or `{pixels: [...]}` reads pixels of the frame; `render.stats` reports `draw_calls`, `shadow_draws`, `instances`, `sprites`, lights and assets; `perf` reports the render time beside the other phases.
 
 ## Materials and assets
 
@@ -33,7 +34,7 @@ A textured mesh with a `cutoff` (`MeshRenderer.cutoff`, or a glTF material with 
 
 ## Not yet
 
-Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, order-independent transparency (translucent meshes sort by their entity's depth, so two that interleave draw in one order), shadows that follow a cut-out's holes (the shadow pass draws the mesh whole), post-processing. Each is a renderer-internal change: the commands and components stay.
+Cascaded shadow maps for large worlds (one map covers the scene's bounds, so a kilometer of terrain would blur it), point-light shadows, order-independent transparency (translucent meshes sort by their entity's depth, so two that interleave draw in one order), shadows that follow a cut-out's holes (the shadow pass draws the mesh whole), post-processing beyond bloom (tone mapping, color grading, vignette; the frame is 8 bits per channel, so bloom works on the frame's own range rather than on light beyond white). Each is a renderer-internal change: the commands and components stay.
 
 ## Debug lines
 

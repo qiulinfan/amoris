@@ -480,3 +480,142 @@ TEST_CASE("inputs select with Shift, the mouse and Cmd+A, and cut, copy and past
     f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 22), mouse(platform::EventType::MouseUp, 20, 22), key("A", platform::kModMeta), key("V", platform::kModMeta)}, text_wanted);
     REQUIRE(f.doc->describe(47)["value"] == "ab cd");
 }
+
+TEST_CASE("a wrapped text area breaks its lines at the width, moves by rows and scrolls with the wheel", "[ui][wrap]") {
+    Fixture f;
+    auto painter = ui::Painter::create(*f.device, *f.font);
+    REQUIRE(painter.has_value());
+    // A paint: it is where a text area brings a moved caret into view and clamps its scroll.
+    auto paint = [&]() {
+        auto frame = f.device->begin_frame();
+        REQUIRE(frame.has_value());
+        WGPURenderPassEncoder pass = f.device->begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        (*painter)->begin(320, 200, 1.0f);
+        f.doc->paint(**painter);
+        REQUIRE((*painter)->flush(*frame).has_value());
+        REQUIRE(f.device->end_frame(*frame).has_value());
+    };
+    // 120 points wide: the sentence takes several rows; a word wider than the area is broken.
+    f.apply(Json::parse(R"([
+        ["create", 47, "input"], ["set", 47, {"position": "absolute", "left": 10, "top": 10, "width": 120, "height": 40, "multiline": true, "textWrap": true, "name": "wrapped", "value": "the quick brown fox jumps over the lazy dog"}], ["append", 1, 47]
+    ])"));
+    f.layout();
+    Json d = f.doc->describe(47);
+    REQUIRE(d["wrap"] == true);
+    const int rows = d["rows"].get<int>();
+    REQUIRE(rows >= 3);
+    // The same text unwrapped is one row; wrapped in a wider box, fewer rows.
+    f.apply(Json::parse(R"([["set", 47, {"textWrap": false}]])"));
+    f.layout();
+    REQUIRE(f.doc->describe(47)["rows"] == 1);
+    f.apply(Json::parse(R"([["set", 47, {"textWrap": true, "width": 240}]])"));
+    f.layout();
+    REQUIRE(f.doc->describe(47)["rows"].get<int>() < rows);
+    f.apply(Json::parse(R"([["set", 47, {"width": 120}]])"));
+    f.layout();
+    // Home on the caret's row (the last) is a word boundary, not the text's start; Up climbs a row.
+    bool text_wanted = false;
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 20), mouse(platform::EventType::MouseUp, 20, 20)}, text_wanted);
+    platform::Event key;
+    key.type = platform::EventType::KeyDown;
+    key.key_name = "End";
+    // A new value puts the caret at its end (the same value again would keep it).
+    f.apply(Json::parse(R"([["set", 47, {"value": ""}], ["set", 47, {"value": "the quick brown fox jumps over the lazy dog"}]])"));
+    const std::string v = "the quick brown fox jumps over the lazy dog";
+    REQUIRE(f.doc->describe(47)["caret"] == static_cast<int>(v.size()));
+    key.key_name = "Home";
+    f.doc->handle_events({key}, text_wanted);
+    const int home = f.doc->describe(47)["caret"].get<int>();
+    REQUIRE(home > 0);
+    REQUIRE(home < static_cast<int>(v.size()));
+    REQUIRE(v[static_cast<std::size_t>(home) - 1] == ' ');
+    key.key_name = "Up";
+    f.doc->handle_events({key}, text_wanted);
+    const int up = f.doc->describe(47)["caret"].get<int>();
+    REQUIRE(up < home);
+    key.key_name = "Down";
+    f.doc->handle_events({key}, text_wanted);
+    REQUIRE(f.doc->describe(47)["caret"].get<int>() >= home);
+    // A word wider than the area is broken into rows rather than clipped.
+    f.apply(Json::parse(R"([["set", 47, {"value": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"}]])"));
+    f.layout();
+    REQUIRE(f.doc->describe(47)["rows"].get<int>() >= 2);
+    // Many lines in a short box: the caret at the end scrolls the rows up; the wheel scrolls back
+    // toward the top; Home (a caret move) brings the caret's row into view again.
+    std::string many;
+    for (int i = 0; i < 12; ++i) many += "line " + std::to_string(i) + "\n";
+    f.apply(Json::parse(R"([["set", 47, {"textWrap": false}]])"));
+    f.apply(Json::array({Json::array({"set", 47, Json{{"value", many}}})}));
+    f.layout();
+    paint();
+    d = f.doc->describe(47);
+    REQUIRE(d["rows"] == 13);
+    REQUIRE(d["scrollTop"].get<float>() > 0);
+    REQUIRE(d["contentHeight"].get<float>() > 40);
+    const float scrolled = d["scrollTop"].get<float>();
+    platform::Event wheel;
+    wheel.type = platform::EventType::MouseWheel;
+    wheel.dy = 1;   // up
+    f.doc->handle_events({mouse(platform::EventType::MouseMove, 30, 30), wheel}, text_wanted);
+    REQUIRE(f.doc->describe(47)["scrollTop"].get<float>() < scrolled);
+    paint();
+    REQUIRE(f.doc->describe(47)["scrollTop"].get<float>() < scrolled);   // a paint keeps the wheel's scroll
+    ui::SnapshotOptions so;
+    REQUIRE(f.doc->snapshot(so).find("scroll=") != std::string::npos);
+    key.key_name = "Up";
+    f.doc->handle_events({key}, text_wanted);   // the caret moves: its row comes back into view
+    paint();
+    REQUIRE(f.doc->describe(47)["scrollTop"].get<float>() > 0);
+}
+
+TEST_CASE("a double-click selects the word under the pointer and a triple-click the line", "[ui][word]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 48, "input"], ["set", 48, {"position": "absolute", "left": 10, "top": 10, "width": 200, "height": 24, "name": "words", "value": "hello world_2 你好"}], ["append", 1, 48],
+        ["create", 49, "input"], ["set", 49, {"position": "absolute", "left": 10, "top": 60, "width": 200, "height": 60, "multiline": true, "name": "lines", "value": "ab cd\nef gh"}], ["append", 1, 49]
+    ])"));
+    f.layout();
+    bool text_wanted = false;
+    platform::Event down = mouse(platform::EventType::MouseDown, 20, 22);
+    down.clicks = 2;
+    f.doc->handle_events({down, mouse(platform::EventType::MouseUp, 20, 22)}, text_wanted);
+    Json d = f.doc->describe(48);
+    REQUIRE(d["selection"] == Json::array({0, 5}));
+    // The second word runs through its digit and underscore; a CJK character is a word of its own.
+    const float w_hello = f.font->measure("hello w", 13.0f);
+    down.x = 10 + 4 + 1 + w_hello;   // padding 4, 1 point in, then into "world_2"
+    f.doc->handle_events({down, mouse(platform::EventType::MouseUp, down.x, 22)}, text_wanted);
+    d = f.doc->describe(48);
+    REQUIRE(d["selection"] == Json::array({6, 13}));
+    const float w_cjk = f.font->measure("hello world_2 ", 13.0f);
+    down.x = 10 + 4 + 1 + w_cjk + 2;
+    f.doc->handle_events({down, mouse(platform::EventType::MouseUp, down.x, 22)}, text_wanted);
+    d = f.doc->describe(48);
+    REQUIRE(d["selection"] == Json::array({14, 17}));
+    // Three clicks select the whole line; in a text area, the line under the pointer.
+    down.clicks = 3;
+    down.x = 20;
+    f.doc->handle_events({down, mouse(platform::EventType::MouseUp, 20, 22)}, text_wanted);
+    REQUIRE(f.doc->describe(48)["selection"] == Json::array({0, 20}));
+    down.y = 70;
+    f.doc->handle_events({down, mouse(platform::EventType::MouseUp, 20, 70)}, text_wanted);
+    REQUIRE(f.doc->describe(49)["selection"] == Json::array({0, 5}));
+    // Typing replaces the selection; a plain click clears it.
+    platform::Event t;
+    t.type = platform::EventType::Text;
+    t.text = "xy";
+    f.doc->handle_events({t}, text_wanted);
+    REQUIRE(f.doc->describe(49)["value"] == "xy\nef gh");
+    down.clicks = 1;
+    f.doc->handle_events({down, mouse(platform::EventType::MouseUp, 20, 70)}, text_wanted);
+    REQUIRE_FALSE(f.doc->describe(49).contains("selection"));
+    // The event round-trips its click count.
+    REQUIRE(platform::event_to_json(down)["clicks"].is_null());
+    down.clicks = 2;
+    REQUIRE(platform::event_from_json(platform::event_to_json(down)).clicks == 2);
+    // The image filter round-trips too.
+    f.apply(Json::parse(R"([["set", 48, {"image": "x.png", "filter": "nearest"}]])"));
+    REQUIRE(f.doc->describe(48)["filter"] == "nearest");
+}

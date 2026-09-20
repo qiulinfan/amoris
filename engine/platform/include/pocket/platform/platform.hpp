@@ -40,6 +40,7 @@ struct Event {
     std::string text;        // for Text
     int pad = 0;             // gamepad index (PadAdded/Removed/Button/Axis); key_name carries the button/axis name; the finger index for Touch events
     int mods = 0;            // modifier bits (kModShift | ...) for keys and mouse buttons
+    int clicks = 1;          // MouseDown/Up: 2 for a double-click, 3 for a triple
     bool pressed = false;    // PadButton
     float value = 0;         // PadAxis, -1..1
 };

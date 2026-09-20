@@ -394,3 +394,45 @@ TEST_CASE("MSAA smooths edges and keeps the ids through a pass of their own", "[
     REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["path"] == "/Level/Player");
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("bloom spreads a glow past a bright surface and leaves the dark alone", "[renderer][bloom]") {
+    app::Session s(playground_options());
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A white-hot cube in the dark, a camera straight above it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 10}, {"z", 0.001}}}, {"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json vis = s.command("render.visible", Json{{"limit", 4}}).value();
+    REQUIRE(vis["count"].get<int>() == 1);
+    const Json& b = vis["visible"][0]["bounds"];
+    // Just past the cube's right edge, and its center.
+    const int outside_x = b["x"].get<int>() + b["width"].get<int>() + 3, y = b["y"].get<int>() + b["height"].get<int>() / 2;
+    const Json pts = Json::array({Json{{"x", outside_x}, {"y", y}}, Json{{"x", b["x"].get<int>() + b["width"].get<int>() / 2}, {"y", y}}});
+    Json plain = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("plain " << plain["pixels"].dump() << " bounds " << b.dump());
+    REQUIRE(plain["render"]["bloom"] == false);
+    REQUIRE(plain["pixels"][0][1].get<int>() < 60);    // the dark beside the cube
+    REQUIRE(plain["pixels"][1][1].get<int>() > 200);   // the cube itself
+    Json set = s.command("render.bloom", Json{{"enabled", true}, {"threshold", 0.6}, {"strength", 1.0}, {"radius", 2.0}}).value();
+    REQUIRE(set["enabled"] == true);
+    REQUIRE(set["radius"].get<double>() == Catch::Approx(2.0));
+    REQUIRE(s.frame().has_value());
+    Json glow = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("glow " << glow["pixels"].dump());
+    REQUIRE(glow["render"]["bloom"] == true);
+    REQUIRE(glow["render"]["draw_calls"].get<int>() == plain["render"]["draw_calls"].get<int>() + 4);
+    REQUIRE(glow["pixels"][0][1].get<int>() > plain["pixels"][0][1].get<int>() + 12);   // the glow reaches past the edge
+    REQUIRE(glow["pixels"][1][1].get<int>() > 200);
+    // Far from anything bright, nothing changes.
+    const Json far = Json::array({Json{{"x", 4}, {"y", 4}}});
+    Json corner = s.command("capture", Json{{"pixels", far}}).value();
+    REQUIRE(std::abs(corner["pixels"][0][1].get<int>() - plain["corner_pixel"][1].get<int>()) <= 2);
+    // Off again: back to the plain frame.
+    REQUIRE(s.command("render.bloom", Json{{"enabled", false}}).value()["enabled"] == false);
+    REQUIRE(s.frame().has_value());
+    Json back = s.command("capture", Json{{"pixels", pts}}).value();
+    REQUIRE(back["render"]["bloom"] == false);
+    REQUIRE(std::abs(back["pixels"][0][1].get<int>() - plain["pixels"][0][1].get<int>()) <= 2);
+    REQUIRE(s.finish().has_value());
+}

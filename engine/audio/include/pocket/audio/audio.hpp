@@ -22,6 +22,10 @@ struct Config {
     std::filesystem::path project_dir;
     bool headless = false;  // never opens a device
     int sample_rate = 48000;
+    // An Ogg clip at least this long is streamed: its compressed bytes stay in memory and each
+    // voice decodes its own way through them a chunk at a time, so a music track costs its file
+    // size rather than its decoded size. 0 streams every Ogg; WAV clips always decode whole.
+    double stream_seconds = 10.0;
 };
 
 struct PlayOptions {
@@ -71,6 +75,9 @@ class Audio {
     std::vector<VoiceEvent> tick(double dt);
     // Render audio into the device stream (no-op without a device). Call once per frame.
     void pump();
+    // Render the next `frames` stereo frames of the mix without a device (what pump would queue):
+    // for tests and tools that want to hear a headless run. Interleaved left, right in -1..1.
+    [[nodiscard]] const std::vector<float>& render_frames(int frames);
     void set_master_volume(float v);
     [[nodiscard]] float master_volume() const;
     void set_muted(bool m);

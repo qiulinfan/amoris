@@ -219,6 +219,10 @@ struct TileMap {
     // tile_height) has its top-left, the cell under a pixel (false outside the map), the drawn
     // map's size, and where an object's Tiled coordinates land (isometric objects are given in
     // the unprojected tile space, the others in pixels).
+    // An infinite map (Tiled's chunks) is read as the box around its chunks, its cells and objects
+    // shifted so the box starts at (0, 0); chunk_x/chunk_y is that box's origin in Tiled's tile coordinates.
+    bool infinite = false;
+    int chunk_x = 0, chunk_y = 0;
     [[nodiscard]] bool orthogonal() const { return orientation == "orthogonal"; }
     [[nodiscard]] Vec2 tile_pixel(int x, int y) const;
     [[nodiscard]] bool cell_at_pixel(float px, float py, int& x, int& y) const;

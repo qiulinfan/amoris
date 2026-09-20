@@ -21,10 +21,28 @@ namespace {
 
 struct Clip {
     std::string path;
-    std::vector<float> samples;  // interleaved stereo at the mixer rate
-    std::uint32_t frames = 0;
+    std::vector<float> samples;  // interleaved stereo at the mixer rate (decoded clips)
+    std::uint32_t frames = 0;    // at the mixer rate (for a streamed clip, from the file's length)
     double duration = 0;
     int source_rate = 0, source_channels = 0;
+    bool streamed = false;               // decoded by each voice as it plays, from `bytes`
+    std::vector<std::uint8_t> bytes;     // the Ogg file (streamed clips)
+};
+
+// A streamed voice's way through its file: a decoder, a converter to the mixer format, and the
+// converted frames from `start` on (the frames behind the mixer are dropped as it goes). The
+// frame count keeps rising across loops, so a looping voice is one continuous timeline.
+struct StreamState {
+    stb_vorbis* dec = nullptr;
+    SDL_AudioStream* conv = nullptr;
+    std::vector<float> buf;
+    std::uint64_t start = 0;
+    bool eof = false;               // nothing more will come (the file's end, without a loop)
+    std::vector<short> chunk;
+    ~StreamState() {
+        if (conv) SDL_DestroyAudioStream(conv);
+        if (dec) stb_vorbis_close(dec);
+    }
 };
 
 struct Voice {
@@ -39,6 +57,7 @@ struct Voice {
     std::string tag;
     std::uint32_t loops_done = 0;
     bool render_done = false;
+    std::shared_ptr<StreamState> stream;   // set for a streamed clip
 };
 
 }  // namespace
@@ -58,6 +77,8 @@ struct Audio::Impl {
     std::uint64_t plays = 0;
 
     ~Impl() {
+        voices.clear();   // streamed voices own SDL converters: gone before the subsystem is
+        clips.clear();
         if (stream) SDL_DestroyAudioStream(stream);
         if (sdl_audio) SDL_QuitSubSystem(SDL_INIT_AUDIO);
     }
@@ -81,6 +102,30 @@ struct Audio::Impl {
         SDL_AudioSpec spec{};
         std::vector<std::uint8_t> pcm;   // the file's samples, in `spec`
         if (ext == ".ogg") {
+            // A long file streams: its length and format come from a probe, the bytes stay.
+            int err = 0;
+            stb_vorbis* probe = stb_vorbis_open_memory(reinterpret_cast<const unsigned char*>(bytes.data()), static_cast<int>(bytes.size()), &err, nullptr);
+            if (!probe) return fail("bad_audio", "{}: not an Ogg Vorbis file (stb_vorbis error {})", path, err);
+            const stb_vorbis_info info = stb_vorbis_get_info(probe);
+            const unsigned int length = stb_vorbis_stream_length_in_samples(probe);
+            stb_vorbis_close(probe);
+            if (info.channels <= 0 || info.sample_rate == 0) return fail("bad_audio", "{}: not an Ogg Vorbis file", path);
+            const double seconds = static_cast<double>(length) / static_cast<double>(info.sample_rate);
+            if (length > 0 && seconds >= config.stream_seconds) {
+                auto c = std::make_unique<Clip>();
+                c->path = path;
+                c->streamed = true;
+                c->bytes = std::move(bytes);
+                c->source_rate = static_cast<int>(info.sample_rate);
+                c->source_channels = info.channels;
+                c->frames = static_cast<std::uint32_t>(std::llround(seconds * config.sample_rate));
+                c->duration = static_cast<double>(c->frames) / config.sample_rate;
+                if (c->frames == 0) return fail("bad_audio", "{}: no samples", path);
+                log::info("audio", "streaming {} ({:.3f} s, {} Hz, {} ch, {} bytes)", path, c->duration, c->source_rate, c->source_channels, c->bytes.size());
+                const Clip* raw = c.get();
+                clips[path] = std::move(c);
+                return raw;
+            }
             // Ogg Vorbis through stb_vorbis: 16-bit frames, interleaved, at the file's rate.
             int channels = 0, rate = 0;
             short* out = nullptr;
@@ -146,6 +191,56 @@ struct Audio::Impl {
         return i;
     }
 
+    // A streamed voice's decoder and converter, at the file's start.
+    Result<std::shared_ptr<StreamState>> open_stream(const Clip& c) const {
+        auto s = std::make_shared<StreamState>();
+        int err = 0;
+        s->dec = stb_vorbis_open_memory(c.bytes.data(), static_cast<int>(c.bytes.size()), &err, nullptr);
+        if (!s->dec) return fail("bad_audio", "{}: cannot open the stream (stb_vorbis error {})", c.path, err);
+        SDL_AudioSpec src{};
+        src.format = SDL_AUDIO_S16;
+        src.channels = c.source_channels;
+        src.freq = c.source_rate;
+        SDL_AudioSpec dst{};
+        dst.format = SDL_AUDIO_F32;
+        dst.channels = 2;
+        dst.freq = config.sample_rate;
+        s->conv = SDL_CreateAudioStream(&src, &dst);
+        if (!s->conv) return fail("bad_audio", "{}: {}", c.path, SDL_GetError());
+        s->chunk.resize(static_cast<std::size_t>(4096) * static_cast<std::size_t>(c.source_channels));
+        return s;
+    }
+
+    // Decode and convert until the buffer reaches frame `need` (or the file's end, with a loop
+    // wrapping to its start), and take what the converter has ready.
+    void feed(StreamState& s, const Clip& c, bool loop, std::uint64_t need) {
+        auto pull = [&]() {
+            const int available = SDL_GetAudioStreamAvailable(s.conv);
+            if (available <= 0) return;
+            const std::size_t at = s.buf.size();
+            s.buf.resize(at + static_cast<std::size_t>(available) / sizeof(float));
+            const int got = SDL_GetAudioStreamData(s.conv, s.buf.data() + at, available);
+            s.buf.resize(at + (got > 0 ? static_cast<std::size_t>(got) / sizeof(float) : 0));
+            if (s.buf.size() % 2) s.buf.pop_back();
+        };
+        int guard = 0;
+        bool wrapped = false;   // a seek to the start that yields nothing ends the stream (an empty file)
+        while (!s.eof && s.start + s.buf.size() / 2 < need && guard++ < 4096) {
+            const int n = stb_vorbis_get_samples_short_interleaved(s.dec, c.source_channels, s.chunk.data(), static_cast<int>(s.chunk.size()));
+            if (n > 0) {
+                SDL_PutAudioStreamData(s.conv, s.chunk.data(), n * c.source_channels * static_cast<int>(sizeof(short)));
+                wrapped = false;
+            } else if (loop && !wrapped && stb_vorbis_seek_start(s.dec)) {
+                wrapped = true;   // around again
+            } else {
+                SDL_FlushAudioStream(s.conv);
+                s.eof = true;
+            }
+            pull();
+        }
+        pull();
+    }
+
     // Render `frames` stereo frames of every voice into mix (additive, then master/mute).
     void render(int frames) {
         mix.assign(static_cast<std::size_t>(frames) * 2, 0.0f);
@@ -157,6 +252,30 @@ struct Audio::Impl {
             float r = v.volume * master * (v.pan >= 0 ? 1.0f : 1.0f + v.pan);
             double pos = v.render;
             double step = std::max(0.01f, v.pitch);
+            if (v.stream) {
+                // From the decoded window: fed ahead of the mixer, the frames behind it dropped.
+                StreamState& s = *v.stream;
+                feed(s, c, v.loop, static_cast<std::uint64_t>(pos + step * frames) + 2);
+                const std::uint64_t have_end = s.start + s.buf.size() / 2;
+                for (int f = 0; f < frames; ++f) {
+                    const auto i0 = static_cast<std::uint64_t>(pos);
+                    if (i0 >= have_end) { if (s.eof) v.render_done = true; break; }   // the end, or starved (silence)
+                    const std::uint64_t i1 = i0 + 1 < have_end ? i0 + 1 : i0;
+                    const std::size_t r0 = static_cast<std::size_t>(i0 - s.start) * 2, r1 = static_cast<std::size_t>(i1 - s.start) * 2;
+                    const float t = static_cast<float>(pos - static_cast<double>(i0));
+                    mix[static_cast<std::size_t>(f) * 2] += (s.buf[r0] * (1 - t) + s.buf[r1] * t) * l;
+                    mix[static_cast<std::size_t>(f) * 2 + 1] += (s.buf[r0 + 1] * (1 - t) + s.buf[r1 + 1] * t) * r;
+                    pos += step;
+                }
+                v.render = pos;
+                const auto behind = static_cast<std::uint64_t>(pos);
+                if (behind > s.start + 8) {
+                    const std::uint64_t drop = std::min<std::uint64_t>(behind - s.start - 4, s.buf.size() / 2);
+                    s.buf.erase(s.buf.begin(), s.buf.begin() + static_cast<std::ptrdiff_t>(drop * 2));
+                    s.start += drop;
+                }
+                continue;
+            }
             for (int f = 0; f < frames; ++f) {
                 if (pos >= c.frames) {
                     if (!v.loop) { v.render_done = true; break; }
@@ -225,6 +344,10 @@ Result<std::uint32_t> Audio::play(const std::string& clip, const PlayOptions& op
     v.loop = options.loop;
     v.entity = options.entity;
     v.tag = options.tag;
+    if (c->streamed) {
+        POCKET_TRY(s, impl_->open_stream(*c));
+        v.stream = s;
+    }
     impl_->voices.push_back(v);
     impl_->plays++;
     return v.id;
@@ -314,6 +437,12 @@ void Audio::pump() {
     }
 }
 
+const std::vector<float>& Audio::render_frames(int frames) {
+    impl_->render(std::max(0, frames));
+    impl_->frames_rendered += static_cast<std::uint64_t>(std::max(0, frames));
+    return impl_->mix;
+}
+
 void Audio::set_master_volume(float v) { impl_->master = std::clamp(v, 0.0f, 2.0f); }
 float Audio::master_volume() const { return impl_->master; }
 void Audio::set_muted(bool m) { impl_->muted = m; }
@@ -335,6 +464,8 @@ Json Audio::clips() const {
         j["frames"] = c->frames;
         j["source_rate"] = c->source_rate;
         j["source_channels"] = c->source_channels;
+        j["streamed"] = c->streamed;
+        j["bytes"] = c->streamed ? c->bytes.size() : c->samples.size() * sizeof(float);   // what it costs in memory
         arr.push_back(j);
     }
     return arr;
@@ -347,6 +478,12 @@ Json Audio::describe() const {
     j["sample_rate"] = im.config.sample_rate;
     j["voices"] = im.voices.size();
     j["clips"] = im.clips.size();
+    std::size_t streamed = 0, streaming = 0;
+    for (const auto& [path, c] : im.clips) streamed += c->streamed ? 1 : 0;
+    for (const Voice& v : im.voices) streaming += v.stream ? 1 : 0;
+    j["streamed_clips"] = streamed;
+    j["streaming_voices"] = streaming;
+    j["stream_seconds"] = im.config.stream_seconds;
     j["plays"] = im.plays;
     j["master_volume"] = im.master;
     j["muted"] = im.muted;

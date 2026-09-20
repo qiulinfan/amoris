@@ -181,3 +181,73 @@ TEST_CASE("shaping joins arabic letters and ligates latin pairs", "[ui][shaping]
     REQUIRE(lines.size() == 2);
     REQUIRE(lines[1].byte_offset == 2);
 }
+
+TEST_CASE("an image sampled by the nearest texel scales into blocks where linear sampling blends", "[ui][nearest]") {
+    rhi::Config rc;
+    rc.width = 256;
+    rc.height = 128;
+    auto device = rhi::Device::create(rc);
+    REQUIRE(device.has_value());
+    rhi::Device& d = **device;
+    auto font = ui::Font::load(d, font_path().string());
+    REQUIRE(font.has_value());
+    auto painter = ui::Painter::create(d, **font);
+    REQUIRE(painter.has_value());
+    ui::Painter& p = **painter;
+    // A 2 by 2 picture: red, green over blue, white.
+    WGPUTextureDescriptor td{};
+    td.label = rhi::str("test.pixels");
+    td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size = {2, 2, 1};
+    td.format = WGPUTextureFormat_RGBA8Unorm;
+    td.mipLevelCount = 1;
+    td.sampleCount = 1;
+    WGPUTexture tex = wgpuDeviceCreateTexture(d.device(), &td);
+    REQUIRE(tex != nullptr);
+    const std::uint8_t pixels[16] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+    WGPUTexelCopyTextureInfo dst{};
+    dst.texture = tex;
+    dst.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferLayout layout{};
+    layout.bytesPerRow = 8;
+    layout.rowsPerImage = 2;
+    WGPUExtent3D ext{2, 2, 1};
+    wgpuQueueWriteTexture(d.queue(), &dst, pixels, sizeof pixels, &layout, &ext);
+    WGPUTextureViewDescriptor vd{};
+    vd.format = td.format;
+    vd.dimension = WGPUTextureViewDimension_2D;
+    vd.mipLevelCount = 1;
+    vd.arrayLayerCount = 1;
+    vd.aspect = WGPUTextureAspect_All;
+    vd.usage = td.usage;
+    WGPUTextureView view = wgpuTextureCreateView(tex, &vd);
+    REQUIRE(view != nullptr);
+
+    auto frame = d.begin_frame();
+    REQUIRE(frame.has_value());
+    WGPURenderPassEncoder pass = d.begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+    p.begin(256, 128, 1.0f);
+    p.image({0, 0, 64, 64}, view, 0, 0, 1, 1, ui::Color{1, 1, 1, 1}, 0, true);    // nearest
+    p.image({64, 0, 64, 64}, view, 0, 0, 1, 1, ui::Color{1, 1, 1, 1}, 0, false);  // linear
+    REQUIRE(p.flush(*frame).has_value());
+    REQUIRE(d.end_frame(*frame).has_value());
+    auto img = d.capture();
+    REQUIRE(img.has_value());
+    // Near the middle of the red block (uv 0.47): nearest keeps it red, linear blends it with its neighbours.
+    Pixel nearest = at(*img, 30, 30);
+    REQUIRE(nearest.r > 240);
+    REQUIRE(nearest.g < 10);
+    REQUIRE(nearest.b < 10);
+    Pixel linear = at(*img, 94, 30);
+    REQUIRE(linear.g > 60);
+    REQUIRE(linear.b > 60);
+    // The blocks' corners are the pure texels either way.
+    Pixel corner = at(*img, 2, 61);
+    REQUIRE(corner.b > 240);
+    REQUIRE(corner.r < 10);
+    wgpuTextureViewRelease(view);
+    wgpuTextureRelease(tex);
+}

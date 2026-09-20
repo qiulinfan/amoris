@@ -23,6 +23,14 @@ struct ShadowSettings {
     float bias = 0.0008f;     // depth bias in shadow-map units, scaled by slope in the shader
 };
 
+// Bloom: bright parts of the frame blurred and added back, so lights and emissive surfaces glow.
+struct BloomSettings {
+    bool enabled = false;
+    float threshold = 0.8f;   // brightness (0..1) above which a pixel glows; the glow is what is over it
+    float strength = 0.6f;    // how much of the blurred glow is added back
+    float radius = 1.0f;      // the blur's spread, in half-resolution texels (1 tight, 4 wide)
+};
+
 struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
@@ -39,6 +47,7 @@ struct RenderStats {
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after an edit, over the renderer's life
     std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     int msaa = 1;                     // samples per pixel of the color pass (1 or 4)
+    bool bloom = false;               // whether the bloom passes ran this frame
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
@@ -106,6 +115,9 @@ class Renderer {
     [[nodiscard]] int msaa() const;
     void set_shadows(ShadowSettings s);
     [[nodiscard]] ShadowSettings shadows() const;
+    // Bloom over the finished scene (off by default); takes effect at the next frame.
+    void set_bloom(BloomSettings s);
+    [[nodiscard]] BloomSettings bloom() const;
     // Where glTF meshes and images come from (MeshRenderer.mesh / .texture paths). Optional.
     void set_assets(assets::AssetStore* store);
     // Local bounds of asset meshes first uploaded since the last call (path -> min/max).

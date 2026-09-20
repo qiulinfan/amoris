@@ -280,6 +280,7 @@ fn shade(in: VsOut) -> vec4f {
 
 // One pass writes color and id together (no MSAA); with MSAA the color pass and the id pass are
 // separate, since an integer id target cannot be multisampled and resolved.
+
 @fragment fn fs(in: VsOut) -> FsOut {
     var out: FsOut;
     out.color = shade(in);
@@ -317,6 +318,45 @@ fn unlit(in: VsOut) -> vec4f {
     let base = unlit(in);
     if (base.a < 0.02) { discard; }
     return in.id;
+}
+)WGSL";
+
+constexpr const char* kBloomWgsl = R"WGSL(
+struct U { texel: vec2f, dir: vec2f, threshold: f32, strength: f32, radius: f32, pad: f32 };
+@group(0) @binding(0) var<uniform> u: U;
+@group(0) @binding(1) var src: texture_2d<f32>;
+@group(0) @binding(2) var smp: sampler;
+struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+// One triangle over the whole target.
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> VOut {
+    var out: VOut;
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    out.pos = vec4f(x, y, 0.0, 1.0);
+    out.uv = vec2f((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);
+    return out;
+}
+// What is brighter than the threshold, by how much.
+@fragment fn fs_bright(in: VOut) -> @location(0) vec4f {
+    let c = textureSample(src, smp, in.uv).rgb;
+    let lum = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+    let k = max(lum - u.threshold, 0.0) / max(lum, 1e-4);
+    return vec4f(c * k, 1.0);
+}
+// A nine-tap gaussian along u.dir, u.radius texels apart.
+@fragment fn fs_blur(in: VOut) -> @location(0) vec4f {
+    var w = array<f32, 5>(0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
+    var acc = textureSample(src, smp, in.uv).rgb * w[0];
+    for (var i = 1; i < 5; i++) {
+        let o = u.dir * u.texel * (f32(i) * u.radius);
+        acc += textureSample(src, smp, in.uv + o).rgb * w[i];
+        acc += textureSample(src, smp, in.uv - o).rgb * w[i];
+    }
+    return vec4f(acc, 1.0);
+}
+// The glow, scaled, added onto the frame (the pipeline blends one plus one).
+@fragment fn fs_add(in: VOut) -> @location(0) vec4f {
+    return vec4f(textureSample(src, smp, in.uv).rgb * u.strength, 1.0);
 }
 )WGSL";
 
@@ -374,6 +414,21 @@ struct Renderer::Impl {
     WGPUTextureView shadow_view = nullptr;
     WGPUSampler shadow_sampler = nullptr;
     ShadowSettings shadows;
+    // Bloom: the frame's bright parts into a half-size texture, blurred across and down, added back.
+    BloomSettings bloom;
+    WGPUShaderModule bloom_shader = nullptr;
+    WGPUBindGroupLayout bloom_bgl = nullptr;
+    WGPUPipelineLayout bloom_layout = nullptr;
+    WGPURenderPipeline bloom_bright_pipeline = nullptr;
+    WGPURenderPipeline bloom_blur_pipeline = nullptr;
+    WGPURenderPipeline bloom_add_pipeline = nullptr;
+    WGPUSampler bloom_sampler = nullptr;
+    WGPUBuffer bloom_uniforms = nullptr;          // four slots (bright, blur across, blur down, add), 256 bytes apart
+    WGPUTexture bloom_tex[2]{};
+    WGPUTextureView bloom_view[2]{};
+    WGPUBindGroup bloom_bg[4]{};                  // bright (reads the frame), blur across, blur down, add
+    WGPUTextureView bloom_src = nullptr;          // the frame view the bright bind group was made for
+    std::uint32_t bloom_w = 0, bloom_h = 0;
     WGPUBuffer frame_buffer = nullptr;
     WGPUBuffer object_buffer = nullptr;
     WGPUBindGroup frame_bg = nullptr;
@@ -489,6 +544,13 @@ struct Renderer::Impl {
         if (id_view) wgpuTextureViewRelease(id_view);
         if (id_texture) wgpuTextureRelease(id_texture);
         release_msaa_targets();
+        release_bloom_targets();
+        if (bloom_uniforms) wgpuBufferRelease(bloom_uniforms);
+        if (bloom_sampler) wgpuSamplerRelease(bloom_sampler);
+        for (WGPURenderPipeline* p : {&bloom_bright_pipeline, &bloom_blur_pipeline, &bloom_add_pipeline}) if (*p) wgpuRenderPipelineRelease(*p);
+        if (bloom_layout) wgpuPipelineLayoutRelease(bloom_layout);
+        if (bloom_bgl) wgpuBindGroupLayoutRelease(bloom_bgl);
+        if (bloom_shader) wgpuShaderModuleRelease(bloom_shader);
         if (id_pipeline) wgpuRenderPipelineRelease(id_pipeline);
         if (id_skinned_pipeline) wgpuRenderPipelineRelease(id_skinned_pipeline);
         if (id_sprite_pipeline) wgpuRenderPipelineRelease(id_sprite_pipeline);
@@ -567,6 +629,192 @@ struct Renderer::Impl {
         ms_width = w;
         ms_height = h;
         ms_samples = samples;
+        return {};
+    }
+
+    struct BloomUniforms {
+        float texel[2];      // one texel of the source, in uv
+        float dir[2];        // the blur's direction (across or down)
+        float threshold, strength, radius, pad;
+    };
+    static constexpr std::uint32_t kBloomSlot = 256;   // the uniform buffer's offset alignment
+
+    void release_bloom_targets() {
+        for (WGPUBindGroup& g : bloom_bg) { if (g) wgpuBindGroupRelease(g); g = nullptr; }
+        for (int i = 0; i < 2; ++i) {
+            if (bloom_view[i]) wgpuTextureViewRelease(bloom_view[i]);
+            if (bloom_tex[i]) wgpuTextureRelease(bloom_tex[i]);
+            bloom_view[i] = nullptr;
+            bloom_tex[i] = nullptr;
+        }
+        bloom_src = nullptr;
+        bloom_w = bloom_h = 0;
+    }
+
+    Status create_bloom() {
+        POCKET_TRY(module, device->create_shader("pocket.bloom", kBloomWgsl));
+        bloom_shader = module;
+        WGPUBindGroupLayoutEntry be[3]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(BloomUniforms);
+        be[1].binding = 1;
+        be[1].visibility = WGPUShaderStage_Fragment;
+        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 2;
+        be[2].visibility = WGPUShaderStage_Fragment;
+        be[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.bloom");
+        bd.entryCount = 3;
+        bd.entries = be;
+        bloom_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.bloom");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &bloom_bgl;
+        bloom_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        auto make = [&](const char* label, const char* entry, bool additive) -> Result<WGPURenderPipeline> {
+            WGPUBlendState blend{};
+            blend.color.operation = WGPUBlendOperation_Add;
+            blend.color.srcFactor = WGPUBlendFactor_One;
+            blend.color.dstFactor = WGPUBlendFactor_One;
+            blend.alpha.operation = WGPUBlendOperation_Add;
+            blend.alpha.srcFactor = WGPUBlendFactor_Zero;
+            blend.alpha.dstFactor = WGPUBlendFactor_One;
+            WGPUColorTargetState ct{};
+            ct.format = device->color_format();
+            ct.blend = additive ? &blend : nullptr;
+            ct.writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState fs{};
+            fs.module = bloom_shader;
+            fs.entryPoint = rhi::str(entry);
+            fs.targetCount = 1;
+            fs.targets = &ct;
+            WGPURenderPipelineDescriptor rpd{};
+            rpd.label = rhi::str(label);
+            rpd.layout = bloom_layout;
+            rpd.vertex.module = bloom_shader;
+            rpd.vertex.entryPoint = rhi::str("vs_screen");
+            rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            rpd.primitive.frontFace = WGPUFrontFace_CCW;
+            rpd.primitive.cullMode = WGPUCullMode_None;
+            rpd.multisample.count = 1;
+            rpd.multisample.mask = 0xFFFFFFFFu;
+            rpd.fragment = &fs;
+            WGPURenderPipeline p = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            if (!p) return fail("gpu_pipeline_failed", "{} pipeline creation failed", label);
+            return p;
+        };
+        POCKET_TRY(bright, make("pocket.bloom.bright", "fs_bright", false));
+        bloom_bright_pipeline = bright;
+        POCKET_TRY(blur, make("pocket.bloom.blur", "fs_blur", false));
+        bloom_blur_pipeline = blur;
+        POCKET_TRY(add, make("pocket.bloom.add", "fs_add", true));
+        bloom_add_pipeline = add;
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.bloom");
+        sd.addressModeU = WGPUAddressMode_ClampToEdge;
+        sd.addressModeV = WGPUAddressMode_ClampToEdge;
+        sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.lodMaxClamp = 32.0f;
+        sd.maxAnisotropy = 1;
+        bloom_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        bloom_uniforms = device->create_buffer("pocket.bloom", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kBloomSlot) * 4);
+        return {};
+    }
+
+    // Half-size targets for the frame's size, and the bind groups over them and the frame.
+    Status ensure_bloom_targets(std::uint32_t w, std::uint32_t h, WGPUTextureView frame_view) {
+        const std::uint32_t bw = std::max(1u, (w + 1) / 2), bh = std::max(1u, (h + 1) / 2);
+        if (bloom_tex[0] && bloom_w == bw && bloom_h == bh && bloom_src == frame_view) return {};
+        release_bloom_targets();
+        for (int i = 0; i < 2; ++i) {
+            WGPUTextureDescriptor td{};
+            td.label = rhi::str(i == 0 ? "pocket.bloom.a" : "pocket.bloom.b");
+            td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+            td.dimension = WGPUTextureDimension_2D;
+            td.size = {bw, bh, 1};
+            td.format = device->color_format();
+            td.mipLevelCount = 1;
+            td.sampleCount = 1;
+            bloom_tex[i] = wgpuDeviceCreateTexture(device->device(), &td);
+            if (!bloom_tex[i]) return fail("gpu_texture_failed", "cannot create the bloom target {}x{}", bw, bh);
+            WGPUTextureViewDescriptor vd{};
+            vd.format = td.format;
+            vd.dimension = WGPUTextureViewDimension_2D;
+            vd.mipLevelCount = 1;
+            vd.arrayLayerCount = 1;
+            vd.aspect = WGPUTextureAspect_All;
+            vd.usage = td.usage;
+            bloom_view[i] = wgpuTextureCreateView(bloom_tex[i], &vd);
+        }
+        const WGPUTextureView sources[4] = {frame_view, bloom_view[0], bloom_view[1], bloom_view[0]};
+        for (int i = 0; i < 4; ++i) {
+            WGPUBindGroupEntry entries[3]{};
+            entries[0].binding = 0;
+            entries[0].buffer = bloom_uniforms;
+            entries[0].offset = static_cast<std::uint64_t>(kBloomSlot) * static_cast<std::uint64_t>(i);
+            entries[0].size = sizeof(BloomUniforms);
+            entries[1].binding = 1;
+            entries[1].textureView = sources[i];
+            entries[2].binding = 2;
+            entries[2].sampler = bloom_sampler;
+            WGPUBindGroupDescriptor bgd{};
+            bgd.label = rhi::str("pocket.bloom");
+            bgd.layout = bloom_bgl;
+            bgd.entryCount = 3;
+            bgd.entries = entries;
+            bloom_bg[i] = wgpuDeviceCreateBindGroup(device->device(), &bgd);
+        }
+        bloom_src = frame_view;
+        bloom_w = bw;
+        bloom_h = bh;
+        return {};
+    }
+
+    // The bloom passes over a finished frame: bright parts into A, blurred across into B and down
+    // into A, A added onto the frame.
+    Status draw_bloom(rhi::Frame& frame) {
+        POCKET_TRY_VOID(ensure_bloom_targets(frame.width, frame.height, frame.color));
+        BloomUniforms u[4]{};
+        const float fw = 1.0f / static_cast<float>(std::max(1u, frame.width)), fh = 1.0f / static_cast<float>(std::max(1u, frame.height));
+        const float tw = 1.0f / static_cast<float>(bloom_w), th = 1.0f / static_cast<float>(bloom_h);
+        const float radius = std::clamp(bloom.radius, 0.25f, 8.0f);
+        u[0] = {{fw, fh}, {0, 0}, bloom.threshold, bloom.strength, radius, 0};
+        u[1] = {{tw, th}, {1, 0}, bloom.threshold, bloom.strength, radius, 0};
+        u[2] = {{tw, th}, {0, 1}, bloom.threshold, bloom.strength, radius, 0};
+        u[3] = {{tw, th}, {0, 0}, bloom.threshold, bloom.strength, radius, 0};
+        for (int i = 0; i < 4; ++i) device->write_buffer(bloom_uniforms, static_cast<std::uint64_t>(kBloomSlot) * static_cast<std::uint64_t>(i), &u[i], sizeof(BloomUniforms));
+        auto pass = [&](const char* label, WGPUTextureView target, bool keep, WGPURenderPipeline pipe, WGPUBindGroup bg) {
+            WGPURenderPassColorAttachment ca{};
+            ca.view = target;
+            ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            ca.loadOp = keep ? WGPULoadOp_Load : WGPULoadOp_Clear;
+            ca.storeOp = WGPUStoreOp_Store;
+            ca.clearValue = {0, 0, 0, 1};
+            WGPURenderPassDescriptor rp{};
+            rp.label = rhi::str(label);
+            rp.colorAttachmentCount = 1;
+            rp.colorAttachments = &ca;
+            WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+            wgpuRenderPassEncoderSetPipeline(enc, pipe);
+            wgpuRenderPassEncoderSetBindGroup(enc, 0, bg, 0, nullptr);
+            wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(enc);
+            wgpuRenderPassEncoderRelease(enc);
+            stats.draw_calls++;
+        };
+        pass("pocket.bloom.bright", bloom_view[0], false, bloom_bright_pipeline, bloom_bg[0]);
+        pass("pocket.bloom.across", bloom_view[1], false, bloom_blur_pipeline, bloom_bg[1]);
+        pass("pocket.bloom.down", bloom_view[0], false, bloom_blur_pipeline, bloom_bg[2]);
+        pass("pocket.bloom.add", frame.color, true, bloom_add_pipeline, bloom_bg[3]);
+        stats.bloom = true;
         return {};
     }
 
@@ -890,6 +1138,7 @@ struct Renderer::Impl {
         lpld.bindGroupLayouts = lbgls;
         line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
         POCKET_TRY_VOID(create_scene_pipelines(msaa));
+        POCKET_TRY_VOID(create_bloom());
 
         // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
         // in the lookup handles acne.
@@ -1870,6 +2119,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.tile_rebuilds = im.tile_rebuilds;
     im.stats.tile_frames = im.tile_frames;
     im.stats.msaa = im.msaa_applied;
+    im.stats.bloom = false;
     im.stats.skinned = skinned_instances;
     im.stats.morphed = morphed_instances;
     im.stats.moving_parts = moving_parts;
@@ -2056,6 +2306,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
+    if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
     return {};
 }
 
@@ -2158,6 +2409,13 @@ void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
 void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4
 int Renderer::msaa() const { return impl_->msaa; }
 void Renderer::set_shadows(ShadowSettings s) { impl_->shadows = s; }
+void Renderer::set_bloom(BloomSettings s) {
+    s.threshold = std::clamp(s.threshold, 0.0f, 1.0f);
+    s.strength = std::clamp(s.strength, 0.0f, 4.0f);
+    s.radius = std::clamp(s.radius, 0.25f, 8.0f);
+    impl_->bloom = s;
+}
+BloomSettings Renderer::bloom() const { return impl_->bloom; }
 ShadowSettings Renderer::shadows() const { return impl_->shadows; }
 void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
 std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> Renderer::take_new_bounds() { return std::exchange(impl_->new_bounds, {}); }
@@ -2183,6 +2441,7 @@ Json Renderer::describe() const {
     j["tile_rebuilds"] = s.tile_rebuilds;
     j["tile_frames"] = s.tile_frames;
     j["msaa"] = s.msaa;
+    j["bloom"] = s.bloom;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;

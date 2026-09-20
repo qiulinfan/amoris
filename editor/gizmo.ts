@@ -95,7 +95,32 @@ export function yawQuat(radians: number): Quat {
     return { x: 0, y: Math.sin(radians / 2), z: 0, w: Math.cos(radians / 2) };
 }
 
-function rotate(q: { x: number; y: number; z: number; w: number }, v: Vec3): Vec3 {
+export function conjugate(q: Quat): Quat {
+    return { x: -q.x, y: -q.y, z: -q.z, w: q.w };
+}
+
+/** A parent's placement as far as a child's local transform is concerned. */
+export interface ParentFrame { rotation: Quat; scale: Vec3 }
+
+/**
+ * A world displacement expressed in a parent's frame (its rotation undone, its scale divided
+ * out), so adding it to a child's local position moves the child by exactly that in the world
+ * however the parent is turned or scaled.
+ */
+export function intoParent(delta: Vec3, parent: ParentFrame | undefined): Vec3 {
+    if (!parent) return delta;
+    const r = rotate(conjugate(parent.rotation), delta);
+    const over = (v: number, s: number) => (Math.abs(s) > 1e-9 ? v / s : v);
+    return { x: over(r.x, parent.scale.x), y: over(r.y, parent.scale.y), z: over(r.z, parent.scale.z) };
+}
+
+/** A world turn expressed in a parent's frame: applied before the child's own rotation, it turns the child about the world axis. */
+export function turnIntoParent(q: Quat, parent: ParentFrame | undefined): Quat {
+    if (!parent) return q;
+    return multiplyQuat(conjugate(parent.rotation), multiplyQuat(q, parent.rotation));
+}
+
+export function rotate(q: { x: number; y: number; z: number; w: number }, v: Vec3): Vec3 {
     // v' = v + 2w(q x v) + 2(q x (q x v))
     const cx = q.y * v.z - q.z * v.y, cy = q.z * v.x - q.x * v.z, cz = q.x * v.y - q.y * v.x;
     const dx = q.y * cz - q.z * cy, dy = q.z * cx - q.x * cz, dz = q.x * cy - q.y * cx;

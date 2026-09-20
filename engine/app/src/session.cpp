@@ -225,6 +225,9 @@ Status Session::start() {
     audio::Config ac;
     ac.project_dir = options_.project_dir;
     ac.headless = options_.headless;
+    if (project_.contains("audio") && project_["audio"].is_object() && project_["audio"].contains("stream_seconds") && project_["audio"]["stream_seconds"].is_number()) {
+        ac.stream_seconds = std::max(0.0, project_["audio"]["stream_seconds"].get<double>());
+    }
     POCKET_TRY(audio, audio::Audio::create(ac));
     audio_ = std::move(audio);
     if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
@@ -253,6 +256,12 @@ Status Session::start() {
         if (r.contains("msaa") && r["msaa"].is_number()) renderer_->set_msaa(r["msaa"].get<int>());
         if (r.contains("shadow_strength") && r["shadow_strength"].is_number()) s.strength = std::clamp(r["shadow_strength"].get<float>(), 0.0f, 1.0f);
         renderer_->set_shadows(s);
+        renderer::BloomSettings b = renderer_->bloom();
+        if (r.contains("bloom") && r["bloom"].is_boolean()) b.enabled = r["bloom"].get<bool>();
+        if (r.contains("bloom_threshold") && r["bloom_threshold"].is_number()) b.threshold = r["bloom_threshold"].get<float>();
+        if (r.contains("bloom_strength") && r["bloom_strength"].is_number()) b.strength = r["bloom_strength"].get<float>();
+        if (r.contains("bloom_radius") && r["bloom_radius"].is_number()) b.radius = r["bloom_radius"].get<float>();
+        renderer_->set_bloom(b);
     }
     if (project_.contains("physics") && project_["physics"].is_object()) {
         const Json& ph = project_["physics"];
@@ -1822,6 +1831,16 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         renderer_->set_shadows(s);
         return Json{{"enabled", s.enabled}, {"strength", s.strength}, {"bias", s.bias}};
     }
+    if (op == "bloom") {
+        renderer::BloomSettings b = renderer_->bloom();
+        if (p.contains("enabled") && p["enabled"].is_boolean()) b.enabled = p["enabled"].get<bool>();
+        if (p.contains("threshold") && p["threshold"].is_number()) b.threshold = p["threshold"].get<float>();
+        if (p.contains("strength") && p["strength"].is_number()) b.strength = p["strength"].get<float>();
+        if (p.contains("radius") && p["radius"].is_number()) b.radius = p["radius"].get<float>();
+        renderer_->set_bloom(b);
+        b = renderer_->bloom();
+        return Json{{"enabled", b.enabled}, {"threshold", b.threshold}, {"strength", b.strength}, {"radius", b.radius}};
+    }
     if (op == "viewport") {
         // Points in, points out; the renderer works in pixels.
         float w = 0, h = 0, scale = 1;
@@ -2313,6 +2332,7 @@ Result<Json> Session::ui_command(std::string_view op, const Json& p) {
         platform::Event move; move.type = platform::EventType::MouseMove; move.x = x; move.y = y;
         platform::Event down; down.type = platform::EventType::MouseDown; down.x = x; down.y = y; down.button = button;
         down.mods = p.contains("mods") ? platform::mods_from_json(p["mods"]) : 0;
+        down.clicks = std::clamp(opt<int>(p, "clicks", 1), 1, 3);   // 2 selects the word under the point in an input, 3 the line
         platform::Event up = down; up.type = platform::EventType::MouseUp;
         return inject_events({move, down, up});
     }
@@ -3203,6 +3223,19 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         std::size_t center = (static_cast<std::size_t>(img.height / 2) * img.width + img.width / 2) * 4;
         c["center_pixel"] = Json::array({img.rgba[center], img.rgba[center + 1], img.rgba[center + 2], img.rgba[center + 3]});
         c["corner_pixel"] = Json::array({img.rgba[0], img.rgba[1], img.rgba[2], img.rgba[3]});
+        // The pixels asked for: `pixel: {x, y}` or `pixels: [{x, y}, ...]`, in the frame's pixels, clamped to it.
+        auto pixel_at = [&](const Json& pt) {
+            const std::uint32_t x = static_cast<std::uint32_t>(std::clamp(static_cast<int>(opt<double>(pt, "x", 0)), 0, static_cast<int>(img.width) - 1));
+            const std::uint32_t y = static_cast<std::uint32_t>(std::clamp(static_cast<int>(opt<double>(pt, "y", 0)), 0, static_cast<int>(img.height) - 1));
+            const std::size_t at = (static_cast<std::size_t>(y) * img.width + x) * 4;
+            return Json::array({img.rgba[at], img.rgba[at + 1], img.rgba[at + 2], img.rgba[at + 3]});
+        };
+        if (p.contains("pixel") && p["pixel"].is_object()) c["pixel"] = pixel_at(p["pixel"]);
+        if (p.contains("pixels") && p["pixels"].is_array()) {
+            Json arr = Json::array();
+            for (const Json& pt : p["pixels"]) if (pt.is_object()) arr.push_back(pixel_at(pt));
+            c["pixels"] = arr;
+        }
         if (!path.empty()) {
             POCKET_TRY_VOID(write_png(path, img));
             c["path"] = path;
@@ -3233,7 +3266,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

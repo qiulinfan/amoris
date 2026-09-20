@@ -247,6 +247,14 @@ export const render = {
     shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {
         return command("render.shadows", settings);
     },
+    /**
+     * Bloom: what is brighter than `threshold` (0..1) is blurred `radius` half-size texels wide and
+     * added back at `strength`, so lights, emissive surfaces and white sprites glow. Off by default;
+     * project.toml [render] bloom = true (with bloom_threshold, bloom_strength, bloom_radius) sets the default.
+     */
+    bloom(settings: { enabled?: boolean; threshold?: number; strength?: number; radius?: number } = {}): { enabled: boolean; threshold: number; strength: number; radius: number } {
+        return command("render.bloom", settings);
+    },
     /** Entities visible in the last frame with their pixel counts and bounds; optionally writes a PNG of the id buffer. */
     ids(path?: string): { width: number; height: number; count: number; visible: VisibleEntity[] } {
         return command("render.ids", { path });

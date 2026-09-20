@@ -497,3 +497,47 @@ TEST_CASE("image layers are read with their place among the tile layers and foll
     REQUIRE((*level)->image_layers[0].parallax_x == Catch::Approx(1.0));   // none asked: it moves with the map
     REQUIRE(store.describe("assets/level.tmj")["image_layers"][0]["name"] == "sky");
 }
+
+TEST_CASE("an infinite map is read as the box around its chunks, cells and objects shifted to it", "[tilemap][infinite]") {
+    // Two 4 by 4 chunks, one at (-4, -4) and one at (0, 0): an 8 by 8 box starting at (-4, -4).
+    const char* text = R"({"type":"map","version":"1.10","orientation":"orthogonal","renderorder":"right-down","width":4,"height":4,"tilewidth":16,"tileheight":16,"infinite":true,"nextlayerid":4,"nextobjectid":2,
+        "tilesets":[{"firstgid":1,"name":"t","image":"t.png","imagewidth":16,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":1,"tilecount":1}],
+        "layers":[
+            {"id":1,"type":"tilelayer","name":"ground","startx":-4,"starty":-4,"width":8,"height":8,"x":0,"y":0,"opacity":1,"visible":true,"chunks":[
+                {"x":-4,"y":-4,"width":4,"height":4,"data":[1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1]},
+                {"x":0,"y":0,"width":4,"height":4,"data":[0,0,0,0, 0,1,0,0, 0,0,0,0, 0,0,0,0]}
+            ]},
+            {"id":2,"type":"objectgroup","name":"spawns","objects":[{"id":1,"name":"player","type":"spawn","x":8,"y":8,"width":0,"height":0,"point":true}]},
+            {"id":3,"type":"imagelayer","name":"bg","image":"bg.png","x":0,"y":0,"offsetx":0,"offsety":0,"opacity":1,"visible":true}
+        ]})";
+    auto parsed = assets::parse_tilemap(text, "maps/big.tmj");
+    if (!parsed) INFO(parsed.error().to_string());
+    REQUIRE(parsed.has_value());
+    assets::TileMap& map = *parsed;
+    REQUIRE(map.infinite);
+    REQUIRE(map.width == 8);
+    REQUIRE(map.height == 8);
+    REQUIRE(map.chunk_x == -4);
+    REQUIRE(map.chunk_y == -4);
+    REQUIRE(map.layers.size() == 1);
+    const assets::TileLayer& ground = map.layers[0];
+    REQUIRE(ground.width == 8);
+    REQUIRE(ground.gids.size() == 64);
+    REQUIRE(ground.gids[0] == 1);                 // chunk (-4,-4) local (0,0)
+    REQUIRE(ground.gids[3 * 8 + 3] == 1);         // chunk (-4,-4) local (3,3)
+    REQUIRE(ground.gids[5 * 8 + 5] == 1);         // chunk (0,0) local (1,1)
+    int filled = 0;
+    for (std::uint32_t g : ground.gids) filled += g != 0;
+    REQUIRE(filled == 3);
+    // Tiled's (8, 8) pixels is the box's (72, 72): four tiles further in each direction.
+    REQUIRE(map.object_layers.size() == 1);
+    REQUIRE(map.object_layers[0].objects[0].x == Catch::Approx(72.0));
+    REQUIRE(map.object_layers[0].objects[0].y == Catch::Approx(72.0));
+    REQUIRE(map.image_layers[0].offset_x == Catch::Approx(64.0));
+    Json d = map.describe();
+    REQUIRE(d["infinite"] == true);
+    REQUIRE(d["origin"]["x"] == -4);
+    REQUIRE(d["width"] == 8);
+    // A finite map reports neither.
+    REQUIRE_FALSE(assets::parse_tilemap(R"({"orientation":"isometric","width":2,"height":2,"tilewidth":32,"tileheight":16,"infinite":true,"tilesets":[],"layers":[]})", "maps/iso.tmj").has_value());
+}

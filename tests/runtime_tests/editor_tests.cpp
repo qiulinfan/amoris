@@ -843,3 +843,54 @@ TEST_CASE("editor's Local toggle moves and turns along the entity's own axes", "
     ok(s.idle_frame());
     ok(s.finish());
 }
+
+TEST_CASE("editor gizmo moves and turns a child exactly under a turned, scaled parent", "[editor][parent]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    // An arm where the ramp is (in view), turned a quarter about Y and doubled, with a pawn at its
+    // origin; named to sort to the top of the hierarchy, where its rows are in view.
+    const Json ramp = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "WorldTransform"}}));
+    const double h = std::sqrt(0.5);
+    Json rig = ok(s.command("world.spawn", Json{{"name", "Arm"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", ramp["position"]["x"]}, {"y", ramp["position"]["y"].get<double>() + 1.0}, {"z", ramp["position"]["z"]}}}, {"rotation", Json{{"x", 0}, {"y", h}, {"z", 0}, {"w", h}}}, {"scale", Json{{"x", 2}, {"y", 2}, {"z", 2}}}}}}}}));
+    Json pawn = ok(s.command("world.spawn", Json{{"name", "Pawn"}, {"parent", rig["id"]}, {"components", Json{{"Transform", Json::object()}}}}));
+    ok(s.command("world.update_transforms", Json::object()));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Pawn")}}));
+    ok(s.idle_frame());
+    ok(s.idle_frame());
+    const Json before = ok(s.command("world.get", Json{{"entity", pawn["id"]}, {"component", "WorldTransform"}}));
+    // The X handle pulled by its own length: the pawn goes that far along world X and nowhere else,
+    // which in the arm's frame is a move along its local Z of half the length.
+    Json cq = ok(s.command("ui.query", Json{{"name", "gizmo:plane"}}));
+    Json xq = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));
+    INFO("pawn " << before.dump() << " projected " << s.command("render.project", Json{{"point", before["position"]}}).value_or(Json()).dump());
+    REQUIRE(cq.size() == 1);
+    REQUIRE(xq.size() == 1);
+    const double dx = xq[0]["rect"]["x"].get<double>() - cq[0]["rect"]["x"].get<double>(), dy = xq[0]["rect"]["y"].get<double>() - cq[0]["rect"]["y"].get<double>();
+    ok(s.command("ui.drag", Json{{"id", xq[0]["id"]}, {"dx", dx}, {"dy", dy}, {"steps", 5}}));
+    ok(s.idle_frame());
+    const Json after = ok(s.command("world.get", Json{{"entity", pawn["id"]}, {"component", "WorldTransform"}}));
+    const Json local = ok(s.command("world.get", Json{{"entity", pawn["id"]}, {"component", "Transform"}}));
+    INFO(before.dump() << " -> " << after.dump() << " local " << local.dump());
+    const double moved = after["position"]["x"].get<double>() - before["position"]["x"].get<double>();
+    REQUIRE(moved > 0.1);
+    REQUIRE(after["position"]["y"].get<double>() == Catch::Approx(before["position"]["y"].get<double>()).margin(1e-3));
+    REQUIRE(after["position"]["z"].get<double>() == Catch::Approx(before["position"]["z"].get<double>()).margin(1e-3));
+    REQUIRE(local["position"]["x"].get<double>() == Catch::Approx(0.0).margin(1e-3));
+    REQUIRE(local["position"]["z"].get<double>() == Catch::Approx(moved / 2).margin(1e-3));
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    // A half turn about world X: the pawn's world rotation is that turn after the arm's, whose
+    // x and z parts then share a sign (turning about the arm's own X would give them opposite signs).
+    Json rq = ok(s.command("ui.query", Json{{"name", "gizmo:rotate_x"}}));
+    REQUIRE(rq.size() == 1);
+    ok(s.command("ui.drag", Json{{"id", rq[0]["id"]}, {"dx", 314}, {"dy", 0}, {"steps", 5}}));
+    ok(s.idle_frame());
+    const Json turned = ok(s.command("world.get", Json{{"entity", pawn["id"]}, {"component", "WorldTransform"}}));
+    INFO(turned.dump());
+    REQUIRE(turned["rotation"]["x"].get<double>() * turned["rotation"]["z"].get<double>() > 0.4);
+    REQUIRE(std::abs(turned["rotation"]["y"].get<double>()) < 0.1);
+    ok(s.finish());
+}

@@ -8,7 +8,8 @@ import type { ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } 
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
 import * as history from "./history";
-import { axisDelta, axisQuat, layoutFor, multiplyQuat, planeDelta } from "./gizmo";
+import { axisDelta, axisQuat, intoParent, layoutFor, multiplyQuat, planeDelta, turnIntoParent } from "./gizmo";
+import type { ParentFrame } from "./gizmo";
 import type { Axis, GizmoLayout } from "./gizmo";
 import type { Vec3 } from "pocket";
 
@@ -69,7 +70,7 @@ let lastViewport = "";
 let viewportRect = { x: 0, y: 0, w: 0, h: 0 };
 let mainRect = { x: 0, y: 0, w: 0, h: 0 };
 let frame = 0;
-let dragState: { ids: number[]; before: Map<number, Transform>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
+let dragState: { ids: number[]; before: Map<number, Transform>; parents: Map<number, ParentFrame | undefined>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
 let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
 
 /** JSON copy (structuredClone is not in the script host). */
@@ -738,8 +739,15 @@ function gizmoDown(axis: Axis): void {
     const lay = layoutFor(primary, localAxes());
     if (!lay) return;
     const before = new Map<number, Transform>();
-    for (const id of ids) before.set(id, clone(world.get(id, "Transform")!));
-    dragState = { ids, before, layout: lay, axis, turned: 0, scaled: 1, moved: { x: 0, y: 0, z: 0 } };
+    const parents = new Map<number, ParentFrame | undefined>();
+    for (const id of ids) {
+        before.set(id, clone(world.get(id, "Transform")!));
+        // World moves and turns are expressed in each parent's frame, so a child under a turned or scaled parent follows the handle exactly.
+        const parent = world.describe(id).parent ?? 0;
+        const pw = parent > 0 ? world.get(parent, "WorldTransform") : undefined;
+        parents.set(id, pw ? { rotation: pw.rotation, scale: pw.scale } : undefined);
+    }
+    dragState = { ids, before, parents, layout: lay, axis, turned: 0, scaled: 1, moved: { x: 0, y: 0, z: 0 } };
 }
 
 /** Round to the nearest multiple of `step`. */
@@ -760,7 +768,7 @@ function gizmoDrag(e: UiEvent): void {
         dragState.turned += dx * 0.01;
         const about = axis === "rotate" ? "y" : axis === "rotate_x" ? "x" : "z";
         const q = axisQuat(about, snapping ? snapTo(dragState.turned, SNAP_ANGLE) : dragState.turned);
-        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { rotation: localAxes() ? multiplyQuat(before.rotation, q) : multiplyQuat(q, before.rotation) });
+        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { rotation: localAxes() ? multiplyQuat(before.rotation, q) : multiplyQuat(turnIntoParent(q, dragState.parents.get(id)), before.rotation) });
     } else if (axis === "scale" || axis === "scale_x" || axis === "scale_y" || axis === "scale_z") {
         // Drag right to grow, left to shrink, relative to the size at the start of the drag: S on
         // every axis, SX, SY, SZ on one.
@@ -775,10 +783,14 @@ function gizmoDrag(e: UiEvent): void {
         const delta = axis === "plane" ? planeDelta(selected(), dx, dy) : axisDelta(dragState.layout, axis, dx, dy);
         const m = dragState.moved;
         m.x += delta.x; m.y += delta.y; m.z += delta.z;
-        const onAxis = (a: "x" | "y" | "z") => axis === "plane" || axis === a;
         const step = snapStep();
-        const at = (v: number, a: "x" | "y" | "z") => (snapping && onAxis(a) ? snapTo(v + m[a], step) : v + m[a]);
-        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { position: { x: at(before.position.x, "x"), y: at(before.position.y, "y"), z: at(before.position.z, "z") } });
+        for (const [id, before] of dragState.before) {
+            if (!alive(id)) continue;
+            const local = intoParent(m, dragState.parents.get(id));
+            // Snapped on the axes the drag touches (in the parent's frame, a turned parent can spread one world axis over several).
+            const at = (v: number, a: "x" | "y" | "z") => (snapping && (axis === "plane" || Math.abs(local[a]) > 1e-9) ? snapTo(v + local[a], step) : v + local[a]);
+            world.set(id, "Transform", { position: { x: at(before.position.x, "x"), y: at(before.position.y, "y"), z: at(before.position.z, "z") } });
+        }
     }
     command("world.update_transforms");   // paused: no tick will do it before the handles are placed
     refreshSelected();
@@ -814,7 +826,8 @@ onFrame(() => {
     const next = { tick: st.tick, hash: st.state_hash, entities: sum.entities, frames: st.frames };
     const cur = status();
     if (cur.tick !== next.tick || cur.hash !== next.hash || cur.entities !== next.entities) status.set(next);
-    if (frame % 15 === 1) {
+    // The hierarchy follows the world every 15 frames, and at once when an entity came or went (a command from outside spawned one).
+    if (frame % 15 === 1 || cur.entities !== next.entities) {
         refreshHierarchy();
         refreshSelected();
     }

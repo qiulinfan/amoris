@@ -56,6 +56,7 @@ Event event_from_json(const Json& j) {
     auto num = [&](const char* k) -> float { return j.contains(k) && j[k].is_number() ? j[k].get<float>() : 0.0f; };
     e.x = num("x"); e.y = num("y"); e.dx = num("dx"); e.dy = num("dy");
     e.button = j.contains("button") && j["button"].is_number() ? j["button"].get<int>() : 0;
+    e.clicks = j.contains("clicks") && j["clicks"].is_number() ? std::max(1, j["clicks"].get<int>()) : 1;
     e.width = static_cast<int>(num("width")); e.height = static_cast<int>(num("height"));
     e.text = j.contains("text") && j["text"].is_string() ? j["text"].get<std::string>() : "";
     e.pad = j.contains("pad") && j["pad"].is_number() ? j["pad"].get<int>() : 0;
@@ -134,6 +135,7 @@ Json event_to_json(const Event& e) {
         case EventType::MouseDown:
         case EventType::MouseUp:
             j["button"] = e.button; j["x"] = e.x; j["y"] = e.y;
+            if (e.clicks > 1) j["clicks"] = e.clicks;
             break;
         case EventType::MouseWheel:
             j["dx"] = e.dx; j["dy"] = e.dy;
@@ -279,6 +281,7 @@ std::vector<Event> Platform::poll() {
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? EventType::MouseDown : EventType::MouseUp;
                 ev.button = e.button.button; ev.x = e.button.x; ev.y = e.button.y;
+                ev.clicks = std::max(1, static_cast<int>(e.button.clicks));
                 ev.mods = mods_from_sdl(SDL_GetModState());
                 if (ev.button >= 0 && ev.button < static_cast<int>(impl_->input.buttons.size())) {
                     impl_->input.buttons[static_cast<std::size_t>(ev.button)] = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;

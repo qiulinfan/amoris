@@ -4,6 +4,7 @@
 
 #include <catch_amalgamated.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 
@@ -157,4 +158,66 @@ TEST_CASE("AudioSource components start voices in a headless session", "[audio]"
     REQUIRE(stats["clips"].get<int>() >= 2);
     REQUIRE(s.finish().has_value());
     REQUIRE(s.report()["audio"]["plays"].get<int>() >= 2);
+}
+
+TEST_CASE("a streamed Ogg clip mixes like a decoded one, deterministically, and loops without a seam", "[audio][stream]") {
+    // The same clip streamed (every Ogg streams) and decoded whole (none does).
+    auto make = [&](double stream_seconds) {
+        audio::Config c;
+        c.project_dir = root() / "samples" / "audio";
+        c.headless = true;
+        c.stream_seconds = stream_seconds;
+        auto a = audio::Audio::create(c);
+        REQUIRE(a.has_value());
+        return std::move(*a);
+    };
+    auto streamed = make(0.0), whole = make(1e9), again = make(0.0);
+    for (auto* a : {&streamed, &whole, &again}) REQUIRE((*a)->load("assets/chime.ogg").has_value());
+    Json sc = streamed->clips(), wc = whole->clips();
+    INFO(sc.dump() << " " << wc.dump());
+    REQUIRE(sc[0]["streamed"] == true);
+    REQUIRE(wc[0]["streamed"] == false);
+    REQUIRE(sc[0]["bytes"].get<std::size_t>() < wc[0]["bytes"].get<std::size_t>() / 4);   // the file against the decoded floats
+    REQUIRE(std::abs(sc[0]["frames"].get<int>() - wc[0]["frames"].get<int>()) < 200);     // the encoder's padding
+    REQUIRE(streamed->describe()["streamed_clips"] == 1);
+    // Played once through at pitch 1.25: the two mixes agree sample for sample within a little, and two streamed runs exactly.
+    audio::PlayOptions o;
+    o.pitch = 1.25f;
+    for (auto* a : {&streamed, &whole, &again}) REQUIRE((*a)->play("assets/chime.ogg", o).has_value());
+    REQUIRE(streamed->describe()["streaming_voices"] == 1);
+    std::vector<float> s_mix, w_mix, a_mix;
+    for (int i = 0; i < 5; ++i) {
+        const auto& s = streamed->render_frames(4000);
+        s_mix.insert(s_mix.end(), s.begin(), s.end());
+        const auto& w = whole->render_frames(4000);
+        w_mix.insert(w_mix.end(), w.begin(), w.end());
+        const auto& g = again->render_frames(4000);
+        a_mix.insert(a_mix.end(), g.begin(), g.end());
+    }
+    REQUIRE(s_mix.size() == w_mix.size());
+    REQUIRE(s_mix == a_mix);
+    float worst = 0, energy = 0;
+    for (std::size_t i = 0; i < s_mix.size(); ++i) { worst = std::max(worst, std::abs(s_mix[i] - w_mix[i])); energy = std::max(energy, std::abs(w_mix[i])); }
+    INFO("worst difference " << worst << ", loudest " << energy);
+    REQUIRE(energy > 0.05f);
+    REQUIRE(worst < 0.05f);
+    // Both fall silent after the clip's end (0.4 s at pitch 1.25 is about 15,400 frames of 20,000).
+    float tail = 0;
+    for (std::size_t i = s_mix.size() - 4000; i < s_mix.size(); ++i) tail = std::max(tail, std::abs(s_mix[i]));
+    REQUIRE(tail == 0.0f);
+    // A looping streamed voice keeps sounding past the clip's length, and the ticks report its wraps.
+    streamed->stop_all();
+    o.pitch = 1.0f;
+    o.loop = true;
+    REQUIRE(streamed->play("assets/chime.ogg", o).has_value());
+    float loud_late = 0;
+    for (int i = 0; i < 12; ++i) {
+        const auto& s = streamed->render_frames(4000);   // 48,000 frames: two and a half times through
+        if (i >= 8) for (float x : s) loud_late = std::max(loud_late, std::abs(x));
+    }
+    REQUIRE(loud_late > 0.05f);
+    std::uint32_t looped = 0;
+    for (int i = 0; i < 60; ++i) for (auto& e : streamed->tick(1.0 / 60)) if (e.type == "audio.looped") ++looped;
+    REQUIRE(looped == 2);
+    REQUIRE(streamed->voices().size() == 1);
 }

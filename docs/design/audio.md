@@ -4,7 +4,7 @@ Sound in Pocket follows the same rule as everything else: the state an agent can
 
 ## Model
 
-- **Clips** are project-relative WAV or Ogg Vorbis files (`assets/beep.wav`, `assets/chime.ogg`), decoded once (WAV through SDL, Vorbis through stb_vorbis) and converted to the mixer format (float, stereo, 48 kHz).
+- **Clips** are project-relative WAV or Ogg Vorbis files (`assets/beep.wav`, `assets/chime.ogg`), decoded once (WAV through SDL, Vorbis through stb_vorbis) and converted to the mixer format (float, stereo, 48 kHz). An Ogg clip at least ten seconds long (`[audio] stream_seconds` in `project.toml`; 0 streams every Ogg) is not decoded whole: it streams, its compressed bytes staying in memory and each voice decoding its own way through them a chunk at a time, a few thousand converted frames ahead of the mixer, so a music track costs its file size rather than its decoded size (a three-minute track: a few megabytes rather than thirty). A streamed voice loops without a seam and plays at any pitch like a decoded one; `audio.clips` reports `streamed` and each clip's `bytes`, `audio.stats` the streamed clips and streaming voices. WAV clips decode whole.
 - **Voices** are playing clips with volume, pitch (rate), pan, loop, an optional owning entity and a tag. A voice's logical position advances by the simulation tick (`dt * rate * pitch`), so a headless run, a test and a window agree on which voices are playing, where they are, when one loops and when one finishes. Finished voices disappear; loops report each wrap.
 - **Events**: `audio.started` (subject: the entity if any; clip, voice, loop), `audio.looped`, `audio.finished` go through the causal event log like collisions, so the transcript groups them and `events.since` streams them.
 - **Playback** is a software mixer rendering the same voices into an SDL3 audio stream bound to the default device, about 80 ms ahead, with linear resampling for pitch and constant-power-free linear panning. Headless sessions never open a device; `audio.stats.device` says `none`.
@@ -31,4 +31,4 @@ A source with `spatial` is heard from where its entity is: every tick the engine
 
 ## Not yet
 
-MP3 and other compressed formats beyond Ogg Vorbis, occlusion and reverb (a spatial source is distance and side only, a wall between does nothing), a listener's velocity (no Doppler), effects buses, streaming long clips (a clip is decoded whole when first loaded, so a long music track costs its decoded size in memory), and audio in the state hash (voices are deterministic but kept out of the hash like the interface).
+MP3 and other compressed formats beyond Ogg Vorbis, occlusion and reverb (a spatial source is distance and side only, a wall between does nothing), a listener's velocity (no Doppler), effects buses, streaming WAV (a long WAV decodes whole; encode music as Ogg), and audio in the state hash (voices are deterministic but kept out of the hash like the interface).

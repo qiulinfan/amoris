@@ -46,6 +46,7 @@ struct Node {
     std::string fit = "contain";     // contain (inside, proportions kept), cover (cropped to fill), fill (stretched)
     float uv[4] = {0, 0, 1, 1};      // the part of the picture shown: u0, v0, u1, v1
     float slice[4] = {0, 0, 0, 0};   // nine-slice borders in picture pixels: left, top, right, bottom (all 0: none)
+    std::string filter = "linear";   // how the picture is sampled: linear (soft) or nearest (pixel art)
     Color border_color{0, 0, 0, 0};
     float border_width = 0;
     float radius = 0;
@@ -63,8 +64,8 @@ struct Node {
     std::string placeholder;
     int caret = 0;
     int anchor = -1;         // input: the other end of the selection (byte offset), -1 for none
-    bool multiline = false;  // input: Return is a new line (with meta or ctrl it commits), Up and Down move by lines
-    int first_line = 0;      // multiline input: the first line shown, kept so the caret's line stays in view
+    bool multiline = false;  // input: Return is a new line (with meta or ctrl it commits), Up and Down move by rows
+    int last_caret = -1;     // multiline input: the caret at the last paint; a caret that moved is scrolled into view
     std::uint32_t listeners = 0;
     // Layout results (absolute, points)
     Rect rect;
@@ -151,6 +152,30 @@ std::size_t utf8_next(const std::string& s, std::size_t i) {
     return i;
 }
 
+// What a double-click selects around a byte offset: a run of word characters (letters, digits,
+// underscores and the accented rest of the Latin range), a run of spaces, a run of punctuation,
+// or one CJK character (its own word).
+int char_kind(std::uint32_t cp) {
+    if (cp == '\n') return 3;
+    if (cp >= 0x2E80) return 2;
+    if (cp == ' ' || cp == '\t') return 0;
+    const bool word = (cp >= '0' && cp <= '9') || (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || cp == '_' || cp >= 0x80;
+    return word ? 1 : 4;
+}
+void word_bounds(const std::string& v, std::size_t at, std::size_t& a, std::size_t& b) {
+    a = b = std::min(at, v.size());
+    if (v.empty()) return;
+    std::size_t i = a, k = i;
+    std::uint32_t cp = i < v.size() ? ui::decode_utf8(v, k) : static_cast<std::uint32_t>('\n');
+    if (cp == '\n' && i > 0) { i = utf8_prev(v, i); k = i; cp = ui::decode_utf8(v, k); }   // at the end of a line: the character before
+    const int kind = char_kind(cp);
+    a = i;
+    b = k;
+    if (kind == 2 || kind == 3) return;
+    while (a > 0) { const std::size_t p = utf8_prev(v, a); std::size_t q = p; if (char_kind(ui::decode_utf8(v, q)) != kind) break; a = p; }
+    while (b < v.size()) { std::size_t q = b; if (char_kind(ui::decode_utf8(v, q)) != kind) break; b = q; }
+}
+
 }  // namespace
 
 struct Document::Impl {
@@ -222,7 +247,11 @@ struct Document::Impl {
         float line_h = m.line_height / self->scale;
         float max_w = wm == YGMeasureModeUndefined ? 1e9f : w;
         std::vector<std::string> lines;
-        if (n->type == "input" && n->multiline) split_lines(text, lines);
+        if (n->type == "input" && n->multiline) {
+            std::vector<Row> rows;
+            self->rows_of(*n, text, n->text_wrap ? max_w : 1e9f, rows);
+            for (const Row& row : rows) lines.push_back(text.substr(row.start, row.end - row.start));
+        }
         else self->wrap(text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines);
         float widest = 0;
         for (const auto& l : lines) widest = std::max(widest, self->font.measure(l, px) / self->scale);
@@ -245,6 +274,85 @@ struct Document::Impl {
             lines.push_back(text.substr(start, nl - start));
             start = nl + 1;
         }
+    }
+
+    // A text area's rows: one per line, or, with textWrap, the lines wrapped at the inner width
+    // (Latin words kept whole, CJK per character, a word wider than the area broken where it must
+    // be). [start, end) are byte offsets; a hard row ends at a newline or the end of the text.
+    struct Row { std::size_t start = 0, end = 0; bool hard = true; };
+    void rows_of(const Node& n, const std::string& text, float inner_w, std::vector<Row>& rows) const {
+        rows.clear();
+        const float px = n.font_size * scale;
+        const float max_w = n.text_wrap && inner_w > 2 ? (inner_w - 2) * scale : 1e30f;
+        std::size_t start = 0;
+        for (;;) {
+            const std::size_t nl = text.find('\n', start);
+            const std::size_t end = nl == std::string::npos ? text.size() : nl;
+            std::size_t row_start = start, i = start;
+            float row_w = 0;
+            while (i < end) {
+                const std::size_t ps = i;
+                std::size_t k = i;
+                const std::uint32_t cp = decode_utf8(text, k);
+                std::size_t pe = k;
+                if (cp < 0x2E80 && cp != ' ') {
+                    while (pe < end) { std::size_t k2 = pe; const std::uint32_t c2 = decode_utf8(text, k2); if (c2 == ' ' || c2 >= 0x2E80) break; pe = k2; }
+                }
+                const float pw = font.measure(text.substr(ps, pe - ps), px);
+                if (row_w + pw > max_w && row_start < ps && cp != ' ') { rows.push_back({row_start, ps, false}); row_start = ps; row_w = 0; }
+                if (pw > max_w && row_start == ps) {
+                    // A word wider than the area: broken by characters.
+                    std::size_t c = ps;
+                    float cw = 0;
+                    for (std::size_t j = ps; j < pe;) {
+                        const std::size_t jn = utf8_next(text, j);
+                        const float w1 = font.measure(text.substr(j, jn - j), px);
+                        if (cw + w1 > max_w && c < j) { rows.push_back({c, j, false}); c = j; cw = 0; }
+                        cw += w1;
+                        j = jn;
+                    }
+                    row_start = c;
+                    row_w = cw;
+                    i = pe;
+                    continue;
+                }
+                row_w += pw;
+                i = pe;
+            }
+            rows.push_back({row_start, end, true});
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+        }
+    }
+    // The row a byte offset is on: the last one starting at or before it (an offset at a soft
+    // break belongs to the row after it).
+    static std::size_t row_of(const std::vector<Row>& rows, std::size_t at) {
+        std::size_t i = 0;
+        while (i + 1 < rows.size() && rows[i + 1].start <= at) ++i;
+        return i;
+    }
+    // Where End goes on a row: its end, or before the space a soft break hangs on.
+    static std::size_t row_last(const std::string& text, const Row& row) {
+        if (!row.hard && row.end > row.start && text[row.end - 1] == ' ') return row.end - 1;
+        return row.end;
+    }
+    // The byte offset on a row nearest an x position (pixels from the row's start).
+    std::size_t offset_in_row(const Node& n, const std::string& text, const Row& row, float local_px) const {
+        const float px = n.font_size * scale;
+        const std::size_t last = row_last(text, row);
+        std::size_t best = last, prev = row.start;
+        float prev_w = 0;
+        for (std::size_t i = row.start; i <= last; i = utf8_next(text, i)) {
+            const float w = font.measure(text.substr(row.start, i - row.start), px);
+            if (w >= local_px) { best = (i > row.start && w - local_px > local_px - prev_w) ? prev : i; break; }
+            prev = i;
+            prev_w = w;
+            if (i >= last) break;
+        }
+        return best;
+    }
+    float inner_width(const Node& n) const {
+        return n.rect.w - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - YGNodeLayoutGetPadding(n.yoga, YGEdgeRight) - 2 * n.border_width;
     }
 
     void wrap(const std::string& text, float size_points, float max_width, std::vector<std::string>& lines) const {
@@ -331,6 +439,7 @@ struct Document::Impl {
             else if (k == "background" || k == "backgroundColor" || k == "bg") n.background = parse_color(v, n.background);
             else if (k == "image") n.image = v.is_string() ? v.get<std::string>() : "";
             else if (k == "fit") n.fit = v.is_string() ? v.get<std::string>() : "contain";
+            else if (k == "filter") n.filter = v.is_string() && v.get<std::string>() == "nearest" ? "nearest" : "linear";
             else if (k == "uv") { if (v.is_array() && v.size() == 4) for (std::size_t i = 0; i < 4; ++i) n.uv[i] = v[i].is_number() ? v[i].get<float>() : n.uv[i]; }
             else if (k == "slice") {
                 if (v.is_array() && v.size() == 4) for (std::size_t i = 0; i < 4; ++i) n.slice[i] = v[i].is_number() ? std::max(0.0f, v[i].get<float>()) : 0.0f;
@@ -404,7 +513,7 @@ struct Document::Impl {
                 const float pw = src.width * (u1 - u0), ph = src.height * (v1 - v0);
                 if (n.slice[0] > 0 || n.slice[1] > 0 || n.slice[2] > 0 || n.slice[3] > 0) {
                     // Nine slices fill the box whatever `fit` says: a frame keeps its corners.
-                    p.image_sliced(r, src.view, u0, v0, u1, v1, pw, ph, n.slice[0], n.slice[1], n.slice[2], n.slice[3], Color{1, 1, 1, op});
+                    p.image_sliced(r, src.view, u0, v0, u1, v1, pw, ph, n.slice[0], n.slice[1], n.slice[2], n.slice[3], Color{1, 1, 1, op}, n.filter == "nearest");
                 } else if (n.fit == "contain" && pw > 0 && ph > 0) {
                     const float s = std::min(r.w / pw, r.h / ph);
                     box = {r.x + (r.w - pw * s) * 0.5f, r.y + (r.h - ph * s) * 0.5f, pw * s, ph * s};
@@ -414,7 +523,7 @@ struct Document::Impl {
                     const float cu = (u0 + u1) * 0.5f, cv = (v0 + v1) * 0.5f;
                     u0 = cu - vw * 0.5f; u1 = cu + vw * 0.5f; v0 = cv - vh * 0.5f; v1 = cv + vh * 0.5f;
                 }
-                if (n.slice[0] <= 0 && n.slice[1] <= 0 && n.slice[2] <= 0 && n.slice[3] <= 0) p.image(box, src.view, u0, v0, u1, v1, Color{1, 1, 1, op}, n.radius);
+                if (n.slice[0] <= 0 && n.slice[1] <= 0 && n.slice[2] <= 0 && n.slice[3] <= 0) p.image(box, src.view, u0, v0, u1, v1, Color{1, 1, 1, op}, n.radius, n.filter == "nearest");
             }
         }
         if (n.border_width > 0 && n.border_color.a > 0) p.border(r, n.border_color.with_alpha(op), n.border_width, n.radius);
@@ -423,43 +532,46 @@ struct Document::Impl {
             p.push_clip(inner);
             float lh = p.line_height(n.font_size);
             if (n.type == "input" && n.multiline) {
-                // Lines from the top, the first shown chosen so the caret's line is in view; the caret on its line.
-                bool placeholder = n.value.empty();
-                Color c = placeholder ? n.color.with_alpha(0.45f * op) : n.color.with_alpha(op);
-                std::vector<std::string> lines;
-                split_lines(placeholder ? n.placeholder : n.value, lines);
+                // Rows from the top (the lines, wrapped when textWrap is set), scrolled by scroll_y
+                // (the wheel); a caret that moved is brought into view; the caret on its row.
+                const bool placeholder = n.value.empty();
+                const Color c = placeholder ? n.color.with_alpha(0.45f * op) : n.color.with_alpha(op);
+                const std::string& shown = placeholder ? n.placeholder : n.value;
+                std::vector<Row> rows;
+                rows_of(n, shown, inner.w, rows);
                 const std::size_t caret = static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size())));
-                int caret_line = 0;
-                std::size_t line_start = 0;
-                for (std::size_t i = 0; i < caret && i < n.value.size(); ++i) if (n.value[i] == '\n') { ++caret_line; line_start = i + 1; }
-                const int visible = std::max(1, static_cast<int>(std::floor((inner.h - 4) / std::max(lh, 1.0f))));
-                if (caret_line < n.first_line) n.first_line = caret_line;
-                if (caret_line >= n.first_line + visible) n.first_line = caret_line - visible + 1;
-                n.first_line = std::clamp(n.first_line, 0, std::max(0, static_cast<int>(lines.size()) - 1));
-                float ty = inner.y + 2;
+                const std::size_t caret_row = placeholder ? 0 : row_of(rows, caret);
+                const float view_h = std::max(inner.h - 4, lh);
+                n.content_height = lh * static_cast<float>(rows.size()) + 4 + (r.h - inner.h);
+                const float max_scroll = std::max(0.0f, n.content_height - r.h);
+                if (n.caret != n.last_caret) {
+                    const float cy = lh * static_cast<float>(caret_row);
+                    if (cy < n.scroll_y) n.scroll_y = cy;
+                    if (cy + lh > n.scroll_y + view_h) n.scroll_y = cy + lh - view_h;
+                    n.last_caret = n.caret;
+                }
+                n.scroll_y = std::clamp(n.scroll_y, 0.0f, max_scroll);
                 std::size_t sel_a = 0, sel_b = 0;
                 const bool selected = !placeholder && selection_of(n, sel_a, sel_b);
-                std::size_t ls = 0;
-                for (std::size_t i = 0; i < static_cast<std::size_t>(n.first_line) && i < lines.size(); ++i) ls += lines[i].size() + 1;
-                for (std::size_t i = static_cast<std::size_t>(n.first_line); i < lines.size() && ty < inner.y + inner.h; ++i) {
-                    const std::size_t le = ls + lines[i].size();
-                    if (selected && sel_a <= le && sel_b > ls) {
-                        // The selected part of this line, with a little past the end when the selection runs on.
-                        const std::size_t a = std::max(sel_a, ls), b = std::min(sel_b, le);
-                        const float x0 = inner.x + 1 + p.measure(lines[i].substr(0, a - ls), n.font_size);
-                        const float x1 = inner.x + 1 + p.measure(lines[i].substr(0, b - ls), n.font_size) + (sel_b > le ? 4.0f : 0.0f);
+                for (std::size_t i = 0; i < rows.size(); ++i) {
+                    const float ty = inner.y + 2 + lh * static_cast<float>(i) - n.scroll_y;
+                    if (ty + lh < inner.y || ty > inner.y + inner.h) continue;
+                    const Row& row = rows[i];
+                    const std::string line = shown.substr(row.start, row.end - row.start);
+                    if (selected && sel_a <= row.end && sel_b > row.start) {
+                        // The selected part of this row, with a little past the end when the selection takes the newline.
+                        const std::size_t a = std::max(sel_a, row.start), b = std::min(sel_b, row.end);
+                        const float x0 = inner.x + 1 + p.measure(line.substr(0, a - row.start), n.font_size);
+                        const float x1 = inner.x + 1 + p.measure(line.substr(0, b - row.start), n.font_size) + (sel_b > row.end && row.hard ? 4.0f : 0.0f);
                         p.rect({x0, ty, std::max(x1 - x0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
                     }
-                    p.text(inner.x + 1, ty, lines[i], n.font_size, c);
-                    ty += lh;
-                    ls = le + 1;
+                    p.text(inner.x + 1, ty, line, n.font_size, c);
                 }
-                if (focused == n.id && !placeholder) {
-                    const float cx = inner.x + 1 + p.measure(n.value.substr(line_start, caret - line_start), n.font_size);
-                    const float cy = inner.y + 2 + static_cast<float>(caret_line - n.first_line) * lh;
+                if (focused == n.id) {
+                    const Row& row = rows[std::min(caret_row, rows.size() - 1)];
+                    const float cx = inner.x + 1 + (placeholder ? 0.0f : p.measure(n.value.substr(row.start, caret - row.start), n.font_size));
+                    const float cy = inner.y + 2 + lh * static_cast<float>(caret_row) - n.scroll_y;
                     p.rect({cx, cy + 1, 1, lh - 2}, n.color.with_alpha(op));
-                } else if (focused == n.id) {
-                    p.rect({inner.x + 1, inner.y + 3, 1, lh - 2}, n.color.with_alpha(op));
                 }
             } else if (n.type == "input") {
                 bool placeholder = n.value.empty();
@@ -491,6 +603,14 @@ struct Document::Impl {
                 }
             }
             p.pop_clip();
+            if (n.type == "input" && n.multiline && n.content_height > r.h + 0.5f) {
+                // A thumb on the right when the rows overflow.
+                const float track_h = r.h - 4;
+                const float thumb_h = std::max(12.0f, track_h * r.h / n.content_height);
+                const float max_scroll = n.content_height - r.h;
+                const float thumb_y = r.y + 2 + (track_h - thumb_h) * (max_scroll > 0 ? n.scroll_y / max_scroll : 0);
+                p.rect({r.x + r.w - 5, thumb_y, 3, thumb_h}, n.color.with_alpha(0.3f * op), 1.5f);
+            }
         }
         if (!n.children.empty()) {
             if (n.clip) p.push_clip(r);
@@ -554,7 +674,7 @@ struct Document::Impl {
         }
         if (focused == n.id) out << " focused";
         if (!n.visible) out << " hidden";
-        if (n.scroll) out << " scroll=" << std::lround(n.scroll_y) << "/" << std::lround(std::max(0.0f, n.content_height - n.rect.h));
+        if (n.scroll || (n.type == "input" && n.multiline && n.content_height > n.rect.h + 0.5f)) out << " scroll=" << std::lround(n.scroll_y) << "/" << std::lround(std::max(0.0f, n.content_height - n.rect.h));
         ++shown;
         bool descend = o.depth < 0 || depth + 1 <= o.depth;
         if (!descend && !n.children.empty()) out << " (" << n.children.size() << " children)";
@@ -758,28 +878,17 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
         if (mods) j["mods"] = platform::mods_to_json(mods);
         return j;
     };
-    // The byte offset in an input nearest a point: in a text area, on the line under it.
+    // The byte offset in an input nearest a point: in a text area, on the row under it.
     auto caret_at = [&](const Node& n, float x, float y) -> std::size_t {
-        float px = n.font_size * im.scale;
-        float local = (x - n.rect.x - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - n.border_width - 1) * im.scale;
-        std::size_t from = 0, to = n.value.size();
-        if (n.multiline) {
-            const float lh = im.font.metrics(px).line_height / im.scale;
-            const float top = n.rect.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width + 2;
-            const int line = n.first_line + static_cast<int>(std::floor(std::max(0.0f, y - top) / std::max(lh, 1.0f)));
-            for (int i = 0; i < line; ++i) { const std::size_t nl = n.value.find('\n', from); if (nl == std::string::npos) break; from = nl + 1; }
-            to = line_end_of(n.value, from);
-        }
-        std::size_t best = to, prev = from;
-        float prev_w = 0;
-        for (std::size_t i = from; i <= to; i = utf8_next(n.value, i)) {
-            float w = im.font.measure(n.value.substr(from, i - from), px);
-            if (w >= local) { best = (i > from && w - local > local - prev_w) ? prev : i; break; }
-            prev = i;
-            prev_w = w;
-            if (i >= to) break;
-        }
-        return best;
+        const float local = (x - n.rect.x - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - n.border_width - 1) * im.scale;
+        if (!n.multiline) return im.offset_in_row(n, n.value, Impl::Row{0, n.value.size(), true}, local);
+        const float lh = im.font.metrics(n.font_size * im.scale).line_height / im.scale;
+        const float top = n.rect.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width + 2;
+        std::vector<Impl::Row> rows;
+        im.rows_of(n, n.value, im.inner_width(n), rows);
+        const int line = static_cast<int>(std::floor((y - top + n.scroll_y) / std::max(lh, 1.0f)));
+        const std::size_t ri = static_cast<std::size_t>(std::clamp(line, 0, static_cast<int>(rows.size()) - 1));
+        return im.offset_in_row(n, n.value, rows[ri], local);
     };
     auto set_focus_to = [&](NodeId id) {
         if (im.focused == id) return;
@@ -841,6 +950,15 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     if (shift && was_focused) { if (n->anchor < 0) n->anchor = n->caret; }
                     else n->anchor = -1;
                     n->caret = static_cast<int>(caret_at(*n, ev.x, ev.y));
+                    if (ev.clicks >= 2) {
+                        // A double-click selects the word under the pointer, a triple-click the line.
+                        const std::size_t c = static_cast<std::size_t>(n->caret);
+                        std::size_t a = c, b = c;
+                        if (ev.clicks >= 3) { a = line_start_of(n->value, c); b = line_end_of(n->value, c); }
+                        else word_bounds(n->value, c, a, b);
+                        n->anchor = static_cast<int>(a);
+                        n->caret = static_cast<int>(b);
+                    }
                 } else {
                     set_focus_to(0);
                 }
@@ -871,7 +989,7 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                 while (s) {
                     Node* n = im.get(s);
                     if (!n) break;
-                    if (n->scroll && n->content_height > n->rect.h) {
+                    if ((n->scroll || (n->type == "input" && n->multiline)) && n->content_height > n->rect.h) {
                         float max_scroll = n->content_height - n->rect.h;
                         n->scroll_y = std::clamp(n->scroll_y - ev.dy * 24.0f, 0.0f, max_scroll);
                         break;
@@ -900,19 +1018,19 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                         if (shift && n->anchor < 0) n->anchor = static_cast<int>(caret);
                         if (ev.key_name == "Left") caret = !shift && has_sel ? sel_a : utf8_prev(v, caret);
                         else if (ev.key_name == "Right") caret = !shift && has_sel ? sel_b : utf8_next(v, caret);
-                        else if (ev.key_name == "Home") caret = n->multiline ? line_start_of(v, caret) : 0;
-                        else if (ev.key_name == "End") caret = n->multiline ? line_end_of(v, caret) : v.size();
+                        else if (!n->multiline && ev.key_name == "Home") caret = 0;
+                        else if (!n->multiline && ev.key_name == "End") caret = v.size();
                         else {
-                            // The same column on the line above or below (or the ends when there is none).
-                            const std::size_t ls = line_start_of(v, caret), col = caret - ls;
-                            if (ev.key_name == "Up") {
-                                if (ls == 0) caret = 0;
-                                else { const std::size_t ps = line_start_of(v, ls - 1); caret = std::min(ps + col, ls - 1); }
-                            } else {
-                                const std::size_t le = line_end_of(v, caret);
-                                if (le >= v.size()) caret = v.size();
-                                else { const std::size_t ns = le + 1; caret = std::min(ns + col, line_end_of(v, ns)); }
-                            }
+                            // Along the row (a line, or the wrapped part of one) for Home and End; the nearest
+                            // position over or under the caret on the row above or below (the ends when there is none).
+                            std::vector<Impl::Row> rows;
+                            im.rows_of(*n, v, im.inner_width(*n), rows);
+                            const std::size_t ri = Impl::row_of(rows, caret);
+                            const float x = im.font.measure(v.substr(rows[ri].start, caret - rows[ri].start), n->font_size * im.scale);
+                            if (ev.key_name == "Home") caret = rows[ri].start;
+                            else if (ev.key_name == "End") caret = Impl::row_last(v, rows[ri]);
+                            else if (ev.key_name == "Up") caret = ri == 0 ? 0 : im.offset_in_row(*n, v, rows[ri - 1], x);
+                            else caret = ri + 1 >= rows.size() ? v.size() : im.offset_in_row(*n, v, rows[ri + 1], x);
                         }
                         if (!shift) n->anchor = -1;
                         consumed = true;
@@ -1031,7 +1149,15 @@ Json Document::describe(NodeId id) const {
         j["value"] = n->value;
         j["placeholder"] = n->placeholder;
         j["caret"] = n->caret;
-        if (n->multiline) j["multiline"] = true;
+        if (n->multiline) {
+            j["multiline"] = true;
+            if (n->text_wrap) j["wrap"] = true;
+            std::vector<Impl::Row> rows;
+            impl_->rows_of(*n, n->value, impl_->inner_width(*n), rows);
+            j["rows"] = rows.size();
+            j["scrollTop"] = n->scroll_y;
+            j["contentHeight"] = n->content_height;
+        }
         if (std::size_t a = 0, b = 0; Impl::selection_of(*n, a, b)) j["selection"] = Json::array({a, b});
     }
     j["visible"] = n->visible;
@@ -1043,6 +1169,7 @@ Json Document::describe(NodeId id) const {
         j["image"] = n->image;
         j["fit"] = n->fit;
         if (n->slice[0] > 0 || n->slice[1] > 0 || n->slice[2] > 0 || n->slice[3] > 0) j["slice"] = Json::array({n->slice[0], n->slice[1], n->slice[2], n->slice[3]});
+        if (n->filter == "nearest") j["filter"] = "nearest";
     }
     return j;
 }

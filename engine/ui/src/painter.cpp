@@ -98,6 +98,7 @@ struct DrawRange {
     std::uint32_t first_index = 0, index_count = 0;
     Rect clip;  // in pixels
     WGPUTextureView view = nullptr;  // an image's texture; null draws from the font atlas
+    bool nearest = false;            // the image sampled by the nearest texel (pixel art)
 };
 
 }  // namespace
@@ -110,6 +111,7 @@ struct Painter::Impl {
     WGPUPipelineLayout layout = nullptr;
     WGPURenderPipeline pipeline = nullptr;
     WGPUSampler sampler = nullptr;
+    WGPUSampler sampler_nearest = nullptr;
     WGPUBuffer globals = nullptr;
     WGPUBuffer vbuf = nullptr;
     WGPUBuffer ibuf = nullptr;
@@ -117,6 +119,7 @@ struct Painter::Impl {
     WGPUBindGroup bind_group = nullptr;
     WGPUTextureView bound_view = nullptr;
     std::map<WGPUTextureView, WGPUBindGroup> image_groups;   // this frame's image textures, released at the next begin()
+    std::map<WGPUTextureView, WGPUBindGroup> image_groups_nearest;   // the same, sampled by the nearest texel
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<DrawRange> ranges;
@@ -130,6 +133,7 @@ struct Painter::Impl {
         if (vbuf) wgpuBufferRelease(vbuf);
         if (globals) wgpuBufferRelease(globals);
         if (sampler) wgpuSamplerRelease(sampler);
+        if (sampler_nearest) wgpuSamplerRelease(sampler_nearest);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
         if (layout) wgpuPipelineLayoutRelease(layout);
         if (bgl) wgpuBindGroupLayoutRelease(bgl);
@@ -217,6 +221,10 @@ struct Painter::Impl {
         sd.lodMaxClamp = 32.0f;
         sd.maxAnisotropy = 1;
         sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        sd.label = rhi::str("pocket.ui.nearest");
+        sd.magFilter = WGPUFilterMode_Nearest;
+        sd.minFilter = WGPUFilterMode_Nearest;
+        sampler_nearest = wgpuDeviceCreateSampler(device->device(), &sd);
         globals = device->create_buffer("pocket.ui.globals", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(Globals));
         return {};
     }
@@ -241,8 +249,9 @@ struct Painter::Impl {
         bound_view = view;
     }
 
-    WGPUBindGroup group_for(WGPUTextureView view) {
-        if (auto it = image_groups.find(view); it != image_groups.end()) return it->second;
+    WGPUBindGroup group_for(WGPUTextureView view, bool nearest) {
+        std::map<WGPUTextureView, WGPUBindGroup>& groups = nearest ? image_groups_nearest : image_groups;
+        if (auto it = groups.find(view); it != groups.end()) return it->second;
         WGPUBindGroupEntry entries[3]{};
         entries[0].binding = 0;
         entries[0].buffer = globals;
@@ -250,20 +259,22 @@ struct Painter::Impl {
         entries[1].binding = 1;
         entries[1].textureView = view;
         entries[2].binding = 2;
-        entries[2].sampler = sampler;
+        entries[2].sampler = nearest ? sampler_nearest : sampler;
         WGPUBindGroupDescriptor bgd{};
         bgd.label = rhi::str("pocket.ui.image");
         bgd.layout = bgl;
         bgd.entryCount = 3;
         bgd.entries = entries;
         WGPUBindGroup g = wgpuDeviceCreateBindGroup(device->device(), &bgd);
-        image_groups[view] = g;
+        groups[view] = g;
         return g;
     }
 
     void release_image_groups() {
         for (auto& [view, g] : image_groups) wgpuBindGroupRelease(g);
+        for (auto& [view, g] : image_groups_nearest) wgpuBindGroupRelease(g);
         image_groups.clear();
+        image_groups_nearest.clear();
     }
 
     Rect clip_px() const {
@@ -272,22 +283,23 @@ struct Painter::Impl {
         return {c.x * scale, c.y * scale, c.w * scale, c.h * scale};
     }
 
-    void new_range_if_needed(WGPUTextureView view) {
+    void new_range_if_needed(WGPUTextureView view, bool nearest) {
         Rect clip = clip_px();
         if (!ranges.empty()) {
             DrawRange& last = ranges.back();
-            if (last.view == view && last.clip.x == clip.x && last.clip.y == clip.y && last.clip.w == clip.w && last.clip.h == clip.h) return;
+            if (last.view == view && last.nearest == nearest && last.clip.x == clip.x && last.clip.y == clip.y && last.clip.w == clip.w && last.clip.h == clip.h) return;
             if (last.index_count == 0) {
                 last.clip = clip;
                 last.view = view;
+                last.nearest = nearest;
                 return;
             }
         }
-        ranges.push_back({static_cast<std::uint32_t>(indices.size()), 0, clip, view});
+        ranges.push_back({static_cast<std::uint32_t>(indices.size()), 0, clip, view, nearest});
     }
 
-    void quad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, WGPUTextureView view = nullptr) {
-        new_range_if_needed(view);
+    void quad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, WGPUTextureView view = nullptr, bool nearest = false) {
+        new_range_if_needed(view, nearest);
         auto base = static_cast<std::uint32_t>(vertices.size());
         vertices.insert(vertices.end(), {a, b, c, d});
         indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
@@ -350,7 +362,7 @@ void Painter::border(const Rect& r, Color color, float thickness, float radius) 
     impl_->box(r, color, radius, 3.0f, thickness);
 }
 
-void Painter::image_sliced(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, float pw, float ph, float left, float top, float right, float bottom, Color tint) {
+void Painter::image_sliced(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, float pw, float ph, float left, float top, float right, float bottom, Color tint, bool nearest) {
     if (!view || pw <= 0 || ph <= 0 || r.w <= 0 || r.h <= 0) return;
     // Slices no wider than the picture, and corners no wider than the box (scaled down together when it is small).
     left = std::clamp(left, 0.0f, pw); right = std::clamp(right, 0.0f, pw - left);
@@ -365,12 +377,12 @@ void Painter::image_sliced(const Rect& r, WGPUTextureView view, float u0, float 
         for (int col = 0; col < 3; ++col) {
             const Rect cell{xs[col], ys[row], xs[col + 1] - xs[col], ys[row + 1] - ys[row]};
             if (cell.w <= 0 || cell.h <= 0) continue;
-            image(cell, view, us[col], vs[row], us[col + 1], vs[row + 1], tint, 0);
+            image(cell, view, us[col], vs[row], us[col + 1], vs[row + 1], tint, 0, nearest);
         }
     }
 }
 
-void Painter::image(const Rect& r_points, WGPUTextureView view, float u0, float v0, float u1, float v1, Color tint, float radius_points) {
+void Painter::image(const Rect& r_points, WGPUTextureView view, float u0, float v0, float u1, float v1, Color tint, float radius_points, bool nearest) {
     Impl& im = *impl_;
     if (!view) return;
     const float x = r_points.x * im.scale, y = r_points.y * im.scale, w = r_points.w * im.scale, h = r_points.h * im.scale;
@@ -385,7 +397,7 @@ void Painter::image(const Rect& r_points, WGPUTextureView view, float u0, float 
     b.x = x + w; b.y = y; b.u = u1; b.v = v0;
     c.x = x + w; c.y = y + h; c.u = u1; c.v = v1;
     d.x = x; d.y = y + h; d.u = u0; d.v = v1;
-    im.quad(a, b, c, d, view);
+    im.quad(a, b, c, d, view, nearest);
 }
 
 void Painter::line(float x0, float y0, float x1, float y1, Color color, float thickness) {
@@ -519,7 +531,7 @@ Status Painter::flush(rhi::Frame& frame) {
         auto ex = static_cast<std::uint32_t>(std::min(static_cast<float>(frame.width), std::ceil(r.clip.x + r.clip.w)));
         auto ey = static_cast<std::uint32_t>(std::min(static_cast<float>(frame.height), std::ceil(r.clip.y + r.clip.h)));
         if (ex <= sx || ey <= sy) continue;
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, r.view ? im.group_for(r.view) : im.bind_group, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, r.view ? im.group_for(r.view, r.nearest) : im.bind_group, 0, nullptr);
         wgpuRenderPassEncoderSetScissorRect(pass, sx, sy, ex - sx, ey - sy);
         wgpuRenderPassEncoderDrawIndexed(pass, r.index_count, 1, r.first_index, 0, 0);
         im.draws++;
