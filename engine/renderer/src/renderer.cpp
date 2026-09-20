@@ -1262,9 +1262,10 @@ struct Renderer::Impl {
         sd.mipmapFilter = WGPUMipmapFilterMode_Linear;
         sd.lodMinClamp = 0;
         sd.lodMaxClamp = 32;
-        sd.maxAnisotropy = 1;
+        sd.maxAnisotropy = 8;   // a ground seen at a grazing angle stays sharp
         sampler = wgpuDeviceCreateSampler(device->device(), &sd);
         sd.label = rhi::str("pocket.material.nearest");
+        sd.maxAnisotropy = 1;   // anisotropy needs linear filters
         sd.magFilter = WGPUFilterMode_Nearest;
         sd.minFilter = WGPUFilterMode_Nearest;
         sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
@@ -1823,6 +1824,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ou.pbr[1] = roughness;
             ou.pbr[2] = mat ? mat->normal_scale : 1.0f;
             ou.pbr[3] = normal_map.empty() ? 0.0f : 1.0f;
+            // The material's texture transform folds into the uv rectangle: uv' = offset + scale * uv.
+            if (mat && mat->uv_transformed) {
+                ou.uv_rect[0] = mat->uv_offset.x; ou.uv_rect[1] = mat->uv_offset.y;
+                ou.uv_rect[2] = mat->uv_offset.x + mat->uv_scale.x; ou.uv_rect[3] = mat->uv_offset.y + mat->uv_scale.y;
+            } else {
+                ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
+            }
             ou.emissive[0] = mr.emissive.r + (mat ? mat->emissive.x : 0.0f);
             ou.emissive[1] = mr.emissive.g + (mat ? mat->emissive.y : 0.0f);
             ou.emissive[2] = mr.emissive.b + (mat ? mat->emissive.z : 0.0f);
@@ -2033,7 +2041,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ou.uv_rect[0] = u0; ou.uv_rect[1] = v0; ou.uv_rect[2] = u1; ou.uv_rect[3] = v1;
         Vec3 d = t.position - im.camera.position;
         float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
-        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, depth, ou});
+        // Y-sorted sprites take their Y as the depth: the higher on the screen, the earlier drawn.
+        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, sp.sort_y ? t.position.y : depth, ou});
     });
     // Particles: one unlit quad each, facing the camera (or flat in XY), sized and tinted by age.
     std::uint32_t particle_count = 0;

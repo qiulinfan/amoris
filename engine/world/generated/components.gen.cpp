@@ -466,6 +466,7 @@ void to_json(Json& j, const Sprite& v) {
     j["flip_y"] = v.flip_y;
     j["filter"] = v.filter;
     j["visible"] = v.visible;
+    j["sort_y"] = v.sort_y;
 }
 
 void from_json(const Json& j, Sprite& v) {
@@ -479,6 +480,7 @@ void from_json(const Json& j, Sprite& v) {
     scalar_from_json(j, "flip_y", v.flip_y);
     scalar_from_json(j, "filter", v.filter);
     scalar_from_json(j, "visible", v.visible);
+    scalar_from_json(j, "sort_y", v.sort_y);
 }
 
 void hash_component(StateHasherRef& h, const Sprite& v) {
@@ -500,6 +502,7 @@ void hash_component(StateHasherRef& h, const Sprite& v) {
     h.u8(v.flip_y ? 1 : 0);
     h.str(v.filter);
     h.u8(v.visible ? 1 : 0);
+    h.u8(v.sort_y ? 1 : 0);
 }
 
 std::size_t numeric_span(Sprite& v, std::string_view path, float** out) {
@@ -1369,6 +1372,7 @@ void to_json(Json& j, const AudioSource& v) {
     j["clip"] = v.clip;
     j["volume"] = v.volume;
     j["pitch"] = v.pitch;
+    j["lowpass"] = v.lowpass;
     j["loop"] = v.loop;
     j["autoplay"] = v.autoplay;
     j["spatial"] = v.spatial;
@@ -1382,6 +1386,7 @@ void from_json(const Json& j, AudioSource& v) {
     scalar_from_json(j, "clip", v.clip);
     scalar_from_json(j, "volume", v.volume);
     scalar_from_json(j, "pitch", v.pitch);
+    scalar_from_json(j, "lowpass", v.lowpass);
     scalar_from_json(j, "loop", v.loop);
     scalar_from_json(j, "autoplay", v.autoplay);
     scalar_from_json(j, "spatial", v.spatial);
@@ -1395,6 +1400,7 @@ void hash_component(StateHasherRef& h, const AudioSource& v) {
     h.str(v.clip);
     h.f32(v.volume);
     h.f32(v.pitch);
+    h.f32(v.lowpass);
     h.u8(v.loop ? 1 : 0);
     h.u8(v.autoplay ? 1 : 0);
     h.u8(v.spatial ? 1 : 0);
@@ -1408,6 +1414,7 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     (void)v;
     if (path == "volume") { *out = &v.volume; return 1; }
     if (path == "pitch") { *out = &v.pitch; return 1; }
+    if (path == "lowpass") { *out = &v.lowpass; return 1; }
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "range") { *out = &v.range; return 1; }
     return 0;
@@ -1626,7 +1633,7 @@ constexpr std::array<FieldInfo, 10> kMeshRendererFields = {{
     FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
 }};
-constexpr std::array<FieldInfo, 10> kSpriteFields = {{
+constexpr std::array<FieldInfo, 11> kSpriteFields = {{
     FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color."},
     FieldInfo{"size", "vec2", "Width and height in world units."},
     FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture."},
@@ -1637,6 +1644,7 @@ constexpr std::array<FieldInfo, 10> kSpriteFields = {{
     FieldInfo{"flip_y", "bool", "Mirror vertically."},
     FieldInfo{"filter", "string", "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles)."},
     FieldInfo{"visible", "bool", "Whether the sprite is drawn."},
+    FieldInfo{"sort_y", "bool", "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer."},
 }};
 constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
     FieldInfo{"clip", "string", "Clip name; empty plays nothing."},
@@ -1807,10 +1815,11 @@ constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
-constexpr std::array<FieldInfo, 10> kAudioSourceFields = {{
+constexpr std::array<FieldInfo, 11> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
     FieldInfo{"volume", "f32", "Linear gain, 0..4."},
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
+    FieldInfo{"lowpass", "f32", "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice."},
     FieldInfo{"loop", "bool", "Restart when the clip ends."},
     FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
     FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},

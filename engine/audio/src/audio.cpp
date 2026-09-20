@@ -58,6 +58,18 @@ struct Voice {
     std::uint32_t loops_done = 0;
     bool render_done = false;
     std::shared_ptr<StreamState> stream;   // set for a streamed clip
+    // A one-pole low-pass per channel: `lowpass` squared is the coefficient, so 1 passes the
+    // clip through and small values muffle it.
+    float lowpass = 1;
+    float lp_l = 0, lp_r = 0;
+    void filter(float& sl, float& sr) {
+        if (lowpass >= 1) return;
+        const float a = std::max(lowpass * lowpass, 1e-4f);
+        lp_l += a * (sl - lp_l);
+        lp_r += a * (sr - lp_r);
+        sl = lp_l;
+        sr = lp_r;
+    }
 };
 
 }  // namespace
@@ -184,6 +196,7 @@ struct Audio::Impl {
         i.volume = v.volume;
         i.pitch = v.pitch;
         i.pan = v.pan;
+        i.lowpass = v.lowpass;
         i.loop = v.loop;
         i.entity = v.entity;
         i.tag = v.tag;
@@ -263,8 +276,10 @@ struct Audio::Impl {
                     const std::uint64_t i1 = i0 + 1 < have_end ? i0 + 1 : i0;
                     const std::size_t r0 = static_cast<std::size_t>(i0 - s.start) * 2, r1 = static_cast<std::size_t>(i1 - s.start) * 2;
                     const float t = static_cast<float>(pos - static_cast<double>(i0));
-                    mix[static_cast<std::size_t>(f) * 2] += (s.buf[r0] * (1 - t) + s.buf[r1] * t) * l;
-                    mix[static_cast<std::size_t>(f) * 2 + 1] += (s.buf[r0 + 1] * (1 - t) + s.buf[r1 + 1] * t) * r;
+                    float sl = s.buf[r0] * (1 - t) + s.buf[r1] * t, sr = s.buf[r0 + 1] * (1 - t) + s.buf[r1 + 1] * t;
+                    v.filter(sl, sr);
+                    mix[static_cast<std::size_t>(f) * 2] += sl * l;
+                    mix[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
                     pos += step;
                 }
                 v.render = pos;
@@ -286,6 +301,7 @@ struct Audio::Impl {
                 float t = static_cast<float>(pos - static_cast<double>(i0));
                 float sl = c.samples[i0 * 2] * (1 - t) + c.samples[i1 * 2] * t;
                 float sr = c.samples[i0 * 2 + 1] * (1 - t) + c.samples[i1 * 2 + 1] * t;
+                v.filter(sl, sr);
                 mix[static_cast<std::size_t>(f) * 2] += sl * l;
                 mix[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
                 pos += step;
@@ -341,6 +357,7 @@ Result<std::uint32_t> Audio::play(const std::string& clip, const PlayOptions& op
     v.volume = std::clamp(options.volume, 0.0f, 4.0f);
     v.pitch = std::clamp(options.pitch, 0.05f, 8.0f);
     v.pan = std::clamp(options.pan, -1.0f, 1.0f);
+    v.lowpass = std::clamp(options.lowpass, 0.0f, 1.0f);
     v.loop = options.loop;
     v.entity = options.entity;
     v.tag = options.tag;
@@ -386,6 +403,7 @@ Status Audio::set(std::uint32_t voice, const Json& params) {
         if (params.contains("volume") && params["volume"].is_number()) v.volume = std::clamp(params["volume"].get<float>(), 0.0f, 4.0f);
         if (params.contains("pitch") && params["pitch"].is_number()) v.pitch = std::clamp(params["pitch"].get<float>(), 0.05f, 8.0f);
         if (params.contains("pan") && params["pan"].is_number()) v.pan = std::clamp(params["pan"].get<float>(), -1.0f, 1.0f);
+        if (params.contains("lowpass") && params["lowpass"].is_number()) v.lowpass = std::clamp(params["lowpass"].get<float>(), 0.0f, 1.0f);
         if (params.contains("loop") && params["loop"].is_boolean()) v.loop = params["loop"].get<bool>();
         return {};
     }

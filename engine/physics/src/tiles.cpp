@@ -21,6 +21,14 @@ struct MapView {
     [[nodiscard]] float bottom(int r) const { return origin.y - static_cast<float>(r + 1) * ts; }
     [[nodiscard]] int solidity(int c, int r) const { return map->solidity_at(c, r); }
     [[nodiscard]] int slope_at_cell(int c, int r) const { return map->slope_at(c, r); }
+    // The solid boxes of a cell in world units: the whole cell, or the tile's collision shapes.
+    struct Box { float l = 0, r = 0, b = 0, t = 0; };
+    mutable std::vector<assets::TileSet::Shape> shapes;
+    template <class F>
+    void boxes(int c, int r, F&& fn) const {
+        map->solid_boxes(c, r, shapes);
+        for (const assets::TileSet::Shape& s : shapes) fn(Box{left(c) + s.x0 * ts, left(c) + s.x1 * ts, top(r) - s.y1 * ts, top(r) - s.y0 * ts});
+    }
 };
 
 constexpr float kSkin = 1e-3f;
@@ -218,27 +226,35 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
             const float bottom = cy - hy;
             int r0 = mv ? mv->row(cy + hy - kSkin) : 0, r1 = mv ? mv->row(bottom + kSkin) : -1;
             float block_x = 0;      // the x the box stops at
-            float top_of_block = 0; // the highest solid top in the blocking column, for stepping up
+            float top_of_block = -1e30f; // the highest solid top in the blocking column, for stepping up
             bool blocked = false;
             if (mv) {
+                // The boxes of the solid cells ahead (a tile's collision shapes, or the whole cell)
+                // that the box's height crosses; the nearest one stops the move.
                 if (dx > 0) {
                     int c_from = mv->col(cx + hx), c_to = mv->col(nx + hx - kSkin);
                     for (int c = c_from; c <= c_to && !blocked; ++c) {
                         for (int r = r0; r <= r1; ++r) {
-                            if (mv->solidity(c, r) == 1) {
-                                if (!blocked) { blocked = true; block_x = mv->left(c) - hx - kSkin; top_of_block = mv->top(r); }
-                                top_of_block = std::max(top_of_block, mv->top(r));
-                            }
+                            if (mv->solidity(c, r) != 1) continue;
+                            mv->boxes(c, r, [&](const MapView::Box& bx) {
+                                if (bx.b >= cy + hy - kSkin || bx.t <= bottom + kSkin || bx.r <= cx + hx - kSkin || bx.l >= nx + hx) return;
+                                const float x = bx.l - hx - kSkin;
+                                if (!blocked || x < block_x) { blocked = true; block_x = x; }
+                                top_of_block = std::max(top_of_block, bx.t);
+                            });
                         }
                     }
                 } else {
                     int c_from = mv->col(cx - hx), c_to = mv->col(nx - hx + kSkin);
                     for (int c = c_from; c >= c_to && !blocked; --c) {
                         for (int r = r0; r <= r1; ++r) {
-                            if (mv->solidity(c, r) == 1) {
-                                if (!blocked) { blocked = true; block_x = mv->right(c) + hx + kSkin; top_of_block = mv->top(r); }
-                                top_of_block = std::max(top_of_block, mv->top(r));
-                            }
+                            if (mv->solidity(c, r) != 1) continue;
+                            mv->boxes(c, r, [&](const MapView::Box& bx) {
+                                if (bx.b >= cy + hy - kSkin || bx.t <= bottom + kSkin || bx.l >= cx - hx + kSkin || bx.r <= nx - hx) return;
+                                const float x = bx.r + hx + kSkin;
+                                if (!blocked || x > block_x) { blocked = true; block_x = x; }
+                                top_of_block = std::max(top_of_block, bx.t);
+                            });
                         }
                     }
                 }
@@ -261,7 +277,12 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                 bool fits = true;
                 int rr0 = mv->row(ny + hy - kSkin), rr1 = mv->row(ny - hy + kSkin);
                 int cc0 = mv->col(nx - hx + kSkin), cc1 = mv->col(nx + hx - kSkin);
-                for (int r = rr0; r <= rr1 && fits; ++r) for (int c = cc0; c <= cc1; ++c) if (mv->solidity(c, r) == 1) { fits = false; break; }
+                for (int r = rr0; r <= rr1 && fits; ++r) {
+                    for (int c = cc0; c <= cc1 && fits; ++c) {
+                        if (mv->solidity(c, r) != 1) continue;
+                        mv->boxes(c, r, [&](const MapView::Box& bx) { if (bx.l < nx + hx && bx.r > nx - hx && bx.b < ny + hy && bx.t > ny - hy + kSkin) fits = false; });
+                    }
+                }
                 for (const Rect& rc : rects) if (!rc.one_way && rc.l < nx + hx && rc.r > nx - hx && rc.b < ny + hy && rc.t > ny - hy + kSkin) fits = false;
                 if (fits) {
                     cy = ny;
@@ -315,9 +336,13 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                     int r_from = mv->row(bottom_before), r_to = mv->row(lowest + kSkin);
                     for (int r = r_from; r <= r_to; ++r) {
                         for (int c = c0; c <= c1; ++c) {
-                            int sv = mv->solidity(c, r);
-                            if (sv == 1) offer(mv->top(r), 0, 0);
-                            else if (sv == 2 && bottom_before >= mv->top(r) - kSkin) offer(mv->top(r), 0, 0);
+                            const int sv = mv->solidity(c, r);
+                            if (sv != 1 && sv != 2) continue;
+                            mv->boxes(c, r, [&](const MapView::Box& bx) {
+                                if (bx.l >= cx + hx - kSkin || bx.r <= cx - hx + kSkin) return;   // beside the body
+                                if (sv == 1) offer(bx.t, 0, 0);
+                                else if (bottom_before >= bx.t - kSkin) offer(bx.t, 0, 0);
+                            });
                         }
                     }
                     // Slopes: the floor under the box's center, in the cells its bottom passes through
@@ -346,7 +371,12 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                 if (mv) {
                     for (int r = r_from; r >= r_to && !hit; --r) {
                         for (int c = c0; c <= c1; ++c) {
-                            if (mv->solidity(c, r) == 1) { ny = mv->bottom(r) - hy - kSkin; hit = true; b.on_ceiling = true; break; }
+                            if (mv->solidity(c, r) != 1) continue;
+                            mv->boxes(c, r, [&](const MapView::Box& bx) {
+                                if (bx.l >= cx + hx - kSkin || bx.r <= cx - hx + kSkin || bx.t <= cy + hy - kSkin || bx.b >= ny + hy) return;
+                                const float y = bx.b - hy - kSkin;
+                                if (!hit || y < ny) { ny = y; hit = true; b.on_ceiling = true; }
+                            });
                         }
                     }
                 }
@@ -524,7 +554,12 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                 const int r0 = d.mv->row(d.cy + d.hy - kSkin), r1 = d.mv->row(d.cy - d.hy + kSkin);
                 const int c0 = d.mv->col(d.cx - d.hx + kSkin), c1 = d.mv->col(d.cx + d.hx - kSkin);
                 for (int r = r0; r <= r1; ++r) {
-                    for (int c = c0; c <= c1; ++c) if (d.mv->solidity(c, r) == 1) out_of(d.mv->left(c), d.mv->right(c));
+                    for (int c = c0; c <= c1; ++c) {
+                        if (d.mv->solidity(c, r) != 1) continue;
+                        d.mv->boxes(c, r, [&](const MapView::Box& bx) {   // the tile's shapes, or the whole cell
+                            if (bx.l < d.cx + d.hx - kSkin && bx.r > d.cx - d.hx + kSkin && bx.b < d.cy + d.hy - kSkin && bx.t > d.cy - d.hy + kSkin) out_of(bx.l, bx.r);
+                        });
+                    }
                 }
             }
             for (const Rect& rc : rects) {

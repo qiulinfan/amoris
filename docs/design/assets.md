@@ -50,7 +50,7 @@ A glTF file draws as one thing by default: its nodes are baked into the file's s
 
 ## Not yet
 
-KHR extensions (texture transform, materials variants, draco), anisotropic filtering, sRGB-correct shading (`alphaMode: MASK` cuts out and `BLEND` draws translucent, `docs/design/rendering.md`), and audio or font assets through the same store.
+KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not): materials variants, draco; sRGB-correct shading (`alphaMode: MASK` cuts out and `BLEND` draws translucent, `docs/design/rendering.md`), and audio or font assets through the same store.
 
 ## Tile maps
 

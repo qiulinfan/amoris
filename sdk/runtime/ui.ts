@@ -190,6 +190,12 @@ export interface StyleProps {
     textAlign?: "left" | "center" | "right";
     textWrap?: boolean;
     scrollTop?: number;
+    /** An entity id: the element sits on that entity's projection every frame (hidden while it is behind the camera or gone), for name tags, damage numbers and speech bubbles. */
+    anchor?: number;
+    /** Points added to the projection. */
+    anchorOffset?: [number, number];
+    /** Which point of the element sits on the projection, 0..1 across and down; [0.5, 1] (the default) stands the element over the point. */
+    anchorAlign?: [number, number];
 }
 
 export interface EventProps {
@@ -576,8 +582,8 @@ export function Button(props: { label: string; onClick?: (e: UiEvent) => void; p
     }, h("text", { color: props.disabled ? theme.muted : props.primary || props.danger ? theme.accentText : theme.text, fontSize: props.small ? 12 : theme.fontSize }, props.label));
 }
 
-export function Label(props: { text: string; muted?: boolean; size?: number; align?: "left" | "center" | "right"; wrap?: boolean; color?: ColorValue; flex?: number; name?: string }): VNode {
-    return h("text", { color: props.color ?? (props.muted ? theme.muted : theme.text), fontSize: props.size ?? theme.fontSize, textAlign: props.align, textWrap: props.wrap, flex: props.flex, name: props.name }, props.text);
+export function Label(props: { text: string; muted?: boolean; size?: number; align?: "left" | "center" | "right"; wrap?: boolean; color?: ColorValue; flex?: number; name?: string; anchor?: number; anchorOffset?: [number, number]; anchorAlign?: [number, number] }): VNode {
+    return h("text", { color: props.color ?? (props.muted ? theme.muted : theme.text), fontSize: props.size ?? theme.fontSize, textAlign: props.align, textWrap: props.wrap, flex: props.flex, name: props.name, anchor: props.anchor, anchorOffset: props.anchorOffset, anchorAlign: props.anchorAlign }, props.text);
 }
 
 export function Panel(props: { title?: string; children?: unknown; flex?: number; width?: Dim; height?: Dim; padding?: Edge; gap?: number; scroll?: boolean; name?: string; direction?: "row" | "column" }): VNode {

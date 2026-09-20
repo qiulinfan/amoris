@@ -202,6 +202,19 @@ Status Session::start() {
         if (platform_ && !platform_->headless()) {
             ui_->set_clipboard([this] { return platform_->clipboard_text(); }, [this](const std::string& text) { platform_->set_clipboard_text(text); });
         }
+        ui_->set_anchor_source([this](std::uint64_t entity, float& x, float& y) {
+            // An anchored element follows its entity's projection, in points.
+            if (!renderer_ || !world_ || !world_->alive(static_cast<world::EntityId>(entity))) return false;
+            const world::WorldTransform* wt = world_->try_get<world::WorldTransform>(static_cast<world::EntityId>(entity));
+            if (!wt) return false;
+            float px = 0, py = 0;
+            if (!renderer_->project(wt->position, px, py)) return false;
+            float w = 0, h = 0, scale = 1;
+            ui_size(w, h, scale);
+            x = px / scale;
+            y = py / scale;
+            return true;
+        });
         ui_->set_image_source([this](const std::string& path) {
             ui::Document::ImageSource src;
             if (!renderer_) return src;
@@ -572,6 +585,7 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
         bool wants_text = false;
         std::vector<Json> ui_events = ui_->handle_events(events, wants_text);
         platform_->set_text_input(wants_text);
+        if (wants_text) { const ui::Rect c = ui_->caret_rect(); platform_->set_text_input_area(static_cast<int>(c.x), static_cast<int>(c.y), static_cast<int>(c.w), static_cast<int>(c.h)); }
         // Tag input events that landed on the interface so gameplay code can ignore them.
         for (std::size_t i = 0; i < events.size(); ++i) {
             const platform::Event& e = events[i];
@@ -613,6 +627,7 @@ Json Session::inject_events(std::vector<platform::Event> events) {
         bool wants_text = false;
         for (Json& e : ui_->handle_events(events, wants_text)) ui_events.push_back(std::move(e));
         platform_->set_text_input(wants_text);
+        if (wants_text) { const ui::Rect c = ui_->caret_rect(); platform_->set_text_input_area(static_cast<int>(c.x), static_cast<int>(c.y), static_cast<int>(c.w), static_cast<int>(c.h)); }
         for (std::size_t i = 0; i < events.size(); ++i) {
             const platform::Event& e = events[i];
             ui::NodeId target = 0;
@@ -1048,6 +1063,11 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
                     if (set->animations.contains(local)) lj["frame"] = set->frame_at(local, assets_->tile_time());   // the id drawn now
                     lj["solid"] = l.solid_layer() || set->solid(local);
                     lj["one_way"] = set->one_way(local);
+                    if (const auto* sh = set->shapes_of(local)) {
+                        Json shapes = Json::array();
+                        for (const assets::TileSet::Shape& s : *sh) shapes.push_back(Json::array({s.x0, s.y0, s.x1, s.y1}));
+                        lj["shapes"] = shapes;   // fractions of the tile, unflipped
+                    }
                     if (auto it = set->tile_properties.find(local); it != set->tile_properties.end()) lj["properties"] = it->second;
                 }
             }
@@ -1065,7 +1085,47 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         } else {
             to_cell(opt<double>(p, "x", 0.0), opt<double>(p, "y", 0.0), cx, cy);
         }
-        return Json{{"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"slope", map->slope_at(cx, cy)}, {"tile_x", cx}, {"tile_y", cy}};
+        Json j{{"solid", map->solid_at(cx, cy)}, {"one_way", map->solidity_at(cx, cy) == 2}, {"slope", map->slope_at(cx, cy)}, {"tile_x", cx}, {"tile_y", cy}};
+        if (!p.contains("tile_x") && !p.contains("tile_y") && map->orthogonal()) {
+            // The point itself, against the tile's collision shapes (the whole cell without them).
+            const double fx = (opt<double>(p, "x", 0.0) - origin.x) / ts - cx, fy = (origin.y - opt<double>(p, "y", 0.0)) / ts - cy;
+            j["inside"] = map->solid_at_point(cx, cy, static_cast<float>(fx), static_cast<float>(fy));
+        }
+        return j;
+    }
+    if (op == "spawn") {
+        // Prefabs at Tiled's objects: `prefabs` maps an object type to a prefab path; every object
+        // of a listed type (in one layer, or all) becomes an instance named after the object at its
+        // center (a point's spot), with its properties named Component.field applied on top.
+        if (!p.contains("prefabs") || !p["prefabs"].is_object()) return fail("bad_args", "give prefabs: {{type: \"prefabs/x.json\", ...}}");
+        const std::string layer_name = opt<std::string>(p, "layer", "");
+        Json spawned = Json::array();
+        for (const assets::ObjectLayer& ol : map->object_layers) {
+            if (!layer_name.empty() && ol.name != layer_name) continue;
+            for (const assets::MapObject& o : ol.objects) {
+                if (!p["prefabs"].contains(o.type) || !p["prefabs"][o.type].is_string()) continue;
+                const Vec2 opx = map->object_pixel(o.x, o.y);
+                const double wx = origin.x + opx.x * sx, wy = origin.y - opx.y * sy, ww = o.width * sx, wh = o.height * sy;
+                const double cxw = wx + ww / 2, cyw = o.gid ? wy + wh / 2 : wy - wh / 2;
+                Json components = Json::object();
+                components["Transform"] = Json{{"position", Json{{"x", cxw}, {"y", cyw}, {"z", origin.z}}}};
+                if (o.properties.is_object()) {
+                    for (const auto& [key, value] : o.properties.items()) {
+                        const std::size_t dot = key.find('.');
+                        if (dot == std::string::npos || dot == 0 || dot + 1 >= key.size()) continue;
+                        components[key.substr(0, dot)][key.substr(dot + 1)] = value;
+                    }
+                }
+                Json args{{"prefab", p["prefabs"][o.type]}, {"components", components}};
+                if (!o.name.empty()) args["name"] = o.name;
+                if (p.contains("parent") && !p["parent"].is_null()) args["parent"] = p["parent"];
+                POCKET_TRY(made, command("world.instantiate", args, "tilemap.spawn"));
+                Json row{{"object", o.name}, {"type", o.type}, {"layer", ol.name}, {"x", cxw}, {"y", cyw}};
+                if (made.is_object() && made.contains("roots") && made["roots"].is_array() && !made["roots"].empty()) row["entity"] = made["roots"][0];
+                spawned.push_back(row);
+            }
+        }
+        return Json{{"spawned", spawned}, {"count", spawned.size()}};
     }
     if (op == "objects") {
         std::string layer_name = opt<std::string>(p, "layer", "");
@@ -2034,6 +2094,11 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         j["actions"] = input_map_.snapshot();
         return j;
     }
+    if (op == "rumble") {
+        // Shake a gamepad: false without one (headless runs, no pad, a pad without motors).
+        const bool rumbled = platform_ && platform_->rumble(std::clamp(opt<int>(p, "pad", 0), 0, 15), opt<float>(p, "low", 1.0f), opt<float>(p, "high", 1.0f), std::clamp(opt<int>(p, "ms", 200), 0, 10000));
+        return Json{{"rumbled", rumbled}};
+    }
     if (op == "pad") {
         // A gamepad button or axis for tests and agents, by pad index, through the same path as a
         // real pad (the map, the journal, the scripts' input events).
@@ -2151,6 +2216,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         j["volume"] = v.volume;
         j["pitch"] = v.pitch;
         j["pan"] = v.pan;
+        j["lowpass"] = v.lowpass;
         j["loop"] = v.loop;
         j["entity"] = v.entity;
         j["tag"] = v.tag;
@@ -2164,6 +2230,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         o.volume = static_cast<float>(opt<double>(p, "volume", 1.0));
         o.pitch = static_cast<float>(opt<double>(p, "pitch", 1.0));
         o.pan = static_cast<float>(opt<double>(p, "pan", 0.0));
+        o.lowpass = static_cast<float>(opt<double>(p, "lowpass", 1.0));
         o.loop = opt<bool>(p, "loop", false);
         o.tag = opt<std::string>(p, "tag", "");
         if (p.contains("entity") && !p["entity"].is_null()) o.entity = resolve_entity(p["entity"]);
@@ -2242,6 +2309,7 @@ void Session::tick_audio(double dt) {
             audio::PlayOptions o;
             o.volume = src.volume;
             o.pitch = src.pitch;
+            o.lowpass = src.lowpass;
             o.loop = src.loop;
             o.entity = e.id();
             auto id = audio_->play(src.clip, o);
@@ -3266,7 +3334,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

@@ -4,7 +4,7 @@ Pocket draws 2D games with the same world, physics-free by default, through two 
 
 ## Sprite
 
-A sprite is a unit square in the entity's XY plane, sized by `size` (world units), positioned by `anchor` (which point of the image sits on the entity's origin), tinted by `color` (its alpha is opacity), textured by `texture` (a project-relative png or jpg; empty draws the color) and cut out of a sheet by `uv` (`u0, v0, u1, v1`, v downward). `flip_x` / `flip_y` mirror it; `filter = "nearest"` keeps pixel art crisp and stops sheet tiles bleeding into each other. Sprites are unlit and alpha blended; they are drawn after every mesh, sorted by `layer` and then far to near, and never write depth, so they layer like paper. Fully transparent pixels are discarded, so `render.pick` and the id buffer see the shape, not the square.
+A sprite is a unit square in the entity's XY plane, sized by `size` (world units), positioned by `anchor` (which point of the image sits on the entity's origin), tinted by `color` (its alpha is opacity), textured by `texture` (a project-relative png or jpg; empty draws the color) and cut out of a sheet by `uv` (`u0, v0, u1, v1`, v downward). `flip_x` / `flip_y` mirror it; `filter = "nearest"` keeps pixel art crisp and stops sheet tiles bleeding into each other. Sprites are unlit and alpha blended; they are drawn after every mesh, sorted by `layer` and then far to near (or, with `sort_y`, by the entity's Y within the layer: what is lower on the screen is drawn later, so a top-down scene layers its people and props by where they stand), and never write depth, so they layer like paper. Fully transparent pixels are discarded, so `render.pick` and the id buffer see the shape, not the square.
 
 ```json
 { "name": "Player", "components": { "Transform": { "position": { "x": 0, "y": -2, "z": 0 } }, "Sprite": { "texture": "assets/player.png", "size": { "x": 1, "y": 1 } } } }
@@ -45,4 +45,4 @@ Levels come from Tiled maps drawn by the `TileMap` component and questioned thro
 
 ## Not yet
 
-Text in the world is the interface layer's job (Pocket UI draws text; the scene pane hosts it).
+Text in the world is the interface layer's job: an element with `anchor` (an entity id) follows that entity's projection every frame, so a name tag, a damage number or a speech bubble is a `Label` over its sprite (`docs/design/pocket-ui.md`, Elements); Pocket UI draws it and the scene pane hosts it.

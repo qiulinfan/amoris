@@ -18,7 +18,7 @@
 
 ## Materials and assets
 
-`MeshRenderer.color` tints, `texture` multiplies, glTF materials bring their base color and texture (`docs/design/assets.md`). A missing asset is drawn as a magenta cube and named in `render.stats.assets.missing`. Every texture is uploaded with its mip chain (each level a 2 by 2 average of the one above, weighted by alpha so transparent texels do not darken edges); the linear sampler filters between levels, so a texture drawn small is smooth rather than sparkling, and the nearest sampler (`Sprite.filter`, tile layers) stays on the full-size image so pixel art keeps its texels.
+`MeshRenderer.color` tints, `texture` multiplies, glTF materials bring their base color and texture (`docs/design/assets.md`; a `KHR_texture_transform` offset and scale on the base color texture are folded into the uv rectangle, so a tiled texture repeats as exported). Textures are sampled through their mip chain with 8x anisotropic filtering, so a ground seen at a grazing angle stays sharp (pixel art, `filter: "nearest"`, keeps its texels instead). A missing asset is drawn as a magenta cube and named in `render.stats.assets.missing`. Every texture is uploaded with its mip chain (each level a 2 by 2 average of the one above, weighted by alpha so transparent texels do not darken edges); the linear sampler filters between levels, so a texture drawn small is smooth rather than sparkling, and the nearest sampler (`Sprite.filter`, tile layers) stays on the full-size image so pixel art keeps its texels.
 
 ## Translucent meshes
 

@@ -5,7 +5,7 @@ Sound in Pocket follows the same rule as everything else: the state an agent can
 ## Model
 
 - **Clips** are project-relative WAV or Ogg Vorbis files (`assets/beep.wav`, `assets/chime.ogg`), decoded once (WAV through SDL, Vorbis through stb_vorbis) and converted to the mixer format (float, stereo, 48 kHz). An Ogg clip at least ten seconds long (`[audio] stream_seconds` in `project.toml`; 0 streams every Ogg) is not decoded whole: it streams, its compressed bytes staying in memory and each voice decoding its own way through them a chunk at a time, a few thousand converted frames ahead of the mixer, so a music track costs its file size rather than its decoded size (a three-minute track: a few megabytes rather than thirty). A streamed voice loops without a seam and plays at any pitch like a decoded one; `audio.clips` reports `streamed` and each clip's `bytes`, `audio.stats` the streamed clips and streaming voices. WAV clips decode whole.
-- **Voices** are playing clips with volume, pitch (rate), pan, loop, an optional owning entity and a tag. A voice's logical position advances by the simulation tick (`dt * rate * pitch`), so a headless run, a test and a window agree on which voices are playing, where they are, when one loops and when one finishes. Finished voices disappear; loops report each wrap.
+- **Voices** are playing clips with volume, pitch (rate), pan, loop, a low-pass (`lowpass`, 1 for the clip as it is, small values muffling it through a one-pole filter per voice: underwater, behind a door), an optional owning entity and a tag. A voice's logical position advances by the simulation tick (`dt * rate * pitch`), so a headless run, a test and a window agree on which voices are playing, where they are, when one loops and when one finishes. Finished voices disappear; loops report each wrap.
 - **Events**: `audio.started` (subject: the entity if any; clip, voice, loop), `audio.looped`, `audio.finished` go through the causal event log like collisions, so the transcript groups them and `events.since` streams them.
 - **Playback** is a software mixer rendering the same voices into an SDL3 audio stream bound to the default device, about 80 ms ahead, with linear resampling for pitch and constant-power-free linear panning. Headless sessions never open a device; `audio.stats.device` says `none`.
 
@@ -21,9 +21,9 @@ A source with `spatial` is heard from where its entity is: every tick the engine
 
 | Command | SDK | Purpose |
 |---|---|---|
-| `audio.play {clip, volume?, pitch?, pan?, loop?, entity?, tag?, spatial?, near?, range?}` | `audio.play(clip, options)` | Start a voice; returns its id. A spatial one follows its entity. |
+| `audio.play {clip, volume?, pitch?, pan?, lowpass?, loop?, entity?, tag?, spatial?, near?, range?}` | `audio.play(clip, options)` | Start a voice; returns its id. A spatial one follows its entity. |
 | `audio.stop {voice | clip | tag | all}` | `audio.stop(id | {clip} | {tag})` | Stop voices; returns how many. |
-| `audio.set {voice, volume?, pitch?, pan?, loop?}` | `audio.set(id, params)` | Change a playing voice. |
+| `audio.set {voice, volume?, pitch?, pan?, lowpass?, loop?}` | `audio.set(id, params)` | Change a playing voice (`lowpass` muffles it, for a door closing or a dive). |
 | `audio.list` | `audio.voices()` | Every voice with position and duration in seconds. |
 | `audio.clips`, `audio.stats`, `audio.master {volume?, muted?}` | `audio.clips()`, `audio.stats()`, `audio.setMasterVolume()`, `audio.mute()` | Loaded clips, device and counters, master gain. |
 

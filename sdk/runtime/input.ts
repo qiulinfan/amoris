@@ -54,6 +54,10 @@ export const input = {
     axis(name: string): number {
         return (snapshot()[name] ?? empty).value;
     },
+    /** Shake a gamepad (by index) for `ms` milliseconds, the low and high motors in 0..1; false without one. */
+    rumble(pad = 0, low = 1, high = 1, ms = 200): boolean {
+        return cmd<{ rumbled: boolean }>("input.rumble", { pad, low, high, ms }).rumbled;
+    },
     /** Fresh snapshot straight from the engine (the tick snapshot is what gameplay should use). */
     actions(): Record<string, ActionState> {
         registry.actions = cmd<Record<string, ActionState>>("input.actions");

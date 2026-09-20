@@ -99,6 +99,7 @@ fields = [
     { name = "flip_y", type = "bool", default = false, doc = "Mirror vertically." },
     { name = "filter", type = "string", default = "linear", doc = "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles)." },
     { name = "visible", type = "bool", default = true, doc = "Whether the sprite is drawn." },
+    { name = "sort_y", type = "bool", default = false, doc = "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer." },
 ]
 
 [[component]]
@@ -358,6 +359,7 @@ fields = [
     { name = "clip", type = "string", default = "", doc = "Project-relative WAV path such as assets/hum.wav." },
     { name = "volume", type = "f32", default = 1.0, doc = "Linear gain, 0..4." },
     { name = "pitch", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
+    { name = "lowpass", type = "f32", default = 1.0, doc = "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice." },
     { name = "loop", type = "bool", default = false, doc = "Restart when the clip ends." },
     { name = "autoplay", type = "bool", default = false, doc = "Start playing as soon as the component exists." },
     { name = "spatial", type = "bool", default = false, doc = "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)." },

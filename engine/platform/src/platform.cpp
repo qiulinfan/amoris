@@ -419,6 +419,22 @@ void Platform::set_text_input(bool enabled) {
 
 bool Platform::text_input() const { return impl_->text_input; }
 
+void Platform::set_text_input_area(int x, int y, int w, int h) {
+    if (!impl_->window) return;
+    const SDL_Rect r{x, y, std::max(1, w), std::max(1, h)};
+    SDL_SetTextInputArea(impl_->window, &r, 0);
+}
+
+bool Platform::rumble(int pad, float low, float high, int ms) {
+    int i = 0;
+    for (auto& [jid, gp] : impl_->pads) {
+        if (i++ != pad) continue;
+        const auto motor = [](float v) { return static_cast<Uint16>(std::clamp(v, 0.0f, 1.0f) * 65535.0f); };
+        return SDL_RumbleGamepad(gp, motor(low), motor(high), static_cast<Uint32>(std::max(0, ms)));
+    }
+    return false;
+}
+
 std::string Platform::clipboard_text() const {
     if (impl_->config.headless) return {};
     char* text = SDL_GetClipboardText();

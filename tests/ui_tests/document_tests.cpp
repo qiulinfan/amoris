@@ -619,3 +619,58 @@ TEST_CASE("a double-click selects the word under the pointer and a triple-click 
     f.apply(Json::parse(R"([["set", 48, {"image": "x.png", "filter": "nearest"}]])"));
     REQUIRE(f.doc->describe(48)["filter"] == "nearest");
 }
+
+TEST_CASE("a focused button wears a ring and the caret's rectangle follows the text", "[ui][ring]") {
+    Fixture f;
+    auto painter = ui::Painter::create(*f.device, *f.font);
+    REQUIRE(painter.has_value());
+    f.apply(Json::parse(R"([
+        ["create", 50, "input"], ["set", 50, {"position": "absolute", "left": 10, "top": 10, "width": 100, "height": 24, "name": "first"}], ["append", 1, 50],
+        ["create", 51, "box"], ["set", 51, {"position": "absolute", "left": 10, "top": 60, "width": 60, "height": 20, "name": "ok", "on": ["click"]}], ["append", 1, 51]
+    ])"));
+    f.layout();
+    auto paint = [&]() {
+        auto frame = f.device->begin_frame();
+        REQUIRE(frame.has_value());
+        WGPURenderPassEncoder pass = f.device->begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        (*painter)->begin(320, 200, 1.0f);
+        f.doc->paint(**painter);
+        REQUIRE((*painter)->flush(*frame).has_value());
+        REQUIRE(f.device->end_frame(*frame).has_value());
+        auto img = f.device->capture();
+        REQUIRE(img.has_value());
+        return *img;
+    };
+    auto at = [](const rhi::Image& img, std::uint32_t x, std::uint32_t y) { return img.rgba[(static_cast<std::size_t>(y) * img.width + x) * 4]; };
+    // Nothing focused: the button's edge is the dark background, and there is no caret.
+    rhi::Image plain = paint();
+    REQUIRE(at(plain, 40, 60) < 40);
+    REQUIRE(f.doc->caret_rect().w == 0);
+    bool text_wanted = false;
+    platform::Event tab;
+    tab.type = platform::EventType::KeyDown;
+    tab.key_name = "Tab";
+    f.doc->handle_events({tab}, text_wanted);   // the input
+    REQUIRE(f.doc->focused() == 50);
+    rhi::Image input_focused = paint();
+    const ui::Rect empty = f.doc->caret_rect();
+    REQUIRE(empty.w == 1);
+    REQUIRE(empty.h > 5);
+    REQUIRE(empty.x > 10);
+    REQUIRE(empty.y > 10);
+    REQUIRE(at(input_focused, 40, 60) < 40);   // the button wears no ring while the input has the focus
+    platform::Event t;
+    t.type = platform::EventType::Text;
+    t.text = "hello";
+    f.doc->handle_events({t}, text_wanted);
+    paint();
+    REQUIRE(f.doc->caret_rect().x > empty.x + 10);   // after the word
+    f.doc->handle_events({tab}, text_wanted);   // the button
+    REQUIRE(f.doc->focused() == 51);
+    rhi::Image ringed = paint();
+    REQUIRE(at(ringed, 40, 60) > 120);   // the ring on its top edge
+    REQUIRE(at(ringed, 40, 70) < 40);    // its middle stays clear
+    REQUIRE(f.doc->caret_rect().w == 0);
+}

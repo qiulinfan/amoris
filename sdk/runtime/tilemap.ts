@@ -112,6 +112,14 @@ export const tilemap = {
         return command("tilemap.objects", { entity, layer }) as MapObjectInfo[];
     },
     /**
+     * Prefabs at the map's objects: `prefabs` maps an object type (Tiled's class) to a prefab
+     * path; every object of a listed type becomes an instance named after the object at its
+     * center (a point's spot), with its properties named `Component.field` applied on top.
+     */
+    spawn(entity: EntityRef, prefabs: Record<string, string>, options: { layer?: string; parent?: EntityRef } = {}): { count: number; spawned: { object: string; type: string; layer: string; x: number; y: number; entity?: number }[] } {
+        return command("tilemap.spawn", { entity, prefabs, ...options }) as { count: number; spawned: { object: string; type: string; layer: string; x: number; y: number; entity?: number }[] };
+    },
+    /**
      * Put a tile into a cell (world position or tile coordinates) of a layer (the component's
      * layer, else the first). The map asset changes for every entity drawing it, the layer is
      * redrawn next frame and Body2D and `solid` see it at once; the file changes only on `save`.

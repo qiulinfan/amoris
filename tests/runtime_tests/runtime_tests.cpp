@@ -3176,3 +3176,233 @@ TEST_CASE("a sliced image keeps its corners and stretches its middle", "[runtime
     REQUIRE(px(c["center_pixel"], 1) < 120);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("an anchored element follows its entity's projection and hides when the entity is gone", "[runtime][ui][anchor]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const auto player = s.command("world.find", Json{{"path", "Player"}}).value().get<std::uint64_t>();
+    // A name tag standing 6 points over the player's origin.
+    Json ops = Json::array();
+    ops.push_back(Json::array({"create", 61, "text"}));
+    ops.push_back(Json::array({"set", 61, Json{{"anchor", player}, {"anchorOffset", Json::array({0, -6})}, {"fontSize", 12}, {"name", "tag"}}}));
+    ops.push_back(Json::array({"text", 61, "Hero"}));
+    ops.push_back(Json::array({"append", 1, 61}));
+    REQUIRE(s.command("ui.apply", Json{{"ops", ops}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto placed = [&]() {
+        Json d = s.command("ui.describe", Json{{"id", 61}}).value();
+        Json pr = s.command("render.project", Json{{"entity", player}}).value();
+        INFO(d.dump() << " " << pr.dump());
+        REQUIRE(pr["visible"] == true);
+        REQUIRE(d["visible"] == true);
+        REQUIRE(d["anchor"].get<std::uint64_t>() == player);
+        REQUIRE(d["rect"]["w"].get<double>() > 10);
+        // Bottom center over the point, 6 points up (headless: one pixel per point).
+        REQUIRE(d["rect"]["x"].get<double>() + d["rect"]["w"].get<double>() / 2 == Catch::Approx(pr["x"].get<double>()).margin(1.0));
+        REQUIRE(d["rect"]["y"].get<double>() + d["rect"]["h"].get<double>() == Catch::Approx(pr["y"].get<double>() - 6).margin(1.0));
+        return d["rect"]["x"].get<double>();
+    };
+    const double x0 = placed();
+    // The player moves: the tag follows on the next frame.
+    Json t = s.command("world.get", Json{{"entity", player}, {"component", "Transform"}}).value();
+    REQUIRE(s.command("world.set", Json{{"entity", player}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", t["position"]["x"].get<double>() + 1.0}, {"y", t["position"]["y"]}, {"z", t["position"]["z"]}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(placed() > x0 + 5);
+    // The snapshot names the anchor; a hit at the tag finds it.
+    Json snap = s.command("ui.snapshot", Json{{"root", 61}}).value();
+    REQUIRE(snap["text"].get<std::string>().find("anchor=") != std::string::npos);
+    Json d = s.command("ui.describe", Json{{"id", 61}}).value();
+    Json hit = s.command("ui.hit", Json{{"x", d["rect"]["x"].get<double>() + 2}, {"y", d["rect"]["y"].get<double>() + 2}}).value();
+    REQUIRE(hit["id"] == 61);
+    // Anchored to nothing that exists, it hides; back on the player, it shows again.
+    REQUIRE(s.command("ui.apply", Json{{"ops", Json::array({Json::array({"set", 61, Json{{"anchor", 987654321}}})})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("ui.describe", Json{{"id", 61}}).value()["visible"] == false);
+    REQUIRE(s.command("ui.hit", Json{{"x", d["rect"]["x"].get<double>() + 2}, {"y", d["rect"]["y"].get<double>() + 2}}).value()["id"] != 61);
+    REQUIRE(s.command("ui.apply", Json{{"ops", Json::array({Json::array({"set", 61, Json{{"anchor", player}}})})}}).has_value());
+    REQUIRE(s.frame().has_value());
+    placed();
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("rumble answers false without a pad", "[runtime][input][rumble]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "hello";
+    o.bundle = root() / "build" / "ts" / "hello.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 10;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json r = s.command("input.rumble", Json{{"pad", 0}, {"low", 1.0}, {"high", 0.5}, {"ms", 100}}).value();
+    REQUIRE(r["rumbled"] == false);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a platformer body lands on a tile's collision shape rather than its cell", "[runtime][tilemap][shapes]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    // A map beside the sample's assets, removed after: a ground row of solid tiles and, over it,
+    // one tile whose collision shape is its bottom half.
+    const std::filesystem::path file = o.project_dir / "assets" / "shapes-test.tmj";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        std::ofstream out(file);
+        out << R"({"type":"map","orientation":"orthogonal","renderorder":"right-down","width":6,"height":4,"tilewidth":16,"tileheight":16,"infinite":false,"nextlayerid":2,"nextobjectid":1,
+            "tilesets":[{"firstgid":1,"name":"tiles","image":"tiles.png","imagewidth":112,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":7,"tilecount":7,"spacing":0,"margin":0,
+                "tiles":[{"id":0,"objectgroup":{"type":"objectgroup","objects":[{"id":1,"x":0,"y":8,"width":16,"height":8}]}},{"id":1,"properties":[{"name":"solid","type":"bool","value":true}]}]}],
+            "layers":[{"id":1,"type":"tilelayer","name":"ground","width":6,"height":4,"x":0,"y":0,"opacity":1,"visible":true,"data":[0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,1,0,0,0, 2,2,2,2,2,2]}]})";
+    }
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The map far from the sample's level (whose script keeps running), at x = 100.
+    Json map = s.command("world.spawn", Json{{"name", "Shapes"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 100}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", "assets/shapes-test.tmj"}, {"tile_size", 1.0}}}}}}).value();
+    REQUIRE(s.command("world.update_transforms", Json::object()).has_value());
+    // Two small bodies: one over the half block, one over open ground.
+    REQUIRE(s.command("world.spawn", Json{{"name", "OverBlock"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 102.5}, {"y", -1.5}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.2}, {"y", 0.2}}}, {"map", "Shapes"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "OverGround"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 100.5}, {"y", -1.5}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.2}, {"y", 0.2}}}, {"map", "Shapes"}, {"step", 0.1}}}}}}).has_value());   // a low step, so the half block is a wall to it
+    for (int i = 0; i < 90; ++i) REQUIRE(s.frame().has_value());
+    Json block = s.command("world.get", Json{{"entity", "OverBlock"}, {"component", "Transform"}}).value();
+    Json ground = s.command("world.get", Json{{"entity", "OverGround"}, {"component", "Transform"}}).value();
+    INFO(block.dump() << " " << ground.dump());
+    // Cell (2, 2) spans y -3..-2; its block is the bottom half, so the body rests at -2.5 + 0.2.
+    REQUIRE(block["position"]["y"].get<double>() == Catch::Approx(-2.3).margin(0.01));
+    REQUIRE(s.command("world.get", Json{{"entity", "OverBlock"}, {"component", "Body2D"}}).value()["grounded"] == true);
+    // The ground row's top is -3: the other body rests at -2.8.
+    REQUIRE(ground["position"]["y"].get<double>() == Catch::Approx(-2.8).margin(0.01));
+    // The cell is solid as a whole, but the point in its top half is not inside the shape.
+    Json above = s.command("tilemap.solid", Json{{"entity", map["id"]}, {"x", 102.5}, {"y", -2.25}}).value();
+    Json within = s.command("tilemap.solid", Json{{"entity", map["id"]}, {"x", 102.5}, {"y", -2.75}}).value();
+    INFO(above.dump() << " " << within.dump());
+    REQUIRE(above["solid"] == true);
+    REQUIRE(above["inside"] == false);
+    REQUIRE(within["inside"] == true);
+    Json tile = s.command("tilemap.tile", Json{{"entity", map["id"]}, {"tile_x", 2}, {"tile_y", 2}}).value();
+    INFO(tile.dump());
+    REQUIRE(tile["layers"][0]["shapes"] == Json::array({Json::array({0.0, 0.5, 1.0, 1.0})}));
+    // Walking into the block from the ground is stopped by its side; the body stands beside it.
+    REQUIRE(s.command("world.set", Json{{"entity", "OverGround"}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", 3.0}, {"y", 0.0}}}}}}).has_value());
+    for (int i = 0; i < 60; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "OverGround"}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", 3.0}, {"y", s.command("world.get", Json{{"entity", "OverGround"}, {"component", "Body2D"}}).value()["velocity"]["y"]}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    }
+    Json walked = s.command("world.get", Json{{"entity", "OverGround"}, {"component", "Transform"}}).value();
+    INFO(walked.dump());
+    REQUIRE(walked["position"]["x"].get<double>() == Catch::Approx(102.0 - 0.2).margin(0.02));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("y-sorted sprites draw what is lower on the screen on top", "[runtime][sprites][sorty]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const auto cam = s.command("render.stats", Json::object()).value()["camera"].get<std::uint64_t>();
+    const Json ct = s.command("world.get", Json{{"entity", cam}, {"component", "WorldTransform"}}).value();
+    const double cx = ct["position"]["x"].get<double>(), cy = ct["position"]["y"].get<double>();
+    // A red square half a unit lower than a blue one, both on layer 9 and y-sorted: red, lower on
+    // the screen, is drawn later where they overlap, although it was spawned first.
+    auto square = [&](const char* name, double y, double r, double g, double b) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", cx}, {"y", y}, {"z", 0.0}}}}}, {"Sprite", Json{{"size", Json{{"x", 1.0}, {"y", 1.0}}}, {"layer", 9}, {"sort_y", true}, {"color", Json{{"r", r}, {"g", g}, {"b", b}, {"a", 1.0}}}}}}}}).has_value());
+    };
+    square("Low", cy - 0.5, 1, 0, 0);
+    square("High", cy, 0, 0, 1);
+    REQUIRE(s.frame().has_value());
+    Json pr = s.command("render.project", Json{{"point", Json{{"x", cx}, {"y", cy - 0.25}, {"z", 0.0}}}}).value();
+    REQUIRE(pr["visible"] == true);
+    const Json at = Json{{"x", pr["x"]}, {"y", pr["y"]}};
+    Json sorted = s.command("capture", Json{{"pixel", at}}).value();
+    INFO("y-sorted " << sorted["pixel"].dump());
+    REQUIRE(sorted["pixel"][0].get<int>() > 150);
+    REQUIRE(sorted["pixel"][2].get<int>() < 80);
+    // Sorted by distance again (both on the same plane, so spawn order): blue, spawned later, wins.
+    for (const char* name : {"Low", "High"}) REQUIRE(s.command("world.set", Json{{"entity", name}, {"component", "Sprite"}, {"value", Json{{"sort_y", false}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json plain = s.command("capture", Json{{"pixel", at}}).value();
+    INFO("plain " << plain["pixel"].dump());
+    REQUIRE(plain["pixel"][2].get<int>() > 150);
+    REQUIRE(plain["pixel"][0].get<int>() < 80);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("tilemap.spawn puts prefabs at a map's objects with their properties applied", "[runtime][tilemap][spawn]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    // A prefab and a map beside the sample's files, removed after.
+    const std::filesystem::path prefab_dir = o.project_dir / "prefabs";
+    const bool had_prefabs = std::filesystem::exists(prefab_dir);
+    const std::filesystem::path prefab = prefab_dir / "marker-test.json";
+    const std::filesystem::path mapfile = o.project_dir / "assets" / "spawn-test.tmj";
+    struct Cleanup {
+        std::filesystem::path prefab, dir, map;
+        bool keep_dir;
+        ~Cleanup() { std::filesystem::remove(prefab); std::filesystem::remove(map); if (!keep_dir) std::filesystem::remove(dir); }
+    } cleanup{prefab, prefab_dir, mapfile, had_prefabs};
+    std::filesystem::create_directories(prefab_dir);
+    {
+        std::ofstream out(prefab);
+        out << R"({"format":"pocket-scene","entities":[{"name":"Marker","components":{"Transform":{},"Sprite":{"size":{"x":0.5,"y":0.5},"layer":3}}}]})";
+        std::ofstream map(mapfile);
+        map << R"({"type":"map","orientation":"orthogonal","renderorder":"right-down","width":4,"height":4,"tilewidth":16,"tileheight":16,"infinite":false,"nextlayerid":2,"nextobjectid":3,"tilesets":[],
+            "layers":[{"id":1,"type":"objectgroup","name":"things","objects":[
+                {"id":1,"name":"hero","type":"marker","point":true,"x":16,"y":16,"width":0,"height":0,"properties":[{"name":"Sprite.layer","type":"int","value":7},{"name":"note","type":"string","value":"kept aside"}]},
+                {"id":2,"name":"box","type":"marker","x":32,"y":32,"width":16,"height":16},
+                {"id":3,"name":"other","type":"decor","point":true,"x":48,"y":48,"width":0,"height":0}]}]})";
+    }
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json map = s.command("world.spawn", Json{{"name", "Things"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 100}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", "assets/spawn-test.tmj"}, {"tile_size", 1.0}}}}}}).value();
+    REQUIRE(s.command("world.update_transforms", Json::object()).has_value());
+    const auto before = s.command("world.summary", Json::object()).value()["entities"].get<int>();
+    Json r = s.command("tilemap.spawn", Json{{"entity", map["id"]}, {"layer", "things"}, {"prefabs", Json{{"marker", "prefabs/marker-test.json"}}}}).value();
+    INFO(r.dump());
+    REQUIRE(r["count"] == 2);   // the decor object is not listed
+    REQUIRE(s.command("world.summary", Json::object()).value()["entities"].get<int>() == before + 2);
+    // Named after the objects, at a point's spot and a rectangle's center, the dotted property applied.
+    Json hero = s.command("world.get", Json{{"entity", "hero"}, {"component", "Transform"}}).value();
+    Json box = s.command("world.get", Json{{"entity", "box"}, {"component", "Transform"}}).value();
+    INFO(hero.dump() << " " << box.dump());
+    REQUIRE(hero["position"]["x"].get<double>() == Catch::Approx(101.0));
+    REQUIRE(hero["position"]["y"].get<double>() == Catch::Approx(-1.0));
+    REQUIRE(box["position"]["x"].get<double>() == Catch::Approx(102.5));
+    REQUIRE(box["position"]["y"].get<double>() == Catch::Approx(-2.5));
+    REQUIRE(s.command("world.get", Json{{"entity", "hero"}, {"component", "Sprite"}}).value()["layer"] == 7);
+    REQUIRE(s.command("world.get", Json{{"entity", "box"}, {"component", "Sprite"}}).value()["layer"] == 3);
+    REQUIRE(r["spawned"][0]["entity"].get<std::uint64_t>() == s.command("world.find", Json{{"path", "hero"}}).value().get<std::uint64_t>());
+    // No prefabs: refused.
+    REQUIRE_FALSE(s.command("tilemap.spawn", Json{{"entity", map["id"]}}).has_value());
+    REQUIRE(s.finish().has_value());
+}

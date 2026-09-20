@@ -36,6 +36,11 @@ struct Material {
     bool double_sided = false;
     bool blend = false;                      // glTF alphaMode BLEND: drawn translucent, after the opaque meshes
     float alpha_cutoff = 0;                  // glTF alphaMode MASK: texels with alpha under this are cut out (0: none)
+    // KHR_texture_transform on the base color texture: uv' = uv_offset + uv_scale * uv (a
+    // rotation in the file is not applied). The same transform is used for the other maps.
+    Vec2 uv_offset{0, 0};
+    Vec2 uv_scale{1, 1};
+    bool uv_transformed = false;
     std::string name;
 };
 
@@ -150,6 +155,12 @@ struct TileSet {
     [[nodiscard]] bool solid(int local_id) const;
     [[nodiscard]] bool one_way(int local_id) const;  // solid only from above (a platform to jump through)
     [[nodiscard]] int slope(int local_id) const;     // 1: a floor rising to the right across the cell, -1: to the left, 0: none
+    // Tiled's collision editor: the rectangles drawn inside a tile, as fractions of the tile
+    // (x0, y0 from its top-left corner, x1, y1 across and down). A tile with shapes is solid
+    // inside them only; ellipses, points and polygons are skipped.
+    struct Shape { float x0 = 0, y0 = 0, x1 = 1, y1 = 1; };
+    std::map<int, std::vector<Shape>> shapes;   // local id -> rectangles
+    [[nodiscard]] const std::vector<Shape>* shapes_of(int local_id) const;
 };
 
 struct TileLayer {
@@ -197,6 +208,13 @@ struct ImageLayer {
 
 struct TileMap {
     static constexpr std::uint32_t kFlipH = 0x80000000u, kFlipV = 0x40000000u, kFlipD = 0x20000000u, kIdMask = 0x1FFFFFFFu;
+    // The solid boxes of a cell as fractions of it, for the platformer: the shapes of the tile
+    // that makes the cell solid (or one-way), flipped with it, or the whole cell when that tile
+    // has none; empty when the cell is neither (slopes are their own thing).
+    void solid_boxes(int x, int y, std::vector<TileSet::Shape>& out) const;
+    // Whether a point of a solid cell (fractions across and down from its top-left) is inside one
+    // of its boxes.
+    [[nodiscard]] bool solid_at_point(int x, int y, float fx, float fy) const;
     std::string path;
     int width = 0, height = 0;          // tiles
     int tile_width = 0, tile_height = 0;  // pixels

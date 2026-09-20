@@ -6,6 +6,8 @@ export interface PlayOptions {
     pitch?: number;
     loop?: boolean;
     pan?: number;
+    /** How much of the high end is kept, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door). */
+    lowpass?: number;
     entity?: number;
     tag?: string;
     /** Heard from where `entity` is: full within `near` of the camera, silent at `range`, panned to its side (docs/design/audio.md). */
@@ -43,7 +45,7 @@ export const audio = {
         const params = target === undefined ? { all: true } : typeof target === "number" ? { voice: target } : target;
         return cmd<{ stopped: number }>("audio.stop", params).stopped;
     },
-    set(voice: number, params: { volume?: number; pitch?: number; pan?: number; loop?: boolean }): void {
+    set(voice: number, params: { volume?: number; pitch?: number; pan?: number; loop?: boolean; lowpass?: number }): void {
         cmd("audio.set", { voice, ...params });
     },
     voices(): Voice[] {

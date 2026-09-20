@@ -33,6 +33,7 @@ struct PlayOptions {
     float pitch = 1.0f;   // playback rate multiplier
     bool loop = false;
     float pan = 0.0f;     // -1 left .. 1 right
+    float lowpass = 1.0f; // how much of the high end is kept, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door)
     std::uint64_t entity = 0;  // optional owner, reported in events
     std::string tag;      // optional label for stop/list
 };
@@ -43,6 +44,7 @@ struct VoiceInfo {
     double position = 0;   // seconds into the clip
     double duration = 0;   // clip length in seconds
     float volume = 1, pitch = 1, pan = 0;
+    float lowpass = 1;
     bool loop = false;
     std::uint64_t entity = 0;
     std::string tag;

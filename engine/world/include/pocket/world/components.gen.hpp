@@ -178,6 +178,7 @@ struct Sprite {
     bool flip_y = false;
     std::string filter = "linear";
     bool visible = true;
+    bool sort_y = false;
     constexpr bool operator==(const Sprite&) const = default;
 };
 void to_json(Json& j, const Sprite& v);
@@ -443,6 +444,7 @@ struct AudioSource {
     std::string clip = "";
     float volume = 1.0f;
     float pitch = 1.0f;
+    float lowpass = 1.0f;
     bool loop = false;
     bool autoplay = false;
     bool spatial = false;

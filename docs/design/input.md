@@ -20,7 +20,7 @@ The platform layer turns SDL keyboard and gamepad events into the normalized eve
 
 ## Agents
 
-`input.pad {pad, button, pressed}` and `input.pad {pad, axis, value}` put a gamepad's button or stick through the same path as a real one (`input.touch` does the same for a finger, Touch below). `input.hold {key | action, ticks, sign}` presses a key (or an action's first positive key; `sign: -1` for the negative direction) now and releases it after N ticks, through the same path as real input and into the journal; `input.press` is a one-tick hold. A hold asked for by a script during a tick (a scenario, a bot) presses at the start of the next tick, so its pressed edge is what that tick's scripts see; a hold from outside (an agent between frames) presses at once. `input.actions`, `input.describe` and `input.state` show what is bound, what is down and what is held. So "walk right for a second" is `input.hold {action: "move_x", ticks: 60}` followed by `step {ticks: 60}` and a transcript.
+`input.pad {pad, button, pressed}` and `input.pad {pad, axis, value}` put a gamepad's button or stick through the same path as a real one (`input.touch` does the same for a finger, Touch below); `input.rumble {pad, low, high, ms}` (the SDK's `input.rumble`) shakes a pad's motors (0..1 each) for a while and answers `rumbled: false` without a pad that can. `input.hold {key | action, ticks, sign}` presses a key (or an action's first positive key; `sign: -1` for the negative direction) now and releases it after N ticks, through the same path as real input and into the journal; `input.press` is a one-tick hold. A hold asked for by a script during a tick (a scenario, a bot) presses at the start of the next tick, so its pressed edge is what that tick's scripts see; a hold from outside (an agent between frames) presses at once. `input.actions`, `input.describe` and `input.state` show what is bound, what is down and what is held. So "walk right for a second" is `input.hold {action: "move_x", ticks: 60}` followed by `step {ticks: 60}` and a transcript.
 
 ## Touch
 
@@ -28,4 +28,4 @@ Fingers reach the engine as their own events, `touch_down`, `touch_move` and `to
 
 ## Not yet
 
-Rumble, gestures (a pinch or a swipe is a script's reading of the finger events), and pressure.
+Gestures (a pinch or a swipe is a script's reading of the finger events), pressure, and rumble patterns (a rumble is one shake of a length; a script sequences them).

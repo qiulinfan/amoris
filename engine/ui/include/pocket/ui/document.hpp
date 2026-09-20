@@ -48,6 +48,9 @@ class Document {
     // Where inputs copy to and paste from (the OS clipboard when a window exists); without it the
     // document keeps its own text, so headless runs cut and paste deterministically.
     void set_clipboard(std::function<std::string()> get, std::function<void(const std::string&)> set);
+    // Where an entity is on the window, in points, for elements with `anchor` (false: behind the
+    // camera or gone, and the element is hidden). Asked at every layout for every anchored element.
+    void set_anchor_source(std::function<bool(std::uint64_t entity, float& x, float& y)> source);
     // Apply a batch of operations: [["create", id, type], ["set", id, props], ["append", parent, id, index?],
     // ["remove", id], ["text", id, string], ["clear", id]]. Stops at the first invalid op.
     Status apply(const Json& ops);
@@ -69,6 +72,9 @@ class Document {
     [[nodiscard]] NodeId hit_test(float x, float y) const;
     [[nodiscard]] Json describe(NodeId id) const;
     [[nodiscard]] Rect rect_of(NodeId id) const;
+    // The focused input's caret as painted last, in points (empty when no input has the focus):
+    // where an IME's candidate window belongs.
+    [[nodiscard]] Rect caret_rect() const;
     [[nodiscard]] std::string snapshot(const SnapshotOptions& options) const;
     // Find nodes by type, text content substring and/or a `name` prop.
     [[nodiscard]] Json query(const Json& params) const;

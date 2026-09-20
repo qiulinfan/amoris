@@ -105,6 +105,7 @@ A 2D image: a textured unit square in the entity's XY plane, sized in world unit
 | `flip_y` | bool | false | Mirror vertically. |
 | `filter` | string | "linear" | Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles). |
 | `visible` | bool | true | Whether the sprite is drawn. |
+| `sort_y` | bool | false | Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer. |
 
 ## SpriteAnimation
 
@@ -344,6 +345,7 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `clip` | string | "" | Project-relative WAV path such as assets/hum.wav. |
 | `volume` | f32 | 1.0 | Linear gain, 0..4. |
 | `pitch` | f32 | 1.0 | Playback rate multiplier. |
+| `lowpass` | f32 | 1.0 | How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice. |
 | `loop` | bool | false | Restart when the clip ends. |
 | `autoplay` | bool | false | Start playing as soon as the component exists. |
 | `spatial` | bool | false | Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). |

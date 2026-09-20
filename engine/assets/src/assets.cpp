@@ -11,6 +11,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 
 namespace pocket::assets {
 
@@ -39,6 +40,7 @@ Json Mesh::describe() const {
         if (m.double_sided) mj["double_sided"] = true;
         if (m.blend) mj["blend"] = true;
         if (m.alpha_cutoff > 0) mj["cutoff"] = m.alpha_cutoff;
+        if (m.uv_transformed) mj["uv_transform"] = Json{{"offset", Json::array({m.uv_offset.x, m.uv_offset.y})}, {"scale", Json::array({m.uv_scale.x, m.uv_scale.y})}};
         mats.push_back(mj);
     }
     j["materials"] = mats;
@@ -142,7 +144,13 @@ int TileSet::frame_at(int local_id, std::uint64_t time_ms) const {
 
 bool TileSet::solid(int local_id) const {
     auto it = tile_properties.find(local_id);
-    return it != tile_properties.end() && truthy(it->second, "solid");
+    if (it != tile_properties.end() && truthy(it->second, "solid")) return true;
+    return shapes.contains(local_id) && !one_way(local_id);   // drawn collision shapes make a tile solid inside them
+}
+
+const std::vector<TileSet::Shape>* TileSet::shapes_of(int local_id) const {
+    auto it = shapes.find(local_id);
+    return it == shapes.end() ? nullptr : &it->second;
 }
 
 bool TileSet::one_way(int local_id) const {
@@ -402,20 +410,26 @@ Json TileMap::to_json() const {
         for (const TileSet& t : tilesets) {
             Json tj{{"name", t.name}, {"firstgid", t.first_gid}, {"image", std::filesystem::path(t.image).filename().generic_string()}, {"tilewidth", t.tile_width}, {"tileheight", t.tile_height}, {"columns", t.columns}, {"tilecount", t.tile_count}, {"imagewidth", t.image_width}, {"imageheight", t.image_height}, {"spacing", t.spacing}, {"margin", t.margin}};
             Json tiles = Json::array();
-            for (const auto& [id, props] : t.tile_properties) {
-                Json tile{{"id", id}, {"properties", tiled_properties(props)}};
+            std::set<int> tile_ids;
+            for (const auto& [id, props] : t.tile_properties) tile_ids.insert(id);
+            for (const auto& [id, anim] : t.animations) tile_ids.insert(id);
+            for (const auto& [id, sh] : t.shapes) tile_ids.insert(id);
+            for (int id : tile_ids) {
+                Json tile{{"id", id}};
+                if (auto pit = t.tile_properties.find(id); pit != t.tile_properties.end()) tile["properties"] = tiled_properties(pit->second);
                 if (auto a = t.animations.find(id); a != t.animations.end()) {
                     Json frames = Json::array();
                     for (const auto& [fid, ms] : a->second.frames) frames.push_back(Json{{"tileid", fid}, {"duration", ms}});
                     tile["animation"] = frames;
                 }
+                if (auto sh = t.shapes.find(id); sh != t.shapes.end()) {
+                    // Back into the collision editor's pixels.
+                    Json objects = Json::array();
+                    int oid = 1;
+                    for (const TileSet::Shape& s : sh->second) objects.push_back(Json{{"id", oid++}, {"name", ""}, {"type", ""}, {"x", s.x0 * static_cast<float>(t.tile_width)}, {"y", s.y0 * static_cast<float>(t.tile_height)}, {"width", (s.x1 - s.x0) * static_cast<float>(t.tile_width)}, {"height", (s.y1 - s.y0) * static_cast<float>(t.tile_height)}, {"rotation", 0}, {"visible", true}});
+                    tile["objectgroup"] = Json{{"type", "objectgroup"}, {"draworder", "index"}, {"name", ""}, {"objects", objects}, {"opacity", 1}, {"visible", true}, {"x", 0}, {"y", 0}};
+                }
                 tiles.push_back(tile);
-            }
-            for (const auto& [id, anim] : t.animations) {
-                if (t.tile_properties.contains(id)) continue;
-                Json frames = Json::array();
-                for (const auto& [fid, ms] : anim.frames) frames.push_back(Json{{"tileid", fid}, {"duration", ms}});
-                tiles.push_back(Json{{"id", id}, {"animation", frames}});
             }
             if (!tiles.empty()) tj["tiles"] = tiles;
             sets.push_back(tj);
@@ -474,6 +488,43 @@ int TileMap::solidity_at(int x, int y) const {
         }
     }
     return best;
+}
+
+void TileMap::solid_boxes(int x, int y, std::vector<TileSet::Shape>& out) const {
+    out.clear();
+    const int kind = solidity_at(x, y);
+    if (kind != 1 && kind != 2) return;
+    for (const TileLayer& l : layers) {
+        if (!l.visible || x < 0 || y < 0 || x >= l.width || y >= l.height) continue;
+        const std::uint32_t gid = l.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(x)];
+        if (gid == 0) continue;
+        if (l.solid_layer()) { out.push_back({}); return; }
+        const TileSet* ts = tileset_for(gid);
+        if (!ts) continue;
+        const int local = static_cast<int>((gid & kIdMask) - ts->first_gid);
+        if (ts->slope(local) != 0) continue;
+        const bool wanted = kind == 1 ? ts->solid(local) : ts->one_way(local);
+        if (!wanted) continue;
+        if (const std::vector<TileSet::Shape>* sh = ts->shapes_of(local)) {
+            const bool fh = (gid & kFlipH) != 0, fv = (gid & kFlipV) != 0;
+            for (TileSet::Shape s : *sh) {
+                if (fh) s = {1 - s.x1, s.y0, 1 - s.x0, s.y1};
+                if (fv) s = {s.x0, 1 - s.y1, s.x1, 1 - s.y0};
+                out.push_back(s);
+            }
+        } else {
+            out.push_back({});
+        }
+        return;
+    }
+}
+
+bool TileMap::solid_at_point(int x, int y, float fx, float fy) const {
+    if (solidity_at(x, y) != 1) return false;
+    std::vector<TileSet::Shape> boxes;
+    solid_boxes(x, y, boxes);
+    for (const TileSet::Shape& s : boxes) if (fx >= s.x0 && fx < s.x1 && fy >= s.y0 && fy < s.y1) return true;
+    return false;
 }
 
 int TileMap::slope_at(int x, int y) const {
@@ -680,6 +731,22 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
                     anim.total_ms += ms;
                 }
                 if (!anim.frames.empty() && anim.total_ms > 0) ts.animations[id] = std::move(anim);
+            }
+            if (tile.contains("objectgroup") && tile["objectgroup"].is_object() && ts.tile_width > 0 && ts.tile_height > 0) {
+                // The collision editor's rectangles, as fractions of the tile.
+                std::vector<TileSet::Shape> shapes;
+                for (const Json& o : tile["objectgroup"].value("objects", Json::array())) {
+                    if (!o.is_object() || o.value("point", false) || o.value("ellipse", false) || o.contains("polygon") || o.contains("polyline")) continue;
+                    const float w = o.value("width", 0.0f), h = o.value("height", 0.0f), ox = o.value("x", 0.0f), oy = o.value("y", 0.0f);
+                    if (w <= 0 || h <= 0) continue;
+                    TileSet::Shape s;
+                    s.x0 = std::clamp(ox / static_cast<float>(ts.tile_width), 0.0f, 1.0f);
+                    s.x1 = std::clamp((ox + w) / static_cast<float>(ts.tile_width), 0.0f, 1.0f);
+                    s.y0 = std::clamp(oy / static_cast<float>(ts.tile_height), 0.0f, 1.0f);
+                    s.y1 = std::clamp((oy + h) / static_cast<float>(ts.tile_height), 0.0f, 1.0f);
+                    if (s.x1 > s.x0 && s.y1 > s.y0) shapes.push_back(s);
+                }
+                if (!shapes.empty()) ts.shapes[id] = std::move(shapes);
             }
         }
         map.tilesets.push_back(std::move(ts));
@@ -1017,7 +1084,16 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             }
             mat.metallic = pbr.value("metallicFactor", 1.0f);
             mat.roughness = pbr.value("roughnessFactor", 1.0f);
-            if (pbr.contains("baseColorTexture")) mat.texture = texture_path(pbr["baseColorTexture"]);
+            if (pbr.contains("baseColorTexture")) {
+                mat.texture = texture_path(pbr["baseColorTexture"]);
+                const Json& info = pbr["baseColorTexture"];
+                if (info.is_object() && info.contains("extensions") && info["extensions"].is_object() && info["extensions"].contains("KHR_texture_transform")) {
+                    const Json& tt = info["extensions"]["KHR_texture_transform"];
+                    if (tt.contains("offset") && tt["offset"].is_array() && tt["offset"].size() == 2) mat.uv_offset = {tt["offset"][0].get<float>(), tt["offset"][1].get<float>()};
+                    if (tt.contains("scale") && tt["scale"].is_array() && tt["scale"].size() == 2) mat.uv_scale = {tt["scale"][0].get<float>(), tt["scale"][1].get<float>()};
+                    mat.uv_transformed = mat.uv_offset.x != 0 || mat.uv_offset.y != 0 || mat.uv_scale.x != 1 || mat.uv_scale.y != 1;
+                }
+            }
             if (pbr.contains("metallicRoughnessTexture")) mat.metallic_roughness_texture = texture_path(pbr["metallicRoughnessTexture"]);
         }
         if (m.contains("normalTexture")) {

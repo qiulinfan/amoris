@@ -221,3 +221,37 @@ TEST_CASE("a streamed Ogg clip mixes like a decoded one, deterministically, and 
     REQUIRE(looped == 2);
     REQUIRE(streamed->voices().size() == 1);
 }
+
+TEST_CASE("a low-passed voice is smoother than the clip and opens up again when set", "[audio][lowpass]") {
+    auto plain = headless_audio(), muffled = headless_audio();
+    audio::PlayOptions o;
+    REQUIRE(plain->play("assets/beep.wav", o).has_value());
+    o.lowpass = 0.05f;
+    auto id = muffled->play("assets/beep.wav", o);
+    REQUIRE(id.has_value());
+    REQUIRE(muffled->voices()[0].lowpass == Catch::Approx(0.05));
+    // Roughness: how much the signal moves from one frame to the next.
+    auto roughness = [](const std::vector<float>& mix) {
+        float sum = 0;
+        for (std::size_t i = 2; i < mix.size(); i += 2) sum += std::abs(mix[i] - mix[i - 2]);
+        return sum;
+    };
+    auto loudness = [](const std::vector<float>& mix) {
+        float peak = 0;
+        for (float x : mix) peak = std::max(peak, std::abs(x));
+        return peak;
+    };
+    const std::vector<float> a = plain->render_frames(2400), b = muffled->render_frames(2400);
+    INFO("plain " << roughness(a) << " / " << loudness(a) << ", muffled " << roughness(b) << " / " << loudness(b));
+    REQUIRE(loudness(a) > 0.1f);
+    REQUIRE(loudness(b) > 0.001f);
+    REQUIRE(roughness(b) < roughness(a) * 0.3f);
+    // Opened again, the next stretch moves like the plain one.
+    REQUIRE(muffled->set(*id, Json{{"lowpass", 1.0}}).has_value());
+    const std::vector<float> a2 = plain->render_frames(2400), b2 = muffled->render_frames(2400);
+    REQUIRE(roughness(b2) > roughness(a2) * 0.8f);
+    REQUIRE(roughness(b2) < roughness(a2) * 1.2f);
+    // Out of range is clamped, not refused.
+    REQUIRE(muffled->set(*id, Json{{"lowpass", 5.0}}).has_value());
+    REQUIRE(muffled->voices()[0].lowpass == Catch::Approx(1.0));
+}

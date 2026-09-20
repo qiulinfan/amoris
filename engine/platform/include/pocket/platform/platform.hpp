@@ -84,10 +84,15 @@ class Platform {
     [[nodiscard]] Json describe() const;
     // Enable or disable OS text input (composition, Text events).
     void set_text_input(bool enabled);
+    // Where the text being edited is, in window points: an IME opens its candidate window beside it.
+    void set_text_input_area(int x, int y, int w, int h);
     [[nodiscard]] bool text_input() const;
     // The OS clipboard as text (empty when headless or when it holds no text).
     [[nodiscard]] std::string clipboard_text() const;
     void set_clipboard_text(const std::string& text);
+    // Shake gamepad `pad` (its index) for `ms` milliseconds, the low and high motors in 0..1.
+    // False when there is no such pad or it cannot rumble.
+    bool rumble(int pad, float low, float high, int ms);
 
    private:
     Platform();

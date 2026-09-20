@@ -58,6 +58,10 @@ struct Node {
     bool clip = false;       // overflow hidden or scroll
     bool scroll = false;     // overflow scroll
     bool visible = true;     // display none => false
+    std::uint64_t anchor_entity = 0;     // an entity this element follows on the window (0: none)
+    float anchor_offset[2] = {0, 0};     // points added to the projection
+    float anchor_align[2] = {0.5f, 1};   // which point of the element sits on the projection (0..1 across, down)
+    bool anchor_hidden = false;          // the entity is behind the camera or gone
     bool disabled = false;
     std::string text;
     std::string value;       // input
@@ -181,6 +185,9 @@ void word_bounds(const std::string& v, std::size_t at, std::size_t& a, std::size
 struct Document::Impl {
     Font& font;
     std::function<Document::ImageSource(const std::string&)> image_source;
+    std::function<bool(std::uint64_t, float&, float&)> anchor_source;
+    Rect caret_rect{};   // the focused input's caret at the last paint
+    static bool shown(const Node& n) { return n.visible && !n.anchor_hidden; }
     std::function<std::string()> clipboard_get_fn;
     std::function<void(const std::string&)> clipboard_set_fn;
     std::string clipboard_local;   // used when no OS clipboard is wired
@@ -435,7 +442,14 @@ struct Document::Impl {
                 n.scroll = s == "scroll";
                 YGNodeStyleSetOverflow(y, s == "hidden" ? YGOverflowHidden : s == "scroll" ? YGOverflowScroll : YGOverflowVisible);
             }
-            else if (k == "display") { std::string s = v.get<std::string>(); n.visible = s != "none"; YGNodeStyleSetDisplay(y, n.visible ? YGDisplayFlex : YGDisplayNone); }
+            else if (k == "display") { std::string s = v.get<std::string>(); n.visible = s != "none"; YGNodeStyleSetDisplay(y, n.visible && !n.anchor_hidden ? YGDisplayFlex : YGDisplayNone); }
+            else if (k == "anchor") {
+                n.anchor_entity = v.is_number() ? v.get<std::uint64_t>() : 0;
+                if (n.anchor_entity) YGNodeStyleSetPositionType(y, YGPositionTypeAbsolute);
+                else if (n.anchor_hidden) { n.anchor_hidden = false; YGNodeStyleSetDisplay(y, n.visible ? YGDisplayFlex : YGDisplayNone); }
+            }
+            else if (k == "anchorOffset") { if (v.is_array() && v.size() == 2) for (std::size_t i = 0; i < 2; ++i) n.anchor_offset[i] = v[i].is_number() ? v[i].get<float>() : 0.0f; }
+            else if (k == "anchorAlign") { if (v.is_array() && v.size() == 2) for (std::size_t i = 0; i < 2; ++i) n.anchor_align[i] = v[i].is_number() ? std::clamp(v[i].get<float>(), 0.0f, 1.0f) : 0.0f; }
             else if (k == "background" || k == "backgroundColor" || k == "bg") n.background = parse_color(v, n.background);
             else if (k == "image") n.image = v.is_string() ? v.get<std::string>() : "";
             else if (k == "fit") n.fit = v.is_string() ? v.get<std::string>() : "contain";
@@ -494,7 +508,7 @@ struct Document::Impl {
     }
 
     void paint_node(Node& n, Painter& p, float opacity) {
-        if (!n.visible) return;
+        if (!shown(n)) return;
         float op = opacity * n.opacity;
         if (op <= 0) return;
         const Rect& r = n.rect;
@@ -527,6 +541,8 @@ struct Document::Impl {
             }
         }
         if (n.border_width > 0 && n.border_color.a > 0) p.border(r, n.border_color.with_alpha(op), n.border_width, n.radius);
+        // The keyboard's focus ring: a focused element that is not an input (the Tab key got it there).
+        if (focused == n.id && n.type != "input" && (n.listeners & kClick)) p.border(r, Color{1, 1, 1, 0.8f * op}, 1.5f, n.radius);
         if (n.type == "text" || n.type == "input") {
             Rect inner{r.x + YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) + n.border_width, r.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width, r.w - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - YGNodeLayoutGetPadding(n.yoga, YGEdgeRight) - 2 * n.border_width, r.h - YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) - YGNodeLayoutGetPadding(n.yoga, YGEdgeBottom) - 2 * n.border_width};
             p.push_clip(inner);
@@ -572,6 +588,7 @@ struct Document::Impl {
                     const float cx = inner.x + 1 + (placeholder ? 0.0f : p.measure(n.value.substr(row.start, caret - row.start), n.font_size));
                     const float cy = inner.y + 2 + lh * static_cast<float>(caret_row) - n.scroll_y;
                     p.rect({cx, cy + 1, 1, lh - 2}, n.color.with_alpha(op));
+                    caret_rect = {cx, cy + 1, 1, lh - 2};
                 }
             } else if (n.type == "input") {
                 bool placeholder = n.value.empty();
@@ -588,6 +605,7 @@ struct Document::Impl {
                 if (focused == n.id) {
                     float cx = inner.x + 1 + p.measure(n.value.substr(0, static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size())))), n.font_size);
                     p.rect({cx, ty + 1, 1, lh - 2}, n.color.with_alpha(op));
+                    caret_rect = {cx, ty + 1, 1, lh - 2};
                 }
             } else {
                 if (n.lines.empty() || (n.text_wrap && std::fabs(n.measured_width - inner.w) > 0.5f)) {
@@ -628,7 +646,7 @@ struct Document::Impl {
     }
 
     NodeId hit(const Node& n, float x, float y, const Rect& clip) const {
-        if (!n.visible) return 0;
+        if (!shown(n)) return 0;
         Rect visible = n.clip ? clip.intersect(n.rect) : clip;
         bool inside = n.rect.contains(x, y) && clip.contains(x, y);
         if (n.clip && !inside) return 0;
@@ -673,7 +691,8 @@ struct Document::Impl {
             }
         }
         if (focused == n.id) out << " focused";
-        if (!n.visible) out << " hidden";
+        if (!Impl::shown(n)) out << " hidden";
+        if (n.anchor_entity) out << " anchor=" << n.anchor_entity;
         if (n.scroll || (n.type == "input" && n.multiline && n.content_height > n.rect.h + 0.5f)) out << " scroll=" << std::lround(n.scroll_y) << "/" << std::lround(std::max(0.0f, n.content_height - n.rect.h));
         ++shown;
         bool descend = o.depth < 0 || depth + 1 <= o.depth;
@@ -841,9 +860,42 @@ void Document::layout(float width, float height, float scale) {
     Node& root = im.nodes[im.root_id];
     YGNodeStyleSetWidth(root.yoga, width);
     YGNodeStyleSetHeight(root.yoga, height);
+    // Anchored elements sit on their entity's projection, the alignment point of their own box
+    // (from the last layout) over it; a second pass corrects the box whose size the first changed.
+    auto place = [&]() -> bool {
+        bool moved = false;
+        for (auto& [id, n] : im.nodes) {
+            if (!n.anchor_entity) continue;
+            float x = 0, y = 0;
+            const bool there = im.anchor_source && im.anchor_source(n.anchor_entity, x, y);
+            if (there == n.anchor_hidden) {
+                n.anchor_hidden = !there;
+                YGNodeStyleSetDisplay(n.yoga, there && n.visible ? YGDisplayFlex : YGDisplayNone);
+                moved = true;
+            }
+            if (!there) continue;
+            const Node* parent = im.get(n.parent);
+            const float left = x + n.anchor_offset[0] - n.rect.w * n.anchor_align[0] - (parent ? parent->rect.x : 0.0f);
+            const float top = y + n.anchor_offset[1] - n.rect.h * n.anchor_align[1] - (parent ? parent->rect.y : 0.0f);
+            const YGValue cl = YGNodeStyleGetPosition(n.yoga, YGEdgeLeft), ct = YGNodeStyleGetPosition(n.yoga, YGEdgeTop);
+            if (cl.unit != YGUnitPoint || ct.unit != YGUnitPoint || std::fabs(cl.value - left) > 0.01f || std::fabs(ct.value - top) > 0.01f) {
+                YGNodeStyleSetPosition(n.yoga, YGEdgeLeft, left);
+                YGNodeStyleSetPosition(n.yoga, YGEdgeTop, top);
+                moved = true;
+            }
+        }
+        return moved;
+    };
+    const bool anchored = place();
     YGNodeCalculateLayout(root.yoga, width, height, YGDirectionLTR);
     im.compute_rects(root, 0, 0);
+    if (anchored && place()) {
+        YGNodeCalculateLayout(root.yoga, width, height, YGDirectionLTR);
+        im.compute_rects(root, 0, 0);
+    }
 }
+
+void Document::set_anchor_source(std::function<bool(std::uint64_t, float&, float&)> source) { impl_->anchor_source = std::move(source); }
 
 void Document::paint(Painter& painter) {
     Impl& im = *impl_;
@@ -1085,7 +1137,7 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     std::vector<NodeId> order;
                     std::function<void(NodeId)> collect = [&](NodeId id) {
                         const Node* node = im.get(id);
-                        if (!node || !node->visible) return;
+                        if (!node || !Impl::shown(*node)) return;
                         if (!node->disabled && node->rect.w > 0 && node->rect.h > 0 && (node->type == "input" || (node->listeners & kClick))) order.push_back(id);
                         for (NodeId c : node->children) collect(c);
                     };
@@ -1160,7 +1212,12 @@ Json Document::describe(NodeId id) const {
         }
         if (std::size_t a = 0, b = 0; Impl::selection_of(*n, a, b)) j["selection"] = Json::array({a, b});
     }
-    j["visible"] = n->visible;
+    j["visible"] = Impl::shown(*n);
+    if (n->anchor_entity) {
+        j["anchor"] = n->anchor_entity;
+        j["anchorOffset"] = Json::array({n->anchor_offset[0], n->anchor_offset[1]});
+        j["anchorAlign"] = Json::array({n->anchor_align[0], n->anchor_align[1]});
+    }
     j["focused"] = impl_->focused == id;
     if (n->scroll) { j["scrollTop"] = n->scroll_y; j["contentHeight"] = n->content_height; }
     j["background"] = color_hex(n->background);
@@ -1172,6 +1229,11 @@ Json Document::describe(NodeId id) const {
         if (n->filter == "nearest") j["filter"] = "nearest";
     }
     return j;
+}
+
+Rect Document::caret_rect() const {
+    const Node* n = impl_->get(impl_->focused);
+    return n && n->type == "input" ? impl_->caret_rect : Rect{};
 }
 
 Rect Document::rect_of(NodeId id) const {

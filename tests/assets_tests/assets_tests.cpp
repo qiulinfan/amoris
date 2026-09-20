@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 
 using namespace pocket;
 
@@ -540,4 +541,82 @@ TEST_CASE("an infinite map is read as the box around its chunks, cells and objec
     REQUIRE(d["width"] == 8);
     // A finite map reports neither.
     REQUIRE_FALSE(assets::parse_tilemap(R"({"orientation":"isometric","width":2,"height":2,"tilewidth":32,"tileheight":16,"infinite":true,"tilesets":[],"layers":[]})", "maps/iso.tmj").has_value());
+}
+
+TEST_CASE("a tile's collision rectangles make it solid inside them, flipped with the tile", "[tilemap][shapes]") {
+    // Tile 0: the bottom half (a low block); its polygon is skipped. Tile 1: solid by property.
+    const char* text = R"({"type":"map","orientation":"orthogonal","width":3,"height":2,"tilewidth":16,"tileheight":16,"infinite":false,
+        "tilesets":[{"firstgid":1,"name":"t","image":"t.png","imagewidth":32,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":2,"tilecount":2,
+            "tiles":[{"id":0,"objectgroup":{"type":"objectgroup","objects":[{"id":1,"x":0,"y":8,"width":16,"height":8},{"id":2,"x":0,"y":0,"polygon":[{"x":0,"y":0},{"x":16,"y":16},{"x":0,"y":16}]}]}},
+                     {"id":1,"properties":[{"name":"solid","type":"bool","value":true}]}]}],
+        "layers":[{"id":1,"type":"tilelayer","name":"ground","width":3,"height":2,"x":0,"y":0,"opacity":1,"visible":true,"data":[1,1073741825,0,2,2,2]}]})";
+    auto parsed = assets::parse_tilemap(text, "maps/shapes.tmj");
+    if (!parsed) INFO(parsed.error().to_string());
+    REQUIRE(parsed.has_value());
+    assets::TileMap& map = *parsed;
+    const assets::TileSet& ts = map.tilesets[0];
+    const auto* sh = ts.shapes_of(0);
+    REQUIRE(sh != nullptr);
+    REQUIRE(sh->size() == 1);
+    REQUIRE((*sh)[0].y0 == Catch::Approx(0.5));
+    REQUIRE((*sh)[0].y1 == Catch::Approx(1.0));
+    REQUIRE((*sh)[0].x1 == Catch::Approx(1.0));
+    REQUIRE(ts.solid(0));
+    REQUIRE(ts.shapes_of(1) == nullptr);
+    REQUIRE(map.solidity_at(0, 0) == 1);
+    std::vector<assets::TileSet::Shape> boxes;
+    map.solid_boxes(0, 0, boxes);
+    REQUIRE(boxes.size() == 1);
+    REQUIRE(boxes[0].y0 == Catch::Approx(0.5));
+    // Cell (1, 0) holds the same tile flipped vertically: the block is its top half.
+    map.solid_boxes(1, 0, boxes);
+    REQUIRE(boxes.size() == 1);
+    REQUIRE(boxes[0].y0 == Catch::Approx(0.0));
+    REQUIRE(boxes[0].y1 == Catch::Approx(0.5));
+    // A whole solid tile is one box over the cell; an empty cell has none.
+    map.solid_boxes(0, 1, boxes);
+    REQUIRE(boxes.size() == 1);
+    REQUIRE(boxes[0].y0 == Catch::Approx(0.0));
+    REQUIRE(boxes[0].y1 == Catch::Approx(1.0));
+    map.solid_boxes(2, 0, boxes);
+    REQUIRE(boxes.empty());
+    // Points: the top half of cell (0, 0) is air, the bottom half solid.
+    REQUIRE_FALSE(map.solid_at_point(0, 0, 0.5f, 0.25f));
+    REQUIRE(map.solid_at_point(0, 0, 0.5f, 0.75f));
+    REQUIRE(map.solid_at_point(0, 1, 0.5f, 0.25f));
+}
+
+TEST_CASE("a material's KHR_texture_transform offset and scale are read", "[assets][gltf][transform]") {
+    // A textured quad beside the sample's assets, removed after: its checker tiles four times, shifted.
+    const std::filesystem::path file = project() / "assets" / "transform-test.gltf";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        std::ofstream out(file);
+        out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"name":"quad","mesh":0}],
+            "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],
+            "materials":[{"name":"tiled","pbrMetallicRoughness":{"baseColorTexture":{"index":0,"extensions":{"KHR_texture_transform":{"offset":[0.25,0.5],"scale":[4,4],"rotation":0}}}}}],
+            "textures":[{"source":0}],"images":[{"uri":"checker.png"}],
+            "buffers":[{"byteLength":140,"uri":"data:application/octet-stream;base64,)" << "AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAPwAAAD8AAAAAAAAAvwAAAD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAEAAgAAAAIAAwA=" << R"("}],
+            "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":48},{"buffer":0,"byteOffset":48,"byteLength":48},{"buffer":0,"byteOffset":96,"byteLength":32},{"buffer":0,"byteOffset":128,"byteLength":12}],
+            "accessors":[{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3","min":[-0.5,-0.5,0],"max":[0.5,0.5,0]},{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":4,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":6,"type":"SCALAR"}]})";
+    }
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/transform-test.gltf");
+    if (!m) INFO(m.error().to_string());
+    REQUIRE(m.has_value());
+    const assets::Mesh& mesh = **m;
+    REQUIRE(mesh.materials.size() == 1);
+    const assets::Material& mat = mesh.materials[0];
+    REQUIRE(mat.texture == "assets/checker.png");
+    REQUIRE(mat.uv_transformed);
+    REQUIRE(mat.uv_offset.x == Catch::Approx(0.25));
+    REQUIRE(mat.uv_offset.y == Catch::Approx(0.5));
+    REQUIRE(mat.uv_scale.x == Catch::Approx(4.0));
+    REQUIRE(mat.uv_scale.y == Catch::Approx(4.0));
+    Json d = mesh.describe();
+    REQUIRE(d["materials"][0]["uv_transform"]["scale"][0] == 4.0);
+    // The crate's material has none.
+    auto crate = store.mesh("assets/crate.glb");
+    REQUIRE(crate.has_value());
+    REQUIRE_FALSE((*crate)->materials[0].uv_transformed);
 }
