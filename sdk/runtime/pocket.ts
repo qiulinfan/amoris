@@ -83,7 +83,9 @@ export interface Tick {
 }
 
 export interface InputEvent {
-    type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis";
+    type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis" | "touch_down" | "touch_up" | "touch_move";
+    /** Touch events: the finger's index (0 is the one that also acts as the mouse). */
+    finger?: number;
     pad?: number;
     button?: number | string;
     axis?: string;

@@ -58,8 +58,33 @@ export interface TweenHandle {
     finish(): void;
 }
 
+/** What a component tween is made of, so it can be written down and started again. */
+interface TweenRecord {
+    component: string;
+    goal: Tree;
+    from?: Tree;      // read from the component when the tween first moves
+    ease?: string;    // a named easing; a custom function cannot be written down
+    custom?: boolean;
+}
+
+/** A running component tween as data: what `tween.snapshot` returns and `tween.restore` takes (entities by path). */
+export interface TweenState {
+    path: string;
+    component: string;
+    goal: unknown;
+    from?: unknown;
+    elapsed: number;
+    delay: number;
+    duration: number;
+    ease?: string;
+    repeat: number;
+    yoyo: boolean;
+    plays: number;
+}
+
 interface Active {
     entity?: EntityRef;
+    record?: TweenRecord;
     elapsed: number;
     delay: number;
     duration: number;
@@ -78,6 +103,17 @@ const active: Active[] = [];
 function curveOf(e: Easing | EaseName | undefined): Easing {
     if (e === undefined) return ease.linear;
     return typeof e === "function" ? e : ease[e];
+}
+
+function componentApply(entity: EntityRef, rec: TweenRecord): (t: number) => void {
+    return (t) => {
+        if (rec.from === undefined) {
+            const current = world.get(entity, rec.component as ComponentName) as unknown as Tree | undefined;
+            if (current === undefined) return;
+            rec.from = project(current, rec.goal);
+        }
+        world.set(entity, rec.component as ComponentName, mix(rec.from, rec.goal, t) as never);
+    };
 }
 
 function start(a: Active): TweenHandle {
@@ -189,21 +225,43 @@ export const tween = {
      * tween starts moving.
      */
     to<K extends ComponentName>(entity: EntityRef, component: K, target: DeepPartial<Components[K]>, options: TweenOptions): TweenHandle {
-        let from: Tree | undefined;
-        const goal = target as unknown as Tree;
+        const rec: TweenRecord = { component, goal: target as unknown as Tree, ease: typeof options.ease === "string" ? options.ease : undefined, custom: typeof options.ease === "function" };
         return start({
-            entity, elapsed: 0, delay: options.delay ?? 0, duration: Math.max(0, options.duration), curve: curveOf(options.ease),
+            entity, record: rec, elapsed: 0, delay: options.delay ?? 0, duration: Math.max(0, options.duration), curve: curveOf(options.ease),
             repeat: options.repeat ?? 0, yoyo: options.yoyo ?? false, plays: 0, done: false, progress: 0,
-            apply: (t) => {
-                if (from === undefined) {
-                    const current = world.get(entity, component) as unknown as Tree | undefined;
-                    if (current === undefined) return;
-                    from = project(current, goal);
-                }
-                world.set(entity, component, mix(from, goal, t) as never);
-            },
+            apply: componentApply(entity, rec),
             onComplete: options.onComplete,
         });
+    },
+    /**
+     * The component tweens running now, as data by entity path, so `onSave` can carry them and
+     * `onLoad` can start them again where they were (`tween.restore`): a loaded scene makes new
+     * entities, and a tween restored this way keeps its phase, so a run branched from a save
+     * plays out exactly as the run it was taken from. Tweens with a custom easing function are
+     * left out (a function cannot be written down), and so are value tweens.
+     */
+    snapshot(): TweenState[] {
+        const out: TweenState[] = [];
+        for (const a of active) {
+            if (a.done || a.entity === undefined || !a.record || a.record.custom) continue;
+            let path: string | undefined;
+            try { path = world.describe(a.entity).path; } catch { continue; }
+            if (!path) continue;
+            out.push({ path, component: a.record.component, goal: a.record.goal, from: a.record.from, elapsed: a.elapsed, delay: a.delay, duration: a.duration, ease: a.record.ease, repeat: a.repeat, yoyo: a.yoyo, plays: a.plays });
+        }
+        return out;
+    },
+    /** Start the tweens of a `snapshot` again on the entities now at those paths; returns how many were found. */
+    restore(states: TweenState[]): number {
+        let n = 0;
+        for (const s of states) {
+            const entity = world.find(s.path);
+            if (entity === undefined) continue;
+            const rec: TweenRecord = { component: s.component, goal: s.goal as Tree, from: s.from as Tree | undefined, ease: s.ease };
+            active.push({ entity, record: rec, elapsed: s.elapsed, delay: s.delay, duration: s.duration, curve: curveOf(s.ease as EaseName | undefined), repeat: s.repeat, yoyo: s.yoyo, plays: s.plays, done: false, progress: 0, apply: componentApply(entity, rec) });
+            n++;
+        }
+        return n;
     },
     /** Sugar for `to(entity, "Transform", { position }, options)`. */
     move(entity: EntityRef, position: { x?: number; y?: number; z?: number }, options: TweenOptions): TweenHandle {

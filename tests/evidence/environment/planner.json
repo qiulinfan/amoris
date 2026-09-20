@@ -3,6 +3,7 @@
   "seed": 1,
   "hold": 20,
   "horizon": 20,
+  "snapshots": true,
   "decisions": 10,
   "history": [
     {
@@ -63,7 +64,7 @@
       "macro": {
         "move_x": -1
       },
-      "value": 2.9056,
+      "value": 2.905,
       "score": 3.0,
       "t": 80,
       "done": false
@@ -73,7 +74,7 @@
       "macro": {
         "move_x": 1
       },
-      "value": 2.9674,
+      "value": 2.965,
       "score": 3.0,
       "t": 100,
       "done": false
@@ -83,7 +84,7 @@
       "macro": {
         "move_x": 1
       },
-      "value": 2.9879,
+      "value": 2.985,
       "score": 3.0,
       "t": 120,
       "done": false
@@ -93,7 +94,7 @@
       "macro": {
         "move_x": 1
       },
-      "value": 3.9679,
+      "value": 3.966,
       "score": 4.0,
       "t": 140,
       "done": false
@@ -103,7 +104,7 @@
       "macro": {
         "move_x": 1
       },
-      "value": 3.9782,
+      "value": 3.978,
       "score": 4.0,
       "t": 160,
       "done": false
@@ -114,7 +115,7 @@
         "move_x": 1,
         "jump": true
       },
-      "value": 4.9859,
+      "value": 4.986,
       "score": 5.0,
       "t": 180,
       "done": false
@@ -132,5 +133,5 @@
   ],
   "score": 6.0,
   "t": 200,
-  "seconds": 8.1
+  "seconds": 4.9
 }

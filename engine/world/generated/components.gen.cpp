@@ -1725,7 +1725,7 @@ constexpr std::array<FieldInfo, 24> kParticleEmitterFields = {{
     FieldInfo{"stretch", "f32", "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square."},
     FieldInfo{"child", "entity", "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none."},
     FieldInfo{"child_count", "i32", "Particles the child emits at each death."},
-    FieldInfo{"collide", "bool", "Particles hit the physics bodies: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md)."},
+    FieldInfo{"collide", "bool", "Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md)."},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner."},

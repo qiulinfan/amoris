@@ -145,6 +145,7 @@ class Session {
     std::map<std::string, Json> prefab_cache_;  // parsed prefab files by project-relative path
     InputMap input_map_;
     std::map<std::string, std::int64_t> held_keys_;  // synthetic holds: key name -> tick at which it releases
+    std::map<int, std::pair<float, float>> touch_last_;  // synthetic fingers: index -> last position, for the deltas
     std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
     bool in_tick_ = false;
     // Typed-array packing buffers shared with scripts (never freed while a script may hold them).

@@ -9,5 +9,5 @@ __pycache__/
 *.swp
 dist/
 projects/
-.pocket/editor.json
+**/.pocket/editor.json
 .claude/

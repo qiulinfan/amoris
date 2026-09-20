@@ -35,6 +35,7 @@ const playing = signal(false);
 const paused = signal(true);
 const overlays = signal(false);   // colliders and joints drawn as lines in the scene pane
 const snap = signal(false);       // gizmo drags land on the grid: snapStep units, 15 degrees, quarter scales
+const localAxes = signal(false);  // gizmo handles on the entity's own axes instead of the world's
 const snapStep = signal(0.5);     // the grid a snapped move lands on, cycled by the toolbar
 const SNAP_STEPS = [0.1, 0.25, 0.5, 1, 2];
 const SNAP_ANGLE = Math.PI / 12, SNAP_SCALE = 0.25;
@@ -154,10 +155,11 @@ function refreshBottom(): void {
 function loadLayout(): void {
     try {
         const r = command<{ text: string }>("project.read", { path: LAYOUT_PATH });
-        const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: Tab; snap?: boolean; snap_step?: number };
+        const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: Tab; snap?: boolean; snap_step?: number; local?: boolean };
         if (j.layout) layout.set({ ...DEFAULT_LAYOUT, ...j.layout });
         if (j.tab !== undefined && TABS.includes(j.tab)) tab.set(j.tab);
         if (j.snap === true) snap.set(true);
+        if (j.local === true) localAxes.set(true);
         if (typeof j.snap_step === "number" && SNAP_STEPS.includes(j.snap_step)) snapStep.set(j.snap_step);
     } catch {
         // No saved layout yet.
@@ -166,7 +168,7 @@ function loadLayout(): void {
 
 function saveLayout(): void {
     try {
-        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab(), snap: snap(), snap_step: snapStep() } });
+        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab(), snap: snap(), snap_step: snapStep(), local: localAxes() } });
     } catch (e) {
         notice.set(`Layout not saved: ${String(e)}`);
     }
@@ -711,7 +713,7 @@ function updateGizmo(): void {
         if (gizmo() !== null) gizmo.set(null);
         return;
     }
-    const lay = layoutFor(id);
+    const lay = layoutFor(id, localAxes());
     if (!lay) {
         if (gizmo() !== null) gizmo.set(null);
         return;
@@ -733,7 +735,7 @@ function gizmoDown(axis: Axis): void {
     const ids = selection().filter((id) => world.has(id, "Transform"));
     const primary = selected();
     if (ids.length === 0 || primary === 0) return;
-    const lay = layoutFor(primary);
+    const lay = layoutFor(primary, localAxes());
     if (!lay) return;
     const before = new Map<number, Transform>();
     for (const id of ids) before.set(id, clone(world.get(id, "Transform")!));
@@ -754,11 +756,11 @@ function gizmoDrag(e: UiEvent): void {
     const snapping = snap();
     const axis = dragState.axis;
     if (axis === "rotate" || axis === "rotate_x" || axis === "rotate_z") {
-        // Horizontal drag turns the selection around a world axis (R: Y, RX: X, RZ: Z), 100 px per radian.
+        // Horizontal drag turns the selection around a world axis (R: Y, RX: X, RZ: Z), or the entity's own with Local on, 100 px per radian.
         dragState.turned += dx * 0.01;
         const about = axis === "rotate" ? "y" : axis === "rotate_x" ? "x" : "z";
         const q = axisQuat(about, snapping ? snapTo(dragState.turned, SNAP_ANGLE) : dragState.turned);
-        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { rotation: multiplyQuat(q, before.rotation) });
+        for (const [id, before] of dragState.before) if (alive(id)) world.set(id, "Transform", { rotation: localAxes() ? multiplyQuat(before.rotation, q) : multiplyQuat(q, before.rotation) });
     } else if (axis === "scale" || axis === "scale_x" || axis === "scale_y" || axis === "scale_z") {
         // Drag right to grow, left to shrink, relative to the size at the start of the drag: S on
         // every axis, SX, SY, SZ on one.
@@ -869,6 +871,13 @@ function toggleSnap(): void {
     notice.set(snap() ? `Snap on: moves to ${snapStep()} units, turns to 15 degrees, scales to quarters` : "Snap off");
 }
 
+function toggleLocal(): void {
+    localAxes.set(!localAxes());
+    saveLayout();
+    updateGizmo();
+    notice.set(localAxes() ? "Local axes: the handles move and turn along the entity's own axes" : "World axes");
+}
+
 /** The next grid step for snapped moves: 0.1, 0.25, 0.5, 1, 2 units, round and round. */
 function cycleSnapStep(): void {
     const i = SNAP_STEPS.indexOf(snapStep());
@@ -896,14 +905,7 @@ function Toolbar() {
             <Button label="Spawn" name="spawn" onClick={spawnEntity} />
             <Button label="Clone" name="duplicate" onClick={duplicateSelected} disabled={selection().length === 0} />
             <Button label="Delete" name="delete" onClick={deleteSelected} disabled={selection().length === 0} />
-            <box width={12} />
-            <Button label={overlays() ? "Overlays: on" : "Overlays"} name="overlays" onClick={toggleOverlays} />
-            <Button label={snap() ? "Snap: on" : "Snap"} name="snap" onClick={toggleSnap} />
-            <Button label={`${snapStep()}`} name="snap_step" onClick={cycleSnapStep} />
             <box flex={1} />
-            <Label text={`tick ${s.tick}`} muted name="tick" />
-            <Label text={`${s.entities} entities`} muted name="entities" />
-            <Label text={s.hash} muted name="hash" />
         </Row>
     );
 }
@@ -1019,6 +1021,7 @@ function Inspector() {
 
 function Bottom() {
     const t = tab();
+    const st = status();
     const tabButton = (id: typeof t, label: string) => <Button label={label} small primary={t === id} name={`tab:${id}`} onClick={() => { tab.set(id); refreshBottom(); saveLayout(); }} />;
     let body;
     if (t === "console") {
@@ -1110,6 +1113,10 @@ function Bottom() {
                 {tabButton("script", "Script")}
                 <box flex={1} />
                 <Label text={notice()} muted size={12} name="notice" />
+                <box width={12} />
+                <Label text={`tick ${st.tick}`} muted size={12} name="tick" />
+                <Label text={`${st.entities} entities`} muted size={12} name="entities" />
+                <Label text={st.hash} muted size={12} name="hash" />
             </Row>
             <box flex={1} overflow="scroll" padding={[4, 8]} gap={1} name="bottom-body">
                 {body}
@@ -1121,6 +1128,20 @@ function Bottom() {
 /** The gizmo: absolute children of the main row, painted over the scene pane. Move handles at
  * the axis tips and the center; turns about Y, X and Z below to the left (R, RX, RZ); scales,
  * uniform and per axis, below to the right (S, SX, SY, SZ). */
+/** The view bar over the scene pane's top-left corner: what the pane shows and how drags land. */
+function ViewBar() {
+    status();   // placed from the pane's rectangle, which settles over the first frames
+    if (viewportRect.w === 0 || mainRect.w === 0) return null;
+    return (
+        <box position="absolute" left={viewportRect.x - mainRect.x + 8} top={8} direction="row" gap={4} padding={[3, 4]} radius={4} background={theme.panelAlt} name="viewbar">
+            <Button label={overlays() ? "Overlays: on" : "Overlays"} small name="overlays" onClick={toggleOverlays} />
+            <Button label={snap() ? "Snap: on" : "Snap"} small name="snap" onClick={toggleSnap} />
+            <Button label={`${snapStep()}`} small name="snap_step" onClick={cycleSnapStep} />
+            <Button label={localAxes() ? "Local" : "World"} small name="axes" onClick={toggleLocal} />
+        </box>
+    );
+}
+
 function GizmoHandles() {
     const g = gizmo();
     if (!g) return null;
@@ -1130,18 +1151,30 @@ function GizmoHandles() {
             <Label text={label} size={label.length > 1 ? 8 : 10} color="#101010" />
         </box>
     );
+    // The turn and scale handles sit at fixed offsets from the center; one is pushed further out
+    // along its own offset when an axis tip would land on it (the tips move with the camera, and
+    // with Local on they follow the entity's turn).
+    const clear = (ox: number, oy: number) => {
+        let p = { x: g.center.x + ox, y: g.center.y + oy };
+        for (let i = 0; i < 4; i++) {
+            const near = [g.x, g.y, g.z].some((t) => Math.hypot(t.x - p.x, t.y - p.y) < 20);
+            if (!near) break;
+            p = { x: p.x + Math.sign(ox) * 24, y: p.y + Math.sign(oy) * 24 };
+        }
+        return p;
+    };
     return [
         handle("plane", g.center, "#f0f0f0", "+"),
         handle("x", g.x, "#e05050", "X"),
         handle("y", g.y, "#50c050", "Y"),
         handle("z", g.z, "#5080f0", "Z"),
-        handle("rotate", { x: g.center.x - 30, y: g.center.y + 30 }, "#f0a030", "R"),
-        handle("rotate_x", { x: g.center.x - 54, y: g.center.y + 30 }, "#f0a030", "RX"),
-        handle("rotate_z", { x: g.center.x - 30, y: g.center.y + 54 }, "#f0a030", "RZ"),
-        handle("scale", { x: g.center.x + 30, y: g.center.y + 30 }, "#c080f0", "S"),
-        handle("scale_x", { x: g.center.x + 54, y: g.center.y + 30 }, "#c080f0", "SX"),
-        handle("scale_y", { x: g.center.x + 30, y: g.center.y + 54 }, "#c080f0", "SY"),
-        handle("scale_z", { x: g.center.x + 54, y: g.center.y + 54 }, "#c080f0", "SZ"),
+        handle("rotate", clear(-30, 30), "#f0a030", "R"),
+        handle("rotate_x", clear(-54, 30), "#f0a030", "RX"),
+        handle("rotate_z", clear(-30, 54), "#f0a030", "RZ"),
+        handle("scale", clear(30, 30), "#c080f0", "S"),
+        handle("scale_x", clear(54, 30), "#c080f0", "SX"),
+        handle("scale_y", clear(30, 54), "#c080f0", "SY"),
+        handle("scale_z", clear(54, 54), "#c080f0", "SZ"),
     ];
 }
 
@@ -1162,6 +1195,7 @@ function Editor() {
                 <Splitter name="split:inspector" onDrag={(e) => layout.update((l) => ({ ...l, inspector: clamp(l.inspector - (e.dx ?? 0), 160, 700) }))} />
                 <Inspector />
                 {GizmoHandles()}
+                {ViewBar()}
             </Row>
             <Splitter name="split:bottom" vertical onDrag={(e) => layout.update((l) => ({ ...l, bottom: clamp(l.bottom - (e.dy ?? 0), 60, 600) }))} />
             <Bottom />

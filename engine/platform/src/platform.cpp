@@ -33,6 +33,9 @@ const char* event_type_name(EventType type) {
         case EventType::PadRemoved: return "pad_removed";
         case EventType::PadButton: return "pad_button";
         case EventType::PadAxis: return "pad_axis";
+        case EventType::TouchDown: return "touch_down";
+        case EventType::TouchUp: return "touch_up";
+        case EventType::TouchMove: return "touch_move";
     }
     return "unknown";
 }
@@ -41,7 +44,11 @@ Event event_from_json(const Json& j) {
     Event e;
     std::string t = j.is_object() ? j.value("type", "quit") : "quit";
     e.type = t == "key_down" ? EventType::KeyDown : t == "key_up" ? EventType::KeyUp : t == "mouse_move" ? EventType::MouseMove : t == "mouse_down" ? EventType::MouseDown : t == "mouse_up" ? EventType::MouseUp : t == "mouse_wheel" ? EventType::MouseWheel : t == "resize" ? EventType::Resize : t == "text" ? EventType::Text : t == "pad_added" ? EventType::PadAdded : t == "pad_removed" ? EventType::PadRemoved : t == "pad_button" ? EventType::PadButton : t == "pad_axis" ? EventType::PadAxis : EventType::Quit;
+    if (t == "touch_down") e.type = EventType::TouchDown;
+    else if (t == "touch_up") e.type = EventType::TouchUp;
+    else if (t == "touch_move") e.type = EventType::TouchMove;
     if (!j.is_object()) return e;
+    if (j.contains("finger") && j["finger"].is_number()) e.pad = j["finger"].get<int>();
     e.key_name = j.contains("key") && j["key"].is_string() ? j["key"].get<std::string>() : "";
     e.key = j.contains("code") && j["code"].is_number() ? j["code"].get<int>() : 0;
     e.repeat = j.contains("repeat") && j["repeat"].is_boolean() && j["repeat"].get<bool>();
@@ -144,6 +151,11 @@ Json event_to_json(const Event& e) {
         case EventType::PadButton:
             j["pad"] = e.pad; j["button"] = e.key_name; j["pressed"] = e.pressed;
             break;
+        case EventType::TouchDown:
+        case EventType::TouchUp:
+        case EventType::TouchMove:
+            j["finger"] = e.pad; j["x"] = e.x; j["y"] = e.y; j["dx"] = e.dx; j["dy"] = e.dy;
+            break;
         case EventType::PadAxis:
             j["pad"] = e.pad; j["axis"] = e.key_name; j["value"] = e.value;
             break;
@@ -161,6 +173,14 @@ struct Platform::Impl {
     bool sdl_initialized = false;
     bool quit = false;
     InputState input;
+    std::vector<SDL_FingerID> fingers;   // active fingers by index (0 is the one that acts as the mouse); 0 when a slot is free
+    int finger_slot(SDL_FingerID id, bool take) {
+        for (std::size_t i = 0; i < fingers.size(); ++i) if (fingers[i] == id) return static_cast<int>(i);
+        if (!take) return -1;
+        for (std::size_t i = 0; i < fingers.size(); ++i) if (fingers[i] == 0) { fingers[i] = id; return static_cast<int>(i); }
+        fingers.push_back(id);
+        return static_cast<int>(fingers.size() - 1);
+    }
     int pixel_w = 0, pixel_h = 0;
     bool text_input = false;
     std::map<SDL_JoystickID, SDL_Gamepad*> pads;  // open gamepads by instance id
@@ -194,6 +214,10 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
         return p;
     }
     SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
+    // Touch reaches the engine as its own events; the first finger is turned into mouse events
+    // here (below), not by SDL, so the stream is one thing to record and replay.
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         return fail("platform_init_failed", "SDL_Init failed: {}", SDL_GetError());
     }
@@ -321,6 +345,38 @@ std::vector<Event> Platform::poll() {
                 ev.key_name = name ? name : "unknown";
                 ev.value = std::clamp(static_cast<float>(e.gaxis.value) / 32767.0f, -1.0f, 1.0f);
                 out.push_back(ev);
+                break;
+            }
+            case SDL_EVENT_FINGER_DOWN:
+            case SDL_EVENT_FINGER_UP:
+            case SDL_EVENT_FINGER_MOTION:
+            case SDL_EVENT_FINGER_CANCELED: {
+                // Fingers by index in window points; the first one also acts as the mouse.
+                const bool down = e.type == SDL_EVENT_FINGER_DOWN, up = e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_CANCELED;
+                const int slot = impl_->finger_slot(e.tfinger.fingerID, down);
+                if (slot < 0) break;
+                int w = 0, h = 0;
+                SDL_GetWindowSize(impl_->window, &w, &h);
+                ev.type = down ? EventType::TouchDown : up ? EventType::TouchUp : EventType::TouchMove;
+                ev.pad = slot;
+                ev.x = e.tfinger.x * static_cast<float>(w);
+                ev.y = e.tfinger.y * static_cast<float>(h);
+                ev.dx = e.tfinger.dx * static_cast<float>(w);
+                ev.dy = e.tfinger.dy * static_cast<float>(h);
+                ev.pressed = !up;
+                if (down) impl_->input.fingers++;
+                if (up) { impl_->input.fingers = std::max(0, impl_->input.fingers - 1); impl_->fingers[static_cast<std::size_t>(slot)] = 0; }
+                out.push_back(ev);
+                if (slot == 0) {
+                    Event m;
+                    m.type = down ? EventType::MouseDown : up ? EventType::MouseUp : EventType::MouseMove;
+                    m.button = 1;
+                    m.x = ev.x; m.y = ev.y; m.dx = ev.dx; m.dy = ev.dy;
+                    m.mods = mods_from_sdl(SDL_GetModState());
+                    impl_->input.mouse_x = m.x; impl_->input.mouse_y = m.y;
+                    if (down || up) impl_->input.buttons[1] = down;
+                    out.push_back(m);
+                }
                 break;
             }
             default:

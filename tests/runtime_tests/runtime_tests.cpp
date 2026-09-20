@@ -2775,6 +2775,100 @@ TEST_CASE("an interface box draws a project image, fitted, cropped or stretched,
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("pad bindings with a player index answer that pad only", "[runtime][input][players]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    Json map;
+    map["p1_jump"] = Json{{"positive", Json::array({"pad0:a"})}};
+    map["p2_jump"] = Json{{"positive", Json::array({"pad1:a"})}};
+    map["any_jump"] = Json::array({"pad:a"});
+    map["p2_move"] = Json{{"axis", Json::array({"pad1:leftx"})}};
+    REQUIRE(s.command("input.map", Json{{"actions", map}}).has_value());
+    REQUIRE(s.command("input.describe", Json::object()).value()["p2_move"]["axis"] == Json::array({"pad1:leftx"}));
+    // Pad 1's button: the second player's action and the any-pad action, not the first player's.
+    Json down = s.command("input.pad", Json{{"pad", 1}, {"button", "a"}, {"pressed", true}}).value();
+    INFO(down.dump());
+    REQUIRE(down["input"][0]["type"] == "pad_button");
+    REQUIRE(down["input"][0]["pad"] == 1);
+    REQUIRE(down["actions"]["p2_jump"]["down"] == true);
+    REQUIRE(down["actions"]["any_jump"]["down"] == true);
+    REQUIRE(down["actions"]["p1_jump"]["down"] == false);
+    Json up = s.command("input.pad", Json{{"pad", 1}, {"button", "a"}, {"pressed", false}}).value();
+    REQUIRE(up["actions"]["p2_jump"]["down"] == false);
+    REQUIRE(up["actions"]["any_jump"]["down"] == false);
+    // Pad 1's stick moves the second player; pad 0's does not.
+    Json stick = s.command("input.pad", Json{{"pad", 1}, {"axis", "leftx"}, {"value", 0.8}}).value();
+    REQUIRE(stick["actions"]["p2_move"]["value"].get<double>() == Catch::Approx((0.8 - 0.15) / 0.85).margin(1e-4));
+    REQUIRE(s.command("input.pad", Json{{"pad", 1}, {"axis", "leftx"}, {"value", 0.0}}).value()["actions"]["p2_move"]["value"].get<double>() == Catch::Approx(0.0));
+    REQUIRE(s.command("input.pad", Json{{"pad", 0}, {"axis", "leftx"}, {"value", 0.8}}).value()["actions"]["p2_move"]["value"].get<double>() == Catch::Approx(0.0));
+    REQUIRE_FALSE(s.command("input.pad", Json{{"pad", 0}}).has_value());
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a finger presses interface buttons, drives mouse bindings and reaches scripts as touch events", "[runtime][input][touch]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // A button over the top-left corner of the window.
+    Json ops = Json::array();
+    ops.push_back(Json::array({"create", 70, "box"}));
+    ops.push_back(Json::array({"set", 70, Json{{"position", "absolute"}, {"left", 10}, {"top", 10}, {"width", 100}, {"height", 40}, {"name", "tap"}, {"on", Json::array({"click"})}}}));
+    ops.push_back(Json::array({"append", 1, 70}));
+    REQUIRE(s.command("ui.apply", Json{{"ops", ops}}).has_value());
+    REQUIRE(s.frame().has_value());
+    // The first finger down and up on it is a click; the touch events carry the finger and land on the element.
+    Json down = s.command("input.touch", Json{{"x", 60}, {"y", 30}, {"phase", "down"}}).value();
+    INFO(down.dump());
+    REQUIRE(down["input"].size() == 2);
+    REQUIRE(down["input"][0]["type"] == "touch_down");
+    REQUIRE(down["input"][0]["finger"] == 0);
+    REQUIRE(down["input"][0]["ui"] == 70);
+    REQUIRE(down["input"][1]["type"] == "mouse_down");
+    Json up = s.command("input.touch", Json{{"x", 62}, {"y", 31}, {"phase", "up"}}).value();
+    INFO(up.dump());
+    bool clicked = false;
+    for (const Json& e : up["events"]) if (e["type"] == "click" && e.value("name", "") == "tap") clicked = true;
+    REQUIRE(clicked);
+    // A second finger is not the mouse: no mouse events, its own index.
+    Json second = s.command("input.touch", Json{{"finger", 1}, {"x", 200}, {"y", 100}, {"phase", "down"}}).value();
+    REQUIRE(second["input"].size() == 1);
+    REQUIRE(second["input"][0]["finger"] == 1);
+    REQUIRE(s.command("input.state", Json::object()).value()["fingers"] == 1);
+    REQUIRE(s.command("input.touch", Json{{"finger", 1}, {"x", 200}, {"y", 100}, {"phase", "up"}}).has_value());
+    REQUIRE(s.command("input.state", Json::object()).value()["fingers"] == 0);
+    REQUIRE_FALSE(s.command("input.touch", Json{{"finger", 3}, {"x", 0}, {"y", 0}, {"phase", "move"}}).has_value());
+    // Moving the first finger drives a mouse axis binding like a mouse move.
+    REQUIRE(s.command("input.map", Json{{"actions", Json{{"look", Json{{"axis", Json::array({"mouse:x"})}}}}}}).has_value());
+    REQUIRE(s.command("input.touch", Json{{"x", 100}, {"y", 100}, {"phase", "down"}}).has_value());
+    Json move = s.command("input.touch", Json{{"x", 160}, {"y", 100}, {"phase", "move"}}).value();
+    INFO(move.dump());
+    REQUIRE(move["input"][0]["type"] == "touch_move");
+    REQUIRE(move["input"][0]["dx"].get<double>() == Catch::Approx(60.0));
+    REQUIRE(move["input"][1]["type"] == "mouse_move");
+    REQUIRE(s.command("input.state", Json::object()).value()["actions"]["look"]["value"].get<double>() > 0.0);
+    REQUIRE(s.command("input.touch", Json{{"x", 160}, {"y", 100}, {"phase", "up"}}).has_value());
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a texture drawn small is sampled from its mip chain, unless it is pixel art", "[runtime][render][mips]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
@@ -2947,6 +3041,53 @@ TEST_CASE("a mesh with alpha under one is drawn translucent over what is behind 
     // The pane is still picked through its id.
     Json pick = s.command("render.pick", Json{{"x", 64}, {"y", 36}}).value();   // the frame is 128 by 72
     REQUIRE(pick["name"] == "Wall");
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("colliding particles land on a level's solid tiles", "[runtime][particles][collide][tiles]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // The ground under the player: the solid cell below its feet, and that cell's top edge.
+    Json player = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value();
+    const double px = player["position"]["x"].get<double>(), py = player["position"]["y"].get<double>();
+    Json ground = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", px}, {"y", py - 0.6}}).value();
+    INFO(ground.dump());
+    REQUIRE(ground["solid"] == true);
+    Json cell = s.command("tilemap.cell", Json{{"entity", "Level"}, {"x", px}, {"y", py - 0.6}}).value();
+    const double top = cell["center"]["y"].get<double>() + 0.5;
+    // Sparks dropped straight down from above the player, with and without collision.
+    auto emitter = [&](const char* name, bool collide) {
+        Json fields = Json{{"emitting", false}, {"gravity", {{"x", 0}, {"y", -10}, {"z", 0}}}, {"lifetime", {{"x", 8}, {"y", 8}}}, {"speed", {{"x", 0.5}, {"y", 0.5}}}, {"direction", {{"x", 0}, {"y", -1}, {"z", 0}}}, {"spread", 0}, {"size", {{"x", 0.05}, {"y", 0.05}}}, {"collide", collide}, {"bounce", 0.3}};
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", {{"x", px}, {"y", py + 1.5}, {"z", 0.0}}}}}, {"ParticleEmitter", fields}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+        REQUIRE(s.command("particles.burst", Json{{"entity", name}, {"count", 20}}).has_value());
+    };
+    emitter("Sparks", true);
+    emitter("Ghosts", false);
+    for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
+    Json sparks = s.command("particles.list", Json{{"entity", "Sparks"}, {"limit", 100}}).value()["particles"];
+    Json ghosts = s.command("particles.list", Json{{"entity", "Ghosts"}, {"limit", 100}}).value()["particles"];
+    REQUIRE(sparks.size() == 20);
+    REQUIRE(ghosts.size() == 20);
+    int resting = 0;
+    for (const Json& p : sparks) {
+        INFO(p.dump() << " top " << top);
+        REQUIRE(p["position"]["y"].get<double>() >= top - 0.02);   // never into the ground
+        REQUIRE(p["position"]["y"].get<double>() <= top + 0.3);
+        resting += p["resting"] == true;
+    }
+    REQUIRE(resting == 20);
+    for (const Json& p : ghosts) REQUIRE(p["position"]["y"].get<double>() < top - 1.0);   // through the tiles, still falling
     REQUIRE(s.finish().has_value());
 }
 

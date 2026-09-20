@@ -223,7 +223,7 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 | `stretch` | f32 | 0.0 | Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square. |
 | `child` | entity | 0 | An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none. |
 | `child_count` | i32 | 8 | Particles the child emits at each death. |
-| `collide` | bool | false | Particles hit the physics bodies: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md). |
+| `collide` | bool | false | Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md). |
 
 ## Bounds
 

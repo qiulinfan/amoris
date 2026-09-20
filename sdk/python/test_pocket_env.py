@@ -89,15 +89,34 @@ class SpritesEpisodes(unittest.TestCase):
         self.assertGreaterEqual(result["best"], 0.0)
         self.assertIn("-2.3", result["per_start"])
 
-    def test_planner_looks_ahead_by_replay(self):
-        # Four decisions of lookahead over two runtimes: the first coin is 1.2 units to the right,
-        # so a plan that tries each macro and keeps the best collects at least one, and the
-        # committed plan replayed from the start reaches the same score (determinism).
+    def test_planner_looks_ahead_through_save_slots(self):
+        # Four decisions of lookahead over two runtimes, each branch taken from the committed save
+        # slot: the first coin is 1.2 units to the right, so a plan that tries each macro and keeps
+        # the best collects at least one, and the committed plan replayed from the start reaches the
+        # score the branches saw (an exact copy, not a replay, at every decision).
         result = plan("sprites", decisions=4, hold=15, horizon=15, envs=2, seed=1, max_ticks=300, log=lambda *_: None)
+        self.assertTrue(result["snapshots"])
         self.assertEqual(result["decisions"], len(result["history"]))
         self.assertGreaterEqual(result["score"], 1)
         self.assertEqual(result["score"], result["steps"][-1]["score"])
         self.assertTrue(all(m in [{"move_x": 1}, {"move_x": -1}, {"move_x": 1, "jump": True}, {"move_x": -1, "jump": True}, {}] for m in result["history"]))
+
+    def test_a_save_slot_branches_an_episode_exactly(self):
+        # A save taken mid-episode and loaded later continues the episode's clock and the script's
+        # own state (score, tweens), so the branch plays out exactly as the run it came from.
+        with PocketEnv("sprites", max_ticks=300) as env:
+            env.reset(seed=1)
+            a = env.step({"move_x": 1}, ticks=30)
+            env.command("save.write", {"slot": "branch-test"})
+            b = env.step({"move_x": 1, "jump": True}, ticks=45)
+            loaded = env.command("save.read", {"slot": "branch-test"})
+            self.assertEqual(loaded["env_t"], a["t"])
+            self.assertEqual(env.observe()["t"], a["t"])
+            c = env.step({"move_x": 1, "jump": True}, ticks=45)
+            self.assertEqual(c["t"], b["t"])
+            self.assertEqual(c["score"], b["score"])
+            self.assertEqual(c["state"], b["state"])
+            env.command("save.delete", {"slot": "branch-test"})
 
     def test_agent_benchmark_reference_passes_and_null_fails(self):
         # The harness checks itself: its own solutions pass, an empty runner does not.

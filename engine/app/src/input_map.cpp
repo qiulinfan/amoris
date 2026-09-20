@@ -7,9 +7,20 @@ namespace pocket::app {
 
 namespace {
 
+// A pad source without its player index: "pad1:leftx" is "pad:leftx" of pad 1; anything else is itself.
+std::string generic(const std::string& s) {
+    if (s.starts_with("pad") && s.size() > 4) {
+        std::size_t i = 3;
+        while (i < s.size() && s[i] >= '0' && s[i] <= '9') ++i;
+        if (i > 3 && i < s.size() && s[i] == ':') return "pad:" + s.substr(i + 1);
+    }
+    return s;
+}
+
 // Pad sticks and triggers; the mouse's motion and wheel are axes too, read as deltas over a
 // tick: a hundred pixels of motion (or one notch of the wheel) is full deflection.
-bool is_axis(const std::string& s) {
+bool is_axis(const std::string& raw) {
+    const std::string s = generic(raw);
     if (s == "mouse:x" || s == "mouse:y" || s == "wheel:x" || s == "wheel:y") return true;
     return s.starts_with("pad:") && (s.ends_with("x") || s.ends_with("y") || s.find("trigger") != std::string::npos) && s != "pad:x" && s != "pad:y";
 }
@@ -79,15 +90,15 @@ void InputMap::recompute(Action& a) {
 
 void InputMap::apply(const platform::Event& event) {
     using platform::EventType;
-    std::string source;
+    std::string source, specific;   // a pad event matches "pad:x" (any pad) and "padN:x" (this pad)
     bool button = false, is_down = false;
     float axis_value = 0;
     bool axis = false;
     switch (event.type) {
         case EventType::KeyDown: if (event.repeat) return; source = event.key_name; button = true; is_down = true; break;
         case EventType::KeyUp: source = event.key_name; button = true; is_down = false; break;
-        case EventType::PadButton: source = "pad:" + event.key_name; button = true; is_down = event.pressed; break;
-        case EventType::PadAxis: source = "pad:" + event.key_name; axis = true; axis_value = event.value; break;
+        case EventType::PadButton: source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; button = true; is_down = event.pressed; break;
+        case EventType::PadAxis: source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; axis = true; axis_value = event.value; break;
         case EventType::MouseMove:
             // Two sources at once, each accumulated over the tick; +y is down the screen.
             apply_delta("mouse:x", event.dx / kMousePixelsPerUnit);
@@ -103,7 +114,7 @@ void InputMap::apply(const platform::Event& event) {
         bool touched = false;
         if (button) {
             for (const Binding& b : a.buttons) {
-                if (b.source != source) continue;
+                if (b.source != source && (specific.empty() || b.source != specific)) continue;
                 if (is_down) a.active[source] = b.sign;
                 else a.active.erase(source);
                 touched = true;
@@ -111,7 +122,7 @@ void InputMap::apply(const platform::Event& event) {
         }
         if (axis) {
             for (const Binding& b : a.axes) {
-                if (b.source != source) continue;
+                if (b.source != source && (specific.empty() || b.source != specific)) continue;
                 a.axis_values[source] = axis_value * b.sign;
                 touched = true;
             }

@@ -5,7 +5,7 @@
 // are collected on contact, a score in the HUD and in the exposed state.
 //   pocket run sprites
 //   pocket run sprites -- --headless --frames 120 --json
-import { Label, events, expose, input, log, mount, onStart, onTick, setClearColor, signal, sprites, tilemap, tween, world } from "pocket";
+import { Label, events, expose, input, log, mount, onLoad, onSave, onStart, onTick, setClearColor, signal, sprites, tilemap, tween, world } from "pocket";
 
 const score = signal(0);
 const coins = new Set<number>();
@@ -90,6 +90,23 @@ onTick((t) => {
 
 expose("score", () => score());
 expose("coins", () => coins.size);
+// Saves carry what the script keeps outside the world: the score, the facing, and the coins'
+// bobbing tweens in their phase; a load makes new entities, so the script finds its own again
+// and rebuilds the coin set from their names. A run branched from a save then plays out exactly
+// as the run it came from, which is what the planning player builds on (docs/design/environment.md).
+onSave(() => ({ score: score(), facingLeft, walking, tweens: tween.snapshot() }));
+onLoad((d) => {
+    score.set(Number(d.score ?? 0));
+    facingLeft = Boolean(d.facingLeft);
+    walking = Boolean(d.walking);
+    player = world.find("Player") ?? 0;
+    level = world.find("Level") ?? 0;
+    lift = world.find("Lift") ?? 0;
+    coins.clear();
+    for (const row of world.query({ name: "Coin*" })) coins.add(row.id);
+    tween.cancelAll();
+    tween.restore((d.tweens as Parameters<typeof tween.restore>[0]) ?? []);
+});
 let ballBounces = 0;
 let bounceSeq = events.lastSeq();   // count from this run's start: the log runs on across an env.reset
 onTick(() => {
@@ -97,6 +114,13 @@ onTick(() => {
         bounceSeq = e.seq;
         if ((e.data as { path?: string }).path === "/Ball") ballBounces++;
     }
+});
+// The bounce count is script state too; the event log is not rewound by a load, so counting
+// starts again from the log's end with the saved count.
+onSave(() => ({ ballBounces }));
+onLoad((d) => {
+    ballBounces = Number(d.ballBounces ?? 0);
+    bounceSeq = events.lastSeq();
 });
 expose("ball.bounces", () => ballBounces);
 expose("ball.y", () => Number((world.get(world.find("Ball") ?? 0, "Transform")?.position.y ?? 0).toFixed(3)));

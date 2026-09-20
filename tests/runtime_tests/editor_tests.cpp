@@ -771,3 +771,75 @@ TEST_CASE("editor opens a project script in a text area and saves it", "[editor]
     REQUIRE(ok(s.command("ui.describe", Json{{"id", area_id}}))["caret"] == 53);
     ok(s.finish());
 }
+
+TEST_CASE("editor's Local toggle moves and turns along the entity's own axes", "[editor][local]") {
+    // The layout file carries the toggle; start and end without one so other tests see the defaults.
+    const std::filesystem::path layout_file = root() / "samples" / "physics" / ".pocket" / "editor.json";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{layout_file};
+    std::filesystem::remove(layout_file);
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ramp")}}));
+    ok(s.idle_frame());
+    ok(s.idle_frame());
+    // The ramp is rolled about Z, so its own X points right and, with the roll's sign, up or down.
+    Json before = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(std::abs(before["rotation"]["z"].get<double>()) > 0.1);
+    const double roll = before["rotation"]["z"].get<double>() > 0 ? 1.0 : -1.0;
+    ok(s.command("ui.click", Json{{"id", find_named(s, "axes")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.query", Json{{"text", "Local"}})).size() >= 1);   // the view bar's toggle reads Local
+    auto drag_x = [&]() {
+        Json cq = ok(s.command("ui.query", Json{{"name", "gizmo:plane"}}));
+        Json xq = ok(s.command("ui.query", Json{{"name", "gizmo:x"}}));
+        REQUIRE(cq.size() == 1);
+        REQUIRE(xq.size() == 1);
+        const double dx = xq[0]["rect"]["x"].get<double>() - cq[0]["rect"]["x"].get<double>(), dy = xq[0]["rect"]["y"].get<double>() - cq[0]["rect"]["y"].get<double>();
+        ok(s.command("ui.drag", Json{{"id", xq[0]["id"]}, {"dx", dx}, {"dy", dy}, {"steps", 5}}));
+        ok(s.idle_frame());
+    };
+    drag_x();
+    Json local = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    INFO(before.dump() << " -> " << local.dump());
+    REQUIRE(local["position"]["x"].get<double>() > before["position"]["x"].get<double>() + 0.1);
+    REQUIRE((local["position"]["y"].get<double>() - before["position"]["y"].get<double>()) * roll > 0.05);   // along the rolled axis, off the level too
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    // A half turn about the ramp's own X: the roll's weight lands in +y; about the world's X it lands in -y.
+    auto drag_rx = [&]() {
+        Json rq = ok(s.command("ui.query", Json{{"name", "gizmo:rotate_x"}}));
+        REQUIRE(rq.size() == 1);
+        ok(s.command("ui.drag", Json{{"id", rq[0]["id"]}, {"dx", 314}, {"dy", 0}, {"steps", 5}}));
+        ok(s.idle_frame());
+    };
+    drag_rx();
+    Json own = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    INFO(own.dump());
+    REQUIRE(std::abs(own["rotation"]["x"].get<double>()) > 0.9);
+    REQUIRE(own["rotation"]["y"].get<double>() * before["rotation"]["z"].get<double>() > 0.05);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    // World again: the same drags move along world X only and turn about world X.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "axes")}}));
+    ok(s.idle_frame());
+    drag_x();
+    Json world_move = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    REQUIRE(world_move["position"]["x"].get<double>() > before["position"]["x"].get<double>() + 0.1);
+    REQUIRE(world_move["position"]["y"].get<double>() == Catch::Approx(before["position"]["y"].get<double>()).margin(1e-4));
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    drag_rx();
+    Json world_turn = ok(s.command("world.get", Json{{"entity", "Ramp"}, {"component", "Transform"}}));
+    INFO(world_turn.dump());
+    REQUIRE(world_turn["rotation"]["y"].get<double>() * before["rotation"]["z"].get<double>() < -0.05);
+    // The choice is kept with the layout.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "axes")}}));
+    ok(s.idle_frame());
+    Json saved = Json::parse(ok(s.command("project.read", Json{{"path", ".pocket/editor.json"}}))["text"].get<std::string>());
+    REQUIRE(saved["local"] == true);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "axes")}}));
+    ok(s.idle_frame());
+    ok(s.finish());
+}

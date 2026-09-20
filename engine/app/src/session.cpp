@@ -143,10 +143,45 @@ Status Session::start() {
     particles_->set_collider([this](Vec3 from, Vec3 to) -> std::optional<renderer::ParticleContact> {
         const Vec3 d = to - from;
         const float len = length(d);
-        if (len < 1e-6f || !physics_) return std::nullopt;
-        auto hit = physics_->raycast(*world_, from, d * (1.0f / len), len, false);
-        if (!hit || hit->entity == 0) return std::nullopt;
-        return renderer::ParticleContact{hit->point, hit->normal};
+        if (len < 1e-6f) return std::nullopt;
+        if (physics_) {
+            auto hit = physics_->raycast(*world_, from, d * (1.0f / len), len, false);
+            if (hit && hit->entity != 0) return renderer::ParticleContact{hit->point, hit->normal};
+        }
+        // The solid tiles of orthogonal maps: when the particle would end in one, the contact is
+        // on the face it crossed to get there (the top or bottom when it changed row, else a side).
+        std::optional<renderer::ParticleContact> tile;
+        if (assets_) {
+            world_->ecs().each([&](flecs::entity e, const world::TileMap& tm) {
+                if (tile) return;
+                auto m = assets_->tilemap(tm.map);
+                if (!m || !(*m)->orthogonal()) return;
+                const float ts = tm.tile_size > 0 ? tm.tile_size : 1.0f;
+                Vec3 origin{0, 0, 0};
+                if (const auto* wt = e.try_get<world::WorldTransform>()) origin = wt->position;
+                else if (const auto* t = e.try_get<world::Transform>()) origin = t->position;
+                auto col = [&](float x) { return static_cast<int>(std::floor((x - origin.x) / ts)); };
+                auto row = [&](float y) { return static_cast<int>(std::floor((origin.y - y) / ts)); };
+                const int c1 = col(to.x), r1 = row(to.y);
+                if (c1 < 0 || r1 < 0 || c1 >= (*m)->width || r1 >= (*m)->height || (*m)->solidity_at(c1, r1) != 1) return;
+                const int c0 = col(from.x), r0 = row(from.y);
+                Vec3 point = from;
+                Vec3 normal{0, 1, 0};
+                if (r0 != r1) {
+                    const float face = r1 > r0 ? origin.y - static_cast<float>(r1) * ts : origin.y - static_cast<float>(r1 + 1) * ts;
+                    const float t = std::fabs(d.y) > 1e-6f ? (face - from.y) / d.y : 0.0f;
+                    point = from + d * std::clamp(t, 0.0f, 1.0f);
+                    normal = {0, r1 > r0 ? 1.0f : -1.0f, 0};
+                } else if (c0 != c1) {
+                    const float face = c1 > c0 ? origin.x + static_cast<float>(c1) * ts : origin.x + static_cast<float>(c1 + 1) * ts;
+                    const float t = std::fabs(d.x) > 1e-6f ? (face - from.x) / d.x : 0.0f;
+                    point = from + d * std::clamp(t, 0.0f, 1.0f);
+                    normal = {c1 > c0 ? -1.0f : 1.0f, 0, 0};
+                }
+                tile = renderer::ParticleContact{point, normal};
+            });
+        }
+        return tile;
     });
     animation_ = std::make_unique<renderer::Animation>();
 
@@ -536,6 +571,9 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
                 case platform::EventType::MouseMove:
                 case platform::EventType::MouseDown:
                 case platform::EventType::MouseUp: target = ui_->hit_test(e.x, e.y); break;
+                case platform::EventType::TouchDown:
+                case platform::EventType::TouchUp:
+                case platform::EventType::TouchMove: target = ui_->hit_test(e.x, e.y); break;
                 case platform::EventType::MouseWheel: target = ui_->hit_test(platform_->input().mouse_x, platform_->input().mouse_y); break;
                 case platform::EventType::KeyDown:
                 case platform::EventType::KeyUp:
@@ -569,7 +607,7 @@ Json Session::inject_events(std::vector<platform::Event> events) {
         for (std::size_t i = 0; i < events.size(); ++i) {
             const platform::Event& e = events[i];
             ui::NodeId target = 0;
-            if (e.type == platform::EventType::MouseMove || e.type == platform::EventType::MouseDown || e.type == platform::EventType::MouseUp) target = ui_->hit_test(e.x, e.y);
+            if (e.type == platform::EventType::MouseMove || e.type == platform::EventType::MouseDown || e.type == platform::EventType::MouseUp || e.type == platform::EventType::TouchDown || e.type == platform::EventType::TouchUp || e.type == platform::EventType::TouchMove) target = ui_->hit_test(e.x, e.y);
             else if (e.type == platform::EventType::KeyDown || e.type == platform::EventType::KeyUp || e.type == platform::EventType::Text) target = ui_->focused();
             if (target) input_events[i]["ui"] = target;
         }
@@ -1879,6 +1917,8 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         save["project"] = name_;
         save["tick"] = clock_.tick;
         save["sim_seconds"] = clock_.sim_seconds();
+        save["env_t"] = clock_.tick - env_start_tick_;   // the episode's clock, so a load continues it (env.step's t and done)
+        save["env_max_ticks"] = env_max_ticks_;
         save["scene"] = world_->save();
         Json script = dispatch("save", nullptr);
         save["script"] = script.is_object() ? script : Json::object();
@@ -1903,6 +1943,10 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         POCKET_TRY_VOID(world_->load(save.value("scene", Json::object()), true));
         world_->update_transforms();
         dispatch("load", save.value("script", Json::object()));
+        if (save.contains("env_t") && save["env_t"].is_number()) {
+            env_start_tick_ = clock_.tick - save["env_t"].get<std::int64_t>();
+            if (save.contains("env_max_ticks") && save["env_max_ticks"].is_number()) env_max_ticks_ = save["env_max_ticks"].get<int>();
+        }
         Json s = dispatch("state", nullptr);
         if (s.is_object()) last_state_ = s;
         world_->events().emit(clock_.tick, "save.loaded", 0, Json{{"slot", slot}, {"entities", world_->entity_count()}, {"saved_tick", save.value("tick", 0)}}, 0, "save");
@@ -1911,6 +1955,7 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         j["entities"] = world_->entity_count();
         j["saved_tick"] = save.value("tick", 0);
         j["saved_sim_seconds"] = save.value("sim_seconds", 0.0);
+        if (save.contains("env_t")) j["env_t"] = save["env_t"];
         if (save.contains("data")) j["data"] = save["data"];
         return j;
     }
@@ -1964,9 +2009,68 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         Json j;
         j["platform"] = platform_->describe();
         j["pads"] = platform_->input().pads;
+        j["fingers"] = platform_->input().fingers + static_cast<int>(touch_last_.size());   // real fingers and synthetic ones
         j["held"] = Json::object();
         for (auto& [k, until] : held_keys_) j["held"][k] = until;
         j["actions"] = input_map_.snapshot();
+        return j;
+    }
+    if (op == "pad") {
+        // A gamepad button or axis for tests and agents, by pad index, through the same path as a
+        // real pad (the map, the journal, the scripts' input events).
+        const int pad = std::clamp(opt<int>(p, "pad", 0), 0, 15);
+        platform::Event e;
+        e.pad = pad;
+        if (p.contains("button") && p["button"].is_string()) {
+            e.type = platform::EventType::PadButton;
+            e.key_name = p["button"].get<std::string>();
+            e.pressed = opt<bool>(p, "pressed", true);
+        } else if (p.contains("axis") && p["axis"].is_string()) {
+            e.type = platform::EventType::PadAxis;
+            e.key_name = p["axis"].get<std::string>();
+            e.value = std::clamp(opt<float>(p, "value", 0.0f), -1.0f, 1.0f);
+        } else {
+            return fail("bad_args", "pad needs a button (with pressed) or an axis (with value)");
+        }
+        Json j = inject_events({e});
+        j["pad"] = pad;
+        j["actions"] = input_map_.snapshot();
+        return j;
+    }
+    if (op == "touch") {
+        // A finger on the screen at window points, for tests and agents: down, move or up. Like a
+        // real touch, the first finger also acts as the mouse (buttons, drags, mouse bindings).
+        const std::string phase = opt<std::string>(p, "phase", "down");
+        if (phase != "down" && phase != "move" && phase != "up") return fail("bad_args", "phase is down, move or up");
+        const int finger = std::clamp(opt<int>(p, "finger", 0), 0, 9);
+        const float x = opt<float>(p, "x", 0.0f), y = opt<float>(p, "y", 0.0f);
+        const auto last = touch_last_.find(finger);
+        if (phase != "down" && last == touch_last_.end()) return fail("bad_args", "finger {} is not down", finger);
+        std::vector<platform::Event> evs;
+        platform::Event t;
+        t.type = phase == "down" ? platform::EventType::TouchDown : phase == "up" ? platform::EventType::TouchUp : platform::EventType::TouchMove;
+        t.pad = finger;
+        t.x = x;
+        t.y = y;
+        t.dx = last == touch_last_.end() ? 0.0f : x - last->second.first;
+        t.dy = last == touch_last_.end() ? 0.0f : y - last->second.second;
+        t.pressed = phase != "up";
+        evs.push_back(t);
+        if (finger == 0) {
+            platform::Event m;
+            m.type = phase == "down" ? platform::EventType::MouseDown : phase == "up" ? platform::EventType::MouseUp : platform::EventType::MouseMove;
+            m.button = 1;
+            m.x = x;
+            m.y = y;
+            m.dx = t.dx;
+            m.dy = t.dy;
+            evs.push_back(m);
+        }
+        if (phase == "up") touch_last_.erase(finger);
+        else touch_last_[finger] = {x, y};
+        Json j = inject_events(std::move(evs));
+        j["finger"] = finger;
+        j["phase"] = phase;
         return j;
     }
     if (op == "hold" || op == "press") {
@@ -3129,7 +3233,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

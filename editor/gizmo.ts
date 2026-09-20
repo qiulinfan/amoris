@@ -11,6 +11,8 @@ export interface GizmoLayout {
     tips: { x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } };
     /** Axis length in world units. */
     length: number;
+    /** The world direction of each handle's axis: the world axes, or the entity's own with Local on. */
+    dirs: { x: Vec3; y: Vec3; z: Vec3 };
 }
 
 const AXES: Record<"x" | "y" | "z", Vec3> = { x: { x: 1, y: 0, z: 0 }, y: { x: 0, y: 1, z: 0 }, z: { x: 0, y: 0, z: 1 } };
@@ -20,8 +22,8 @@ function projectPoint(p: Vec3): { x: number; y: number } | undefined {
     return r.visible && r.x !== undefined && r.y !== undefined ? { x: r.x, y: r.y } : undefined;
 }
 
-/** Handle positions in pixels for an entity, or undefined when it is behind the camera. */
-export function layoutFor(entity: number): GizmoLayout | undefined {
+/** Handle positions in pixels for an entity, or undefined when it is behind the camera; `local` puts the handles on the entity's own axes. */
+export function layoutFor(entity: number, local = false): GizmoLayout | undefined {
     const wt = world.get(entity, "WorldTransform");
     if (!wt) return undefined;
     const cam = render.stats().camera;
@@ -30,10 +32,11 @@ export function layoutFor(entity: number): GizmoLayout | undefined {
     const length = Math.max(0.25, dist * 0.12);
     const center = projectPoint(wt.position);
     if (!center) return undefined;
+    const dirs = local ? { x: rotate(wt.rotation, AXES.x), y: rotate(wt.rotation, AXES.y), z: rotate(wt.rotation, AXES.z) } : AXES;
     const tip = (a: Vec3) => projectPoint({ x: wt.position.x + a.x * length, y: wt.position.y + a.y * length, z: wt.position.z + a.z * length });
-    const tx = tip(AXES.x), ty = tip(AXES.y), tz = tip(AXES.z);
+    const tx = tip(dirs.x), ty = tip(dirs.y), tz = tip(dirs.z);
     if (!tx || !ty || !tz) return undefined;
-    return { center, tips: { x: tx, y: ty, z: tz }, length };
+    return { center, tips: { x: tx, y: ty, z: tz }, length, dirs };
 }
 
 /**
@@ -46,7 +49,7 @@ export function axisDelta(layout: GizmoLayout, axis: "x" | "y" | "z", dxPixels: 
     const len2 = sx * sx + sy * sy;
     if (len2 < 1e-6) return { x: 0, y: 0, z: 0 };
     const t = (dxPixels * sx + dyPixels * sy) / len2;   // fraction of one axis length
-    const a = AXES[axis];
+    const a = layout.dirs[axis];
     return { x: a.x * t * layout.length, y: a.y * t * layout.length, z: a.z * t * layout.length };
 }
 
