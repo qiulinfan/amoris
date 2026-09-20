@@ -17,11 +17,13 @@ Sound in Pocket follows the same rule as everything else: the state an agent can
 
 A source with `spatial` is heard from where its entity is: every tick the engine takes the entity's world position against the listener, an entity with an enabled `AudioListener` (its world position and facing; the first by id when there are several, so a third-person game puts one on the player and sounds are placed around the player, not the camera) or else the camera of the last frame, and sets the voice's volume to the source's, full within `near` of the camera and falling in a straight line to nothing at `range`, and its pan toward the side the entity is on (most of the way, so a sound straight to the right still reaches the left ear). A one-shot follows its entity the same way: `audio.play {clip, entity, spatial: true, near?, range?}` places the voice now and every tick until it ends. The placement goes through `audio.set`, so `audio.list` shows the volume and pan a spatial voice has right now, and a headless run places its voices the same way a window does (the mixer never runs, the numbers do). A source without `spatial` keeps the volume and pan it was given.
 
+A wall counts when the source's `occlusion` is above 0 (`AudioSource.occlusion`, or `audio.play {occlusion}` for a one-shot): each tick one ray runs from the listener to the entity, and when a collider of another entity that is not a trigger crosses it (the listener's own collider and the source's are passed over, so a player carrying the `AudioListener` does not block their own ears), the volume is scaled by `1 - occlusion` and the voice's `lowpass` is set to the source's times the same, so a hum behind a door at `occlusion: 0.7` is at three tenths of its volume and muffled; with nothing in the way the source's own `lowpass` is restored, so a source with occlusion owns its voice's low-pass as a spatial one owns its volume and pan. `AudioSource.occluded` says whether it is blocked right now and `audio.occluded {clip, voice, blocked, by}` is emitted when that changes, so a script can swap a room's ambience when the door shuts. The test is one straight line: a doorway a step to the side still muffles, and nothing bends around a corner.
+
 ## Commands and SDK
 
 | Command | SDK | Purpose |
 |---|---|---|
-| `audio.play {clip, volume?, pitch?, pan?, lowpass?, loop?, entity?, tag?, spatial?, near?, range?}` | `audio.play(clip, options)` | Start a voice; returns its id. A spatial one follows its entity. |
+| `audio.play {clip, volume?, pitch?, pan?, lowpass?, loop?, entity?, tag?, spatial?, near?, range?, occlusion?}` | `audio.play(clip, options)` | Start a voice; returns its id. A spatial one follows its entity; with `occlusion` a wall between muffles it. |
 | `audio.stop {voice | clip | tag | all}` | `audio.stop(id | {clip} | {tag})` | Stop voices; returns how many. |
 | `audio.set {voice, volume?, pitch?, pan?, lowpass?, loop?}` | `audio.set(id, params)` | Change a playing voice (`lowpass` muffles it, for a door closing or a dive). |
 | `audio.list` | `audio.voices()` | Every voice with position and duration in seconds. |
@@ -31,4 +33,4 @@ A source with `spatial` is heard from where its entity is: every tick the engine
 
 ## Not yet
 
-MP3 and other compressed formats beyond Ogg Vorbis, occlusion and reverb (a spatial source is distance and side only, a wall between does nothing), a listener's velocity (no Doppler), effects buses, streaming WAV (a long WAV decodes whole; encode music as Ogg), and audio in the state hash (voices are deterministic but kept out of the hash like the interface).
+MP3 and other compressed formats beyond Ogg Vorbis, reverb (a room's echo; occlusion is a straight ray, so nothing bends around a corner either), a listener's velocity (no Doppler), effects buses, streaming WAV (a long WAV decodes whole; encode music as Ogg), and audio in the state hash (voices are deterministic but kept out of the hash like the interface).

@@ -674,3 +674,58 @@ TEST_CASE("a focused button wears a ring and the caret's rectangle follows the t
     REQUIRE(at(ringed, 40, 70) < 40);    // its middle stays clear
     REQUIRE(f.doc->caret_rect().w == 0);
 }
+
+TEST_CASE("a transition runs a changed prop from where it is to the new value, eased, on advance", "[ui][transition]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 55, "box"], ["set", 55, {"position": "absolute", "left": 10, "top": 10, "width": 50, "height": 20, "background": "#000000", "opacity": 1, "transition": {"left": 200, "opacity": 200, "background": 200}}], ["append", 1, 55]
+    ])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(55).x == Catch::Approx(10));
+    // A new left: nothing moves until time passes; halfway through it is halfway (eased); then it lands.
+    f.apply(Json::parse(R"([["set", 55, {"left": 110}]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(55).x == Catch::Approx(10));
+    Json d = f.doc->describe(55);
+    REQUIRE(d["transition"]["left"] == 200.0);
+    REQUIRE(d["animating"] == Json::array({"left"}));
+    f.doc->advance(0.1f);
+    f.layout();
+    REQUIRE(f.doc->rect_of(55).x == Catch::Approx(60).margin(1));
+    f.doc->advance(0.05f);
+    f.layout();
+    const float late = f.doc->rect_of(55).x;
+    REQUIRE(late > 85);
+    REQUIRE(late < 110);
+    f.doc->advance(0.1f);
+    f.layout();
+    REQUIRE(f.doc->rect_of(55).x == Catch::Approx(110));
+    REQUIRE_FALSE(f.doc->describe(55).contains("animating"));
+    // Opacity and a color fade; a prop without a transition lands at once.
+    f.apply(Json::parse(R"([["set", 55, {"opacity": 0, "background": "#ffffff", "top": 50}]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(55).y == Catch::Approx(50));
+    REQUIRE(f.doc->describe(55)["opacity"].get<double>() == Catch::Approx(1.0));
+    f.doc->advance(0.1f);
+    d = f.doc->describe(55);
+    INFO(d.dump());
+    REQUIRE(d["opacity"].get<double>() == Catch::Approx(0.5).margin(0.02));
+    const std::string mid = d["background"].get<std::string>();
+    REQUIRE((mid == "#808080" || mid == "#7f7f7f"));
+    f.doc->advance(0.2f);
+    d = f.doc->describe(55);
+    REQUIRE(d["opacity"].get<double>() == Catch::Approx(0.0));
+    REQUIRE(d["background"] == "#ffffff");
+    // A new target part way through starts from where the value is, not from the old target.
+    f.apply(Json::parse(R"([["set", 55, {"opacity": 1}]])"));
+    f.doc->advance(0.1f);
+    f.apply(Json::parse(R"([["set", 55, {"opacity": 0}]])"));
+    f.doc->advance(0.1f);
+    const double back = f.doc->describe(55)["opacity"].get<double>();
+    REQUIRE(back > 0.1);
+    REQUIRE(back < 0.5);
+    // A transition set to nothing: changes land at once again.
+    f.apply(Json::parse(R"([["set", 55, {"transition": {}}], ["set", 55, {"left": 10}]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(55).x == Catch::Approx(10));
+}

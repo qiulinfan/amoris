@@ -359,6 +359,7 @@ Result<Frame> Device::begin_frame() {
     f.encoder = wgpuDeviceCreateCommandEncoder(impl_->device, nullptr);
     if (!f.encoder) return fail("gpu_encoder_failed", "cannot create command encoder");
     f.color = impl_->color_view;
+    f.color_texture = impl_->color;
     f.depth = impl_->depth_view;
     f.width = impl_->width;
     f.height = impl_->height;

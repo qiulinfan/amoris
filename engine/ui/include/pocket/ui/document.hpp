@@ -64,6 +64,9 @@ class Document {
 
     // Layout the tree into width x height points at the given pixel scale.
     void layout(float width, float height, float scale);
+    // Move the running transitions on by `seconds` (an element's `transition` style animates
+    // changes to its opacity, left, top, width, height, background and color).
+    void advance(float seconds);
     void paint(Painter& painter);
     // Route platform events; returns UI events for script listeners. `text_input_wanted` tells the
     // platform whether an input element has focus.

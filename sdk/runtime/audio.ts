@@ -14,6 +14,8 @@ export interface PlayOptions {
     spatial?: boolean;
     near?: number;
     range?: number;
+    /** How much a wall between the listener and `entity` takes, 0..1: a collider across the line scales the volume by 1 - occlusion and muffles the voice by the same (docs/design/audio.md, Where a sound is). */
+    occlusion?: number;
 }
 
 export interface Voice {

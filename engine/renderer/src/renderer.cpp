@@ -360,6 +360,38 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 }
 )WGSL";
 
+constexpr const char* kGradeWgsl = R"WGSL(
+struct G { exposure: f32, contrast: f32, saturation: f32, vignette: f32, tint: vec4f, temperature: f32, filmic: f32, pad0: f32, pad1: f32 };
+@group(0) @binding(0) var<uniform> g: G;
+@group(0) @binding(1) var src: texture_2d<f32>;
+@group(0) @binding(2) var smp: sampler;
+struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> VOut {
+    var out: VOut;
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    out.pos = vec4f(x, y, 0.0, 1.0);
+    out.uv = vec2f((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);
+    return out;
+}
+// The frame's look, in order: exposure, the filmic roll-off, warmth, contrast, saturation, tint, vignette.
+@fragment fn fs_grade(in: VOut) -> @location(0) vec4f {
+    let s = textureSample(src, smp, in.uv);
+    var c = s.rgb * g.exposure;
+    if (g.filmic > 0.5) {
+        c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+    }
+    c = c * vec3f(1.0 + 0.15 * g.temperature, 1.0, 1.0 - 0.15 * g.temperature);
+    c = (c - 0.5) * g.contrast + 0.5;
+    let lum = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+    c = mix(vec3f(lum), c, g.saturation);
+    c = c * g.tint.rgb;
+    let d = length((in.uv - 0.5) * 2.0);   // 0 at the centre, about 1.4 at a corner
+    c = c * (1.0 - g.vignette * smoothstep(0.4, 1.4, d));
+    return vec4f(clamp(c, vec3f(0.0), vec3f(1.0)), s.a);
+}
+)WGSL";
+
 struct GpuMesh {
     WGPUBuffer vertices = nullptr;
     WGPUBuffer indices = nullptr;
@@ -429,6 +461,17 @@ struct Renderer::Impl {
     WGPUBindGroup bloom_bg[4]{};                  // bright (reads the frame), blur across, blur down, add
     WGPUTextureView bloom_src = nullptr;          // the frame view the bright bind group was made for
     std::uint32_t bloom_w = 0, bloom_h = 0;
+    // Grading: the frame copied aside and drawn back through the grade shader.
+    GradeSettings grade;
+    WGPUShaderModule grade_shader = nullptr;
+    WGPUBindGroupLayout grade_bgl = nullptr;      // a uniform, a texture and a sampler, like bloom's but for the grade's uniform
+    WGPUPipelineLayout grade_layout = nullptr;
+    WGPURenderPipeline grade_pipeline = nullptr;
+    WGPUBuffer grade_uniforms = nullptr;
+    WGPUTexture grade_tex = nullptr;
+    WGPUTextureView grade_view = nullptr;
+    WGPUBindGroup grade_bg = nullptr;
+    std::uint32_t grade_w = 0, grade_h = 0;
     WGPUBuffer frame_buffer = nullptr;
     WGPUBuffer object_buffer = nullptr;
     WGPUBindGroup frame_bg = nullptr;
@@ -544,6 +587,12 @@ struct Renderer::Impl {
         if (id_view) wgpuTextureViewRelease(id_view);
         if (id_texture) wgpuTextureRelease(id_texture);
         release_msaa_targets();
+        release_grade_target();
+        if (grade_uniforms) wgpuBufferRelease(grade_uniforms);
+        if (grade_pipeline) wgpuRenderPipelineRelease(grade_pipeline);
+        if (grade_layout) wgpuPipelineLayoutRelease(grade_layout);
+        if (grade_bgl) wgpuBindGroupLayoutRelease(grade_bgl);
+        if (grade_shader) wgpuShaderModuleRelease(grade_shader);
         release_bloom_targets();
         if (bloom_uniforms) wgpuBufferRelease(bloom_uniforms);
         if (bloom_sampler) wgpuSamplerRelease(bloom_sampler);
@@ -815,6 +864,162 @@ struct Renderer::Impl {
         pass("pocket.bloom.down", bloom_view[0], false, bloom_blur_pipeline, bloom_bg[2]);
         pass("pocket.bloom.add", frame.color, true, bloom_add_pipeline, bloom_bg[3]);
         stats.bloom = true;
+        return {};
+    }
+
+    struct GradeUniforms {
+        float exposure, contrast, saturation, vignette;
+        float tint[4];
+        float temperature, filmic, pad0, pad1;
+    };
+
+    void release_grade_target() {
+        if (grade_bg) wgpuBindGroupRelease(grade_bg);
+        if (grade_view) wgpuTextureViewRelease(grade_view);
+        if (grade_tex) wgpuTextureRelease(grade_tex);
+        grade_bg = nullptr;
+        grade_view = nullptr;
+        grade_tex = nullptr;
+        grade_w = grade_h = 0;
+    }
+
+    // The grade pipeline draws the whole target from one texture (a uniform, a texture, a
+    // sampler); created after the bloom pass, whose sampler it shares.
+    Status create_grade() {
+        POCKET_TRY(module, device->create_shader("pocket.grade", kGradeWgsl));
+        grade_shader = module;
+        WGPUBindGroupLayoutEntry be[3]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(GradeUniforms);
+        be[1].binding = 1;
+        be[1].visibility = WGPUShaderStage_Fragment;
+        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 2;
+        be[2].visibility = WGPUShaderStage_Fragment;
+        be[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.grade");
+        bd.entryCount = 3;
+        bd.entries = be;
+        grade_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.grade");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &grade_bgl;
+        grade_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState ct{};
+        ct.format = device->color_format();
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = grade_shader;
+        fs.entryPoint = rhi::str("fs_grade");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.grade");
+        rpd.layout = grade_layout;
+        rpd.vertex.module = grade_shader;
+        rpd.vertex.entryPoint = rhi::str("vs_screen");
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        grade_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!grade_pipeline) return fail("gpu_pipeline_failed", "pocket.grade pipeline creation failed");
+        grade_uniforms = device->create_buffer("pocket.grade", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(GradeUniforms));
+        return {};
+    }
+
+    // A copy of the frame at its size, and the bind group that reads it.
+    Status ensure_grade_target(std::uint32_t w, std::uint32_t h) {
+        if (grade_tex && grade_w == w && grade_h == h) return {};
+        release_grade_target();
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str("pocket.grade.copy");
+        td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {w, h, 1};
+        td.format = device->color_format();
+        td.mipLevelCount = 1;
+        td.sampleCount = 1;
+        grade_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!grade_tex) return fail("gpu_texture_failed", "cannot create the grade copy {}x{}", w, h);
+        WGPUTextureViewDescriptor vd{};
+        vd.format = td.format;
+        vd.dimension = WGPUTextureViewDimension_2D;
+        vd.mipLevelCount = 1;
+        vd.arrayLayerCount = 1;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = td.usage;
+        grade_view = wgpuTextureCreateView(grade_tex, &vd);
+        WGPUBindGroupEntry entries[3]{};
+        entries[0].binding = 0;
+        entries[0].buffer = grade_uniforms;
+        entries[0].offset = 0;
+        entries[0].size = sizeof(GradeUniforms);
+        entries[1].binding = 1;
+        entries[1].textureView = grade_view;
+        entries[2].binding = 2;
+        entries[2].sampler = bloom_sampler;
+        WGPUBindGroupDescriptor bgd{};
+        bgd.label = rhi::str("pocket.grade");
+        bgd.layout = grade_bgl;
+        bgd.entryCount = 3;
+        bgd.entries = entries;
+        grade_bg = wgpuDeviceCreateBindGroup(device->device(), &bgd);
+        grade_w = w;
+        grade_h = h;
+        return {};
+    }
+
+    // The grading pass over a finished frame: the frame copied aside, then every pixel drawn
+    // back through the grade shader.
+    Status draw_grade(rhi::Frame& frame) {
+        if (!frame.color_texture) return {};
+        POCKET_TRY_VOID(ensure_grade_target(frame.width, frame.height));
+        WGPUTexelCopyTextureInfo src{};
+        src.texture = frame.color_texture;
+        src.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = grade_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        const WGPUExtent3D extent{frame.width, frame.height, 1};
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &extent);
+        GradeUniforms u{};
+        u.exposure = grade.exposure;
+        u.contrast = grade.contrast;
+        u.saturation = grade.saturation;
+        u.vignette = grade.vignette;
+        u.tint[0] = grade.tint.r;
+        u.tint[1] = grade.tint.g;
+        u.tint[2] = grade.tint.b;
+        u.tint[3] = 1.0f;
+        u.temperature = grade.temperature;
+        u.filmic = grade.filmic ? 1.0f : 0.0f;
+        device->write_buffer(grade_uniforms, 0, &u, sizeof(GradeUniforms));
+        WGPURenderPassColorAttachment ca{};
+        ca.view = frame.color;
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, 1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.grade");
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        wgpuRenderPassEncoderSetPipeline(enc, grade_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, grade_bg, 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        stats.draw_calls++;
+        stats.grade = true;
         return {};
     }
 
@@ -1139,6 +1344,7 @@ struct Renderer::Impl {
         line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
         POCKET_TRY_VOID(create_scene_pipelines(msaa));
         POCKET_TRY_VOID(create_bloom());
+        POCKET_TRY_VOID(create_grade());
 
         // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
         // in the lookup handles acne.
@@ -2129,6 +2335,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.tile_frames = im.tile_frames;
     im.stats.msaa = im.msaa_applied;
     im.stats.bloom = false;
+    im.stats.grade = false;
     im.stats.skinned = skinned_instances;
     im.stats.morphed = morphed_instances;
     im.stats.moving_parts = moving_parts;
@@ -2316,6 +2523,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
+    if (im.grade.enabled) POCKET_TRY_VOID(im.draw_grade(frame));
     return {};
 }
 
@@ -2425,6 +2633,17 @@ void Renderer::set_bloom(BloomSettings s) {
     impl_->bloom = s;
 }
 BloomSettings Renderer::bloom() const { return impl_->bloom; }
+void Renderer::set_grade(GradeSettings s) {
+    s.exposure = std::clamp(s.exposure, 0.0f, 8.0f);
+    s.temperature = std::clamp(s.temperature, -1.0f, 1.0f);
+    s.contrast = std::clamp(s.contrast, 0.0f, 4.0f);
+    s.saturation = std::clamp(s.saturation, 0.0f, 4.0f);
+    s.vignette = std::clamp(s.vignette, 0.0f, 1.0f);
+    for (float* c : {&s.tint.r, &s.tint.g, &s.tint.b}) *c = std::clamp(*c, 0.0f, 4.0f);
+    s.tint.a = 1.0f;
+    impl_->grade = s;
+}
+GradeSettings Renderer::grade() const { return impl_->grade; }
 ShadowSettings Renderer::shadows() const { return impl_->shadows; }
 void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
 std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> Renderer::take_new_bounds() { return std::exchange(impl_->new_bounds, {}); }
@@ -2451,6 +2670,7 @@ Json Renderer::describe() const {
     j["tile_frames"] = s.tile_frames;
     j["msaa"] = s.msaa;
     j["bloom"] = s.bloom;
+    j["grade"] = s.grade;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;

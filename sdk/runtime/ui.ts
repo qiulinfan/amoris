@@ -190,6 +190,8 @@ export interface StyleProps {
     textAlign?: "left" | "center" | "right";
     textWrap?: boolean;
     scrollTop?: number;
+    /** Milliseconds per prop: later changes to opacity, left, top, width, height, background or color run from the present value to the new one, eased in and out (a panel sliding in, a fade). */
+    transition?: Partial<Record<"opacity" | "left" | "top" | "width" | "height" | "background" | "color", number>>;
     /** An entity id: the element sits on that entity's projection every frame (hidden while it is behind the camera or gone), for name tags, damage numbers and speech bubbles. */
     anchor?: number;
     /** Points added to the projection. */

@@ -255,6 +255,15 @@ export const render = {
     bloom(settings: { enabled?: boolean; threshold?: number; strength?: number; radius?: number } = {}): { enabled: boolean; threshold: number; strength: number; radius: number } {
         return command("render.bloom", settings);
     },
+    /**
+     * Grading, the frame's look applied last: `exposure` multiplies the frame, `filmic` rolls the top of the
+     * range off so an exposure above 1 brightens without clipping, `temperature` warms (1) or cools (-1),
+     * `contrast` and `saturation` scale around mid gray (1 as rendered), `tint` washes the result ({r, g, b}
+     * or "#rrggbb"), `vignette` darkens the corners (0..1). Off by default; project.toml [render.grade] sets the default.
+     */
+    grade(settings: { enabled?: boolean; exposure?: number; filmic?: boolean; temperature?: number; contrast?: number; saturation?: number; tint?: { r: number; g: number; b: number } | string; vignette?: number } = {}): { enabled: boolean; exposure: number; filmic: boolean; temperature: number; contrast: number; saturation: number; tint: { r: number; g: number; b: number }; vignette: number } {
+        return command("render.grade", settings);
+    },
     /** Entities visible in the last frame with their pixel counts and bounds; optionally writes a PNG of the id buffer. */
     ids(path?: string): { width: number; height: number; count: number; visible: VisibleEntity[] } {
         return command("render.ids", { path });

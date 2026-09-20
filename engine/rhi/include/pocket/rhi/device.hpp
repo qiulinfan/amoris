@@ -34,6 +34,7 @@ struct Image {
 struct Frame {
     WGPUCommandEncoder encoder = nullptr;
     WGPUTextureView color = nullptr;  // offscreen RGBA8 target
+    WGPUTexture color_texture = nullptr;  // the texture behind `color`, for a pass that copies the frame aside
     WGPUTextureView depth = nullptr;  // Depth24Plus
     std::uint32_t width = 0, height = 0;
     std::uint64_t index = 0;

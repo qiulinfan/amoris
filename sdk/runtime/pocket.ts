@@ -45,7 +45,7 @@ export { audio } from "./audio";
 export { input } from "./input";
 export { tween, ease } from "./tween";
 export type { Easing, EaseName, TweenOptions, TweenHandle } from "./tween";
-export { timer, wait, nextTick, lastTick } from "./timer";
+export { timer, time, wait, nextTick, lastTick } from "./timer";
 export type { TimerHandle } from "./timer";
 export type { ActionState, Binding } from "./input";
 import { setActionSnapshot } from "./input";
@@ -83,9 +83,18 @@ export interface Tick {
 }
 
 export interface InputEvent {
-    type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis" | "touch_down" | "touch_up" | "touch_move";
+    type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis" | "touch_down" | "touch_up" | "touch_move" | "gesture";
     /** Touch events: the finger's index (0 is the one that also acts as the mouse). */
     finger?: number;
+    /** Gesture events (docs/design/input.md, Gestures): which one; a tap's `count` (2 for a double tap), a swipe's `direction`, `dx`, `dy` and `seconds`, a pinch's `phase`, `scale`, `rotation` (degrees) and `distance` with `x`, `y` at its centre. */
+    gesture?: "tap" | "long_press" | "swipe" | "pinch";
+    count?: number;
+    direction?: "left" | "right" | "up" | "down";
+    seconds?: number;
+    phase?: "begin" | "move" | "end";
+    scale?: number;
+    rotation?: number;
+    distance?: number;
     pad?: number;
     button?: number | string;
     axis?: string;
@@ -121,6 +130,8 @@ export interface Frame {
     dt: number;
     /** True while the simulation is paused; frame handlers still run (the editor lives here). */
     paused: boolean;
+    /** Simulation seconds per real second (`time.scale`): 1 normally, below it slow motion, 0 a hit-stop. */
+    time_scale: number;
 }
 
 /** The script context this bundle was loaded into ("project", "editor" or "main"). */

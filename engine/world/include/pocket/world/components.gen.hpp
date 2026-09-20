@@ -450,6 +450,8 @@ struct AudioSource {
     bool spatial = false;
     float near = 1.0f;
     float range = 20.0f;
+    float occlusion = 0.0f;
+    bool occluded = false;
     bool playing = false;
     std::uint32_t voice = 0;
     constexpr bool operator==(const AudioSource&) const = default;

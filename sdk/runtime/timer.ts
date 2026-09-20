@@ -2,6 +2,7 @@
 // ("open the door, wait two seconds, close it"). Driven by ticks, so they pause with the game
 // and replay exactly. The global setTimeout family maps onto the same clock in milliseconds.
 import { own } from "./registry";
+import { command } from "./world";
 import type { Tick } from "./pocket";
 
 export interface TimerHandle {
@@ -117,3 +118,16 @@ if (g.setTimeout === undefined) {
     g.clearInterval = g.clearTimeout;
 }
 if (g.queueMicrotask === undefined) g.queueMicrotask = (fn: () => void): void => { void Promise.resolve().then(fn); };
+
+/**
+ * Real time into simulation time: `time.scale(0.25)` is slow motion, `time.scale(2)` fast forward
+ * (up to 8), `time.scale(0, 0.1)` a hit-stop (no tick for a tenth of a real second while frames keep
+ * drawing, then 1 again). A tick is the same length whatever the scale, so timers, tweens and physics
+ * are unchanged; only how many ticks a frame runs. A headless run counts a tick's worth of real time
+ * per frame, and `step` runs its ticks whatever the scale. Called without arguments it only reads.
+ */
+export const time = {
+    scale(scale?: number, seconds?: number): { scale: number; seconds: number } {
+        return command("time.scale", scale === undefined ? {} : { scale, seconds });
+    },
+};

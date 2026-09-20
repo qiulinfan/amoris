@@ -62,6 +62,11 @@ struct Node {
     float anchor_offset[2] = {0, 0};     // points added to the projection
     float anchor_align[2] = {0.5f, 1};   // which point of the element sits on the projection (0..1 across, down)
     bool anchor_hidden = false;          // the entity is behind the camera or gone
+    // Transitions: a change to a listed prop runs from the present value to the new one over
+    // its seconds (eased in and out), advanced by Document::advance.
+    std::map<std::string, float> transition;   // prop -> seconds
+    struct Anim { float from[4] = {0, 0, 0, 0}, to[4] = {0, 0, 0, 0}; float t = 0, dur = 0; int n = 1; };
+    std::map<std::string, Anim> anims;
     bool disabled = false;
     std::string text;
     std::string value;       // input
@@ -401,9 +406,75 @@ struct Document::Impl {
         lines.push_back(current);
     }
 
+    static float eased(const Node::Anim& a) {
+        const float k = a.dur > 0 ? std::clamp(a.t / a.dur, 0.0f, 1.0f) : 1.0f;
+        return k * k * (3 - 2 * k);
+    }
+    // A transitioned prop's value now: the running animation's, else the style's.
+    static bool present_value(const Node& n, const std::string& k, float out[4]) {
+        if (auto it = n.anims.find(k); it != n.anims.end()) {
+            const float e = eased(it->second);
+            for (int i = 0; i < 4; ++i) out[i] = it->second.from[i] + (it->second.to[i] - it->second.from[i]) * e;
+            return true;
+        }
+        if (k == "opacity") { out[0] = n.opacity; return true; }
+        if (k == "left" || k == "top") { const YGValue v = YGNodeStyleGetPosition(n.yoga, k == "left" ? YGEdgeLeft : YGEdgeTop); if (v.unit != YGUnitPoint) return false; out[0] = v.value; return true; }
+        if (k == "width" || k == "height") { const YGValue v = k == "width" ? YGNodeStyleGetWidth(n.yoga) : YGNodeStyleGetHeight(n.yoga); out[0] = v.unit == YGUnitPoint ? v.value : (k == "width" ? n.rect.w : n.rect.h); return true; }
+        if (k == "background" || k == "color") { const Color& c = k == "color" ? n.color : n.background; out[0] = c.r; out[1] = c.g; out[2] = c.b; out[3] = c.a; return true; }
+        return false;
+    }
+    static void apply_value(Node& n, const std::string& k, const float v[4]) {
+        if (k == "opacity") n.opacity = v[0];
+        else if (k == "left") YGNodeStyleSetPosition(n.yoga, YGEdgeLeft, v[0]);
+        else if (k == "top") YGNodeStyleSetPosition(n.yoga, YGEdgeTop, v[0]);
+        else if (k == "width") YGNodeStyleSetWidth(n.yoga, v[0]);
+        else if (k == "height") YGNodeStyleSetHeight(n.yoga, v[0]);
+        else if (k == "background") n.background = Color{v[0], v[1], v[2], v[3]};
+        else if (k == "color") n.color = Color{v[0], v[1], v[2], v[3]};
+    }
+    // Take a change to a transitioned prop: it runs from where the prop is now to the new value.
+    // False when the value is not one that animates (a percent, "auto"), so the change lands at once.
+    static bool start_transition(Node& n, const std::string& k, const Json& v, float seconds) {
+        float target[4] = {0, 0, 0, 0}, now[4] = {0, 0, 0, 0};
+        int count = 1;
+        if (k == "opacity" || k == "left" || k == "top" || k == "width" || k == "height") {
+            if (!v.is_number()) return false;
+            target[0] = v.get<float>();
+        } else if (k == "background" || k == "color") {
+            const Color c = parse_color(v, k == "color" ? n.color : n.background);
+            target[0] = c.r; target[1] = c.g; target[2] = c.b; target[3] = c.a;
+            count = 4;
+        } else {
+            return false;
+        }
+        if (!present_value(n, k, now)) return false;
+        if (auto it = n.anims.find(k); it != n.anims.end()) {
+            bool same = true;
+            for (int i = 0; i < count; ++i) same = same && std::fabs(it->second.to[i] - target[i]) < 1e-6f;
+            if (same) return true;   // already on its way there
+        }
+        bool there = true;
+        for (int i = 0; i < count; ++i) there = there && std::fabs(now[i] - target[i]) < 1e-6f;
+        if (there) { n.anims.erase(k); apply_value(n, k, target); return true; }
+        Node::Anim a;
+        for (int i = 0; i < 4; ++i) { a.from[i] = now[i]; a.to[i] = target[i]; }
+        a.dur = seconds;
+        a.n = count;
+        n.anims[k] = a;
+        apply_value(n, k, now);
+        return true;
+    }
+
     void apply_style(Node& n, const Json& props) {
         YGNodeRef y = n.yoga;
         for (auto& [k, v] : props.items()) {
+            if (k == "transition") {
+                // {prop: milliseconds}: changes to those props animate from then on.
+                n.transition.clear();
+                if (v.is_object()) for (auto& [pk, pv] : v.items()) if (pv.is_number() && pv.get<float>() > 0) n.transition[pk] = pv.get<float>() / 1000.0f;
+                continue;
+            }
+            if (auto tr = n.transition.find(k); tr != n.transition.end() && start_transition(n, k, v, tr->second)) continue;
             if (k == "width") apply_dim(v, YGNodeStyleSetWidth, YGNodeStyleSetWidthPercent, YGNodeStyleSetWidthAuto, y);
             else if (k == "height") apply_dim(v, YGNodeStyleSetHeight, YGNodeStyleSetHeightPercent, YGNodeStyleSetHeightAuto, y);
             else if (k == "minWidth") apply_dim(v, YGNodeStyleSetMinWidth, YGNodeStyleSetMinWidthPercent, nullptr, y);
@@ -897,6 +968,23 @@ void Document::layout(float width, float height, float scale) {
 
 void Document::set_anchor_source(std::function<bool(std::uint64_t, float&, float&)> source) { impl_->anchor_source = std::move(source); }
 
+void Document::advance(float seconds) {
+    if (seconds <= 0) return;
+    for (auto& [id, n] : impl_->nodes) {
+        if (n.anims.empty()) continue;
+        std::vector<std::string> done;
+        for (auto& [k, a] : n.anims) {
+            a.t += seconds;
+            float v[4];
+            const float e = Impl::eased(a);
+            for (int i = 0; i < 4; ++i) v[i] = a.from[i] + (a.to[i] - a.from[i]) * e;
+            Impl::apply_value(n, k, v);
+            if (a.t >= a.dur) done.push_back(k);
+        }
+        for (const std::string& k : done) n.anims.erase(k);
+    }
+}
+
 void Document::paint(Painter& painter) {
     Impl& im = *impl_;
     Node& root = im.nodes[im.root_id];
@@ -1222,6 +1310,17 @@ Json Document::describe(NodeId id) const {
     if (n->scroll) { j["scrollTop"] = n->scroll_y; j["contentHeight"] = n->content_height; }
     j["background"] = color_hex(n->background);
     j["color"] = color_hex(n->color);
+    j["opacity"] = n->opacity;
+    if (!n->transition.empty()) {
+        Json tr = Json::object();
+        for (const auto& [k, secs] : n->transition) tr[k] = secs * 1000.0f;
+        j["transition"] = tr;
+        if (!n->anims.empty()) {
+            Json running = Json::array();
+            for (const auto& [k, a] : n->anims) running.push_back(k);
+            j["animating"] = running;
+        }
+    }
     if (!n->image.empty()) {
         j["image"] = n->image;
         j["fit"] = n->fit;

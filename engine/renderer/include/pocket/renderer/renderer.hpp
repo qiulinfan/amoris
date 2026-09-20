@@ -31,6 +31,18 @@ struct BloomSettings {
     float radius = 1.0f;      // the blur's spread, in half-resolution texels (1 tight, 4 wide)
 };
 
+// Grading: the finished frame's look, applied last and in this order.
+struct GradeSettings {
+    bool enabled = false;
+    float exposure = 1.0f;       // multiplies the frame (1 as rendered)
+    bool filmic = false;         // roll the top of the range off, so an exposure above 1 brightens without clipping
+    float temperature = 0.0f;    // -1 cool (toward blue) .. 0 .. 1 warm (toward red)
+    float contrast = 1.0f;       // around mid gray (1 as rendered)
+    float saturation = 1.0f;     // 0 gray .. 1 as rendered .. 2 vivid
+    rhi::Color tint{1, 1, 1, 1}; // multiplies the result (a color wash; white leaves it)
+    float vignette = 0.0f;       // how dark the corners get (0 none, 1 black)
+};
+
 struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
@@ -48,6 +60,7 @@ struct RenderStats {
     std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     int msaa = 1;                     // samples per pixel of the color pass (1 or 4)
     bool bloom = false;               // whether the bloom passes ran this frame
+    bool grade = false;               // whether the grading pass ran this frame
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
@@ -118,6 +131,9 @@ class Renderer {
     // Bloom over the finished scene (off by default); takes effect at the next frame.
     void set_bloom(BloomSettings s);
     [[nodiscard]] BloomSettings bloom() const;
+    // Grading over the finished frame, after bloom (off by default); takes effect at the next frame.
+    void set_grade(GradeSettings s);
+    [[nodiscard]] GradeSettings grade() const;
     // Where glTF meshes and images come from (MeshRenderer.mesh / .texture paths). Optional.
     void set_assets(assets::AssetStore* store);
     // Local bounds of asset meshes first uploaded since the last call (path -> min/max).

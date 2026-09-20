@@ -1378,6 +1378,8 @@ void to_json(Json& j, const AudioSource& v) {
     j["spatial"] = v.spatial;
     j["near"] = v.near;
     j["range"] = v.range;
+    j["occlusion"] = v.occlusion;
+    j["occluded"] = v.occluded;
     j["playing"] = v.playing;
     j["voice"] = v.voice;
 }
@@ -1392,6 +1394,8 @@ void from_json(const Json& j, AudioSource& v) {
     scalar_from_json(j, "spatial", v.spatial);
     scalar_from_json(j, "near", v.near);
     scalar_from_json(j, "range", v.range);
+    scalar_from_json(j, "occlusion", v.occlusion);
+    scalar_from_json(j, "occluded", v.occluded);
     scalar_from_json(j, "playing", v.playing);
     scalar_from_json(j, "voice", v.voice);
 }
@@ -1406,6 +1410,8 @@ void hash_component(StateHasherRef& h, const AudioSource& v) {
     h.u8(v.spatial ? 1 : 0);
     h.f32(v.near);
     h.f32(v.range);
+    h.f32(v.occlusion);
+    h.u8(v.occluded ? 1 : 0);
     h.u8(v.playing ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.voice));
 }
@@ -1417,6 +1423,7 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     if (path == "lowpass") { *out = &v.lowpass; return 1; }
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "range") { *out = &v.range; return 1; }
+    if (path == "occlusion") { *out = &v.occlusion; return 1; }
     return 0;
 }
 
@@ -1815,7 +1822,7 @@ constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
-constexpr std::array<FieldInfo, 11> kAudioSourceFields = {{
+constexpr std::array<FieldInfo, 13> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
     FieldInfo{"volume", "f32", "Linear gain, 0..4."},
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
@@ -1825,6 +1832,8 @@ constexpr std::array<FieldInfo, 11> kAudioSourceFields = {{
     FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
     FieldInfo{"near", "f32", "Distance within which a spatial source plays at its full volume."},
     FieldInfo{"range", "f32", "Distance at which a spatial source is silent."},
+    FieldInfo{"occlusion", "f32", "How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is)."},
+    FieldInfo{"occluded", "bool", "Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes)."},
     FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
 }};

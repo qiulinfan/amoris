@@ -32,12 +32,13 @@ Gameplay reads only `t.dt` and never the wall clock, which is what makes runs re
 ## Time
 
 ```ts
-import { tween, timer, wait, ease } from "pocket";
+import { tween, timer, time, wait, ease } from "pocket";
 
 tween.to(door, "Transform", { position: { y: 3 } }, { duration: 0.5, ease: "cubicOut" });
 tween.value(0, 1, { duration: 2, onUpdate: (v) => setClearColor(v, v, v) });
 timer.after(1.5, () => spawnWave());
 timer.every(0.2, () => shoot(), 5);
+time.scale(0.2, 1.5);   // slow motion for a second and a half of real time, then normal speed
 async function openAndClose() { open(); await wait(2); close(); }
 ```
 

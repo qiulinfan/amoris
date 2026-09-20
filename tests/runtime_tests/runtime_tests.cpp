@@ -3406,3 +3406,222 @@ TEST_CASE("tilemap.spawn puts prefabs at a map's objects with their properties a
     REQUIRE_FALSE(s.command("tilemap.spawn", Json{{"entity", map["id"]}}).has_value());
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("a wall between the listener and a source turns it down and muffles it", "[runtime][audio][occlusion]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "audio";
+    o.bundle = root() / "build" / "ts" / "audio.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The camera at the origin looking down -Z; the hum six units ahead, seven tenths taken by a wall.
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"rotation", {{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Hum"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -6}}}}}, {"AudioSource", Json{{"clip", "assets/hum.wav"}, {"autoplay", true}, {"loop", true}, {"spatial", true}, {"near", 1.0}, {"range", 20.0}, {"occlusion", 0.7}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    auto voice = [&]() {
+        for (const Json& v : s.command("audio.list", Json::object()).value()) if (v["clip"] == "assets/hum.wav" && v["entity"] != 0) return v;
+        return Json(nullptr);
+    };
+    auto source = [&]() { return s.command("world.get", Json{{"entity", "Hum"}, {"component", "AudioSource"}}).value(); };
+    const double open = (20.0 - 6.0) / 19.0;
+    Json v = voice();
+    INFO(v.dump());
+    REQUIRE(!v.is_null());
+    REQUIRE(v["volume"].get<double>() == Catch::Approx(open).margin(0.02));
+    REQUIRE(v["lowpass"].get<double>() == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(source()["occluded"] == false);
+    // A static wall across the line: three tenths of the volume and of the high end, and the event says by what.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wall"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -3}}}}}, {"RigidBody", Json{{"kind", 1}}}, {"Collider", Json{{"shape", 0}, {"size", {{"x", 2}, {"y", 2}, {"z", 0.25}}}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    v = voice();
+    INFO(v.dump());
+    REQUIRE(v["volume"].get<double>() == Catch::Approx(open * 0.3).margin(0.02));
+    REQUIRE(v["lowpass"].get<double>() == Catch::Approx(0.3).margin(0.01));
+    REQUIRE(source()["occluded"] == true);
+    Json ev = s.command("events.recent", Json{{"limit", 20}, {"type", "audio.occluded"}}).value();
+    INFO(ev.dump());
+    REQUIRE(ev.size() >= 1);
+    REQUIRE(ev.back()["data"]["blocked"] == true);
+    REQUIRE(ev.back()["data"]["by"] == "/Wall");
+    // A trigger does not block.
+    REQUIRE(s.command("world.set", Json{{"entity", "Wall"}, {"component", "Collider"}, {"value", Json{{"is_trigger", true}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    v = voice();
+    REQUIRE(v["volume"].get<double>() == Catch::Approx(open).margin(0.02));
+    REQUIRE(v["lowpass"].get<double>() == Catch::Approx(1.0).margin(0.01));
+    REQUIRE(source()["occluded"] == false);
+    ev = s.command("events.recent", Json{{"limit", 20}, {"type", "audio.occluded"}}).value();
+    REQUIRE(ev.back()["data"]["blocked"] == false);
+    // Solid again but moved aside: open.
+    REQUIRE(s.command("world.set", Json{{"entity", "Wall"}, {"component", "Collider"}, {"value", Json{{"is_trigger", false}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Wall"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 10}, {"y", 0}, {"z", -3}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(voice()["volume"].get<double>() == Catch::Approx(open).margin(0.02));
+    REQUIRE(source()["occluded"] == false);
+    // A one-shot with its own occlusion and low-pass, behind the wall put back: half of each.
+    REQUIRE(s.command("world.set", Json{{"entity", "Wall"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -3}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json shot = s.command("audio.play", Json{{"clip", "assets/beep.wav"}, {"entity", "Hum"}, {"spatial", true}, {"occlusion", 0.5}, {"lowpass", 0.8}}).value();
+    REQUIRE(s.frame().has_value());
+    Json bv(nullptr);
+    for (const Json& x : s.command("audio.list", Json::object()).value()) if (x["id"] == shot["voice"]) bv = x;
+    INFO(bv.dump());
+    REQUIRE(!bv.is_null());
+    REQUIRE(bv["volume"].get<double>() == Catch::Approx(open * 0.5).margin(0.02));
+    REQUIRE(bv["lowpass"].get<double>() == Catch::Approx(0.4).margin(0.01));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("the time scale slows, speeds and stops the simulation against the frames, and a step is exact", "[runtime][time]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 64;
+    o.height = 64;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const std::int64_t t0 = s.tick();
+    Json st = s.command("time.scale", Json::object()).value();
+    REQUIRE(st["scale"].get<double>() == Catch::Approx(1.0));
+    REQUIRE(st["seconds"].get<double>() == Catch::Approx(0.0));
+    // Half speed: a tick every other frame.
+    REQUIRE(s.command("time.scale", Json{{"scale", 0.5}}).value()["scale"].get<double>() == Catch::Approx(0.5));
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.tick() == t0 + 2);
+    // Double speed: two ticks a frame.
+    REQUIRE(s.command("time.scale", Json{{"scale", 2}}).has_value());
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.tick() == t0 + 10);
+    // A step is its ticks whatever the scale.
+    Json stepped = s.command("step", Json{{"ticks", 3}}).value();
+    REQUIRE(s.tick() == t0 + 13);
+    REQUIRE(stepped["tick"].get<std::int64_t>() == t0 + 13);
+    // A hit-stop: no tick for a twentieth of a second (three frames), then time runs by itself.
+    Json stop = s.command("time.scale", Json{{"scale", 0}, {"seconds", 0.05}}).value();
+    REQUIRE(stop["scale"].get<double>() == Catch::Approx(0.0));
+    REQUIRE(stop["seconds"].get<double>() == Catch::Approx(0.05));
+    const std::int64_t t1 = s.tick();
+    for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.tick() == t1);
+    REQUIRE(s.command("time.scale", Json::object()).value()["scale"].get<double>() == Catch::Approx(1.0));
+    for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.tick() == t1 + 2);
+    // Out of range is clamped; a non-number is refused.
+    REQUIRE(s.command("time.scale", Json{{"scale", 50}}).value()["scale"].get<double>() == Catch::Approx(8.0));
+    REQUIRE(s.command("time.scale", Json{{"scale", "fast"}}).error().code == "bad_args");
+    REQUIRE(s.command("time.scale", Json{{"scale", 1}}).value()["seconds"].get<double>() == Catch::Approx(0.0));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[runtime][input][gesture]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    auto gestures = [](const Json& reply) {
+        Json out = Json::array();
+        for (const Json& e : reply["input"]) if (e["type"] == "gesture") out.push_back(e);
+        return out;
+    };
+    auto touch = [&](int finger, const char* phase, double x, double y) {
+        Json r = s.command("input.touch", Json{{"finger", finger}, {"x", x}, {"y", y}, {"phase", phase}}).value();
+        return gestures(r);
+    };
+    auto last_event = [&]() {
+        Json ev = s.command("events.recent", Json{{"limit", 5}, {"type", "input.gesture"}}).value();
+        return ev.empty() ? Json(nullptr) : ev.back()["data"];
+    };
+    REQUIRE(s.command("input.state", Json::object()).value()["gestures"]["enabled"] == true);
+    // A tap: down and up a few ticks apart, barely moving.
+    REQUIRE(touch(0, "down", 100, 100).empty());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    Json g = touch(0, "up", 103, 101);
+    INFO(g.dump());
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["gesture"] == "tap");
+    REQUIRE(g[0]["count"] == 1);
+    REQUIRE(g[0]["finger"] == 0);
+    REQUIRE(g[0]["x"].get<double>() == Catch::Approx(103));
+    // Another right away in the same place: a double tap, and the world event says so.
+    for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(touch(0, "down", 101, 100).empty());
+    REQUIRE(s.frame().has_value());
+    g = touch(0, "up", 101, 100);
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["count"] == 2);
+    REQUIRE(last_event()["gesture"] == "tap");
+    REQUIRE(last_event()["count"] == 2);
+    // A long press: held still for half a second is reported while down; lifting it is no tap.
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(touch(0, "down", 50, 50).empty());
+    for (int i = 0; i < 31; ++i) REQUIRE(s.frame().has_value());
+    Json held = last_event();
+    INFO(held.dump());
+    REQUIRE(held["gesture"] == "long_press");
+    REQUIRE(held["x"].get<double>() == Catch::Approx(50));
+    REQUIRE(touch(0, "up", 51, 50).empty());
+    // A swipe: a finger that travels right and lifts within a few frames.
+    REQUIRE(touch(0, "down", 100, 100).empty());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(touch(0, "move", 140, 100).empty());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(touch(0, "move", 180, 102).empty());
+    REQUIRE(s.frame().has_value());
+    g = touch(0, "up", 200, 103);
+    INFO(g.dump());
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["gesture"] == "swipe");
+    REQUIRE(g[0]["direction"] == "right");
+    REQUIRE(g[0]["dx"].get<double>() == Catch::Approx(100));
+    REQUIRE(g[0]["seconds"].get<double>() == Catch::Approx(3.0 / 60.0).margin(0.001));
+    // A pinch: two fingers; the second moving away doubles the spread; neither lifts as a tap.
+    REQUIRE(touch(0, "down", 100, 100).empty());
+    g = touch(1, "down", 200, 100);
+    INFO(g.dump());
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["gesture"] == "pinch");
+    REQUIRE(g[0]["phase"] == "begin");
+    REQUIRE(g[0]["scale"].get<double>() == Catch::Approx(1.0));
+    REQUIRE(g[0]["x"].get<double>() == Catch::Approx(150));
+    g = touch(1, "move", 300, 100);
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["phase"] == "move");
+    REQUIRE(g[0]["scale"].get<double>() == Catch::Approx(2.0));
+    REQUIRE(g[0]["rotation"].get<double>() == Catch::Approx(0.0).margin(0.01));
+    REQUIRE(g[0]["x"].get<double>() == Catch::Approx(200));
+    g = touch(1, "move", 100, 200);   // straight below the first finger: a quarter turn
+    REQUIRE(g[0]["rotation"].get<double>() == Catch::Approx(90.0).margin(0.01));
+    g = touch(1, "up", 100, 200);
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["phase"] == "end");
+    REQUIRE(touch(0, "up", 100, 100).empty());
+    // A drift past the slop that is too short for a swipe is nothing.
+    REQUIRE(touch(0, "down", 10, 10).empty());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(touch(0, "move", 40, 10).empty());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(touch(0, "up", 40, 10).empty());
+    REQUIRE(s.finish().has_value());
+}

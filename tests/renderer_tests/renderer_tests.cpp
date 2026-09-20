@@ -436,3 +436,76 @@ TEST_CASE("bloom spreads a glow past a bright surface and leaves the dark alone"
     REQUIRE(std::abs(back["pixels"][0][1].get<int>() - plain["pixels"][0][1].get<int>()) <= 2);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("grading exposes, tints, warms, rolls off and vignettes the finished frame", "[renderer][grade]") {
+    app::Session s(playground_options());
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A white-hot slab filling the view (black albedo, white emissive: every pixel is white whatever the light).
+    REQUIRE(s.command("world.spawn", Json{{"name", "Slab"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}, {"scale", Json{{"x", 40}, {"y", 1}, {"z", 40}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 10}, {"z", 0.001}}}, {"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    // The centre, a corner and a point a sixteenth of the way in from the left edge.
+    const Json pts = Json::array({Json{{"x", 128}, {"y", 72}}, Json{{"x", 4}, {"y", 4}}, Json{{"x", 16}, {"y", 72}}});
+    auto px = [&](const Json& cap, int i, int ch) { return cap["pixels"][static_cast<std::size_t>(i)][static_cast<std::size_t>(ch)].get<int>(); };
+    Json plain = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("plain " << plain["pixels"].dump());
+    REQUIRE(plain["render"]["grade"] == false);
+    for (int i = 0; i < 3; ++i) for (int ch = 0; ch < 3; ++ch) REQUIRE(px(plain, i, ch) >= 250);
+    // Half the exposure: half the light, one more draw, and the stats say so.
+    Json set = s.command("render.grade", Json{{"enabled", true}, {"exposure", 0.5}}).value();
+    REQUIRE(set["enabled"] == true);
+    REQUIRE(set["exposure"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(set["tint"]["g"].get<double>() == Catch::Approx(1.0));
+    REQUIRE(s.frame().has_value());
+    Json half = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("half " << half["pixels"].dump());
+    REQUIRE(half["render"]["grade"] == true);
+    REQUIRE(half["render"]["draw_calls"].get<int>() == plain["render"]["draw_calls"].get<int>() + 1);
+    REQUIRE(px(half, 0, 0) >= 100);
+    REQUIRE(px(half, 0, 0) <= 160);
+    // A tint washes the white by its channels; a hex string is a tint too.
+    REQUIRE(s.command("render.grade", Json{{"exposure", 1.0}, {"tint", Json{{"r", 1}, {"g", 0.5}, {"b", 0.25}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json tinted = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("tinted " << tinted["pixels"].dump());
+    REQUIRE(px(tinted, 0, 0) >= 240);
+    REQUIRE(px(tinted, 0, 1) >= 110);
+    REQUIRE(px(tinted, 0, 1) <= 145);
+    REQUIRE(px(tinted, 0, 2) >= 50);
+    REQUIRE(px(tinted, 0, 2) <= 80);
+    Json hex = s.command("render.grade", Json{{"tint", "#ffffff"}}).value();
+    REQUIRE(hex["tint"]["b"].get<double>() == Catch::Approx(1.0));
+    REQUIRE_FALSE(s.command("render.grade", Json{{"tint", "warm"}}).has_value());
+    // Warmth lifts red and drops blue; the filmic curve softens a plain white to about four fifths.
+    REQUIRE(s.command("render.grade", Json{{"temperature", 1.0}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json warm = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("warm " << warm["pixels"].dump());
+    REQUIRE(px(warm, 0, 0) >= 250);
+    REQUIRE(px(warm, 0, 1) >= 250);
+    REQUIRE(px(warm, 0, 2) >= 200);
+    REQUIRE(px(warm, 0, 2) <= 232);
+    REQUIRE(s.command("render.grade", Json{{"temperature", 0.0}, {"filmic", true}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json filmic = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("filmic " << filmic["pixels"].dump());
+    REQUIRE(px(filmic, 0, 0) >= 190);
+    REQUIRE(px(filmic, 0, 0) <= 220);
+    // A full vignette: the centre stays, the corner goes black, the edge is part way.
+    REQUIRE(s.command("render.grade", Json{{"filmic", false}, {"vignette", 1.0}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json vig = s.command("capture", Json{{"pixels", pts}}).value();
+    INFO("vignette " << vig["pixels"].dump());
+    REQUIRE(px(vig, 0, 0) >= 250);
+    REQUIRE(px(vig, 1, 0) <= 10);
+    REQUIRE(px(vig, 2, 0) >= 80);
+    REQUIRE(px(vig, 2, 0) <= 200);
+    // Off again: the plain frame, and no grade in the stats.
+    REQUIRE(s.command("render.grade", Json{{"enabled", false}}).value()["enabled"] == false);
+    REQUIRE(s.frame().has_value());
+    Json back = s.command("capture", Json{{"pixels", pts}}).value();
+    REQUIRE(back["render"]["grade"] == false);
+    for (int i = 0; i < 3; ++i) REQUIRE(px(back, i, 0) >= 250);
+    REQUIRE(s.finish().has_value());
+}

@@ -46,6 +46,50 @@ T opt(const Json& p, const char* key, T fallback) {
     }
 }
 
+// A color for the grade's tint: {r, g, b}, [r, g, b] or "#rrggbb" (also "#rgb").
+bool read_tint(const Json& v, rhi::Color& out) {
+    if (v.is_object()) {
+        out = {opt<float>(v, "r", out.r), opt<float>(v, "g", out.g), opt<float>(v, "b", out.b), 1.0f};
+        return true;
+    }
+    if (v.is_array() && v.size() >= 3 && v[0].is_number() && v[1].is_number() && v[2].is_number()) {
+        out = {v[0].get<float>(), v[1].get<float>(), v[2].get<float>(), 1.0f};
+        return true;
+    }
+    if (v.is_string()) {
+        std::string s = v.get<std::string>();
+        if (!s.empty() && s[0] == '#') s.erase(0, 1);
+        if (s.size() == 3) s = {s[0], s[0], s[1], s[1], s[2], s[2]};
+        if (s.size() != 6) return false;
+        float c[3];
+        for (int i = 0; i < 3; ++i) {
+            char* end = nullptr;
+            const std::string part = s.substr(static_cast<std::size_t>(i) * 2, 2);
+            const long n = std::strtol(part.c_str(), &end, 16);
+            if (end == nullptr || *end != '\0') return false;
+            c[i] = static_cast<float>(n) / 255.0f;
+        }
+        out = {c[0], c[1], c[2], 1.0f};
+        return true;
+    }
+    return false;
+}
+
+// The grade's fields from a command's params or a project's [render.grade] table.
+void read_grade(renderer::GradeSettings& g, const Json& p) {
+    g.exposure = opt<float>(p, "exposure", g.exposure);
+    g.filmic = opt<bool>(p, "filmic", g.filmic);
+    g.temperature = opt<float>(p, "temperature", g.temperature);
+    g.contrast = opt<float>(p, "contrast", g.contrast);
+    g.saturation = opt<float>(p, "saturation", g.saturation);
+    g.vignette = opt<float>(p, "vignette", g.vignette);
+    if (p.is_object() && p.contains("tint")) read_tint(p["tint"], g.tint);
+}
+
+Json grade_json(const renderer::GradeSettings& g) {
+    return Json{{"enabled", g.enabled}, {"exposure", g.exposure}, {"filmic", g.filmic}, {"temperature", g.temperature}, {"contrast", g.contrast}, {"saturation", g.saturation}, {"tint", Json{{"r", g.tint.r}, {"g", g.tint.g}, {"b", g.tint.b}}}, {"vignette", g.vignette}};
+}
+
 std::vector<std::string> string_list(const Json& p, const char* key) {
     std::vector<std::string> out;
     if (!p.is_object() || !p.contains(key)) return out;
@@ -243,6 +287,7 @@ Status Session::start() {
     }
     POCKET_TRY(audio, audio::Audio::create(ac));
     audio_ = std::move(audio);
+    if (project_.contains("input") && project_["input"].is_object()) gestures_.configure(project_["input"]);
     if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
         if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
         else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
@@ -275,6 +320,18 @@ Status Session::start() {
         if (r.contains("bloom_strength") && r["bloom_strength"].is_number()) b.strength = r["bloom_strength"].get<float>();
         if (r.contains("bloom_radius") && r["bloom_radius"].is_number()) b.radius = r["bloom_radius"].get<float>();
         renderer_->set_bloom(b);
+        // [render] grade = true, or a [render.grade] table with the settings (on unless it says enabled = false).
+        if (r.contains("grade")) {
+            renderer::GradeSettings g = renderer_->grade();
+            const Json& gj = r["grade"];
+            if (gj.is_boolean()) {
+                g.enabled = gj.get<bool>();
+            } else if (gj.is_object()) {
+                g.enabled = opt<bool>(gj, "enabled", true);
+                read_grade(g, gj);
+            }
+            renderer_->set_grade(g);
+        }
     }
     if (project_.contains("physics") && project_["physics"].is_object()) {
         const Json& ph = project_["physics"];
@@ -449,6 +506,7 @@ void Session::run_tick() {
     particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
     if (audio_) tick_audio(clock_.tick_seconds);
+    if (ui_) ui_->advance(static_cast<float>(clock_.tick_seconds));   // the interface's transitions run on the simulation clock
     if (recorder_.recording()) recorder_.record(*world_, tick);
     perf_world_.add(sw.ms());
     sw = Stopwatch{};
@@ -544,6 +602,7 @@ Json Session::frame_info() const {
     j["time"] = clock_.sim_seconds();
     j["dt"] = clock_.tick_seconds;
     j["paused"] = paused_;
+    j["time_scale"] = time_scale_;
     return j;
 }
 
@@ -564,10 +623,26 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
                 if (auto r = device_->resize(static_cast<std::uint32_t>(e.width), static_cast<std::uint32_t>(e.height)); !r) record_error(r.error());
             }
         }
-        if (simulating && !options_.headless) {
-            double elapsed = frame_timer_.lap();
-            if (frames_ == 0) elapsed = clock_.tick_seconds;
-            ticks = clock_.advance(elapsed);
+        if (simulating) {
+            // Real time into ticks through the time scale: a windowed run by the wall clock, a
+            // headless one a tick's worth per frame; a step is one tick whatever the scale.
+            double elapsed = clock_.tick_seconds;
+            if (!options_.headless) {
+                elapsed = frame_timer_.lap();
+                if (frames_ == 0) elapsed = clock_.tick_seconds;
+            }
+            if (stepping_ || (options_.headless && time_scale_ == 1.0)) {
+                ticks = 1;
+            } else {
+                ticks = clock_.advance(elapsed * time_scale_);
+            }
+            if (scale_left_ > 0) {
+                scale_left_ -= elapsed;
+                if (scale_left_ <= 1e-9) {
+                    scale_left_ = 0;
+                    time_scale_ = 1.0;
+                }
+            }
         }
         if (journal_ && journal_->recording) {
             Json raw = Json::array();
@@ -607,7 +682,23 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
         }
         if (!ui_events.empty()) dispatch("ui", Json(ui_events));
     }
+    recognize_gestures(events, input_events, simulating);
     return true;
+}
+
+void Session::recognize_gestures(const std::vector<platform::Event>& events, Json& input_events, bool time_passes) {
+    std::vector<std::uint64_t> on_ui(events.size(), 0);
+    for (std::size_t i = 0; i < events.size() && i < input_events.size(); ++i) {
+        if (input_events[i].is_object() && input_events[i].contains("ui") && input_events[i]["ui"].is_number()) on_ui[i] = input_events[i]["ui"].get<std::uint64_t>();
+    }
+    std::vector<Json> found = gestures_.feed(events, on_ui, clock_.tick, clock_.tick_seconds);
+    if (time_passes) for (Json& g : gestures_.tick(clock_.tick, clock_.tick_seconds)) found.push_back(std::move(g));
+    for (Json& g : found) {
+        Json data = g;
+        data.erase("type");
+        world_->events().emit(clock_.tick, "input.gesture", 0, std::move(data), 0, "input");
+        input_events.push_back(std::move(g));
+    }
 }
 
 Json Session::inject_events(std::vector<platform::Event> events) {
@@ -637,6 +728,7 @@ Json Session::inject_events(std::vector<platform::Event> events) {
         }
         if (!ui_events.empty()) dispatch("ui", ui_events);
     }
+    recognize_gestures(events, input_events, false);
     if (!input_events.empty()) dispatch("input", input_events);
     host_->drain_microtasks();
     out["events"] = ui_events;
@@ -1901,6 +1993,14 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         b = renderer_->bloom();
         return Json{{"enabled", b.enabled}, {"threshold", b.threshold}, {"strength", b.strength}, {"radius", b.radius}};
     }
+    if (op == "grade") {
+        renderer::GradeSettings g = renderer_->grade();
+        g.enabled = opt<bool>(p, "enabled", g.enabled);
+        if (p.is_object() && p.contains("tint") && !read_tint(p["tint"], g.tint)) return fail("bad_args", "grade tint: {{r, g, b}}, [r, g, b] or \"#rrggbb\"");
+        read_grade(g, p);
+        renderer_->set_grade(g);
+        return grade_json(renderer_->grade());
+    }
     if (op == "viewport") {
         // Points in, points out; the renderer works in pixels.
         float w = 0, h = 0, scale = 1;
@@ -2089,6 +2189,7 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         j["platform"] = platform_->describe();
         j["pads"] = platform_->input().pads;
         j["fingers"] = platform_->input().fingers + static_cast<int>(touch_last_.size());   // real fingers and synthetic ones
+        j["gestures"] = Json{{"enabled", gestures_.settings().enabled}, {"slop", gestures_.settings().slop}, {"tap_seconds", gestures_.settings().tap_seconds}, {"hold_seconds", gestures_.settings().hold_seconds}, {"swipe_points", gestures_.settings().swipe_points}, {"swipe_seconds", gestures_.settings().swipe_seconds}};
         j["held"] = Json::object();
         for (auto& [k, until] : held_keys_) j["held"][k] = until;
         j["actions"] = input_map_.snapshot();
@@ -2239,8 +2340,9 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         if (spatial && o.entity == 0) return fail("bad_args", "a spatial voice needs an entity to be heard from");
         POCKET_TRY(id, a.play(clip, o));
         if (spatial) {
-            spatial_voices_[id] = SpatialVoice{o.entity, o.volume, static_cast<float>(opt<double>(p, "near", 1.0)), static_cast<float>(opt<double>(p, "range", 20.0))};
-            place_voice(id, o.entity, o.volume, spatial_voices_[id].near, spatial_voices_[id].range);
+            spatial_voices_[id] = SpatialVoice{o.entity, o.volume, static_cast<float>(opt<double>(p, "near", 1.0)), static_cast<float>(opt<double>(p, "range", 20.0)), static_cast<float>(opt<double>(p, "occlusion", 0.0)), o.lowpass};
+            const SpatialVoice& sv = spatial_voices_[id];
+            place_voice(id, o.entity, o.volume, sv.near, sv.range, sv.occlusion, sv.lowpass);
         }
         world_->events().emit(clock_.tick, "audio.started", o.entity, Json{{"clip", clip}, {"voice", id}, {"loop", o.loop}, {"spatial", spatial}}, 0, "audio");
         return Json{{"voice", id}, {"clip", clip}};
@@ -2274,9 +2376,10 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
 
 // The listener is the camera of the last frame; a spatial voice's gain falls from full within
 // `near` to nothing at `range`, and it pans toward the side its entity is on, most of the way.
-void Session::place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range) {
+bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range, float occlusion, float base_lowpass, world::EntityId* blocker) {
     const auto* wt = world_->try_get<world::WorldTransform>(entity);
-    if (!wt) return;
+    if (!wt) return false;
+    occlusion = std::clamp(occlusion, 0.0f, 1.0f);
     // The listener: the first enabled AudioListener entity, else the camera of the last frame.
     const renderer::CameraView& cam = renderer_->camera();
     Vec3 ear = cam.position, forward = cam.forward;
@@ -2297,7 +2400,23 @@ void Session::place_voice(std::uint32_t voice, world::EntityId entity, float bas
     if (length(right) < 1e-4f) right = Vec3{1, 0, 0};
     right = normalize(right);
     const float pan = d > 1e-4f ? std::clamp(dot(to * (1.0f / d), right), -1.0f, 1.0f) * 0.8f : 0.0f;
-    (void)audio_->set(voice, Json{{"volume", base_volume * gain}, {"pan", pan}});
+    // A wall in the way: one ray from the ear to the source, past the listener's own collider and the
+    // source's, through triggers.
+    bool blocked = false;
+    world::EntityId by = 0;
+    if (occlusion > 0 && physics_ && d > 1e-3f) {
+        auto hit = physics_->raycast(*world_, ear, to * (1.0f / d), d, [entity, listener](world::EntityId e, const world::RigidBody&, const world::Collider& col) { return !col.is_trigger && e != entity && e != listener; });
+        if (hit) {
+            blocked = true;
+            by = hit->entity;
+        }
+    }
+    const float keep = blocked ? 1.0f - occlusion : 1.0f;
+    Json params{{"volume", base_volume * gain * keep}, {"pan", pan}};
+    if (occlusion > 0) params["lowpass"] = base_lowpass * keep;
+    (void)audio_->set(voice, params);
+    if (blocker) *blocker = by;
+    return blocked;
 }
 
 // AudioSource components start their voices; voices report back; finished voices clear `playing`.
@@ -2324,14 +2443,21 @@ void Session::tick_audio(double dt) {
             }
             updates.emplace_back(e.id(), next);
         } else if (src.spatial && src.playing && src.voice != 0) {
-            place_voice(src.voice, e.id(), src.volume, src.near, src.range);
+            world::EntityId by = 0;
+            const bool blocked = place_voice(src.voice, e.id(), src.volume, src.near, src.range, src.occlusion, src.lowpass, &by);
+            if (src.occlusion > 0 && blocked != src.occluded) {
+                world::AudioSource next = src;
+                next.occluded = blocked;
+                updates.emplace_back(e.id(), next);
+                w.events().emit(clock_.tick, "audio.occluded", e.id(), Json{{"clip", src.clip}, {"voice", src.voice}, {"blocked", blocked}, {"by", by ? w.path(by) : std::string()}}, 0, "audio");
+            }
         }
     });
     for (auto& [id, next] : updates) {
         w.ecs().entity(id).set<world::AudioSource>(next);
-        if (next.spatial && next.playing && next.voice != 0) place_voice(next.voice, id, next.volume, next.near, next.range);
+        if (next.spatial && next.playing && next.voice != 0) place_voice(next.voice, id, next.volume, next.near, next.range, next.occlusion, next.lowpass);
     }
-    for (auto& [voice, sp] : spatial_voices_) place_voice(voice, sp.entity, sp.volume, sp.near, sp.range);
+    for (auto& [voice, sp] : spatial_voices_) place_voice(voice, sp.entity, sp.volume, sp.near, sp.range, sp.occlusion, sp.lowpass);
     for (const audio::VoiceEvent& ev : audio_->tick(dt)) {
         w.events().emit(clock_.tick, ev.type, ev.voice.entity, Json{{"clip", ev.voice.clip}, {"voice", ev.voice.id}, {"loops", ev.voice.loops_done}}, 0, "audio");
         if (ev.type == "audio.finished") spatial_voices_.erase(ev.voice.id);
@@ -3271,16 +3397,28 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name == "step") {
         int ticks = opt<int>(p, "ticks", 1);
         if (ticks < 0 || ticks > 100000) return fail("bad_args", "ticks must be in [0, 100000]");
+        stepping_ = true;
         for (int i = 0; i < ticks; ++i) {
             bool was_paused = paused_;
             paused_ = false;
-            if (auto r = frame(); !r) { paused_ = was_paused; return fail(r.error()); }
+            if (auto r = frame(); !r) { paused_ = was_paused; stepping_ = false; return fail(r.error()); }
             paused_ = was_paused;
         }
+        stepping_ = false;
         return command("state", Json::object(), source);
     }
     if (name == "pause") { paused_ = true; return Json{{"paused", true}}; }
     if (name == "resume") { paused_ = false; return Json{{"paused", false}}; }
+    if (name == "time.scale") {
+        // Slow motion, fast forward and hit-stops: simulation seconds per real second, 0 to 8 (the
+        // most ticks a frame runs), held for `seconds` of real time then 1 again, or until the next call.
+        if (p.contains("scale")) {
+            if (!p["scale"].is_number()) return fail("bad_args", "scale must be a number from 0 to 8");
+            time_scale_ = std::clamp(p["scale"].get<double>(), 0.0, 8.0);
+            scale_left_ = time_scale_ == 1.0 ? 0.0 : std::max(opt<double>(p, "seconds", 0.0), 0.0);
+        }
+        return Json{{"scale", time_scale_}, {"seconds", scale_left_}};
+    }
     if (name == "quit") { quit_ = true; return Json{{"ok", true}}; }
     if (name == "capture") {
         std::string path = opt<std::string>(p, "path", "");
@@ -3334,7 +3472,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }

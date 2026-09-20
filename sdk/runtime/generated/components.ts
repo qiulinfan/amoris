@@ -524,6 +524,10 @@ export interface AudioSource {
     near: number;
     /** Distance at which a spatial source is silent. */
     range: number;
+    /** How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is). */
+    occlusion: number;
+    /** Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes). */
+    occluded: boolean;
     /** Whether a voice is currently playing this source (written by the engine). */
     playing: boolean;
     /** Id of the playing voice, 0 when silent (written by the engine). */
@@ -644,7 +648,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
-    AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, playing: false, voice: 0 },
+    AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },

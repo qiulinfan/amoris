@@ -2,6 +2,7 @@
 // the HTTP control server and tests all share.
 #pragma once
 
+#include <pocket/app/gestures.hpp>
 #include <pocket/app/input_map.hpp>
 #include <pocket/app/runtime.hpp>
 #include <pocket/assets/assets.hpp>
@@ -69,6 +70,9 @@ class Session {
     Json frame_info() const;
     void ui_size(float& width, float& height, float& scale) const;
     Json inject_events(std::vector<platform::Event> events);
+    // The gestures a batch of events completes (and, with time passing, long presses): appended
+    // to the batch's input events and emitted as `input.gesture` world events.
+    void recognize_gestures(const std::vector<platform::Event>& events, Json& input_events, bool time_passes);
     Result<Json> ui_command(std::string_view op, const Json& p);
     Result<Json> script_command(std::string_view op, const Json& p);
     Result<Json> project_command(std::string_view op, const Json& p);
@@ -99,7 +103,10 @@ class Session {
     void release_expired_holds();
     void tick_audio(double dt);
     // A spatial voice's volume and pan from its entity's place against the camera (docs/design/audio.md, Where a sound is).
-    void place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range);
+    // Place a spatial voice from its entity against the listener (volume by distance, pan by side);
+    // with `occlusion` above 0 a collider across the line takes its share and the voice's low-pass is
+    // set from `base_lowpass`. Returns whether something was in the way (`blocker` gets what).
+    bool place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range, float occlusion = 0, float base_lowpass = 1, world::EntityId* blocker = nullptr);
     Status render_frame();
 
     Options options_;
@@ -134,7 +141,7 @@ class Session {
     renderer::DebugDraw debug_draw_;
     std::unique_ptr<assets::AssetStore> assets_;
     std::unique_ptr<audio::Audio> audio_;
-    struct SpatialVoice { world::EntityId entity = 0; float volume = 1, near = 1, range = 20; };
+    struct SpatialVoice { world::EntityId entity = 0; float volume = 1, near = 1, range = 20, occlusion = 0, lowpass = 1; };
     std::map<std::uint32_t, SpatialVoice> spatial_voices_;   // one-shots placed by their entity every tick until they end
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
@@ -144,6 +151,7 @@ class Session {
     std::vector<std::string> bundle_names_;
     std::map<std::string, Json> prefab_cache_;  // parsed prefab files by project-relative path
     InputMap input_map_;
+    Gestures gestures_;
     std::map<std::string, std::int64_t> held_keys_;  // synthetic holds: key name -> tick at which it releases
     std::map<int, std::pair<float, float>> touch_last_;  // synthetic fingers: index -> last position, for the deltas
     std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
@@ -173,6 +181,9 @@ class Session {
     std::int64_t ticks_ = 0;
     bool has_dispatch_ = false;
     bool paused_ = false;
+    double time_scale_ = 1.0;    // simulation seconds per real second (slow motion below 1, a hit-stop at 0)
+    double scale_left_ = 0.0;    // real seconds the scale holds before returning to 1 (0: until the next call)
+    bool stepping_ = false;      // inside `step`: a frame is exactly one tick whatever the scale
     bool quit_ = false;
     bool started_ = false;
     bool stopped_ = false;

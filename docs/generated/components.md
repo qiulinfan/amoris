@@ -351,6 +351,8 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `spatial` | bool | false | Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). |
 | `near` | f32 | 1.0 | Distance within which a spatial source plays at its full volume. |
 | `range` | f32 | 20.0 | Distance at which a spatial source is silent. |
+| `occlusion` | f32 | 0.0 | How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is). |
+| `occluded` | bool | false | Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes). |
 | `playing` | bool | false | Whether a voice is currently playing this source (written by the engine). |
 | `voice` | u32 | 0 | Id of the playing voice, 0 when silent (written by the engine). |
 

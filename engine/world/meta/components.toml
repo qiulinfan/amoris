@@ -365,6 +365,8 @@ fields = [
     { name = "spatial", type = "bool", default = false, doc = "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)." },
     { name = "near", type = "f32", default = 1.0, doc = "Distance within which a spatial source plays at its full volume." },
     { name = "range", type = "f32", default = 20.0, doc = "Distance at which a spatial source is silent." },
+    { name = "occlusion", type = "f32", default = 0.0, doc = "How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is)." },
+    { name = "occluded", type = "bool", default = false, doc = "Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes)." },
     { name = "playing", type = "bool", default = false, doc = "Whether a voice is currently playing this source (written by the engine)." },
     { name = "voice", type = "u32", default = 0, doc = "Id of the playing voice, 0 when silent (written by the engine)." },
 ]
