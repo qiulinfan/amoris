@@ -796,3 +796,50 @@ TEST_CASE("a text area with a syntax colours keywords, strings, numbers, comment
     CHECK(plain[0] > 200);
     CHECK(std::abs(plain[0] - plain[2]) < 20);   // white stays white
 }
+
+TEST_CASE("a keyframed animation runs its props through their keyframes, loops, alternates, waits and ends", "[ui][keyframes]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 60, "box"], ["set", 60, {"name": "fade", "position": "absolute", "left": 0, "top": 10, "width": 20, "height": 20, "on": ["animationend"],
+            "animation": {"keyframes": [{"opacity": 0, "left": 0, "background": "#ff0000"}, {"opacity": 1, "left": 100, "background": "#0000ff"}], "duration": 1000, "easing": "linear"}}], ["append", 1, 60]
+    ])"));
+    auto d = [&]() { return f.doc->describe(60); };
+    f.layout();
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.0));
+    f.doc->advance(0.5f);
+    f.layout();
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.5).margin(1e-3));
+    REQUIRE(d()["rect"]["x"].get<double>() == Catch::Approx(50.0).margin(0.01));
+    REQUIRE(d()["background"] == "#800080");   // halfway from red to blue
+    REQUIRE(d()["animation"]["finished"] == false);
+    // The same animation set again (a re-render) keeps running where it is.
+    f.apply(Json::parse(R"([["set", 60, {"animation": {"keyframes": [{"opacity": 0, "left": 0, "background": "#ff0000"}, {"opacity": 1, "left": 100, "background": "#0000ff"}], "duration": 1000, "easing": "linear"}}]])"));
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.5).margin(1e-3));
+    // Past its end: the last keyframe holds, and animationend comes out with the next events, once.
+    f.doc->advance(0.7f);
+    f.layout();
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(1.0));
+    REQUIRE(d()["rect"]["x"].get<double>() == Catch::Approx(100.0).margin(0.01));
+    REQUIRE(d()["animation"]["finished"] == true);
+    bool wants = false;
+    auto events = f.doc->handle_events({}, wants);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "animationend");
+    REQUIRE(events[0]["name"] == "fade");
+    f.doc->advance(0.5f);
+    REQUIRE(f.doc->handle_events({}, wants).empty());
+    // Forever, alternating, eased, after a delay: the first keyframe during the delay, then out and back.
+    f.apply(Json::parse(R"([["set", 60, {"animation": {"keyframes": [{"offset": 0, "opacity": 0.2}, {"offset": 1, "opacity": 1}], "duration": 1000, "delay": 200, "iterations": "infinite", "direction": "alternate"}}]])"));
+    f.doc->advance(0.1f);
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.2).margin(1e-3));
+    f.doc->advance(0.6f);                            // half way out: eased, still the middle
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.6).margin(1e-3));
+    f.doc->advance(1.0f);                            // half way back
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.6).margin(1e-3));
+    f.doc->advance(0.5f);                            // back at the start
+    REQUIRE(d()["opacity"].get<double>() == Catch::Approx(0.2).margin(1e-3));
+    REQUIRE(d()["animation"]["finished"] == false);
+    // null stops it where it is.
+    f.apply(Json::parse(R"([["set", 60, {"animation": null}]])"));
+    REQUIRE_FALSE(d().contains("animation"));
+}

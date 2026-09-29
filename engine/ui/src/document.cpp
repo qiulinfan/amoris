@@ -6,9 +6,11 @@
 #include <yoga/Yoga.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <map>
+#include <optional>
 #include <sstream>
 
 namespace pocket::ui {
@@ -17,7 +19,7 @@ namespace {
 
 enum Listener : std::uint32_t {
     kClick = 1u << 0, kInput = 1u << 1, kChange = 1u << 2, kKeyDown = 1u << 3, kWheel = 1u << 4,
-    kHover = 1u << 5, kFocus = 1u << 6, kDrag = 1u << 7, kMouseDown = 1u << 8, kMouseUp = 1u << 9,
+    kHover = 1u << 5, kFocus = 1u << 6, kDrag = 1u << 7, kMouseDown = 1u << 8, kMouseUp = 1u << 9, kAnimationEnd = 1u << 10,
 };
 
 std::uint32_t listener_bit(std::string_view name) {
@@ -31,6 +33,7 @@ std::uint32_t listener_bit(std::string_view name) {
     if (name == "drag") return kDrag;
     if (name == "mousedown") return kMouseDown;
     if (name == "mouseup") return kMouseUp;
+    if (name == "animationend") return kAnimationEnd;
     return 0;
 }
 
@@ -68,6 +71,18 @@ struct Node {
     std::map<std::string, float> transition;   // prop -> seconds
     struct Anim { float from[4] = {0, 0, 0, 0}, to[4] = {0, 0, 0, 0}; float t = 0, dur = 0; int n = 1; };
     std::map<std::string, Anim> anims;
+    // A keyframed animation (`animation`): per prop its keyframes (offset 0..1, value), over
+    // `duration` seconds after `delay`, `iterations` times (0: forever), every other one backwards
+    // with `alternate`, eased in and out or linear; `source` is the style it came from, so the same
+    // style set again (a re-render) does not start it over.
+    struct Keyframes {
+        std::map<std::string, std::vector<std::pair<float, std::array<float, 4>>>> tracks;
+        float duration = 1, delay = 0, t = 0;
+        int iterations = 1;
+        bool alternate = false, ease = true, finished = false;
+        std::string source;
+    };
+    std::optional<Keyframes> keyframes;
     bool disabled = false;
     std::string text;
     std::string value;       // input
@@ -232,6 +247,7 @@ struct Document::Impl {
         return true;
     }
     std::map<NodeId, Node> nodes;
+    std::vector<Json> pending;   // events raised between frames (animationend), handed out with the next input
     NodeId root_id = 1;
     YGConfigRef config = nullptr;
     float width = 0, height = 0, scale = 1;
@@ -488,9 +504,83 @@ struct Document::Impl {
         return true;
     }
 
+    // A keyframed animation from its style: {keyframes: [{offset, prop: value, ...}], duration (ms),
+    // delay (ms), iterations (a number or "infinite"), direction ("normal" or "alternate"), easing
+    // ("ease" or "linear")}; props are those transitions animate. False for something else.
+    static bool read_keyframes(Node& n, const Json& v, Node::Keyframes& out) {
+        if (!v.is_object() || !v.contains("keyframes") || !v["keyframes"].is_array()) return false;
+        const Json& frames = v["keyframes"];
+        for (std::size_t i = 0; i < frames.size(); ++i) {
+            const Json& f = frames[i];
+            if (!f.is_object()) return false;
+            const float at = f.contains("offset") && f["offset"].is_number() ? f["offset"].get<float>() : (frames.size() > 1 ? static_cast<float>(i) / static_cast<float>(frames.size() - 1) : 0.0f);
+            for (auto& [k, pv] : f.items()) {
+                if (k == "offset") continue;
+                std::array<float, 4> val{0, 0, 0, 0};
+                if (k == "opacity" || k == "left" || k == "top" || k == "width" || k == "height") {
+                    if (!pv.is_number()) continue;
+                    val[0] = pv.get<float>();
+                } else if (k == "background" || k == "color") {
+                    const Color c = parse_color(pv, k == "color" ? n.color : n.background);
+                    val = {c.r, c.g, c.b, c.a};
+                } else {
+                    continue;
+                }
+                out.tracks[k].push_back({std::clamp(at, 0.0f, 1.0f), val});
+            }
+        }
+        for (auto& [k, t] : out.tracks) std::stable_sort(t.begin(), t.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        out.duration = std::max(v.value("duration", 1000.0f), 1.0f) / 1000.0f;
+        out.delay = std::max(v.value("delay", 0.0f), 0.0f) / 1000.0f;
+        if (v.contains("iterations") && v["iterations"].is_string()) out.iterations = 0;
+        else out.iterations = std::max(static_cast<int>(v.value("iterations", 1.0f)), 1);
+        out.alternate = v.value("direction", std::string("normal")) == "alternate";
+        out.ease = v.value("easing", std::string("ease")) != "linear";
+        out.source = v.dump();
+        return !out.tracks.empty();
+    }
+    // Where a keyframed animation puts its props at its present time.
+    static void apply_keyframes(Node& n) {
+        Node::Keyframes& a = *n.keyframes;
+        const float local = a.t - a.delay;
+        float phase = 0;
+        if (local > 0) {
+            const float cycles = local / a.duration;
+            int iteration = static_cast<int>(std::floor(cycles));
+            phase = cycles - static_cast<float>(iteration);
+            if (a.iterations > 0 && iteration >= a.iterations) { iteration = a.iterations - 1; phase = 1; a.finished = true; }
+            if (a.alternate && (iteration % 2) == 1) phase = 1 - phase;
+        }
+        const float k = a.ease ? phase * phase * (3 - 2 * phase) : phase;
+        for (auto& [prop, track] : a.tracks) {
+            std::array<float, 4> v = track.front().second;
+            if (k >= track.back().first) {
+                v = track.back().second;
+            } else {
+                for (std::size_t i = 1; i < track.size(); ++i) {
+                    if (k <= track[i].first) {
+                        const float span = std::max(track[i].first - track[i - 1].first, 1e-6f);
+                        const float f = std::clamp((k - track[i - 1].first) / span, 0.0f, 1.0f);
+                        for (int c = 0; c < 4; ++c) v[static_cast<std::size_t>(c)] = track[i - 1].second[static_cast<std::size_t>(c)] + (track[i].second[static_cast<std::size_t>(c)] - track[i - 1].second[static_cast<std::size_t>(c)]) * f;
+                        break;
+                    }
+                }
+            }
+            apply_value(n, prop, v.data());
+        }
+    }
+
     void apply_style(Node& n, const Json& props) {
         YGNodeRef y = n.yoga;
         for (auto& [k, v] : props.items()) {
+            if (k == "animation") {
+                // A keyframed animation; the same one set again keeps running where it is.
+                if (v.is_null()) { n.keyframes.reset(); continue; }
+                if (n.keyframes && n.keyframes->source == v.dump()) continue;
+                Node::Keyframes a;
+                if (read_keyframes(n, v, a)) { n.keyframes = std::move(a); apply_keyframes(n); }
+                continue;
+            }
             if (k == "transition") {
                 // {prop: milliseconds}: changes to those props animate from then on.
                 n.transition.clear();
@@ -1020,6 +1110,15 @@ void Document::set_anchor_source(std::function<bool(std::uint64_t, float&, float
 void Document::advance(float seconds) {
     if (seconds <= 0) return;
     for (auto& [id, n] : impl_->nodes) {
+        if (n.keyframes && !n.keyframes->finished) {
+            n.keyframes->t += seconds;
+            Impl::apply_keyframes(n);
+            if (n.keyframes->finished && (n.listeners & kAnimationEnd)) {
+                Json e{{"type", "animationend"}, {"id", id}};
+                if (!n.name.empty()) e["name"] = n.name;
+                impl_->pending.push_back(std::move(e));
+            }
+        }
         if (n.anims.empty()) continue;
         std::vector<std::string> done;
         for (auto& [k, a] : n.anims) {
@@ -1055,7 +1154,8 @@ void Document::set_focus(NodeId id) {
 
 std::vector<Json> Document::handle_events(const std::vector<platform::Event>& events, bool& text_input_wanted) {
     Impl& im = *impl_;
-    std::vector<Json> out;
+    std::vector<Json> out = std::move(im.pending);
+    im.pending.clear();
     auto emit = [&](NodeId target, const char* type, Json extra = Json::object()) {
         Json e = std::move(extra);
         e["type"] = type;
@@ -1361,6 +1461,12 @@ Json Document::describe(NodeId id) const {
     j["background"] = color_hex(n->background);
     j["color"] = color_hex(n->color);
     j["opacity"] = n->opacity;
+    if (n->keyframes) {
+        const Node::Keyframes& a = *n->keyframes;
+        Json props = Json::array();
+        for (const auto& [k, t] : a.tracks) props.push_back(k);
+        j["animation"] = Json{{"time", a.t}, {"duration", a.duration * 1000.0f}, {"iterations", a.iterations}, {"finished", a.finished}, {"props", props}};
+    }
     if (!n->transition.empty()) {
         Json tr = Json::object();
         for (const auto& [k, secs] : n->transition) tr[k] = secs * 1000.0f;

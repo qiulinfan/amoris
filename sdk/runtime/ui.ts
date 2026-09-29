@@ -192,6 +192,8 @@ export interface StyleProps {
     scrollTop?: number;
     /** Milliseconds per prop: later changes to opacity, left, top, width, height, background or color run from the present value to the new one, eased in and out (a panel sliding in, a fade). */
     transition?: Partial<Record<"opacity" | "left" | "top" | "width" | "height" | "background" | "color", number>>;
+    /** A keyframed animation of opacity, left, top, width, height, background or color: keyframes at offsets 0..1 (evenly spread without), over `duration` ms after `delay`, `iterations` times or "infinite", `direction` "alternate" to run every other one backwards, `easing` "ease" (in and out) or "linear". The same one set again keeps running; onAnimationEnd fires when a finite one ends. */
+    animation?: { keyframes: Array<{ offset?: number; opacity?: number; left?: number; top?: number; width?: number; height?: number; background?: ColorValue; color?: ColorValue }>; duration?: number; delay?: number; iterations?: number | "infinite"; direction?: "normal" | "alternate"; easing?: "ease" | "linear" } | null;
     /** An entity id: the element sits on that entity's projection every frame (hidden while it is behind the camera or gone), for name tags, damage numbers and speech bubbles. */
     anchor?: number;
     /** Points added to the projection. */
@@ -213,6 +215,7 @@ export interface EventProps {
     onBlur?: (e: UiEvent) => void;
     onDrag?: (e: UiEvent) => void;
     onDragEnd?: (e: UiEvent) => void;
+    onAnimationEnd?: (e: UiEvent) => void;
 }
 
 export interface CommonProps extends StyleProps, EventProps {
@@ -275,7 +278,7 @@ function collectText(node: VNode): string {
 
 const eventNames: Record<string, string> = {
     onClick: "click", onMouseDown: "mousedown", onMouseUp: "mouseup", onInput: "input", onChange: "change", onKeyDown: "keydown",
-    onWheel: "wheel", onHover: "hover", onFocus: "focus", onBlur: "focus", onDrag: "drag", onDragEnd: "drag",
+    onWheel: "wheel", onHover: "hover", onFocus: "focus", onBlur: "focus", onDrag: "drag", onDragEnd: "drag", onAnimationEnd: "animationend",
 };
 
 // Expand components and fragments into a tree of intrinsic elements.
@@ -526,6 +529,7 @@ export function dispatchUiEvents(events: UiEvent[]): void {
             case "blur": h.onBlur?.(e); break;
             case "drag": h.onDrag?.(e); break;
             case "dragend": h.onDragEnd?.(e); break;
+            case "animationend": h.onAnimationEnd?.(e); break;
         }
     }
     flushUi();

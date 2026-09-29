@@ -1,0 +1,24 @@
+name = "showcase"
+entry = "scripts/main.ts"
+scene = "scene.json"
+
+[window]
+title = "Pocket showcase: a courtyard at dusk"
+width = 1280
+height = 720
+
+# Everything the renderer does, on at once (docs/design/rendering.md).
+[render]
+taa = true
+ssr = true
+bloom = true
+bloom_threshold = 1.0
+bloom_strength = 0.45
+shadow_distance = 60
+
+[render.tonemap]
+operator = "agx"
+exposure = 0.95
+
+[render.ao]
+radius = 0.5

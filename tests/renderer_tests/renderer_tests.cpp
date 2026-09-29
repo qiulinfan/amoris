@@ -1648,3 +1648,102 @@ TEST_CASE("a reflection probe makes a room's floor reflect the room, not the sky
     REQUIRE(std::abs(back[2] - sky[2]) < 8);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("the showcase sample has every part of the renderer on at once", "[renderer][showcase]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "showcase";
+    o.bundle = root() / "build" / "ts" / "showcase.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["sky"] == "procedural");
+    REQUIRE(stats["shadow_cascades"].get<int>() == 4);
+    REQUIRE(stats["point_lights"].get<int>() >= 10);
+    REQUIRE(stats["spot_lights"] == 1);
+    REQUIRE(stats["light_shadows"]["lights"].get<int>() >= 4);
+    REQUIRE(stats["volumetric"] == true);
+    REQUIRE(stats["taa"] == true);
+    REQUIRE(stats["ssr"] == true);
+    REQUIRE(stats["probes"]["in_use"] == 1);
+    REQUIRE(stats["bloom"] == true);
+    REQUIRE(stats["ao"] == true);
+    REQUIRE(stats["tonemap"] == "agx");
+    REQUIRE(stats["assets"].value("missing", Json::array()).empty());
+    // The camera circles: its angle is exposed and moves.
+    const double a0 = s.command("state", Json::object()).value()["state"]["camera.angle"].get<double>();
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    const double a1 = s.command("state", Json::object()).value()["state"]["camera.angle"].get<double>();
+    REQUIRE(a1 > a0);
+    REQUIRE(s.finish().has_value());
+    REQUIRE(s.report()["ok"] == true);
+}
+
+TEST_CASE("a light's shadow faces draw only the casters it reaches", "[renderer][lightshadows][shadowcull]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 90;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // Forty blocks three units apart along x; a lamp beside the first, reaching four units.
+    for (int i = 0; i < 40; ++i) {
+        REQUIRE(s.command("world.spawn", Json{{"name", "Block" + std::to_string(i)}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3 * i}, {"y", 0.5}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}}}}).has_value());
+    }
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 3}, {"z", 8}}}}}, {"Camera", Json{{"fov_degrees", 60}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 1}, {"y", 2}, {"z", 1}}}}}, {"Light", Json{{"kind", 1}, {"intensity", 2}, {"range", 4}, {"shadows", false}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int without = s.command("render.stats", Json::object()).value()["shadow_instances"].get<int>();
+    REQUIRE(s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"shadows", true}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    const int with = stats["shadow_instances"].get<int>();
+    INFO("shadow instances without the lamp's shadows " << without << ", with " << with << " " << stats["light_shadows"].dump());
+    REQUIRE(stats["light_shadows"]["faces"] == 6);
+    // Six faces of the lamp, each drawing the two blocks within its reach, not all forty.
+    REQUIRE(with - without > 0);
+    REQUIRE(with - without <= 6 * 3);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("order-independent transparency blends interleaved translucent meshes alike whichever is drawn first", "[renderer][oit]") {
+    // A thin red pane and a blue box around it share a center, so sorting by entity depth cannot
+    // tell them apart: sorted blending draws them in the order they were made, OIT does not care.
+    auto center = [&](bool blue_first, bool oit) {
+        app::Options o = playground_options();
+        o.width = 160;
+        o.height = 90;
+        app::Session s(o);
+        REQUIRE(s.start().has_value());
+        REQUIRE(s.command("world.clear", Json::object()).has_value());
+        const Json pane{{"name", "Pane"}, {"components", Json{{"Transform", Json{{"scale", Json{{"x", 2}, {"y", 2}, {"z", 0.02}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 1}, {"g", 0}, {"b", 0}, {"a", 0.5}}}}}}}};
+        const Json box{{"name", "Box"}, {"components", Json{{"Transform", Json{{"scale", Json{{"x", 1.2}, {"y", 1.2}, {"z", 0.4}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 1}, {"a", 0.5}}}}}}}};
+        REQUIRE(s.command("world.spawn", blue_first ? box : pane).has_value());
+        REQUIRE(s.command("world.spawn", blue_first ? pane : box).has_value());
+        REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 5}}}}}, {"Camera", Json{{"fov_degrees", 40}}}}}}).has_value());
+        REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 0}, {"intensity", 1.0}}}}}}).has_value());
+        REQUIRE(s.command("render.oit", Json{{"enabled", oit}}).value()["enabled"] == oit);
+        REQUIRE(s.frame().has_value());
+        REQUIRE(s.command("render.stats", Json::object()).value()["oit"] == oit);
+        Json r = s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        REQUIRE(s.finish().has_value());
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    const auto sorted_a = center(false, false), sorted_b = center(true, false);
+    const auto oit_a = center(false, true), oit_b = center(true, true);
+    INFO("sorted " << sorted_a[0] << "," << sorted_a[2] << " vs " << sorted_b[0] << "," << sorted_b[2] << "; oit " << oit_a[0] << "," << oit_a[2] << " vs " << oit_b[0] << "," << oit_b[2]);
+    // Sorted: which one ends on top depends on which was made first.
+    REQUIRE(std::abs(sorted_a[0] - sorted_b[0]) + std::abs(sorted_a[2] - sorted_b[2]) > 30);
+    // OIT: the same either way, and both colors in it, the nearer (blue) weighing more.
+    REQUIRE(std::abs(oit_a[0] - oit_b[0]) <= 3);
+    REQUIRE(std::abs(oit_a[2] - oit_b[2]) <= 3);
+    REQUIRE(oit_a[0] > 40);
+    REQUIRE(oit_a[2] > oit_a[0]);
+}

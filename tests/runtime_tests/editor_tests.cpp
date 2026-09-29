@@ -366,6 +366,9 @@ TEST_CASE("editor lists the project's assets and places one dropped on the scene
     ok(s.idle_frame());
     Json row = ok(s.command("ui.query", Json{{"name", "asset:assets/bowl.glb"}}));
     REQUIRE(row.size() == 1);
+    // A model's row carries a thumbnail drawn by assets.preview into the project's .pocket/thumbs.
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "thumb:assets/bowl.glb"}})).size() == 1);
+    REQUIRE(std::filesystem::is_regular_file(root() / "samples" / "physics" / ".pocket" / "thumbs" / "assets_bowl.glb.png"));
     // A click describes the file.
     ok(s.command("ui.click", Json{{"id", row[0]["id"]}}));
     ok(s.idle_frame());

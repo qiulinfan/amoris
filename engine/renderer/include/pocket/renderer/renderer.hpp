@@ -110,6 +110,7 @@ struct GradeSettings {
 struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
+    std::uint32_t shadow_instances = 0; // objects drawn into the shadow passes (a light's faces draw only what its reach touches)
     bool shadows = false;             // whether a shadow map was rendered this frame
     int shadow_cascades = 0;          // cascades rendered this frame
     float shadow_distance = 0;        // view depth the last cascade reaches
@@ -134,6 +135,7 @@ struct RenderStats {
     bool fog = false;                 // whether fog was applied this frame
     bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
     bool taa = false;                 // whether the frame was resolved against its history (temporal anti-aliasing)
+    bool oit = false;                 // whether translucent meshes were blended order-independently this frame
     bool lut = false;                 // whether a look-up table graded the frame
     bool ssr = false;                 // whether screen-space reflections were traced this frame
     std::uint32_t probes = 0;         // reflection probes in use (captured)
@@ -232,6 +234,9 @@ class Renderer {
     // request to capture every one again.
     [[nodiscard]] Json probes() const;
     void refresh_probes();
+    // Order-independent transparency (weighted blended): translucent meshes need no sorting.
+    void set_oit(bool enabled);
+    [[nodiscard]] bool oit() const;
     void set_ssr(SsrSettings s);
     [[nodiscard]] SsrSettings ssr() const;
     void set_dof(DofSettings s);

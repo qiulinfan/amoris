@@ -143,6 +143,23 @@ function topLevelSelection(): Array<{ id: number; path: string }> {
     return withPaths.filter((s) => !withPaths.some((o) => o.id !== s.id && s.path.startsWith(o.path + "/")));
 }
 
+// Models' thumbnails: drawn once a session by assets.preview into the project's .pocket/thumbs,
+// shown by the Assets tab like an image's.
+const thumbs = new Map<string, string>();
+function thumbFor(path: string): string {
+    let thumb = thumbs.get(path);
+    if (thumb === undefined) {
+        thumb = `.pocket/thumbs/${path.replace(/[\\/]/g, "_")}.png`;
+        try {
+            command("assets.preview", { path, size: 64, out: thumb });
+        } catch {
+            thumb = "";   // unreadable: no thumbnail
+        }
+        thumbs.set(path, thumb);
+    }
+    return thumb;
+}
+
 function refreshBottom(): void {
     const t = tab();
     if (t === "console") logs.set(command<LogRow[]>("log.tail", { n: 40 }));
@@ -708,6 +725,11 @@ function reimportPicked(): void {
     try {
         const r = command<{ importer: string; seconds?: number; cached?: boolean }>("assets.import", { path, force: true });
         assetInfo.set(describeAsset(path));
+        // Its thumbnail again, and the picture the interface holds of it forgotten.
+        const old = thumbs.get(path);
+        thumbs.delete(path);
+        const thumb = thumbFor(path);
+        if (old && thumb) command("assets.reload", { path: thumb });
         notice.set(`${path} imported again${r.importer === "blender" && r.seconds !== undefined ? ` through Blender in ${r.seconds.toFixed(1)} s` : ""}`);
     } catch (e) {
         notice.set(`${path} not imported: ${String(e)}`);
@@ -1135,6 +1157,7 @@ function Bottom() {
             ...list.map((r) => (
                 <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" padding={[2, 6]} gap={8} radius={3} background={picked === r.path ? theme.accent : null} onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)}>
                     {r.kind === "image" ? <box width={16} height={16} image={r.path} name={`thumb:${r.path}`} /> : null}
+                    {r.kind === "mesh" && thumbFor(r.path) ? <box width={16} height={16} image={thumbFor(r.path)} name={`thumb:${r.path}`} /> : null}
                     <Label text={r.path} size={12} color={picked === r.path ? theme.accentText : theme.text} />
                     <Label text={r.kind} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
                     {r.importer && r.importer !== "gltf" ? <Label text={r.importer === "blender" ? "via Blender" : r.importer.toUpperCase()} size={12} color={picked === r.path ? theme.accentText : theme.muted} name={`importer:${r.path}`} /> : null}

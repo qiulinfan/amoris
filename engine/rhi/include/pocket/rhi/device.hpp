@@ -58,6 +58,8 @@ class Device {
     Status end_frame(Frame& frame);
     // Read back the offscreen target of the last submitted frame.
     Result<Image> capture();
+    // Read back any RGBA8 texture with CopySrc usage (after the work that fills it was submitted).
+    Result<Image> read_texture(WGPUTexture texture, std::uint32_t width, std::uint32_t height);
     // Let the GPU make progress: process callbacks (and on the web, yield to the page).
     void poll(bool wait);
 

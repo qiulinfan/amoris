@@ -60,6 +60,7 @@ A `MeshRenderer.mesh` or `world.instantiate {mesh}` can name any of these, and t
 | `assets.describe {path}` | A mesh's vertices, triangles, submeshes, nodes, materials and bounds; an image's size. Loads it if needed. |
 | `assets.reload {path?}` | Forget decoded data (one path or all) and drop GPU copies; the next frame reloads from disk. |
 | `assets.stats` | Counts of loaded meshes, images and failures plus the renderer's view. |
+| `assets.preview {path, size?, out?, image?}` | A model drawn on its own, off screen, by a renderer of its own (the scene's frames, camera and history untouched): framed from three quarters above so its bounding sphere fills the view, under a procedural sky and a sun, AgX; written to `out` (project-relative or absolute) as PNG and, with `image: true`, returned as base64 PNG. The editor's thumbnails and the MCP tool `asset_preview` (which hands the picture to a model that sees) come from it, so an agent can look at a Blender file before placing it. |
 | `assets.import {path, force?}` | Read a model now (through Blender for the formats it converts, cached by content) and describe it. |
 
 `render.stats` reports `assets.meshes`, `assets.textures` and `assets.missing`.

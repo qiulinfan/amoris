@@ -113,6 +113,10 @@ fn tools_list() -> Value {
             "ids": { "type": "string", "description": "PNG path for the false-color id buffer" },
             "image": { "type": "boolean", "default": false }
         }), &[])),
+        tool("asset_preview", "A model file (glTF, OBJ, STL, or one Blender reads) drawn on its own, framed from three quarters above under a sky and a sun, returned as a picture: see a model before placing it. The scene is untouched.", obj_schema(json!({
+            "path": { "type": "string", "description": "project-relative model path, e.g. assets/crate.glb" },
+            "size": { "type": "integer", "default": 256 }
+        }), &["path"])),
         tool("render_pick", "Entity under a pixel of the last frame.", obj_schema(json!({ "x": { "type": "number" }, "y": { "type": "number" } }), &["x", "y"])),
         tool("ui_snapshot", "The interface as text: one line per element with type, id, name, rectangle, text or value, listeners, focus and scroll state. Read this instead of screenshots.", obj_schema(json!({ "depth": { "type": "integer" }, "max_nodes": { "type": "integer" }, "root": { "type": "integer" } }), &[])),
         tool("ui_query", "Find interface elements by name, text substring or type (box, text, input).", obj_schema(json!({ "name": { "type": "string" }, "text": { "type": "string" }, "type": { "type": "string" } }), &[])),
@@ -330,6 +334,16 @@ impl<'a> McpServer<'a> {
             "step" => self.rpc("step", args).map(|v| Self::text_result(v, false)),
             "events_since" => self.rpc("events.since", args).map(|v| Self::text_result(v, false)),
             "capture" => self.capture(args),
+            "asset_preview" => {
+                let mut a = args.clone();
+                a["image"] = json!(true);
+                let mut v = self.rpc("assets.preview", a)?;
+                let png = v.get("png").and_then(|p| p.as_str()).unwrap_or_default().to_string();
+                if let Some(o) = v.as_object_mut() { o.remove("png"); }
+                let mut content = vec![json!({ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() })];
+                if !png.is_empty() { content.push(json!({ "type": "image", "data": png, "mimeType": "image/png" })); }
+                Ok(json!({ "content": content, "isError": false }))
+            }
             "render_pick" => self.rpc("render.pick", args).map(|v| Self::text_result(v, false)),
             "ui_snapshot" => self.rpc("ui.snapshot", args).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false)),
             "ui_query" => self.rpc("ui.query", args).map(|v| Self::text_result(v, false)),

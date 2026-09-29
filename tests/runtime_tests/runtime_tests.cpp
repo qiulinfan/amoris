@@ -3855,3 +3855,46 @@ TEST_CASE("a spatial source rises in pitch coming at the listener and falls goin
     REQUIRE(pitch() == Catch::Approx(1.0).margin(1e-3));
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("assets.preview draws a model on its own without touching the scene's frame", "[runtime][assets][preview]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "error";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const Json before = s.command("render.stats", Json::object()).value();
+    const std::filesystem::path out = root() / "build" / "test-out" / "crate-preview.png";
+    std::filesystem::remove(out);
+    Json p = s.command("assets.preview", Json{{"path", "assets/crate.glb"}, {"size", 96}, {"out", out.string()}, {"image", true}}).value();
+    INFO(p.dump().substr(0, 400));
+    REQUIRE(p["width"] == 96);
+    REQUIRE(p["vertices"].get<int>() > 0);
+    REQUIRE(p["png"].get<std::string>().rfind("iVBORw0KGgo", 0) == 0);   // a PNG's signature, in base64
+    REQUIRE(std::filesystem::is_regular_file(out));
+    auto bytes = fs::read_text(out);
+    REQUIRE(bytes.has_value());
+    auto img = assets::decode_image(*bytes, "preview");
+    REQUIRE(img.has_value());
+    REQUIRE(img->width == 96);
+    // The model fills the middle; the corners are the background.
+    auto at = [&](std::uint32_t x, std::uint32_t y) { const std::size_t i = (static_cast<std::size_t>(y) * img->width + x) * 4; return std::array<int, 3>{img->rgba[i], img->rgba[i + 1], img->rgba[i + 2]}; };
+    const auto corner = at(2, 2), middle = at(48, 52);
+    INFO("corner " << corner[0] << "," << corner[1] << "," << corner[2] << " middle " << middle[0] << "," << middle[1] << "," << middle[2]);
+    REQUIRE(std::abs(middle[0] - corner[0]) + std::abs(middle[1] - corner[1]) + std::abs(middle[2] - corner[2]) > 40);
+    // The scene's renderer did not see any of it.
+    REQUIRE(s.frame().has_value());
+    const Json after = s.command("render.stats", Json::object()).value();
+    REQUIRE(after["camera"] == before["camera"]);
+    REQUIRE(after["instances"] == before["instances"]);
+    REQUIRE(after["draw_calls"] == before["draw_calls"]);
+    // A path that is not a model is refused.
+    REQUIRE_FALSE(s.command("assets.preview", Json{{"path", "assets/nothing.glb"}}).has_value());
+    REQUIRE(s.finish().has_value());
+}

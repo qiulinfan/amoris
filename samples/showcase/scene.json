@@ -1,0 +1,1851 @@
+{
+ "format": "pocket-scene",
+ "version": 1,
+ "entities": [
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {
+     "mode": 1,
+     "zenith": {
+      "r": 0.12,
+      "g": 0.18,
+      "b": 0.38,
+      "a": 1
+     },
+     "horizon": {
+      "r": 0.85,
+      "g": 0.5,
+      "b": 0.3,
+      "a": 1
+     },
+     "ground": {
+      "r": 0.22,
+      "g": 0.2,
+      "b": 0.2,
+      "a": 1
+     },
+     "intensity": 0.8,
+     "sun_size": 1.5
+    }
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "rotation": {
+      "x": -0.07833610394146276,
+      "y": -0.7603344640039612,
+      "z": -0.09335733330207169,
+      "w": 0.6379963683170988
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 2.6,
+     "color": {
+      "r": 1.0,
+      "g": 0.72,
+      "b": 0.45,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Mist",
+   "components": {
+    "Fog": {
+     "color": {
+      "r": 1,
+      "g": 0.95,
+      "b": 0.9,
+      "a": 1
+     },
+     "density": 0.0045,
+     "falloff": 0.18,
+     "volumetric": true,
+     "anisotropy": 0.7,
+     "steps": 40,
+     "distance": 45
+    }
+   }
+  },
+  {
+   "name": "Floor",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": -0.1,
+      "z": 0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 44,
+      "y": 0.2,
+      "z": 44
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.42,
+      "g": 0.39,
+      "b": 0.35,
+      "a": 1
+     },
+     "roughness": 0.4
+    }
+   }
+  },
+  {
+   "name": "PoolRim",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.05,
+      "z": 1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 7.4,
+      "y": 0.3,
+      "z": 13.4
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.55,
+      "g": 0.5,
+      "b": 0.45,
+      "a": 1
+     },
+     "roughness": 0.5
+    }
+   }
+  },
+  {
+   "name": "Pool",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.12,
+      "z": 1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 6.6,
+      "y": 0.2,
+      "z": 12.6
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.04,
+      "g": 0.07,
+      "b": 0.1,
+      "a": 1
+     },
+     "roughness": 0.03
+    }
+   }
+  },
+  {
+   "name": "Column0",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": -8
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Column1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": -5
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Column2",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": -2
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Column3",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": 1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Column4",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": 4
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Column5",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": 7
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Column6",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 2.2,
+      "z": 10
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 4.4,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.85,
+      "g": 0.8,
+      "b": 0.72,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "Lintel",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -7,
+      "y": 4.6,
+      "z": 1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1.1,
+      "y": 0.5,
+      "z": 19.5
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.8,
+      "g": 0.75,
+      "b": 0.67,
+      "a": 1
+     },
+     "roughness": 0.6
+    }
+   }
+  },
+  {
+   "name": "PavilionFloor",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9,
+      "y": 0.05,
+      "z": 0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 6,
+      "y": 0.1,
+      "z": 6
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.3,
+      "g": 0.3,
+      "b": 0.32,
+      "a": 1
+     },
+     "metallic": 0.0,
+     "roughness": 0.06
+    }
+   }
+  },
+  {
+   "name": "PavilionBack",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 12.1,
+      "y": 1.6,
+      "z": 0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.2,
+      "y": 3.2,
+      "z": 6.2
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.55,
+      "g": 0.12,
+      "b": 0.1,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "PavilionNorth",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9,
+      "y": 1.6,
+      "z": -3.1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 6.2,
+      "y": 3.2,
+      "z": 0.2
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.75,
+      "g": 0.72,
+      "b": 0.66,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "PavilionSouth",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9,
+      "y": 1.6,
+      "z": 3.1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 6.2,
+      "y": 3.2,
+      "z": 0.2
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.75,
+      "g": 0.72,
+      "b": 0.66,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "PavilionRoof",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9,
+      "y": 3.3,
+      "z": 0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 6.6,
+      "y": 0.2,
+      "z": 6.6
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.35,
+      "g": 0.3,
+      "b": 0.28,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "PavilionProbe",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9,
+      "y": 1.6,
+      "z": 0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "ReflectionProbe": {
+     "size": {
+      "x": 6,
+      "y": 3.2,
+      "z": 6
+     }
+    }
+   }
+  },
+  {
+   "name": "PavilionLamp",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 10.5,
+      "y": 2.4,
+      "z": 0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.3,
+      "y": 0.3,
+      "z": 0.3
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 8,
+      "g": 5.5,
+      "b": 2.5
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 4,
+     "range": 7,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.75,
+      "b": 0.45,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Crate0",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9.5,
+      "y": 0.55,
+      "z": -1.3
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "assets/crate.glb"
+    }
+   }
+  },
+  {
+   "name": "Crate1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 10.4,
+      "y": 0.55,
+      "z": -1.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "assets/crate.glb"
+    }
+   }
+  },
+  {
+   "name": "Crate2",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 9.9,
+      "y": 1.55,
+      "z": -1.15
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "assets/crate.glb"
+    }
+   }
+  },
+  {
+   "name": "CrateSpot",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 8,
+      "y": 3.1,
+      "z": -0.5
+     },
+     "rotation": {
+      "x": -0.4330127018922193,
+      "y": -0.4330127018922193,
+      "z": -0.24999999999999994,
+      "w": 0.7500000000000001
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "Light": {
+     "kind": 2,
+     "intensity": 6,
+     "range": 6,
+     "inner_angle": 18,
+     "outer_angle": 26,
+     "shadows": true,
+     "color": {
+      "r": 0.8,
+      "g": 0.9,
+      "b": 1.0,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post0_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 0.5,
+      "z": -5.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern0_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 1.15,
+      "z": -5.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": false,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post0_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 0.5,
+      "z": -5.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern0_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 1.15,
+      "z": -5.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": false,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post1_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 0.5,
+      "z": -2.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern1_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 1.15,
+      "z": -2.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": false,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post1_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 0.5,
+      "z": -2.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern1_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 1.15,
+      "z": -2.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": false,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post2_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 0.5,
+      "z": -0.20000000000000018
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern2_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 1.15,
+      "z": -0.20000000000000018
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": false,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post2_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 0.5,
+      "z": -0.20000000000000018
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern2_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 1.15,
+      "z": -0.20000000000000018
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": false,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post3_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 0.5,
+      "z": 2.1999999999999993
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern3_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 1.15,
+      "z": 2.1999999999999993
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post3_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 0.5,
+      "z": 2.1999999999999993
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern3_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 1.15,
+      "z": 2.1999999999999993
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post4_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 0.5,
+      "z": 4.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern4_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 1.15,
+      "z": 4.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post4_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 0.5,
+      "z": 4.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern4_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 1.15,
+      "z": 4.6
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post5_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 0.5,
+      "z": 7.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern5_-1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -4.2,
+      "y": 1.15,
+      "z": 7.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Post5_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 0.5,
+      "z": 7.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.14,
+      "y": 1.0,
+      "z": 0.14
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 0.2,
+      "g": 0.18,
+      "b": 0.16,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Lantern5_1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 4.2,
+      "y": 1.15,
+      "z": 7.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.22,
+      "y": 0.22,
+      "z": 0.22
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     },
+     "emissive": {
+      "r": 5,
+      "g": 3.2,
+      "b": 1.4
+     },
+     "cast_shadows": false
+    },
+    "Light": {
+     "kind": 1,
+     "intensity": 1.6,
+     "range": 3.2,
+     "shadows": true,
+     "color": {
+      "r": 1,
+      "g": 0.7,
+      "b": 0.4,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Orb",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 2.2,
+      "z": 1
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 0.7,
+      "y": 0.7,
+      "z": 0.7
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.9,
+      "g": 0.9,
+      "b": 0.95,
+      "a": 1
+     },
+     "metallic": 1.0,
+     "roughness": 0.08
+    }
+   }
+  },
+  {
+   "name": "Camera",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 6,
+      "z": 20
+     },
+     "rotation": {
+      "x": -0.12186934340514748,
+      "y": 0.0,
+      "z": 0.0,
+      "w": 0.992546151641322
+     },
+     "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+     }
+    },
+    "Camera": {
+     "fov_degrees": 55,
+     "far": 400
+    }
+   }
+  }
+ ]
+}

@@ -117,6 +117,7 @@ class Session {
     std::unique_ptr<script::ScriptHost> host_;
     std::unique_ptr<world::World> world_;
     std::unique_ptr<renderer::Renderer> renderer_;
+    std::unique_ptr<renderer::Renderer> preview_renderer_;   // assets.preview's own, made on first use (its frames never touch the scene's)
     std::unique_ptr<renderer::Particles> particles_;
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;

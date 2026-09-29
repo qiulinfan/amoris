@@ -445,27 +445,29 @@ Status Device::end_frame(Frame& frame) {
     return {};
 }
 
-Result<Image> Device::capture() {
+Result<Image> Device::capture() { return read_texture(impl_->color, impl_->width, impl_->height); }
+
+Result<Image> Device::read_texture(WGPUTexture texture, std::uint32_t width, std::uint32_t height) {
     Impl& im = *impl_;
-    const std::uint32_t bpr_unpadded = im.width * 4;
+    const std::uint32_t bpr_unpadded = width * 4;
     const std::uint32_t align = 256;
     const std::uint32_t bpr = (bpr_unpadded + align - 1) / align * align;
     WGPUBufferDescriptor bd{};
     bd.label = str("pocket.readback");
     bd.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
-    bd.size = static_cast<std::uint64_t>(bpr) * im.height;
+    bd.size = static_cast<std::uint64_t>(bpr) * height;
     WGPUBuffer readback = wgpuDeviceCreateBuffer(im.device, &bd);
     if (!readback) return fail("gpu_buffer_failed", "cannot create readback buffer");
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(im.device, nullptr);
     WGPUTexelCopyTextureInfo src{};
-    src.texture = im.color;
+    src.texture = texture;
     src.aspect = WGPUTextureAspect_All;
     WGPUTexelCopyBufferInfo dst{};
     dst.layout.offset = 0;
     dst.layout.bytesPerRow = bpr;
-    dst.layout.rowsPerImage = im.height;
+    dst.layout.rowsPerImage = height;
     dst.buffer = readback;
-    WGPUExtent3D ext{im.width, im.height, 1};
+    WGPUExtent3D ext{width, height, 1};
     wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &ext);
     WGPUCommandBuffer cb = wgpuCommandEncoderFinish(enc, nullptr);
     wgpuQueueSubmit(im.queue, 1, &cb);
@@ -490,10 +492,10 @@ Result<Image> Device::capture() {
     }
     const auto* px = static_cast<const std::uint8_t*>(wgpuBufferGetConstMappedRange(readback, 0, bd.size));
     Image img;
-    img.width = im.width;
-    img.height = im.height;
-    img.rgba.resize(static_cast<std::size_t>(bpr_unpadded) * im.height);
-    for (std::uint32_t y = 0; y < im.height; ++y) {
+    img.width = width;
+    img.height = height;
+    img.rgba.resize(static_cast<std::size_t>(bpr_unpadded) * height);
+    for (std::uint32_t y = 0; y < height; ++y) {
         std::memcpy(img.rgba.data() + static_cast<std::size_t>(y) * bpr_unpadded, px + static_cast<std::size_t>(y) * bpr, bpr_unpadded);
     }
     wgpuBufferUnmap(readback);

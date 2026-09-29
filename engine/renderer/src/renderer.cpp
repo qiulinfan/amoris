@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -570,6 +571,26 @@ fn shade(in: VsOut) -> vec4f {
 @fragment fn fs_color(in: VsOut) -> @location(0) vec4f {
     return shade(in);
 }
+// Order-independent transparency (weighted blended, McGuire and Bavoil): each translucent surface
+// adds its premultiplied color into an accumulation target weighed by how near and how opaque it
+// is, and multiplies a revealage target by what it lets through; a composite divides the one by
+// its weight and lays it over the opaque scene by the other. No sorting, so interleaved surfaces
+// blend alike whichever way round they are drawn.
+struct OitOut {
+    @location(0) accum: vec4f,
+    @location(1) reveal: f32,
+};
+@fragment fn fs_oit(in: VsOut) -> OitOut {
+    let c = shade(in);
+    let a = clamp(c.a, 0.0, 1.0);
+    let z = abs(dot(in.world_pos - frame.camera_pos.xyz, frame.camera_fwd.xyz));
+    let w = a * clamp(10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0)), 1e-2, 3e3);
+    var out: OitOut;
+    out.accum = vec4f(c.rgb * a, a) * w;
+    out.reveal = a;
+    return out;
+}
+
 // The id pass writes the entity and the pixel's motion since last frame, in viewport units (y down).
 struct IdOut {
     @location(0) id: u32,
@@ -1502,6 +1523,24 @@ fn motion_at(px: vec2i) -> vec2f {
 }
 )WGSL";
 
+// The composite of order-independent transparency over the HDR target (alpha blended by the pipeline).
+constexpr const char* kOitCompositeWgsl = R"WGSL(
+@group(0) @binding(0) var accum_tex: texture_2d<f32>;
+@group(0) @binding(1) var reveal_tex: texture_2d<f32>;
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    return vec4f(x, y, 0.0, 1.0);
+}
+@fragment fn fs_composite(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let p = vec2i(pos.xy);
+    let reveal = textureLoad(reveal_tex, p, 0).r;
+    if (reveal >= 0.9999) { discard; }
+    let a = textureLoad(accum_tex, p, 0);
+    return vec4f(a.rgb / clamp(a.a, 1e-4, 5e4), 1.0 - reveal);
+}
+)WGSL";
+
 constexpr const char* kExposureWgsl = R"WGSL(
 struct Meter { viewport: vec4f, min_ev: f32, max_ev: f32, compensation: f32, rate: f32 };
 @group(0) @binding(0) var<uniform> meter: Meter;
@@ -1666,6 +1705,15 @@ struct Renderer::Impl {
     // TAA: the settings, the resolved frames (two, one the history of the other), the pass, the
     // jitter's frame count, last frame's unjittered view-projection and each object's model then.
     TaaSettings taa;
+    bool oit = false;
+    WGPURenderPipeline oit_pipeline = nullptr, oit_skinned_pipeline = nullptr, oit_composite_pipeline = nullptr;
+    WGPUShaderModule oit_shader = nullptr;
+    WGPUBindGroupLayout oit_bgl = nullptr;
+    WGPUPipelineLayout oit_layout = nullptr;
+    WGPUTexture oit_accum_tex = nullptr, oit_reveal_tex = nullptr;
+    WGPUTextureView oit_accum_view = nullptr, oit_reveal_view = nullptr;
+    std::uint32_t oit_w = 0, oit_h = 0;
+    WGPUBindGroup oit_bg = nullptr;
     DofSettings dof;
     MotionBlurSettings motion_blur;
     WGPUShaderModule fx_shader = nullptr;
@@ -1783,6 +1831,7 @@ struct Renderer::Impl {
     WGPUBindGroup face_bg = nullptr;
     WGPUBuffer face_buffer = nullptr;
     std::vector<GpuFace> faces;
+    std::vector<std::pair<Vec3, float>> face_light;   // per face, the light's position and range (what its shadow pass draws)
     WGPUBindGroup frame_bg = nullptr;
     WGPUBindGroup object_bg = nullptr;
     WGPUTexture id_texture = nullptr;
@@ -2004,6 +2053,13 @@ struct Renderer::Impl {
         if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
         if (shadow_cut_pipeline) wgpuRenderPipelineRelease(shadow_cut_pipeline);
+        for (WGPURenderPipeline p : {oit_pipeline, oit_skinned_pipeline, oit_composite_pipeline}) if (p) wgpuRenderPipelineRelease(p);
+        if (oit_bg) wgpuBindGroupRelease(oit_bg);
+        for (WGPUTextureView v : {oit_accum_view, oit_reveal_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {oit_accum_tex, oit_reveal_tex}) if (t) wgpuTextureRelease(t);
+        if (oit_layout) wgpuPipelineLayoutRelease(oit_layout);
+        if (oit_bgl) wgpuBindGroupLayoutRelease(oit_bgl);
+        if (oit_shader) wgpuShaderModuleRelease(oit_shader);
         for (WGPUBindGroup g : probe_groups) wgpuBindGroupRelease(g);
         for (WGPURenderPipeline p : {probe_pipeline, probe_skinned_pipeline, probe_sky_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         if (probe_fill_pipeline) wgpuComputePipelineRelease(probe_fill_pipeline);
@@ -3471,6 +3527,131 @@ struct Renderer::Impl {
         return {};
     }
 
+    // Order-independent transparency: the translucent meshes' pipelines into the two targets (depth
+    // tested against the opaque scene, not written) and the composite over the HDR target.
+    Status create_oit() {
+        WGPUBlendState add{};
+        add.color = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_One};
+        add.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_One};
+        WGPUBlendState keep{};
+        keep.color = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_OneMinusSrc};
+        keep.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_OneMinusSrc};
+        WGPUColorTargetState t[2]{};
+        t[0].format = kHdrFormat;
+        t[0].writeMask = WGPUColorWriteMask_All;
+        t[0].blend = &add;
+        t[1].format = WGPUTextureFormat_R16Float;
+        t[1].writeMask = WGPUColorWriteMask_All;
+        t[1].blend = &keep;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str("fs_oit");
+        fs.targetCount = 2;
+        fs.targets = t;
+        WGPUDepthStencilState ds{};
+        ds.format = device->depth_format();
+        ds.depthWriteEnabled = WGPUOptionalBool_False;
+        ds.depthCompare = WGPUCompareFunction_LessEqual;
+        ds.stencilFront.compare = WGPUCompareFunction_Always;
+        ds.stencilBack.compare = WGPUCompareFunction_Always;
+        ds.stencilReadMask = 0xFFFFFFFF;
+        ds.stencilWriteMask = 0xFFFFFFFF;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.oit");
+        rpd.layout = layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_Back;
+        rpd.depthStencil = &ds;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        oit_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        rpd.label = rhi::str("pocket.oit.skinned");
+        rpd.vertex.entryPoint = rhi::str("vs_skinned");
+        rpd.vertex.bufferCount = 2;
+        rpd.vertex.buffers = vbls;
+        oit_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        POCKET_TRY(module, device->create_shader("pocket.oit", kOitCompositeWgsl));
+        oit_shader = module;
+        WGPUBindGroupLayoutEntry be[2]{};
+        for (std::uint32_t b = 0; b < 2; ++b) {
+            be[b].binding = b;
+            be[b].visibility = WGPUShaderStage_Fragment;
+            be[b].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+            be[b].texture.viewDimension = WGPUTextureViewDimension_2D;
+        }
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.oit");
+        bd.entryCount = 2;
+        bd.entries = be;
+        oit_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.oit");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &oit_bgl;
+        oit_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUBlendState over{};
+        over.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+        over.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        ct.blend = &over;
+        WGPUFragmentState cfs{};
+        cfs.module = oit_shader;
+        cfs.entryPoint = rhi::str("fs_composite");
+        cfs.targetCount = 1;
+        cfs.targets = &ct;
+        WGPURenderPipelineDescriptor c{};
+        c.label = rhi::str("pocket.oit.composite");
+        c.layout = oit_layout;
+        c.vertex.module = oit_shader;
+        c.vertex.entryPoint = rhi::str("vs_screen");
+        c.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        c.primitive.frontFace = WGPUFrontFace_CCW;
+        c.primitive.cullMode = WGPUCullMode_None;
+        c.multisample.count = 1;
+        c.multisample.mask = 0xFFFFFFFFu;
+        c.fragment = &cfs;
+        oit_composite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &c);
+        if (!oit_pipeline || !oit_skinned_pipeline || !oit_composite_pipeline) return fail("gpu_pipeline_failed", "order-independent transparency pipelines could not be created");
+        return {};
+    }
+
+    // Its two targets at the frame's size, and the composite's group over them.
+    Status ensure_oit_targets(std::uint32_t w, std::uint32_t h) {
+        if (oit_accum_tex && oit_w == w && oit_h == h) return {};
+        if (oit_bg) wgpuBindGroupRelease(oit_bg);
+        for (WGPUTextureView v : {oit_accum_view, oit_reveal_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {oit_accum_tex, oit_reveal_tex}) if (t) wgpuTextureRelease(t);
+        auto [at, av] = make_target("pocket.oit.accum", w, h, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        auto [rt, rv] = make_target("pocket.oit.reveal", w, h, WGPUTextureFormat_R16Float, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        if (!at || !rt) return fail("gpu_texture_failed", "cannot create the transparency targets {}x{}", w, h);
+        oit_accum_tex = at;
+        oit_accum_view = av;
+        oit_reveal_tex = rt;
+        oit_reveal_view = rv;
+        oit_w = w;
+        oit_h = h;
+        WGPUBindGroupEntry e[2]{};
+        e[0].binding = 0;
+        e[0].textureView = oit_accum_view;
+        e[1].binding = 1;
+        e[1].textureView = oit_reveal_view;
+        WGPUBindGroupDescriptor d{};
+        d.label = rhi::str("pocket.oit");
+        d.layout = oit_bgl;
+        d.entryCount = 2;
+        d.entries = e;
+        oit_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+        return {};
+    }
+
     // The TAA resolve: a full-screen pass over this frame, the history, the motion and the depth.
     Status create_taa() {
         POCKET_TRY(module, device->create_shader("pocket.taa", kTaaWgsl));
@@ -4409,6 +4590,7 @@ struct Renderer::Impl {
         POCKET_TRY_VOID(create_volume());
         POCKET_TRY_VOID(create_taa());
         POCKET_TRY_VOID(create_fx());
+        POCKET_TRY_VOID(create_oit());
         POCKET_TRY_VOID(create_ssr());
         POCKET_TRY_VOID(create_probe_textures());
         POCKET_TRY_VOID(create_probe_passes());
@@ -4920,6 +5102,7 @@ struct Renderer::Impl {
     // that face). Each light's first face and a texel's size at unit distance go into its cone.
     void assign_shadow_faces() {
         faces.clear();
+        face_light.clear();
         for (GpuLight& g : light_packed) {
             const bool wants = g.cone[1] >= 0.0f;
             g.cone[1] = -1.0f;
@@ -4942,6 +5125,7 @@ struct Renderer::Impl {
                 f.rect[2] = 1.0f / kFaceTiles;
                 f.rect[3] = 1.0f / kAtlasSize;
                 faces.push_back(f);
+                face_light.emplace_back(at, range);
             };
             g.cone[1] = static_cast<float>(faces.size());
             if (spot) {
@@ -5388,6 +5572,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         bool blend = false;   // translucent: after every opaque draw, far to near
         float depth = 0;      // along the camera's forward, for that order
         bool cutout = false;  // an alpha cutoff: its shadow keeps the holes
+        Vec3 center{0, 0, 0}; // the entity's bounding sphere in the world (radius < 0: unknown, always drawn)
+        float radius = -1;
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
@@ -5436,6 +5622,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             const Vec3 to_cam = t.position - im.camera.position;
             const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
             draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f});
+            if (const auto* b = e.try_get<world::Bounds>(); b && !skinned) {
+                draws.back().center = (b->min + b->max) * 0.5f;
+                draws.back().radius = length(b->max - b->min) * 0.5f;
+            }
             if (blend) ++translucent_instances;
             ++count;
         };
@@ -5786,18 +5976,21 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // translucent mesh like any other (it casts a shadow and is picked).
     // `cut` (the shadow passes): an unskinned cut-out draws through it with its material at group 3,
     // so the texture's holes let the light through.
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr) {
+    // `keep` (a light's shadow faces): draws it turns down are skipped, splitting their runs.
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr) {
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
         bool current_skinned = false, current_blend = false, current_cut = false;
         wgpuRenderPassEncoderSetPipeline(pass, plain);
         std::size_t i = 0;
         while (i < draws.size()) {
+            if (keep && !(*keep)(i)) { ++i; continue; }
             const Draw& d = draws[i];
             const bool blend = d.blend && blend_plain != nullptr;
             const bool cutting = d.cutout && !d.skinned && cut != nullptr;
             std::size_t run = 1;
             while (i + run < draws.size()) {
+                if (keep && !(*keep)(i + run)) break;
                 const Draw& n = draws[i + run];
                 if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned || n.blend != d.blend || n.cutout != d.cutout) break;
                 if (blend && n.depth != d.depth) break;   // translucent instances keep their far-to-near order
@@ -5823,6 +6016,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             }
             wgpuRenderPassEncoderDrawIndexed(pass, d.count, static_cast<std::uint32_t>(run), d.first, 0, static_cast<std::uint32_t>(i));
             counter++;
+            if (instances) *instances += static_cast<std::uint32_t>(run);
             i += run;
         }
     };
@@ -5845,7 +6039,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
             const std::uint32_t offset = 256u * static_cast<std::uint32_t>(c);
             wgpuRenderPassEncoderSetBindGroup(spass, 2, im.cascade_bg, 1, &offset);
-            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline);
+            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, nullptr, &im.stats.shadow_instances);
             wgpuRenderPassEncoderEnd(spass);
             wgpuRenderPassEncoderRelease(spass);
         }
@@ -6013,7 +6207,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderSetScissorRect(apass, x, y, kFaceSize, kFaceSize);
             const std::uint32_t offset = 256u * static_cast<std::uint32_t>(f);
             wgpuRenderPassEncoderSetBindGroup(apass, 2, im.face_bg, 1, &offset);
-            draw_runs(apass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline);
+            // Only what the light reaches can throw its shadow: the draws whose sphere meets the light's.
+            const Vec3 at = im.face_light[f].first;
+            const float reach = im.face_light[f].second;
+            const std::function<bool(std::size_t)> keep = [&](std::size_t k) {
+                const Draw& d = draws[k];
+                return d.radius < 0 || length(d.center - at) <= reach + d.radius;
+            };
+            draw_runs(apass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, &keep, &im.stats.shadow_instances);
         }
         wgpuRenderPassEncoderEnd(apass);
         wgpuRenderPassEncoderRelease(apass);
@@ -6107,10 +6308,72 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         im.stats.draw_calls++;
     }
+    // Order-independent transparency (not with MSAA): the translucent meshes leave this pass for
+    // their own, and what is drawn after them (sprites, lines) waits for a pass after the composite.
+    const bool oit = im.oit && !resolve && translucent_instances > 0;
+    const std::function<bool(std::size_t)> opaque_only = [&](std::size_t k) { return !draws[k].blend; };
+    const std::function<bool(std::size_t)> translucent_only = [&](std::size_t k) { return draws[k].blend; };
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, nullptr, oit ? &opaque_only : nullptr);
+    }
+    if (oit) {
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        POCKET_TRY_VOID(im.ensure_oit_targets(frame.width, frame.height));
+        WGPURenderPassColorAttachment oca[2]{};
+        oca[0].view = im.oit_accum_view;
+        oca[0].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        oca[0].loadOp = WGPULoadOp_Clear;
+        oca[0].storeOp = WGPUStoreOp_Store;
+        oca[0].clearValue = {0, 0, 0, 0};
+        oca[1] = oca[0];
+        oca[1].view = im.oit_reveal_view;
+        oca[1].clearValue = {1, 1, 1, 1};
+        WGPURenderPassDepthStencilAttachment ods = ds;
+        ods.depthLoadOp = WGPULoadOp_Load;
+        WGPURenderPassDescriptor orp{};
+        orp.label = rhi::str("pocket.oit");
+        orp.colorAttachmentCount = 2;
+        orp.colorAttachments = oca;
+        orp.depthStencilAttachment = &ods;
+        WGPURenderPassEncoder opass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &orp);
+        set_viewport(opass);
+        wgpuRenderPassEncoderSetBindGroup(opass, 0, im.scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(opass, 1, im.object_bg, 0, nullptr);
+        draw_runs(opass, true, im.stats.draw_calls, im.oit_pipeline, im.oit_skinned_pipeline, nullptr, nullptr, nullptr, &translucent_only);
+        wgpuRenderPassEncoderEnd(opass);
+        wgpuRenderPassEncoderRelease(opass);
+        WGPURenderPassColorAttachment cca{};
+        cca.view = im.hdr_view;
+        cca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        cca.loadOp = WGPULoadOp_Load;
+        cca.storeOp = WGPUStoreOp_Store;
+        WGPURenderPassDescriptor crp{};
+        crp.label = rhi::str("pocket.oit.composite");
+        crp.colorAttachmentCount = 1;
+        crp.colorAttachments = &cca;
+        WGPURenderPassEncoder cpass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &crp);
+        wgpuRenderPassEncoderSetPipeline(cpass, im.oit_composite_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(cpass, 0, im.oit_bg, 0, nullptr);
+        wgpuRenderPassEncoderDraw(cpass, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(cpass);
+        wgpuRenderPassEncoderRelease(cpass);
+        im.stats.draw_calls++;
+        im.stats.oit = true;
+        // The rest of the scene pass: sprites and lines over the composite.
+        WGPURenderPassColorAttachment aca[2] = {ca[0], ca[1]};
+        aca[0].loadOp = WGPULoadOp_Load;
+        aca[1].loadOp = WGPULoadOp_Load;
+        WGPURenderPassDepthStencilAttachment ads2 = ds;
+        ads2.depthLoadOp = WGPULoadOp_Load;
+        WGPURenderPassDescriptor arp2 = rp;
+        arp2.label = rhi::str("pocket.scene.after");
+        arp2.colorAttachments = aca;
+        arp2.depthStencilAttachment = &ads2;
+        pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &arp2);
+        set_viewport(pass);
     }
     if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.stats.draw_calls);
     if (debug && !debug->vertices().empty()) {
@@ -6296,6 +6559,8 @@ void Renderer::set_taa(TaaSettings s) {
     impl_->taa = s;
 }
 TaaSettings Renderer::taa() const { return impl_->taa; }
+void Renderer::set_oit(bool enabled) { impl_->oit = enabled; }
+bool Renderer::oit() const { return impl_->oit; }
 void Renderer::set_dof(DofSettings s) {
     s.focus = std::clamp(s.focus, 0.01f, 100000.0f);
     s.aperture = std::clamp(s.aperture, 0.0f, 0.1f);
@@ -6407,6 +6672,7 @@ Json Renderer::describe() const {
     Json j;
     j["draw_calls"] = s.draw_calls;
     j["shadow_draws"] = s.shadow_draws;
+    j["shadow_instances"] = s.shadow_instances;
     j["shadows"] = s.shadows;
     j["shadow_cascades"] = s.shadow_cascades;
     j["shadow_distance"] = s.shadow_distance;
@@ -6434,6 +6700,7 @@ Json Renderer::describe() const {
     j["fog"] = s.fog;
     j["volumetric"] = s.volumetric;
     j["taa"] = s.taa;
+    j["oit"] = s.oit;
     j["lut"] = s.lut;
     j["ssr"] = s.ssr;
     j["probes"] = Json{{"in_use", s.probes}, {"captured", s.probe_captures}};

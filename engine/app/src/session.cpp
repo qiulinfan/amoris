@@ -27,6 +27,28 @@ Status write_png(const std::filesystem::path& path, const rhi::Image& img) {
     return {};
 }
 
+// A PNG in memory, and base64 for handing one over in JSON.
+std::string png_bytes(const rhi::Image& img) {
+    std::string out;
+    stbi_write_png_to_func([](void* ctx, void* data, int size) { static_cast<std::string*>(ctx)->append(static_cast<const char*>(data), static_cast<std::size_t>(size)); },
+                           &out, static_cast<int>(img.width), static_cast<int>(img.height), 4, img.rgba.data(), static_cast<int>(img.width * 4));
+    return out;
+}
+
+std::string base64(const std::string& bytes) {
+    static constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    for (std::size_t i = 0; i < bytes.size(); i += 3) {
+        const std::uint32_t n = (static_cast<std::uint8_t>(bytes[i]) << 16) | (i + 1 < bytes.size() ? static_cast<std::uint8_t>(bytes[i + 1]) << 8 : 0) | (i + 2 < bytes.size() ? static_cast<std::uint8_t>(bytes[i + 2]) : 0);
+        out += kAlphabet[(n >> 18) & 63];
+        out += kAlphabet[(n >> 12) & 63];
+        out += i + 1 < bytes.size() ? kAlphabet[(n >> 6) & 63] : '=';
+        out += i + 2 < bytes.size() ? kAlphabet[n & 63] : '=';
+    }
+    return out;
+}
+
 Json error_json(const Error& e) {
     Json j;
     j["code"] = e.code;
@@ -411,6 +433,8 @@ Status Session::start() {
             }
             renderer_->set_motion_blur(m);
         }
+        // [render] oit = true
+        if (r.contains("oit") && r["oit"].is_boolean()) renderer_->set_oit(r["oit"].get<bool>());
         // [render] taa = true, or [render.taa] enabled, feedback.
         if (r.contains("taa") && (r["taa"].is_object() || r["taa"].is_boolean())) {
             renderer::TaaSettings t = renderer_->taa();
@@ -2153,6 +2177,11 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         m = renderer_->motion_blur();
         return Json{{"enabled", m.enabled}, {"strength", m.strength}, {"samples", m.samples}};
     }
+    if (op == "oit") {
+        // Order-independent transparency: translucent meshes blended without sorting.
+        renderer_->set_oit(opt<bool>(p, "enabled", renderer_->oit()));
+        return Json{{"enabled", renderer_->oit()}};
+    }
     if (op == "taa") {
         // Temporal anti-aliasing: the view jittered inside the pixel, frames blended through motion.
         renderer::TaaSettings t = renderer_->taa();
@@ -2228,6 +2257,92 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         else assets_->invalidate(path);
         renderer_->drop_asset_cache();
         return Json{{"ok", true}, {"version", assets_->version()}};
+    }
+    if (op == "preview") {
+        // A model on its own, framed from three quarters above under a sky and a sun, drawn off
+        // screen by a renderer of its own (the scene's frames, cameras and history untouched):
+        // written to `out` (project-relative, or absolute), and as base64 PNG with `image`.
+        const std::string path = opt<std::string>(p, "path", "");
+        if (path.empty()) return fail("bad_args", "preview needs a project-relative model path");
+        const auto size = static_cast<std::uint32_t>(std::clamp(opt<int>(p, "size", 256), 16, 1024));
+        POCKET_TRY(mesh, assets_->mesh(path));
+        if (!preview_renderer_) {
+            POCKET_TRY(pr, renderer::Renderer::create(*device_));
+            preview_renderer_ = std::move(pr);
+            preview_renderer_->set_assets(assets_.get());
+            renderer::TonemapSettings t = preview_renderer_->tonemap();
+            t.op = renderer::Tonemap::Agx;
+            preview_renderer_->set_tonemap(t);
+        }
+        const Vec3 lo = mesh->aabb_min, hi = mesh->aabb_max;
+        const Vec3 center = (lo + hi) * 0.5f;
+        const float radius = std::max(length(hi - lo) * 0.5f, 1e-3f);
+        constexpr float kFov = 35.0f;
+        const float dist = radius / std::sin(radians(kFov * 0.5f)) * 1.05f;
+        const float yaw = radians(35.0f), pitch = radians(-25.0f);
+        const Quat look = Quat::from_axis_angle({0, 1, 0}, yaw) * Quat::from_axis_angle({1, 0, 0}, pitch);
+        const Vec3 eye = center - look.rotate({0, 0, -1}) * dist;
+        world::World pw;
+        auto put = [&](const char* name, const Json& comps) -> Status {
+            auto r = pw.spawn(name, 0, comps);
+            if (!r) return std::unexpected(r.error());
+            return {};
+        };
+        POCKET_TRY_VOID(put("Model", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", path}}}}));
+        POCKET_TRY_VOID(put("Camera", Json{{"Transform", Json{{"position", Json{{"x", eye.x}, {"y", eye.y}, {"z", eye.z}}}, {"rotation", Json{{"x", look.x}, {"y", look.y}, {"z", look.z}, {"w", look.w}}}}},
+                                           {"Camera", Json{{"fov_degrees", kFov}, {"near", std::max(dist - radius * 2.0f, 0.01f)}, {"far", dist + radius * 4.0f}}}}));
+        const Quat sun = Quat::from_axis_angle({0, 1, 0}, radians(-40.0f)) * Quat::from_axis_angle({1, 0, 0}, radians(-50.0f));
+        POCKET_TRY_VOID(put("Sun", Json{{"Transform", Json{{"rotation", Json{{"x", sun.x}, {"y", sun.y}, {"z", sun.z}, {"w", sun.w}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2.0}}}}));
+        POCKET_TRY_VOID(put("Sky", Json{{"Sky", Json{{"mode", 1}, {"intensity", 0.9}}}}));
+        pw.update_transforms();
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str("pocket.preview");
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {size, size, 1};
+        td.format = device_->color_format();
+        td.mipLevelCount = 1;
+        td.sampleCount = 1;
+        WGPUTexture color = wgpuDeviceCreateTexture(device_->device(), &td);
+        td.label = rhi::str("pocket.preview.depth");
+        td.usage = WGPUTextureUsage_RenderAttachment;
+        td.format = device_->depth_format();
+        WGPUTexture depth = wgpuDeviceCreateTexture(device_->device(), &td);
+        if (!color || !depth) {
+            if (color) wgpuTextureRelease(color);
+            if (depth) wgpuTextureRelease(depth);
+            return fail("gpu_texture_failed", "cannot create the preview targets");
+        }
+        WGPUTextureView color_view = wgpuTextureCreateView(color, nullptr);
+        WGPUTextureView depth_view = wgpuTextureCreateView(depth, nullptr);
+        rhi::Frame f;
+        f.encoder = wgpuDeviceCreateCommandEncoder(device_->device(), nullptr);
+        f.color = color_view;
+        f.color_texture = color;
+        f.depth = depth_view;
+        f.width = size;
+        f.height = size;
+        const Status drawn = preview_renderer_->render(f, pw, rhi::Color{0.16f, 0.17f, 0.2f, 1.0f}, nullptr, nullptr, nullptr);
+        WGPUCommandBuffer cb = wgpuCommandEncoderFinish(f.encoder, nullptr);
+        wgpuQueueSubmit(device_->queue(), 1, &cb);
+        wgpuCommandBufferRelease(cb);
+        wgpuCommandEncoderRelease(f.encoder);
+        auto img = drawn ? device_->read_texture(color, size, size) : Result<rhi::Image>(std::unexpected(drawn.error()));
+        wgpuTextureViewRelease(color_view);
+        wgpuTextureViewRelease(depth_view);
+        wgpuTextureRelease(color);
+        wgpuTextureRelease(depth);
+        if (!img) return std::unexpected(img.error());
+        Json j{{"path", path}, {"width", size}, {"height", size}, {"vertices", mesh->vertices.size()}, {"triangles", mesh->indices.size() / 3}};
+        const std::string out = opt<std::string>(p, "out", "");
+        if (!out.empty()) {
+            std::filesystem::path to = out;
+            if (to.is_relative()) to = options_.project_dir / to;
+            POCKET_TRY_VOID(write_png(to, *img));
+            j["out"] = to.string();
+        }
+        if (opt<bool>(p, "image", false)) j["png"] = base64(png_bytes(*img));
+        return j;
     }
     if (op == "import") {
         // Read a model now: an OBJ or STL natively, a Blender-read format converted through Blender
@@ -3843,7 +3958,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");
