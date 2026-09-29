@@ -22,6 +22,18 @@ Json Mesh::describe() const {
     j["triangles"] = indices.size() / 3;
     j["submeshes"] = submeshes.size();
     j["nodes"] = node_count;
+    j["importer"] = importer;
+    if (!converted.empty()) j["converted"] = converted;
+    if (!lights.empty()) {
+        Json lj = Json::array();
+        for (const LightDef& l : lights) lj.push_back(Json{{"name", l.name}, {"type", l.type == 0 ? "directional" : l.type == 2 ? "spot" : "point"}, {"intensity", l.intensity}});
+        j["lights"] = lj;
+    }
+    if (!cameras.empty()) {
+        Json cj = Json::array();
+        for (const CameraDef& c : cameras) cj.push_back(Json{{"name", c.name}, {"orthographic", c.orthographic}});
+        j["cameras"] = cj;
+    }
     Json mats = Json::array();
     for (const auto& m : materials) {
         Json mj;
@@ -875,7 +887,8 @@ Json Image::describe() const {
     j["path"] = path;
     j["width"] = width;
     j["height"] = height;
-    j["bytes"] = rgba.size();
+    j["bytes"] = rgba.size() + hdr.size() * sizeof(float);
+    if (!hdr.empty()) j["hdr"] = true;
     return j;
 }
 
@@ -1104,6 +1117,11 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         if (m.contains("emissiveFactor") && m["emissiveFactor"].size() == 3) {
             mat.emissive = {m["emissiveFactor"][0].get<float>(), m["emissiveFactor"][1].get<float>(), m["emissiveFactor"][2].get<float>()};
         }
+        // KHR_materials_emissive_strength: emission brighter than the factor's 0..1 (Blender's strength).
+        if (m.contains("extensions") && m["extensions"].is_object() && m["extensions"].contains("KHR_materials_emissive_strength")) {
+            const float k = m["extensions"]["KHR_materials_emissive_strength"].value("emissiveStrength", 1.0f);
+            mat.emissive = mat.emissive * k;
+        }
         mesh.materials.push_back(mat);
     }
     if (mesh.materials.empty()) mesh.materials.push_back(Material{});
@@ -1135,6 +1153,8 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             int ci = c.get<int>();
             if (ci >= 0 && ci < static_cast<int>(nodes.size())) out.children.push_back(ci);
         }
+        if (n.contains("extensions") && n["extensions"].is_object() && n["extensions"].contains("KHR_lights_punctual")) out.light = n["extensions"]["KHR_lights_punctual"].value("light", -1);
+        if (n.contains("camera") && n["camera"].is_number_integer()) out.camera = n["camera"].get<int>();
         mesh.nodes.push_back(std::move(out));
     }
     for (std::size_t i = 0; i < mesh.nodes.size(); ++i) {
@@ -1422,11 +1442,60 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             mesh.aabb_max = {std::max(mesh.aabb_max.x, pos.x), std::max(mesh.aabb_max.y, pos.y), std::max(mesh.aabb_max.z, pos.z)};
         }
     }
+    // Lights (KHR_lights_punctual) and cameras the nodes carry.
+    if (g.doc.contains("extensions") && g.doc["extensions"].is_object() && g.doc["extensions"].contains("KHR_lights_punctual")) {
+        for (const Json& lj : g.doc["extensions"]["KHR_lights_punctual"].value("lights", Json::array())) {
+            LightDef l;
+            l.name = lj.value("name", "light" + std::to_string(mesh.lights.size()));
+            const std::string type = lj.value("type", "point");
+            l.type = type == "directional" ? 0 : type == "spot" ? 2 : 1;
+            if (lj.contains("color") && lj["color"].size() == 3) l.color = {lj["color"][0].get<float>(), lj["color"][1].get<float>(), lj["color"][2].get<float>()};
+            l.intensity = lj.value("intensity", 1.0f);
+            l.range = lj.value("range", 0.0f);
+            if (lj.contains("spot")) {
+                l.inner_cone = lj["spot"].value("innerConeAngle", 0.0f);
+                l.outer_cone = lj["spot"].value("outerConeAngle", 0.785398f);
+            }
+            mesh.lights.push_back(l);
+        }
+    }
+    for (const Json& cj : g.doc.value("cameras", Json::array())) {
+        CameraDef c;
+        c.name = cj.value("name", "camera" + std::to_string(mesh.cameras.size()));
+        c.orthographic = cj.value("type", "perspective") == "orthographic";
+        const Json& d = cj.value(c.orthographic ? "orthographic" : "perspective", Json::object());
+        c.yfov = d.value("yfov", 0.8f);
+        c.ymag = d.value("ymag", 5.0f);
+        c.znear = d.value("znear", 0.1f);
+        c.zfar = d.value("zfar", 1000.0f);
+        mesh.cameras.push_back(c);
+    }
     return mesh;
 }
 
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path) {
     int w = 0, h = 0, channels = 0;
+    const auto* data = reinterpret_cast<const stbi_uc*>(bytes.data());
+    if (stbi_is_hdr_from_memory(data, static_cast<int>(bytes.size()))) {
+        // Light levels beyond white (a sky, a panorama): kept as floats, and an 8-bit view beside them.
+        float* f = stbi_loadf_from_memory(data, static_cast<int>(bytes.size()), &w, &h, &channels, 4);
+        if (!f) return fail("bad_image", "{}: {}", display_path, stbi_failure_reason() ? stbi_failure_reason() : "cannot decode");
+        Image img;
+        img.path = display_path;
+        img.width = static_cast<std::uint32_t>(w);
+        img.height = static_cast<std::uint32_t>(h);
+        const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4;
+        img.hdr.assign(f, f + n);
+        stbi_image_free(f);
+        img.rgba.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i % 4 == 3) { img.rgba[i] = 255; continue; }
+            const float c = std::clamp(img.hdr[i], 0.0f, 1.0f);
+            const float e = c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+            img.rgba[i] = static_cast<std::uint8_t>(std::lround(e * 255.0f));
+        }
+        return img;
+    }
     stbi_uc* pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()), static_cast<int>(bytes.size()), &w, &h, &channels, 4);
     if (!pixels) return fail("bad_image", "{}: {}", display_path, stbi_failure_reason() ? stbi_failure_reason() : "cannot decode");
     Image img;
@@ -1456,8 +1525,35 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
     if (auto it = meshes_.find(path); it != meshes_.end()) return it->second.get();
     if (auto f = failures_.find("mesh:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);
     POCKET_TRY(full, resolve(path));
-    POCKET_TRY(bytes, fs::read_bytes(full));
-    auto parsed = parse_gltf(std::string(bytes.begin(), bytes.end()), full.parent_path(), path);
+    std::string ext = full.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    Result<Mesh> parsed = fail("bad_asset", "unread");
+    if (ext == ".obj") {
+        POCKET_TRY(text, fs::read_text(full));
+        parsed = parse_obj(text, path, [this](const std::string& p) -> Result<std::string> {
+            POCKET_TRY(f, resolve(p));
+            return fs::read_text(f);
+        });
+    } else if (ext == ".stl") {
+        POCKET_TRY(bytes, fs::read_bytes(full));
+        parsed = parse_stl(std::string(bytes.begin(), bytes.end()), path);
+    } else if (blender_format(ext)) {
+        // Through Blender into glTF (cached by content), then read like any glTF.
+        auto glb = converted_glb(path, full, false);
+        if (!glb) {
+            failures_["mesh:" + path] = glb.error().message;
+            return fail(glb.error());
+        }
+        POCKET_TRY(bytes, fs::read_bytes(*glb));
+        parsed = parse_gltf(std::string(bytes.begin(), bytes.end()), glb->parent_path(), path);
+        if (parsed) {
+            parsed->importer = "blender";
+            parsed->converted = std::filesystem::relative(*glb, project_dir_).generic_string();
+        }
+    } else {
+        POCKET_TRY(bytes, fs::read_bytes(full));
+        parsed = parse_gltf(std::string(bytes.begin(), bytes.end()), full.parent_path(), path);
+    }
     if (!parsed) {
         failures_["mesh:" + path] = parsed.error().message;
         return fail(parsed.error());
@@ -1515,7 +1611,10 @@ Result<const Image*> AssetStore::image(const std::string& path) {
         // An image embedded in a glTF buffer view.
         std::string gltf_path = path.substr(0, hash);
         int index = std::atoi(path.c_str() + hash + 6);
-        POCKET_TRY(full, resolve(gltf_path));
+        POCKET_TRY(resolved, resolve(gltf_path));
+        // A Blender-read file's images live in the glTF it became.
+        std::filesystem::path full = resolved;
+        if (auto c = converted_.find(gltf_path); c != converted_.end()) full = c->second;
         POCKET_TRY(bytes, fs::read_bytes(full));
         std::string text(bytes.begin(), bytes.end());
         // Re-read the container to find the buffer view (cheap; embedded images are rare).
@@ -1564,6 +1663,39 @@ Result<const Image*> AssetStore::image(const std::string& path) {
     return raw;
 }
 
+Result<std::filesystem::path> AssetStore::converted_glb(const std::string& path, const std::filesystem::path& full, bool force, Conversion* report) {
+    const std::filesystem::path out = project_dir_ / ".imported" / (path + ".glb");
+    const std::string blender = find_blender(blender_config_);
+    POCKET_TRY(conv, convert_with_blender(full, out, blender, force));
+    if (!conv.cached) log::info("assets", "imported {} through Blender in {:.1f} s", path, conv.seconds);
+    converted_[path] = out;
+    if (report) *report = conv;
+    return out;
+}
+
+Result<Json> AssetStore::import(const std::string& path, bool force) {
+    POCKET_TRY(full, resolve(path));
+    std::string ext = full.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    Json j;
+    j["path"] = path;
+    if (blender_format(ext)) {
+        Conversion conv;
+        POCKET_TRY(glb, converted_glb(path, full, force, &conv));
+        j["importer"] = "blender";
+        j["converted"] = std::filesystem::relative(glb, project_dir_).generic_string();
+        j["cached"] = conv.cached;
+        j["seconds"] = conv.seconds;
+        j["blender"] = conv.blender;
+    } else {
+        j["importer"] = ext == ".obj" ? "obj" : ext == ".stl" ? "stl" : "gltf";
+    }
+    invalidate(path);
+    POCKET_TRY(mesh, this->mesh(path));
+    j["mesh"] = mesh->describe();
+    return j;
+}
+
 void AssetStore::invalidate(const std::string& path) {
     meshes_.erase(path);
     images_.erase(path);
@@ -1592,10 +1724,13 @@ Json AssetStore::list() const {
         for (const auto& p : paths) {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            std::string kind = ext == ".glb" || ext == ".gltf" ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" ? "audio" : "other";
+            const bool model = ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || blender_format(ext);
+            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" ? "audio" : ext == ".mtl" ? "material" : "other";
+
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
             f["kind"] = kind;
+            if (model) f["importer"] = blender_format(ext) ? "blender" : ext == ".obj" ? "obj" : ext == ".stl" ? "stl" : "gltf";
             f["bytes"] = std::filesystem::file_size(p);
             f["loaded"] = kind == "mesh" ? meshes_.contains(f["path"].get<std::string>()) : kind == "image" ? images_.contains(f["path"].get<std::string>()) : kind == "tilemap" ? tilemaps_.contains(f["path"].get<std::string>()) : false;
             files.push_back(f);
@@ -1628,7 +1763,7 @@ Json AssetStore::describe(const std::string& path) {
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     Json j;
     j["path"] = path;
-    if (ext == ".glb" || ext == ".gltf") {
+    if (ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || blender_format(ext)) {
         auto m = mesh(path);
         if (!m) { j["error"] = m.error().to_string(); return j; }
         j = (*m)->describe();

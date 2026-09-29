@@ -144,6 +144,15 @@ export const world = {
     instantiateMesh(path: string, options: { parent?: EntityRef; name?: string; position?: Vec3; cause?: number } = {}): Entity {
         return command<{ roots: Entity[] }>("world.instantiate", { mesh: path, parent: options.parent, name: options.name, position: options.position, cause: options.cause }).roots[0];
     },
+    /**
+     * Read a model now and describe it: glTF, OBJ (with its MTL) and STL are read by the engine; .blend,
+     * .fbx, .dae, .usd, .abc and .ply go through Blender once per file content into `.imported/` (`force`
+     * converts again). Any mesh path works in a MeshRenderer or instantiateMesh without this; it is for
+     * seeing what a file holds (materials, lights, cameras, parts) before using it.
+     */
+    importModel(path: string, force = false): { path: string; importer: string; converted?: string; cached?: boolean; seconds?: number; blender_found: boolean; mesh: Record<string, unknown> } {
+        return command("assets.import", { path, force });
+    },
     /** Write an entity and its descendants as a prefab file under the project directory. */
     savePrefab(entity: EntityRef, path: string): { path: string; entities: number } {
         return command("world.save_prefab", { entity, path });
@@ -261,6 +270,18 @@ export const render = {
      * `contrast` and `saturation` scale around mid gray (1 as rendered), `tint` washes the result ({r, g, b}
      * or "#rrggbb"), `vignette` darkens the corners (0..1). Off by default; project.toml [render.grade] sets the default.
      */
+    /**
+     * How the HDR scene becomes the frame. The scene is lit in linear light in a half-float target, so
+     * an emissive of 4 is four times white; `exposure` multiplies it, `auto_exposure` meters the frame and
+     * brings its average to mid gray (`compensation` in EV on top, adapting at `speed` per second, the
+     * metered average kept within `min_ev`..`max_ev`), then `operator` maps it to the screen: "none" clips
+     * at white (2D art keeps its exact colors), "aces" and "agx" roll highlights off filmically, "neutral"
+     * keeps hues and only compresses near white. `metered` is what the meter settled on after the last frame.
+     * project.toml [render.tonemap] sets the default.
+     */
+    tonemap(settings: { operator?: "none" | "aces" | "agx" | "neutral"; exposure?: number; auto_exposure?: boolean; compensation?: number; min_ev?: number; max_ev?: number; speed?: number } = {}): { operator: string; exposure: number; auto_exposure: boolean; compensation: number; min_ev: number; max_ev: number; speed: number; metered?: { exposure_ev: number; average_ev: number } } {
+        return command("render.tonemap", settings);
+    },
     grade(settings: { enabled?: boolean; exposure?: number; filmic?: boolean; temperature?: number; contrast?: number; saturation?: number; tint?: { r: number; g: number; b: number } | string; vignette?: number } = {}): { enabled: boolean; exposure: number; filmic: boolean; temperature: number; contrast: number; saturation: number; tint: { r: number; g: number; b: number }; vignette: number } {
         return command("render.grade", settings);
     },

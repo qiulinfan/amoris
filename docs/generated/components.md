@@ -68,9 +68,27 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `kind` | i32 | 0 | 0 directional, 1 point. |
-| `color` | color | [1.0, 1.0, 1.0, 1.0] | Linear RGB color; alpha unused. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Color as a color picker shows it (sRGB), decoded to linear light; alpha unused. |
 | `intensity` | f32 | 1.0 | Multiplier applied to color. |
 | `range` | f32 | 10.0 | Point light range in meters. |
+
+## Sky
+
+The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `mode` | i32 | 1 | 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off. |
+| `image` | string | "" | For mode 2: project-relative path of the panorama (2:1, the horizon across the middle). |
+| `zenith` | color | [0.25, 0.45, 0.8, 1.0] | Procedural: the color straight up. |
+| `horizon` | color | [0.75, 0.82, 0.9, 1.0] | Procedural: the color at the horizon. |
+| `ground` | color | [0.33, 0.3, 0.27, 1.0] | Procedural: the color below the horizon. |
+| `intensity` | f32 | 1.0 | Brightness of the sky, as seen and as light. |
+| `rotation` | f32 | 0.0 | Mode 2: turns the panorama about the vertical axis, in degrees. |
+| `sun_size` | f32 | 1.5 | Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light. |
+| `diffuse` | f32 | 1.0 | How much the sky lights surfaces (0 leaves only the lights). |
+| `specular` | f32 | 1.0 | How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness). |
+| `enabled` | bool | true | false turns the sky off without removing it. |
 
 ## MeshRenderer
 
@@ -80,11 +98,11 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 |---|---|---|---|
 | `mesh` | string | "cube" | cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
 | `node` | string | "" | Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole. |
-| `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color, linear RGB; multiplies the asset's material color. |
+| `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent. |
 | `texture` | string | "" | Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. |
 | `metallic` | f32 | -1.0 | 0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives). |
 | `roughness` | f32 | -1.0 | 0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives). |
-| `emissive` | color | [0.0, 0.0, 0.0, 1.0] | Light the surface gives off regardless of lighting, added to the asset material's emissive color. |
+| `emissive` | color | [0.0, 0.0, 0.0, 1.0] | Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow. |
 | `cutoff` | f32 | 0.0 | Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none. |
 | `normal_map` | string | "" | Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. |
 | `visible` | bool | true | Whether the mesh is drawn. |

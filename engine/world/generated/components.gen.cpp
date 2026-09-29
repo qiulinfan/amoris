@@ -390,6 +390,83 @@ std::size_t numeric_span(Light& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Sky& v) {
+    j = Json::object();
+    j["mode"] = v.mode;
+    j["image"] = v.image;
+    vec_to_json(j["zenith"], v.zenith);
+    vec_to_json(j["horizon"], v.horizon);
+    vec_to_json(j["ground"], v.ground);
+    j["intensity"] = v.intensity;
+    j["rotation"] = v.rotation;
+    j["sun_size"] = v.sun_size;
+    j["diffuse"] = v.diffuse;
+    j["specular"] = v.specular;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Sky& v) {
+    scalar_from_json(j, "mode", v.mode);
+    scalar_from_json(j, "image", v.image);
+    if (j.is_object() && j.contains("zenith")) vec_from_json(j["zenith"], v.zenith);
+    if (j.is_object() && j.contains("horizon")) vec_from_json(j["horizon"], v.horizon);
+    if (j.is_object() && j.contains("ground")) vec_from_json(j["ground"], v.ground);
+    scalar_from_json(j, "intensity", v.intensity);
+    scalar_from_json(j, "rotation", v.rotation);
+    scalar_from_json(j, "sun_size", v.sun_size);
+    scalar_from_json(j, "diffuse", v.diffuse);
+    scalar_from_json(j, "specular", v.specular);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Sky& v) {
+    h.i64(static_cast<std::int64_t>(v.mode));
+    h.str(v.image);
+    h.f32(v.zenith.r);
+    h.f32(v.zenith.g);
+    h.f32(v.zenith.b);
+    h.f32(v.zenith.a);
+    h.f32(v.horizon.r);
+    h.f32(v.horizon.g);
+    h.f32(v.horizon.b);
+    h.f32(v.horizon.a);
+    h.f32(v.ground.r);
+    h.f32(v.ground.g);
+    h.f32(v.ground.b);
+    h.f32(v.ground.a);
+    h.f32(v.intensity);
+    h.f32(v.rotation);
+    h.f32(v.sun_size);
+    h.f32(v.diffuse);
+    h.f32(v.specular);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Sky& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "zenith") { *out = &v.zenith.r; return 4; }
+    if (path == "zenith.r") { *out = &v.zenith.r; return 1; }
+    if (path == "zenith.g") { *out = &v.zenith.g; return 1; }
+    if (path == "zenith.b") { *out = &v.zenith.b; return 1; }
+    if (path == "zenith.a") { *out = &v.zenith.a; return 1; }
+    if (path == "horizon") { *out = &v.horizon.r; return 4; }
+    if (path == "horizon.r") { *out = &v.horizon.r; return 1; }
+    if (path == "horizon.g") { *out = &v.horizon.g; return 1; }
+    if (path == "horizon.b") { *out = &v.horizon.b; return 1; }
+    if (path == "horizon.a") { *out = &v.horizon.a; return 1; }
+    if (path == "ground") { *out = &v.ground.r; return 4; }
+    if (path == "ground.r") { *out = &v.ground.r; return 1; }
+    if (path == "ground.g") { *out = &v.ground.g; return 1; }
+    if (path == "ground.b") { *out = &v.ground.b; return 1; }
+    if (path == "ground.a") { *out = &v.ground.a; return 1; }
+    if (path == "intensity") { *out = &v.intensity; return 1; }
+    if (path == "rotation") { *out = &v.rotation; return 1; }
+    if (path == "sun_size") { *out = &v.sun_size; return 1; }
+    if (path == "diffuse") { *out = &v.diffuse; return 1; }
+    if (path == "specular") { *out = &v.specular; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const MeshRenderer& v) {
     j = Json::object();
     j["mesh"] = v.mesh;
@@ -1624,18 +1701,31 @@ constexpr std::array<FieldInfo, 6> kCameraFields = {{
 }};
 constexpr std::array<FieldInfo, 4> kLightFields = {{
     FieldInfo{"kind", "i32", "0 directional, 1 point."},
-    FieldInfo{"color", "color", "Linear RGB color; alpha unused."},
+    FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused."},
     FieldInfo{"intensity", "f32", "Multiplier applied to color."},
     FieldInfo{"range", "f32", "Point light range in meters."},
+}};
+constexpr std::array<FieldInfo, 11> kSkyFields = {{
+    FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off."},
+    FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle)."},
+    FieldInfo{"zenith", "color", "Procedural: the color straight up."},
+    FieldInfo{"horizon", "color", "Procedural: the color at the horizon."},
+    FieldInfo{"ground", "color", "Procedural: the color below the horizon."},
+    FieldInfo{"intensity", "f32", "Brightness of the sky, as seen and as light."},
+    FieldInfo{"rotation", "f32", "Mode 2: turns the panorama about the vertical axis, in degrees."},
+    FieldInfo{"sun_size", "f32", "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light."},
+    FieldInfo{"diffuse", "f32", "How much the sky lights surfaces (0 leaves only the lights)."},
+    FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness)."},
+    FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
 }};
 constexpr std::array<FieldInfo, 10> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
-    FieldInfo{"color", "color", "Base color, linear RGB; multiplies the asset's material color."},
+    FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent."},
     FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
     FieldInfo{"metallic", "f32", "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives)."},
     FieldInfo{"roughness", "f32", "0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives)."},
-    FieldInfo{"emissive", "color", "Light the surface gives off regardless of lighting, added to the asset material's emissive color."},
+    FieldInfo{"emissive", "color", "Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow."},
     FieldInfo{"cutoff", "f32", "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none."},
     FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
@@ -1867,7 +1957,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 26> kComponents = {{
+constexpr std::array<ComponentInfo, 27> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1875,6 +1965,7 @@ constexpr std::array<ComponentInfo, 26> kComponents = {{
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
+    ComponentInfo{"Sky", "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.", true, kSkyFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
     ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},
     ComponentInfo{"SpriteAnimation", "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.", true, kSpriteAnimationFields},

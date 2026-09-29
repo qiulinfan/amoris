@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <array>
+#include <cmath>
+#include <fstream>
 #include <set>
 
 using namespace pocket;
@@ -461,9 +463,10 @@ TEST_CASE("grading exposes, tints, warms, rolls off and vignettes the finished f
     Json half = s.command("capture", Json{{"pixels", pts}}).value();
     INFO("half " << half["pixels"].dump());
     REQUIRE(half["render"]["grade"] == true);
-    REQUIRE(half["render"]["draw_calls"].get<int>() == plain["render"]["draw_calls"].get<int>() + 1);
-    REQUIRE(px(half, 0, 0) >= 100);
-    REQUIRE(px(half, 0, 0) <= 160);
+    REQUIRE(half["render"]["draw_calls"].get<int>() == plain["render"]["draw_calls"].get<int>());   // grading is part of the final pass, not a pass of its own
+    // Half the light in linear light is one stop down: 0.5 encodes to 188 of 255.
+    REQUIRE(px(half, 0, 0) >= 182);
+    REQUIRE(px(half, 0, 0) <= 194);
     // A tint washes the white by its channels; a hex string is a tint too.
     REQUIRE(s.command("render.grade", Json{{"exposure", 1.0}, {"tint", Json{{"r", 1}, {"g", 0.5}, {"b", 0.25}}}}).has_value());
     REQUIRE(s.frame().has_value());
@@ -484,14 +487,14 @@ TEST_CASE("grading exposes, tints, warms, rolls off and vignettes the finished f
     INFO("warm " << warm["pixels"].dump());
     REQUIRE(px(warm, 0, 0) >= 250);
     REQUIRE(px(warm, 0, 1) >= 250);
-    REQUIRE(px(warm, 0, 2) >= 200);
-    REQUIRE(px(warm, 0, 2) <= 232);
+    REQUIRE(px(warm, 0, 2) >= 226);   // 0.85 of the light: 236
+    REQUIRE(px(warm, 0, 2) <= 244);
     REQUIRE(s.command("render.grade", Json{{"temperature", 0.0}, {"filmic", true}}).has_value());
     REQUIRE(s.frame().has_value());
     Json filmic = s.command("capture", Json{{"pixels", pts}}).value();
     INFO("filmic " << filmic["pixels"].dump());
-    REQUIRE(px(filmic, 0, 0) >= 190);
-    REQUIRE(px(filmic, 0, 0) <= 220);
+    REQUIRE(px(filmic, 0, 0) >= 222);   // ACES takes white to about 0.8 of the light: 231
+    REQUIRE(px(filmic, 0, 0) <= 238);
     // A full vignette: the centre stays, the corner goes black, the edge is part way.
     REQUIRE(s.command("render.grade", Json{{"filmic", false}, {"vignette", 1.0}}).has_value());
     REQUIRE(s.frame().has_value());
@@ -499,13 +502,280 @@ TEST_CASE("grading exposes, tints, warms, rolls off and vignettes the finished f
     INFO("vignette " << vig["pixels"].dump());
     REQUIRE(px(vig, 0, 0) >= 250);
     REQUIRE(px(vig, 1, 0) <= 10);
-    REQUIRE(px(vig, 2, 0) >= 80);
-    REQUIRE(px(vig, 2, 0) <= 200);
+    REQUIRE(px(vig, 2, 0) >= 150);
+    REQUIRE(px(vig, 2, 0) <= 215);
     // Off again: the plain frame, and no grade in the stats.
     REQUIRE(s.command("render.grade", Json{{"enabled", false}}).value()["enabled"] == false);
     REQUIRE(s.frame().has_value());
     Json back = s.command("capture", Json{{"pixels", pts}}).value();
     REQUIRE(back["render"]["grade"] == false);
     for (int i = 0; i < 3; ++i) REQUIRE(px(back, i, 0) >= 250);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("the scene is lit in HDR: light over white survives exposure, operators roll it off, the meter adapts, unlit art keeps its colors", "[renderer][hdr]") {
+    app::Session s(playground_options());
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A black slab glowing four times white, filling the view from above.
+    auto slab = [&](double glow) {
+        return Json{{"entity", "Slab"}, {"component", "MeshRenderer"}, {"value", Json{{"emissive", Json{{"r", glow}, {"g", glow}, {"b", glow}, {"a", 1}}}}}};
+    };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Slab"}, {"components", Json{{"Transform", Json{{"scale", Json{{"x", 40}, {"y", 1}, {"z", 40}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 4}, {"g", 4}, {"b", 4}, {"a", 1}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 10}, {"z", 0.001}}}, {"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    const Json centre = Json{{"x", 128}, {"y", 72}};
+    auto grey = [&]() {
+        REQUIRE(s.frame().has_value());
+        Json c = s.command("capture", Json{{"pixel", centre}}).value();
+        return c["pixel"][0].get<int>();
+    };
+    // Four times white clips at the screen, but an eighth of it is half the light (188), which an
+    // 8-bit scene target would have clipped to white first and then darkened to 99.
+    REQUIRE(grey() == 255);
+    Json t = s.command("render.tonemap", Json{{"exposure", 0.125}}).value();
+    REQUIRE(t["operator"] == "none");
+    REQUIRE(t["exposure"].get<double>() == Catch::Approx(0.125));
+    int g = grey();
+    REQUIRE(g >= 182);
+    REQUIRE(g <= 196);
+    Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["hdr"] == true);
+    REQUIRE(stats["tonemap"] == "none");
+    // The operators on white: ACES about 0.8 of the light, AgX lower and softer, Neutral nearly white.
+    REQUIRE(s.command("render.tonemap", Json{{"exposure", 0.25}, {"operator", "aces"}}).has_value());
+    const int aces = grey();
+    REQUIRE(s.command("render.tonemap", Json{{"operator", "agx"}}).has_value());
+    const int agx = grey();
+    REQUIRE(s.command("render.tonemap", Json{{"operator", "neutral"}}).has_value());
+    const int neutral = grey();
+    INFO("aces " << aces << " agx " << agx << " neutral " << neutral);
+    REQUIRE(aces >= 222);
+    REQUIRE(aces <= 240);
+    REQUIRE(agx >= 185);
+    REQUIRE(agx <= 218);
+    REQUIRE(neutral >= 232);
+    REQUIRE(neutral <= 250);
+    REQUIRE(s.command("render.stats", Json::object()).value()["tonemap"] == "neutral");
+    REQUIRE(s.command("render.tonemap", Json{{"operator", "sepia"}}).error().code == "bad_args");
+    // The meter: a dim slab and a bright one both come out mid gray (0.18 of the light: 118).
+    REQUIRE(s.command("render.tonemap", Json{{"operator", "none"}, {"exposure", 1}, {"auto_exposure", true}, {"speed", 20}}).has_value());
+    REQUIRE(s.command("world.set", slab(0.25)).has_value());   // 0.25 as a color is 0.05 of the light
+    g = grey();
+    INFO("dim " << g);
+    REQUIRE(std::abs(g - 118) <= 8);
+    Json m = s.command("render.tonemap", Json::object()).value();
+    INFO(m.dump());
+    REQUIRE(m["metered"]["average_ev"].get<double>() == Catch::Approx(std::log2(0.058)).margin(0.4));
+    REQUIRE(m["metered"]["exposure_ev"].get<double>() > 1.0);
+    // Brighter by sixty times: the first frame after is still bright, the eye adapts over the next ones.
+    REQUIRE(s.command("world.set", slab(3.0)).has_value());
+    const int first = grey();
+    INFO("first " << first);
+    REQUIRE(first == 255);
+    for (int i = 0; i < 40; ++i) REQUIRE(s.frame().has_value());
+    g = grey();
+    INFO("adapted " << g);
+    REQUIRE(std::abs(g - 118) <= 8);
+    m = s.command("render.tonemap", Json::object()).value();
+    REQUIRE(m["metered"]["average_ev"].get<double>() == Catch::Approx(std::log2(3.0)).margin(0.2));
+    REQUIRE(m["metered"]["exposure_ev"].get<double>() < -3.5);
+    // One stop of compensation: twice the light (0.36: 161).
+    REQUIRE(s.command("render.tonemap", Json{{"compensation", 1}}).has_value());
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    g = grey();
+    INFO("compensated " << g);
+    REQUIRE(std::abs(g - 161) <= 8);
+    // Unlit art keeps its exact color through the linear scene: a mid-gray sprite is 128 again.
+    REQUIRE(s.command("render.tonemap", Json{{"auto_exposure", false}, {"compensation", 0}}).has_value());
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Slab"}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 10}}}, {"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Card"}, {"components", Json{{"Transform", Json::object()}, {"Sprite", Json{{"size", Json{{"x", 40}, {"y", 40}}}, {"color", Json{{"r", 0.5}, {"g", 0.25}, {"b", 0.75}, {"a", 1}}}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json card = s.command("capture", Json{{"pixel", centre}}).value();
+    INFO(card.dump());
+    REQUIRE(std::abs(card["pixel"][0].get<int>() - 128) <= 1);
+    REQUIRE(std::abs(card["pixel"][1].get<int>() - 64) <= 1);
+    REQUIRE(std::abs(card["pixel"][2].get<int>() - 191) <= 1);
+    REQUIRE(s.finish().has_value());
+}
+
+namespace {
+// A flat Radiance .hdr (no run-length encoding): the top half `top`, the bottom half `bottom`.
+void write_test_hdr(const std::filesystem::path& path, int w, int h, const float top[3], const float bottom[3]) {
+    std::string out = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y " + std::to_string(h) + " +X " + std::to_string(w) + "\n";
+    auto rgbe = [](const float c[3]) {
+        const float m = std::max({c[0], c[1], c[2]});
+        std::array<unsigned char, 4> px{0, 0, 0, 0};
+        if (m < 1e-32f) return px;
+        int e = 0;
+        const float f = std::frexp(m, &e) * 256.0f / m;
+        for (int i = 0; i < 3; ++i) px[static_cast<std::size_t>(i)] = static_cast<unsigned char>(c[i] * f);
+        px[3] = static_cast<unsigned char>(e + 128);
+        return px;
+    };
+    for (int y = 0; y < h; ++y) {
+        const auto px = rgbe(y < h / 2 ? top : bottom);
+        for (int x = 0; x < w; ++x) out.append(reinterpret_cast<const char*>(px.data()), 4);
+    }
+    std::ofstream(path, std::ios::binary) << out;
+}
+}  // namespace
+
+TEST_CASE("a sky is drawn behind the scene and lights it: gradient, sun disc, reflections, diffuse light, HDR panoramas", "[renderer][sky]") {
+    app::Session s(playground_options());
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A camera at the origin looking along -Z at the horizon, a sun low in front of it, no other light.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json::object()}, {"Camera", Json{{"fov_degrees", 60}}}}}}).has_value());
+    const Vec3 toward_sun = normalize(Vec3{0.3f, 0.25f, -1.0f});
+    // The light shines along its -Z: turn -Z onto the direction away from the sun.
+    const Vec3 away = toward_sun * -1.0f;
+    const Vec3 axis = normalize(cross(Vec3{0, 0, -1}, away));
+    const Quat q = Quat::from_axis_angle(axis, std::acos(std::clamp(dot(Vec3{0, 0, -1}, away), -1.0f, 1.0f)));
+    const Json rotation{{"x", q.x}, {"y", q.y}, {"z", q.z}, {"w", q.w}};
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", rotation}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.0}};
+    REQUIRE(s.command("world.spawn", sun).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json::object()}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto at = [&](const Json& cap, int i, int ch) { return cap["pixels"][static_cast<std::size_t>(i)][static_cast<std::size_t>(ch)].get<int>(); };
+    auto project = [&](Vec3 p) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", p.x}, {"y", p.y}, {"z", p.z}}}}).value();
+        return Json{{"x", r["x"]}, {"y", r["y"]}};
+    };
+    // Up in the sky, down on the ground, and the sun.
+    Json cap = s.command("capture", Json{{"pixels", Json::array({Json{{"x", 60}, {"y", 3}}, Json{{"x", 60}, {"y", 140}}, project(toward_sun * 100.0f)})}}).value();
+    INFO(cap["pixels"].dump() << " " << cap["render"].dump());
+    REQUIRE(cap["render"]["sky"] == "procedural");
+    REQUIRE(cap["render"]["env_updates"].get<int>() >= 1);
+    REQUIRE(at(cap, 0, 2) > at(cap, 0, 0) + 20);    // the sky is blue up high
+    REQUIRE(at(cap, 0, 2) > 150);
+    REQUIRE(at(cap, 1, 2) < at(cap, 0, 2) - 40);    // the ground is darker and not blue
+    REQUIRE(at(cap, 2, 0) >= 250);                  // the sun's disc
+    REQUIRE(s.command("render.pick", Json{{"x", 60}, {"y", 3}}).value()["id"] == 0);   // the sky is background: nothing to pick
+    // The environment is rebuilt only when what it is made of changes.
+    const int updates = cap["render"]["env_updates"].get<int>();
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["env_updates"].get<int>() == updates);
+    // A mirror ball in front: its top reflects the sky, its bottom the ground.
+    Json ball;
+    ball["name"] = "Ball";
+    ball["components"]["Transform"]["position"] = Json{{"x", 0}, {"y", 0}, {"z", -3}};
+    ball["components"]["MeshRenderer"] = Json{{"mesh", "sphere"}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}, {"metallic", 1.0}, {"roughness", 0.05}};
+    REQUIRE(s.command("world.spawn", ball).has_value());
+    REQUIRE(s.frame().has_value());
+    const Vec3 top{0, 0.35f, -3 + 0.357f}, bottom{0, -0.35f, -3 + 0.357f};
+    cap = s.command("capture", Json{{"pixels", Json::array({project(top), project(bottom)})}}).value();
+    INFO("mirror " << cap["pixels"].dump());
+    REQUIRE(at(cap, 0, 2) > at(cap, 0, 0) + 15);    // the sky in the top
+    REQUIRE(at(cap, 0, 2) > at(cap, 1, 2) + 40);    // the ground in the bottom
+    // A rough white ball lit by the sky alone (the sun turned off): lit with it, dark without it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Light"}, {"value", Json{{"intensity", 0.0}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"metallic", 0.0}, {"roughness", 1.0}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const Json lit = s.command("capture", Json{{"pixels", Json::array({project(top), project(bottom)})}}).value();
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"diffuse", 0.0}, {"specular", 0.0}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const Json unlit = s.command("capture", Json{{"pixels", Json::array({project(top), project(bottom)})}}).value();
+    INFO("sky-lit " << lit["pixels"].dump() << " unlit " << unlit["pixels"].dump());
+    REQUIRE(at(lit, 0, 1) > 100);
+    REQUIRE(at(lit, 0, 2) > at(lit, 0, 0));          // lit from the blue above
+    REQUIRE(at(lit, 0, 1) > at(lit, 1, 1) + 15);     // brighter on top than underneath
+    REQUIRE(at(unlit, 0, 1) < 12);
+    // An HDR panorama, red above and dim green below: seen behind, and reflected by a mirror.
+    const std::filesystem::path pano = root() / "samples" / "playground" / "assets" / "sky-test.hdr";
+    const float red[3] = {2.0f, 0.0f, 0.0f}, green[3] = {0.0f, 0.5f, 0.0f};
+    const bool made_dir = std::filesystem::create_directories(pano.parent_path());
+    write_test_hdr(pano, 64, 32, red, green);
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"mode", 2}, {"image", "assets/sky-test.hdr"}, {"diffuse", 1.0}, {"specular", 1.0}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"metallic", 1.0}, {"roughness", 0.05}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    cap = s.command("capture", Json{{"pixels", Json::array({Json{{"x", 60}, {"y", 3}}, Json{{"x", 60}, {"y", 140}}, project(top), project(bottom)})}}).value();
+    std::filesystem::remove(pano);
+    if (made_dir) std::filesystem::remove(pano.parent_path());
+    INFO("panorama " << cap["pixels"].dump() << " " << cap["render"].dump());
+    REQUIRE(cap["render"]["sky"] == "image");
+    REQUIRE(at(cap, 0, 0) >= 250);
+    REQUIRE(at(cap, 0, 1) < 10);
+    REQUIRE(at(cap, 1, 1) > 150);                   // 0.5 of the light encodes to 188
+    REQUIRE(at(cap, 1, 0) < 10);
+    REQUIRE(at(cap, 2, 0) > at(cap, 2, 1) + 100);   // the mirror's top is red
+    REQUIRE(at(cap, 3, 1) > at(cap, 3, 0) + 60);    // and its bottom green
+    const Json described = s.command("assets.describe", Json{{"path", "assets/sky-test.hdr"}}).value();
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("cascaded shadows keep a nearby shadow's edge sharp and still reach far away", "[renderer][cascades]") {
+    app::Options o = playground_options();
+    o.width = 480;
+    o.height = 270;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A ground 400 units wide seen from eye height, a thin post four units ahead and a block fifty
+    // units off, the sun shining toward +X and down at 45 degrees.
+    Json ground;
+    ground["name"] = "Ground";
+    ground["components"]["Transform"]["scale"] = Json{{"x", 400}, {"y", 1}, {"z", 400}};
+    ground["components"]["MeshRenderer"] = Json{{"mesh", "plane"}, {"color", Json{{"r", 0.8}, {"g", 0.8}, {"b", 0.8}, {"a", 1}}}};
+    REQUIRE(s.command("world.spawn", ground).has_value());
+    Json post;
+    post["name"] = "Post";
+    post["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 0.5}, {"z", -4}}}, {"scale", Json{{"x", 0.2}, {"y", 1}, {"z", 0.2}}}};
+    post["components"]["MeshRenderer"] = Json{{"mesh", "cube"}};
+    REQUIRE(s.command("world.spawn", post).has_value());
+    Json block;
+    block["name"] = "Block";
+    block["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", -50}}}, {"scale", Json{{"x", 2}, {"y", 2}, {"z", 2}}}};
+    block["components"]["MeshRenderer"] = Json{{"mesh", "cube"}};
+    REQUIRE(s.command("world.spawn", block).has_value());
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"]["rotation"] = Json{{"x", -0.5}, {"y", -0.5}, {"z", 0}, {"w", 0.70710678}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.2}};
+    REQUIRE(s.command("world.spawn", sun).has_value());
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0.5}, {"y", 1.7}, {"z", 0}}}, {"rotation", Json{{"x", -0.1736}, {"y", 0}, {"z", 0}, {"w", 0.9848}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 60}, {"far", 400}};
+    REQUIRE(s.command("world.spawn", camera).has_value());
+    // The width of the post's shadow edge in samples along the ground, from 10 to 90 percent of the
+    // way from shadowed to lit (the shadow runs from x 0.1 to about 1.1 at z -4).
+    auto edge = [&](const char* name) {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        const std::string path = (root() / "build" / "test-out" / name).string();
+        Json cap = s.command("capture", Json{{"path", path}}).value();
+        std::vector<double> b;
+        for (int i = 0; i <= 60; ++i) b.push_back(brightness_at(s, cap, {0.6f + 0.02f * static_cast<float>(i), 0, -4}));
+        const double lo = *std::min_element(b.begin(), b.end()), hi = *std::max_element(b.begin(), b.end());
+        int width = 0;
+        for (double v : b) width += (v > lo + 0.1 * (hi - lo) && v < lo + 0.9 * (hi - lo)) ? 1 : 0;
+        INFO(name << " shadowed " << lo << " lit " << hi << " edge samples " << width);
+        REQUIRE(hi > lo + 150);   // there is a shadow with an edge in the strip
+        return std::make_pair(width, cap);
+    };
+    auto [sharp, cap4] = edge("cascades-4.png");
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["shadow_cascades"] == 4);
+    REQUIRE(stats["shadow_distance"].get<double>() == Catch::Approx(80.0).margin(0.5));
+    // The far block's shadow lands too, fifty units out (seen from above, where it is more than a line).
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 30}, {"z", -10}}}, {"rotation", Json{{"x", -0.4226}, {"y", 0}, {"z", 0}, {"w", 0.9063}}}}}}).has_value());
+    for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+    Json high = s.command("capture", Json{{"path", (root() / "build" / "test-out" / "cascades-far.png").string()}}).value();
+    const double far_shade = brightness_at(s, high, {2.0f, 0, -50}), far_lit = brightness_at(s, high, {-3.0f, 0, -50});
+    INFO("far shade " << far_shade << " far lit " << far_lit);
+    REQUIRE(far_shade < far_lit * 0.8);
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0.5}, {"y", 1.7}, {"z", 0}}}, {"rotation", Json{{"x", -0.1736}, {"y", 0}, {"z", 0}, {"w", 0.9848}}}}}}).has_value());
+    // One cascade over the same eighty units: the near edge is softer (wider in samples).
+    Json one = s.command("render.shadows", Json{{"cascades", 1}}).value();
+    REQUIRE(one["cascades"] == 1);
+    auto [soft, cap1] = edge("cascades-1.png");
+    REQUIRE(s.command("render.stats", Json::object()).value()["shadow_cascades"] == 1);
+    INFO("four cascades " << sharp << " one cascade " << soft);
+    REQUIRE(soft > sharp + 2);
+    REQUIRE(s.command("render.shadows", Json{{"cascades", 9}}).value()["cascades"] == 4);
     REQUIRE(s.finish().has_value());
 }

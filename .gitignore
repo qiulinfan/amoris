@@ -11,3 +11,6 @@ dist/
 projects/
 **/.pocket/editor.json
 .claude/
+
+# Models converted through Blender (docs/design/assets.md, Importing models); rebuilt from the sources.
+.imported/

@@ -20,22 +20,39 @@ namespace pocket::renderer {
 struct ShadowSettings {
     bool enabled = true;
     float strength = 0.85f;   // how dark a fully shadowed surface gets (0 none, 1 black)
-    float bias = 0.0008f;     // depth bias in shadow-map units, scaled by slope in the shader
+    float bias = 0.0008f;     // depth bias in shadow-map units, scaled by slope in the shader (lookups also move out along the surface's normal by a texel)
+    int cascades = 4;         // shadow maps along the view, each covering a farther slice at a coarser scale (1..4)
+    float distance = 80.0f;   // how far from the camera shadows reach (clamped to the scene and the camera's far plane)
 };
 
 // Bloom: bright parts of the frame blurred and added back, so lights and emissive surfaces glow.
 struct BloomSettings {
     bool enabled = false;
-    float threshold = 0.8f;   // brightness (0..1) above which a pixel glows; the glow is what is over it
+    float threshold = 0.8f;   // linear brightness above which a pixel glows (the scene is HDR: an emissive of 4 is four times over 1); the glow is what is over it
     float strength = 0.6f;    // how much of the blurred glow is added back
     float radius = 1.0f;      // the blur's spread, in half-resolution texels (1 tight, 4 wide)
 };
 
-// Grading: the finished frame's look, applied last and in this order.
+// How the HDR scene becomes the 8-bit frame: an exposure (fixed, or metered from the frame and
+// adapted over time), then a tone-mapping operator, then the sRGB encoding.
+enum class Tonemap : int { None = 0, Aces = 1, Agx = 2, Neutral = 3 };
+const char* tonemap_name(Tonemap t);
+bool tonemap_from_name(const std::string& name, Tonemap& out);
+struct TonemapSettings {
+    Tonemap op = Tonemap::None;  // none clips at white (2D art keeps its exact colors), aces and agx roll highlights off filmically, neutral keeps hues and only compresses near white
+    float exposure = 1.0f;       // multiplies the scene before the operator
+    bool auto_exposure = false;  // meter the frame's average brightness and expose it to mid gray, adapting over time
+    float compensation = 0.0f;   // EV added to the metered exposure (+1 twice as bright)
+    float min_ev = -10.0f;       // the metered average is kept within [min_ev, max_ev] (log2 of luminance)
+    float max_ev = 10.0f;
+    float speed = 3.0f;          // how fast the eye adapts, per second (0 holds, large is instant)
+};
+
+// Grading: the finished frame's look, applied in the final pass after tone mapping.
 struct GradeSettings {
     bool enabled = false;
-    float exposure = 1.0f;       // multiplies the frame (1 as rendered)
-    bool filmic = false;         // roll the top of the range off, so an exposure above 1 brightens without clipping
+    float exposure = 1.0f;       // multiplies the scene before tone mapping (1 as rendered)
+    bool filmic = false;         // the ACES curve when the tone-mapping operator is none
     float temperature = 0.0f;    // -1 cool (toward blue) .. 0 .. 1 warm (toward red)
     float contrast = 1.0f;       // around mid gray (1 as rendered)
     float saturation = 1.0f;     // 0 gray .. 1 as rendered .. 2 vivid
@@ -47,6 +64,8 @@ struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
     bool shadows = false;             // whether a shadow map was rendered this frame
+    int shadow_cascades = 0;          // cascades rendered this frame
+    float shadow_distance = 0;        // view depth the last cascade reaches
     std::uint32_t instances = 0;      // objects drawn (one per entity, or per glTF material)
     std::uint32_t sprites = 0;        // of which sprites
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
@@ -60,7 +79,11 @@ struct RenderStats {
     std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     int msaa = 1;                     // samples per pixel of the color pass (1 or 4)
     bool bloom = false;               // whether the bloom passes ran this frame
-    bool grade = false;               // whether the grading pass ran this frame
+    bool grade = false;               // whether grading was applied in the final pass this frame
+    int tonemap = 0;                  // the operator of the final pass (Tonemap)
+    int sky = 0;                      // the Sky drawn (0 none, 1 procedural, 2 image)
+    std::uint32_t env_updates = 0;    // times the sky's environment light was rebuilt, over the renderer's life
+    bool auto_exposure = false;       // whether the frame was metered for exposure
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
@@ -134,6 +157,15 @@ class Renderer {
     // Grading over the finished frame, after bloom (off by default); takes effect at the next frame.
     void set_grade(GradeSettings s);
     [[nodiscard]] GradeSettings grade() const;
+    // Exposure and tone mapping of the HDR scene into the frame; takes effect at the next frame.
+    void set_tonemap(TonemapSettings s);
+    [[nodiscard]] TonemapSettings tonemap() const;
+    // Seconds between rendered frames, for the auto exposure's adaptation (a tick by default).
+    void set_time_step(float seconds);
+    // The auto exposure's state after the last frame, read back from the GPU: the exposure it
+    // applied (EV, log2 of the multiplier) and the metered average (log2 of luminance).
+    struct Metering { float exposure_ev = 0, average_ev = 0; bool valid = false; };
+    Result<Metering> metering();
     // Where glTF meshes and images come from (MeshRenderer.mesh / .texture paths). Optional.
     void set_assets(assets::AssetStore* store);
     // Local bounds of asset meshes first uploaded since the last call (path -> min/max).

@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -73,6 +74,27 @@ struct Node {
     Vec3 scale{1, 1, 1};
     Mat4 rest;  // the node's local matrix as authored (TRS above, or an explicit matrix)
     std::vector<int> children;
+    int light = -1;   // index into Mesh::lights (KHR_lights_punctual), -1 for none
+    int camera = -1;  // index into Mesh::cameras, -1 for none
+};
+
+// A light a file places on a node (KHR_lights_punctual): it shines along the node's -Z.
+struct LightDef {
+    std::string name;
+    int type = 1;             // 0 directional, 1 point, 2 spot
+    Vec3 color{1, 1, 1};      // linear
+    float intensity = 1;      // as the file says (lux for directional, candela for the others, or unitless from Blender)
+    float range = 0;          // 0: unlimited in the file
+    float inner_cone = 0, outer_cone = 0.785398f;   // spot cone half-angles, radians
+};
+
+// A camera a file places on a node: it looks along the node's -Z.
+struct CameraDef {
+    std::string name;
+    bool orthographic = false;
+    float yfov = 0.8f;        // radians, perspective
+    float ymag = 5;           // half height, orthographic
+    float znear = 0.1f, zfar = 1000;
 };
 
 struct Skin {
@@ -119,6 +141,10 @@ struct Mesh {
     std::vector<AnimationClip> animations;
     std::vector<MorphTarget> morph_targets;
     std::vector<float> default_weights;     // one per target, from the file's mesh weights (zeros otherwise)
+    std::vector<LightDef> lights;
+    std::vector<CameraDef> cameras;
+    std::string importer = "gltf";          // how the file was read: gltf, obj, stl, or blender (converted to glTF by Blender)
+    std::string converted;                  // for blender: the project-relative glTF it became
     [[nodiscard]] bool skinned() const { return !skin_vertices.empty(); }
     // A node's matrix in the file's space with the nodes at rest (identity for -1 or out of range).
     [[nodiscard]] Mat4 rest_global(int node) const;
@@ -285,6 +311,7 @@ struct Image {
     std::string path;
     std::uint32_t width = 0, height = 0;
     std::vector<std::uint8_t> rgba;  // 8-bit RGBA, row major, top-left origin
+    std::vector<float> hdr;          // for a Radiance .hdr: linear float RGBA (rgba then holds it clipped and sRGB-encoded)
     [[nodiscard]] Json describe() const;
 };
 
@@ -294,6 +321,24 @@ struct Image {
 // skins and animations come along so the runtime can pose them (docs/design/animation.md).
 Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& base_dir, const std::string& display_path);
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path);
+// Wavefront OBJ with its MTL libraries (read through `read`, project-relative paths): one node per
+// object, one submesh per object and material, normals smoothed where the file has none.
+Result<Mesh> parse_obj(const std::string& text, const std::string& display_path, const std::function<Result<std::string>(const std::string&)>& read);
+// STL, binary or ASCII: one node, one gray material, flat normals.
+Result<Mesh> parse_stl(const std::string& bytes, const std::string& display_path);
+// Formats Blender reads and the engine converts through it (.blend, .fbx, .dae, .usd*, .abc, .ply, ...).
+bool blender_format(std::string_view extension);
+// Blender's executable: `configured`, else POCKET_BLENDER, the usual install places, PATH; "" for none.
+std::string find_blender(const std::string& configured);
+struct Conversion {
+    std::filesystem::path glb;
+    bool cached = false;      // the same content was converted before (or Blender is missing and a conversion exists)
+    double seconds = 0;
+    std::string blender;
+};
+// `source` as binary glTF at `out_glb` by running Blender headless, unless a conversion of the same
+// content is there already (`force` converts again).
+Result<Conversion> convert_with_blender(const std::filesystem::path& source, const std::filesystem::path& out_glb, const std::string& blender, bool force);
 
 class AssetStore {
    public:
@@ -323,8 +368,16 @@ class AssetStore {
     // Version bumps whenever something is (re)loaded or invalidated; renderers use it to
     // drop GPU copies.
     [[nodiscard]] std::uint64_t version() const { return version_; }
+    // Blender for the formats it converts: a path, or "" to look for it (docs/design/assets.md, Importing models).
+    void set_blender(std::string path) { blender_config_ = std::move(path); }
+    [[nodiscard]] std::string blender() const { return find_blender(blender_config_); }
+    // Convert a Blender-read file now (again with force) and report it; the mesh reloads from the result.
+    Result<Json> import(const std::string& path, bool force);
 
    private:
+    Result<std::filesystem::path> converted_glb(const std::string& path, const std::filesystem::path& full, bool force, Conversion* report = nullptr);
+    std::string blender_config_;
+    std::map<std::string, std::filesystem::path> converted_;   // project path of a Blender-read file -> the glTF it became
     Result<std::filesystem::path> resolve(const std::string& path) const;
     std::filesystem::path project_dir_;
     std::map<std::string, std::unique_ptr<Mesh>> meshes_;

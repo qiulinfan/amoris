@@ -9,6 +9,7 @@
     X(Lifetime) \
     X(Camera) \
     X(Light) \
+    X(Sky) \
     X(MeshRenderer) \
     X(Sprite) \
     X(SpriteAnimation) \

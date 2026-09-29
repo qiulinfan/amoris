@@ -108,12 +108,38 @@ export interface Camera {
 export interface Light {
     /** 0 directional, 1 point. */
     kind: number;
-    /** Linear RGB color; alpha unused. */
+    /** Color as a color picker shows it (sRGB), decoded to linear light; alpha unused. */
     color: Color;
     /** Multiplier applied to color. */
     intensity: number;
     /** Point light range in meters. */
     range: number;
+}
+
+/** The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out. */
+export interface Sky {
+    /** 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off. */
+    mode: number;
+    /** For mode 2: project-relative path of the panorama (2:1, the horizon across the middle). */
+    image: string;
+    /** Procedural: the color straight up. */
+    zenith: Color;
+    /** Procedural: the color at the horizon. */
+    horizon: Color;
+    /** Procedural: the color below the horizon. */
+    ground: Color;
+    /** Brightness of the sky, as seen and as light. */
+    intensity: number;
+    /** Mode 2: turns the panorama about the vertical axis, in degrees. */
+    rotation: number;
+    /** Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light. */
+    sun_size: number;
+    /** How much the sky lights surfaces (0 leaves only the lights). */
+    diffuse: number;
+    /** How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness). */
+    specular: number;
+    /** false turns the sky off without removing it. */
+    enabled: boolean;
 }
 
 /** Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured. */
@@ -122,7 +148,7 @@ export interface MeshRenderer {
     mesh: string;
     /** Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole. */
     node: string;
-    /** Base color, linear RGB; multiplies the asset's material color. */
+    /** Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent. */
     color: Color;
     /** Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. */
     texture: string;
@@ -130,7 +156,7 @@ export interface MeshRenderer {
     metallic: number;
     /** 0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives). */
     roughness: number;
-    /** Light the surface gives off regardless of lighting, added to the asset material's emissive color. */
+    /** Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow. */
     emissive: Color;
     /** Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none. */
     cutoff: number;
@@ -600,6 +626,7 @@ export interface Components {
     Lifetime: Lifetime;
     Camera: Camera;
     Light: Light;
+    Sky: Sky;
     MeshRenderer: MeshRenderer;
     Sprite: Sprite;
     SpriteAnimation: SpriteAnimation;
@@ -623,7 +650,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -634,6 +661,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
+    Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },

@@ -147,6 +147,26 @@ void from_json(const Json& j, Light& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Light& v, std::string_view path, float** out);
 
+/// The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.
+struct Sky {
+    std::int32_t mode = 1;
+    std::string image = "";
+    Color4 zenith{0.25f, 0.45f, 0.8f, 1.0f};
+    Color4 horizon{0.75f, 0.82f, 0.9f, 1.0f};
+    Color4 ground{0.33f, 0.3f, 0.27f, 1.0f};
+    float intensity = 1.0f;
+    float rotation = 0.0f;
+    float sun_size = 1.5f;
+    float diffuse = 1.0f;
+    float specular = 1.0f;
+    bool enabled = true;
+    constexpr bool operator==(const Sky&) const = default;
+};
+void to_json(Json& j, const Sky& v);
+void from_json(const Json& j, Sky& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Sky& v, std::string_view path, float** out);
+
 /// Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.
 struct MeshRenderer {
     std::string mesh = "cube";
@@ -542,6 +562,7 @@ void hash_component(struct StateHasherRef& h, const Health& v);
 void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
+void hash_component(struct StateHasherRef& h, const Sky& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
 void hash_component(struct StateHasherRef& h, const Sprite& v);
 void hash_component(struct StateHasherRef& h, const SpriteAnimation& v);

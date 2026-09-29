@@ -19,6 +19,30 @@ namespace pocket::renderer {
 namespace {
 
 constexpr std::uint32_t kMaxPointLights = 8;
+// The scene is drawn into a half-float target (lighting in linear light, values over 1 kept), and
+// a final pass exposes, tone-maps and sRGB-encodes it into the 8-bit frame.
+constexpr WGPUTextureFormat kHdrFormat = WGPUTextureFormat_RGBA16Float;
+
+// Colors in components are authored as a color picker shows them (sRGB); lighting needs linear
+// light. Values over 1 are intensities and pass through (an emissive of 4 is four times white).
+float decode(float c) { return c <= 0.04045f ? c / 12.92f : (c <= 1.0f ? std::pow((c + 0.055f) / 1.055f, 2.4f) : c); }
+
+// A float as IEEE half bits (for uploading light levels into half-float textures), clamped to the largest half.
+std::uint16_t to_half(float f) {
+    if (!(f == f)) return 0;
+    f = std::clamp(f, -65504.0f, 65504.0f);
+    std::uint32_t x;
+    std::memcpy(&x, &f, 4);
+    const std::uint32_t sign = (x >> 16) & 0x8000u;
+    const int exp = static_cast<int>((x >> 23) & 0xFFu) - 127 + 15;
+    std::uint32_t mant = x & 0x7FFFFFu;
+    if (exp <= 0) {
+        if (exp < -10) return static_cast<std::uint16_t>(sign);
+        mant |= 0x800000u;
+        return static_cast<std::uint16_t>(sign | (mant >> static_cast<std::uint32_t>(14 - exp)));
+    }
+    return static_cast<std::uint16_t>(sign | (static_cast<std::uint32_t>(exp) << 10) | (mant >> 13));
+}
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
 constexpr std::uint32_t kObjectStride = 256;  // sizeof(ObjectUniforms)
@@ -35,7 +59,17 @@ struct alignas(16) FrameUniforms {
     float point_color[kMaxPointLights][4];
     float light_view_proj[16];   // the sun's orthographic view for the shadow map
     float shadow[4];             // texel size, depth bias, strength, enabled
+    float inv_view_proj[16];     // clip to world, for the sky's view directions
+    float env[4];                // environment light: on, diffuse, specular, the prefiltered map's last level
+    float sky[4];                // sky drawn: mode, cos of the sun disc's radius, the disc's brightness, a sun exists
+    float cascade_vp[4][16];     // the sun's view-projection per cascade
+    float cascade_far[4];        // the view depth each cascade reaches
+    float cascade_texel[4];      // a texel of each cascade in world units (the lookup's normal offset)
+    float camera_fwd[4];         // xyz: the camera's forward (view depth), w: cascades in use
 };
+constexpr std::uint32_t kCascades = 4;
+// The environment map: an equirectangular panorama with its GGX prefiltered levels as mips.
+constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
 constexpr std::uint32_t kShadowMapSize = 2048;
 
 struct alignas(16) ObjectUniforms {
@@ -64,7 +98,9 @@ struct VsOut {
     var out: VsOut;
     out.clip = frame.view_proj * vec4f(position, 1.0);
     out.clip.z = out.clip.z - 0.0005 * out.clip.w;  // a hair toward the camera: lines on a surface win
-    out.color = color;
+    // sRGB-authored colors into the linear scene.
+    let c = color.rgb;
+    out.color = vec4f(select(pow((c + 0.055) / 1.055, vec3f(2.4)), c / 12.92, c <= vec3f(0.04045)), color.a);
     return out;
 }
 @fragment fn fs(in: VsOut) -> @location(0) vec4f {
@@ -84,9 +120,41 @@ struct Frame {
     point_color: array<vec4f, 8>,
     light_view_proj: mat4x4f,
     shadow: vec4f,
+    inv_view_proj: mat4x4f,
+    env: vec4f,
+    sky: vec4f,
+    cascade_vp: array<mat4x4f, 4>,
+    cascade_far: vec4f,
+    cascade_texel: vec4f,
+    camera_fwd: vec4f,
 };
-@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
+// The sky's light: the panorama with GGX-prefiltered mips (roughness 0 to 1), and its diffuse
+// irradiance as nine spherical-harmonic coefficients (already divided by pi).
+@group(0) @binding(3) var env_tex: texture_2d<f32>;
+@group(0) @binding(4) var env_samp: sampler;
+@group(0) @binding(5) var<storage, read> sh: array<vec4f, 9>;
+fn env_uv(d: vec3f) -> vec2f {
+    return vec2f(atan2(d.x, -d.z) / 6.2831853 + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+}
+fn sh_irradiance(n: vec3f) -> vec3f {
+    let c = sh[0].rgb * 0.282095
+        + sh[1].rgb * (0.488603 * n.y) + sh[2].rgb * (0.488603 * n.z) + sh[3].rgb * (0.488603 * n.x)
+        + sh[4].rgb * (1.092548 * n.x * n.y) + sh[5].rgb * (1.092548 * n.y * n.z)
+        + sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + sh[7].rgb * (1.092548 * n.x * n.z)
+        + sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(c, vec3f(0.0));
+}
+// Karis's analytic fit of the split-sum environment BRDF.
+fn env_brdf(f0: vec3f, roughness: f32, ndv: f32) -> vec3f {
+    let c0 = vec4f(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4f(1.0, 0.0425, 1.04, -0.04);
+    let r = roughness * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
+    let ab = vec2f(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
 struct Object {
     model: mat4x4f,
     normal: mat4x4f,
@@ -150,10 +218,12 @@ struct VsOut {
     return out;
 }
 
-// Shadow pass: depth only, from the sun.
+// Shadow pass: depth only, from the sun, once per cascade (its matrix comes with a dynamic offset).
+struct Cascade { view_proj: mat4x4f };
+@group(2) @binding(5) var<uniform> cascade: Cascade;
 @vertex fn vs_shadow(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
     let object = objects[instance];
-    return frame.light_view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
+    return cascade.view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
 }
 
 // Skinned meshes: the joint matrices of this instance start at object.id.z in the joints array.
@@ -179,7 +249,7 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
 @vertex fn vs_shadow_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> @builtin(position) vec4f {
     let object = objects[instance];
     let model = object.model * skin_matrix(object.id.z, j, w);
-    return frame.light_view_proj * (model * vec4f(morph_position(object, vid, position), 1.0));
+    return cascade.view_proj * (model * vec4f(morph_position(object, vid, position), 1.0));
 }
 
 struct FsOut {
@@ -221,6 +291,23 @@ fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f
     return (diffuse * ndl + spec);
 }
 
+// How lit a point is by the sun in one cascade (0 shadowed .. 1 lit), outside the map lit.
+fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
+    let p = world_pos + gn * frame.cascade_texel[c] * 1.5;
+    let sp = frame.cascade_vp[c] * vec4f(p, 1.0);
+    let ndc = sp.xyz / sp.w;
+    let suv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
+    let bias = frame.shadow.y * (1.0 + 2.0 * (1.0 - ndl));
+    var lit = 0.0;
+    for (var j = -1; j <= 1; j = j + 1) {
+        for (var i = -1; i <= 1; i = i + 1) {
+            lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, suv + vec2f(f32(i), f32(j)) * frame.shadow.x, c, ndc.z - bias);
+        }
+    }
+    return lit / 9.0;
+}
+
 fn shade(in: VsOut) -> vec4f {
     let object = objects[in.instance];
     // Derivatives and samples first: both must stay in uniform control flow.
@@ -244,24 +331,34 @@ fn shade(in: VsOut) -> vec4f {
     let albedo = base.rgb;
     let f0 = mix(vec3f(0.04), albedo, metallic);
     var color = frame.ambient.rgb * mix(albedo, f0, metallic);
+    if (frame.env.x > 0.5) {
+        // The sky's light instead of the flat ambient: diffuse from its harmonics, specular from the
+        // prefiltered level matching the roughness, in the mirror direction.
+        let ndv = max(dot(n, v), 1e-4);
+        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, n)), roughness * frame.env.w).rgb;
+        color = albedo * (1.0 - metallic) * sh_irradiance(n) * frame.env.y + spec * env_brdf(f0, roughness, ndv) * frame.env.z;
+    }
     // Directional light.
     let l = normalize(-frame.sun_dir.xyz);
     let ndl = max(dot(n, l), 0.0);
-    // Shadow map lookup with a 3x3 comparison filter; slope-scaled bias against acne.
+    // Shadow: the cascade covering this depth (blended into the next over the last tenth of it),
+    // looked up a texel out along the surface's normal, with a 3x3 comparison filter.
     var shadow = 1.0;
     if (frame.shadow.w > 0.5) {
-        let sp = frame.light_view_proj * vec4f(in.world_pos, 1.0);
-        let ndc = sp.xyz / sp.w;
-        let suv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        if (suv.x >= 0.0 && suv.x <= 1.0 && suv.y >= 0.0 && suv.y <= 1.0 && ndc.z >= 0.0 && ndc.z <= 1.0) {
-            let bias = frame.shadow.y * (1.0 + 2.0 * (1.0 - ndl));
-            var lit = 0.0;
-            for (var j = -1; j <= 1; j = j + 1) {
-                for (var i = -1; i <= 1; i = i + 1) {
-                    lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, suv + vec2f(f32(i), f32(j)) * frame.shadow.x, ndc.z - bias);
-                }
+        let depth = dot(in.world_pos - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+        let count = i32(frame.camera_fwd.w);
+        var c = 0;
+        while (c < count && depth > frame.cascade_far[c]) { c = c + 1; }
+        if (c < count) {
+            let gn = normalize(in.normal);
+            var lit = cascade_lit(c, in.world_pos, gn, ndl);
+            let start = select(0.0, frame.cascade_far[max(c - 1, 0)], c > 0);
+            let band = (frame.cascade_far[c] - start) * 0.1;
+            let into = frame.cascade_far[c] - depth;
+            if (c + 1 < count && into < band) {
+                lit = mix(cascade_lit(c + 1, in.world_pos, gn, ndl), lit, into / band);
             }
-            shadow = mix(1.0 - frame.shadow.z, 1.0, lit / 9.0);
+            shadow = mix(1.0 - frame.shadow.z, 1.0, lit);
         }
     }
     color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow;
@@ -295,6 +392,42 @@ fn shade(in: VsOut) -> vec4f {
     let a = textureSample(base_tex, base_samp, in.uv).a * in.color.a;
     if (object.emissive.w > 0.0 && a < object.emissive.w) { discard; }
     return in.id;
+}
+
+// The sky behind everything: a full-screen triangle, the panorama in the view direction, and the
+// sun's disc on a procedural sky. Drawn first in the scene pass; the id stays 0 (background).
+struct SkyOut {
+    @builtin(position) clip: vec4f,
+    @location(0) ndc: vec2f,
+};
+@vertex fn vs_sky(@builtin(vertex_index) i: u32) -> SkyOut {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    var out: SkyOut;
+    out.clip = vec4f(x, y, 1.0, 1.0);
+    out.ndc = vec2f(x, y);
+    return out;
+}
+fn sky_color(ndc: vec2f) -> vec3f {
+    let far = frame.inv_view_proj * vec4f(ndc, 1.0, 1.0);
+    let near = frame.inv_view_proj * vec4f(ndc, 0.0, 1.0);
+    let d = normalize(far.xyz / far.w - near.xyz / near.w);
+    var c = textureSampleLevel(env_tex, env_samp, env_uv(d), 0.0).rgb;
+    if (frame.sky.x > 0.5 && frame.sky.x < 1.5 && frame.sky.w > 0.5) {
+        let mu = dot(d, normalize(-frame.sun_dir.xyz));
+        let edge = frame.sky.y;
+        c = c + frame.sun_color.rgb * frame.sky.z * smoothstep(edge, edge + (1.0 - edge) * 0.2, mu);
+    }
+    return c;
+}
+@fragment fn fs_sky(in: SkyOut) -> FsOut {
+    var out: FsOut;
+    out.color = vec4f(sky_color(in.ndc), 1.0);
+    out.id = 0u;
+    return out;
+}
+@fragment fn fs_sky_color(in: SkyOut) -> @location(0) vec4f {
+    return vec4f(sky_color(in.ndc), 1.0);
 }
 
 // Sprites: no lighting, alpha blended, transparent pixels leave no id behind.
@@ -360,35 +493,239 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 }
 )WGSL";
 
-constexpr const char* kGradeWgsl = R"WGSL(
-struct G { exposure: f32, contrast: f32, saturation: f32, vignette: f32, tint: vec4f, temperature: f32, filmic: f32, pad0: f32, pad1: f32 };
-@group(0) @binding(0) var<uniform> g: G;
-@group(0) @binding(1) var src: texture_2d<f32>;
-@group(0) @binding(2) var smp: sampler;
-struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
-@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> VOut {
-    var out: VOut;
+constexpr const char* kPostWgsl = R"WGSL(
+struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f };
+@group(0) @binding(0) var<uniform> post: Post;
+@group(0) @binding(1) var hdr: texture_2d<f32>;
+@group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
     let x = f32(i32(i & 1u) * 4 - 1);
     let y = f32(i32(i >> 1u) * 4 - 1);
-    out.pos = vec4f(x, y, 0.0, 1.0);
-    out.uv = vec2f((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);
-    return out;
+    return vec4f(x, y, 0.0, 1.0);
 }
-// The frame's look, in order: exposure, the filmic roll-off, warmth, contrast, saturation, tint, vignette.
-@fragment fn fs_grade(in: VOut) -> @location(0) vec4f {
-    let s = textureSample(src, smp, in.uv);
-    var c = s.rgb * g.exposure;
-    if (g.filmic > 0.5) {
-        c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+// Narkowicz's fit of the ACES filmic curve.
+fn aces(c: vec3f) -> vec3f {
+    return clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
+}
+// AgX: into a log space through an inset matrix, a sigmoid (a polynomial fit), back out.
+fn agx(c0: vec3f) -> vec3f {
+    let inset = mat3x3f(vec3f(0.842479062253094, 0.0423282422610123, 0.0423756549057051),
+                        vec3f(0.0784335999999992, 0.878468636469772, 0.0784336),
+                        vec3f(0.0792237451477643, 0.0791661274605434, 0.879142973793104));
+    let outset = mat3x3f(vec3f(1.19687900512017, -0.0528968517574562, -0.0529716355144438),
+                         vec3f(-0.0980208811401368, 1.15190312990417, -0.0980434501171241),
+                         vec3f(-0.0990297440797205, -0.0989611768448433, 1.15107367264116));
+    let lo = -12.47393;
+    let hi = 4.026069;
+    var v = inset * max(c0, vec3f(1e-10));
+    v = (clamp(log2(v), vec3f(lo), vec3f(hi)) - lo) / (hi - lo);
+    let x2 = v * v;
+    let x4 = x2 * x2;
+    v = 15.5 * x4 * x2 - 40.14 * x4 * v + 31.96 * x4 - 6.868 * x2 * v + 0.4298 * x2 + 0.1191 * v - 0.00232;
+    return pow(clamp(outset * v, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
+}
+// Khronos PBR Neutral: colors under the shoulder are kept, only near white is compressed.
+fn neutral(c0: vec3f) -> vec3f {
+    let start = 0.76;
+    let desat = 0.15;
+    var c = c0;
+    let x = min(c.r, min(c.g, c.b));
+    c = c - select(0.04, x - 6.25 * x * x, x < 0.08);
+    let peak = max(c.r, max(c.g, c.b));
+    if (peak < start) { return c; }
+    let d = 1.0 - start;
+    let top = 1.0 - d * d / (peak + d - start);
+    c = c * (top / peak);
+    let g = 1.0 - 1.0 / (desat * (peak - top) + 1.0);
+    return mix(c, vec3f(top), g);
+}
+fn encode(c: vec3f) -> vec3f {
+    return select(1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3f(0.0031308));
+}
+// The final pass: exposure, the operator, the grade, the sRGB encoding (contrast on the encoded values).
+@fragment fn fs_post(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let s = textureLoad(hdr, vec2i(pos.xy), 0);
+    var exposure = post.exposure;
+    if (post.auto_on != 0u) { exposure = exposure * exp2(metered[0]); }
+    var c = max(s.rgb * exposure, vec3f(0.0));
+    switch post.op {
+        case 1u: { c = aces(c); }
+        case 2u: { c = agx(c); }
+        case 3u: { c = neutral(c); }
+        default: { }
     }
-    c = c * vec3f(1.0 + 0.15 * g.temperature, 1.0, 1.0 - 0.15 * g.temperature);
-    c = (c - 0.5) * g.contrast + 0.5;
-    let lum = dot(c, vec3f(0.2126, 0.7152, 0.0722));
-    c = mix(vec3f(lum), c, g.saturation);
-    c = c * g.tint.rgb;
-    let d = length((in.uv - 0.5) * 2.0);   // 0 at the centre, about 1.4 at a corner
-    c = c * (1.0 - g.vignette * smoothstep(0.4, 1.4, d));
-    return vec4f(clamp(c, vec3f(0.0), vec3f(1.0)), s.a);
+    if (post.grade_on != 0u) {
+        c = c * vec3f(1.0 + 0.15 * post.temperature, 1.0, 1.0 - 0.15 * post.temperature);
+        let lum = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+        c = max(mix(vec3f(lum), c, post.saturation), vec3f(0.0));
+        c = c * post.tint.rgb;
+        let uv = (pos.xy - post.viewport.xy) / max(post.viewport.zw, vec2f(1.0));
+        let d = length((uv - 0.5) * 2.0);   // 0 at the centre, about 1.4 at a corner
+        c = c * (1.0 - post.vignette * smoothstep(0.4, 1.3, d));   // black just inside the corners at 1
+    }
+    var e = encode(clamp(c, vec3f(0.0), vec3f(1.0)));
+    if (post.grade_on != 0u) { e = clamp((e - 0.5) * post.contrast + 0.5, vec3f(0.0), vec3f(1.0)); }
+    return vec4f(e, 1.0);
+}
+)WGSL";
+
+// The auto exposure's meter: 4096 samples on a grid over the viewport, their mean log luminance,
+// and an exposure that brings it to mid gray, eased toward from the last frame's in EV.
+// The sky's environment: `fill` writes level 0 of the panorama (procedural, or the image turned
+// by the rotation), `prefilter` convolves each next level with a GGX lobe (importance sampled from
+// the level above, the lobe widened by what that level already has), `irradiance` projects a small
+// level onto nine spherical harmonics for the diffuse light.
+constexpr const char* kSkyWgsl = R"WGSL(
+struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f };
+@group(0) @binding(0) var<uniform> sp: SkyParams;
+@group(0) @binding(1) var src: texture_2d<f32>;
+@group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var dst: texture_storage_2d<rgba16float, write>;
+const PI = 3.14159265;
+fn dir_of(uv: vec2f) -> vec3f {
+    let phi = (uv.x - 0.5) * 2.0 * PI;
+    let theta = uv.y * PI;
+    return vec3f(sin(theta) * sin(phi), cos(theta), -sin(theta) * cos(phi));
+}
+fn uv_of(d: vec3f) -> vec2f {
+    return vec2f(atan2(d.x, -d.z) / (2.0 * PI) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / PI);
+}
+fn procedural(d: vec3f) -> vec3f {
+    let up = d.y;
+    var c: vec3f;
+    if (up >= 0.0) {
+        c = mix(sp.horizon.rgb, sp.zenith.rgb, pow(up, 0.5));
+    } else {
+        c = mix(mix(sp.horizon.rgb, sp.ground.rgb, 0.5), sp.ground.rgb, pow(min(-up * 4.0, 1.0), 0.5));
+    }
+    if (sp.sun.w > 0.5 && up > -0.05) {
+        // The glow around the sun (the disc itself is drawn by the sky pass, and lights through the sun light).
+        let mu = max(dot(d, sp.sun.xyz), 0.0);
+        c = c + sp.sun_color.rgb * (0.08 * pow(mu, 48.0) + 0.02 * pow(mu, 4.0));
+    }
+    return c;
+}
+@compute @workgroup_size(8, 8) fn fill(@builtin(global_invocation_id) id: vec3u) {
+    if (f32(id.x) >= sp.size.x || f32(id.y) >= sp.size.y) { return; }
+    let uv = (vec2f(id.xy) + 0.5) / sp.size.xy;
+    let d = dir_of(uv);
+    var c: vec3f;
+    if (sp.misc.x > 1.5) {
+        let r = sp.misc.y;
+        let rd = vec3f(d.x * cos(r) + d.z * sin(r), d.y, -d.x * sin(r) + d.z * cos(r));
+        c = textureSampleLevel(src, samp, uv_of(rd), 0.0).rgb;
+    } else {
+        c = procedural(d);
+    }
+    textureStore(dst, vec2i(id.xy), vec4f(c * sp.misc.w, 1.0));
+}
+fn importance_ggx(xi: vec2f, n: vec3f, a: f32) -> vec3f {
+    let phi = 2.0 * PI * xi.x;
+    let cos_t = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
+    let sin_t = sqrt(max(1.0 - cos_t * cos_t, 0.0));
+    let h = vec3f(cos(phi) * sin_t, sin(phi) * sin_t, cos_t);
+    let up = select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), abs(n.z) < 0.999);
+    let tx = normalize(cross(up, n));
+    let ty = cross(n, tx);
+    return normalize(tx * h.x + ty * h.y + n * h.z);
+}
+@compute @workgroup_size(8, 8) fn prefilter(@builtin(global_invocation_id) id: vec3u) {
+    if (f32(id.x) >= sp.size.x || f32(id.y) >= sp.size.y) { return; }
+    let uv = (vec2f(id.xy) + 0.5) / sp.size.xy;
+    let n = dir_of(uv);
+    let a = sp.misc.z;
+    var acc = vec3f(0.0);
+    var w = 0.0;
+    for (var i = 0u; i < 64u; i = i + 1u) {
+        let xi = vec2f(f32(i) / 64.0, f32(reverseBits(i)) * 2.3283064365386963e-10);
+        let h = importance_ggx(xi, n, a);
+        let l = normalize(2.0 * dot(n, h) * h - n);
+        let ndl = dot(n, l);
+        if (ndl > 0.0) {
+            acc = acc + textureSampleLevel(src, samp, uv_of(l), 0.0).rgb * ndl;
+            w = w + ndl;
+        }
+    }
+    textureStore(dst, vec2i(id.xy), vec4f(acc / max(w, 1e-4), 1.0));
+}
+)WGSL";
+
+constexpr const char* kIrradianceWgsl = R"WGSL(
+@group(0) @binding(0) var env_lo: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> sh: array<vec4f, 9>;
+var<workgroup> part: array<array<vec3f, 9>, 64>;
+const PI = 3.14159265;
+@compute @workgroup_size(64) fn irradiance(@builtin(local_invocation_index) li: u32) {
+    let dims = textureDimensions(env_lo);
+    var c: array<vec3f, 9>;
+    let total = dims.x * dims.y;
+    for (var t = li; t < total; t = t + 64u) {
+        let x = t % dims.x;
+        let y = t / dims.x;
+        let uv = (vec2f(f32(x), f32(y)) + 0.5) / vec2f(dims);
+        let phi = (uv.x - 0.5) * 2.0 * PI;
+        let theta = uv.y * PI;
+        let d = vec3f(sin(theta) * sin(phi), cos(theta), -sin(theta) * cos(phi));
+        let dw = (2.0 * PI / f32(dims.x)) * (PI / f32(dims.y)) * sin(theta);
+        let l = textureLoad(env_lo, vec2i(i32(x), i32(y)), 0).rgb * dw;
+        c[0] = c[0] + l * 0.282095;
+        c[1] = c[1] + l * (0.488603 * d.y);
+        c[2] = c[2] + l * (0.488603 * d.z);
+        c[3] = c[3] + l * (0.488603 * d.x);
+        c[4] = c[4] + l * (1.092548 * d.x * d.y);
+        c[5] = c[5] + l * (1.092548 * d.y * d.z);
+        c[6] = c[6] + l * (0.315392 * (3.0 * d.z * d.z - 1.0));
+        c[7] = c[7] + l * (1.092548 * d.x * d.z);
+        c[8] = c[8] + l * (0.546274 * (d.x * d.x - d.y * d.y));
+    }
+    for (var k = 0; k < 9; k = k + 1) { part[li][k] = c[k]; }
+    workgroupBarrier();
+    for (var stride = 32u; stride > 0u; stride = stride / 2u) {
+        if (li < stride) {
+            for (var k = 0; k < 9; k = k + 1) { part[li][k] = part[li][k] + part[li + stride][k]; }
+        }
+        workgroupBarrier();
+    }
+    if (li == 0u) {
+        // Convolved with the cosine lobe and divided by pi (the engine's diffuse has no 1/pi):
+        // A0 = pi, A1 = 2 pi / 3, A2 = pi / 4.
+        var a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
+        for (var k = 0; k < 9; k = k + 1) { sh[k] = vec4f(part[0][k] * a[k], 0.0); }
+    }
+}
+)WGSL";
+
+constexpr const char* kExposureWgsl = R"WGSL(
+struct Meter { viewport: vec4f, min_ev: f32, max_ev: f32, compensation: f32, rate: f32 };
+@group(0) @binding(0) var<uniform> meter: Meter;
+@group(0) @binding(1) var hdr: texture_2d<f32>;
+@group(0) @binding(2) var<storage, read_write> state: array<f32, 4>;   // exposure EV, average EV, initialized
+var<workgroup> sums: array<f32, 256>;
+@compute @workgroup_size(256) fn measure(@builtin(local_invocation_index) li: u32) {
+    var s = 0.0;
+    for (var k = 0u; k < 16u; k = k + 1u) {
+        let idx = li * 16u + k;
+        let g = vec2f(f32(idx % 64u) + 0.5, f32(idx / 64u) + 0.5) / 64.0;
+        let p = vec2i(meter.viewport.xy + g * meter.viewport.zw);
+        let c = textureLoad(hdr, p, 0).rgb;
+        let lum = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+        s = s + clamp(log2(max(lum, 1e-8)), meter.min_ev, meter.max_ev);
+    }
+    sums[li] = s;
+    workgroupBarrier();
+    for (var stride = 128u; stride > 0u; stride = stride / 2u) {
+        if (li < stride) { sums[li] = sums[li] + sums[li + stride]; }
+        workgroupBarrier();
+    }
+    if (li == 0u) {
+        let average = sums[0] / 4096.0;
+        let target_ev = log2(0.18) - average + meter.compensation;
+        var ev = target_ev;
+        if (state[2] > 0.5 && meter.rate < 1.0) { ev = mix(state[0], target_ev, meter.rate); }
+        state[0] = ev;
+        state[1] = average;
+        state[2] = 1.0;
+    }
 }
 )WGSL";
 
@@ -443,7 +780,11 @@ struct Renderer::Impl {
     WGPUBindGroupLayout scene_bgl = nullptr;   // frame uniforms + shadow map + comparison sampler
     WGPUBindGroup scene_bg = nullptr;
     WGPUTexture shadow_texture = nullptr;
-    WGPUTextureView shadow_view = nullptr;
+    WGPUTextureView shadow_view = nullptr;              // every cascade, for the lookups
+    WGPUTextureView cascade_view[kCascades]{};          // one cascade each, for its pass
+    WGPUBindGroupLayout cascade_bgl = nullptr;          // the cascade's matrix at group 2 binding 5, dynamic offset
+    WGPUBuffer cascade_buffer = nullptr;                // one 256-byte slot per cascade
+    WGPUBindGroup cascade_bg = nullptr;
     WGPUSampler shadow_sampler = nullptr;
     ShadowSettings shadows;
     // Bloom: the frame's bright parts into a half-size texture, blurred across and down, added back.
@@ -461,17 +802,53 @@ struct Renderer::Impl {
     WGPUBindGroup bloom_bg[4]{};                  // bright (reads the frame), blur across, blur down, add
     WGPUTextureView bloom_src = nullptr;          // the frame view the bright bind group was made for
     std::uint32_t bloom_w = 0, bloom_h = 0;
-    // Grading: the frame copied aside and drawn back through the grade shader.
+    // The HDR scene target, and the final pass that exposes, tone-maps, grades and encodes it into
+    // the frame; the auto exposure's meter is a compute pass over the same target.
+    WGPUTexture hdr_tex = nullptr;
+    WGPUTextureView hdr_view = nullptr;
+    std::uint32_t hdr_w = 0, hdr_h = 0;
     GradeSettings grade;
-    WGPUShaderModule grade_shader = nullptr;
-    WGPUBindGroupLayout grade_bgl = nullptr;      // a uniform, a texture and a sampler, like bloom's but for the grade's uniform
-    WGPUPipelineLayout grade_layout = nullptr;
-    WGPURenderPipeline grade_pipeline = nullptr;
-    WGPUBuffer grade_uniforms = nullptr;
-    WGPUTexture grade_tex = nullptr;
-    WGPUTextureView grade_view = nullptr;
-    WGPUBindGroup grade_bg = nullptr;
-    std::uint32_t grade_w = 0, grade_h = 0;
+    TonemapSettings tonemap;
+    float time_step = 1.0f / 60.0f;
+    WGPUShaderModule post_shader = nullptr;
+    WGPUBindGroupLayout post_bgl = nullptr;       // uniform, the HDR target, the meter's state
+    WGPUPipelineLayout post_layout = nullptr;
+    WGPURenderPipeline post_pipeline = nullptr;
+    WGPUBuffer post_uniforms = nullptr;
+    WGPUBindGroup post_bg = nullptr;
+    WGPUShaderModule meter_shader = nullptr;
+    WGPUBindGroupLayout meter_bgl = nullptr;
+    WGPUPipelineLayout meter_layout = nullptr;
+    WGPUComputePipeline meter_pipeline = nullptr;
+    WGPUBuffer meter_uniforms = nullptr;
+    WGPUBuffer meter_state = nullptr;             // 4 floats: exposure EV, average EV, initialized
+    WGPUBindGroup meter_bg = nullptr;
+    bool meter_reset = true;                      // the next metered frame snaps instead of easing
+    // The sky: its pipelines, the environment map (level views for the compute passes, one view of
+    // every level for sampling), the harmonics buffer, the panorama's source texture.
+    WGPUPipelineLayout sky_layout = nullptr;      // the scene group only
+    WGPURenderPipeline sky_pipeline = nullptr;    // follows the sample count like the scene pipelines
+    WGPUShaderModule sky_shader = nullptr;
+    WGPUShaderModule irr_shader = nullptr;
+    WGPUBindGroupLayout env_bgl = nullptr;
+    WGPUBindGroupLayout irr_bgl = nullptr;
+    WGPUPipelineLayout env_layout = nullptr;
+    WGPUPipelineLayout irr_layout = nullptr;
+    WGPUComputePipeline fill_pipeline = nullptr;
+    WGPUComputePipeline prefilter_pipeline = nullptr;
+    WGPUComputePipeline irradiance_pipeline = nullptr;
+    WGPUTexture env_tex = nullptr;
+    WGPUTextureView env_view = nullptr;
+    WGPUTextureView env_level[kEnvLevels]{};
+    WGPUSampler env_sampler = nullptr;
+    WGPUBuffer env_params = nullptr;              // one 256-byte slot per level
+    WGPUBuffer sh_buffer = nullptr;
+    WGPUBindGroup fill_bg = nullptr;
+    WGPUBindGroup prefilter_bg[kEnvLevels]{};
+    WGPUBindGroup irr_bg = nullptr;
+    std::string sky_source_path;
+    std::string env_key;                          // what the environment was last built from
+    std::uint32_t env_updates = 0;
     WGPUBuffer frame_buffer = nullptr;
     WGPUBuffer object_buffer = nullptr;
     WGPUBindGroup frame_bg = nullptr;
@@ -504,10 +881,12 @@ struct Renderer::Impl {
     WGPUSampler nearest_sampler = nullptr;   // pixel art: no filtering, no bleeding between sheet tiles
     struct GpuTexture {
         WGPUTexture texture = nullptr;
-        WGPUTextureView view = nullptr;
+        WGPUTextureView view = nullptr;        // the texels as stored (data maps, and the interface, which paints in sRGB)
+        WGPUTextureView srgb_view = nullptr;   // decoded to linear when sampled (base color and emissive maps)
     };
     GpuTexture white;
     GpuTexture flat_normal;   // (0.5, 0.5, 1): no bend
+    GpuTexture sky_source;    // the sky's panorama (half floats); 1x1 black without one
     std::map<std::string, GpuTexture> textures;
     std::map<std::string, WGPUBindGroup> material_groups;  // "base|mr|normal|emissive|filter" -> group 2
     struct AssetMesh {
@@ -547,6 +926,7 @@ struct Renderer::Impl {
     std::vector<std::uint8_t> object_staging;
 
     void release_texture(GpuTexture& t) {
+        if (t.srgb_view) wgpuTextureViewRelease(t.srgb_view);
         if (t.view) wgpuTextureViewRelease(t.view);
         if (t.texture) wgpuTextureRelease(t.texture);
         t = GpuTexture{};
@@ -587,12 +967,19 @@ struct Renderer::Impl {
         if (id_view) wgpuTextureViewRelease(id_view);
         if (id_texture) wgpuTextureRelease(id_texture);
         release_msaa_targets();
-        release_grade_target();
-        if (grade_uniforms) wgpuBufferRelease(grade_uniforms);
-        if (grade_pipeline) wgpuRenderPipelineRelease(grade_pipeline);
-        if (grade_layout) wgpuPipelineLayoutRelease(grade_layout);
-        if (grade_bgl) wgpuBindGroupLayoutRelease(grade_bgl);
-        if (grade_shader) wgpuShaderModuleRelease(grade_shader);
+        release_hdr_target();
+        release_sky();
+        if (post_uniforms) wgpuBufferRelease(post_uniforms);
+        if (post_pipeline) wgpuRenderPipelineRelease(post_pipeline);
+        if (post_layout) wgpuPipelineLayoutRelease(post_layout);
+        if (post_bgl) wgpuBindGroupLayoutRelease(post_bgl);
+        if (post_shader) wgpuShaderModuleRelease(post_shader);
+        if (meter_uniforms) wgpuBufferRelease(meter_uniforms);
+        if (meter_state) wgpuBufferRelease(meter_state);
+        if (meter_pipeline) wgpuComputePipelineRelease(meter_pipeline);
+        if (meter_layout) wgpuPipelineLayoutRelease(meter_layout);
+        if (meter_bgl) wgpuBindGroupLayoutRelease(meter_bgl);
+        if (meter_shader) wgpuShaderModuleRelease(meter_shader);
         release_bloom_targets();
         if (bloom_uniforms) wgpuBufferRelease(bloom_uniforms);
         if (bloom_sampler) wgpuSamplerRelease(bloom_sampler);
@@ -612,6 +999,10 @@ struct Renderer::Impl {
         if (scene_bg) wgpuBindGroupRelease(scene_bg);
         if (scene_bgl) wgpuBindGroupLayoutRelease(scene_bgl);
         if (shadow_view) wgpuTextureViewRelease(shadow_view);
+        for (WGPUTextureView v : cascade_view) if (v) wgpuTextureViewRelease(v);
+        if (cascade_bg) wgpuBindGroupRelease(cascade_bg);
+        if (cascade_buffer) wgpuBufferRelease(cascade_buffer);
+        if (cascade_bgl) wgpuBindGroupLayoutRelease(cascade_bgl);
         if (shadow_texture) wgpuTextureRelease(shadow_texture);
         if (shadow_sampler) wgpuSamplerRelease(shadow_sampler);
         if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
@@ -673,7 +1064,7 @@ struct Renderer::Impl {
             view = wgpuTextureCreateView(tex, &vd);
             return {};
         };
-        POCKET_TRY_VOID(make("pocket.msaa.color", device->color_format(), ms_color, ms_color_view));
+        POCKET_TRY_VOID(make("pocket.msaa.color", kHdrFormat, ms_color, ms_color_view));
         POCKET_TRY_VOID(make("pocket.msaa.depth", device->depth_format(), ms_depth, ms_depth_view));
         ms_width = w;
         ms_height = h;
@@ -734,7 +1125,7 @@ struct Renderer::Impl {
             blend.alpha.srcFactor = WGPUBlendFactor_Zero;
             blend.alpha.dstFactor = WGPUBlendFactor_One;
             WGPUColorTargetState ct{};
-            ct.format = device->color_format();
+            ct.format = kHdrFormat;
             ct.blend = additive ? &blend : nullptr;
             ct.writeMask = WGPUColorWriteMask_All;
             WGPUFragmentState fs{};
@@ -789,7 +1180,7 @@ struct Renderer::Impl {
             td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
             td.dimension = WGPUTextureDimension_2D;
             td.size = {bw, bh, 1};
-            td.format = device->color_format();
+            td.format = kHdrFormat;
             td.mipLevelCount = 1;
             td.sampleCount = 1;
             bloom_tex[i] = wgpuDeviceCreateTexture(device->device(), &td);
@@ -830,7 +1221,7 @@ struct Renderer::Impl {
     // The bloom passes over a finished frame: bright parts into A, blurred across into B and down
     // into A, A added onto the frame.
     Status draw_bloom(rhi::Frame& frame) {
-        POCKET_TRY_VOID(ensure_bloom_targets(frame.width, frame.height, frame.color));
+        POCKET_TRY_VOID(ensure_bloom_targets(frame.width, frame.height, hdr_view));
         BloomUniforms u[4]{};
         const float fw = 1.0f / static_cast<float>(std::max(1u, frame.width)), fh = 1.0f / static_cast<float>(std::max(1u, frame.height));
         const float tw = 1.0f / static_cast<float>(bloom_w), th = 1.0f / static_cast<float>(bloom_h);
@@ -862,66 +1253,74 @@ struct Renderer::Impl {
         pass("pocket.bloom.bright", bloom_view[0], false, bloom_bright_pipeline, bloom_bg[0]);
         pass("pocket.bloom.across", bloom_view[1], false, bloom_blur_pipeline, bloom_bg[1]);
         pass("pocket.bloom.down", bloom_view[0], false, bloom_blur_pipeline, bloom_bg[2]);
-        pass("pocket.bloom.add", frame.color, true, bloom_add_pipeline, bloom_bg[3]);
+        pass("pocket.bloom.add", hdr_view, true, bloom_add_pipeline, bloom_bg[3]);
         stats.bloom = true;
         return {};
     }
 
-    struct GradeUniforms {
-        float exposure, contrast, saturation, vignette;
+    struct PostUniforms {
+        float exposure;
+        std::uint32_t op, auto_on, grade_on;
         float tint[4];
-        float temperature, filmic, pad0, pad1;
+        float temperature, contrast, saturation, vignette;
+        float viewport[4];
+    };
+    struct MeterUniforms {
+        float viewport[4];
+        float min_ev, max_ev, compensation, rate;
     };
 
-    void release_grade_target() {
-        if (grade_bg) wgpuBindGroupRelease(grade_bg);
-        if (grade_view) wgpuTextureViewRelease(grade_view);
-        if (grade_tex) wgpuTextureRelease(grade_tex);
-        grade_bg = nullptr;
-        grade_view = nullptr;
-        grade_tex = nullptr;
-        grade_w = grade_h = 0;
+    void release_hdr_target() {
+        if (post_bg) wgpuBindGroupRelease(post_bg);
+        if (meter_bg) wgpuBindGroupRelease(meter_bg);
+        if (hdr_view) wgpuTextureViewRelease(hdr_view);
+        if (hdr_tex) wgpuTextureRelease(hdr_tex);
+        post_bg = nullptr;
+        meter_bg = nullptr;
+        hdr_view = nullptr;
+        hdr_tex = nullptr;
+        hdr_w = hdr_h = 0;
     }
 
-    // The grade pipeline draws the whole target from one texture (a uniform, a texture, a
-    // sampler); created after the bloom pass, whose sampler it shares.
-    Status create_grade() {
-        POCKET_TRY(module, device->create_shader("pocket.grade", kGradeWgsl));
-        grade_shader = module;
+    // The final pass (a full-screen triangle reading the HDR target texel for texel) and the meter.
+    Status create_post() {
+        POCKET_TRY(module, device->create_shader("pocket.post", kPostWgsl));
+        post_shader = module;
         WGPUBindGroupLayoutEntry be[3]{};
         be[0].binding = 0;
         be[0].visibility = WGPUShaderStage_Fragment;
         be[0].buffer.type = WGPUBufferBindingType_Uniform;
-        be[0].buffer.minBindingSize = sizeof(GradeUniforms);
+        be[0].buffer.minBindingSize = sizeof(PostUniforms);
         be[1].binding = 1;
         be[1].visibility = WGPUShaderStage_Fragment;
-        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
         be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
         be[2].binding = 2;
         be[2].visibility = WGPUShaderStage_Fragment;
-        be[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        be[2].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        be[2].buffer.minBindingSize = sizeof(float) * 4;
         WGPUBindGroupLayoutDescriptor bd{};
-        bd.label = rhi::str("pocket.grade");
+        bd.label = rhi::str("pocket.post");
         bd.entryCount = 3;
         bd.entries = be;
-        grade_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        post_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
         WGPUPipelineLayoutDescriptor pld{};
-        pld.label = rhi::str("pocket.grade");
+        pld.label = rhi::str("pocket.post");
         pld.bindGroupLayoutCount = 1;
-        pld.bindGroupLayouts = &grade_bgl;
-        grade_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        pld.bindGroupLayouts = &post_bgl;
+        post_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
         WGPUColorTargetState ct{};
         ct.format = device->color_format();
         ct.writeMask = WGPUColorWriteMask_All;
         WGPUFragmentState fs{};
-        fs.module = grade_shader;
-        fs.entryPoint = rhi::str("fs_grade");
+        fs.module = post_shader;
+        fs.entryPoint = rhi::str("fs_post");
         fs.targetCount = 1;
         fs.targets = &ct;
         WGPURenderPipelineDescriptor rpd{};
-        rpd.label = rhi::str("pocket.grade");
-        rpd.layout = grade_layout;
-        rpd.vertex.module = grade_shader;
+        rpd.label = rhi::str("pocket.post");
+        rpd.layout = post_layout;
+        rpd.vertex.module = post_shader;
         rpd.vertex.entryPoint = rhi::str("vs_screen");
         rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
         rpd.primitive.frontFace = WGPUFrontFace_CCW;
@@ -929,26 +1328,62 @@ struct Renderer::Impl {
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        grade_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!grade_pipeline) return fail("gpu_pipeline_failed", "pocket.grade pipeline creation failed");
-        grade_uniforms = device->create_buffer("pocket.grade", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(GradeUniforms));
+        post_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!post_pipeline) return fail("gpu_pipeline_failed", "pocket.post pipeline creation failed");
+        post_uniforms = device->create_buffer("pocket.post", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(PostUniforms));
+
+        POCKET_TRY(mm, device->create_shader("pocket.meter", kExposureWgsl));
+        meter_shader = mm;
+        WGPUBindGroupLayoutEntry me[3]{};
+        me[0].binding = 0;
+        me[0].visibility = WGPUShaderStage_Compute;
+        me[0].buffer.type = WGPUBufferBindingType_Uniform;
+        me[0].buffer.minBindingSize = sizeof(MeterUniforms);
+        me[1].binding = 1;
+        me[1].visibility = WGPUShaderStage_Compute;
+        me[1].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        me[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        me[2].binding = 2;
+        me[2].visibility = WGPUShaderStage_Compute;
+        me[2].buffer.type = WGPUBufferBindingType_Storage;
+        me[2].buffer.minBindingSize = sizeof(float) * 4;
+        WGPUBindGroupLayoutDescriptor md{};
+        md.label = rhi::str("pocket.meter");
+        md.entryCount = 3;
+        md.entries = me;
+        meter_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &md);
+        WGPUPipelineLayoutDescriptor mpld{};
+        mpld.label = rhi::str("pocket.meter");
+        mpld.bindGroupLayoutCount = 1;
+        mpld.bindGroupLayouts = &meter_bgl;
+        meter_layout = wgpuDeviceCreatePipelineLayout(device->device(), &mpld);
+        WGPUComputePipelineDescriptor cpd{};
+        cpd.label = rhi::str("pocket.meter");
+        cpd.layout = meter_layout;
+        cpd.compute.module = meter_shader;
+        cpd.compute.entryPoint = rhi::str("measure");
+        meter_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
+        if (!meter_pipeline) return fail("gpu_pipeline_failed", "pocket.meter pipeline creation failed");
+        meter_uniforms = device->create_buffer("pocket.meter", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(MeterUniforms));
+        const float zero[4] = {0, 0, 0, 0};
+        meter_state = device->create_buffer("pocket.meter.state", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst | WGPUBufferUsage_CopySrc, sizeof zero, zero);
         return {};
     }
 
-    // A copy of the frame at its size, and the bind group that reads it.
-    Status ensure_grade_target(std::uint32_t w, std::uint32_t h) {
-        if (grade_tex && grade_w == w && grade_h == h) return {};
-        release_grade_target();
+    // The HDR target at the frame's size, and the bind groups that read it.
+    Status ensure_hdr_target(std::uint32_t w, std::uint32_t h) {
+        if (hdr_tex && hdr_w == w && hdr_h == h) return {};
+        release_hdr_target();
         WGPUTextureDescriptor td{};
-        td.label = rhi::str("pocket.grade.copy");
-        td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+        td.label = rhi::str("pocket.hdr");
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc;
         td.dimension = WGPUTextureDimension_2D;
         td.size = {w, h, 1};
-        td.format = device->color_format();
+        td.format = kHdrFormat;
         td.mipLevelCount = 1;
         td.sampleCount = 1;
-        grade_tex = wgpuDeviceCreateTexture(device->device(), &td);
-        if (!grade_tex) return fail("gpu_texture_failed", "cannot create the grade copy {}x{}", w, h);
+        hdr_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!hdr_tex) return fail("gpu_texture_failed", "cannot create the HDR target {}x{}", w, h);
         WGPUTextureViewDescriptor vd{};
         vd.format = td.format;
         vd.dimension = WGPUTextureViewDimension_2D;
@@ -956,74 +1391,408 @@ struct Renderer::Impl {
         vd.arrayLayerCount = 1;
         vd.aspect = WGPUTextureAspect_All;
         vd.usage = td.usage;
-        grade_view = wgpuTextureCreateView(grade_tex, &vd);
-        WGPUBindGroupEntry entries[3]{};
-        entries[0].binding = 0;
-        entries[0].buffer = grade_uniforms;
-        entries[0].offset = 0;
-        entries[0].size = sizeof(GradeUniforms);
-        entries[1].binding = 1;
-        entries[1].textureView = grade_view;
-        entries[2].binding = 2;
-        entries[2].sampler = bloom_sampler;
-        WGPUBindGroupDescriptor bgd{};
-        bgd.label = rhi::str("pocket.grade");
-        bgd.layout = grade_bgl;
-        bgd.entryCount = 3;
-        bgd.entries = entries;
-        grade_bg = wgpuDeviceCreateBindGroup(device->device(), &bgd);
-        grade_w = w;
-        grade_h = h;
+        hdr_view = wgpuTextureCreateView(hdr_tex, &vd);
+        auto group = [&](const char* label, WGPUBindGroupLayout layout, WGPUBuffer uniforms, std::uint64_t size) {
+            WGPUBindGroupEntry entries[3]{};
+            entries[0].binding = 0;
+            entries[0].buffer = uniforms;
+            entries[0].size = size;
+            entries[1].binding = 1;
+            entries[1].textureView = hdr_view;
+            entries[2].binding = 2;
+            entries[2].buffer = meter_state;
+            entries[2].size = sizeof(float) * 4;
+            WGPUBindGroupDescriptor bgd{};
+            bgd.label = rhi::str(label);
+            bgd.layout = layout;
+            bgd.entryCount = 3;
+            bgd.entries = entries;
+            return wgpuDeviceCreateBindGroup(device->device(), &bgd);
+        };
+        post_bg = group("pocket.post", post_bgl, post_uniforms, sizeof(PostUniforms));
+        meter_bg = group("pocket.meter", meter_bgl, meter_uniforms, sizeof(MeterUniforms));
+        hdr_w = w;
+        hdr_h = h;
         return {};
     }
 
-    // The grading pass over a finished frame: the frame copied aside, then every pixel drawn
-    // back through the grade shader.
-    Status draw_grade(rhi::Frame& frame) {
-        if (!frame.color_texture) return {};
-        POCKET_TRY_VOID(ensure_grade_target(frame.width, frame.height));
-        WGPUTexelCopyTextureInfo src{};
-        src.texture = frame.color_texture;
-        src.aspect = WGPUTextureAspect_All;
-        WGPUTexelCopyTextureInfo dst{};
-        dst.texture = grade_tex;
-        dst.aspect = WGPUTextureAspect_All;
-        const WGPUExtent3D extent{frame.width, frame.height, 1};
-        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &extent);
-        GradeUniforms u{};
-        u.exposure = grade.exposure;
+    // Meter the viewport of the HDR target (auto exposure only), then draw the frame from it:
+    // everything outside the viewport is the clear color, as the scene pass left it before.
+    Status draw_post(rhi::Frame& frame, rhi::Color clear) {
+        const bool metered = tonemap.auto_exposure;
+        if (metered) {
+            MeterUniforms mu{};
+            mu.viewport[0] = static_cast<float>(applied.x);
+            mu.viewport[1] = static_cast<float>(applied.y);
+            mu.viewport[2] = static_cast<float>(applied.w);
+            mu.viewport[3] = static_cast<float>(applied.h);
+            mu.min_ev = std::min(tonemap.min_ev, tonemap.max_ev);
+            mu.max_ev = std::max(tonemap.min_ev, tonemap.max_ev);
+            mu.compensation = tonemap.compensation;
+            mu.rate = meter_reset ? 1.0f : 1.0f - std::exp(-std::max(time_step, 0.0f) * std::max(tonemap.speed, 0.0f));
+            if (meter_reset) {
+                const float zero[4] = {0, 0, 0, 0};
+                device->write_buffer(meter_state, 0, zero, sizeof zero);
+                meter_reset = false;
+            }
+            device->write_buffer(meter_uniforms, 0, &mu, sizeof mu);
+            WGPUComputePassDescriptor cpd{};
+            cpd.label = rhi::str("pocket.meter");
+            WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(frame.encoder, &cpd);
+            wgpuComputePassEncoderSetPipeline(cp, meter_pipeline);
+            wgpuComputePassEncoderSetBindGroup(cp, 0, meter_bg, 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
+            wgpuComputePassEncoderEnd(cp);
+            wgpuComputePassEncoderRelease(cp);
+        }
+        PostUniforms u{};
+        u.exposure = tonemap.exposure * (grade.enabled ? grade.exposure : 1.0f);
+        Tonemap op = tonemap.op;
+        if (op == Tonemap::None && grade.enabled && grade.filmic) op = Tonemap::Aces;
+        u.op = static_cast<std::uint32_t>(op);
+        u.auto_on = metered ? 1u : 0u;
+        u.grade_on = grade.enabled ? 1u : 0u;
+        u.tint[0] = decode(grade.tint.r);
+        u.tint[1] = decode(grade.tint.g);
+        u.tint[2] = decode(grade.tint.b);
+        u.tint[3] = 1.0f;
+        u.temperature = grade.temperature;
         u.contrast = grade.contrast;
         u.saturation = grade.saturation;
         u.vignette = grade.vignette;
-        u.tint[0] = grade.tint.r;
-        u.tint[1] = grade.tint.g;
-        u.tint[2] = grade.tint.b;
-        u.tint[3] = 1.0f;
-        u.temperature = grade.temperature;
-        u.filmic = grade.filmic ? 1.0f : 0.0f;
-        device->write_buffer(grade_uniforms, 0, &u, sizeof(GradeUniforms));
+        u.viewport[0] = static_cast<float>(applied.x);
+        u.viewport[1] = static_cast<float>(applied.y);
+        u.viewport[2] = static_cast<float>(applied.w);
+        u.viewport[3] = static_cast<float>(applied.h);
+        device->write_buffer(post_uniforms, 0, &u, sizeof u);
         WGPURenderPassColorAttachment ca{};
         ca.view = frame.color;
         ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         ca.loadOp = WGPULoadOp_Clear;
         ca.storeOp = WGPUStoreOp_Store;
-        ca.clearValue = {0, 0, 0, 1};
+        ca.clearValue = {clear.r, clear.g, clear.b, clear.a};
         WGPURenderPassDescriptor rp{};
-        rp.label = rhi::str("pocket.grade");
+        rp.label = rhi::str("pocket.post");
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
         WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
-        wgpuRenderPassEncoderSetPipeline(enc, grade_pipeline);
-        wgpuRenderPassEncoderSetBindGroup(enc, 0, grade_bg, 0, nullptr);
+        if (applied.w != frame.width || applied.h != frame.height) {
+            wgpuRenderPassEncoderSetScissorRect(enc, static_cast<std::uint32_t>(applied.x), static_cast<std::uint32_t>(applied.y), applied.w, applied.h);
+        }
+        wgpuRenderPassEncoderSetPipeline(enc, post_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, post_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(enc);
         wgpuRenderPassEncoderRelease(enc);
-        stats.draw_calls++;
-        stats.grade = true;
+        stats.grade = grade.enabled;
+        stats.tonemap = static_cast<int>(op);
+        stats.auto_exposure = metered;
         return {};
     }
 
+    struct SkyParams {
+        float zenith[4], horizon[4], ground[4];
+        float sun[4];          // toward the sun, w: a sun exists
+        float sun_color[4];
+        float misc[4];         // mode, rotation (radians), GGX alpha for a prefilter level, intensity
+        float size[4];         // the level's width and height
+    };
+    static constexpr std::uint32_t kSkySlot = 256;
+
+    void release_sky() {
+        if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
+        sky_pipeline = nullptr;
+        for (WGPUBindGroup& g : prefilter_bg) { if (g) wgpuBindGroupRelease(g); g = nullptr; }
+        if (fill_bg) wgpuBindGroupRelease(fill_bg);
+        if (irr_bg) wgpuBindGroupRelease(irr_bg);
+        fill_bg = irr_bg = nullptr;
+        for (WGPUTextureView& v : env_level) { if (v) wgpuTextureViewRelease(v); v = nullptr; }
+        if (env_view) wgpuTextureViewRelease(env_view);
+        if (env_tex) wgpuTextureRelease(env_tex);
+        env_view = nullptr;
+        env_tex = nullptr;
+        release_texture(sky_source);
+        if (env_sampler) wgpuSamplerRelease(env_sampler);
+        if (env_params) wgpuBufferRelease(env_params);
+        if (sh_buffer) wgpuBufferRelease(sh_buffer);
+        for (WGPUComputePipeline* p : {&fill_pipeline, &prefilter_pipeline, &irradiance_pipeline}) { if (*p) wgpuComputePipelineRelease(*p); *p = nullptr; }
+        for (WGPUPipelineLayout* l : {&env_layout, &irr_layout, &sky_layout}) { if (*l) wgpuPipelineLayoutRelease(*l); *l = nullptr; }
+        for (WGPUBindGroupLayout* l : {&env_bgl, &irr_bgl}) { if (*l) wgpuBindGroupLayoutRelease(*l); *l = nullptr; }
+        if (sky_shader) wgpuShaderModuleRelease(sky_shader);
+        if (irr_shader) wgpuShaderModuleRelease(irr_shader);
+        sky_shader = irr_shader = nullptr;
+    }
+
+    // A half-float texture from linear RGBA floats (the panorama's source).
+    Result<GpuTexture> upload_half(const char* label, std::uint32_t w, std::uint32_t h, const std::vector<float>& rgba) {
+        GpuTexture t;
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str(label);
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {w, h, 1};
+        td.format = kHdrFormat;
+        td.mipLevelCount = 1;
+        td.sampleCount = 1;
+        t.texture = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!t.texture) return fail("gpu_texture_failed", "cannot create texture {} ({}x{})", label, w, h);
+        WGPUTextureViewDescriptor vd{};
+        vd.format = td.format;
+        vd.dimension = WGPUTextureViewDimension_2D;
+        vd.mipLevelCount = 1;
+        vd.arrayLayerCount = 1;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = td.usage;
+        t.view = wgpuTextureCreateView(t.texture, &vd);
+        std::vector<std::uint16_t> half(rgba.size());
+        for (std::size_t i = 0; i < rgba.size(); ++i) half[i] = to_half(rgba[i]);
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = t.texture;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout layout{};
+        layout.bytesPerRow = w * 8;
+        layout.rowsPerImage = h;
+        WGPUExtent3D ext{w, h, 1};
+        wgpuQueueWriteTexture(device->queue(), &dst, half.data(), half.size() * sizeof(std::uint16_t), &layout, &ext);
+        return t;
+    }
+
+    // The fill pass's group reads the current source (the panorama, or the black texel).
+    void make_fill_group() {
+        if (fill_bg) wgpuBindGroupRelease(fill_bg);
+        WGPUBindGroupEntry e[4]{};
+        e[0].binding = 0;
+        e[0].buffer = env_params;
+        e[0].offset = 0;
+        e[0].size = sizeof(SkyParams);
+        e[1].binding = 1;
+        e[1].textureView = sky_source.view;
+        e[2].binding = 2;
+        e[2].sampler = env_sampler;
+        e[3].binding = 3;
+        e[3].textureView = env_level[0];
+        WGPUBindGroupDescriptor d{};
+        d.label = rhi::str("pocket.sky.fill");
+        d.layout = env_bgl;
+        d.entryCount = 4;
+        d.entries = e;
+        fill_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+    }
+
+    Status create_sky() {
+        POCKET_TRY(sm, device->create_shader("pocket.sky", kSkyWgsl));
+        sky_shader = sm;
+        POCKET_TRY(im, device->create_shader("pocket.irradiance", kIrradianceWgsl));
+        irr_shader = im;
+        WGPUBindGroupLayoutEntry be[4]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Compute;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(SkyParams);
+        be[1].binding = 1;
+        be[1].visibility = WGPUShaderStage_Compute;
+        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 2;
+        be[2].visibility = WGPUShaderStage_Compute;
+        be[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        be[3].binding = 3;
+        be[3].visibility = WGPUShaderStage_Compute;
+        be[3].storageTexture.access = WGPUStorageTextureAccess_WriteOnly;
+        be[3].storageTexture.format = kHdrFormat;
+        be[3].storageTexture.viewDimension = WGPUTextureViewDimension_2D;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.sky");
+        bd.entryCount = 4;
+        bd.entries = be;
+        env_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUBindGroupLayoutEntry ie[2]{};
+        ie[0].binding = 0;
+        ie[0].visibility = WGPUShaderStage_Compute;
+        ie[0].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        ie[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+        ie[1].binding = 1;
+        ie[1].visibility = WGPUShaderStage_Compute;
+        ie[1].buffer.type = WGPUBufferBindingType_Storage;
+        ie[1].buffer.minBindingSize = sizeof(float) * 36;
+        WGPUBindGroupLayoutDescriptor id{};
+        id.label = rhi::str("pocket.irradiance");
+        id.entryCount = 2;
+        id.entries = ie;
+        irr_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &id);
+        auto pipeline_layout = [&](const char* label, WGPUBindGroupLayout g) {
+            WGPUPipelineLayoutDescriptor pld{};
+            pld.label = rhi::str(label);
+            pld.bindGroupLayoutCount = 1;
+            pld.bindGroupLayouts = &g;
+            return wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        };
+        env_layout = pipeline_layout("pocket.sky", env_bgl);
+        irr_layout = pipeline_layout("pocket.irradiance", irr_bgl);
+        auto compute = [&](const char* label, WGPUPipelineLayout layout, WGPUShaderModule module, const char* entry) {
+            WGPUComputePipelineDescriptor cpd{};
+            cpd.label = rhi::str(label);
+            cpd.layout = layout;
+            cpd.compute.module = module;
+            cpd.compute.entryPoint = rhi::str(entry);
+            return wgpuDeviceCreateComputePipeline(device->device(), &cpd);
+        };
+        fill_pipeline = compute("pocket.sky.fill", env_layout, sky_shader, "fill");
+        prefilter_pipeline = compute("pocket.sky.prefilter", env_layout, sky_shader, "prefilter");
+        irradiance_pipeline = compute("pocket.sky.irradiance", irr_layout, irr_shader, "irradiance");
+        if (!fill_pipeline || !prefilter_pipeline || !irradiance_pipeline) return fail("gpu_pipeline_failed", "sky pipelines could not be created");
+
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str("pocket.environment");
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_StorageBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {kEnvWidth, kEnvHeight, 1};
+        td.format = kHdrFormat;
+        td.mipLevelCount = kEnvLevels;
+        td.sampleCount = 1;
+        env_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!env_tex) return fail("gpu_texture_failed", "cannot create the environment map");
+        WGPUTextureViewDescriptor vd{};
+        vd.format = td.format;
+        vd.dimension = WGPUTextureViewDimension_2D;
+        vd.mipLevelCount = kEnvLevels;
+        vd.arrayLayerCount = 1;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = WGPUTextureUsage_TextureBinding;
+        env_view = wgpuTextureCreateView(env_tex, &vd);
+        for (std::uint32_t l = 0; l < kEnvLevels; ++l) {
+            vd.baseMipLevel = l;
+            vd.mipLevelCount = 1;
+            vd.usage = WGPUTextureUsage_None;   // the texture's own usage: sampled and written
+            env_level[l] = wgpuTextureCreateView(env_tex, &vd);
+        }
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.environment");
+        sd.addressModeU = WGPUAddressMode_Repeat;
+        sd.addressModeV = WGPUAddressMode_ClampToEdge;
+        sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Linear;
+        sd.lodMinClamp = 0;
+        sd.lodMaxClamp = 32;
+        sd.maxAnisotropy = 1;
+        env_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        env_params = device->create_buffer("pocket.sky", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kSkySlot) * kEnvLevels);
+        std::vector<float> zero_sh(36, 0.0f);
+        sh_buffer = device->create_buffer("pocket.sky.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, zero_sh.size() * sizeof(float), zero_sh.data());
+        POCKET_TRY(black, upload_half("pocket.sky.none", 1, 1, std::vector<float>{0, 0, 0, 1}));
+        sky_source = black;
+        make_fill_group();
+        for (std::uint32_t l = 1; l < kEnvLevels; ++l) {
+            WGPUBindGroupEntry e[4]{};
+            e[0].binding = 0;
+            e[0].buffer = env_params;
+            e[0].offset = static_cast<std::uint64_t>(kSkySlot) * l;
+            e[0].size = sizeof(SkyParams);
+            e[1].binding = 1;
+            e[1].textureView = env_level[l - 1];
+            e[2].binding = 2;
+            e[2].sampler = env_sampler;
+            e[3].binding = 3;
+            e[3].textureView = env_level[l];
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.sky.prefilter");
+            d.layout = env_bgl;
+            d.entryCount = 4;
+            d.entries = e;
+            prefilter_bg[l] = wgpuDeviceCreateBindGroup(device->device(), &d);
+        }
+        WGPUBindGroupEntry ie2[2]{};
+        ie2[0].binding = 0;
+        ie2[0].textureView = env_level[3];
+        ie2[1].binding = 1;
+        ie2[1].buffer = sh_buffer;
+        ie2[1].size = sizeof(float) * 36;
+        WGPUBindGroupDescriptor idd{};
+        idd.label = rhi::str("pocket.irradiance");
+        idd.layout = irr_bgl;
+        idd.entryCount = 2;
+        idd.entries = ie2;
+        irr_bg = wgpuDeviceCreateBindGroup(device->device(), &idd);
+        return {};
+    }
+
+    // Rebuild the environment when what it is made of changed: the sky's settings, its image, and
+    // for a procedural sky the sun's direction and color. False when the image is unavailable.
+    bool update_environment(rhi::Frame& frame, const world::Sky& sky, bool have_sun, Vec3 toward_sun, Vec3 sun_linear) {
+        const bool image = sky.mode == 2;
+        if (image) {
+            if (sky.image.empty()) return false;
+            if (sky.image != sky_source_path) {
+                if (!assets) { report_missing(sky.image, "no asset store"); return false; }
+                if (failed.contains(sky.image)) { note_missing(sky.image); return false; }
+                auto img = assets->image(sky.image);
+                if (!img) { report_missing(sky.image, img.error().message); return false; }
+                const assets::Image& src = **img;
+                std::vector<float> rgba(static_cast<std::size_t>(src.width) * src.height * 4);
+                for (std::size_t i = 0; i < rgba.size(); ++i) rgba[i] = (i % 4 == 3) ? 1.0f : (src.hdr.empty() ? decode(src.rgba[i] / 255.0f) : src.hdr[i]);
+                auto t = upload_half(sky.image.c_str(), src.width, src.height, rgba);
+                if (!t) { report_missing(sky.image, t.error().message); return false; }
+                release_texture(sky_source);
+                sky_source = *t;
+                sky_source_path = sky.image;
+                make_fill_group();
+                env_key.clear();
+            }
+        }
+        char key[512];
+        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%g,%g,%g", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, toward_sun.x, toward_sun.y, toward_sun.z, sun_linear.x, sun_linear.y, sun_linear.z);
+        if (env_key == key) return true;
+        SkyParams p{};
+        auto color = [](float* out, const world::Color4& c) { out[0] = decode(c.r); out[1] = decode(c.g); out[2] = decode(c.b); out[3] = 1; };
+        color(p.zenith, sky.zenith);
+        color(p.horizon, sky.horizon);
+        color(p.ground, sky.ground);
+        p.sun[0] = toward_sun.x; p.sun[1] = toward_sun.y; p.sun[2] = toward_sun.z; p.sun[3] = have_sun && !image ? 1.0f : 0.0f;
+        p.sun_color[0] = sun_linear.x; p.sun_color[1] = sun_linear.y; p.sun_color[2] = sun_linear.z; p.sun_color[3] = 1;
+        p.misc[0] = static_cast<float>(sky.mode);
+        p.misc[1] = radians(sky.rotation);
+        p.misc[3] = std::max(sky.intensity, 0.0f);
+        std::vector<std::uint8_t> slots(static_cast<std::size_t>(kSkySlot) * kEnvLevels, 0);
+        float prev_alpha = 0;
+        for (std::uint32_t l = 0; l < kEnvLevels; ++l) {
+            SkyParams q = p;
+            q.size[0] = static_cast<float>(std::max(1u, kEnvWidth >> l));
+            q.size[1] = static_cast<float>(std::max(1u, kEnvHeight >> l));
+            const float rough = static_cast<float>(l) / static_cast<float>(kEnvLevels - 1);
+            const float alpha = rough * rough;
+            // The level above is already blurred by its own lobe: only the difference is added here.
+            q.misc[2] = std::sqrt(std::max(alpha * alpha - prev_alpha * prev_alpha, 1e-4f));
+            prev_alpha = alpha;
+            std::memcpy(slots.data() + static_cast<std::size_t>(kSkySlot) * l, &q, sizeof q);
+        }
+        device->write_buffer(env_params, 0, slots.data(), slots.size());
+        WGPUComputePassDescriptor cpd{};
+        cpd.label = rhi::str("pocket.sky");
+        WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(frame.encoder, &cpd);
+        wgpuComputePassEncoderSetPipeline(cp, fill_pipeline);
+        wgpuComputePassEncoderSetBindGroup(cp, 0, fill_bg, 0, nullptr);
+        wgpuComputePassEncoderDispatchWorkgroups(cp, (kEnvWidth + 7) / 8, (kEnvHeight + 7) / 8, 1);
+        wgpuComputePassEncoderSetPipeline(cp, prefilter_pipeline);
+        for (std::uint32_t l = 1; l < kEnvLevels; ++l) {
+            const std::uint32_t w = std::max(1u, kEnvWidth >> l), h = std::max(1u, kEnvHeight >> l);
+            wgpuComputePassEncoderSetBindGroup(cp, 0, prefilter_bg[l], 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(cp, (w + 7) / 8, (h + 7) / 8, 1);
+        }
+        wgpuComputePassEncoderSetPipeline(cp, irradiance_pipeline);
+        wgpuComputePassEncoderSetBindGroup(cp, 0, irr_bg, 0, nullptr);
+        wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
+        wgpuComputePassEncoderEnd(cp);
+        wgpuComputePassEncoderRelease(cp);
+        env_key = key;
+        ++env_updates;
+        return true;
+    }
+
     void release_scene_pipelines() {
+        if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
+        sky_pipeline = nullptr;
         for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
@@ -1037,7 +1806,7 @@ struct Renderer::Impl {
         release_scene_pipelines();
         const bool split = samples > 1;
         WGPUColorTargetState targets[2]{};
-        targets[0].format = device->color_format();
+        targets[0].format = kHdrFormat;
         targets[0].writeMask = WGPUColorWriteMask_All;
         targets[1].format = WGPUTextureFormat_R32Uint;
         targets[1].writeMask = WGPUColorWriteMask_All;
@@ -1193,6 +1962,36 @@ struct Renderer::Impl {
             id_sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
             if (!id_sprite_pipeline) return fail("gpu_pipeline_failed", "sprite id pipeline creation failed");
         }
+        {
+            // The sky: first in the scene pass, never tested against or written into depth.
+            WGPUColorTargetState kt[2]{};
+            kt[0].format = kHdrFormat;
+            kt[0].writeMask = WGPUColorWriteMask_All;
+            kt[1].format = WGPUTextureFormat_R32Uint;
+            kt[1].writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState kfs{};
+            kfs.module = shader;
+            kfs.entryPoint = rhi::str(split ? "fs_sky_color" : "fs_sky");
+            kfs.targetCount = split ? 1 : 2;
+            kfs.targets = kt;
+            WGPUDepthStencilState kds = ds;
+            kds.depthWriteEnabled = WGPUOptionalBool_False;
+            kds.depthCompare = WGPUCompareFunction_Always;
+            WGPURenderPipelineDescriptor k{};
+            k.label = rhi::str("pocket.sky");
+            k.layout = sky_layout;
+            k.vertex.module = shader;
+            k.vertex.entryPoint = rhi::str("vs_sky");
+            k.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            k.primitive.frontFace = WGPUFrontFace_CCW;
+            k.primitive.cullMode = WGPUCullMode_None;
+            k.depthStencil = &kds;
+            k.multisample.count = static_cast<std::uint32_t>(samples);
+            k.multisample.mask = 0xFFFFFFFFu;
+            k.fragment = &kfs;
+            sky_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &k);
+            if (!sky_pipeline) return fail("gpu_pipeline_failed", "sky pipeline creation failed");
+        }
         msaa_applied = samples;
         return {};
     }
@@ -1238,18 +2037,29 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[3]{};
+        WGPUBindGroupLayoutEntry se[6]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
         se[1].texture.sampleType = WGPUTextureSampleType_Depth;
-        se[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        se[1].texture.viewDimension = WGPUTextureViewDimension_2DArray;
         se[2].binding = 2;
         se[2].visibility = WGPUShaderStage_Fragment;
         se[2].sampler.type = WGPUSamplerBindingType_Comparison;
+        se[3].binding = 3;
+        se[3].visibility = WGPUShaderStage_Fragment;
+        se[3].texture.sampleType = WGPUTextureSampleType_Float;
+        se[3].texture.viewDimension = WGPUTextureViewDimension_2D;
+        se[4].binding = 4;
+        se[4].visibility = WGPUShaderStage_Fragment;
+        se[4].sampler.type = WGPUSamplerBindingType_Filtering;
+        se[5].binding = 5;
+        se[5].visibility = WGPUShaderStage_Fragment;
+        se[5].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        se[5].buffer.minBindingSize = sizeof(float) * 36;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 3;
+        scene_ld.entryCount = 6;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -1299,10 +2109,26 @@ struct Renderer::Impl {
         pld.bindGroupLayoutCount = 3;
         pld.bindGroupLayouts = bgls;
         layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
-        WGPUBindGroupLayout sbgls[2] = {frame_bgl, object_bgl};
+        WGPUPipelineLayoutDescriptor kpld{};
+        kpld.label = rhi::str("pocket.sky");
+        kpld.bindGroupLayoutCount = 1;
+        kpld.bindGroupLayouts = &scene_bgl;
+        sky_layout = wgpuDeviceCreatePipelineLayout(device->device(), &kpld);
+        WGPUBindGroupLayoutEntry ce{};
+        ce.binding = 5;
+        ce.visibility = WGPUShaderStage_Vertex;
+        ce.buffer.type = WGPUBufferBindingType_Uniform;
+        ce.buffer.hasDynamicOffset = true;
+        ce.buffer.minBindingSize = sizeof(float) * 16;
+        WGPUBindGroupLayoutDescriptor cld{};
+        cld.label = rhi::str("pocket.cascade");
+        cld.entryCount = 1;
+        cld.entries = &ce;
+        cascade_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &cld);
+        WGPUBindGroupLayout sbgls[3] = {frame_bgl, object_bgl, cascade_bgl};
         WGPUPipelineLayoutDescriptor spld{};
         spld.label = rhi::str("pocket.shadow");
-        spld.bindGroupLayoutCount = 2;
+        spld.bindGroupLayoutCount = 3;
         spld.bindGroupLayouts = sbgls;
         shadow_layout = wgpuDeviceCreatePipelineLayout(device->device(), &spld);
 
@@ -1344,7 +2170,7 @@ struct Renderer::Impl {
         line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
         POCKET_TRY_VOID(create_scene_pipelines(msaa));
         POCKET_TRY_VOID(create_bloom());
-        POCKET_TRY_VOID(create_grade());
+        POCKET_TRY_VOID(create_post());
 
         // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
         // in the lookup handles acne.
@@ -1401,7 +2227,7 @@ struct Renderer::Impl {
         std_.label = rhi::str("pocket.shadow");
         std_.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
         std_.dimension = WGPUTextureDimension_2D;
-        std_.size = {kShadowMapSize, kShadowMapSize, 1};
+        std_.size = {kShadowMapSize, kShadowMapSize, kCascades};
         std_.format = WGPUTextureFormat_Depth32Float;
         std_.mipLevelCount = 1;
         std_.sampleCount = 1;
@@ -1409,12 +2235,29 @@ struct Renderer::Impl {
         if (!shadow_texture) return fail("gpu_texture_failed", "cannot create the shadow map");
         WGPUTextureViewDescriptor svd{};
         svd.format = std_.format;
-        svd.dimension = WGPUTextureViewDimension_2D;
+        svd.dimension = WGPUTextureViewDimension_2DArray;
         svd.mipLevelCount = 1;
-        svd.arrayLayerCount = 1;
+        svd.arrayLayerCount = kCascades;
         svd.aspect = WGPUTextureAspect_DepthOnly;
         svd.usage = std_.usage;
         shadow_view = wgpuTextureCreateView(shadow_texture, &svd);
+        for (std::uint32_t c = 0; c < kCascades; ++c) {
+            svd.dimension = WGPUTextureViewDimension_2D;
+            svd.baseArrayLayer = c;
+            svd.arrayLayerCount = 1;
+            cascade_view[c] = wgpuTextureCreateView(shadow_texture, &svd);
+        }
+        cascade_buffer = device->create_buffer("pocket.cascades", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 256ull * kCascades);
+        WGPUBindGroupEntry cbe{};
+        cbe.binding = 5;
+        cbe.buffer = cascade_buffer;
+        cbe.size = sizeof(float) * 16;
+        WGPUBindGroupDescriptor cbd{};
+        cbd.label = rhi::str("pocket.cascade");
+        cbd.layout = cascade_bgl;
+        cbd.entryCount = 1;
+        cbd.entries = &cbe;
+        cascade_bg = wgpuDeviceCreateBindGroup(device->device(), &cbd);
         WGPUSamplerDescriptor ssd{};
         ssd.label = rhi::str("pocket.shadow");
         ssd.addressModeU = WGPUAddressMode_ClampToEdge;
@@ -1428,16 +2271,24 @@ struct Renderer::Impl {
         ssd.compare = WGPUCompareFunction_LessEqual;
         ssd.maxAnisotropy = 1;
         shadow_sampler = wgpuDeviceCreateSampler(device->device(), &ssd);
-        WGPUBindGroupEntry sbe[3]{};
+        POCKET_TRY_VOID(create_sky());
+        WGPUBindGroupEntry sbe[6]{};
         sbe[0] = fbe;
         sbe[1].binding = 1;
         sbe[1].textureView = shadow_view;
         sbe[2].binding = 2;
         sbe[2].sampler = shadow_sampler;
+        sbe[3].binding = 3;
+        sbe[3].textureView = env_view;
+        sbe[4].binding = 4;
+        sbe[4].sampler = env_sampler;
+        sbe[5].binding = 5;
+        sbe[5].buffer = sh_buffer;
+        sbe[5].size = sizeof(float) * 36;
         WGPUBindGroupDescriptor sbd{};
         sbd.label = rhi::str("pocket.scene");
         sbd.layout = scene_bgl;
-        sbd.entryCount = 3;
+        sbd.entryCount = 6;
         sbd.entries = sbe;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
 
@@ -1512,6 +2363,9 @@ struct Renderer::Impl {
         td.format = WGPUTextureFormat_RGBA8Unorm;
         td.mipLevelCount = levels;
         td.sampleCount = 1;
+        const WGPUTextureFormat srgb = WGPUTextureFormat_RGBA8UnormSrgb;
+        td.viewFormatCount = 1;
+        td.viewFormats = &srgb;
         t.texture = wgpuDeviceCreateTexture(device->device(), &td);
         if (!t.texture) return fail("gpu_texture_failed", "cannot create texture {} ({}x{})", label, w, h);
         WGPUTextureViewDescriptor vd{};
@@ -1522,6 +2376,8 @@ struct Renderer::Impl {
         vd.aspect = WGPUTextureAspect_All;
         vd.usage = td.usage;
         t.view = wgpuTextureCreateView(t.texture, &vd);
+        vd.format = srgb;
+        t.srgb_view = wgpuTextureCreateView(t.texture, &vd);
         auto write_level = [&](std::uint32_t level, std::uint32_t lw, std::uint32_t lh, const std::uint8_t* data) {
             WGPUTexelCopyTextureInfo dst{};
             dst.texture = t.texture;
@@ -1574,7 +2430,7 @@ struct Renderer::Impl {
         if (auto it = material_groups.find(key); it != material_groups.end()) return it->second;
         WGPUBindGroupEntry entries[5]{};
         entries[0].binding = 0;
-        entries[0].textureView = view_for(base, white);
+        entries[0].textureView = view_for(base, white, true);
         entries[1].binding = 1;
         entries[1].sampler = nearest ? nearest_sampler : sampler;
         entries[2].binding = 2;
@@ -1582,7 +2438,7 @@ struct Renderer::Impl {
         entries[3].binding = 3;
         entries[3].textureView = view_for(normal, flat_normal);
         entries[4].binding = 4;
-        entries[4].textureView = view_for(emissive, white);
+        entries[4].textureView = view_for(emissive, white, true);
         WGPUBindGroupDescriptor bd{};
         bd.label = rhi::str("pocket.material");
         bd.layout = material_bgl;
@@ -1604,23 +2460,25 @@ struct Renderer::Impl {
 
     // The bind group for an image path (the white texture when empty or unavailable).
     // The view of an image by project path, uploaded on first use; `fallback` when unavailable.
-    WGPUTextureView view_for(const std::string& path, const GpuTexture& fallback) {
-        if (path.empty()) return fallback.view;
-        if (auto it = textures.find(path); it != textures.end()) return it->second.view;
-        if (!assets) { report_missing(path, "no asset store"); return fallback.view; }
-        if (failed.contains(path)) { note_missing(path); return fallback.view; }
+    // Color maps (srgb) are decoded to linear light when sampled; data maps are read as stored.
+    WGPUTextureView view_for(const std::string& path, const GpuTexture& fallback, bool srgb = false) {
+        auto pick = [srgb](const GpuTexture& t) { return srgb && t.srgb_view ? t.srgb_view : t.view; };
+        if (path.empty()) return pick(fallback);
+        if (auto it = textures.find(path); it != textures.end()) return pick(it->second);
+        if (!assets) { report_missing(path, "no asset store"); return pick(fallback); }
+        if (failed.contains(path)) { note_missing(path); return pick(fallback); }
         auto img = assets->image(path);
         if (!img) {
             report_missing(path, img.error().message);
-            return fallback.view;
+            return pick(fallback);
         }
         auto t = upload_texture(path.c_str(), (*img)->width, (*img)->height, (*img)->rgba.data());
         if (!t) {
             report_missing(path, t.error().message);
-            return fallback.view;
+            return pick(fallback);
         }
         textures[path] = *t;
-        return t->view;
+        return pick(*t);
     }
 
     WGPUBindGroup texture_for(const std::string& path, bool nearest = false) { return material_for(path, "", "", "", nearest); }
@@ -1906,6 +2764,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     Impl& im = *impl_;
     if (im.msaa != im.msaa_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa));
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
+    POCKET_TRY_VOID(im.ensure_hdr_target(frame.width, frame.height));
     POCKET_TRY_VOID(im.ensure_msaa_targets(frame.width, frame.height, im.msaa_applied));
     im.last_width = frame.width;
     im.last_height = frame.height;
@@ -1927,7 +2786,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.camera_pos[0] = im.camera.position.x;
     fu.camera_pos[1] = im.camera.position.y;
     fu.camera_pos[2] = im.camera.position.z;
-    fu.ambient[0] = 0.18f; fu.ambient[1] = 0.19f; fu.ambient[2] = 0.22f;
+    fu.ambient[0] = decode(0.18f); fu.ambient[1] = decode(0.19f); fu.ambient[2] = decode(0.22f);
     fu.sun_dir[0] = 0.3f; fu.sun_dir[1] = -1.0f; fu.sun_dir[2] = -0.4f;
     fu.sun_color[0] = 0; fu.sun_color[1] = 0; fu.sun_color[2] = 0;
     bool have_sun = false;
@@ -1938,23 +2797,23 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             have_sun = true;
             Vec3 dir = t.rotation.rotate({0, 0, -1});
             fu.sun_dir[0] = dir.x; fu.sun_dir[1] = dir.y; fu.sun_dir[2] = dir.z;
-            fu.sun_color[0] = l.color.r * l.intensity;
-            fu.sun_color[1] = l.color.g * l.intensity;
-            fu.sun_color[2] = l.color.b * l.intensity;
+            fu.sun_color[0] = decode(l.color.r) * l.intensity;
+            fu.sun_color[1] = decode(l.color.g) * l.intensity;
+            fu.sun_color[2] = decode(l.color.b) * l.intensity;
         } else if (points < kMaxPointLights) {
             fu.point_pos[points][0] = t.position.x;
             fu.point_pos[points][1] = t.position.y;
             fu.point_pos[points][2] = t.position.z;
             fu.point_pos[points][3] = l.range > 0 ? l.range : 0.001f;
-            fu.point_color[points][0] = l.color.r * l.intensity;
-            fu.point_color[points][1] = l.color.g * l.intensity;
-            fu.point_color[points][2] = l.color.b * l.intensity;
+            fu.point_color[points][0] = decode(l.color.r) * l.intensity;
+            fu.point_color[points][1] = decode(l.color.g) * l.intensity;
+            fu.point_color[points][2] = decode(l.color.b) * l.intensity;
             ++points;
         }
     });
     if (!have_sun) {
         // Default key light so a scene without lights is still visible.
-        fu.sun_color[0] = 0.9f; fu.sun_color[1] = 0.88f; fu.sun_color[2] = 0.85f;
+        fu.sun_color[0] = decode(0.9f); fu.sun_color[1] = decode(0.88f); fu.sun_color[2] = decode(0.85f);
     }
     fu.point_count[0] = points;
     im.stats.has_sun = have_sun;
@@ -1970,20 +2829,104 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             hi = {std::max(hi.x, b.max.x), std::max(hi.y, b.max.y), std::max(hi.z, b.max.z)};
         });
         if (!any) shadows_on = false;
-        Vec3 center = (lo + hi) * 0.5f;
-        Vec3 ext = (hi - lo) * 0.5f;
-        float radius = std::max(1.0f, std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z));
-        Vec3 dir = normalize(Vec3{fu.sun_dir[0], fu.sun_dir[1], fu.sun_dir[2]});
-        Vec3 up = std::abs(dir.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
-        Mat4 light_view = Mat4::look_at(center - dir * (radius * 2.0f), center, up);
-        Mat4 light_proj = Mat4::orthographic(-radius, radius, -radius, radius, 0.05f, radius * 4.0f);
-        to_array(light_proj * light_view, fu.light_view_proj);
+        const Vec3 scene_center = (lo + hi) * 0.5f;
+        const Vec3 ext = (hi - lo) * 0.5f;
+        const float scene_radius = std::max(1.0f, length(ext));
+        const Vec3 dir = normalize(Vec3{fu.sun_dir[0], fu.sun_dir[1], fu.sun_dir[2]});
+        const Vec3 up = std::abs(dir.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        // The whole view frustum's corners (near, then far), from which each slice is cut by view depth.
+        const Mat4 inv = (im.camera.proj * im.camera.view).inverse();
+        Vec3 corner[8];
+        for (int k = 0; k < 8; ++k) {
+            const Vec4 c = inv * Vec4{(k & 1) ? 1.0f : -1.0f, (k & 2) ? 1.0f : -1.0f, (k & 4) ? 1.0f : 0.0f, 1.0f};
+            corner[k] = Vec3{c.x / c.w, c.y / c.w, c.z / c.w};
+        }
+        const Vec3 fwd = im.camera.forward;
+        auto depth_of = [&](Vec3 p) { return dot(p - im.camera.position, fwd); };
+        const float near_d = std::max(0.01f, depth_of(corner[0]));
+        const float far_d = depth_of(corner[4]);
+        // Shadows reach the setting's distance, no farther than the scene or the camera sees.
+        const float scene_far = depth_of(scene_center) + scene_radius;
+        const float reach = std::max(near_d + 0.1f, std::min({im.shadows.distance, far_d, scene_far}));
+        const int count = std::clamp(im.shadows.cascades, 1, static_cast<int>(kCascades));
+        float splits[kCascades + 1];
+        splits[0] = near_d;
+        for (int c = 1; c <= count; ++c) {
+            // Practical splits: mostly logarithmic, a fifth uniform.
+            const float t = static_cast<float>(c) / static_cast<float>(count);
+            const float log_split = near_d * std::pow(reach / near_d, t);
+            const float uni_split = near_d + (reach - near_d) * t;
+            splits[c] = 0.8f * log_split + 0.2f * uni_split;
+        }
+        std::uint8_t slots[256 * kCascades] = {};
+        for (int c = 0; c < static_cast<int>(kCascades); ++c) {
+            const int cc = std::min(c, count - 1);
+            // The slice's eight corners along the frustum's edges, their bounding sphere (radius rounded
+            // up, so it does not breathe as the camera turns).
+            Vec3 pts[8];
+            Vec3 mid{0, 0, 0};
+            for (int k = 0; k < 4; ++k) {
+                const Vec3 a = corner[k], b = corner[k + 4];
+                const float da = depth_of(a), db = depth_of(b);
+                auto at = [&](float d) { return a + (b - a) * ((d - da) / std::max(db - da, 1e-6f)); };
+                pts[k] = at(splits[cc]);
+                pts[k + 4] = at(splits[cc + 1]);
+                mid = mid + pts[k] + pts[k + 4];
+            }
+            mid = mid * (1.0f / 8.0f);
+            float r = 0;
+            for (const Vec3& p : pts) r = std::max(r, length(p - mid));
+            r = std::ceil(r * 16.0f) / 16.0f;
+            // Casters toward the sun: back to the far side of the scene, whatever is behind the slice.
+            const float back = std::max(r, dot(mid - scene_center, dir) + scene_radius) + 1.0f;
+            const Mat4 light_view = Mat4::look_at(mid - dir * back, mid, up);
+            Mat4 light_proj = Mat4::orthographic(-r, r, -r, r, 0.05f, back + r + 1.0f);
+            // Snap to the texel grid, so the shadow's edge does not crawl as the camera moves.
+            const Mat4 vp0 = light_proj * light_view;
+            const Vec4 o = vp0 * Vec4{0, 0, 0, 1};
+            const float half = static_cast<float>(kShadowMapSize) * 0.5f;
+            const float sx = std::round(o.x * half) / half - o.x, sy = std::round(o.y * half) / half - o.y;
+            light_proj = Mat4::translation({sx, sy, 0}) * light_proj;
+            const Mat4 vp = light_proj * light_view;
+            to_array(vp, fu.cascade_vp[c]);
+            std::memcpy(slots + 256 * c, fu.cascade_vp[c], sizeof(float) * 16);
+            fu.cascade_far[c] = splits[cc + 1];
+            fu.cascade_texel[c] = 2.0f * r / static_cast<float>(kShadowMapSize);
+        }
+        if (shadows_on) im.device->write_buffer(im.cascade_buffer, 0, slots, sizeof slots);
+        fu.camera_fwd[0] = fwd.x; fu.camera_fwd[1] = fwd.y; fu.camera_fwd[2] = fwd.z; fu.camera_fwd[3] = static_cast<float>(count);
+        std::memcpy(fu.light_view_proj, fu.cascade_vp[0], sizeof(float) * 16);
+        im.stats.shadow_cascades = shadows_on ? count : 0;
+        im.stats.shadow_distance = shadows_on ? splits[count] : 0.0f;
         fu.shadow[0] = 1.0f / static_cast<float>(kShadowMapSize);
         fu.shadow[1] = im.shadows.bias;
         fu.shadow[2] = im.shadows.strength;
         fu.shadow[3] = shadows_on ? 1.0f : 0.0f;
     }
     im.stats.shadows = shadows_on;
+    // The sky: the first enabled Sky; its environment is rebuilt when anything it is made of changed.
+    world::Sky sky;
+    bool has_sky = false;
+    world.ecs().each([&](flecs::entity, const world::Sky& s) {
+        if (!has_sky && s.enabled && (s.mode == 1 || s.mode == 2)) { sky = s; has_sky = true; }
+    });
+    bool env_on = false;
+    if (has_sky) {
+        const Vec3 toward = normalize(Vec3{-fu.sun_dir[0], -fu.sun_dir[1], -fu.sun_dir[2]});
+        env_on = im.update_environment(frame, sky, have_sun, toward, Vec3{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]});
+        if (!env_on) has_sky = false;
+    }
+    to_array((im.camera.proj * im.camera.view).inverse(), fu.inv_view_proj);
+    fu.env[0] = env_on && (sky.diffuse > 0 || sky.specular > 0) ? 1.0f : 0.0f;
+    fu.env[1] = std::max(sky.diffuse, 0.0f);
+    fu.env[2] = std::max(sky.specular, 0.0f);
+    fu.env[3] = static_cast<float>(kEnvLevels - 1);
+    fu.sky[0] = has_sky ? static_cast<float>(sky.mode) : 0.0f;
+    fu.sky[1] = std::cos(radians(std::clamp(sky.sun_size, 0.0f, 30.0f) * 0.5f));
+    fu.sky[2] = sky.sun_size > 0 ? 40.0f : 0.0f;
+    fu.sky[3] = have_sun ? 1.0f : 0.0f;
+    im.stats.sky = has_sky ? sky.mode : 0;
+    if (has_sky) fu.ambient[0] = fu.ambient[1] = fu.ambient[2] = 0.0f;   // the sky's light replaces the flat ambient, even at zero
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
     // Gather one object per primitive entity and one per material of a glTF entity, sorted by
@@ -2037,9 +2980,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             } else {
                 ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
             }
-            ou.emissive[0] = mr.emissive.r + (mat ? mat->emissive.x : 0.0f);
-            ou.emissive[1] = mr.emissive.g + (mat ? mat->emissive.y : 0.0f);
-            ou.emissive[2] = mr.emissive.b + (mat ? mat->emissive.z : 0.0f);
+            ou.emissive[0] = decode(mr.emissive.r) + (mat ? mat->emissive.x : 0.0f);
+            ou.emissive[1] = decode(mr.emissive.g) + (mat ? mat->emissive.y : 0.0f);
+            ou.emissive[2] = decode(mr.emissive.b) + (mat ? mat->emissive.z : 0.0f);
             ou.emissive[3] = mr.cutoff > 0 ? mr.cutoff : (mat ? mat->alpha_cutoff : 0.0f);
             WGPUBindGroup group = im.material_for(tex, mr_map, normal_map, em_map, false);
             const bool blend = color.w < 0.999f || (mat && mat->blend);
@@ -2055,7 +2998,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         int kind = Impl::primitive_index(mr.mesh);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
-            push(&gm, 0, gm.index_count, mr.texture, {mr.color.r, mr.color.g, mr.color.b, mr.color.a}, mr.mesh, nullptr);
+            push(&gm, 0, gm.index_count, mr.texture, {decode(mr.color.r), decode(mr.color.g), decode(mr.color.b), mr.color.a}, mr.mesh, nullptr);
             return;
         }
         Impl::AssetMesh* am = im.asset_mesh(mr.mesh);
@@ -2110,7 +3053,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             const assets::Submesh& sm = am->submeshes[si];
             if (only >= 0 && sm.origin != only) continue;
             const assets::Material& mat = am->materials[std::min<std::size_t>(sm.material, am->materials.size() - 1)];
-            Vec4 color{mr.color.r * mat.base_color.x, mr.color.g * mat.base_color.y, mr.color.b * mat.base_color.z, mr.color.a * mat.base_color.w};
+            Vec4 color{decode(mr.color.r) * mat.base_color.x, decode(mr.color.g) * mat.base_color.y, decode(mr.color.b) * mat.base_color.z, mr.color.a * mat.base_color.w};
             const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
             ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
             if (skinned) ++skinned_instances;
@@ -2178,7 +3121,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             if (!layer.visible || (!tmc.layer.empty() && layer.name != tmc.layer)) continue;
             const Impl::TileLayerMesh* lm = im.tile_layer_mesh(**map, layer, this_index, tmc.tile_size > 0 ? tmc.tile_size : 1.0f, im.assets->tile_time());
             if (!lm) continue;
-            ou.color[0] = tmc.color.r; ou.color[1] = tmc.color.g; ou.color[2] = tmc.color.b; ou.color[3] = tmc.color.a * layer.opacity;
+            ou.color[0] = decode(tmc.color.r); ou.color[1] = decode(tmc.color.g); ou.color[2] = decode(tmc.color.b); ou.color[3] = tmc.color.a * layer.opacity;
             for (const auto& part : lm->parts) {
                 if (count + sprites.size() >= kMaxObjects) return;
                 sprites.push_back({part.texture, im.texture_for(part.texture, true), tmc.order, depth, ou, &lm->gpu, part.first, part.count, 2 * this_index + 1});
@@ -2213,7 +3156,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 const float shift_y = (im.camera.position.y - t.position.y) * (1.0f - il.parallax_y);
                 ObjectUniforms iu = ou;
                 iu.id[0] = 0;   // a picture is backdrop: render.pick sees through it, so an empty cell still picks nothing
-                iu.color[0] = tmc.color.r * il.tint.x; iu.color[1] = tmc.color.g * il.tint.y; iu.color[2] = tmc.color.b * il.tint.z; iu.color[3] = tmc.color.a * il.tint.w * il.opacity;
+                iu.color[0] = decode(tmc.color.r * il.tint.x); iu.color[1] = decode(tmc.color.g * il.tint.y); iu.color[2] = decode(tmc.color.b * il.tint.z); iu.color[3] = tmc.color.a * il.tint.w * il.opacity;
                 WGPUBindGroup material = im.texture_for(il.image, true);
                 bool drawn = false;
                 for (int ky = ky0; ky <= ky1; ++ky) {
@@ -2238,7 +3181,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ObjectUniforms ou{};
         to_array(model, ou.model);
         to_array(transpose(model.inverse_affine()), ou.normal);
-        ou.color[0] = sp.color.r; ou.color[1] = sp.color.g; ou.color[2] = sp.color.b; ou.color[3] = sp.color.a;
+        ou.color[0] = decode(sp.color.r); ou.color[1] = decode(sp.color.g); ou.color[2] = decode(sp.color.b); ou.color[3] = sp.color.a;
         ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
         ou.id[1] = 1;
         float u0 = sp.uv.x, v0 = sp.uv.y, u1 = sp.uv.z, v1 = sp.uv.w;
@@ -2301,9 +3244,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 ObjectUniforms ou{};
                 to_array(model, ou.model);
                 to_array(Mat4::identity(), ou.normal);
-                ou.color[0] = e->color.r + (e->color_end.r - e->color.r) * k;
-                ou.color[1] = e->color.g + (e->color_end.g - e->color.g) * k;
-                ou.color[2] = e->color.b + (e->color_end.b - e->color.b) * k;
+                ou.color[0] = decode(e->color.r + (e->color_end.r - e->color.r) * k);
+                ou.color[1] = decode(e->color.g + (e->color_end.g - e->color.g) * k);
+                ou.color[2] = decode(e->color.b + (e->color_end.b - e->color.b) * k);
                 ou.color[3] = e->color.a + (e->color_end.a - e->color.a) * k;
                 ou.id[0] = static_cast<std::uint32_t>(id & 0xFFFFFFFFu);
                 ou.id[1] = 1;
@@ -2336,6 +3279,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.msaa = im.msaa_applied;
     im.stats.bloom = false;
     im.stats.grade = false;
+    im.stats.tonemap = 0;
+    im.stats.auto_exposure = false;
+    im.stats.env_updates = im.env_updates;
     im.stats.skinned = skinned_instances;
     im.stats.morphed = morphed_instances;
     im.stats.moving_parts = moving_parts;
@@ -2345,12 +3291,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
 
     const bool split = im.msaa_applied > 1;  // color resolves from the multisampled target; ids get their own pass
     WGPURenderPassColorAttachment ca[2]{};
-    ca[0].view = split ? im.ms_color_view : frame.color;
-    ca[0].resolveTarget = split ? frame.color : nullptr;
+    ca[0].view = split ? im.ms_color_view : im.hdr_view;
+    ca[0].resolveTarget = split ? im.hdr_view : nullptr;
     ca[0].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     ca[0].loadOp = WGPULoadOp_Clear;
     ca[0].storeOp = split ? WGPUStoreOp_Discard : WGPUStoreOp_Store;
-    ca[0].clearValue = {clear.r, clear.g, clear.b, clear.a};
+    ca[0].clearValue = {decode(clear.r), decode(clear.g), decode(clear.b), clear.a};
     ca[1].view = im.id_view;
     ca[1].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     ca[1].loadOp = WGPULoadOp_Clear;
@@ -2405,24 +3351,28 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         }
     };
     if (shadows_on && !draws.empty()) {
-        WGPURenderPassDepthStencilAttachment sds{};
-        sds.view = im.shadow_view;
-        sds.depthLoadOp = WGPULoadOp_Clear;
-        sds.depthStoreOp = WGPUStoreOp_Store;
-        sds.depthClearValue = 1.0f;
-        sds.stencilLoadOp = WGPULoadOp_Undefined;
-        sds.stencilStoreOp = WGPUStoreOp_Undefined;
-        sds.stencilReadOnly = true;
-        WGPURenderPassDescriptor srp{};
-        srp.label = rhi::str("pocket.shadow");
-        srp.colorAttachmentCount = 0;
-        srp.depthStencilAttachment = &sds;
-        WGPURenderPassEncoder spass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &srp);
-        wgpuRenderPassEncoderSetBindGroup(spass, 0, im.frame_bg, 0, nullptr);
-        wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
-        draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline);
-        wgpuRenderPassEncoderEnd(spass);
-        wgpuRenderPassEncoderRelease(spass);
+        for (int c = 0; c < im.stats.shadow_cascades; ++c) {
+            WGPURenderPassDepthStencilAttachment sds{};
+            sds.view = im.cascade_view[c];
+            sds.depthLoadOp = WGPULoadOp_Clear;
+            sds.depthStoreOp = WGPUStoreOp_Store;
+            sds.depthClearValue = 1.0f;
+            sds.stencilLoadOp = WGPULoadOp_Undefined;
+            sds.stencilStoreOp = WGPUStoreOp_Undefined;
+            sds.stencilReadOnly = true;
+            WGPURenderPassDescriptor srp{};
+            srp.label = rhi::str("pocket.shadow");
+            srp.colorAttachmentCount = 0;
+            srp.depthStencilAttachment = &sds;
+            WGPURenderPassEncoder spass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &srp);
+            wgpuRenderPassEncoderSetBindGroup(spass, 0, im.frame_bg, 0, nullptr);
+            wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
+            const std::uint32_t offset = 256u * static_cast<std::uint32_t>(c);
+            wgpuRenderPassEncoderSetBindGroup(spass, 2, im.cascade_bg, 1, &offset);
+            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline);
+            wgpuRenderPassEncoderEnd(spass);
+            wgpuRenderPassEncoderRelease(spass);
+        }
     }
     // Sprites and tile layers in draw order; the same loop serves the color pass and the id pass.
     auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, std::uint32_t& counter) {
@@ -2499,6 +3449,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     rp.depthStencilAttachment = &ds;
     WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
     set_viewport(pass);
+    if (im.stats.sky != 0) {
+        wgpuRenderPassEncoderSetPipeline(pass, im.sky_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+        im.stats.draw_calls++;
+    }
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
@@ -2523,7 +3479,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
-    if (im.grade.enabled) POCKET_TRY_VOID(im.draw_grade(frame));
+    POCKET_TRY_VOID(im.draw_post(frame, clear));
     return {};
 }
 
@@ -2625,9 +3581,13 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
 void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
 void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4
 int Renderer::msaa() const { return impl_->msaa; }
-void Renderer::set_shadows(ShadowSettings s) { impl_->shadows = s; }
+void Renderer::set_shadows(ShadowSettings s) {
+    s.cascades = std::clamp(s.cascades, 1, static_cast<int>(kCascades));
+    s.distance = std::max(s.distance, 1.0f);
+    impl_->shadows = s;
+}
 void Renderer::set_bloom(BloomSettings s) {
-    s.threshold = std::clamp(s.threshold, 0.0f, 1.0f);
+    s.threshold = std::clamp(s.threshold, 0.0f, 64.0f);
     s.strength = std::clamp(s.strength, 0.0f, 4.0f);
     s.radius = std::clamp(s.radius, 0.25f, 8.0f);
     impl_->bloom = s;
@@ -2644,6 +3604,73 @@ void Renderer::set_grade(GradeSettings s) {
     impl_->grade = s;
 }
 GradeSettings Renderer::grade() const { return impl_->grade; }
+void Renderer::set_tonemap(TonemapSettings s) {
+    s.exposure = std::clamp(s.exposure, 0.0f, 64.0f);
+    s.compensation = std::clamp(s.compensation, -16.0f, 16.0f);
+    s.min_ev = std::clamp(s.min_ev, -24.0f, 24.0f);
+    s.max_ev = std::clamp(s.max_ev, -24.0f, 24.0f);
+    s.speed = std::clamp(s.speed, 0.0f, 1000.0f);
+    if (s.auto_exposure && !impl_->tonemap.auto_exposure) impl_->meter_reset = true;   // turned on: the first metered frame snaps
+    impl_->tonemap = s;
+}
+TonemapSettings Renderer::tonemap() const { return impl_->tonemap; }
+void Renderer::set_time_step(float seconds) { impl_->time_step = seconds; }
+
+const char* tonemap_name(Tonemap t) {
+    switch (t) {
+        case Tonemap::Aces: return "aces";
+        case Tonemap::Agx: return "agx";
+        case Tonemap::Neutral: return "neutral";
+        default: return "none";
+    }
+}
+bool tonemap_from_name(const std::string& name, Tonemap& out) {
+    for (Tonemap t : {Tonemap::None, Tonemap::Aces, Tonemap::Agx, Tonemap::Neutral}) {
+        if (name == tonemap_name(t)) { out = t; return true; }
+    }
+    if (name == "filmic") { out = Tonemap::Aces; return true; }
+    return false;
+}
+
+Result<Renderer::Metering> Renderer::metering() {
+    Impl& im = *impl_;
+    Metering m;
+    if (!im.meter_state) return m;
+    WGPUBufferDescriptor bd{};
+    bd.label = rhi::str("pocket.meter.readback");
+    bd.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+    bd.size = sizeof(float) * 4;
+    WGPUBuffer readback = wgpuDeviceCreateBuffer(im.device->device(), &bd);
+    if (!readback) return fail("gpu_buffer_failed", "cannot create the meter readback buffer");
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(im.device->device(), nullptr);
+    wgpuCommandEncoderCopyBufferToBuffer(enc, im.meter_state, 0, readback, 0, sizeof(float) * 4);
+    WGPUCommandBuffer cb = wgpuCommandEncoderFinish(enc, nullptr);
+    wgpuQueueSubmit(im.device->queue(), 1, &cb);
+    wgpuCommandBufferRelease(cb);
+    wgpuCommandEncoderRelease(enc);
+    struct MapResult { bool done = false; WGPUMapAsyncStatus status{}; } mr;
+    WGPUBufferMapCallbackInfo mci{};
+    mci.mode = WGPUCallbackMode_AllowSpontaneous;
+    mci.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void* u1, void*) {
+        auto* r = static_cast<MapResult*>(u1);
+        r->status = status;
+        r->done = true;
+    };
+    mci.userdata1 = &mr;
+    wgpuBufferMapAsync(readback, WGPUMapMode_Read, 0, sizeof(float) * 4, mci);
+    while (!mr.done) im.device->poll(true);
+    if (mr.status != WGPUMapAsyncStatus_Success) {
+        wgpuBufferRelease(readback);
+        return fail("gpu_map_failed", "cannot read the meter back");
+    }
+    const auto* p = static_cast<const float*>(wgpuBufferGetConstMappedRange(readback, 0, sizeof(float) * 4));
+    m.exposure_ev = p[0];
+    m.average_ev = p[1];
+    m.valid = p[2] > 0.5f;
+    wgpuBufferUnmap(readback);
+    wgpuBufferRelease(readback);
+    return m;
+}
 ShadowSettings Renderer::shadows() const { return impl_->shadows; }
 void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
 std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> Renderer::take_new_bounds() { return std::exchange(impl_->new_bounds, {}); }
@@ -2657,6 +3684,8 @@ Json Renderer::describe() const {
     j["draw_calls"] = s.draw_calls;
     j["shadow_draws"] = s.shadow_draws;
     j["shadows"] = s.shadows;
+    j["shadow_cascades"] = s.shadow_cascades;
+    j["shadow_distance"] = s.shadow_distance;
     j["instances"] = s.instances;
     j["translucent"] = s.translucent;
     j["sprites"] = s.sprites;
@@ -2671,6 +3700,11 @@ Json Renderer::describe() const {
     j["msaa"] = s.msaa;
     j["bloom"] = s.bloom;
     j["grade"] = s.grade;
+    j["hdr"] = true;
+    j["tonemap"] = tonemap_name(static_cast<Tonemap>(s.tonemap));
+    j["auto_exposure"] = s.auto_exposure;
+    j["sky"] = s.sky == 1 ? "procedural" : s.sky == 2 ? "image" : "none";
+    j["env_updates"] = s.env_updates;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;

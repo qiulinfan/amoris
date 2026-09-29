@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 using namespace pocket;
@@ -3025,8 +3026,11 @@ TEST_CASE("a mesh with alpha under one is drawn translucent over what is behind 
     INFO("opaque " << opaque["center_pixel"].dump());
     REQUIRE(opaque["render"]["translucent"] == 0);
     REQUIRE(px(opaque["center_pixel"], 0) > px(half["center_pixel"], 0));
-    REQUIRE(px(opaque["center_pixel"], 1) < 8);
-    REQUIRE(px(opaque["center_pixel"], 2) < 8);
+    // Only the pane's own highlight is left in green and blue (a dielectric reflects a little white,
+    // which the sRGB encoding of linear light makes visible): far under the scene showing through.
+    REQUIRE(px(opaque["center_pixel"], 1) < 40);
+    REQUIRE(px(opaque["center_pixel"], 2) < 40);
+    REQUIRE(px(opaque["center_pixel"], 1) * 2 < px(half["center_pixel"], 1));
     // Behind an opaque wall, a translucent mesh does not show: the depth test still applies to it.
     REQUIRE(s.command("world.set", Json{{"entity", "Pane"}, {"component", "MeshRenderer"}, {"value", Json{{"color", {{"r", 1.0}, {"g", 0.0}, {"b", 0.0}, {"a", 0.5}}}}}}).has_value());
     Json wall;
@@ -3624,4 +3628,103 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(s.frame().has_value());
     REQUIRE(touch(0, "up", 40, 10).empty());
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("Blender files, FBX and OBJ come in as scenes: converted once, instantiated with their lights and cameras", "[runtime][import]") {
+    const std::string blender = assets::find_blender("");
+    if (blender.empty()) SKIP("Blender is not installed");
+    const std::filesystem::path dir = root() / "samples" / "assets" / "assets" / "import-test";
+    const std::filesystem::path out = root() / "build" / "test-out";
+    std::filesystem::create_directories(dir);
+    std::filesystem::create_directories(out);
+    // A Blender scene made by Blender: a beveled red cube, a warm point lamp and a camera, saved as
+    // .blend and exported as .fbx.
+    std::ofstream(out / "make-scene.py") << R"PY(
+import bpy, sys
+argv = sys.argv[sys.argv.index('--') + 1:]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0.5))
+crate = bpy.context.active_object
+crate.name = 'Crate'
+mat = bpy.data.materials.new('RedPaint')
+mat.use_nodes = True
+bsdf = mat.node_tree.nodes['Principled BSDF']
+bsdf.inputs['Base Color'].default_value = (0.8, 0.05, 0.05, 1)
+bsdf.inputs['Roughness'].default_value = 0.3
+crate.data.materials.append(mat)
+bpy.ops.object.modifier_add(type='BEVEL')
+crate.modifiers[-1].width = 0.1
+bpy.ops.object.light_add(type='POINT', location=(2, -2, 3))
+bpy.context.active_object.name = 'Lamp'
+bpy.context.active_object.data.energy = 1000
+bpy.ops.object.camera_add(location=(0, -6, 2))
+bpy.context.active_object.name = 'Eye'
+bpy.ops.wm.save_as_mainfile(filepath=argv[0])
+bpy.ops.export_scene.fbx(filepath=argv[1])
+)PY";
+    const std::string cmd = "'" + blender + "' -b --factory-startup --python '" + (out / "make-scene.py").string() + "' -- '" + (dir / "scene.blend").string() + "' '" + (dir / "scene.fbx").string() + "' > '" + (out / "make-scene.log").string() + "' 2>&1";
+    REQUIRE(std::system(cmd.c_str()) == 0);
+    REQUIRE(std::filesystem::is_regular_file(dir / "scene.blend"));
+    std::ofstream(dir / "post.obj") << "o Post\nv 0 0 0\nv 0.2 0 0\nv 0.2 2 0\nv 0 2 0\nf 1 2 3 4\n";
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The first import runs Blender; the same content again is the cached conversion.
+    Json first = s.command("assets.import", Json{{"path", "assets/import-test/scene.blend"}}).value();
+    INFO(first.dump());
+    REQUIRE(first["importer"] == "blender");
+    REQUIRE(first["cached"] == false);
+    REQUIRE(first["blender_found"] == true);
+    REQUIRE(first["converted"] == ".imported/assets/import-test/scene.blend.glb");
+    REQUIRE(first["mesh"]["lights"].size() == 1);
+    REQUIRE(first["mesh"]["cameras"].size() == 1);
+    REQUIRE(first["mesh"]["materials"][0]["name"] == "RedPaint");
+    REQUIRE(first["mesh"]["materials"][0]["roughness"].get<double>() == Catch::Approx(0.3).margin(0.01));
+    REQUIRE(first["mesh"]["vertices"].get<int>() > 24);   // the bevel modifier was applied
+    Json again = s.command("assets.import", Json{{"path", "assets/import-test/scene.blend"}}).value();
+    REQUIRE(again["cached"] == true);
+    // Instantiated: the file's objects as entities, the lamp a point light, the camera inactive.
+    Json inst = s.command("world.instantiate", Json{{"mesh", "assets/import-test/scene.blend"}}).value();
+    const Json root_id = inst["roots"][0];
+    auto child = [&](const char* name) {
+        for (const Json& c : s.command("world.children", Json{{"entity", root_id}}).value()) {
+            if (s.command("world.describe", Json{{"entity", c}}).value().value("name", "") == name) return c;
+        }
+        return Json(nullptr);
+    };
+    const Json crate = child("Crate"), lamp = child("Lamp"), eye = child("Eye");
+    REQUIRE(!crate.is_null());
+    REQUIRE(!lamp.is_null());
+    REQUIRE(!eye.is_null());
+    Json light = s.command("world.get", Json{{"entity", lamp}, {"component", "Light"}}).value();
+    REQUIRE(light["kind"] == 1);
+    REQUIRE(light["intensity"].get<double>() > 1.0);
+    Json cam = s.command("world.get", Json{{"entity", eye}, {"component", "Camera"}}).value();
+    REQUIRE(cam["active"] == false);
+    // Blender's Z up is Y up here: the lamp three units above the ground.
+    Json lamp_t = s.command("world.get", Json{{"entity", lamp}, {"component", "Transform"}}).value();
+    REQUIRE(lamp_t["position"]["y"].get<double>() == Catch::Approx(3.0).margin(1e-3));
+    REQUIRE(lamp_t["position"]["z"].get<double>() == Catch::Approx(2.0).margin(1e-3));
+    REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    for (const Json& m : stats["assets"].value("missing", Json::array())) REQUIRE(m.get<std::string>().find("import-test") == std::string::npos);   // the sample's own Missing entity aside
+    // An FBX goes the same way, and an OBJ needs no Blender at all.
+    Json fbx = s.command("assets.import", Json{{"path", "assets/import-test/scene.fbx"}}).value();
+    REQUIRE(fbx["importer"] == "blender");
+    REQUIRE(fbx["mesh"]["materials"][0]["name"] == "RedPaint");
+    Json obj = s.command("world.instantiate", Json{{"mesh", "assets/import-test/post.obj"}}).value();
+    REQUIRE(obj["roots"].size() == 1);
+    REQUIRE(s.command("assets.describe", Json{{"path", "assets/import-test/post.obj"}}).value()["importer"] == "obj");
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(root() / "samples" / "assets" / ".imported");
 }

@@ -37,6 +37,17 @@ The mesh pipeline samples one base color texture per draw (group 2: texture + sa
 
 A glTF file draws as one thing by default: its nodes are baked into the file's space and one `MeshRenderer` shows them all. `world.instantiate {mesh: "assets/house.glb", position}` (`world.instantiateMesh` in scripts) makes the file's node tree into entities instead: one root named after the file, one entity per node with the node's own translation, rotation and scale (a node authored as a matrix is taken apart), and on every node that carries geometry a `MeshRenderer` whose `node` names it (`assets.describe` lists those names as `parts`; an unnamed node goes by its index). Such an entity draws that node alone, its baked geometry moved back into the node's space, so the picture is the same as the whole file's until the parts are moved, renamed, given colors or picked one by one. Skinned files are refused (their joints place them, so they stay one drawable); the moving parts of an animated file draw where the entity puts them, not where the clip would.
 
+## Importing models
+
+A `MeshRenderer.mesh` or `world.instantiate {mesh}` can name any of these, and the store reads it into the same mesh a glTF file becomes:
+
+- **glTF** (`.glb`, `.gltf`): read directly (above), with `KHR_lights_punctual` lights, cameras and `KHR_materials_emissive_strength` kept.
+- **Wavefront OBJ** (`.obj` with its `mtllib` files): read directly. Every `o` object is a node (`parts` in `assets.describe`), one submesh per object and material; `Kd`, `d`/`Tr` (under 1 draws translucent), `Ke`, `Pr`/`Pm` (or `Ns` as a roughness), `map_Kd`, `map_Ke` and `map_Bump` (as a tangent-space normal map, the way Blender writes it) make the material, texture paths resolved next to the `.mtl`; v runs up in OBJ and is flipped; faces with more than three corners are fanned; normals the file leaves out are smoothed per position, weighted by face area; a face pointing past the vertices is refused with its line number.
+- **STL** (binary or ASCII): read directly, one node, flat normals, a gray material.
+- **Through Blender** (`.blend`, `.fbx`, `.dae`, `.usd`/`.usda`/`.usdc`/`.usdz`, `.abc`, `.ply`, and `.3ds`/`.x3d` when Blender has their importers): the store runs Blender headless (`blender -b --factory-startup`) to open or import the file and export it as binary glTF with modifiers applied, animations, skins, shape keys, lights (Blender's unitless mode) and cameras, into `<project>/.imported/<path>.glb`, and reads that. A conversion is keyed by the source's size and content hash (`.stamp` beside it, Blender's output in `.log`), so the same file is converted once and a changed one again; a packed game carries `.imported/` and uses it without Blender. Blender is `[assets] blender` in `project.toml`, else `POCKET_BLENDER`, else the usual install places and `PATH`; without it such a file fails with that said, unless a conversion is already there. Blender's Z-up scenes arrive Y-up.
+
+`world.instantiate {mesh}` then makes a file's lights and cameras into entities too: a light node gets a `Light` (directional stays directional; point and spot lights become point lights, their intensity divided by 20 to suit the engine's falloff and a `range` from the file or from the intensity, their color encoded for the component), a camera node an inactive `Camera` with the file's field of view and clip planes, so a scene built in Blender comes in lit, and its camera can be switched to. `assets.import {path, force?}` (`world.importModel` in scripts) reads a model now and answers with its importer, where it was converted to, whether that was cached, how long Blender took and the mesh's description; `assets.list` marks every model with its `importer`. `runtime_tests` (`[import]`) has Blender make a beveled red cube, a point lamp and a camera as a `.blend` and an `.fbx`, imports both (Blender once, then the cache), instantiates the scene and checks the lamp three units up, the camera inactive and the material's roughness; `assets_tests` (`[obj]`, `[stl]`) check the readers against small files written by the test.
+
 ## Commands
 
 | Command | Purpose |
@@ -45,12 +56,13 @@ A glTF file draws as one thing by default: its nodes are baked into the file's s
 | `assets.describe {path}` | A mesh's vertices, triangles, submeshes, nodes, materials and bounds; an image's size. Loads it if needed. |
 | `assets.reload {path?}` | Forget decoded data (one path or all) and drop GPU copies; the next frame reloads from disk. |
 | `assets.stats` | Counts of loaded meshes, images and failures plus the renderer's view. |
+| `assets.import {path, force?}` | Read a model now (through Blender for the formats it converts, cached by content) and describe it. |
 
 `render.stats` reports `assets.meshes`, `assets.textures` and `assets.missing`.
 
 ## Not yet
 
-KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not): materials variants, draco; sRGB-correct shading (`alphaMode: MASK` cuts out and `BLEND` draws translucent, `docs/design/rendering.md`), and audio or font assets through the same store.
+KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not), `KHR_lights_punctual` and `KHR_materials_emissive_strength`: materials variants, draco; spot lights (a file's spot light comes in as a point light), vertex colors (OBJ, PLY and glTF colors are dropped), and audio or font assets through the same store.
 
 ## Tile maps
 

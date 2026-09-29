@@ -620,3 +620,88 @@ TEST_CASE("a material's KHR_texture_transform offset and scale are read", "[asse
     REQUIRE(crate.has_value());
     REQUIRE_FALSE((*crate)->materials[0].uv_transformed);
 }
+
+TEST_CASE("OBJ files with MTL materials: objects as nodes, materials, uvs flipped, missing normals smoothed", "[assets][obj]") {
+    const std::filesystem::path dir = project() / "assets" / "obj-test";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "things.mtl") << "# two materials\nnewmtl Red\nKd 0.8 0.1 0.1\nNs 250\nmap_Kd ../checker.png\nmap_Bump -bm 1.0 ../normal_up.png\n\nnewmtl Glass\nKd 0.2 0.4 0.9\nd 0.5\nPm 0.0\nPr 0.1\nKe 0.5 0.5 0\n";
+    std::ofstream(dir / "things.obj") <<
+        "mtllib things.mtl\n"
+        "o Floor\nv -1 0 -1\nv 1 0 -1\nv 1 0 1\nv -1 0 1\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n"
+        "usemtl Red\nf 1/1 4/4 3/3 2/2\n"
+        "o Pane\nv 0 1 0\nv 1 1 0\nv 0 2 0\nvn 0 0 1\n"
+        "usemtl Glass\nf -3//1 -2//1 -1//1\n";
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/obj-test/things.obj");
+    INFO((m ? std::string() : m.error().to_string()));
+    REQUIRE(m.has_value());
+    const assets::Mesh& mesh = **m;
+    REQUIRE(mesh.importer == "obj");
+    REQUIRE(mesh.nodes.size() == 2);
+    REQUIRE(mesh.nodes[0].name == "Floor");
+    REQUIRE(mesh.nodes[1].name == "Pane");
+    REQUIRE(mesh.submeshes.size() == 2);
+    REQUIRE(mesh.submeshes[0].origin == 0);
+    REQUIRE(mesh.submeshes[1].origin == 1);
+    REQUIRE(mesh.submeshes[0].index_count == 6);   // the quad as two triangles
+    REQUIRE(mesh.submeshes[1].index_count == 3);
+    REQUIRE(mesh.vertices.size() == 7);
+    // The floor had no normals: smoothed from its faces, straight up.
+    REQUIRE(mesh.vertices[0].normal.y == Catch::Approx(1.0f));
+    // v runs up in OBJ and down in images.
+    REQUIRE(mesh.vertices[0].uv.y == Catch::Approx(1.0f));
+    REQUIRE(mesh.materials.size() == 2);
+    const assets::Material& red = mesh.materials[0];
+    REQUIRE(red.name == "Red");
+    REQUIRE(red.base_color.x == Catch::Approx(0.8f));
+    REQUIRE(red.texture == "assets/checker.png");
+    REQUIRE(red.normal_texture == "assets/normal_up.png");
+    REQUIRE(red.roughness == Catch::Approx(0.5f));   // Ns 250: half the way
+    REQUIRE_FALSE(red.blend);
+    const assets::Material& glass = mesh.materials[1];
+    REQUIRE(glass.base_color.w == Catch::Approx(0.5f));
+    REQUIRE(glass.blend);
+    REQUIRE(glass.roughness == Catch::Approx(0.1f));
+    REQUIRE(glass.emissive.x == Catch::Approx(0.5f));
+    REQUIRE(mesh.aabb_max.y == Catch::Approx(2.0f));
+    REQUIRE(mesh.describe()["importer"] == "obj");
+    // The store lists it as a mesh read by the OBJ reader, and its library as a material file.
+    bool listed = false;
+    for (const Json& f : store.list()) if (f["path"] == "assets/obj-test/things.obj") listed = f["kind"] == "mesh" && f["importer"] == "obj";
+    REQUIRE(listed);
+    // A face pointing past the vertices is refused with the line.
+    std::ofstream(dir / "bad.obj") << "v 0 0 0\nv 1 0 0\nf 1 2 9\n";
+    auto bad = store.mesh("assets/obj-test/bad.obj");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find(":3:") != std::string::npos);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("STL files, binary and ASCII, become one flat-shaded gray mesh", "[assets][stl]") {
+    const std::filesystem::path dir = project() / "assets" / "stl-test";
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "tri.stl", std::ios::binary);
+        std::string header(80, ' ');
+        out.write(header.data(), 80);
+        const std::uint32_t count = 1;
+        out.write(reinterpret_cast<const char*>(&count), 4);
+        const float f[12] = {0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0};
+        out.write(reinterpret_cast<const char*>(f), sizeof f);
+        const std::uint16_t attr = 0;
+        out.write(reinterpret_cast<const char*>(&attr), 2);
+    }
+    std::ofstream(dir / "tri-ascii.stl") << "solid t\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid t\n";
+    assets::AssetStore store(project());
+    auto b = store.mesh("assets/stl-test/tri.stl");
+    REQUIRE(b.has_value());
+    REQUIRE((*b)->importer == "stl");
+    REQUIRE((*b)->indices.size() == 3);
+    REQUIRE((*b)->aabb_max.x == Catch::Approx(2.0f));
+    REQUIRE((*b)->vertices[0].normal.z == Catch::Approx(1.0f));
+    auto a = store.mesh("assets/stl-test/tri-ascii.stl");
+    REQUIRE(a.has_value());
+    REQUIRE((*a)->indices.size() == 3);
+    REQUIRE((*a)->aabb_max.y == Catch::Approx(1.0f));
+    std::filesystem::remove_all(dir);
+}

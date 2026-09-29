@@ -86,6 +86,28 @@ void read_grade(renderer::GradeSettings& g, const Json& p) {
     if (p.is_object() && p.contains("tint")) read_tint(p["tint"], g.tint);
 }
 
+// The tone-mapping settings from a command's params or a project's [render.tonemap] table; false
+// with `why` set when the operator is not one of the names.
+bool read_tonemap(renderer::TonemapSettings& t, const Json& p, std::string& why) {
+    if (p.is_object() && p.contains("operator")) {
+        if (!p["operator"].is_string() || !renderer::tonemap_from_name(p["operator"].get<std::string>(), t.op)) {
+            why = "operator is none, aces, agx or neutral";
+            return false;
+        }
+    }
+    t.exposure = opt<float>(p, "exposure", t.exposure);
+    t.auto_exposure = opt<bool>(p, "auto_exposure", t.auto_exposure);
+    t.compensation = opt<float>(p, "compensation", t.compensation);
+    t.min_ev = opt<float>(p, "min_ev", t.min_ev);
+    t.max_ev = opt<float>(p, "max_ev", t.max_ev);
+    t.speed = opt<float>(p, "speed", t.speed);
+    return true;
+}
+
+Json tonemap_json(const renderer::TonemapSettings& t) {
+    return Json{{"operator", renderer::tonemap_name(t.op)}, {"exposure", t.exposure}, {"auto_exposure", t.auto_exposure}, {"compensation", t.compensation}, {"min_ev", t.min_ev}, {"max_ev", t.max_ev}, {"speed", t.speed}};
+}
+
 Json grade_json(const renderer::GradeSettings& g) {
     return Json{{"enabled", g.enabled}, {"exposure", g.exposure}, {"filmic", g.filmic}, {"temperature", g.temperature}, {"contrast", g.contrast}, {"saturation", g.saturation}, {"tint", Json{{"r", g.tint.r}, {"g", g.tint.g}, {"b", g.tint.b}}}, {"vignette", g.vignette}};
 }
@@ -183,6 +205,7 @@ Status Session::start() {
 
     POCKET_TRY(renderer, renderer::Renderer::create(*device_));
     renderer_ = std::move(renderer);
+    renderer_->set_time_step(static_cast<float>(1.0 / options_.tick_rate));
     particles_ = std::make_unique<renderer::Particles>();
     particles_->set_collider([this](Vec3 from, Vec3 to) -> std::optional<renderer::ParticleContact> {
         const Vec3 d = to - from;
@@ -277,6 +300,8 @@ Status Session::start() {
     physics_ = std::make_unique<physics::Physics>();
     physics2d_ = std::make_unique<physics::Physics2D>();
     assets_ = std::make_unique<assets::AssetStore>(options_.project_dir);
+    // [assets] blender = "/path/to/blender": where Blender is for the formats it imports.
+    if (project_.contains("assets") && project_["assets"].is_object() && project_["assets"].contains("blender") && project_["assets"]["blender"].is_string()) assets_->set_blender(project_["assets"]["blender"].get<std::string>());
     physics_->set_assets(assets_.get());
     renderer_->set_assets(assets_.get());
     audio::Config ac;
@@ -313,6 +338,8 @@ Status Session::start() {
         if (r.contains("shadows") && r["shadows"].is_boolean()) s.enabled = r["shadows"].get<bool>();
         if (r.contains("msaa") && r["msaa"].is_number()) renderer_->set_msaa(r["msaa"].get<int>());
         if (r.contains("shadow_strength") && r["shadow_strength"].is_number()) s.strength = std::clamp(r["shadow_strength"].get<float>(), 0.0f, 1.0f);
+        if (r.contains("shadow_cascades") && r["shadow_cascades"].is_number()) s.cascades = r["shadow_cascades"].get<int>();
+        if (r.contains("shadow_distance") && r["shadow_distance"].is_number()) s.distance = r["shadow_distance"].get<float>();
         renderer_->set_shadows(s);
         renderer::BloomSettings b = renderer_->bloom();
         if (r.contains("bloom") && r["bloom"].is_boolean()) b.enabled = r["bloom"].get<bool>();
@@ -331,6 +358,13 @@ Status Session::start() {
                 read_grade(g, gj);
             }
             renderer_->set_grade(g);
+        }
+        // [render.tonemap] operator = "agx", exposure, auto_exposure, compensation, min_ev, max_ev, speed.
+        if (r.contains("tonemap") && r["tonemap"].is_object()) {
+            renderer::TonemapSettings t = renderer_->tonemap();
+            std::string why;
+            if (read_tonemap(t, r["tonemap"], why)) renderer_->set_tonemap(t);
+            else log::warn("runtime", "project [render.tonemap]: {}", why);
         }
     }
     if (project_.contains("physics") && project_["physics"].is_object()) {
@@ -1980,8 +2014,11 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         if (p.contains("enabled") && p["enabled"].is_boolean()) s.enabled = p["enabled"].get<bool>();
         if (p.contains("strength") && p["strength"].is_number()) s.strength = std::clamp(p["strength"].get<float>(), 0.0f, 1.0f);
         if (p.contains("bias") && p["bias"].is_number()) s.bias = std::max(0.0f, p["bias"].get<float>());
+        if (p.contains("cascades") && p["cascades"].is_number()) s.cascades = p["cascades"].get<int>();
+        if (p.contains("distance") && p["distance"].is_number()) s.distance = p["distance"].get<float>();
         renderer_->set_shadows(s);
-        return Json{{"enabled", s.enabled}, {"strength", s.strength}, {"bias", s.bias}};
+        s = renderer_->shadows();
+        return Json{{"enabled", s.enabled}, {"strength", s.strength}, {"bias", s.bias}, {"cascades", s.cascades}, {"distance", s.distance}};
     }
     if (op == "bloom") {
         renderer::BloomSettings b = renderer_->bloom();
@@ -2000,6 +2037,20 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         read_grade(g, p);
         renderer_->set_grade(g);
         return grade_json(renderer_->grade());
+    }
+    if (op == "tonemap") {
+        // How the HDR scene becomes the frame: exposure (fixed or metered), the operator. The
+        // answer carries what the meter settled on after the last frame when it is on.
+        renderer::TonemapSettings t = renderer_->tonemap();
+        std::string why;
+        if (!read_tonemap(t, p, why)) return fail("bad_args", "tonemap: {}", why);
+        renderer_->set_tonemap(t);
+        Json j = tonemap_json(renderer_->tonemap());
+        if (renderer_->tonemap().auto_exposure) {
+            POCKET_TRY(m, renderer_->metering());
+            if (m.valid) j["metered"] = Json{{"exposure_ev", m.exposure_ev}, {"average_ev", m.average_ev}};
+        }
+        return j;
     }
     if (op == "viewport") {
         // Points in, points out; the renderer works in pixels.
@@ -2043,6 +2094,16 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         else assets_->invalidate(path);
         renderer_->drop_asset_cache();
         return Json{{"ok", true}, {"version", assets_->version()}};
+    }
+    if (op == "import") {
+        // Read a model now: an OBJ or STL natively, a Blender-read format converted through Blender
+        // (again with force); the answer describes what came out. The renderer uploads it anew.
+        const std::string path = opt<std::string>(p, "path", "");
+        if (path.empty()) return fail("bad_args", "import needs a project-relative path");
+        POCKET_TRY(j, assets_->import(path, opt<bool>(p, "force", false)));
+        renderer_->drop_asset_cache();
+        j["blender_found"] = !assets_->blender().empty();
+        return j;
     }
     return fail("unknown_command", "unknown assets command '{}'", op);
 }
@@ -3003,6 +3064,27 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
                 if (trs_default) decompose(n.rest, t, r, s);
                 e["components"]["Transform"] = Json{{"position", {{"x", t.x}, {"y", t.y}, {"z", t.z}}}, {"rotation", {{"x", r.x}, {"y", r.y}, {"z", r.z}, {"w", r.w}}}, {"scale", {{"x", s.x}, {"y", s.y}, {"z", s.z}}}};
                 if (uses[static_cast<std::size_t>(ni)] > 0) e["components"]["MeshRenderer"] = Json{{"mesh", mesh_path}, {"node", named ? n.name : std::to_string(ni)}};
+                // The file's lights and cameras come along: a light keeps its color (encoded for the
+                // component's sRGB) and intensity (point and spot lights scaled to the engine's falloff);
+                // a camera arrives inactive, so it does not take the view from the scene's own.
+                if (n.light >= 0 && static_cast<std::size_t>(n.light) < mesh->lights.size()) {
+                    const assets::LightDef& l = mesh->lights[static_cast<std::size_t>(n.light)];
+                    auto enc = [](float c) { c = std::clamp(c, 0.0f, 1.0f); return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
+                    const float m = std::max({l.color.x, l.color.y, l.color.z, 1e-6f});
+                    Json light{{"kind", l.type == 0 ? 0 : 1}, {"color", {{"r", enc(l.color.x / m)}, {"g", enc(l.color.y / m)}, {"b", enc(l.color.z / m)}, {"a", 1.0}}}};
+                    if (l.type == 0) {
+                        light["intensity"] = l.intensity * m;
+                    } else {
+                        const float k = l.intensity * m / 20.0f;
+                        light["intensity"] = k;
+                        light["range"] = l.range > 0 ? l.range : std::max(5.0f, 2.0f * std::sqrt(l.intensity * m));
+                    }
+                    e["components"]["Light"] = light;
+                }
+                if (n.camera >= 0 && static_cast<std::size_t>(n.camera) < mesh->cameras.size()) {
+                    const assets::CameraDef& c = mesh->cameras[static_cast<std::size_t>(n.camera)];
+                    e["components"]["Camera"] = Json{{"active", false}, {"orthographic", c.orthographic}, {"fov_degrees", c.yfov * 180.0f / 3.14159265f}, {"ortho_size", c.ymag}, {"near", c.znear}, {"far", c.zfar}};
+                }
                 Json kids = Json::array();
                 for (int c : n.children) if (c >= 0 && static_cast<std::size_t>(c) < count) kids.push_back(entity_of(c));
                 if (!kids.empty()) e["children"] = kids;
@@ -3472,7 +3554,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "report") return report();
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "assets.list", "assets.describe", "assets.reload", "assets.stats", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "capture", "log.tail", "report", "commands"});
     }
     return fail("unknown_command", "unknown command '{}'", name);
 }
