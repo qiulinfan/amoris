@@ -105,6 +105,7 @@ Result<Mesh> parse_obj(const std::string& text, const std::string& display_path,
     Mesh mesh;
     mesh.path = display_path;
     std::vector<Vec3> positions;
+    std::vector<Vec4> colors;   // per position, when the file gives them
     std::vector<Vec3> normals;
     std::vector<Vec2> uvs;
     std::map<std::string, Material> library;
@@ -147,7 +148,15 @@ Result<Mesh> parse_obj(const std::string& text, const std::string& display_path,
         const auto t = split_ws(line);
         if (t.empty() || t[0][0] == '#') continue;
         const std::string& key = t[0];
-        if (key == "v" && t.size() >= 4) positions.push_back({to_float(t[1]), to_float(t[2]), to_float(t[3])});
+        if (key == "v" && t.size() >= 4) {
+            positions.push_back({to_float(t[1]), to_float(t[2]), to_float(t[3])});
+            // A vertex color after the position (x y z r g b), as tools that paint vertices write it, in sRGB.
+            if (t.size() >= 7) {
+                auto lin = [](float c) { c = std::clamp(c, 0.0f, 1.0f); return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
+                colors.resize(positions.size() - 1, Vec4{1, 1, 1, 1});
+                colors.push_back({lin(to_float(t[4])), lin(to_float(t[5])), lin(to_float(t[6])), 1.0f});
+            }
+        }
         else if (key == "vn" && t.size() >= 4) normals.push_back({to_float(t[1]), to_float(t[2]), to_float(t[3])});
         else if (key == "vt" && t.size() >= 3) uvs.push_back({to_float(t[1]), 1.0f - to_float(t[2])});   // OBJ's v runs up; images run down
         else if (key == "vt" && t.size() == 2) uvs.push_back({to_float(t[1]), 1.0f});
@@ -211,6 +220,7 @@ Result<Mesh> parse_obj(const std::string& text, const std::string& display_path,
                     const Vec3 n = k.n >= 0 ? normals[static_cast<std::size_t>(k.n)] : smooth[static_cast<std::size_t>(k.v)];
                     v.normal = length(n) > 1e-12f ? normalize(n) : Vec3{0, 1, 0};
                     v.uv = k.t >= 0 ? uvs[static_cast<std::size_t>(k.t)] : Vec2{0, 0};
+                    if (static_cast<std::size_t>(k.v) < colors.size()) v.color = colors[static_cast<std::size_t>(k.v)];
                     mesh.vertices.push_back(v);
                     it = vertex_of.emplace(key, static_cast<std::uint32_t>(mesh.vertices.size() - 1)).first;
                 }
@@ -222,6 +232,7 @@ Result<Mesh> parse_obj(const std::string& text, const std::string& display_path,
     }
     mesh.node_count = static_cast<std::uint32_t>(mesh.nodes.size());
     mesh.importer = "obj";
+    mesh.vertex_colors = !colors.empty();
     finish_bounds(mesh);
     return mesh;
 }

@@ -48,4 +48,4 @@ Then `ui.snapshot` lists the panes and their elements by name (`play`, `undo`, `
 
 ## Not yet
 
-Tabbed docking beyond resizable panes, syntax colouring and errors in the script editor (it is a plain text area), thumbnails for meshes and maps in the asset list (images have them). Each is an editor-side feature on the existing commands. A gizmo drag under a parent with shear (a non-uniform scale under a rotation) is close, not exact: moves and turns are expressed in the parent's frame as a rotation and a scale.
+Tabbed docking beyond resizable panes, errors in the script editor (it colours TypeScript but does not check it; the bundler's errors arrive in the console on a watched save), thumbnails for meshes and maps in the asset list (images have them). Each is an editor-side feature on the existing commands. A gizmo drag under a parent with shear (a non-uniform scale under a rotation) is close, not exact: moves and turns are expressed in the parent's frame as a rotation and a scale.

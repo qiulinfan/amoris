@@ -33,6 +33,17 @@ struct BloomSettings {
     float radius = 1.0f;      // the blur's spread, in half-resolution texels (1 tight, 4 wide)
 };
 
+// Screen-space reflections: glossy surfaces reflect what is on screen, found by marching the mirror
+// ray through the depth, in place of the sky's reflection where a hit is found.
+struct SsrSettings {
+    bool enabled = false;
+    float max_distance = 20.0f;   // how far a reflection ray is followed, in world units
+    float max_roughness = 0.6f;   // rougher surfaces keep the sky's reflection
+    int steps = 48;               // samples along each ray, 8..128
+    float thickness = 0.3f;       // how far behind a surface a ray may pass and still hit it
+    float intensity = 1.0f;
+};
+
 // Depth of field: what is nearer or farther than the focus blurred by how far it is from it, as a
 // lens of the given aperture would (docs/design/rendering.md, Depth of field and motion blur).
 struct DofSettings {
@@ -124,6 +135,9 @@ struct RenderStats {
     bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
     bool taa = false;                 // whether the frame was resolved against its history (temporal anti-aliasing)
     bool lut = false;                 // whether a look-up table graded the frame
+    bool ssr = false;                 // whether screen-space reflections were traced this frame
+    std::uint32_t probes = 0;         // reflection probes in use (captured)
+    std::uint32_t probe_captures = 0; // probes captured this frame (at most one a frame)
     bool dof = false;                 // whether depth of field was applied this frame
     bool motion_blur = false;         // whether motion blur was applied this frame
     std::uint32_t env_updates = 0;    // times the sky's environment light was rebuilt, over the renderer's life
@@ -214,6 +228,12 @@ class Renderer {
     void set_ao(AoSettings s);
     void set_taa(TaaSettings s);
     [[nodiscard]] TaaSettings taa() const;
+    // Reflection probes: the ones in use (entity, layer, center, size, when last captured), and a
+    // request to capture every one again.
+    [[nodiscard]] Json probes() const;
+    void refresh_probes();
+    void set_ssr(SsrSettings s);
+    [[nodiscard]] SsrSettings ssr() const;
     void set_dof(DofSettings s);
     [[nodiscard]] DofSettings dof() const;
     void set_motion_blur(MotionBlurSettings s);

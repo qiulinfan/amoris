@@ -73,6 +73,17 @@ fields = [
 ]
 
 [[component]]
+name = "ReflectionProbe"
+doc = "What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap."
+fields = [
+    { name = "size", type = "vec3", default = [10.0, 4.0, 10.0], doc = "The box it covers, centered on the entity, in world units (not turned with it)." },
+    { name = "intensity", type = "f32", default = 1.0, doc = "Multiplies what it reflects." },
+    { name = "box_projection", type = "bool", default = true, doc = "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky." },
+    { name = "realtime", type = "bool", default = false, doc = "Capture again every frame (six views of the scene each time); otherwise when it appears, moves or changes size, or on render.probes {refresh: true}." },
+    { name = "enabled", type = "bool", default = true, doc = "false stops it being used, without removing it." },
+]
+
+[[component]]
 name = "Fog"
 doc = "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts."
 fields = [
@@ -405,6 +416,7 @@ fields = [
     { name = "near", type = "f32", default = 1.0, doc = "Distance within which a spatial source plays at its full volume." },
     { name = "range", type = "f32", default = 20.0, doc = "Distance at which a spatial source is silent." },
     { name = "occlusion", type = "f32", default = 0.0, doc = "How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is)." },
+    { name = "doppler", type = "f32", default = 1.0, doc = "How strongly a spatial source's pitch follows its motion toward or away from the listener, and the listener's own (the Doppler effect, sound at 343 m/s): 1 as in air, 0 keeps the pitch; the change is held between half and twice the pitch." },
     { name = "occluded", type = "bool", default = false, doc = "Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes)." },
     { name = "playing", type = "bool", default = false, doc = "Whether a voice is currently playing this source (written by the engine)." },
     { name = "voice", type = "u32", default = 0, doc = "Id of the playing voice, 0 when silent (written by the engine)." },

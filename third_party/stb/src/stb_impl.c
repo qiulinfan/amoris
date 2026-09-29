@@ -5,3 +5,6 @@
 #include "stb_image_write.h"
 #define STB_VORBIS_NO_STDIO
 #include "stb_vorbis.c"
+#define DR_MP3_NO_STDIO
+#define DR_MP3_IMPLEMENTATION
+#include "dr_mp3.h"

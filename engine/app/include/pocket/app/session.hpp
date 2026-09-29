@@ -106,7 +106,9 @@ class Session {
     // Place a spatial voice from its entity against the listener (volume by distance, pan by side);
     // with `occlusion` above 0 a collider across the line takes its share and the voice's low-pass is
     // set from `base_lowpass`. Returns whether something was in the way (`blocker` gets what).
-    bool place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range, float occlusion = 0, float base_lowpass = 1, world::EntityId* blocker = nullptr);
+    // With dt > 0 and doppler > 0 the voice's pitch also follows the Doppler effect of this tick's motion.
+    bool place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range, float occlusion = 0, float base_lowpass = 1, world::EntityId* blocker = nullptr, float base_pitch = 1, float doppler = 0, double dt = 0);
+    Vec3 listener_position(Vec3* forward = nullptr, world::EntityId* listener = nullptr) const;
     Status render_frame();
 
     Options options_;
@@ -141,8 +143,12 @@ class Session {
     renderer::DebugDraw debug_draw_;
     std::unique_ptr<assets::AssetStore> assets_;
     std::unique_ptr<audio::Audio> audio_;
-    struct SpatialVoice { world::EntityId entity = 0; float volume = 1, near = 1, range = 20, occlusion = 0, lowpass = 1; };
+    struct SpatialVoice { world::EntityId entity = 0; float volume = 1, near = 1, range = 20, occlusion = 0, lowpass = 1, pitch = 1, doppler = 1; };
     std::map<std::uint32_t, SpatialVoice> spatial_voices_;   // one-shots placed by their entity every tick until they end
+    // The Doppler effect: where each spatial voice's entity and the listener were last tick.
+    std::map<std::uint32_t, Vec3> voice_prev_pos_;
+    Vec3 listener_prev_{0, 0, 0}, listener_vel_{0, 0, 0};
+    bool listener_prev_set_ = false;
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
     std::unique_ptr<ui::Painter> painter_;

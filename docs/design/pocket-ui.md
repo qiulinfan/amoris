@@ -59,7 +59,7 @@ Handlers registered by a bundle live in a per-context registry on `globalThis` (
 
 ## Not yet
 
-Keyframed animations (a transition is one eased move per change), syntax colouring in a text area, and golden-image comparison in CI (`render.compare` compares whole frames). Each of these slots into the element model without changing the commands.
+Keyframed animations (a transition is one eased move per change) and golden-image comparison in CI (`render.compare` compares whole frames). Each of these slots into the element model without changing the commands.
 
 ## Text
 

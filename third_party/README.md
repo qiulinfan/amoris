@@ -9,6 +9,7 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | cpp-httplib | 0.56.0 | MIT | vendored single header |
 | stb_image, stb_image_write | master (2026-09) | public domain / MIT | vendored headers; stb_image decodes project images, stb_image_write writes captures |
 | stb_vorbis | 1.22 (master, 2026-09) | public domain / MIT | vendored source (`third_party/stb/include/stb_vorbis.c`, compiled in `stb_impl.c`); decodes Ogg Vorbis clips for the audio module |
+| dr_mp3 | 0.7.4 (master, 2026-09) | public domain / MIT-0 | vendored header (`third_party/stb/include/dr_mp3.h`, from github.com/mackron/dr_libs, compiled in `stb_impl.c`); decodes MP3 clips for the audio module |
 | Catch2 | 3.16.0 | BSL-1.0 | vendored amalgamation |
 | Yoga | 3.2.1 | MIT | vendored sources |
 | SDL3 | 3.4.16 | Zlib | fetched source, built with CMake by `pocket setup` |

@@ -18,6 +18,8 @@ export interface PlayOptions {
     range?: number;
     /** How much a wall between the listener and `entity` takes, 0..1: a collider across the line scales the volume by 1 - occlusion and muffles the voice by the same (docs/design/audio.md, Where a sound is). */
     occlusion?: number;
+    /** How strongly the pitch follows `entity`'s motion toward or away from the listener, and the listener's (the Doppler effect): 1 as in air (the default), 0 keeps the pitch. */
+    doppler?: number;
 }
 
 export interface Voice {

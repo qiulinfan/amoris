@@ -540,7 +540,9 @@ def make_sounds(out):
     for name in ("beep.wav", "hum.wav", "click.wav"):
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
     # chime.ogg beside them is checked in, not generated: a 0.4 s 660 Hz sine at 22050 Hz, stereo,
-    # encoded once with ffmpeg's Vorbis encoder (this script writes WAV only).
+    # encoded once with ffmpeg's Vorbis encoder (this script writes WAV only). blip.mp3 likewise: a
+    # 0.4 s 880 Hz sine at 44100 Hz, mono, through ffmpeg's libmp3lame at 64 kb/s
+    # (ffmpeg -f lavfi -i "sine=frequency=880:duration=0.4:sample_rate=44100" -ac 1 -c:a libmp3lame -b:a 64k blip.mp3).
 
 
 def sprites_level():

@@ -75,6 +75,18 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point,
 | `outer_angle` | f32 | 30.0 | Spot: the half-angle in degrees where it has faded out (at most 89.5). |
 | `shadows` | bool | false | Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'. |
 
+## ReflectionProbe
+
+What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `size` | vec3 | [10.0, 4.0, 10.0] | The box it covers, centered on the entity, in world units (not turned with it). |
+| `intensity` | f32 | 1.0 | Multiplies what it reflects. |
+| `box_projection` | bool | true | Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky. |
+| `realtime` | bool | false | Capture again every frame (six views of the scene each time); otherwise when it appears, moves or changes size, or on render.probes {refresh: true}. |
+| `enabled` | bool | true | false stops it being used, without removing it. |
+
 ## Fog
 
 Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.
@@ -393,6 +405,7 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `near` | f32 | 1.0 | Distance within which a spatial source plays at its full volume. |
 | `range` | f32 | 20.0 | Distance at which a spatial source is silent. |
 | `occlusion` | f32 | 0.0 | How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is). |
+| `doppler` | f32 | 1.0 | How strongly a spatial source's pitch follows its motion toward or away from the listener, and the listener's own (the Doppler effect, sound at 343 m/s): 1 as in air, 0 keeps the pitch; the change is held between half and twice the pitch. |
 | `occluded` | bool | false | Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes). |
 | `playing` | bool | false | Whether a voice is currently playing this source (written by the engine). |
 | `voice` | u32 | 0 | Id of the playing voice, 0 when silent (written by the engine). |

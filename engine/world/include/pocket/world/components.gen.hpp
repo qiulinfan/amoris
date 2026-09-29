@@ -150,6 +150,20 @@ void from_json(const Json& j, Light& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Light& v, std::string_view path, float** out);
 
+/// What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap.
+struct ReflectionProbe {
+    Vec3 size{10.0f, 4.0f, 10.0f};
+    float intensity = 1.0f;
+    bool box_projection = true;
+    bool realtime = false;
+    bool enabled = true;
+    constexpr bool operator==(const ReflectionProbe&) const = default;
+};
+void to_json(Json& j, const ReflectionProbe& v);
+void from_json(const Json& j, ReflectionProbe& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(ReflectionProbe& v, std::string_view path, float** out);
+
 /// Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.
 struct Fog {
     Color4 color{0.7f, 0.75f, 0.8f, 1.0f};
@@ -496,6 +510,7 @@ struct AudioSource {
     float near = 1.0f;
     float range = 20.0f;
     float occlusion = 0.0f;
+    float doppler = 1.0f;
     bool occluded = false;
     bool playing = false;
     std::uint32_t voice = 0;
@@ -587,6 +602,7 @@ void hash_component(struct StateHasherRef& h, const Health& v);
 void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
+void hash_component(struct StateHasherRef& h, const ReflectionProbe& v);
 void hash_component(struct StateHasherRef& h, const Fog& v);
 void hash_component(struct StateHasherRef& h, const Sky& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);

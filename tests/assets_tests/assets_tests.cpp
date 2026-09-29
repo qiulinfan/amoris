@@ -705,3 +705,45 @@ TEST_CASE("STL files, binary and ASCII, become one flat-shaded gray mesh", "[ass
     REQUIRE((*a)->aabb_max.y == Catch::Approx(1.0f));
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes) and from OBJ (r g b after a vertex)", "[assets][vcolor]") {
+    const std::filesystem::path dir = project() / "assets" / "vcolor-test";
+    std::filesystem::create_directories(dir);
+    // One triangle twice: colors as float RGB, then as normalized unsigned-byte RGBA.
+    std::ofstream(dir / "tri.gltf") << R"({"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0, 1]}],
+        "nodes": [{"mesh": 0}, {"mesh": 1}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}}]}, {"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 2}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+                      {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+                      {"bufferView": 2, "componentType": 5121, "normalized": true, "count": 3, "type": "VEC4"}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}, {"buffer": 0, "byteOffset": 72, "byteLength": 12}],
+        "buffers": [{"byteLength": 84, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA//wAA/wD/AIAAAP//"}]})";
+    assets::AssetStore store(project());
+    auto g = store.mesh("assets/vcolor-test/tri.gltf");
+    INFO((g ? std::string() : g.error().to_string()));
+    REQUIRE(g.has_value());
+    REQUIRE((*g)->vertex_colors);
+    REQUIRE((*g)->vertices.size() == 6);
+    REQUIRE((*g)->vertices[0].color.x == Catch::Approx(1.0f));
+    REQUIRE((*g)->vertices[1].color.y == Catch::Approx(1.0f));
+    REQUIRE((*g)->vertices[2].color.z == Catch::Approx(1.0f));
+    REQUIRE((*g)->vertices[2].color.w == Catch::Approx(1.0f));
+    REQUIRE((*g)->vertices[4].color.y == Catch::Approx(1.0f));
+    REQUIRE((*g)->vertices[4].color.w == Catch::Approx(128.0f / 255.0f).margin(1e-3));
+    REQUIRE(store.describe("assets/vcolor-test/tri.gltf")["vertex_colors"] == true);
+    // OBJ: sRGB colors after the positions; a vertex without one is white.
+    std::ofstream(dir / "paint.obj") << "v 0 0 0 1 0 0\nv 1 0 0 0.5 0.5 0.5\nv 0 1 0\nf 1 2 3\n";
+    auto o = store.mesh("assets/vcolor-test/paint.obj");
+    REQUIRE(o.has_value());
+    REQUIRE((*o)->vertex_colors);
+    REQUIRE((*o)->vertices[0].color.x == Catch::Approx(1.0f));
+    REQUIRE((*o)->vertices[0].color.y == Catch::Approx(0.0f));
+    REQUIRE((*o)->vertices[1].color.x == Catch::Approx(0.214f).margin(0.002));   // sRGB 0.5 in linear light
+    REQUIRE((*o)->vertices[2].color.x == Catch::Approx(1.0f));
+    // A file without colors has none.
+    std::ofstream(dir / "plain.obj") << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    auto p = store.mesh("assets/vcolor-test/plain.obj");
+    REQUIRE(p.has_value());
+    REQUIRE_FALSE((*p)->vertex_colors);
+    std::filesystem::remove_all(dir);
+}

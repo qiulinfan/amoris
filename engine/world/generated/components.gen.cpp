@@ -401,6 +401,43 @@ std::size_t numeric_span(Light& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const ReflectionProbe& v) {
+    j = Json::object();
+    vec_to_json(j["size"], v.size);
+    j["intensity"] = v.intensity;
+    j["box_projection"] = v.box_projection;
+    j["realtime"] = v.realtime;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, ReflectionProbe& v) {
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    scalar_from_json(j, "intensity", v.intensity);
+    scalar_from_json(j, "box_projection", v.box_projection);
+    scalar_from_json(j, "realtime", v.realtime);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const ReflectionProbe& v) {
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.size.z);
+    h.f32(v.intensity);
+    h.u8(v.box_projection ? 1 : 0);
+    h.u8(v.realtime ? 1 : 0);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(ReflectionProbe& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 3; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "size.z") { *out = &v.size.z; return 1; }
+    if (path == "intensity") { *out = &v.intensity; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Fog& v) {
     j = Json::object();
     vec_to_json(j["color"], v.color);
@@ -1534,6 +1571,7 @@ void to_json(Json& j, const AudioSource& v) {
     j["near"] = v.near;
     j["range"] = v.range;
     j["occlusion"] = v.occlusion;
+    j["doppler"] = v.doppler;
     j["occluded"] = v.occluded;
     j["playing"] = v.playing;
     j["voice"] = v.voice;
@@ -1551,6 +1589,7 @@ void from_json(const Json& j, AudioSource& v) {
     scalar_from_json(j, "near", v.near);
     scalar_from_json(j, "range", v.range);
     scalar_from_json(j, "occlusion", v.occlusion);
+    scalar_from_json(j, "doppler", v.doppler);
     scalar_from_json(j, "occluded", v.occluded);
     scalar_from_json(j, "playing", v.playing);
     scalar_from_json(j, "voice", v.voice);
@@ -1568,6 +1607,7 @@ void hash_component(StateHasherRef& h, const AudioSource& v) {
     h.f32(v.near);
     h.f32(v.range);
     h.f32(v.occlusion);
+    h.f32(v.doppler);
     h.u8(v.occluded ? 1 : 0);
     h.u8(v.playing ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.voice));
@@ -1582,6 +1622,7 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "range") { *out = &v.range; return 1; }
     if (path == "occlusion") { *out = &v.occlusion; return 1; }
+    if (path == "doppler") { *out = &v.doppler; return 1; }
     return 0;
 }
 
@@ -1788,6 +1829,13 @@ constexpr std::array<FieldInfo, 7> kLightFields = {{
     FieldInfo{"inner_angle", "f32", "Spot: the half-angle of the cone in degrees inside which the light is full."},
     FieldInfo{"outer_angle", "f32", "Spot: the half-angle in degrees where it has faded out (at most 89.5)."},
     FieldInfo{"shadows", "bool", "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'."},
+}};
+constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
+    FieldInfo{"size", "vec3", "The box it covers, centered on the entity, in world units (not turned with it)."},
+    FieldInfo{"intensity", "f32", "Multiplies what it reflects."},
+    FieldInfo{"box_projection", "bool", "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky."},
+    FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time); otherwise when it appears, moves or changes size, or on render.probes {refresh: true}."},
+    FieldInfo{"enabled", "bool", "false stops it being used, without removing it."},
 }};
 constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"color", "color", "The fog's color as a color picker shows it (sRGB); the alpha is unused."},
@@ -2010,7 +2058,7 @@ constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
-constexpr std::array<FieldInfo, 14> kAudioSourceFields = {{
+constexpr std::array<FieldInfo, 15> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
     FieldInfo{"volume", "f32", "Linear gain, 0..4."},
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
@@ -2022,6 +2070,7 @@ constexpr std::array<FieldInfo, 14> kAudioSourceFields = {{
     FieldInfo{"near", "f32", "Distance within which a spatial source plays at its full volume."},
     FieldInfo{"range", "f32", "Distance at which a spatial source is silent."},
     FieldInfo{"occlusion", "f32", "How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is)."},
+    FieldInfo{"doppler", "f32", "How strongly a spatial source's pitch follows its motion toward or away from the listener, and the listener's own (the Doppler effect, sound at 343 m/s): 1 as in air, 0 keeps the pitch; the change is held between half and twice the pitch."},
     FieldInfo{"occluded", "bool", "Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes)."},
     FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
     FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
@@ -2056,7 +2105,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 28> kComponents = {{
+constexpr std::array<ComponentInfo, 29> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -2064,6 +2113,7 @@ constexpr std::array<ComponentInfo, 28> kComponents = {{
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
+    ComponentInfo{"ReflectionProbe", "What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},
     ComponentInfo{"Fog", "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.", true, kFogFields},
     ComponentInfo{"Sky", "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.", true, kSkyFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},

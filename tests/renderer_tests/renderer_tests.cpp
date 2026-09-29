@@ -1416,3 +1416,235 @@ TEST_CASE("a look-up table grades the finished frame: identity changes nothing, 
     REQUIRE(s.finish().has_value());
     for (const char* f : {"lut-identity.tga", "lut-invert.tga", "lut-square.tga"}) std::filesystem::remove(dir / f);
 }
+
+TEST_CASE("screen-space reflections show what stands on a mirror floor where its mirror image falls", "[renderer][ssr]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 40}, {"y", 0.2}, {"z", 40}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}, {"metallic", 1.0}, {"roughness", 0.05}};
+    spawn(floor);
+    Json box;
+    box["name"] = "Box";
+    box["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 0.75}, {"z", -1}}}, {"scale", Json{{"x", 1.2}, {"y", 1.5}, {"z", 1.2}}}};
+    box["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 0}, {"b", 0}, {"a", 1}}}};
+    spawn(box);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", Json{{"x", -0.5}, {"y", -0.3}, {"z", 0}, {"w", 0.81}}}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.0}};
+    spawn(sun);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 2.4}, {"z", 7}}}, {"rotation", Json{{"x", -0.14}, {"y", 0}, {"z", 0}, {"w", 0.99}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 55}};
+    spawn(camera);
+    REQUIRE(s.frame().has_value());
+    // Where the box's front appears mirrored in the floor.
+    Json mirrored = s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", -0.75}, {"z", -0.4}}}}).value();
+    auto pixel = [&]() {
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", mirrored["x"]}, {"y", mirrored["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    REQUIRE(s.frame().has_value());
+    const auto plain = pixel();
+    Json on = s.command("render.ssr", Json{{"enabled", true}}).value();
+    REQUIRE(on["enabled"] == true);
+    REQUIRE(s.frame().has_value());
+    const auto traced = pixel();
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("mirror image pixel " << plain[0] << "," << plain[1] << "," << plain[2] << " -> " << traced[0] << "," << traced[1] << "," << traced[2] << " " << stats.dump());
+    REQUIRE(stats["ssr"] == true);
+    REQUIRE(stats["depth_prepass"] == true);
+    REQUIRE(plain[0] < 80);                        // the floor reflects only the dim ambient there
+    REQUIRE(traced[0] > plain[0] + 80);            // with the box in it
+    REQUIRE(traced[0] > traced[1] + 60);           // red
+    // A rough floor keeps the sky's reflection.
+    REQUIRE(s.command("world.set", Json{{"entity", "Floor"}, {"component", "MeshRenderer"}, {"value", Json{{"roughness", 0.9}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto rough = pixel();
+    INFO("rough " << rough[0] << "," << rough[1] << "," << rough[2]);
+    REQUIRE(rough[0] < traced[0] - 60);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a cut-out's holes let the sun through its shadow", "[renderer][shadows][cutout]") {
+    const std::filesystem::path dir = root() / "samples" / "playground" / "assets";
+    std::filesystem::create_directories(dir);
+    {
+        // Two texels: the left one solid, the right one clear.
+        const std::uint8_t tga[18 + 8] = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 32, 0x28, 200, 200, 200, 255, 200, 200, 200, 0};
+        std::ofstream(dir / "half-clear.tga", std::ios::binary).write(reinterpret_cast<const char*>(tga), sizeof tga);
+    }
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 30}, {"y", 0.2}, {"z", 30}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.8}, {"g", 0.8}, {"b", 0.8}, {"a", 1}}}};
+    spawn(floor);
+    // A roof two units up, its texture solid on the left half and clear on the right, cut at 0.5.
+    Json roof;
+    roof["name"] = "Roof";
+    roof["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 2}, {"z", 0}}}, {"scale", Json{{"x", 4}, {"y", 1}, {"z", 4}}}};
+    roof["components"]["MeshRenderer"] = Json{{"mesh", "plane"}, {"texture", "assets/half-clear.tga"}, {"cutoff", 0.5}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(roof);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.5}};
+    spawn(sun);
+    // Under the roof, looking along the floor.
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 6}}}, {"rotation", Json{{"x", -0.1}, {"y", 0}, {"z", 0}, {"w", 0.995}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 60}};
+    spawn(camera);
+    auto level_at = [&](double x, double z) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 0}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return (p[0].get<int>() + p[1].get<int>() + p[2].get<int>()) / 3;
+    };
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    const int under_solid = level_at(-1.2, 0.5), under_clear = level_at(1.2, 0.5);
+    // Without a cutoff the roof is whole, in its shadow too.
+    REQUIRE(s.command("world.set", Json{{"entity", "Roof"}, {"component", "MeshRenderer"}, {"value", Json{{"cutoff", 0.0}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int whole_left = level_at(-1.2, 0.5), whole_right = level_at(1.2, 0.5);
+    INFO("cut: under the solid half " << under_solid << ", under the clear half " << under_clear << "; whole: " << whole_left << ", " << whole_right);
+    REQUIRE(under_clear > under_solid + 60);
+    REQUIRE(std::abs(whole_left - whole_right) < 10);
+    REQUIRE(whole_right < under_clear - 60);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(dir / "half-clear.tga");
+}
+
+TEST_CASE("vertex colors tint a mesh corner by corner", "[renderer][vcolor]") {
+    const std::filesystem::path dir = root() / "samples" / "playground" / "assets";
+    std::filesystem::create_directories(dir);
+    // A quad facing +Z, its corners red, green, blue and white.
+    std::ofstream(dir / "painted.gltf") << R"({"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "COLOR_0": 2}, "indices": 3}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-1, -1, 0], "max": [1, 1, 0]},
+                      {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3"},
+                      {"bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC3"},
+                      {"bufferView": 3, "componentType": 5123, "count": 6, "type": "SCALAR"}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 48}, {"buffer": 0, "byteOffset": 48, "byteLength": 48}, {"buffer": 0, "byteOffset": 96, "byteLength": 48}, {"buffer": 0, "byteOffset": 144, "byteLength": 12}],
+        "buffers": [{"byteLength": 156, "uri": "data:application/octet-stream;base64,AACAvwAAgL8AAAAAAACAPwAAgL8AAAAAAACAPwAAgD8AAAAAAACAvwAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAABAAIAAAACAAMA"}]})";
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    Json quad;
+    quad["name"] = "Painted";
+    quad["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}};
+    quad["components"]["MeshRenderer"] = Json{{"mesh", "assets/painted.gltf"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}};
+    REQUIRE(s.command("world.spawn", quad).has_value());
+    // Lit straight on by a white sun from the camera's side, so each corner shows its color.
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.0}};
+    REQUIRE(s.command("world.spawn", sun).has_value());
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 4}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 50}};
+    REQUIRE(s.command("world.spawn", camera).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Painted"}, {"component", "MeshRenderer"}, {"value", Json{{"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto at = [&](double x, double y) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", 0}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    const auto red = at(-0.9, -0.9), green = at(0.9, -0.9), blue = at(0.9, 0.9), white = at(-0.9, 0.9);
+    INFO("red " << red[0] << "," << red[1] << "," << red[2] << " green " << green[0] << "," << green[1] << "," << green[2] << " blue " << blue[0] << "," << blue[1] << "," << blue[2] << " white " << white[0] << "," << white[1] << "," << white[2]);
+    REQUIRE(red[0] > red[1] + 80);
+    REQUIRE(red[0] > red[2] + 80);
+    REQUIRE(green[1] > green[0] + 80);
+    REQUIRE(blue[2] > blue[0] + 80);
+    REQUIRE(std::abs(white[0] - white[2]) < 30);
+    REQUIRE(white[0] > 120);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(dir / "painted.gltf");
+}
+
+TEST_CASE("a reflection probe makes a room's floor reflect the room, not the sky outside", "[renderer][probes]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto box = [&](const char* name, double x, double y, double z, double sx, double sy, double sz, Json mr) {
+        mr["mesh"] = "cube";
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}, {"scale", Json{{"x", sx}, {"y", sy}, {"z", sz}}}}}, {"MeshRenderer", mr}}}}).has_value());
+    };
+    const Json gray{{"r", 0.6}, {"g", 0.6}, {"b", 0.62}, {"a", 1}};
+    box("Floor", 0, -0.1, 0, 10, 0.2, 10, Json{{"color", Json{{"r", 0.9}, {"g", 0.9}, {"b", 0.9}, {"a", 1}}}, {"metallic", 1.0}, {"roughness", 0.05}});
+    box("Far", 0, 1.5, -5.1, 10, 3, 0.2, Json{{"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 0.05}, {"b", 0.05}, {"a", 1}}}});
+    box("Left", -5.1, 1.5, 0, 0.2, 3, 10, Json{{"color", gray}});
+    box("Right", 5.1, 1.5, 0, 0.2, 3, 10, Json{{"color", gray}});
+    box("Back", 0, 1.5, 5.1, 10, 3, 0.2, Json{{"color", gray}});
+    box("Ceiling", 0, 3.1, 0, 10.4, 0.2, 10.4, Json{{"color", gray}});
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 1}, {"intensity", 1.5}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.5}, {"y", 0.3}, {"z", 0.1}, {"w", 0.8}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2.0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.6}, {"z", 4.2}}}, {"rotation", Json{{"x", -0.1}, {"y", 0}, {"z", 0}, {"w", 0.995}}}}}, {"Camera", Json{{"fov_degrees", 65}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    // The floor just in front of the red far wall, where its mirror image falls.
+    Json at = s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", 0}, {"z", -3.5}}}}).value();
+    auto pixel = [&]() {
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    const auto sky = pixel();
+    REQUIRE(s.command("world.spawn", Json{{"name", "RoomProbe"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}}}, {"ReflectionProbe", Json{{"size", Json{{"x", 10}, {"y", 3}, {"z", 10}}}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["probes"]["captured"] == 1);
+    REQUIRE(stats["probes"]["in_use"] == 0);       // captured this frame, used from the next
+    REQUIRE(s.frame().has_value());
+    const auto room = pixel();
+    stats = s.command("render.stats", Json::object()).value();
+    INFO("floor before the red wall: sky " << sky[0] << "," << sky[1] << "," << sky[2] << " -> probe " << room[0] << "," << room[1] << "," << room[2] << " " << stats["probes"].dump());
+    REQUIRE(stats["probes"]["in_use"] == 1);
+    REQUIRE(stats["probes"]["captured"] == 0);     // once is enough while it stays
+    REQUIRE(sky[2] >= sky[0]);                     // the sky's blue
+    REQUIRE(room[0] > room[2] + 40);               // the red wall
+    Json list = s.command("render.probes", Json::object()).value();
+    INFO(list.dump());
+    REQUIRE(list["probes"].size() == 1);
+    REQUIRE(list["probes"][0]["captured"] == true);
+    const auto first = list["probes"][0]["frame"].get<std::uint64_t>();
+    // Asked, or moved, it is captured again.
+    REQUIRE(s.command("render.probes", Json{{"refresh", true}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["probes"]["captured"] == 1);
+    const auto second = s.command("render.probes", Json::object()).value()["probes"][0]["frame"].get<std::uint64_t>();
+    REQUIRE(second > first);
+    REQUIRE(s.command("world.set", Json{{"entity", "RoomProbe"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 1.4}, {"z", 0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["probes"]["captured"] == 1);
+    // Disabled, the sky's reflection is back.
+    REQUIRE(s.command("world.set", Json{{"entity", "RoomProbe"}, {"component", "ReflectionProbe"}, {"value", Json{{"enabled", false}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto back = pixel();
+    REQUIRE(std::abs(back[0] - sky[0]) < 8);
+    REQUIRE(std::abs(back[2] - sky[2]) < 8);
+    REQUIRE(s.finish().has_value());
+}

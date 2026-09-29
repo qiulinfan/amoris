@@ -372,6 +372,21 @@ Status Session::start() {
             }
             renderer_->set_grade(g);
         }
+        // [render] ssr = true, or [render.ssr] max_distance, max_roughness, steps, thickness, intensity.
+        if (r.contains("ssr") && (r["ssr"].is_object() || r["ssr"].is_boolean())) {
+            renderer::SsrSettings s = renderer_->ssr();
+            if (r["ssr"].is_boolean()) {
+                s.enabled = r["ssr"].get<bool>();
+            } else {
+                s.enabled = opt<bool>(r["ssr"], "enabled", true);
+                s.max_distance = opt<float>(r["ssr"], "max_distance", s.max_distance);
+                s.max_roughness = opt<float>(r["ssr"], "max_roughness", s.max_roughness);
+                s.steps = opt<int>(r["ssr"], "steps", s.steps);
+                s.thickness = opt<float>(r["ssr"], "thickness", s.thickness);
+                s.intensity = opt<float>(r["ssr"], "intensity", s.intensity);
+            }
+            renderer_->set_ssr(s);
+        }
         // [render.dof] focus, aperture, max_blur (on unless enabled = false); [render.motion_blur] strength, samples.
         if (r.contains("dof") && (r["dof"].is_object() || r["dof"].is_boolean())) {
             renderer::DofSettings d = renderer_->dof();
@@ -2100,6 +2115,24 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         renderer_->set_grade(g);
         return grade_json(renderer_->grade());
     }
+    if (op == "probes") {
+        // Reflection probes in use, and a request to capture every one again (a room rearranged).
+        if (opt<bool>(p, "refresh", false)) renderer_->refresh_probes();
+        return renderer_->probes();
+    }
+    if (op == "ssr") {
+        // Screen-space reflections: glossy surfaces reflect what is on screen.
+        renderer::SsrSettings r = renderer_->ssr();
+        r.enabled = opt<bool>(p, "enabled", r.enabled);
+        r.max_distance = opt<float>(p, "max_distance", r.max_distance);
+        r.max_roughness = opt<float>(p, "max_roughness", r.max_roughness);
+        r.steps = opt<int>(p, "steps", r.steps);
+        r.thickness = opt<float>(p, "thickness", r.thickness);
+        r.intensity = opt<float>(p, "intensity", r.intensity);
+        renderer_->set_ssr(r);
+        r = renderer_->ssr();
+        return Json{{"enabled", r.enabled}, {"max_distance", r.max_distance}, {"max_roughness", r.max_roughness}, {"steps", r.steps}, {"thickness", r.thickness}, {"intensity", r.intensity}};
+    }
     if (op == "dof") {
         // Depth of field: a lens focused at `focus`, blurring what is nearer or farther.
         renderer::DofSettings d = renderer_->dof();
@@ -2504,7 +2537,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         if (spatial && o.entity == 0) return fail("bad_args", "a spatial voice needs an entity to be heard from");
         POCKET_TRY(id, a.play(clip, o));
         if (spatial) {
-            spatial_voices_[id] = SpatialVoice{o.entity, o.volume, static_cast<float>(opt<double>(p, "near", 1.0)), static_cast<float>(opt<double>(p, "range", 20.0)), static_cast<float>(opt<double>(p, "occlusion", 0.0)), o.lowpass};
+            spatial_voices_[id] = SpatialVoice{o.entity, o.volume, static_cast<float>(opt<double>(p, "near", 1.0)), static_cast<float>(opt<double>(p, "range", 20.0)), static_cast<float>(opt<double>(p, "occlusion", 0.0)), o.lowpass, o.pitch, static_cast<float>(opt<double>(p, "doppler", 1.0))};
             const SpatialVoice& sv = spatial_voices_[id];
             place_voice(id, o.entity, o.volume, sv.near, sv.range, sv.occlusion, sv.lowpass);
         }
@@ -2549,13 +2582,8 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown audio command '{}'", op);
 }
 
-// The listener is the camera of the last frame; a spatial voice's gain falls from full within
-// `near` to nothing at `range`, and it pans toward the side its entity is on, most of the way.
-bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range, float occlusion, float base_lowpass, world::EntityId* blocker) {
-    const auto* wt = world_->try_get<world::WorldTransform>(entity);
-    if (!wt) return false;
-    occlusion = std::clamp(occlusion, 0.0f, 1.0f);
-    // The listener: the first enabled AudioListener entity, else the camera of the last frame.
+// The listener: the first enabled AudioListener entity, else the camera of the last frame.
+Vec3 Session::listener_position(Vec3* forward_out, world::EntityId* listener_out) const {
     const renderer::CameraView& cam = renderer_->camera();
     Vec3 ear = cam.position, forward = cam.forward;
     world::EntityId listener = 0;
@@ -2567,6 +2595,20 @@ bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float bas
         ear = lt->position;
         forward = lt->rotation.rotate(Vec3{0, 0, -1});
     }
+    if (forward_out) *forward_out = forward;
+    if (listener_out) *listener_out = listener;
+    return ear;
+}
+
+// The listener is the camera of the last frame; a spatial voice's gain falls from full within
+// `near` to nothing at `range`, and it pans toward the side its entity is on, most of the way.
+bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float base_volume, float near, float range, float occlusion, float base_lowpass, world::EntityId* blocker, float base_pitch, float doppler, double dt) {
+    const auto* wt = world_->try_get<world::WorldTransform>(entity);
+    if (!wt) return false;
+    occlusion = std::clamp(occlusion, 0.0f, 1.0f);
+    Vec3 forward;
+    world::EntityId listener = 0;
+    const Vec3 ear = listener_position(&forward, &listener);
     const Vec3 to = wt->position - ear;
     const float d = length(to);
     const float span = std::max(range - near, 1e-3f);
@@ -2589,6 +2631,18 @@ bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float bas
     const float keep = blocked ? 1.0f - occlusion : 1.0f;
     Json params{{"volume", base_volume * gain * keep}, {"pan", pan}};
     if (occlusion > 0) params["lowpass"] = base_lowpass * keep;
+    if (doppler > 0 && dt > 0) {
+        // The Doppler effect: the source's and the listener's speeds along the line between them,
+        // this tick's motion, against sound's 343 m/s. A source first heard this tick has not moved.
+        const Vec3 source_vel = voice_prev_pos_.contains(voice) ? (wt->position - voice_prev_pos_[voice]) * static_cast<float>(1.0 / dt) : Vec3{0, 0, 0};
+        voice_prev_pos_[voice] = wt->position;
+        const Vec3 dir = d > 1e-4f ? to * (1.0f / d) : Vec3{0, 0, 0};
+        constexpr float kSound = 343.0f;
+        const float away = dot(source_vel, dir) * doppler;        // the source moving off
+        const float toward = dot(listener_vel_, dir) * doppler;   // the listener moving at it
+        const float factor = std::clamp((kSound + toward) / std::max(kSound + away, 1.0f), 0.5f, 2.0f);
+        params["pitch"] = base_pitch * factor;
+    }
     (void)audio_->set(voice, params);
     if (blocker) *blocker = by;
     return blocked;
@@ -2597,6 +2651,13 @@ bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float bas
 // AudioSource components start their voices; voices report back; finished voices clear `playing`.
 void Session::tick_audio(double dt) {
     world::World& w = *world_;
+    // The listener's velocity this tick, for the Doppler effect.
+    {
+        const Vec3 ear = listener_position();
+        listener_vel_ = listener_prev_set_ && dt > 0 ? (ear - listener_prev_) * static_cast<float>(1.0 / dt) : Vec3{0, 0, 0};
+        listener_prev_ = ear;
+        listener_prev_set_ = true;
+    }
     std::vector<std::pair<world::EntityId, world::AudioSource>> updates;
     w.ecs().each([&](flecs::entity e, const world::AudioSource& src) {
         if (src.autoplay && !src.playing && src.voice == 0 && !src.clip.empty()) {
@@ -2620,7 +2681,7 @@ void Session::tick_audio(double dt) {
             updates.emplace_back(e.id(), next);
         } else if (src.spatial && src.playing && src.voice != 0) {
             world::EntityId by = 0;
-            const bool blocked = place_voice(src.voice, e.id(), src.volume, src.near, src.range, src.occlusion, src.lowpass, &by);
+            const bool blocked = place_voice(src.voice, e.id(), src.volume, src.near, src.range, src.occlusion, src.lowpass, &by, src.pitch, src.doppler, dt);
             if (src.occlusion > 0 && blocked != src.occluded) {
                 world::AudioSource next = src;
                 next.occluded = blocked;
@@ -2633,8 +2694,9 @@ void Session::tick_audio(double dt) {
         w.ecs().entity(id).set<world::AudioSource>(next);
         if (next.spatial && next.playing && next.voice != 0) place_voice(next.voice, id, next.volume, next.near, next.range, next.occlusion, next.lowpass);
     }
-    for (auto& [voice, sp] : spatial_voices_) place_voice(voice, sp.entity, sp.volume, sp.near, sp.range, sp.occlusion, sp.lowpass);
+    for (auto& [voice, sp] : spatial_voices_) place_voice(voice, sp.entity, sp.volume, sp.near, sp.range, sp.occlusion, sp.lowpass, nullptr, sp.pitch, sp.doppler, dt);
     for (const audio::VoiceEvent& ev : audio_->tick(dt)) {
+        if (ev.type == "audio.finished") voice_prev_pos_.erase(ev.voice.id);
         w.events().emit(clock_.tick, ev.type, ev.voice.entity, Json{{"clip", ev.voice.clip}, {"voice", ev.voice.id}, {"loops", ev.voice.loops_done}}, 0, "audio");
         if (ev.type == "audio.finished") spatial_voices_.erase(ev.voice.id);
         if (ev.type == "audio.finished" && ev.voice.entity) {
@@ -3781,7 +3843,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

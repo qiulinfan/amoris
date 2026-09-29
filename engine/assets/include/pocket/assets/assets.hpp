@@ -22,6 +22,7 @@ struct MeshVertex {
     Vec3 position;
     Vec3 normal;
     Vec2 uv;
+    Vec4 color{1, 1, 1, 1};   // linear; a file's vertex colors (glTF COLOR_0, OBJ's r g b after a vertex), white without
 };
 
 struct Material {
@@ -135,6 +136,7 @@ struct Mesh {
     std::vector<Material> materials;
     Vec3 aabb_min{0, 0, 0}, aabb_max{0, 0, 0};
     std::uint32_t node_count = 0;  // glTF nodes baked into this mesh
+    bool vertex_colors = false;    // whether the file gave its vertices colors
     std::vector<SkinVertex> skin_vertices;  // same length as vertices when skinned() (else empty)
     std::vector<Node> nodes;
     std::vector<Skin> skins;

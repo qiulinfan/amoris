@@ -3809,3 +3809,49 @@ TEST_CASE("a script error stops the simulation, says so in state and in step, an
     REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("a spatial source rises in pitch coming at the listener and falls going away (Doppler)", "[runtime][audio][doppler]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "audio";
+    o.bundle = root() / "build" / "ts" / "audio.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"rotation", {{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Car"}, {"components", Json{{"Transform", Json{{"position", {{"x", 0}, {"y", 0}, {"z", -15}}}}}, {"AudioSource", Json{{"clip", "assets/hum.wav"}, {"autoplay", true}, {"loop", true}, {"spatial", true}, {"near", 1.0}, {"range", 40.0}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    auto pitch = [&]() {
+        for (const Json& v : s.command("audio.list", Json::object()).value()) if (v["clip"] == "assets/hum.wav" && v["entity"] != 0) return v["pitch"].get<double>();
+        return -1.0;
+    };
+    REQUIRE(pitch() == Catch::Approx(1.0).margin(1e-3));   // standing still
+    // Thirty units a second (half a unit a tick) toward the camera, then away.
+    double z = -15;
+    auto drive = [&](double step, int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            z += step;
+            REQUIRE(s.command("world.set", Json{{"entity", "Car"}, {"component", "Transform"}, {"value", Json{{"position", {{"x", 0}, {"y", 0}, {"z", z}}}}}}).has_value());
+            REQUIRE(s.frame().has_value());
+        }
+    };
+    drive(0.5, 4);
+    const double coming = pitch();
+    drive(-0.5, 4);
+    const double going = pitch();
+    INFO("coming " << coming << ", going " << going);
+    REQUIRE(coming == Catch::Approx(343.0 / 313.0).margin(0.01));
+    REQUIRE(going == Catch::Approx(343.0 / 373.0).margin(0.01));
+    // Parked: the pitch returns; with doppler 0 motion leaves it alone.
+    drive(0.0, 2);
+    REQUIRE(pitch() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(s.command("world.set", Json{{"entity", "Car"}, {"component", "AudioSource"}, {"value", Json{{"doppler", 0.0}}}}).has_value());
+    drive(0.5, 3);
+    REQUIRE(pitch() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(s.finish().has_value());
+}

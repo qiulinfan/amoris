@@ -93,12 +93,24 @@ struct alignas(16) FrameUniforms {
     float cur_view_proj[16];     // this frame's view-projection without the TAA jitter
     float prev_view_proj[16];    // last frame's, without its jitter
     float taa[4];                // on
+    float probe_box[8][4];       // reflection probes in use: center, the array layer
+    float probe_ext[8][4];       // half size, intensity (negative: no box projection)
+    float probe_info[4];         // how many, the last prefiltered level
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
+// The id pass's surface targets (screen-space reflections): the normal (octahedral), roughness and
+// metallic; and the albedo.
+constexpr WGPUTextureFormat kSurfaceFormat = WGPUTextureFormat_RGBA16Float;
+constexpr WGPUTextureFormat kAlbedoFormat = WGPUTextureFormat_RGBA8Unorm;
 constexpr std::uint32_t kCascades = 4;
 // The environment map: an equirectangular panorama with its GGX prefiltered levels as mips.
 constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
+// Reflection probes: each captured as six square views, turned into a panorama of its own (a layer
+// of one array) with GGX-prefiltered mips like the sky's.
+constexpr std::uint32_t kMaxProbes = 8;
+constexpr std::uint32_t kProbeFace = 128;
+constexpr std::uint32_t kProbeWidth = 256, kProbeHeight = 128, kProbeLevels = 5;
 constexpr std::uint32_t kShadowMapSize = 2048;
 
 struct alignas(16) ObjectUniforms {
@@ -161,6 +173,9 @@ struct Frame {
     cur_view_proj: mat4x4f,
     prev_view_proj: mat4x4f,
     taa: vec4f,
+    probe_box: array<vec4f, 8>,
+    probe_ext: array<vec4f, 8>,
+    probe_info: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -181,6 +196,30 @@ struct LocalLight { pos_range: vec4f, color_kind: vec4f, dir_cos: vec4f, cone: v
 struct ShadowFace { view_proj: mat4x4f, rect: vec4f };
 @group(0) @binding(10) var<storage, read> shadow_faces: array<ShadowFace>;
 @group(0) @binding(11) var shadow_atlas: texture_depth_2d;
+@group(0) @binding(12) var probe_env: texture_2d_array<f32>;
+// The reflection probe a point is in (the first whose box holds it, a room's own walls and floor
+// included): what arrives along the mirror direction from its capture, box-projected; w is how much
+// it counts, 1 in the box and fading over half a unit outside it, 0 away from every probe.
+fn probe_specular(p: vec3f, n: vec3f, v: vec3f, roughness: f32) -> vec4f {
+    let count = u32(frame.probe_info.x);
+    let r = reflect(-v, n);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let c = frame.probe_box[i].xyz;
+        let e = frame.probe_ext[i].xyz;
+        let local = p - c;
+        let outside = length(max(abs(local) - e, vec3f(0.0)));
+        if (outside > 0.5) { continue; }
+        var dir = r;
+        if (frame.probe_ext[i].w > 0.0) {
+            // Where the mirror ray leaves the box, seen from the probe's center.
+            let t = max((e - local) / r, (-e - local) / r);
+            dir = normalize(local + r * max(min(min(t.x, t.y), t.z), 0.0));
+        }
+        let s = textureSampleLevel(probe_env, env_samp, env_uv(dir), i32(frame.probe_box[i].w), roughness * frame.probe_info.y).rgb;
+        return vec4f(s * abs(frame.probe_ext[i].w), 1.0 - outside / 0.5);
+    }
+    return vec4f(0.0);
+}
 // How lit a point is by one face of a local light's shadow (0 shadowed .. 1 lit): moved off the
 // surface along its normal and toward the light by a texel's size there, filtered 3x3 inside the face.
 fn face_lit(face: i32, world_pos: vec3f, gn: vec3f, pl: vec3f, texel: f32) -> f32 {
@@ -273,7 +312,10 @@ struct VsOut {
     @location(7) prev: vec4f,
 };
 
-@vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
+fn vertex_color(c: vec4f) -> vec4f {
+    return vec4f(select(pow((c.rgb + 0.055) / 1.055, vec3f(2.4)), c.rgb / 12.92, c.rgb <= vec3f(0.04045)), c.a);
+}
+@vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(5) vcolor: vec4f) -> VsOut {
     let object = objects[instance];
     var out: VsOut;
     let local = vec4f(morph_position(object, vid, position), 1.0);
@@ -284,7 +326,7 @@ struct VsOut {
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
-    out.color = object.color;
+    out.color = object.color * vertex_color(vcolor);
     out.id = object.id.x;
     out.instance = instance;
     return out;
@@ -299,12 +341,36 @@ struct Cascade { view_proj: mat4x4f };
     return cascade.view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
 }
 
+// Cut-outs in the shadow passes: the same placement with the uv, and a fragment that drops what the
+// texture's alpha cuts away (the material at group 3; the cascade or light face at group 2).
+struct ShadowCut {
+    @builtin(position) clip: vec4f,
+    @location(0) uv: vec2f,
+    @location(1) @interpolate(flat) instance: u32,
+};
+@group(3) @binding(0) var cut_tex: texture_2d<f32>;
+@group(3) @binding(1) var cut_samp: sampler;
+@vertex fn vs_shadow_cut(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> ShadowCut {
+    let object = objects[instance];
+    var out: ShadowCut;
+    out.clip = cascade.view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
+    if ((object.id.y & 2u) != 0u) { out.clip = vec4f(0.0, 0.0, -2.0, 1.0); }
+    out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
+    out.instance = instance;
+    return out;
+}
+@fragment fn fs_shadow_cut(in: ShadowCut) {
+    let object = objects[in.instance];
+    let a = textureSample(cut_tex, cut_samp, in.uv).a * object.color.a;
+    if (a < object.emissive.w) { discard; }
+}
+
 // Skinned meshes: the joint matrices of this instance start at object.id.z in the joints array.
 fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     return joints[base + j.x] * w.x + joints[base + j.y] * w.y + joints[base + j.z] * w.z + joints[base + j.w] * w.w;
 }
 
-@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> VsOut {
+@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f, @location(5) vcolor: vec4f) -> VsOut {
     let object = objects[instance];
     let skin = skin_matrix(object.id.z, j, w);
     let model = object.model * skin;
@@ -317,7 +383,7 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     out.world_pos = world.xyz;
     out.normal = normalize((model * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
-    out.color = object.color;
+    out.color = object.color * vertex_color(vcolor);
     out.id = object.id.x;
     out.instance = instance;
     return out;
@@ -409,12 +475,17 @@ fn shade(in: VsOut) -> vec4f {
     let albedo = base.rgb;
     let f0 = mix(vec3f(0.04), albedo, metallic);
     var color = frame.ambient.rgb * mix(albedo, f0, metallic);
+    // Inside a reflection probe's box, what the probe saw takes the place of the sky's reflection.
+    let probe = probe_specular(in.world_pos, n, v, roughness);
     if (frame.env.x > 0.5) {
         // The sky's light instead of the flat ambient: diffuse from its harmonics, specular from the
         // prefiltered level matching the roughness, in the mirror direction.
         let ndv = max(dot(n, v), 1e-4);
-        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, n)), roughness * frame.env.w).rgb;
-        color = albedo * (1.0 - metallic) * sh_irradiance(n) * frame.env.y + spec * env_brdf(f0, roughness, ndv) * frame.env.z;
+        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, n)), roughness * frame.env.w).rgb * frame.env.z;
+        color = albedo * (1.0 - metallic) * sh_irradiance(n) * frame.env.y + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv);
+    } else if (probe.w > 0.0) {
+        let ndv = max(dot(n, v), 1e-4);
+        color = mix(color, frame.ambient.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv), probe.w);
     }
     // Ambient occlusion darkens only this light from all around, not the lights'.
     if (frame.ao.x > 0.5) {
@@ -503,17 +574,39 @@ fn shade(in: VsOut) -> vec4f {
 struct IdOut {
     @location(0) id: u32,
     @location(1) velocity: vec2f,
+    @location(2) surface: vec4f,   // the normal (octahedral), roughness, metallic
+    @location(3) albedo: vec4f,
 };
+fn oct_encode(n: vec3f) -> vec2f {
+    var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+    if (n.z < 0.0) { p = (1.0 - abs(p.yx)) * select(vec2f(-1.0), vec2f(1.0), p >= vec2f(0.0)); }
+    return p;
+}
+fn oct_decode(e: vec2f) -> vec3f {
+    var n = vec3f(e.x, e.y, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) { n = vec3f((1.0 - abs(n.yx)) * select(vec2f(-1.0), vec2f(1.0), n.xy >= vec2f(0.0)), n.z); }
+    return normalize(n);
+}
 fn motion(in: VsOut) -> vec2f {
     return (in.cur.xy / in.cur.w - in.prev.xy / in.prev.w) * vec2f(0.5, -0.5);
 }
 @fragment fn fs_id(in: VsOut) -> IdOut {
     let object = objects[in.instance];
-    let a = textureSample(base_tex, base_samp, in.uv).a * in.color.a;
-    if (object.emissive.w > 0.0 && a < object.emissive.w) { discard; }
+    let dp1 = dpdx(in.world_pos);
+    let dp2 = dpdy(in.world_pos);
+    let duv1 = dpdx(in.uv);
+    let duv2 = dpdy(in.uv);
+    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    let mr = textureSample(mr_tex, base_samp, in.uv);
+    let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
+    if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
+    var n = normalize(in.normal);
+    if (object.pbr.w > 0.5) { n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
     var out: IdOut;
     out.id = in.id;
     out.velocity = motion(in);
+    out.surface = vec4f(oct_encode(n), clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0));
+    out.albedo = vec4f(base.rgb, 1.0);
     return out;
 }
 
@@ -576,7 +669,107 @@ fn unlit(in: VsOut) -> vec4f {
     var out: IdOut;
     out.id = in.id;
     out.velocity = motion(in);
+    out.surface = vec4f(0.0, 0.0, 1.0, 0.0);   // rough: no reflection traced
+    out.albedo = vec4f(base.rgb, 1.0);
     return out;
+}
+
+// Screen-space reflections (docs/design/rendering.md): from each glossy pixel the mirror ray is
+// marched in screen space (depth interpolated as 1/w, every pixel starting at its own offset), a hit
+// is where it passes just behind the depth, refined by bisection; the scene's color there takes the
+// place of the sky's reflection, weighed by the same BRDF and faded toward the view's edges, the
+// ray's end and rough surfaces.
+struct Ssr { params: vec4f, more: vec4f };
+@group(1) @binding(10) var<uniform> ssr: Ssr;
+@group(1) @binding(11) var ssr_scene: texture_2d<f32>;
+@group(1) @binding(12) var ssr_depth: texture_depth_2d;
+@group(1) @binding(13) var ssr_surface: texture_2d<f32>;
+@group(1) @binding(14) var ssr_albedo: texture_2d<f32>;
+fn ssr_world(px: vec2i, d: f32) -> vec3f {
+    let uv = (vec2f(px) + vec2f(0.5) - frame.viewport.xy) / frame.viewport.zw;
+    let h = frame.inv_view_proj * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    return h.xyz / h.w;
+}
+fn ssr_depth_at(q: vec2i) -> f32 {
+    let d = textureLoad(ssr_depth, q, 0);
+    if (d >= 1.0) { return 1e9; }
+    return dot(ssr_world(q, d) - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+}
+fn ssr_px(c: vec4f) -> vec2f {
+    return frame.viewport.xy + vec2f(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5) * frame.viewport.zw;
+}
+@fragment fn fs_ssr(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let px = vec2i(pos.xy);
+    let center = textureLoad(ssr_scene, px, 0);
+    let d = textureLoad(ssr_depth, px, 0);
+    if (d >= 1.0) { return center; }
+    let s = textureLoad(ssr_surface, px, 0);
+    let roughness = s.z;
+    if (roughness > ssr.params.y) { return center; }
+    let p = ssr_world(px, d);
+    let n = oct_decode(s.xy);
+    let v = normalize(frame.camera_pos.xyz - p);
+    let r = reflect(-v, n);
+    let start = p + n * 0.02;
+    var len = ssr.params.x;
+    let c0 = frame.cur_view_proj * vec4f(start, 1.0);
+    var c1 = frame.cur_view_proj * vec4f(start + r * len, 1.0);
+    if (c1.w < 0.05) {
+        // Toward the eye: the ray stops at the near plane.
+        len = len * (c0.w - 0.05) / max(c0.w - c1.w, 1e-5);
+        c1 = frame.cur_view_proj * vec4f(start + r * len, 1.0);
+    }
+    let s0 = ssr_px(c0);
+    let s1 = ssr_px(c1);
+    let k0 = 1.0 / c0.w;
+    let k1 = 1.0 / c1.w;
+    let steps = max(u32(ssr.params.z), 8u);
+    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))));
+    let lo_px = vec2i(frame.viewport.xy);
+    let hi_px = vec2i(frame.viewport.xy + frame.viewport.zw);
+    var prev_t = 0.0;
+    var hit_t = -1.0;
+    for (var i = 0u; i < steps; i = i + 1u) {
+        let t = (f32(i) + jitter + 0.5) / f32(steps);
+        let q = vec2i(mix(s0, s1, t));
+        if (any(q < lo_px) || any(q >= hi_px)) { break; }
+        let ray_depth = 1.0 / mix(k0, k1, t);
+        let scene_depth = ssr_depth_at(q);
+        if (ray_depth > scene_depth && ray_depth - scene_depth < ssr.params.w * (1.0 + 0.05 * ray_depth)) { hit_t = t; break; }
+        prev_t = t;
+    }
+    if (hit_t < 0.0) { return center; }
+    var lo = prev_t;
+    var hi = hit_t;
+    for (var b = 0; b < 5; b = b + 1) {
+        let m = 0.5 * (lo + hi);
+        if (1.0 / mix(k0, k1, m) > ssr_depth_at(vec2i(mix(s0, s1, m)))) { hi = m; } else { lo = m; }
+    }
+    let hp = mix(s0, s1, hi);
+    let hq = vec2i(hp);
+    let uv = (hp - frame.viewport.xy) / frame.viewport.zw;
+    let edge = clamp(min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)) * 10.0, 0.0, 1.0);
+    let conf = edge * (1.0 - hi * hi) * (1.0 - smoothstep(ssr.params.y * 0.5, ssr.params.y, roughness)) * ssr.more.x;
+    // The light arriving along the ray, spread a little on rough surfaces.
+    var hit = textureLoad(ssr_scene, hq, 0).rgb;
+    let spread = i32(roughness * 10.0);
+    if (spread >= 1) {
+        let dims = vec2i(textureDimensions(ssr_scene));
+        hit = hit + textureLoad(ssr_scene, clamp(hq + vec2i(spread, 0), vec2i(0), dims - vec2i(1)), 0).rgb
+                  + textureLoad(ssr_scene, clamp(hq - vec2i(spread, 0), vec2i(0), dims - vec2i(1)), 0).rgb
+                  + textureLoad(ssr_scene, clamp(hq + vec2i(0, spread), vec2i(0), dims - vec2i(1)), 0).rgb
+                  + textureLoad(ssr_scene, clamp(hq - vec2i(0, spread), vec2i(0), dims - vec2i(1)), 0).rgb;
+        hit = hit / 5.0;
+    }
+    // In place of what the sky's reflection gave the pixel, through the same BRDF.
+    let albedo = textureLoad(ssr_albedo, px, 0).rgb;
+    let f0 = mix(vec3f(0.04), albedo, s.w);
+    let brdf = env_brdf(f0, roughness, max(dot(n, v), 1e-4));
+    var env = frame.ambient.rgb;
+    if (frame.env.x > 0.5) { env = textureSampleLevel(env_tex, env_samp, env_uv(r), roughness * frame.env.w).rgb * frame.env.z; }
+    let probe = probe_specular(p, n, v, roughness);
+    env = mix(env, probe.rgb, probe.w);
+    return vec4f(max(center.rgb + (hit - env) * brdf * conf, vec3f(0.0)), center.a);
 }
 
 // Volumetric fog (docs/design/rendering.md, Volumetric light): each pixel of a half-size target
@@ -981,6 +1174,32 @@ fn importance_ggx(xi: vec2f, n: vec3f, a: f32) -> vec3f {
 }
 )WGSL";
 
+// A probe's six views into level 0 of its panorama: each direction looks up the view it falls in
+// (by its largest axis) through that view's own projection, so the views need no cube convention.
+constexpr const char* kProbeFillWgsl = R"WGSL(
+struct ProbeFill { faces: array<mat4x4f, 6>, center: vec4f, size: vec4f };
+@group(0) @binding(0) var<uniform> pf: ProbeFill;
+@group(0) @binding(1) var views: texture_2d_array<f32>;
+@group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var dst: texture_storage_2d<rgba16float, write>;
+const PI = 3.14159265;
+@compute @workgroup_size(8, 8) fn probe_fill(@builtin(global_invocation_id) id: vec3u) {
+    if (f32(id.x) >= pf.size.x || f32(id.y) >= pf.size.y) { return; }
+    let uv = (vec2f(id.xy) + 0.5) / pf.size.xy;
+    let phi = (uv.x - 0.5) * 2.0 * PI;
+    let theta = uv.y * PI;
+    let d = vec3f(sin(theta) * sin(phi), cos(theta), -sin(theta) * cos(phi));
+    let a = abs(d);
+    var face = 0;
+    if (a.x >= a.y && a.x >= a.z) { face = select(1, 0, d.x > 0.0); }
+    else if (a.y >= a.z) { face = select(3, 2, d.y > 0.0); }
+    else { face = select(5, 4, d.z > 0.0); }
+    let p = pf.faces[face] * vec4f(pf.center.xyz + d, 1.0);
+    let fuv = clamp(vec2f(p.x / p.w * 0.5 + 0.5, 0.5 - p.y / p.w * 0.5), vec2f(0.0), vec2f(1.0));
+    textureStore(dst, vec2i(id.xy), vec4f(textureSampleLevel(views, samp, fuv, face, 0.0).rgb, 1.0));
+}
+)WGSL";
+
 constexpr const char* kIrradianceWgsl = R"WGSL(
 @group(0) @binding(0) var env_lo: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read_write> sh: array<vec4f, 9>;
@@ -1350,6 +1569,8 @@ struct Renderer::Impl {
     WGPURenderPipeline blend_pipeline = nullptr;           // the lit shading alpha blended, no depth writes
     WGPURenderPipeline blend_skinned_pipeline = nullptr;
     WGPURenderPipeline shadow_skinned_pipeline = nullptr;
+    WGPURenderPipeline shadow_cut_pipeline = nullptr;     // cut-outs: the texture's holes let the light through
+    WGPUPipelineLayout shadow_cut_layout = nullptr;
     WGPUBuffer joint_buffer = nullptr;
     std::vector<float> joint_staging;  // 16 floats per matrix
     std::uint32_t joint_count = 0;
@@ -1431,6 +1652,15 @@ struct Renderer::Impl {
     WGPUTexture prepass_tex = nullptr;
     WGPUTextureView prepass_view = nullptr;
     std::uint32_t prepass_w = 0, prepass_h = 0;
+    WGPUTexture surface_tex = nullptr, albedo_tex = nullptr;          // the id pass's surface targets
+    WGPUTextureView surface_view = nullptr, albedo_view = nullptr;
+    SsrSettings ssr;
+    WGPUBindGroupLayout ssr_bgl = nullptr;
+    WGPUPipelineLayout ssr_layout = nullptr;
+    WGPURenderPipeline ssr_pipeline = nullptr;
+    WGPUBuffer ssr_uniforms = nullptr;
+    WGPUBindGroup ssr_bg = nullptr;
+    WGPUTextureView ssr_bg_scene = nullptr, ssr_bg_depth = nullptr, ssr_bg_surface = nullptr;
     WGPUTexture velocity_tex = nullptr;       // the id pass's motion target, the prepass's size
     WGPUTextureView velocity_view = nullptr;
     // TAA: the settings, the resolved frames (two, one the history of the other), the pass, the
@@ -1482,7 +1712,33 @@ struct Renderer::Impl {
     WGPUTexture ao_white_tex = nullptr;
     WGPUTextureView ao_white_view = nullptr;
     WGPUTextureView scene_ao = nullptr;           // the AO view the scene group was made with
-    WGPUBindGroupEntry scene_entries[12]{};       // the scene group's entries, to make it again when the AO target or the atlas changes
+    WGPUBindGroupEntry scene_entries[13]{};       // the scene group's entries, to make it again when the AO target or the atlas changes
+    // Reflection probes: their slots (one array layer each), the panoramas, the six views a capture
+    // draws, the passes that draw them and turn them into a panorama.
+    struct ProbeSlot {
+        std::uint64_t entity = 0;
+        Vec3 center{0, 0, 0}, size{0, 0, 0};
+        float intensity = 1;
+        bool box = true, realtime = false, captured = false;
+        std::uint64_t frame = 0;   // the frame it was last captured in
+    };
+    std::array<ProbeSlot, kMaxProbes> probe_slots{};
+    std::uint32_t probe_count = 0;
+    std::uint32_t probe_cursor = 0;   // where the search for a probe to capture starts (realtime ones take turns)
+    bool probe_refresh = false;
+    std::uint64_t frame_number = 0;
+    WGPUTexture probe_env_tex = nullptr, probe_views_tex = nullptr, probe_depth_tex = nullptr;
+    WGPUTextureView probe_env_view = nullptr, probe_views_array = nullptr, probe_depth_view = nullptr;
+    WGPUTextureView probe_level[kMaxProbes][kProbeLevels]{};
+    WGPUTextureView probe_view[6]{};
+    WGPUShaderModule probe_fill_shader = nullptr;
+    WGPUBindGroupLayout probe_fill_bgl = nullptr;
+    WGPUPipelineLayout probe_fill_layout = nullptr;
+    WGPUComputePipeline probe_fill_pipeline = nullptr;
+    WGPUBuffer probe_fill_params = nullptr, probe_prefilter_params = nullptr;
+    WGPUBuffer probe_frame_buf[6]{};
+    WGPURenderPipeline probe_pipeline = nullptr, probe_skinned_pipeline = nullptr, probe_sky_pipeline = nullptr;
+    std::vector<WGPUBindGroup> probe_groups;   // the last capture's groups, released at the next
     // The sky: its pipelines, the environment map (level views for the compute passes, one view of
     // every level for sampling), the harmonics buffer, the panorama's source texture.
     WGPUPipelineLayout sky_layout = nullptr;      // the scene group only
@@ -1545,7 +1801,7 @@ struct Renderer::Impl {
     WGPURenderPipeline id_pipeline = nullptr;
     WGPURenderPipeline id_skinned_pipeline = nullptr;
     WGPURenderPipeline id_sprite_pipeline = nullptr;
-    WGPUVertexAttribute mesh_attrs[3]{};
+    WGPUVertexAttribute mesh_attrs[4]{};
     WGPUVertexAttribute skin_attrs[2]{};
     WGPUVertexBufferLayout vbl{};
     WGPUVertexBufferLayout vbls[2]{};
@@ -1664,6 +1920,13 @@ struct Renderer::Impl {
         if (prepass_tex) wgpuTextureRelease(prepass_tex);
         if (velocity_view) wgpuTextureViewRelease(velocity_view);
         if (velocity_tex) wgpuTextureRelease(velocity_tex);
+        for (WGPUTextureView tv : {surface_view, albedo_view}) if (tv) wgpuTextureViewRelease(tv);
+        for (WGPUTexture tt : {surface_tex, albedo_tex}) if (tt) wgpuTextureRelease(tt);
+        if (ssr_bg) wgpuBindGroupRelease(ssr_bg);
+        if (ssr_uniforms) wgpuBufferRelease(ssr_uniforms);
+        if (ssr_pipeline) wgpuRenderPipelineRelease(ssr_pipeline);
+        if (ssr_layout) wgpuPipelineLayoutRelease(ssr_layout);
+        if (ssr_bgl) wgpuBindGroupLayoutRelease(ssr_bgl);
         for (int k = 0; k < 2; ++k) {
             if (taa_bg[k]) wgpuBindGroupRelease(taa_bg[k]);
             if (taa_view[k]) wgpuTextureViewRelease(taa_view[k]);
@@ -1740,6 +2003,20 @@ struct Renderer::Impl {
         if (blend_pipeline) wgpuRenderPipelineRelease(blend_pipeline);
         if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
+        if (shadow_cut_pipeline) wgpuRenderPipelineRelease(shadow_cut_pipeline);
+        for (WGPUBindGroup g : probe_groups) wgpuBindGroupRelease(g);
+        for (WGPURenderPipeline p : {probe_pipeline, probe_skinned_pipeline, probe_sky_pipeline}) if (p) wgpuRenderPipelineRelease(p);
+        if (probe_fill_pipeline) wgpuComputePipelineRelease(probe_fill_pipeline);
+        if (probe_fill_layout) wgpuPipelineLayoutRelease(probe_fill_layout);
+        if (probe_fill_bgl) wgpuBindGroupLayoutRelease(probe_fill_bgl);
+        if (probe_fill_shader) wgpuShaderModuleRelease(probe_fill_shader);
+        for (WGPUBuffer b : {probe_fill_params, probe_prefilter_params}) if (b) wgpuBufferRelease(b);
+        for (WGPUBuffer b : probe_frame_buf) if (b) wgpuBufferRelease(b);
+        for (auto& layer : probe_level) for (WGPUTextureView v : layer) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTextureView v : probe_view) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTextureView v : {probe_env_view, probe_views_array, probe_depth_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {probe_env_tex, probe_views_tex, probe_depth_tex}) if (t) wgpuTextureRelease(t);
+        if (shadow_cut_layout) wgpuPipelineLayoutRelease(shadow_cut_layout);
         if (joint_buffer) wgpuBufferRelease(joint_buffer);
         if (morph_buffer) wgpuBufferRelease(morph_buffer);
         if (layout) wgpuPipelineLayoutRelease(layout);
@@ -2733,6 +3010,327 @@ struct Renderer::Impl {
         return {};
     }
 
+    // Reflection probes' textures: the panoramas (a layer each, all their mips), the six views of a
+    // capture and its depth.
+    Status create_probe_textures() {
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str("pocket.probes");
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_StorageBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {kProbeWidth, kProbeHeight, kMaxProbes};
+        td.format = kHdrFormat;
+        td.mipLevelCount = kProbeLevels;
+        td.sampleCount = 1;
+        probe_env_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!probe_env_tex) return fail("gpu_texture_failed", "cannot create the reflection probes' panoramas");
+        WGPUTextureViewDescriptor vd{};
+        vd.format = kHdrFormat;
+        vd.dimension = WGPUTextureViewDimension_2DArray;
+        vd.mipLevelCount = kProbeLevels;
+        vd.arrayLayerCount = kMaxProbes;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = WGPUTextureUsage_TextureBinding;
+        probe_env_view = wgpuTextureCreateView(probe_env_tex, &vd);
+        for (std::uint32_t p = 0; p < kMaxProbes; ++p)
+            for (std::uint32_t l = 0; l < kProbeLevels; ++l) {
+                WGPUTextureViewDescriptor lv = vd;
+                lv.dimension = WGPUTextureViewDimension_2D;
+                lv.baseMipLevel = l;
+                lv.mipLevelCount = 1;
+                lv.baseArrayLayer = p;
+                lv.arrayLayerCount = 1;
+                lv.usage = WGPUTextureUsage_None;   // the texture's own: sampled and written
+                probe_level[p][l] = wgpuTextureCreateView(probe_env_tex, &lv);
+            }
+        td.label = rhi::str("pocket.probe.views");
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+        td.size = {kProbeFace, kProbeFace, 6};
+        td.mipLevelCount = 1;
+        probe_views_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!probe_views_tex) return fail("gpu_texture_failed", "cannot create the reflection probes' views");
+        vd.mipLevelCount = 1;
+        vd.arrayLayerCount = 6;
+        vd.usage = WGPUTextureUsage_TextureBinding;
+        probe_views_array = wgpuTextureCreateView(probe_views_tex, &vd);
+        for (std::uint32_t f = 0; f < 6; ++f) {
+            WGPUTextureViewDescriptor fv = vd;
+            fv.dimension = WGPUTextureViewDimension_2D;
+            fv.baseArrayLayer = f;
+            fv.arrayLayerCount = 1;
+            fv.usage = WGPUTextureUsage_RenderAttachment;
+            probe_view[f] = wgpuTextureCreateView(probe_views_tex, &fv);
+        }
+        auto [dt, dv] = make_target("pocket.probe.depth", kProbeFace, kProbeFace, kPrepassDepth, WGPUTextureUsage_RenderAttachment);
+        if (!dt) return fail("gpu_texture_failed", "cannot create the reflection probes' depth");
+        probe_depth_tex = dt;
+        probe_depth_view = dv;
+        return {};
+    }
+
+    // The passes a capture runs: the scene's own shading into a probe's six views (a pipeline for
+    // the views' format and depth), the sky behind, and the fill that turns the views into level 0.
+    Status create_probe_passes() {
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str("fs_color");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPUDepthStencilState ds{};
+        ds.format = kPrepassDepth;
+        ds.depthWriteEnabled = WGPUOptionalBool_True;
+        ds.depthCompare = WGPUCompareFunction_Less;
+        ds.stencilFront.compare = WGPUCompareFunction_Always;
+        ds.stencilBack.compare = WGPUCompareFunction_Always;
+        ds.stencilReadMask = 0xFFFFFFFF;
+        ds.stencilWriteMask = 0xFFFFFFFF;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.probe.mesh");
+        rpd.layout = layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_Back;
+        rpd.depthStencil = &ds;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        probe_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        rpd.label = rhi::str("pocket.probe.skinned");
+        rpd.vertex.entryPoint = rhi::str("vs_skinned");
+        rpd.vertex.bufferCount = 2;
+        rpd.vertex.buffers = vbls;
+        probe_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        WGPUFragmentState kfs = fs;
+        kfs.entryPoint = rhi::str("fs_sky_color");
+        WGPUDepthStencilState kds = ds;
+        kds.depthWriteEnabled = WGPUOptionalBool_False;
+        kds.depthCompare = WGPUCompareFunction_Always;
+        WGPURenderPipelineDescriptor k{};
+        k.label = rhi::str("pocket.probe.sky");
+        k.layout = sky_layout;
+        k.vertex.module = shader;
+        k.vertex.entryPoint = rhi::str("vs_sky");
+        k.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        k.primitive.frontFace = WGPUFrontFace_CCW;
+        k.primitive.cullMode = WGPUCullMode_None;
+        k.depthStencil = &kds;
+        k.multisample.count = 1;
+        k.multisample.mask = 0xFFFFFFFFu;
+        k.fragment = &kfs;
+        probe_sky_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &k);
+        if (!probe_pipeline || !probe_skinned_pipeline || !probe_sky_pipeline) return fail("gpu_pipeline_failed", "reflection probe pipelines could not be created");
+        POCKET_TRY(module, device->create_shader("pocket.probe.fill", kProbeFillWgsl));
+        probe_fill_shader = module;
+        WGPUBindGroupLayoutEntry be[4]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Compute;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(float) * (16 * 6 + 8);
+        be[1].binding = 1;
+        be[1].visibility = WGPUShaderStage_Compute;
+        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2DArray;
+        be[2].binding = 2;
+        be[2].visibility = WGPUShaderStage_Compute;
+        be[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        be[3].binding = 3;
+        be[3].visibility = WGPUShaderStage_Compute;
+        be[3].storageTexture.access = WGPUStorageTextureAccess_WriteOnly;
+        be[3].storageTexture.format = kHdrFormat;
+        be[3].storageTexture.viewDimension = WGPUTextureViewDimension_2D;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.probe.fill");
+        bd.entryCount = 4;
+        bd.entries = be;
+        probe_fill_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.probe.fill");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &probe_fill_bgl;
+        probe_fill_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUComputePipelineDescriptor cpd{};
+        cpd.label = rhi::str("pocket.probe.fill");
+        cpd.layout = probe_fill_layout;
+        cpd.compute.module = probe_fill_shader;
+        cpd.compute.entryPoint = rhi::str("probe_fill");
+        probe_fill_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
+        if (!probe_fill_pipeline) return fail("gpu_pipeline_failed", "the reflection probe fill could not be created");
+        probe_fill_params = device->create_buffer("pocket.probe.fill", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * (16 * 6 + 8));
+        probe_prefilter_params = device->create_buffer("pocket.probe.prefilter", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kSkySlot) * kProbeLevels);
+        for (auto& b : probe_frame_buf) b = device->create_buffer("pocket.probe.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
+        return {};
+    }
+
+    // Which probes are in use this frame (the first eight enabled by id, each keeping its layer
+    // while it stays), which of them is captured this frame, and what the lit pass is told of the
+    // captured ones. A probe is captured when it is new, moved or resized, realtime, or asked for.
+    int gather_probes(const world::World& w, FrameUniforms& fu) {
+        std::vector<std::pair<std::uint64_t, std::pair<world::ReflectionProbe, Vec3>>> found;
+        w.ecs().each([&](flecs::entity e, const world::ReflectionProbe& p, const world::WorldTransform& t) {
+            if (p.enabled) found.push_back({e.id(), {p, t.position}});
+        });
+        std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (found.size() > kMaxProbes) found.resize(kMaxProbes);
+        for (std::size_t i = 0; i < kMaxProbes; ++i) {
+            ProbeSlot& s = probe_slots[i];
+            if (i >= found.size()) { s = ProbeSlot{}; continue; }
+            const auto& [id, pv] = found[i];
+            const auto& [p, at] = pv;
+            const Vec3 size{std::max(p.size.x, 0.01f), std::max(p.size.y, 0.01f), std::max(p.size.z, 0.01f)};
+            if (s.entity != id || length(s.center - at) > 1e-4f || length(s.size - size) > 1e-4f) s = ProbeSlot{id, at, size};
+            s.intensity = std::max(p.intensity, 0.0f);
+            s.box = p.box_projection;
+            s.realtime = p.realtime;
+        }
+        probe_count = static_cast<std::uint32_t>(found.size());
+        if (probe_refresh) { for (auto& s : probe_slots) s.captured = false; probe_refresh = false; }
+        int capture = -1;
+        for (std::uint32_t k = 0; k < probe_count && capture < 0; ++k) {
+            const std::uint32_t i = (probe_cursor + k) % probe_count;
+            if (!probe_slots[i].captured || probe_slots[i].realtime) capture = static_cast<int>(i);
+        }
+        if (capture >= 0) probe_cursor = static_cast<std::uint32_t>(capture) + 1;
+        std::uint32_t used = 0;
+        for (std::uint32_t i = 0; i < probe_count; ++i) {
+            const ProbeSlot& s = probe_slots[i];
+            if (!s.captured) continue;
+            fu.probe_box[used][0] = s.center.x; fu.probe_box[used][1] = s.center.y; fu.probe_box[used][2] = s.center.z;
+            fu.probe_box[used][3] = static_cast<float>(i);
+            fu.probe_ext[used][0] = s.size.x * 0.5f; fu.probe_ext[used][1] = s.size.y * 0.5f; fu.probe_ext[used][2] = s.size.z * 0.5f;
+            fu.probe_ext[used][3] = std::max(s.intensity, 1e-4f) * (s.box ? 1.0f : -1.0f);
+            ++used;
+        }
+        fu.probe_info[0] = static_cast<float>(used);
+        fu.probe_info[1] = static_cast<float>(kProbeLevels - 1);
+        stats.probes = used;
+        return capture;
+    }
+
+    // The six views of a probe at `center`: along +X, -X, +Y, -Y, +Z and -Z, each 90 degrees.
+    std::array<Mat4, 6> probe_views(Vec3 center) const {
+        static const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        static const Vec3 ups[6] = {{0, 1, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 1}, {0, 1, 0}, {0, 1, 0}};
+        std::array<Mat4, 6> out;
+        for (int f = 0; f < 6; ++f) out[static_cast<std::size_t>(f)] = Mat4::perspective(radians(90.0f), 1.0f, 0.05f, 1000.0f) * Mat4::look_at(center, center + dirs[f], ups[f]);
+        return out;
+    }
+
+    // Screen-space reflections: the mesh module's vs_volume/fs_ssr over the scene group (the frame,
+    // the sky's light) and a group of their own (the HDR target, depth, the surface targets).
+    Status create_ssr() {
+        WGPUBindGroupLayoutEntry be[5]{};
+        be[0].binding = 10;
+        be[0].visibility = WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(float) * 8;
+        be[1].binding = 11;
+        be[1].visibility = WGPUShaderStage_Fragment;
+        be[1].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 12;
+        be[2].visibility = WGPUShaderStage_Fragment;
+        be[2].texture.sampleType = WGPUTextureSampleType_Depth;
+        be[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+        for (std::uint32_t b = 3; b < 5; ++b) {
+            be[b].binding = 10 + b;
+            be[b].visibility = WGPUShaderStage_Fragment;
+            be[b].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+            be[b].texture.viewDimension = WGPUTextureViewDimension_2D;
+        }
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.ssr");
+        bd.entryCount = 5;
+        bd.entries = be;
+        ssr_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUBindGroupLayout layouts[2] = {scene_bgl, ssr_bgl};
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.ssr");
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
+        ssr_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str("fs_ssr");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.ssr");
+        rpd.layout = ssr_layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs_volume");
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        ssr_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!ssr_pipeline) return fail("gpu_pipeline_failed", "the screen-space reflection pipeline could not be created");
+        ssr_uniforms = device->create_buffer("pocket.ssr", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 8);
+        return {};
+    }
+
+    // Trace the reflections into the scratch target and copy it back over the HDR target.
+    Status draw_ssr(rhi::Frame& frame) {
+        POCKET_TRY_VOID(ensure_fx_target(frame.width, frame.height));
+        if (!ssr_bg || ssr_bg_scene != hdr_view || ssr_bg_depth != prepass_view || ssr_bg_surface != surface_view) {
+            if (ssr_bg) wgpuBindGroupRelease(ssr_bg);
+            WGPUBindGroupEntry e[5]{};
+            e[0].binding = 10;
+            e[0].buffer = ssr_uniforms;
+            e[0].size = sizeof(float) * 8;
+            e[1].binding = 11;
+            e[1].textureView = hdr_view;
+            e[2].binding = 12;
+            e[2].textureView = prepass_view;
+            e[3].binding = 13;
+            e[3].textureView = surface_view;
+            e[4].binding = 14;
+            e[4].textureView = albedo_view;
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.ssr");
+            d.layout = ssr_bgl;
+            d.entryCount = 5;
+            d.entries = e;
+            ssr_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+            ssr_bg_scene = hdr_view;
+            ssr_bg_depth = prepass_view;
+            ssr_bg_surface = surface_view;
+        }
+        const float u[8] = {ssr.max_distance, ssr.max_roughness, static_cast<float>(ssr.steps), ssr.thickness, ssr.intensity, 0, 0, 0};
+        device->write_buffer(ssr_uniforms, 0, u, sizeof u);
+        WGPURenderPassColorAttachment ca{};
+        ca.view = fx_view;
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, 1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.ssr");
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        wgpuRenderPassEncoderSetPipeline(enc, ssr_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(enc, 1, ssr_bg, 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        fx_copy_back(frame);
+        stats.ssr = true;
+        stats.draw_calls++;
+        return {};
+    }
+
     // Depth of field and motion blur: one layout (uniforms, the HDR target, depth, motion, a sampler),
     // two pipelines, a scratch target the pass draws into and is copied back from.
     Status create_fx() {
@@ -2797,9 +3395,8 @@ struct Renderer::Impl {
         return {};
     }
 
-    // One effect over the HDR target: drawn into the scratch target from it, then copied back.
-    Status apply_fx(rhi::Frame& frame, WGPURenderPipeline pipeline, const char* label, const FxUniforms& u) {
-        const std::uint32_t w = frame.width, h = frame.height;
+    // The scratch target effects draw into before they are copied back into the HDR target.
+    Status ensure_fx_target(std::uint32_t w, std::uint32_t h) {
         if (!fx_tex || fx_w != w || fx_h != h) {
             if (fx_view) wgpuTextureViewRelease(fx_view);
             if (fx_tex) wgpuTextureRelease(fx_tex);
@@ -2810,6 +3407,24 @@ struct Renderer::Impl {
             fx_w = w;
             fx_h = h;
         }
+        return {};
+    }
+
+    // Copy the scratch target back into the HDR target.
+    void fx_copy_back(rhi::Frame& frame) {
+        WGPUTexelCopyTextureInfo src{};
+        src.texture = fx_tex;
+        src.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = hdr_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUExtent3D ext{frame.width, frame.height, 1};
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
+    }
+
+    // One effect over the HDR target: drawn into the scratch target from it, then copied back.
+    Status apply_fx(rhi::Frame& frame, WGPURenderPipeline pipeline, const char* label, const FxUniforms& u) {
+        POCKET_TRY_VOID(ensure_fx_target(frame.width, frame.height));
         if (!fx_bg || fx_bg_scene != hdr_view || fx_bg_depth != prepass_view || fx_bg_velocity != velocity_view) {
             if (fx_bg) wgpuBindGroupRelease(fx_bg);
             WGPUBindGroupEntry e[5]{};
@@ -2851,14 +3466,7 @@ struct Renderer::Impl {
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(enc);
         wgpuRenderPassEncoderRelease(enc);
-        WGPUTexelCopyTextureInfo src{};
-        src.texture = fx_tex;
-        src.aspect = WGPUTextureAspect_All;
-        WGPUTexelCopyTextureInfo dst{};
-        dst.texture = hdr_tex;
-        dst.aspect = WGPUTextureAspect_All;
-        WGPUExtent3D ext{w, h, 1};
-        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
+        fx_copy_back(frame);
         stats.draw_calls++;
         return {};
     }
@@ -3141,6 +3749,8 @@ struct Renderer::Impl {
         if (prepass_tex) wgpuTextureRelease(prepass_tex);
         if (velocity_view) wgpuTextureViewRelease(velocity_view);
         if (velocity_tex) wgpuTextureRelease(velocity_tex);
+        for (WGPUTextureView tv : {surface_view, albedo_view}) if (tv) wgpuTextureViewRelease(tv);
+        for (WGPUTexture tt : {surface_tex, albedo_tex}) if (tt) wgpuTextureRelease(tt);
         taa_valid = false;
         auto [t, v] = make_target("pocket.prepass", w, h, kPrepassDepth, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
         if (!t) return fail("gpu_texture_failed", "cannot create the depth prepass {}x{}", w, h);
@@ -3150,6 +3760,13 @@ struct Renderer::Impl {
         if (!vt) return fail("gpu_texture_failed", "cannot create the motion target {}x{}", w, h);
         velocity_tex = vt;
         velocity_view = vv;
+        auto [st, sv] = make_target("pocket.surface", w, h, kSurfaceFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        auto [at, av] = make_target("pocket.albedo", w, h, kAlbedoFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        if (!st || !at) return fail("gpu_texture_failed", "cannot create the surface targets {}x{}", w, h);
+        surface_tex = st;
+        surface_view = sv;
+        albedo_tex = at;
+        albedo_view = av;
         prepass_w = w;
         prepass_h = h;
         release_ao_targets();   // their groups read the old depth
@@ -3205,7 +3822,7 @@ struct Renderer::Impl {
         WGPUBindGroupDescriptor sbd{};
         sbd.label = rhi::str("pocket.scene");
         sbd.layout = scene_bgl;
-        sbd.entryCount = 12;
+        sbd.entryCount = 13;
         sbd.entries = scene_entries;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
         scene_ao = ao_view_now;
@@ -3378,15 +3995,19 @@ struct Renderer::Impl {
         }
         if (split) {
             // The id pass: one R32Uint target, one sample, its own depth test, the same vertex paths.
-            WGPUColorTargetState idt[2]{};
+            WGPUColorTargetState idt[4]{};
             idt[0].format = WGPUTextureFormat_R32Uint;
             idt[0].writeMask = WGPUColorWriteMask_All;
             idt[1].format = kVelocityFormat;   // the motion TAA follows
             idt[1].writeMask = WGPUColorWriteMask_All;
+            idt[2].format = kSurfaceFormat;    // what screen-space reflections read
+            idt[2].writeMask = WGPUColorWriteMask_All;
+            idt[3].format = kAlbedoFormat;
+            idt[3].writeMask = WGPUColorWriteMask_All;
             WGPUFragmentState ifs{};
             ifs.module = shader;
             ifs.entryPoint = rhi::str("fs_id");
-            ifs.targetCount = 2;
+            ifs.targetCount = 4;
             ifs.targets = idt;
             WGPUDepthStencilState ids = ds;
             ids.format = kPrepassDepth;   // the id pass has a depth target of its own, sampled afterwards
@@ -3496,7 +4117,7 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[12]{};
+        WGPUBindGroupLayoutEntry se[13]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
@@ -3538,9 +4159,13 @@ struct Renderer::Impl {
         se[11].visibility = WGPUShaderStage_Fragment;
         se[11].texture.sampleType = WGPUTextureSampleType_Depth;
         se[11].texture.viewDimension = WGPUTextureViewDimension_2D;
+        se[12].binding = 12;
+        se[12].visibility = WGPUShaderStage_Fragment;
+        se[12].texture.sampleType = WGPUTextureSampleType_Float;
+        se[12].texture.viewDimension = WGPUTextureViewDimension_2DArray;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 12;
+        scene_ld.entryCount = 13;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -3624,8 +4249,11 @@ struct Renderer::Impl {
         mesh_attrs[2].shaderLocation = 2;
         vbl = WGPUVertexBufferLayout{};
         vbl.stepMode = WGPUVertexStepMode_Vertex;
+        mesh_attrs[3].format = WGPUVertexFormat_Unorm8x4;
+        mesh_attrs[3].offset = sizeof(float) * 8;
+        mesh_attrs[3].shaderLocation = 5;
         vbl.arrayStride = sizeof(Vertex);
-        vbl.attributeCount = 3;
+        vbl.attributeCount = 4;
         vbl.attributes = mesh_attrs;
         skin_attrs[0].format = WGPUVertexFormat_Uint16x4;
         skin_attrs[0].offset = 0;
@@ -3685,6 +4313,28 @@ struct Renderer::Impl {
         rpd.vertex.buffers = vbls;
         shadow_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!shadow_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned shadow pipeline creation failed");
+        {
+            // Cut-outs: the shadow layout with the material after it, and a fragment that drops holes.
+            WGPUBindGroupLayout cbgls[4] = {frame_bgl, object_bgl, cascade_bgl, material_bgl};
+            WGPUPipelineLayoutDescriptor cpld{};
+            cpld.label = rhi::str("pocket.shadow.cut");
+            cpld.bindGroupLayoutCount = 4;
+            cpld.bindGroupLayouts = cbgls;
+            shadow_cut_layout = wgpuDeviceCreatePipelineLayout(device->device(), &cpld);
+            WGPUFragmentState cfs{};
+            cfs.module = shader;
+            cfs.entryPoint = rhi::str("fs_shadow_cut");
+            cfs.targetCount = 0;
+            WGPURenderPipelineDescriptor crpd = rpd;
+            crpd.label = rhi::str("pocket.shadow.cut");
+            crpd.layout = shadow_cut_layout;
+            crpd.vertex.entryPoint = rhi::str("vs_shadow_cut");
+            crpd.vertex.bufferCount = 1;
+            crpd.vertex.buffers = &vbl;
+            crpd.fragment = &cfs;
+            shadow_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &crpd);
+            if (!shadow_cut_pipeline) return fail("gpu_pipeline_failed", "cut-out shadow pipeline creation failed");
+        }
         joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16);
         joint_staging.resize(static_cast<std::size_t>(kMaxJoints) * 16);
         morph_buffer = device->create_buffer("pocket.morphs", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxMorphVec4) * sizeof(float) * 4);
@@ -3759,7 +4409,12 @@ struct Renderer::Impl {
         POCKET_TRY_VOID(create_volume());
         POCKET_TRY_VOID(create_taa());
         POCKET_TRY_VOID(create_fx());
+        POCKET_TRY_VOID(create_ssr());
+        POCKET_TRY_VOID(create_probe_textures());
+        POCKET_TRY_VOID(create_probe_passes());
         WGPUBindGroupEntry* sbe = scene_entries;
+        sbe[12].binding = 12;
+        sbe[12].textureView = probe_env_view;
         sbe[0] = fbe;
         sbe[1].binding = 1;
         sbe[1].textureView = shadow_view;
@@ -4014,7 +4669,16 @@ struct Renderer::Impl {
         const assets::Mesh& src = **m;
         std::vector<Vertex> verts;
         verts.reserve(src.vertices.size());
-        for (const auto& v : src.vertices) verts.push_back({v.position, v.normal, v.uv});
+        // Vertex colors go up sRGB-encoded in 8 bits (dark shades keep their steps), decoded per vertex.
+        auto enc = [](float c) {
+            c = std::clamp(c, 0.0f, 1.0f);
+            const float e = c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+            return static_cast<std::uint32_t>(std::lround(e * 255.0f));
+        };
+        for (const auto& v : src.vertices) {
+            const std::uint32_t a = static_cast<std::uint32_t>(std::lround(std::clamp(v.color.w, 0.0f, 1.0f) * 255.0f));
+            verts.push_back({v.position, v.normal, v.uv, enc(v.color.x) | (enc(v.color.y) << 8) | (enc(v.color.z) << 16) | (a << 24)});
+        }
         AssetMesh am;
         am.gpu.vertices = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
         am.gpu.indices = device->create_buffer(path.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, src.indices.size() * sizeof(std::uint32_t), src.indices.data());
@@ -4499,7 +5163,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     world.ecs().each([&](flecs::entity, const world::Fog& f) {
         if (!fog_on && f.enabled && f.density > 0) { fog = f; fog_on = true; }
     });
-    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled;
+    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled;
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
     if (im.ao.enabled) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
@@ -4706,6 +5370,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.ao[1] = 1.0f / static_cast<float>(std::max(1u, frame.width));
     fu.ao[2] = 1.0f / static_cast<float>(std::max(1u, frame.height));
     if (has_sky) fu.ambient[0] = fu.ambient[1] = fu.ambient[2] = 0.0f;   // the sky's light replaces the flat ambient, even at zero
+    const int probe_capture = im.gather_probes(world, fu);
+    ++im.frame_number;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
     // Gather one object per primitive entity and one per material of a glTF entity, sorted by
@@ -4721,6 +5387,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         bool skinned = false;
         bool blend = false;   // translucent: after every opaque draw, far to near
         float depth = 0;      // along the camera's forward, for that order
+        bool cutout = false;  // an alpha cutoff: its shadow keeps the holes
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
@@ -4768,7 +5435,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             const bool blend = color.w < 0.999f || (mat && mat->blend);
             const Vec3 to_cam = t.position - im.camera.position;
             const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
-            draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned, blend, depth});
+            draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f});
             if (blend) ++translucent_instances;
             ++count;
         };
@@ -5117,28 +5784,33 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // Instanced runs of equal mesh, submesh and material; the same loop serves both passes.
     // The blend pipelines are given for the color pass only: the shadow and id passes draw a
     // translucent mesh like any other (it casts a shadow and is picked).
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr) {
+    // `cut` (the shadow passes): an unskinned cut-out draws through it with its material at group 3,
+    // so the texture's holes let the light through.
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr) {
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
-        bool current_skinned = false, current_blend = false;
+        bool current_skinned = false, current_blend = false, current_cut = false;
         wgpuRenderPassEncoderSetPipeline(pass, plain);
         std::size_t i = 0;
         while (i < draws.size()) {
             const Draw& d = draws[i];
             const bool blend = d.blend && blend_plain != nullptr;
+            const bool cutting = d.cutout && !d.skinned && cut != nullptr;
             std::size_t run = 1;
             while (i + run < draws.size()) {
                 const Draw& n = draws[i + run];
-                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned || n.blend != d.blend) break;
+                if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned || n.blend != d.blend || n.cutout != d.cutout) break;
                 if (blend && n.depth != d.depth) break;   // translucent instances keep their far-to-near order
                 ++run;
             }
-            if (d.skinned != current_skinned || blend != current_blend) {
-                wgpuRenderPassEncoderSetPipeline(pass, blend ? (d.skinned ? blend_skinned : blend_plain) : (d.skinned ? skinned : plain));
+            if (d.skinned != current_skinned || blend != current_blend || cutting != current_cut) {
+                wgpuRenderPassEncoderSetPipeline(pass, cutting ? cut : blend ? (d.skinned ? blend_skinned : blend_plain) : (d.skinned ? skinned : plain));
                 current_skinned = d.skinned;
                 current_blend = blend;
+                current_cut = cutting;
                 current_mesh = nullptr;
             }
+            if (cutting) wgpuRenderPassEncoderSetBindGroup(pass, 3, d.material, 0, nullptr);
             if (d.gpu != current_mesh) {
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
                 if (d.skinned) wgpuRenderPassEncoderSetVertexBuffer(pass, 1, d.gpu->skin, 0, WGPU_WHOLE_SIZE);
@@ -5173,10 +5845,150 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
             const std::uint32_t offset = 256u * static_cast<std::uint32_t>(c);
             wgpuRenderPassEncoderSetBindGroup(spass, 2, im.cascade_bg, 1, &offset);
-            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline);
+            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline);
             wgpuRenderPassEncoderEnd(spass);
             wgpuRenderPassEncoderRelease(spass);
         }
+    }
+    // A reflection probe's capture: the scene drawn six ways from its center with the frame's own
+    // shading (the sky, the sun, the ambient and what glows; no local lights, shadows, occlusion or
+    // probes, so it needs nothing of the camera's), then turned into its panorama and prefiltered.
+    if (probe_capture >= 0) {
+        Impl::ProbeSlot& slot = im.probe_slots[static_cast<std::size_t>(probe_capture)];
+        for (WGPUBindGroup g : im.probe_groups) wgpuBindGroupRelease(g);
+        im.probe_groups.clear();
+        const std::array<Mat4, 6> views = im.probe_views(slot.center);
+        const rhi::Color bg{decode(clear.r), decode(clear.g), decode(clear.b), 1.0f};
+        for (int f = 0; f < 6; ++f) {
+            FrameUniforms pu = fu;
+            to_array(views[static_cast<std::size_t>(f)], pu.view_proj);
+            to_array(views[static_cast<std::size_t>(f)], pu.cur_view_proj);
+            to_array(views[static_cast<std::size_t>(f)], pu.prev_view_proj);
+            to_array(views[static_cast<std::size_t>(f)].inverse(), pu.inv_view_proj);
+            pu.camera_pos[0] = slot.center.x; pu.camera_pos[1] = slot.center.y; pu.camera_pos[2] = slot.center.z;
+            pu.camera_fwd[3] = 0;
+            pu.clusters[3] = 0;
+            pu.shadow[3] = 0;
+            pu.ao[0] = 0;
+            pu.taa[0] = 0;
+            pu.probe_info[0] = 0;
+            pu.viewport[0] = 0; pu.viewport[1] = 0; pu.viewport[2] = kProbeFace; pu.viewport[3] = kProbeFace;
+            im.device->write_buffer(im.probe_frame_buf[f], 0, &pu, sizeof pu);
+            WGPUBindGroupEntry pe[13];
+            std::memcpy(pe, im.scene_entries, sizeof pe);
+            pe[0].buffer = im.probe_frame_buf[f];
+            WGPUBindGroupDescriptor pd{};
+            pd.label = rhi::str("pocket.probe.scene");
+            pd.layout = im.scene_bgl;
+            pd.entryCount = 13;
+            pd.entries = pe;
+            WGPUBindGroup group = wgpuDeviceCreateBindGroup(im.device->device(), &pd);
+            im.probe_groups.push_back(group);
+            WGPURenderPassColorAttachment pca{};
+            pca.view = im.probe_view[f];
+            pca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            pca.loadOp = WGPULoadOp_Clear;
+            pca.storeOp = WGPUStoreOp_Store;
+            pca.clearValue = {bg.r, bg.g, bg.b, 1.0};
+            WGPURenderPassDepthStencilAttachment pds{};
+            pds.view = im.probe_depth_view;
+            pds.depthLoadOp = WGPULoadOp_Clear;
+            pds.depthStoreOp = WGPUStoreOp_Store;
+            pds.depthClearValue = 1.0f;
+            pds.stencilLoadOp = WGPULoadOp_Undefined;
+            pds.stencilStoreOp = WGPUStoreOp_Undefined;
+            pds.stencilReadOnly = true;
+            WGPURenderPassDescriptor prp{};
+            prp.label = rhi::str("pocket.probe.view");
+            prp.colorAttachmentCount = 1;
+            prp.colorAttachments = &pca;
+            prp.depthStencilAttachment = &pds;
+            WGPURenderPassEncoder ppass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &prp);
+            if (im.stats.sky != 0) {
+                wgpuRenderPassEncoderSetPipeline(ppass, im.probe_sky_pipeline);
+                wgpuRenderPassEncoderSetBindGroup(ppass, 0, group, 0, nullptr);
+                wgpuRenderPassEncoderDraw(ppass, 3, 1, 0, 0);
+            }
+            if (!draws.empty()) {
+                std::uint32_t probe_draws = 0;
+                wgpuRenderPassEncoderSetBindGroup(ppass, 0, group, 0, nullptr);
+                wgpuRenderPassEncoderSetBindGroup(ppass, 1, im.object_bg, 0, nullptr);
+                draw_runs(ppass, true, probe_draws, im.probe_pipeline, im.probe_skinned_pipeline);
+            }
+            wgpuRenderPassEncoderEnd(ppass);
+            wgpuRenderPassEncoderRelease(ppass);
+        }
+        // The views into level 0 of the probe's layer, then each next level prefiltered from the one above.
+        const auto layer = static_cast<std::size_t>(probe_capture);
+        std::vector<float> fill(16 * 6 + 8, 0.0f);
+        for (int f = 0; f < 6; ++f) to_array(views[static_cast<std::size_t>(f)], fill.data() + 16 * f);
+        fill[96] = slot.center.x; fill[97] = slot.center.y; fill[98] = slot.center.z;
+        fill[100] = kProbeWidth; fill[101] = kProbeHeight;
+        im.device->write_buffer(im.probe_fill_params, 0, fill.data(), fill.size() * sizeof(float));
+        std::vector<std::uint8_t> slots(static_cast<std::size_t>(Impl::kSkySlot) * kProbeLevels, 0);
+        float prev_alpha = 0;
+        for (std::uint32_t l = 0; l < kProbeLevels; ++l) {
+            Impl::SkyParams q{};
+            q.size[0] = static_cast<float>(std::max(1u, kProbeWidth >> l));
+            q.size[1] = static_cast<float>(std::max(1u, kProbeHeight >> l));
+            const float rough = static_cast<float>(l) / static_cast<float>(kProbeLevels - 1);
+            const float alpha = rough * rough;
+            q.misc[2] = std::sqrt(std::max(alpha * alpha - prev_alpha * prev_alpha, 1e-4f));
+            prev_alpha = alpha;
+            std::memcpy(slots.data() + static_cast<std::size_t>(Impl::kSkySlot) * l, &q, sizeof q);
+        }
+        im.device->write_buffer(im.probe_prefilter_params, 0, slots.data(), slots.size());
+        WGPUBindGroupEntry fe4[4]{};
+        fe4[0].binding = 0;
+        fe4[0].buffer = im.probe_fill_params;
+        fe4[0].size = sizeof(float) * (16 * 6 + 8);
+        fe4[1].binding = 1;
+        fe4[1].textureView = im.probe_views_array;
+        fe4[2].binding = 2;
+        fe4[2].sampler = im.env_sampler;
+        fe4[3].binding = 3;
+        fe4[3].textureView = im.probe_level[layer][0];
+        WGPUBindGroupDescriptor fd{};
+        fd.label = rhi::str("pocket.probe.fill");
+        fd.layout = im.probe_fill_bgl;
+        fd.entryCount = 4;
+        fd.entries = fe4;
+        WGPUBindGroup fill_group = wgpuDeviceCreateBindGroup(im.device->device(), &fd);
+        im.probe_groups.push_back(fill_group);
+        WGPUComputePassDescriptor cpd{};
+        cpd.label = rhi::str("pocket.probe");
+        WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(frame.encoder, &cpd);
+        wgpuComputePassEncoderSetPipeline(cp, im.probe_fill_pipeline);
+        wgpuComputePassEncoderSetBindGroup(cp, 0, fill_group, 0, nullptr);
+        wgpuComputePassEncoderDispatchWorkgroups(cp, (kProbeWidth + 7) / 8, (kProbeHeight + 7) / 8, 1);
+        wgpuComputePassEncoderSetPipeline(cp, im.prefilter_pipeline);
+        for (std::uint32_t l = 1; l < kProbeLevels; ++l) {
+            WGPUBindGroupEntry e[4]{};
+            e[0].binding = 0;
+            e[0].buffer = im.probe_prefilter_params;
+            e[0].offset = static_cast<std::uint64_t>(Impl::kSkySlot) * l;
+            e[0].size = sizeof(Impl::SkyParams);
+            e[1].binding = 1;
+            e[1].textureView = im.probe_level[layer][l - 1];
+            e[2].binding = 2;
+            e[2].sampler = im.env_sampler;
+            e[3].binding = 3;
+            e[3].textureView = im.probe_level[layer][l];
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.probe.prefilter");
+            d.layout = im.env_bgl;
+            d.entryCount = 4;
+            d.entries = e;
+            WGPUBindGroup g = wgpuDeviceCreateBindGroup(im.device->device(), &d);
+            im.probe_groups.push_back(g);
+            wgpuComputePassEncoderSetBindGroup(cp, 0, g, 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(cp, (std::max(1u, kProbeWidth >> l) + 7) / 8, (std::max(1u, kProbeHeight >> l) + 7) / 8, 1);
+        }
+        wgpuComputePassEncoderEnd(cp);
+        wgpuComputePassEncoderRelease(cp);
+        slot.captured = true;
+        slot.frame = im.frame_number;
+        im.stats.probe_captures = 1;
     }
     // The local lights' shadow faces: one pass over the atlas, each face drawn into its own square.
     if (!im.faces.empty() && im.atlas_view && !draws.empty()) {
@@ -5201,7 +6013,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderSetScissorRect(apass, x, y, kFaceSize, kFaceSize);
             const std::uint32_t offset = 256u * static_cast<std::uint32_t>(f);
             wgpuRenderPassEncoderSetBindGroup(apass, 2, im.face_bg, 1, &offset);
-            draw_runs(apass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline);
+            draw_runs(apass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline);
         }
         wgpuRenderPassEncoderEnd(apass);
         wgpuRenderPassEncoderRelease(apass);
@@ -5260,10 +6072,15 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ids.view = im.prepass_view;
         WGPURenderPassColorAttachment icas[2] = {ica, ica};
         icas[1].view = im.velocity_view;
+        WGPURenderPassColorAttachment surface_ca = ica, albedo_ca = ica;
+        surface_ca.view = im.surface_view;
+        surface_ca.clearValue = {0, 0, 1, 0};   // rough: nothing traced where nothing was drawn
+        albedo_ca.view = im.albedo_view;
+        WGPURenderPassColorAttachment icas4[4] = {icas[0], icas[1], surface_ca, albedo_ca};
         WGPURenderPassDescriptor irp{};
         irp.label = rhi::str("pocket.ids");
-        irp.colorAttachmentCount = 2;
-        irp.colorAttachments = icas;
+        irp.colorAttachmentCount = 4;
+        irp.colorAttachments = icas4;
         irp.depthStencilAttachment = &ids;
         WGPURenderPassEncoder ipass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &irp);
         set_viewport(ipass);
@@ -5313,6 +6130,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
+    if (im.ssr.enabled && split && im.surface_view) POCKET_TRY_VOID(im.draw_ssr(frame));
     if (im.taa.enabled && split && im.velocity_view) POCKET_TRY_VOID(im.resolve_taa(frame, taa_reproject));
     if ((im.dof.enabled || im.motion_blur.enabled) && split && im.velocity_view) {
         Impl::FxUniforms u{};
@@ -5485,6 +6303,25 @@ void Renderer::set_dof(DofSettings s) {
     impl_->dof = s;
 }
 DofSettings Renderer::dof() const { return impl_->dof; }
+void Renderer::set_ssr(SsrSettings s) {
+    s.max_distance = std::clamp(s.max_distance, 0.1f, 1000.0f);
+    s.max_roughness = std::clamp(s.max_roughness, 0.0f, 1.0f);
+    s.steps = std::clamp(s.steps, 8, 128);
+    s.thickness = std::clamp(s.thickness, 0.001f, 10.0f);
+    s.intensity = std::clamp(s.intensity, 0.0f, 2.0f);
+    impl_->ssr = s;
+}
+SsrSettings Renderer::ssr() const { return impl_->ssr; }
+Json Renderer::probes() const {
+    Json list = Json::array();
+    for (std::uint32_t i = 0; i < impl_->probe_count; ++i) {
+        const Impl::ProbeSlot& s = impl_->probe_slots[i];
+        list.push_back(Json{{"entity", s.entity}, {"layer", i}, {"center", Json{{"x", s.center.x}, {"y", s.center.y}, {"z", s.center.z}}}, {"size", Json{{"x", s.size.x}, {"y", s.size.y}, {"z", s.size.z}}},
+                            {"captured", s.captured}, {"frame", s.frame}, {"realtime", s.realtime}});
+    }
+    return Json{{"probes", list}, {"frame", impl_->frame_number}, {"max", kMaxProbes}};
+}
+void Renderer::refresh_probes() { impl_->probe_refresh = true; }
 void Renderer::set_motion_blur(MotionBlurSettings s) {
     s.strength = std::clamp(s.strength, 0.0f, 2.0f);
     s.samples = std::clamp(s.samples, 4, 32);
@@ -5598,6 +6435,8 @@ Json Renderer::describe() const {
     j["volumetric"] = s.volumetric;
     j["taa"] = s.taa;
     j["lut"] = s.lut;
+    j["ssr"] = s.ssr;
+    j["probes"] = Json{{"in_use", s.probes}, {"captured", s.probe_captures}};
     j["dof"] = s.dof;
     j["motion_blur"] = s.motion_blur;
     j["id_draws"] = s.id_draws;

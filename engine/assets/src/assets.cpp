@@ -69,6 +69,7 @@ Json Mesh::describe() const {
     j["parts"] = parts;
     j["moving_parts"] = moving_parts();
     j["skinned"] = skinned();
+    j["vertex_colors"] = vertex_colors;
     Json sk = Json::array();
     for (const auto& s : skins) sk.push_back(Json{{"name", s.name}, {"joints", s.joints.size()}});
     j["skins"] = sk;
@@ -1289,7 +1290,8 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                 const Json& attrs = prim.value("attributes", Json::object());
                 if (!attrs.contains("POSITION")) continue;
                 POCKET_TRY(pos, g.accessor(attrs["POSITION"].get<int>()));
-                std::optional<Accessor> nrm, uv, jnt, wgt;
+                std::optional<Accessor> nrm, uv, jnt, wgt, col;
+                if (attrs.contains("COLOR_0")) { POCKET_TRY(a, g.accessor(attrs["COLOR_0"].get<int>())); col = a; mesh.vertex_colors = true; }
                 if (attrs.contains("NORMAL")) { POCKET_TRY(a, g.accessor(attrs["NORMAL"].get<int>())); nrm = a; }
                 if (attrs.contains("TEXCOORD_0")) { POCKET_TRY(a, g.accessor(attrs["TEXCOORD_0"].get<int>())); uv = a; }
                 if (skin_index >= 0 && attrs.contains("JOINTS_0") && attrs.contains("WEIGHTS_0")) {
@@ -1380,6 +1382,14 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                         const std::uint8_t* up = uv->data + v * uv->stride;
                         std::size_t ucs = component_size(uv->component_type);
                         mv.uv = {read_float(up, uv->component_type, uv->normalized), read_float(up + ucs, uv->component_type, uv->normalized)};
+                    }
+                    if (col && v < col->count) {
+                        // Linear, as glTF has it: floats, or normalized bytes or shorts; RGB or RGBA.
+                        const std::uint8_t* cp = col->data + v * col->stride;
+                        const std::size_t ccs = component_size(col->component_type);
+                        const bool norm = col->normalized || col->component_type != 5126;
+                        mv.color = {read_float(cp, col->component_type, norm), read_float(cp + ccs, col->component_type, norm), read_float(cp + 2 * ccs, col->component_type, norm),
+                                    col->components >= 4 ? read_float(cp + 3 * ccs, col->component_type, norm) : 1.0f};
                     }
                     mesh.vertices.push_back(mv);
                 }
@@ -1725,7 +1735,7 @@ Json AssetStore::list() const {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             const bool model = ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || blender_format(ext);
-            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" ? "audio" : ext == ".mtl" ? "material" : "other";
+            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" ? "audio" : ext == ".mtl" ? "material" : "other";
 
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();

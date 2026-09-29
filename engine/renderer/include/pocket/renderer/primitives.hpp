@@ -12,6 +12,7 @@ struct Vertex {
     Vec3 position;
     Vec3 normal;
     Vec2 uv;
+    std::uint32_t color = 0xFFFFFFFFu;   // RGBA, 8 bits each, sRGB-encoded (decoded in the vertex stage)
 };
 
 struct MeshData {

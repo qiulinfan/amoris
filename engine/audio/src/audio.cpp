@@ -7,6 +7,8 @@
 
 #define STB_VORBIS_HEADER_ONLY
 #include <stb_vorbis.c>
+#define DR_MP3_NO_STDIO
+#include <dr_mp3.h>
 #undef STB_VORBIS_HEADER_ONLY
 
 #include <algorithm>
@@ -26,7 +28,8 @@ struct Clip {
     double duration = 0;
     int source_rate = 0, source_channels = 0;
     bool streamed = false;               // decoded by each voice as it plays, from `bytes`
-    std::vector<std::uint8_t> bytes;     // the Ogg file (streamed clips)
+    bool mp3 = false;                    // an MP3 file (dr_mp3), not Ogg Vorbis (stb_vorbis)
+    std::vector<std::uint8_t> bytes;     // the compressed file (streamed clips)
 };
 
 // A streamed voice's way through its file: a decoder, a converter to the mixer format, and the
@@ -34,6 +37,7 @@ struct Clip {
 // frame count keeps rising across loops, so a looping voice is one continuous timeline.
 struct StreamState {
     stb_vorbis* dec = nullptr;
+    std::unique_ptr<drmp3> mp3;     // an MP3 clip's decoder instead
     SDL_AudioStream* conv = nullptr;
     std::vector<float> buf;
     std::uint64_t start = 0;
@@ -42,6 +46,7 @@ struct StreamState {
     ~StreamState() {
         if (conv) SDL_DestroyAudioStream(conv);
         if (dec) stb_vorbis_close(dec);
+        if (mp3) drmp3_uninit(mp3.get());
     }
 };
 
@@ -209,6 +214,42 @@ struct Audio::Impl {
             const auto* raw = reinterpret_cast<const std::uint8_t*>(out);
             pcm.assign(raw, raw + static_cast<std::size_t>(frames) * static_cast<std::size_t>(channels) * sizeof(short));
             std::free(out);
+        } else if (ext == ".mp3") {
+            // MP3 through dr_mp3, like Ogg: a probe for the format and length, then streamed when
+            // long, else decoded whole to 16-bit frames.
+            drmp3 probe;
+            if (!drmp3_init_memory(&probe, bytes.data(), bytes.size(), nullptr)) return fail("bad_audio", "{}: not an MP3 file", path);
+            const int channels = static_cast<int>(probe.channels);
+            const int rate = static_cast<int>(probe.sampleRate);
+            const drmp3_uint64 length = drmp3_get_pcm_frame_count(&probe);
+            drmp3_uninit(&probe);
+            if (channels <= 0 || rate <= 0 || length == 0) return fail("bad_audio", "{}: an MP3 file without samples", path);
+            const double seconds = static_cast<double>(length) / static_cast<double>(rate);
+            if (seconds >= config.stream_seconds) {
+                auto c = std::make_unique<Clip>();
+                c->path = path;
+                c->streamed = true;
+                c->mp3 = true;
+                c->bytes = std::move(bytes);
+                c->source_rate = rate;
+                c->source_channels = channels;
+                c->frames = static_cast<std::uint32_t>(std::llround(seconds * config.sample_rate));
+                c->duration = static_cast<double>(c->frames) / config.sample_rate;
+                log::info("audio", "streaming {} ({:.3f} s, {} Hz, {} ch, {} bytes)", path, c->duration, c->source_rate, c->source_channels, c->bytes.size());
+                const Clip* raw = c.get();
+                clips[path] = std::move(c);
+                return raw;
+            }
+            drmp3_config info{};
+            drmp3_uint64 frames = 0;
+            drmp3_int16* out = drmp3_open_memory_and_read_pcm_frames_s16(bytes.data(), bytes.size(), &info, &frames, nullptr);
+            if (!out || frames == 0) { if (out) drmp3_free(out, nullptr); return fail("bad_audio", "{}: not an MP3 file", path); }
+            spec.format = SDL_AUDIO_S16;
+            spec.channels = static_cast<int>(info.channels);
+            spec.freq = static_cast<int>(info.sampleRate);
+            const auto* raw = reinterpret_cast<const std::uint8_t*>(out);
+            pcm.assign(raw, raw + static_cast<std::size_t>(frames) * info.channels * sizeof(drmp3_int16));
+            drmp3_free(out, nullptr);
         } else {
             SDL_IOStream* io = SDL_IOFromConstMem(bytes.data(), bytes.size());
             if (!io) return fail("bad_audio", "{}: {}", path, SDL_GetError());
@@ -268,9 +309,14 @@ struct Audio::Impl {
     // A streamed voice's decoder and converter, at the file's start.
     Result<std::shared_ptr<StreamState>> open_stream(const Clip& c) const {
         auto s = std::make_shared<StreamState>();
-        int err = 0;
-        s->dec = stb_vorbis_open_memory(c.bytes.data(), static_cast<int>(c.bytes.size()), &err, nullptr);
-        if (!s->dec) return fail("bad_audio", "{}: cannot open the stream (stb_vorbis error {})", c.path, err);
+        if (c.mp3) {
+            s->mp3 = std::make_unique<drmp3>();
+            if (!drmp3_init_memory(s->mp3.get(), c.bytes.data(), c.bytes.size(), nullptr)) { s->mp3.reset(); return fail("bad_audio", "{}: cannot open the stream", c.path); }
+        } else {
+            int err = 0;
+            s->dec = stb_vorbis_open_memory(c.bytes.data(), static_cast<int>(c.bytes.size()), &err, nullptr);
+            if (!s->dec) return fail("bad_audio", "{}: cannot open the stream (stb_vorbis error {})", c.path, err);
+        }
         SDL_AudioSpec src{};
         src.format = SDL_AUDIO_S16;
         src.channels = c.source_channels;
@@ -300,11 +346,12 @@ struct Audio::Impl {
         int guard = 0;
         bool wrapped = false;   // a seek to the start that yields nothing ends the stream (an empty file)
         while (!s.eof && s.start + s.buf.size() / 2 < need && guard++ < 4096) {
-            const int n = stb_vorbis_get_samples_short_interleaved(s.dec, c.source_channels, s.chunk.data(), static_cast<int>(s.chunk.size()));
+            const int n = s.mp3 ? static_cast<int>(drmp3_read_pcm_frames_s16(s.mp3.get(), s.chunk.size() / static_cast<std::size_t>(c.source_channels), s.chunk.data()))
+                                : stb_vorbis_get_samples_short_interleaved(s.dec, c.source_channels, s.chunk.data(), static_cast<int>(s.chunk.size()));
             if (n > 0) {
                 SDL_PutAudioStreamData(s.conv, s.chunk.data(), n * c.source_channels * static_cast<int>(sizeof(short)));
                 wrapped = false;
-            } else if (loop && !wrapped && stb_vorbis_seek_start(s.dec)) {
+            } else if (loop && !wrapped && (s.mp3 ? drmp3_seek_to_pcm_frame(s.mp3.get(), 0) != 0 : stb_vorbis_seek_start(s.dec) != 0)) {
                 wrapped = true;   // around again
             } else {
                 SDL_FlushAudioStream(s.conv);

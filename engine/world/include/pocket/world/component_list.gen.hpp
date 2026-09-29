@@ -9,6 +9,7 @@
     X(Lifetime) \
     X(Camera) \
     X(Light) \
+    X(ReflectionProbe) \
     X(Fog) \
     X(Sky) \
     X(MeshRenderer) \
