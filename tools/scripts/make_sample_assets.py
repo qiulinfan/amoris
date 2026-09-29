@@ -11,7 +11,7 @@ Everything is produced from code so the repository carries no third-party binari
 Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samples/assets/assets)
        python3 tools/scripts/make_sample_assets.py --sounds [dir]   WAV clips for samples/audio/assets
        python3 tools/scripts/make_sample_assets.py --sprites [dir]  PNG sprites for samples/sprites/assets
-       python3 tools/scripts/make_sample_assets.py --decals [dir]   decal images for samples/showcase/assets
+       python3 tools/scripts/make_sample_assets.py --decals [dir]   decal images and a puddle's normal map for samples/showcase/assets
 """
 import base64
 import json
@@ -693,9 +693,32 @@ def arrow(size=128):
     return png(size, size, px)
 
 
+def ripples(size=256):
+    """A puddle's normal map: rings spreading from three drops, their slopes as tangent-space
+    normals (x right, y up the image, z out; 0..1 as 0..255), flat where the rings have faded."""
+    drops = [(0.32, 0.4, 0.0), (0.68, 0.58, 1.9), (0.5, 0.25, 3.7)]
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        for x in range(size):
+            u, v = (x + 0.5) / size, (y + 0.5) / size
+            gx = gy = 0.0
+            for cx, cy, phase in drops:
+                dx, dy = u - cx, v - cy
+                r = math.hypot(dx, dy) + 1e-6
+                # d/dr of a ring wave fading with distance: sin(40 r + phase) * e^(-6 r)
+                slope = (40 * math.cos(40 * r + phase) - 6 * math.sin(40 * r + phase)) * math.exp(-6 * r) * 0.012
+                gx += slope * dx / r
+                gy += slope * dy / r
+            nx, ny, nz = -gx, gy, 1.0   # image y runs down: up the image is -v
+            l = math.sqrt(nx * nx + ny * ny + nz * nz)
+            i = (y * size + x) * 4
+            px[i:i + 4] = [int(round((nx / l * 0.5 + 0.5) * 255)), int(round((ny / l * 0.5 + 0.5) * 255)), int(round((nz / l * 0.5 + 0.5) * 255)), 255]
+    return png(size, size, px)
+
+
 def make_decals(out):
     os.makedirs(out, exist_ok=True)
-    for name, data in (("sigil.png", sigil()), ("arrow.png", arrow())):
+    for name, data in (("sigil.png", sigil()), ("arrow.png", arrow()), ("ripples.png", ripples())):
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
         print(name, len(data), "bytes")

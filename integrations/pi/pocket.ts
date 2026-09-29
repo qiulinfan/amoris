@@ -54,10 +54,22 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: "pocket_look",
         label: "Pocket look",
-        description: "See the running game: renders the current frame to a PNG and returns it as an image, with the visible entities and their pixel bounds.",
-        parameters: Type.Object({}),
-        async execute() {
-            const path = join(mkdtempSync(join(tmpdir(), "pocket-look-")), "frame.png");
+        description: "See the running game: renders the current frame to a PNG and returns it as an image, with the visible entities and their pixel bounds. With around (true, or an entity's name), a sheet of the scene or that entity from six sides instead (front, right, back, left, top, perspective).",
+        parameters: Type.Object({ around: Type.Optional(Type.Union([Type.Boolean(), Type.String()])) }),
+        async execute(_id: string, params: { around?: boolean | string }) {
+            const dir = mkdtempSync(join(tmpdir(), "pocket-look-"));
+            if (params?.around) {
+                const path = join(dir, "views.png");
+                const sheet = await call("render.views", typeof params.around === "string" ? { path, entity: params.around } : { path });
+                return {
+                    content: [
+                        { type: "text", text: text({ views: sheet.views.map((v: { view: string }) => v.view), columns: sheet.columns, center: sheet.center, entity: sheet.entity }) },
+                        { type: "image", data: readFileSync(path).toString("base64"), mimeType: "image/png" },
+                    ],
+                    details: undefined,
+                };
+            }
+            const path = join(dir, "frame.png");
             const cap = await call("capture", { path });
             const visible = await call("render.visible", { limit: 20 });
             return {

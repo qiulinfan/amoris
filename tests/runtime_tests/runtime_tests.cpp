@@ -4924,3 +4924,135 @@ TEST_CASE("a peer joins a lockstep game over a WebSocket (as a browser does) and
     REQUIRE(host.state["state"]["blue.z"].get<double>() > -6.0 + 2.0);    // the WebSocket peer's key moved its player
     REQUIRE(host.net["desyncs"] == 0);
 }
+
+TEST_CASE("world.lint names what is likely wrong, says how to fix it, and every sample is clean but for its deliberate miss", "[runtime][lint]") {
+    {
+        app::Options o;
+        o.project_dir = root() / "samples" / "playground";
+        o.bundle = root() / "build" / "ts" / "playground.js";
+        o.project_config = o.bundle.string() + ".project.json";
+        o.headless = true;
+        o.frames = 100;
+        o.width = 160;
+        o.height = 90;
+        o.log_level = "warn";
+        app::Session s(o);
+        REQUIRE(s.start().has_value());
+        REQUIRE(s.command("world.clear", Json::object()).has_value());
+        auto spawn = [&](const char* name, Json parts) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(parts)}}).has_value()); };
+        const Json box{{"shape", 0}, {"size", Json{{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}};
+        spawn("Loose", Json{{"Transform", Json::object()}, {"Collider", box}});
+        spawn("Weightless", Json{{"Transform", Json::object()}, {"RigidBody", Json{{"kind", 0}, {"mass", 0}}}, {"Collider", box}});
+        spawn("Ghost", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "assets/nope.glb"}}}});
+        Json flat = Json::object();
+        flat["Transform"]["scale"] = Json{{"x", 1}, {"y", 0}, {"z", 1}};
+        flat["MeshRenderer"]["mesh"] = "cube";
+        spawn("Flat", flat);
+        spawn("Strewn", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "sphere"}}}, {"Scatter", Json{{"on", "Nobody"}, {"count", 5}}}});
+        spawn("Eye", Json{{"Transform", Json::object()}, {"Camera", Json{{"active", false}}}, {"CameraRig", Json{{"target", "Nobody"}}}});
+        auto lint = [&]() { return s.command("world.lint", Json::object()).value(); };
+        auto has = [](const Json& l, const char* path, const char* component, const char* severity) {
+            for (const Json& q : l["problems"]) {
+                if (q.value("path", "") == path && q["component"] == component && q["severity"] == severity) return true;
+            }
+            return false;
+        };
+        Json l = lint();
+        INFO(l.dump(1));
+        REQUIRE(l["ok"] == false);
+        REQUIRE(has(l, "/Loose", "Collider", "warning"));
+        REQUIRE(has(l, "/Weightless", "RigidBody", "error"));
+        REQUIRE(has(l, "/Ghost", "MeshRenderer", "error"));
+        REQUIRE(has(l, "/Flat", "Transform", "warning"));
+        REQUIRE(has(l, "/Strewn", "Scatter", "error"));
+        REQUIRE(has(l, "/Eye", "CameraRig", "error"));
+        bool camera = false;
+        for (const Json& q : l["problems"]) camera = camera || (q["component"] == "Camera" && q["severity"] == "error");
+        REQUIRE(camera);   // a camera, none active
+        for (const Json& q : l["problems"]) REQUIRE_FALSE(q["fix"].get<std::string>().empty());
+        // Fixed, each goes away; with all of them fixed the world is clean.
+        REQUIRE(s.command("world.set", Json{{"entity", "Loose"}, {"component", "RigidBody"}, {"value", Json{{"kind", 1}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Weightless"}, {"component", "RigidBody"}, {"value", Json{{"mass", 1}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Ghost"}, {"component", "MeshRenderer"}, {"value", Json{{"mesh", "cube"}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Flat"}, {"component", "Transform"}, {"value", Json{{"scale", Json{{"x", 1}, {"y", 1}, {"z", 1}}}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Strewn"}, {"component", "Scatter"}, {"value", Json{{"on", ""}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "Camera"}, {"value", Json{{"active", true}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "CameraRig"}, {"value", Json{{"target", "Flat"}}}}).has_value());
+        l = lint();
+        INFO(l.dump(1));
+        REQUIRE(l["ok"] == true);
+        REQUIRE(l["errors"] == 0);
+        REQUIRE(l["warnings"] == 0);
+        REQUIRE(s.finish().has_value());
+    }
+    // Every sample as it ships: no errors but the assets sample's Missing, which shows the fallback.
+    for (const auto& entry : std::filesystem::directory_iterator(root() / "samples")) {
+        const std::string name = entry.path().filename().string();
+        const std::filesystem::path bundle = root() / "build" / "ts" / (name + ".js");
+        if (!std::filesystem::exists(bundle)) continue;
+        app::Options o;
+        o.project_dir = entry.path();
+        o.bundle = bundle;
+        if (std::filesystem::exists(bundle.string() + ".project.json")) o.project_config = bundle.string() + ".project.json";
+        o.headless = true;
+        o.frames = 100;
+        o.width = 160;
+        o.height = 90;
+        o.log_level = "error";
+        app::Session s(o);
+        REQUIRE(s.start().has_value());
+        for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+        const Json l = s.command("world.lint", Json::object()).value();
+        INFO(name << ": " << l.dump(1));
+        for (const Json& q : l["problems"]) {
+            if (q["severity"] != "error") continue;
+            REQUIRE((name == "assets" && q.value("path", "") == "/Missing"));
+        }
+        REQUIRE(l["warnings"] == 0);
+        REQUIRE(s.finish().has_value());
+    }
+}
+
+TEST_CASE("render.views draws the scene or an entity from standard views into one sheet without touching the world", "[runtime][views]") {
+    const std::filesystem::path out = root() / "build" / "test-out";
+    std::filesystem::create_directories(out);
+    app::Options o;
+    o.project_dir = root() / "samples" / "physics";
+    o.bundle = root() / "build" / "ts" / "physics.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 100;
+    o.width = 240;
+    o.height = 150;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 5; ++i) REQUIRE(s.frame().has_value());
+    const Json before = s.command("state", Json::object()).value();
+    const auto camera = s.command("render.stats", Json::object()).value()["camera"];
+    // The whole scene from six sides: a sheet of three by two tiles of the frame's size.
+    Json v = s.command("render.views", Json{{"path", (out / "views.png").string()}}).value();
+    INFO(v.dump());
+    REQUIRE(std::filesystem::exists(out / "views.png"));
+    REQUIRE(v["views"].size() == 6);
+    REQUIRE(v["columns"] == 3);
+    REQUIRE(v["rows"] == 2);
+    REQUIRE(v["width"] == 240 * 3);
+    REQUIRE(v["height"] == 150 * 2);
+    // One entity from four: two by two, framed on it (the eye of the top view straight over its centre).
+    v = s.command("render.views", Json{{"path", (out / "views-ramp.png").string()}, {"entity", "Ramp"}, {"views", Json::array({"front", "right", "top", "perspective"})}}).value();
+    REQUIRE(v["columns"] == 2);
+    REQUIRE(v["rows"] == 2);
+    REQUIRE(v["entity"] == "/Ramp");
+    REQUIRE(v["views"][2]["eye"]["x"].get<double>() == Catch::Approx(v["center"]["x"].get<double>()).margin(1e-3));
+    REQUIRE(v["views"][2]["eye"]["y"].get<double>() > v["center"]["y"].get<double>() + 1);
+    // Nothing moved and the scene's own camera is back.
+    const Json after = s.command("state", Json::object()).value();
+    REQUIRE(after["tick"] == before["tick"]);
+    REQUIRE(after["world_hash"] == before["world_hash"]);
+    REQUIRE(s.command("render.stats", Json::object()).value()["camera"] == camera);
+    // Asked wrongly, it says so.
+    REQUIRE_FALSE(s.command("render.views", Json{{"path", (out / "x.png").string()}, {"views", Json::array({"sideways"})}}).has_value());
+    REQUIRE_FALSE(s.command("render.views", Json::object()).has_value());
+    REQUIRE(s.finish().has_value());
+}

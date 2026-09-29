@@ -33,6 +33,7 @@ A track that cannot apply (no such entity, the component missing, no such field,
 |---|---|---|
 | `timeline.play {entity, path?, time?, speed?, loop?}` | `timeline.play(entity, path, {time, speed, loop})` | The entity's Timeline set to play the file from `time` (0); answers the duration and every track that could not apply in this world. |
 | `timeline.stop {entity}` | `timeline.stop(entity)` | Stop where it is. |
+| `timeline.seek {entity, time}` | `timeline.seek(entity, time)` | Put it at `time` (within the duration) and apply its tracks there at once, with no tick and no events: a look at a moment of a cutscene, and the editor's playhead (the Timeline tab, `docs/editor.md`). |
 | `timeline.info {path, entity?}` | `timeline.info(path)` | The file read and checked against the world: its duration, each track's target, key count and times, and its `problem`, the events, and all the `problems` together. A file that is not JSON, a key that is not a key or an easing that does not exist is refused with the reason. |
 | | `timeline.write(path, doc)` | The file written into the project (`project.write`). |
 
@@ -42,4 +43,4 @@ A track that cannot apply (no such entity, the component missing, no such field,
 
 ## Not yet
 
-Curves beyond the easings (a key has no tangents of its own), tracks on scripts' state or on UI, a timeline that blends into another, and an editor for timelines (the file is edited as text, or by an agent).
+Curves beyond the easings (a key has no tangents of its own), tracks on scripts' state or on UI, a timeline that blends into another, and dragging keys along the editor's ruler or editing a key's value and easing there (the editor keys values from the scene; the file is also text an agent writes).

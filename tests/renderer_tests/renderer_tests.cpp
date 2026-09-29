@@ -2167,3 +2167,103 @@ TEST_CASE("the atmosphere: a blue day, a warm low sun that reddens its own light
     REQUIRE(s.finish().has_value());
     std::filesystem::remove(ref);
 }
+
+TEST_CASE("caustics: the sunlight on a bed under water gathers into lines that move with time, and none without", "[renderer][water][caustics]") {
+    const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-caustics.png";
+    std::filesystem::remove(ref);
+    app::Options o = playground_options();
+    o.width = 192;
+    o.height = 128;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    Json bed = Json::object();
+    bed["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -2}, {"z", 0}}}, {"scale", Json{{"x", 40}, {"y", 2}, {"z", 40}}}};
+    bed["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.85}, {"g", 0.75}, {"b", 0.55}, {"a", 1}}}, {"roughness", 1.0}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Bed"}, {"components", bed}}).has_value());   // its top a unit under the surface
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.64}, {"y", 0.1}, {"z", 0.05}, {"w", 0.76}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2.0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lake"}, {"components", Json{{"Transform", Json::object()}, {"Water", Json{{"size", Json{{"x", 30}, {"y", 30}}}, {"wave_height", 0}, {"ripples", 0}, {"foam", 0}, {"clarity", 8.0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 5}, {"z", 0}}}, {"rotation", Json{{"x", -0.7071}, {"y", 0}, {"z", 0}, {"w", 0.7071}}}}}, {"Camera", Json{{"fov_degrees", 60}}}}}}).has_value());
+    // How much the bed's brightness varies over a grid of points on it.
+    auto spread = [&]() {
+        REQUIRE(s.frame().has_value());
+        Json pts = Json::array();
+        for (int j = 0; j < 8; ++j) for (int i = 0; i < 12; ++i) pts.push_back(Json{{"x", 20 + i * 13}, {"y", 12 + j * 13}});
+        const Json px = s.command("capture", Json{{"pixels", pts}}).value()["pixels"];
+        double sum = 0, sq = 0;
+        for (const Json& p : px) {
+            const double l = p[0].get<double>() + p[1].get<double>() + p[2].get<double>();
+            sum += l;
+            sq += l * l;
+        }
+        const double n = static_cast<double>(px.size()), mean = sum / n;
+        return std::sqrt(std::max(sq / n - mean * mean, 0.0));
+    };
+    REQUIRE(s.command("world.set", Json{{"entity", "Lake"}, {"component", "Water"}, {"value", Json{{"caustics", 0}}}}).has_value());
+    const double flat = spread();
+    REQUIRE(s.command("world.set", Json{{"entity", "Lake"}, {"component", "Water"}, {"value", Json{{"caustics", 1}}}}).has_value());
+    const double lit = spread();
+    INFO("spread without " << flat << ", with " << lit);
+    REQUIRE(lit > flat * 1.3);   // about 66 against 42 (the flat bed varies with the sky it reflects)
+    // They move: a third of a second later the bed looks different.
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/test-caustics.png"}, {"update", true}}).has_value());
+    for (int i = 0; i < 20; ++i) REQUIRE(s.frame().has_value());
+    const double moved = s.command("render.compare", Json{{"path", ".pocket/test-caustics.png"}, {"threshold", 6}}).value()["fraction"].get<double>();
+    INFO("moved " << moved);
+    REQUIRE(moved > 0.05);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(ref);
+}
+
+TEST_CASE("a decal's normal map bends the light on what it covers: tilted toward the sun it is brighter than tilted away", "[renderer][decals][decalnormals]") {
+    // Two flat normal maps, tilted 40 degrees toward +x and toward -x (written with the terrain
+    // paint's RGBA PNG writer: one colour all over).
+    const std::filesystem::path dir = root() / "samples" / "playground" / "assets";
+    auto normal_png = [&](const char* name, float nx, float nz) {
+        assets::Terrain t;
+        t.n = 2;
+        t.h.assign(4, 0.0f);
+        t.paint.assign(4, std::array<float, 4>{nx * 0.5f + 0.5f, 0.5f, nz * 0.5f + 0.5f, 1.0f});
+        std::ofstream(dir / name, std::ios::binary) << assets::terrain_paint_png(t);
+    };
+    normal_png("test-tilt-east.png", std::sin(0.7f), std::cos(0.7f));
+    normal_png("test-tilt-west.png", -std::sin(0.7f), std::cos(0.7f));
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(components)}}).has_value()); };
+    Json floor = Json::object();
+    floor["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 20}, {"y", 0.2}, {"z", 20}}}};
+    floor["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.5}, {"g", 0.5}, {"b", 0.5}, {"a", 1}}}, {"roughness", 1.0}};
+    spawn("Floor", floor);
+    // The sun low in the east (+x), shining west and down at 25 degrees.
+    spawn("Sun", Json{{"Transform", Json{{"rotation", Json{{"x", -0.1531}, {"y", 0.6903}, {"z", 0.1531}, {"w", 0.6903}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2}}}});
+    auto decal = [&](const char* name, double x, const char* map) {
+        Json d{{"color", Json{{"r", 0.5}, {"g", 0.5}, {"b", 0.5}, {"a", 1}}}, {"size", Json{{"x", 2}, {"y", 1}, {"z", 2}}}};
+        if (map) d["normal_map"] = map;
+        spawn(name, Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 0.2}, {"z", 0}}}}}, {"Decal", d}});
+    };
+    decal("East", -3, "assets/test-tilt-east.png");
+    decal("Flat", 0, nullptr);
+    decal("West", 3, "assets/test-tilt-west.png");
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 6}, {"z", 5}}}, {"rotation", Json{{"x", -0.4}, {"y", 0}, {"z", 0}, {"w", 0.9165}}}}}, {"Camera", Json{{"fov_degrees", 60}}}});
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    auto lum = [&](double x) {
+        Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 0}, {"z", 0}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return p[0].get<int>() + p[1].get<int>() + p[2].get<int>();
+    };
+    const int east = lum(-3), flat = lum(0), west = lum(3);
+    INFO("toward the sun " << east << ", flat " << flat << ", away " << west);
+    REQUIRE(east > flat + 30);
+    REQUIRE(west < flat - 30);
+    REQUIRE(s.command("render.stats", Json::object()).value()["decals"]["drawn"] == 3);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(dir / "test-tilt-east.png");
+    std::filesystem::remove(dir / "test-tilt-west.png");
+}

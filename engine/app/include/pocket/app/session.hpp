@@ -82,6 +82,7 @@ class Session {
     void bind_natives();
     world::EntityId resolve_entity(const Json& v) const;
     Result<Json> world_command(std::string_view op, const Json& p, std::string_view source);
+    Result<Json> world_lint(const Json& p);
     Result<Json> events_command(std::string_view op, const Json& p, std::string_view source);
     Result<Json> recorder_command(std::string_view op, const Json& p);
     Result<Json> debug_command(std::string_view op, const Json& p);

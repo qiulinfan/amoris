@@ -126,6 +126,10 @@ export const world = {
     summary(): { tick: number; entities: number; roots: number; components: Record<string, number>; events: number; hash: string } {
         return command("world.summary");
     },
+    /** What is likely wrong with the world: each problem's severity, entity, component, what it does and a fix. */
+    lint(limit?: number): { ok: boolean; errors: number; warnings: number; infos: number; problems: Array<{ severity: "error" | "warning" | "info"; entity?: number; path?: string; component: string; problem: string; fix: string }> } {
+        return command("world.lint", limit === undefined ? {} : { limit });
+    },
     /**
      * Spawn a prefab (a scene fragment file under the project, or an inline scene object) and
      * return its root entity. `components` merge onto the root; `parent` places it in the tree.
@@ -219,6 +223,10 @@ export interface FrameComparison {
 }
 
 export const render = {
+    /** The scene, or an entity and what is under it, from standard views at once into one PNG sheet (nothing moves). */
+    views(path: string, options: { entity?: EntityRef; views?: Array<"front" | "back" | "right" | "left" | "top" | "bottom" | "perspective"> } = {}): { path: string; views: Array<{ view: string; eye: Vec3 }>; columns: number; rows: number; width: number; height: number; center: Vec3; radius: number; entity: string | null } {
+        return command("render.views", { path, ...options });
+    },
     stats(): { draw_calls: number; shadow_draws: number; shadows: boolean; instances: number; sprites: number; meshes: number; point_lights: number; has_camera: boolean; has_sun: boolean; camera?: Entity; msaa: number; id_draws: number } {
         return command("render.stats");
     },

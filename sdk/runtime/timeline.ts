@@ -29,6 +29,10 @@ export const timeline = {
     stop(entity: EntityRef): void {
         command("timeline.stop", { entity });
     },
+    /** Put the entity's timeline at `time` with its tracks applied there now (no tick, no events). */
+    seek(entity: EntityRef, time: number): { time: number; duration: number; error?: string } {
+        return command("timeline.seek", { entity, time });
+    },
     /** A timeline file checked against the world: duration, each track's target and problem, events. */
     info(path: string, entity?: EntityRef): TimelineInfo {
         return command("timeline.info", entity === undefined ? { path } : { path, entity }) as TimelineInfo;

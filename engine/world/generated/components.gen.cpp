@@ -675,6 +675,8 @@ void to_json(Json& j, const Decal& v) {
     vec_to_json(j["size"], v.size);
     j["roughness"] = v.roughness;
     j["emissive"] = v.emissive;
+    j["normal_map"] = v.normal_map;
+    j["bumpiness"] = v.bumpiness;
     j["angle"] = v.angle;
     j["order"] = v.order;
     j["enabled"] = v.enabled;
@@ -686,6 +688,8 @@ void from_json(const Json& j, Decal& v) {
     if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
     scalar_from_json(j, "roughness", v.roughness);
     scalar_from_json(j, "emissive", v.emissive);
+    scalar_from_json(j, "normal_map", v.normal_map);
+    scalar_from_json(j, "bumpiness", v.bumpiness);
     scalar_from_json(j, "angle", v.angle);
     scalar_from_json(j, "order", v.order);
     scalar_from_json(j, "enabled", v.enabled);
@@ -702,6 +706,8 @@ void hash_component(StateHasherRef& h, const Decal& v) {
     h.f32(v.size.z);
     h.f32(v.roughness);
     h.f32(v.emissive);
+    h.str(v.normal_map);
+    h.f32(v.bumpiness);
     h.f32(v.angle);
     h.i64(static_cast<std::int64_t>(v.order));
     h.u8(v.enabled ? 1 : 0);
@@ -720,6 +726,7 @@ std::size_t numeric_span(Decal& v, std::string_view path, float** out) {
     if (path == "size.z") { *out = &v.size.z; return 1; }
     if (path == "roughness") { *out = &v.roughness; return 1; }
     if (path == "emissive") { *out = &v.emissive; return 1; }
+    if (path == "bumpiness") { *out = &v.bumpiness; return 1; }
     if (path == "angle") { *out = &v.angle; return 1; }
     return 0;
 }
@@ -2115,6 +2122,7 @@ void to_json(Json& j, const Water& v) {
     j["choppiness"] = v.choppiness;
     j["ripples"] = v.ripples;
     j["foam"] = v.foam;
+    j["caustics"] = v.caustics;
     vec_to_json(j["flow"], v.flow);
     j["density"] = v.density;
     j["drag"] = v.drag;
@@ -2132,6 +2140,7 @@ void from_json(const Json& j, Water& v) {
     scalar_from_json(j, "choppiness", v.choppiness);
     scalar_from_json(j, "ripples", v.ripples);
     scalar_from_json(j, "foam", v.foam);
+    scalar_from_json(j, "caustics", v.caustics);
     if (j.is_object() && j.contains("flow")) vec_from_json(j["flow"], v.flow);
     scalar_from_json(j, "density", v.density);
     scalar_from_json(j, "drag", v.drag);
@@ -2153,6 +2162,7 @@ void hash_component(StateHasherRef& h, const Water& v) {
     h.f32(v.choppiness);
     h.f32(v.ripples);
     h.f32(v.foam);
+    h.f32(v.caustics);
     h.f32(v.flow.x);
     h.f32(v.flow.y);
     h.f32(v.density);
@@ -2178,6 +2188,7 @@ std::size_t numeric_span(Water& v, std::string_view path, float** out) {
     if (path == "choppiness") { *out = &v.choppiness; return 1; }
     if (path == "ripples") { *out = &v.ripples; return 1; }
     if (path == "foam") { *out = &v.foam; return 1; }
+    if (path == "caustics") { *out = &v.caustics; return 1; }
     if (path == "flow") { *out = &v.flow.x; return 2; }
     if (path == "flow.x") { *out = &v.flow.x; return 1; }
     if (path == "flow.y") { *out = &v.flow.y; return 1; }
@@ -2756,12 +2767,14 @@ constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
     FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}."},
     FieldInfo{"enabled", "bool", "false stops it being used, without removing it."},
 }};
-constexpr std::array<FieldInfo, 8> kDecalFields = {{
+constexpr std::array<FieldInfo, 10> kDecalFields = {{
     FieldInfo{"texture", "string", "A project image (its alpha is where it paints); empty is a soft round spot."},
     FieldInfo{"color", "color", "Multiplies the image; alpha is the decal's opacity."},
     FieldInfo{"size", "vec3", "The box's size along the entity's x, y (the projection's depth) and z, times its scale."},
     FieldInfo{"roughness", "f32", "The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own."},
     FieldInfo{"emissive", "f32", "How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units."},
+    FieldInfo{"normal_map", "string", "A project image of normals (tangent space, +y up the image, as glTF's) bending the light on what it covers where its texture paints: a puddle's ripples, cracks, a carved rune. Empty leaves the surface's own shape."},
+    FieldInfo{"bumpiness", "f32", "How much the normal map bends the surface (0 flat, 1 as the map says, more to exaggerate)."},
     FieldInfo{"angle", "f32", "Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean)."},
     FieldInfo{"order", "i32", "Where decals overlap, a higher order paints over a lower (then the later entity)."},
     FieldInfo{"enabled", "bool", "false stops it painting."},
@@ -3036,7 +3049,7 @@ constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind."},
     FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any)."},
 }};
-constexpr std::array<FieldInfo, 14> kWaterFields = {{
+constexpr std::array<FieldInfo, 15> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity."},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed."},
     FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back)."},
@@ -3047,6 +3060,7 @@ constexpr std::array<FieldInfo, 14> kWaterFields = {{
     FieldInfo{"choppiness", "f32", "How sharp the crests are, 0 (rolling) to 1 (peaked)."},
     FieldInfo{"ripples", "f32", "The strength of the small ripples on the waves, 0 for none."},
     FieldInfo{"foam", "f32", "How far out from the shore foam reaches, in units of depth; 0 for none."},
+    FieldInfo{"caustics", "f32", "How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none."},
     FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples."},
     FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default)."},
     FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more."},

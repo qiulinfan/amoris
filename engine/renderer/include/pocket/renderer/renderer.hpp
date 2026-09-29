@@ -11,6 +11,7 @@
 #include <pocket/world/world.hpp>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -189,6 +190,13 @@ struct CameraView {
     float near = 0.1f, far = 1000.0f;
 };
 
+// A view the renderer looks from instead of the scene's camera, for a frame or a few: what
+// render.views draws its sheet from without moving anything in the world.
+struct ViewOverride {
+    Vec3 eye, target, up{0, 1, 0};
+    float fov_degrees = 45;
+};
+
 class Renderer {
    public:
     static Result<std::unique_ptr<Renderer>> create(rhi::Device& device);
@@ -222,6 +230,8 @@ class Renderer {
     // Multisampling of the color pass: 1 (off) or 4; takes effect at the next frame (the scene
     // pipelines are rebuilt and the ids move to a pass of their own).
     void set_msaa(int samples);
+    // Look from `view` instead of the scene's camera until it is cleared (nullopt).
+    void set_view(std::optional<ViewOverride> view);
     [[nodiscard]] int msaa() const;
     void set_shadows(ShadowSettings s);
     [[nodiscard]] ShadowSettings shadows() const;

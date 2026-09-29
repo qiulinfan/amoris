@@ -1173,3 +1173,71 @@ TEST_CASE("editor docks: a tab dragged to another dock moves its pane there, an 
         ok(s.finish());
     }
 }
+
+TEST_CASE("editor timeline pane: tracks and keys on a ruler, a playhead that scrubs, keys added, deleted and undone, a new track", "[editor][timeline]") {
+    const std::filesystem::path file = root() / "samples" / "physics" / "timelines" / "test-door.json";
+    std::filesystem::remove(file);
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("project.write", Json{{"path", "timelines/test-door.json"}, {"json", Json{{"duration", 2}, {"tracks", Json::array({Json{{"component", "Transform"}, {"field", "position.y"}, {"keys", Json::array({Json::array({0, 0}), Json::array({2, 3})})}}})}}}}));
+    Json door = Json::object();
+    door["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}};
+    door["MeshRenderer"] = Json{{"mesh", "cube"}};
+    door["Timeline"] = Json{{"path", "timelines/test-door.json"}, {"playing", false}};
+    ok(s.command("world.spawn", Json{{"name", "ADoor"}, {"components", door}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:ADoor")}}));
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tab:timeline")}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    // One track with its two keys on the ruler.
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "tl:track:0"}})).size() == 1);
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "tl:key:0:0"}})).size() == 1);
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "tl:key:0:1"}})).size() == 1);
+    // The playhead dragged to the middle puts the door halfway up, with no tick.
+    const Json slider = ok(s.command("ui.query", Json{{"name", "tl:time"}}))[0]["rect"];
+    ok(s.command("ui.click", Json{{"x", slider["x"].get<double>() + slider["w"].get<double>() * 0.5}, {"y", slider["y"].get<double>() + slider["h"].get<double>() * 0.5}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    const double t = ok(s.command("world.get", Json{{"entity", "ADoor"}, {"component", "Timeline"}}))["time"].get<double>();
+    INFO("time " << t);
+    REQUIRE(t == Catch::Approx(1).margin(0.15));
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "ADoor"}, {"component", "Transform"}}))["position"]["y"].get<double>() == Catch::Approx(1.5 * t).margin(0.01));
+    // The door raised to 5 and keyed there: three keys, the middle one 5.
+    ok(s.command("world.set", Json{{"entity", "ADoor"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"y", 5}}}}}}));
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tl:track:0:key")}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    auto keys = [&]() { return Json::parse(ok(s.command("project.read", Json{{"path", "timelines/test-door.json"}}))["text"].get<std::string>())["tracks"][0]["keys"]; };
+    Json k = keys();
+    INFO(k.dump());
+    REQUIRE(k.size() == 3);
+    REQUIRE(k[1][1].get<double>() == Catch::Approx(5));
+    // The last key picked and deleted; undone, it is back.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tl:key:0:2")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tl:key:delete")}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    REQUIRE(keys().size() == 2);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    REQUIRE(keys().size() == 3);
+    // A new track on scale.x starts with the value now at the playhead.
+    const int field = find_named(s, "tl:new:field");
+    ok(s.command("ui.click", Json{{"id", field}}));
+    ok(s.command("ui.key", Json{{"key", "End"}}));
+    for (int i = 0; i < 12; ++i) ok(s.command("ui.key", Json{{"key", "Backspace"}}));
+    ok(s.command("ui.type", Json{{"text", "scale.x"}}));
+    ok(s.command("ui.key", Json{{"key", "Return"}}));
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tl:new:add")}}));
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    const Json doc = Json::parse(ok(s.command("project.read", Json{{"path", "timelines/test-door.json"}}))["text"].get<std::string>());
+    INFO(doc.dump());
+    REQUIRE(doc["tracks"].size() == 2);
+    REQUIRE(doc["tracks"][1]["field"] == "scale.x");
+    REQUIRE(doc["tracks"][1]["keys"][0][1].get<double>() == Catch::Approx(1));
+    for (int i = 0; i < 25; ++i) ok(s.idle_frame());   // the bottom dock redraws its tab every twenty frames
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "tl:track:1"}})).size() == 1);
+    ok(s.finish());
+    std::filesystem::remove(file);
+    std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");
+}

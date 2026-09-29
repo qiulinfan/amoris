@@ -123,6 +123,8 @@ An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Dec
 | `size` | vec3 | [2.0, 1.0, 2.0] | The box's size along the entity's x, y (the projection's depth) and z, times its scale. |
 | `roughness` | f32 | -1.0 | The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own. |
 | `emissive` | f32 | 0.0 | How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units. |
+| `normal_map` | string | "" | A project image of normals (tangent space, +y up the image, as glTF's) bending the light on what it covers where its texture paints: a puddle's ripples, cracks, a carved rune. Empty leaves the surface's own shape. |
+| `bumpiness` | f32 | 1.0 | How much the normal map bends the surface (0 flat, 1 as the map says, more to exaggerate). |
 | `angle` | f32 | 60.0 | Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean). |
 | `order` | i32 | 0 | Where decals overlap, a higher order paints over a lower (then the later entity). |
 | `enabled` | bool | true | false stops it painting. |
@@ -508,6 +510,7 @@ A body of water (docs/design/water.md): a surface size.x by size.y (x by z) cent
 | `choppiness` | f32 | 0.5 | How sharp the crests are, 0 (rolling) to 1 (peaked). |
 | `ripples` | f32 | 1.0 | The strength of the small ripples on the waves, 0 for none. |
 | `foam` | f32 | 0.5 | How far out from the shore foam reaches, in units of depth; 0 for none. |
+| `caustics` | f32 | 1.0 | How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none. |
 | `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. |
 | `density` | f32 | 2.0 | The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). |
 | `drag` | f32 | 1.0 | How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. |

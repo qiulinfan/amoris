@@ -250,6 +250,10 @@ export interface Decal {
     roughness: number;
     /** How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units. */
     emissive: number;
+    /** A project image of normals (tangent space, +y up the image, as glTF's) bending the light on what it covers where its texture paints: a puddle's ripples, cracks, a carved rune. Empty leaves the surface's own shape. */
+    normal_map: string;
+    /** How much the normal map bends the surface (0 flat, 1 as the map says, more to exaggerate). */
+    bumpiness: number;
     /** Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean). */
     angle: number;
     /** Where decals overlap, a higher order paints over a lower (then the later entity). */
@@ -820,6 +824,8 @@ export interface Water {
     ripples: number;
     /** How far out from the shore foam reaches, in units of depth; 0 for none. */
     foam: number;
+    /** How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none. */
+    caustics: number;
     /** A current along x and z in units a second: it carries what floats, and the ripples. */
     flow: Vec2;
     /** The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). */
@@ -1095,7 +1101,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
-    Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, angle: 60, order: 0, enabled: true },
+    Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 32, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true, cast_shadows: true },
@@ -1115,7 +1121,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
     Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "" },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
-    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, flow: { x: 0, y: 0 }, density: 2, drag: 1, enabled: true },
+    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },

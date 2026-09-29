@@ -58,6 +58,9 @@ class Timelines {
     Result<Json> info(const world::World& w, const std::string& path, world::EntityId self);
     // Files are read again when they change on disk; this reads every one again now.
     void forget();
+    // The Timeline of entity `id` put at `time` (within its file's duration) with its tracks
+    // applied there at once: no tick, no events. What an editor's playhead and a preview do.
+    Result<Json> seek(world::World& w, world::EntityId id, float time);
 
    private:
     struct Cached {
@@ -65,6 +68,7 @@ class Timelines {
         std::filesystem::file_time_type stamp{};
     };
     Result<const TimelineFile*> load(const std::string& path);
+    std::string apply(world::World& w, world::EntityId id, const TimelineFile& f, float time);
     std::filesystem::path project_dir_;
     std::map<std::string, Cached> files_;
 };

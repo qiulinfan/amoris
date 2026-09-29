@@ -25,7 +25,7 @@ The repository's `.mcp.json` registers the same server for any client that reads
 pi, oh-my-pi and other agents:
 
 - **oh-my-pi** (`omp`) reads `.mcp.json`: run it at the repository root and the `pocket` tools are there (it calls them through its `write` tool on `xd://mcp__pocket_<tool>`).
-- **pi** has no MCP by design; `integrations/pi/pocket.ts` is a pi extension with the same reach: a `pocket` tool (a command and its params) and `pocket_look` (the frame as an image, with what is visible). Load it with `pi -e integrations/pi/pocket.ts` or copy it into `~/.pi/agent/extensions/`; it drives `$POCKET_RPC_URL`, or the url `/pocket-attach <url>` sets.
+- **pi** has no MCP by design; `integrations/pi/pocket.ts` is a pi extension with the same reach: a `pocket` tool (a command and its params) and `pocket_look` (the frame as an image, with what is visible; `around: true` or an entity's name for the six-sided sheet of `render.views`). Load it with `pi -e integrations/pi/pocket.ts` or copy it into `~/.pi/agent/extensions/`; it drives `$POCKET_RPC_URL`, or the url `/pocket-attach <url>` sets.
 - **Any agent with a shell**: `pocket rpc <method> '<params>'` sends one command to `$POCKET_RPC_URL` (or `--url`) and prints the result: JSON, or the text of a text result such as `world.tree`. `pocket rpc help '{"command": "world.set"}'` says how to call a command.
 
 ## Attaching to a running runtime
@@ -50,6 +50,7 @@ Every command has a usage line and a summary in the engine itself: `help {comman
 | `events_since` | The causal event log after a sequence number, with `cause` links; `runtime_command {method: "events.why", params: {seq}}` turns one event into its chain of causes. |
 | `capture`, `render_pick` | The last frame as PNG, the entity id buffer, the entity under a pixel. |
 | `asset_preview` | A model file drawn on its own (framed, under a sky and a sun) and returned as a picture, to look at a model before placing it (`assets.preview`). |
+| `look_around` | The scene, or one entity and what is under it, from six sides at once in one picture (`render.views`), returned as an image: what was built, checked from every side without moving the camera. |
 | `ui_snapshot`, `ui_query`, `ui_click`, `ui_type`, `ui_key` | The interface as text, element lookup by name/text/type, and synthetic input through the same path a player's input takes (see `docs/design/pocket-ui.md`). With `runtime_start {editor: true}` the same tools operate the editor (`docs/editor.md`). |
 | `runtime_command` | Any other command (`world.spawn`, `world.set`, `events.emit`, `world.save`, `save.write`, `input.hold`, `perf`, `log.tail`, `render.visible`, `render.unproject`, `tilemap.set/fill/save`, `nav.bake/path/reachable/nearest`, `recorder.at/diff/track/first` when the session started with `history`, ...); `runtime_commands` lists them. |
 | `runtime_stop` | Quit the session and return its final report. |

@@ -42,8 +42,9 @@ struct GpuDecal {
     float inv[16];      // world to the box, -0.5 to 0.5 along each axis
     float axis[4];      // the projection's direction, the cosine past which surfaces fade
     float color[4];     // linear tint, opacity
-    float params[4];    // image layer, roughness (negative: the surface's), glow
+    float params[4];    // image layer, roughness (negative: the surface's), glow, normal map layer (0 none)
     float sphere[4];    // centre, radius squared
+    float extra[4];     // bumpiness
 };
 // Shadows of point and spot lights: one depth atlas of 512-texel faces, a spot's one face a
 // perspective view down its cone, a point light's six the faces of a cube around it.
@@ -200,6 +201,8 @@ struct alignas(16) FrameUniforms {
     float wind_gust[4];          // its gusts (fraction), 2 pi / gust length
     float clouds[4];             // the atmosphere's clouds: cover, height, 1 / feature size, on
     float cloud_drift[4];        // how far they have drifted (x, z)
+    float waters[8][4];          // up to four water bodies for caustics: (centre x, level, centre z, half x), (half z, depth, caustics)
+    float water_info[4];         // how many, the time
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
@@ -295,6 +298,8 @@ struct Frame {
     wind_gust: vec4f,
     clouds: vec4f,
     cloud_drift: vec4f,
+    waters: array<vec4f, 8>,
+    water_info: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -367,8 +372,9 @@ struct Decal {
     inv: mat4x4f,      // the world into the box, -0.5 to 0.5 along each axis
     axis: vec4f,       // the projection's direction, the cosine past which surfaces fade
     color: vec4f,      // tint, opacity
-    params: vec4f,     // image layer, roughness (negative: the surface's), glow
+    params: vec4f,     // image layer, roughness (negative: the surface's), glow, normal map layer (0 none)
     sphere: vec4f,     // around the box: centre, radius squared
+    extra: vec4f,      // bumpiness
 };
 @group(0) @binding(14) var<storage, read> decals: array<Decal>;
 @group(0) @binding(15) var decal_tex: texture_2d_array<f32>;
@@ -378,6 +384,7 @@ struct Painted {
     roughness: f32,
     metallic: f32,
     glow: vec3f,
+    normal: vec3f,
 };
 fn paint_decals(p: vec3f, n: vec3f, dp1: vec3f, dp2: vec3f, surface: Painted) -> Painted {
     var out = surface;
@@ -397,6 +404,17 @@ fn paint_decals(p: vec3f, n: vec3f, dp1: vec3f, dp2: vec3f, surface: Painted) ->
         out.metallic = mix(out.metallic, 0.0, a);
         if (d.params.y >= 0.0) { out.roughness = mix(out.roughness, clamp(d.params.y, 0.04, 1.0), a); }
         out.glow = out.glow + t.rgb * d.color.rgb * (d.params.z * a);
+        if (d.params.w > 0.5) {
+            // Its normal map bends the surface: the image's x along the box's x, its y (up the
+            // image) along the box's -z, both laid flat on the surface.
+            let m = textureSampleGrad(decal_tex, decal_samp, l.xz + vec2f(0.5), i32(d.params.w), (d.inv * vec4f(dp1, 0.0)).xz, (d.inv * vec4f(dp2, 0.0)).xz).xyz * 2.0 - 1.0;
+            let bx = normalize(vec3f(d.inv[0][0], d.inv[1][0], d.inv[2][0]));
+            let bz = normalize(vec3f(d.inv[0][2], d.inv[1][2], d.inv[2][2]));
+            let tx = normalize(bx - out.normal * dot(bx, out.normal));
+            let tz = normalize(bz - out.normal * dot(bz, out.normal));
+            let bent = normalize(out.normal * max(m.z, 0.05) + (tx * m.x - tz * m.y) * d.extra.x);
+            out.normal = normalize(mix(out.normal, bent, a));
+        }
     }
     return out;
 }
@@ -684,7 +702,8 @@ fn shade(in: VsOut) -> vec4f {
         n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z));
     }
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0)));
+    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
+    n = paint.normal;
     let metallic = paint.metallic;
     let roughness = paint.roughness;
     let albedo = paint.albedo;
@@ -741,7 +760,7 @@ fn shade(in: VsOut) -> vec4f {
             shadow = mix(1.0 - frame.shadow.z, 1.0, lit);
         }
     }
-    color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l);
+    color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l);
     // Point and spot lights: the ones the pixel's cluster lists.
     if (frame.clusters.w > 0u) {
         let at = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
@@ -849,7 +868,8 @@ fn motion(in: VsOut) -> vec2f {
     if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
     if (object.pbr.w > 0.5) { n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
-    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0)));
+    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
+    n = paint.normal;
     var out: IdOut;
     out.id = in.id;
     out.velocity = motion(in);
@@ -888,6 +908,38 @@ fn cloud_noise(p: vec2f) -> f32 {
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
     return mix(mix(cloud_hash(i), cloud_hash(i + vec2i(1, 0)), u.x), mix(cloud_hash(i + vec2i(0, 1)), cloud_hash(i + vec2i(1, 1)), u.x), u.y);
+}
+// Caustics (docs/design/water.md): under a Water body the sunlight on what lies below is gathered
+// into a moving net of bright lines, as a wavy surface focuses it. The net is a warped grid of
+// thin lines (where a warped sine crosses zero), two of them drifting apart, projected along the
+// sun's way down through the water and softened with depth; it multiplies the sun's light there.
+fn caustic_net(p: vec2f, t: f32) -> f32 {
+    var q = p;
+    var lines = 0.0;
+    for (var i = 0; i < 3; i = i + 1) {
+        let fi = f32(i);
+        q = q + 0.55 * vec2f(sin(q.y * 1.31 + t * 0.9 + fi * 1.7), sin(q.x * 1.17 - t * 0.7 + fi * 2.3));
+        let cell = abs(sin(q.x) * sin(q.y * 1.1));
+        lines = lines + pow(1.0 - clamp(cell, 0.0, 1.0), 6.0);
+    }
+    return lines / 3.0;
+}
+fn caustics_at(p: vec3f, l: vec3f) -> f32 {
+    let n = u32(frame.water_info.x);
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = frame.waters[i * 2u];
+        let b = frame.waters[i * 2u + 1u];
+        let depth = a.y - p.y;
+        if (depth <= 0.0 || depth > b.y || abs(p.x - a.x) > a.w || abs(p.z - a.z) > b.x || b.z <= 0.0) { continue; }
+        // Where the light that reaches p came through the surface, a little slanted by the refraction.
+        let s = p.xz + l.xz / max(l.y, 0.2) * depth * 0.75;
+        let t = frame.water_info.y;
+        let net = 0.6 * caustic_net(s * 0.9, t) + 0.4 * caustic_net(s * 1.3 + vec2f(3.1, 1.7), t * 1.3);
+        // Sharp in the shallows, washed out in the deep.
+        let focus = exp(-depth * 0.35);
+        return 1.0 + b.z * focus * (2.4 * net - 0.35);
+    }
+    return 1.0;
 }
 // How thick the clouds are where the layer (cloud_height above the camera) is over world x, z.
 fn cloud_density(xz: vec2f) -> f32 {
@@ -2351,6 +2403,7 @@ struct Renderer::Impl {
     std::uint32_t taa_w = 0, taa_h = 0;
     int taa_next = 0;                          // the one written this frame
     bool taa_valid = false;                    // whether the history holds a frame of this view
+    std::optional<ViewOverride> view_override;   // render.views: a view instead of the scene's camera
     bool motion_prev_set = false;              // whether taa_prev_vp is last frame's (motion blur without TAA)
     std::uint64_t taa_frame = 0;
     Mat4 taa_prev_vp = Mat4::identity();
@@ -4087,9 +4140,12 @@ struct Renderer::Impl {
 
     // The array layer of a decal's image: loaded on first use into the next free layer; the spot
     // for an empty path, and (reported missing) for an image that cannot be read or has no layer left.
-    std::uint32_t decal_layer(const std::string& path) {
+    // A decal image's layer (loaded the first time). A normal map is stored so the layer's sRGB
+    // decoding gives its values back as they are in the file.
+    std::uint32_t decal_layer(const std::string& path, bool normals = false) {
         if (path.empty()) return 0;
-        if (auto it = decal_layers.find(path); it != decal_layers.end()) return it->second;
+        const std::string key = normals ? path + "#normals" : path;
+        if (auto it = decal_layers.find(key); it != decal_layers.end()) return it->second;
         if (failed.contains(path) || !assets) { note_missing(path); return 0; }
         if (decal_layers.size() + 1 >= kDecalLayers) {
             report_missing(path, std::format("more than {} decal images", kDecalLayers - 1));
@@ -4101,8 +4157,19 @@ struct Renderer::Impl {
             return 0;
         }
         const auto layer = static_cast<std::uint32_t>(decal_layers.size() + 1);
-        write_decal_layer(layer, (*img)->width, (*img)->height, (*img)->rgba.data());
-        decal_layers[path] = layer;
+        if (normals) {
+            std::vector<std::uint8_t> enc((*img)->rgba);
+            for (std::size_t k = 0; k < enc.size(); ++k) {
+                if (k % 4 == 3) continue;
+                const float v = static_cast<float>(enc[k]) / 255.0f;
+                const float s = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+                enc[k] = static_cast<std::uint8_t>(std::lround(std::clamp(s, 0.0f, 1.0f) * 255.0f));
+            }
+            write_decal_layer(layer, (*img)->width, (*img)->height, enc.data());
+        } else {
+            write_decal_layer(layer, (*img)->width, (*img)->height, (*img)->rgba.data());
+        }
+        decal_layers[key] = layer;
         return layer;
     }
 
@@ -4146,6 +4213,8 @@ struct Renderer::Impl {
             g.params[0] = static_cast<float>(decal_layer(f.d.texture));
             g.params[1] = f.d.roughness;
             g.params[2] = std::max(f.d.emissive, 0.0f);
+            g.params[3] = static_cast<float>(decal_layer(f.d.normal_map, true));
+            g.extra[0] = std::max(f.d.bumpiness, 0.0f);
             g.sphere[0] = f.centre.x; g.sphere[1] = f.centre.y; g.sphere[2] = f.centre.z; g.sphere[3] = f.radius * f.radius;
             out.push_back(g);
         }
@@ -6219,6 +6288,19 @@ struct Renderer::Impl {
 
     CameraView find_camera(const world::World& w, float aspect) {
         CameraView cv;
+        if (view_override) {
+            const ViewOverride& v = *view_override;
+            const float span = length(v.target - v.eye);
+            cv.view = Mat4::look_at(v.eye, v.target, v.up);
+            cv.near = std::max(span * 0.002f, 0.02f);
+            cv.far = std::max(span * 8.0f, 100.0f);
+            cv.proj = Mat4::perspective(radians(v.fov_degrees), aspect, cv.near, cv.far);
+            cv.position = v.eye;
+            cv.forward = normalize(v.target - v.eye);
+            stats.has_camera = true;
+            stats.camera = 0;
+            return cv;
+        }
         world::EntityId cam_id = 0;
         world::Camera cam;
         world::WorldTransform ct;
@@ -6537,6 +6619,19 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.camera = im.find_camera(world, aspect);
 
     FrameUniforms fu{};
+    // The bodies' boxes for the caustics on what lies below them (the first four).
+    {
+        const std::size_t n = std::min<std::size_t>(im.water_src.size(), 4);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& [wa, c] = im.water_src[i];
+            float* a = fu.waters[i * 2];
+            float* b = fu.waters[i * 2 + 1];
+            a[0] = c.x; a[1] = c.y; a[2] = c.z; a[3] = wa.size.x * 0.5f;
+            b[0] = wa.size.y * 0.5f; b[1] = std::max(wa.depth, 0.0f); b[2] = std::max(wa.caustics, 0.0f);
+        }
+        fu.water_info[0] = static_cast<float>(n);
+        fu.water_info[1] = static_cast<float>(world.seconds());
+    }
     // TAA: the projection shifted by a Halton (2, 3) point inside the pixel, a different one each of
     // eight frames; the unjittered matrices say where things are now and were last frame.
     const Mat4 cur_vp = im.camera.proj * im.camera.view;
@@ -7880,6 +7975,11 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
 }
 
 void Renderer::set_viewport(Viewport v) { impl_->viewport = v; }
+void Renderer::set_view(std::optional<ViewOverride> view) {
+    impl_->view_override = view;
+    impl_->taa_valid = false;   // a cut: no history to blend with
+}
+
 void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4
 int Renderer::msaa() const { return impl_->msaa; }
 void Renderer::set_shadows(ShadowSettings s) {

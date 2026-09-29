@@ -261,6 +261,8 @@ struct Decal {
     Vec3 size{2.0f, 1.0f, 2.0f};
     float roughness = -1.0f;
     float emissive = 0.0f;
+    std::string normal_map = "";
+    float bumpiness = 1.0f;
     float angle = 60.0f;
     std::int32_t order = 0;
     bool enabled = true;
@@ -686,6 +688,7 @@ struct Water {
     float choppiness = 0.5f;
     float ripples = 1.0f;
     float foam = 0.5f;
+    float caustics = 1.0f;
     Vec2 flow{0.0f, 0.0f};
     float density = 2.0f;
     float drag = 1.0f;

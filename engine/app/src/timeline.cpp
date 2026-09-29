@@ -230,6 +230,40 @@ Result<const TimelineFile*> Timelines::load(const std::string& path) {
     return &c.file;
 }
 
+// Every track of `f` at `time` on the Timeline of entity `id`; the first problem, or empty.
+std::string Timelines::apply(world::World& w, world::EntityId id, const TimelineFile& f, float time) {
+    std::string error;
+    for (const TimelineTrack& tr : f.tracks) {
+        const world::EntityId target = tr.entity.empty() || tr.entity == "." ? id : w.find(tr.entity);
+        if (!target || !w.alive(target)) { if (error.empty()) error = std::format("a track moves '{}', which is not an entity", tr.entity); continue; }
+        auto current = w.get(target, tr.component);
+        if (!current) { if (error.empty()) error = std::format("{} has no {}", w.path(target), tr.component); continue; }
+        Json doc = *current;
+        Json* slot = field_at(doc, tr.field);
+        if (!slot) { if (error.empty()) error = std::format("{} has no field '{}'", tr.component, tr.field); continue; }
+        Json value;
+        std::string why;
+        if (!shape(value_at(tr, time), *slot, value, why)) { if (error.empty()) error = std::format("{}.{}: {}", tr.component, tr.field, why); continue; }
+        if (*slot == value) continue;
+        *slot = value;
+        if (auto r = w.set(target, tr.component, doc); !r && error.empty()) error = r.error().message;
+    }
+    return error;
+}
+
+Result<Json> Timelines::seek(world::World& w, world::EntityId id, float time) {
+    const world::Timeline* found = w.try_get<world::Timeline>(id);
+    if (!found) return fail("no_timeline", "{} has no Timeline", w.path(id));
+    world::Timeline t = *found;
+    POCKET_TRY(file, load(t.path));
+    t.time = std::clamp(time, 0.0f, std::max(file->duration, 0.0f));
+    t.error = apply(w, id, *file, t.time);
+    w.ecs().entity(id).set<world::Timeline>(t);
+    Json j{{"entity", id}, {"time", t.time}, {"duration", file->duration}};
+    if (!t.error.empty()) j["error"] = t.error;
+    return j;
+}
+
 void Timelines::step(world::World& w, float dt) {
     std::vector<std::pair<world::EntityId, world::Timeline>> playing;
     w.ecs().each([&](flecs::entity e, const world::Timeline& t) {
@@ -263,21 +297,7 @@ void Timelines::step(world::World& w, float dt) {
             ended = true;
         }
         // The tracks at the new time.
-        for (const TimelineTrack& tr : f.tracks) {
-            const world::EntityId target = tr.entity.empty() || tr.entity == "." ? id : w.find(tr.entity);
-            if (!target || !w.alive(target)) { if (error.empty()) error = std::format("a track moves '{}', which is not an entity", tr.entity); continue; }
-            auto current = w.get(target, tr.component);
-            if (!current) { if (error.empty()) error = std::format("{} has no {}", w.path(target), tr.component); continue; }
-            Json doc = *current;
-            Json* slot = field_at(doc, tr.field);
-            if (!slot) { if (error.empty()) error = std::format("{} has no field '{}'", tr.component, tr.field); continue; }
-            Json value;
-            std::string why;
-            if (!shape(value_at(tr, t.time), *slot, value, why)) { if (error.empty()) error = std::format("{}.{}: {}", tr.component, tr.field, why); continue; }
-            if (*slot == value) continue;
-            *slot = value;
-            if (auto r = w.set(target, tr.component, doc); !r && error.empty()) error = r.error().message;
-        }
+        error = apply(w, id, f, t.time);
         // The events passed on the way: from the time before (included) to now (not), across a
         // wrap; at the end of one that stops, those at its end too.
         auto fire = [&](const TimelineEvent& e) {

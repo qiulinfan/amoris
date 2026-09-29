@@ -23,13 +23,13 @@ interface SchemaComponent { name: string; doc: string; serialized: boolean; fiel
 // names: `hierarchy` is the left dock's, `inspector` the right's.
 interface Layout { hierarchy: number; inspector: number; bottom: number; docks: Record<Dock, Pane[]>; active: Record<Dock, Pane | "">; }
 interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "blender" }
-type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script";
-const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script"];
+type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script" | "timeline";
+const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script", "timeline"];
 type Pane = "hierarchy" | "inspector" | Tab;
 type Dock = "left" | "right" | "bottom";
 const PANES: Pane[] = ["hierarchy", "inspector", ...TABS];
 const DOCKS: Dock[] = ["left", "right", "bottom"];
-const PANE_LABELS: Record<Pane, string> = { hierarchy: "Hierarchy", inspector: "Inspector", console: "Console", events: "Events", transcript: "Transcript", assets: "Assets", input: "Input", audio: "Audio", script: "Script" };
+const PANE_LABELS: Record<Pane, string> = { hierarchy: "Hierarchy", inspector: "Inspector", console: "Console", events: "Events", transcript: "Transcript", assets: "Assets", input: "Input", audio: "Audio", script: "Script", timeline: "Timeline" };
 interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
@@ -199,6 +199,7 @@ function refreshTab(t: Tab): void {
     }
     else if (t === "input") actions.set(command<Record<string, ActionBindings>>("input.describe"));
     else if (t === "audio") refreshMixer();
+    else if (t === "timeline") timelineVersion.update((v) => v + 1);
     else transcriptText.set(command<{ text: string }>("transcript", { max_lines: 30 }).text);
 }
 
@@ -1350,9 +1351,168 @@ function Inspector(props: { width: Dim; grow?: boolean }) {
 }
 
 /** What a tab pane shows (its body), in whichever dock it is. */
+// ------------------------------------------------------------------------------------ timeline pane
+// The selected entity's Timeline (docs/design/timelines.md): its file's tracks as rows of keys on a
+// ruler with the playhead, which scrubs (timeline.seek applies the tracks there without a tick).
+// A key is picked to delete it; a track keys the field's value now at the playhead; a new track
+// starts from the value now. Every change writes the file, which the Timeline reads again, and is
+// one undo step.
+interface TimelineTrackDoc { entity?: string; component: string; field: string; keys: unknown[] }
+interface TimelineDoc { duration?: number; tracks?: TimelineTrackDoc[]; events?: unknown[] }
+const timelineVersion = signal(0);
+const timelineKey = signal<{ path: string; track: number; key: number } | null>(null);
+const timelineNew = signal<{ entity: string; component: string; field: string }>({ entity: "", component: "Transform", field: "position.y" });
+const TIMELINE_WIDTH = 420;
+
+function readTimeline(path: string): TimelineDoc | null {
+    try {
+        return JSON.parse(command<{ text: string }>("project.read", { path }).text) as TimelineDoc;
+    } catch {
+        return null;
+    }
+}
+function writeTimeline(path: string, before: TimelineDoc | null, after: TimelineDoc, label: string): void {
+    const put = (doc: TimelineDoc | null) => { if (doc) command("project.write", { path, json: doc }); timelineVersion.update((v) => v + 1); };
+    put(after);
+    history.record({ label, undo: () => put(before), redo: () => put(after) });
+    historyVersion.update((v) => v + 1);
+}
+function keyTime(k: unknown): number {
+    return Array.isArray(k) ? Number(k[0]) : Number((k as { time?: number }).time ?? 0);
+}
+function timelineDuration(d: TimelineDoc): number {
+    if (typeof d.duration === "number") return d.duration;
+    let end = 0;
+    for (const tr of d.tracks ?? []) for (const k of tr.keys) end = Math.max(end, keyTime(k));
+    for (const e of d.events ?? []) end = Math.max(end, keyTime(e));
+    return end;
+}
+/** A field's value now as a key holds it: a number as it is, a vector or a colour as a list. */
+function fieldNow(entity: number, component: string, field: string): unknown {
+    let v: unknown = world.get(entity, component as ComponentName);
+    for (const part of field.split(".")) {
+        if (v === null || typeof v !== "object") return undefined;
+        v = (v as Record<string, unknown>)[part];
+    }
+    if (v !== null && typeof v === "object") {
+        const o = v as Record<string, number>;
+        for (const order of [["x", "y", "z", "w"], ["r", "g", "b", "a"]]) if (order[0] in o) return order.filter((k) => k in o).map((k) => o[k]);
+    }
+    return v;
+}
+function trackTarget(owner: number, name: string | undefined): number {
+    return !name || name === "." ? owner : world.find(name) ?? 0;
+}
+/** Key a track at the playhead with its field's value now (replacing a key already at that time). */
+function keyAtPlayhead(owner: number, path: string, doc: TimelineDoc, track: number, time: number): void {
+    const tr = doc.tracks?.[track];
+    if (!tr) return;
+    const target = trackTarget(owner, tr.entity);
+    const value = target ? fieldNow(target, tr.component, tr.field) : undefined;
+    if (value === undefined) { notice.set(`${tr.entity ?? "this entity"} has no ${tr.component}.${tr.field} to key`); return; }
+    const after = clone(doc);
+    const t = Math.round(time * 1000) / 1000;
+    const keys = after.tracks![track].keys.filter((k) => Math.abs(keyTime(k) - t) > 1e-4);
+    keys.push([t, value]);
+    keys.sort((a, b) => keyTime(a) - keyTime(b));
+    after.tracks![track].keys = keys;
+    writeTimeline(path, doc, after, `key ${tr.component}.${tr.field} at ${t}s`);
+}
+
+function TimelineBody(): VNode[] {
+    timelineVersion();
+    historyVersion();
+    const id = selected();
+    const tl = id !== 0 && world.has(id, "Timeline") ? world.get(id, "Timeline") : undefined;
+    if (!tl) {
+        const owners = world.query({ with: ["Timeline"] });
+        return [
+            <Label key="hint" text={owners.length > 0 ? "Select an entity with a Timeline:" : "No entity has a Timeline yet: add one in the inspector and name its file."} muted size={12} />,
+            <Row key="owners" gap={4} wrap>
+                {owners.map((r) => <Button key={r.id} label={r.path} small name={`tl:owner:${r.path}`} onClick={() => select(r.id)} />)}
+            </Row>,
+        ];
+    }
+    const path = tl.path;
+    const doc = path ? readTimeline(path) : null;
+    if (!doc) {
+        return [
+            <Row key="none" gap={6}>
+                <Label text={path ? `${path} is not in the project yet.` : "This Timeline names no file."} muted size={12} />
+                {path ? <Button label="Create it" small name="tl:create" onClick={() => writeTimeline(path, null, { duration: 4, tracks: [], events: [] }, `create ${path}`)} /> : null}
+            </Row>,
+        ];
+    }
+    const duration = Math.max(timelineDuration(doc), 0.001);
+    const x = (time: number) => Math.round(Math.min(Math.max(time / duration, 0), 1) * TIMELINE_WIDTH);
+    const pick = timelineKey();
+    const picked = pick && pick.path === path ? pick : null;
+    const seek = (v: number) => { command("timeline.seek", { entity: id, time: v }); timelineVersion.update((n) => n + 1); };
+    const tracks = doc.tracks ?? [];
+    const draft = timelineNew();
+    const out: Array<VNode | null> = [
+        <Row key="head" gap={8} name="tl:head">
+            <Label text={`${path}, ${duration.toFixed(2)} s`} size={12} />
+            <Button label={tl.playing ? "Stop" : "Play"} small primary={tl.playing} name="tl:play" onClick={() => { command(tl.playing ? "timeline.stop" : "timeline.play", tl.playing ? { entity: id } : { entity: id, path, time: tl.time }); timelineVersion.update((n) => n + 1); }} />
+            <Slider value={tl.time} min={0} max={duration} step={duration / 400} width={TIMELINE_WIDTH - 60} name="tl:time" onInput={seek} />
+            <Label text={`${tl.time.toFixed(2)} s`} muted size={12} name="tl:now" />
+        </Row>,
+        ...tracks.map((tr, i) => (
+            <Row key={`track${i}`} gap={8} name={`tl:track:${i}`}>
+                <box width={190}><Label text={`${tr.entity && tr.entity !== "." ? tr.entity : "(this)"} ${tr.component}.${tr.field}`} size={12} /></box>
+                <box width={TIMELINE_WIDTH + 8} height={16} background={theme.panelAlt} radius={3}>
+                    {tr.keys.map((k, n) => (
+                        <box key={n} name={`tl:key:${i}:${n}`} position="absolute" left={x(keyTime(k))} top={2} width={8} height={12} radius={2}
+                            background={picked && picked.track === i && picked.key === n ? "#f0c060" : theme.accent} onClick={() => timelineKey.set({ path, track: i, key: n })} />
+                    ))}
+                    <box position="absolute" left={x(tl.time) + 3} top={0} width={2} height={16} background="#ff5050" />
+                </box>
+                <Button label="Key" small name={`tl:track:${i}:key`} onClick={() => keyAtPlayhead(id, path, doc, i, tl.time)} />
+                <Button label="Remove" small name={`tl:track:${i}:remove`} onClick={() => {
+                    const after = clone(doc);
+                    after.tracks!.splice(i, 1);
+                    timelineKey.set(null);
+                    writeTimeline(path, doc, after, `remove the ${tr.component}.${tr.field} track`);
+                }} />
+            </Row>
+        )),
+        picked && tracks[picked.track]?.keys[picked.key] !== undefined ? (
+            <Row key="picked" gap={8} name="tl:picked">
+                <Label text={`key at ${keyTime(tracks[picked.track].keys[picked.key]).toFixed(2)} s: ${JSON.stringify(Array.isArray(tracks[picked.track].keys[picked.key]) ? (tracks[picked.track].keys[picked.key] as unknown[]).slice(1) : tracks[picked.track].keys[picked.key])}`} size={12} />
+                <Button label="Go to it" small name="tl:key:goto" onClick={() => seek(keyTime(tracks[picked.track].keys[picked.key]))} />
+                <Button label="Delete key" small name="tl:key:delete" onClick={() => {
+                    const after = clone(doc);
+                    after.tracks![picked.track].keys.splice(picked.key, 1);
+                    if (after.tracks![picked.track].keys.length === 0) after.tracks!.splice(picked.track, 1);
+                    timelineKey.set(null);
+                    writeTimeline(path, doc, after, "delete a key");
+                }} />
+            </Row>
+        ) : null,
+        <Row key="new" gap={6} name="tl:new">
+            <TextInput value={draft.entity} placeholder="entity (this)" width={110} name="tl:new:entity" onChange={(v) => timelineNew.set({ ...timelineNew(), entity: v })} />
+            <TextInput value={draft.component} width={110} name="tl:new:component" onChange={(v) => timelineNew.set({ ...timelineNew(), component: v })} />
+            <TextInput value={draft.field} width={110} name="tl:new:field" onChange={(v) => timelineNew.set({ ...timelineNew(), field: v })} />
+            <Button label="Add track" small name="tl:new:add" onClick={() => {
+                const d = timelineNew();
+                const target = trackTarget(id, d.entity);
+                const value = target ? fieldNow(target, d.component, d.field) : undefined;
+                if (value === undefined) { notice.set(`${d.entity || "this entity"} has no ${d.component}.${d.field}`); return; }
+                const after = clone(doc);
+                after.tracks = [...(after.tracks ?? []), { ...(d.entity ? { entity: d.entity } : {}), component: d.component, field: d.field, keys: [[Math.round(tl.time * 1000) / 1000, value]] }];
+                writeTimeline(path, doc, after, `add a ${d.component}.${d.field} track`);
+            }} />
+            <Label text="A new track starts with the field's value now at the playhead; Key adds the value now to a track." muted size={11} wrap flex={1} />
+        </Row>,
+    ];
+    return out.filter((n): n is VNode => n !== null);
+}
+
 function TabBody(t: Tab): VNode[] {
     let body;
-    if (t === "console") {
+    if (t === "timeline") {
+        body = TimelineBody();
+    } else if (t === "console") {
         body = logs().map((l) => <Label key={l.seq} text={`${l.tick !== undefined ? `[${l.tick}] ` : ""}${l.level} ${l.cat}: ${l.msg}`} size={12} color={l.level === "error" ? theme.danger : l.level === "warn" ? "#f0c060" : theme.text} />);
     } else if (t === "events") {
         body = recentEvents().map((e) => <Label key={e.seq} text={`#${e.seq} t${e.tick} ${e.type}${e.subject ? ` @${e.subject}` : ""}${e.cause ? ` <- #${e.cause}` : ""} ${e.data ? JSON.stringify(e.data) : ""}`} size={12} />);

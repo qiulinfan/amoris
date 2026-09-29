@@ -1247,10 +1247,14 @@ Result<Json> Session::timeline_command(std::string_view op, const Json& p) {
         world::EntityId self = p.contains("entity") ? resolve_entity(p["entity"]) : 0;
         return timelines_->info(w, opt<std::string>(p, "path", ""), self);
     }
-    if (op != "play" && op != "stop") return fail("unknown_command", "timeline.{} is not a command (play, stop, info)", op);
+    if (op != "play" && op != "stop" && op != "seek") return fail("unknown_command", "timeline.{} is not a command (play, stop, seek, info)", op);
     if (!p.contains("entity")) return fail("bad_args", "timeline.{} needs an 'entity'", op);
     const world::EntityId id = resolve_entity(p["entity"]);
     if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+    if (op == "seek") {
+        if (!p.contains("time")) return fail("bad_args", "timeline.seek needs a 'time'");
+        return timelines_->seek(w, id, opt<float>(p, "time", 0.0f));
+    }
     world::Timeline t = w.try_get<world::Timeline>(id) ? *w.try_get<world::Timeline>(id) : world::Timeline{};
     if (op == "stop") {
         t.playing = false;
@@ -4164,7 +4168,112 @@ world::EntityId Session::resolve_entity(const Json& v) const {
     return 0;
 }
 
+// What is likely wrong with the world as it stands (docs/design/world-model.md, Linting): parts
+// that do nothing together, files that are not there, names that name nothing. Each problem says
+// what it does to the game and what would fix it, for an agent to act on.
+Result<Json> Session::world_lint(const Json& p) {
+    const std::size_t limit = static_cast<std::size_t>(std::clamp(opt<int>(p, "limit", 200), 1, 5000));
+    Json problems = Json::array();
+    std::map<std::string, int> counts;
+    auto add = [&](const char* severity, world::EntityId id, const char* component, std::string problem, std::string fix) {
+        counts[severity]++;
+        if (problems.size() >= limit) return;
+        Json j{{"severity", severity}, {"component", component}, {"problem", std::move(problem)}, {"fix", std::move(fix)}};
+        if (id) {
+            j["entity"] = id;
+            j["path"] = world_->path(id);
+        }
+        problems.push_back(std::move(j));
+    };
+    // A project file named by a field: whether it is there.
+    auto file_missing = [&](const std::string& rel) {
+        if (rel.empty()) return false;
+        auto full = inside_dir(options_.project_dir, rel);
+        std::error_code ec;
+        return !full || !std::filesystem::exists(*full, ec);
+    };
+    auto names_nothing = [&](const std::string& name) { return !name.empty() && resolve_entity(Json(name)) == 0; };
+    auto& ecs = world_->ecs();
+    // Physics: parts that need each other.
+    ecs.each([&](flecs::entity e, const world::Collider& col) {
+        if (!e.has<world::RigidBody>() && !e.has<world::Character>()) add("warning", e.id(), "Collider", "a Collider without a RigidBody is ignored by the physics: nothing stands on it or hits it", "add a RigidBody (kind 1 for something that never moves) or remove the Collider");
+        if (col.shape == 3 && !col.mesh.empty() && file_missing(col.mesh)) add("error", e.id(), "Collider", std::format("the mesh collider's file {} is not in the project", col.mesh), "import it (assets.import) or point Collider.mesh at a file that is there");
+    });
+    ecs.each([&](flecs::entity e, const world::RigidBody& rb) {
+        if (!e.has<world::Collider>()) add("warning", e.id(), "RigidBody", rb.kind == 0 ? "a dynamic RigidBody without a Collider falls through everything and nothing can touch it" : "a RigidBody without a Collider does nothing", "add a Collider (a box, sphere or capsule the size of what is drawn)");
+        if (rb.kind == 0 && !(rb.mass > 0)) add("error", e.id(), "RigidBody", "a dynamic body with no mass cannot be simulated", "give RigidBody.mass a value above 0 (1 for a crate)");
+        if (rb.kind == 0 && e.has<world::Character>()) add("warning", e.id(), "RigidBody", "a Character moves itself; a dynamic RigidBody on it fights that", "remove the RigidBody, or make it kinematic (kind 2)");
+    });
+    ecs.each([&](flecs::entity e, const world::Transform& t) {
+        if (t.scale.x == 0 || t.scale.y == 0 || t.scale.z == 0) add("warning", e.id(), "Transform", "a scale of 0 along an axis makes it flat: not drawn, and its collider has no size", "set every scale component above 0");
+        if (std::fabs(t.position.x) > 1e5f || std::fabs(t.position.y) > 1e5f || std::fabs(t.position.z) > 1e5f) add("warning", e.id(), "Transform", "this far from the origin floats lose precision: it jitters and collides roughly", "keep the game within some ten thousand units of the origin");
+    });
+    // Files the scene names.
+    ecs.each([&](flecs::entity e, const world::MeshRenderer& mr) {
+        const bool primitive = mr.mesh.empty() || mr.mesh == "cube" || mr.mesh == "sphere" || mr.mesh == "plane" || mr.mesh == "cylinder" || mr.mesh == "quad" || mr.mesh == "capsule";
+        if (!primitive && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule)");
+        if (file_missing(mr.texture)) add("error", e.id(), "MeshRenderer", std::format("the texture {} is not in the project", mr.texture), "point MeshRenderer.texture at an image in the project, or clear it");
+        if (file_missing(mr.normal_map)) add("error", e.id(), "MeshRenderer", std::format("the normal map {} is not in the project", mr.normal_map), "point MeshRenderer.normal_map at an image in the project, or clear it");
+    });
+    ecs.each([&](flecs::entity e, const world::Sprite& s) {
+        if (file_missing(s.texture)) add("error", e.id(), "Sprite", std::format("the sprite's texture {} is not in the project", s.texture), "point Sprite.texture at an image in the project");
+    });
+    ecs.each([&](flecs::entity e, const world::TileMap& m) {
+        if (file_missing(m.map)) add("error", e.id(), "TileMap", std::format("the map file {} is not in the project", m.map), "point TileMap.map at a .tmj file in the project");
+    });
+    ecs.each([&](flecs::entity e, const world::AudioSource& a) {
+        if (file_missing(a.clip)) add("error", e.id(), "AudioSource", std::format("the sound {} is not in the project, so it plays nothing", a.clip), "point AudioSource.clip at a .wav, .ogg or .mp3 in the project");
+    });
+    ecs.each([&](flecs::entity e, const world::Timeline& t) {
+        if (file_missing(t.path)) add("error", e.id(), "Timeline", std::format("the timeline file {} is not in the project", t.path), "write it (timeline.write, project.write) or point Timeline.path at one");
+        else if (!t.error.empty()) add("warning", e.id(), "Timeline", std::format("a track does not apply: {}", t.error), "timeline.info {path} lists every track's problem");
+    });
+    ecs.each([&](flecs::entity e, const world::Decal& d) {
+        if (file_missing(d.texture)) add("error", e.id(), "Decal", std::format("the decal's image {} is not in the project", d.texture), "point Decal.texture at an image in the project, or clear it for the built-in spot");
+    });
+    ecs.each([&](flecs::entity e, const world::ParticleEmitter& pe) {
+        if (file_missing(pe.texture)) add("error", e.id(), "ParticleEmitter", std::format("the particles' texture {} is not in the project", pe.texture), "point ParticleEmitter.texture at an image in the project, or clear it");
+    });
+    ecs.each([&](flecs::entity e, const world::Terrain& t) {
+        if (file_missing(t.heightmap)) add("error", e.id(), "Terrain", std::format("the heightmap {} is not in the project: the ground is flat", t.heightmap), "save one (terrain.save) or clear Terrain.heightmap for noise");
+        if (file_missing(t.paintmap)) add("error", e.id(), "Terrain", std::format("the paint map {} is not in the project", t.paintmap), "save the paint (terrain.save {paint: true}) or clear Terrain.paintmap");
+    });
+    ecs.each([&](flecs::entity e, const world::Sky& s) {
+        if (s.enabled && s.mode == 2 && (s.image.empty() || file_missing(s.image))) add("error", e.id(), "Sky", std::format("the sky's panorama {} is not in the project, so no sky is drawn", s.image), "point Sky.image at an .hdr, .png or .jpg panorama, or use mode 1 or 3");
+    });
+    // Names that name nothing.
+    ecs.each([&](flecs::entity e, const world::Scatter& sc) {
+        if (names_nothing(sc.on)) add("error", e.id(), "Scatter", std::format("Scatter.on names {}, which is not in the world", sc.on), "name the terrain or collider to strew over, or clear it for any static collider");
+        if (!e.has<world::MeshRenderer>()) add("warning", e.id(), "Scatter", "a Scatter draws its entity's MeshRenderer, and this entity has none", "add a MeshRenderer with the mesh to strew");
+    });
+    ecs.each([&](flecs::entity e, const world::CameraRig& r) {
+        if (names_nothing(r.target)) add("error", e.id(), "CameraRig", std::format("the rig follows {}, which is not in the world", r.target), "name the entity to follow (by name or path)");
+        if (!e.has<world::Camera>()) add("warning", e.id(), "CameraRig", "a CameraRig moves a camera, and this entity has no Camera", "put the rig on the camera's entity");
+    });
+    ecs.each([&](flecs::entity e, const world::Joint& j) {
+        if (names_nothing(j.target)) add("error", e.id(), "Joint", std::format("the joint ties to {}, which is not in the world", j.target), "name the other body, or clear the target to tie it to a point in the world");
+        if (!e.has<world::RigidBody>()) add("warning", e.id(), "Joint", "a Joint works on a body, and this entity has no RigidBody", "add a RigidBody and a Collider");
+    });
+    // The view: something must be drawn from a camera.
+    int cameras = 0, active = 0, drawn = 0, skies = 0, winds = 0;
+    ecs.each([&](flecs::entity, const world::Camera& c) { ++cameras; active += c.active ? 1 : 0; });
+    ecs.each([&](flecs::entity, const world::MeshRenderer&) { ++drawn; });
+    ecs.each([&](flecs::entity, const world::Sprite&) { ++drawn; });
+    ecs.each([&](flecs::entity, const world::Sky& s) { skies += s.enabled ? 1 : 0; });
+    ecs.each([&](flecs::entity, const world::Wind& w) { winds += w.enabled ? 1 : 0; });
+    if (drawn > 0 && active == 0) add(cameras == 0 ? "warning" : "error", 0, "Camera", cameras == 0 ? "no Camera: the renderer looks from a default place" : "no Camera is active, so none is looked through", cameras == 0 ? "spawn an entity with a Transform and a Camera where the view should be" : "set Camera.active on the one to look through");
+    if (active > 1) add("info", 0, "Camera", std::format("{} cameras are active; the first by id is looked through", active), "set Camera.active false on the others");
+    if (skies > 1) add("info", 0, "Sky", std::format("{} skies are enabled; only the first by id is drawn", skies), "disable the others");
+    if (winds > 1) add("info", 0, "Wind", std::format("{} winds are enabled; only the first by id blows", winds), "disable the others");
+    // Scripts that failed.
+    for (const Json& err : errors_) add("error", 0, "script", err.is_object() && err.contains("message") && err["message"].is_string() ? err["message"].get<std::string>() : err.dump(), "fix the script (log.tail and script.diagnostics say where)");
+    Json j{{"problems", std::move(problems)}, {"errors", counts["error"]}, {"warnings", counts["warning"]}, {"infos", counts["info"]}};
+    j["ok"] = counts["error"] == 0;
+    return j;
+}
+
 Result<Json> Session::world_command(std::string_view op, const Json& p, std::string_view source) {
+    if (op == "lint") return world_lint(p);
     auto& w = *world_;
     auto need_entity = [&](const char* key) -> Result<world::EntityId> {
         if (!p.is_object() || !p.contains(key)) return fail("bad_args", "missing '{}'", key);
@@ -4860,6 +4969,93 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("recorder.")) return recorder_command(name.substr(9), p);
     if (name.starts_with("debug.")) return debug_command(name.substr(6), p);
+    if (name == "render.views") {
+        // The scene (or one entity and what is under it) seen from standard views at once, without
+        // moving anything: a contact sheet an agent reads to check what it built from every side.
+        const std::string path = opt<std::string>(p, "path", "");
+        if (path.empty()) return fail("bad_args", "render.views needs a 'path' for the sheet (a .png)");
+        std::vector<std::string> names;
+        if (p.contains("views") && p["views"].is_array()) {
+            for (const Json& v : p["views"]) if (v.is_string()) names.push_back(v.get<std::string>());
+        } else {
+            names = {"front", "right", "back", "left", "top", "perspective"};
+        }
+        // What to frame: the entity's bounds and its descendants', or every bound in the world.
+        Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        bool any = false;
+        auto grow = [&](world::EntityId id) {
+            if (const auto* b = world_->try_get<world::Bounds>(id)) {
+                lo = {std::min(lo.x, b->min.x), std::min(lo.y, b->min.y), std::min(lo.z, b->min.z)};
+                hi = {std::max(hi.x, b->max.x), std::max(hi.y, b->max.y), std::max(hi.z, b->max.z)};
+                any = true;
+            }
+        };
+        world::EntityId focus = 0;
+        if (p.contains("entity") && !p["entity"].is_null()) {
+            focus = resolve_entity(p["entity"]);
+            if (!world_->alive(focus)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+            world_->visit_all([&](world::EntityId id, world::EntityId, int) {
+                for (world::EntityId a = id; a != 0; a = world_->parent(a)) if (a == focus) { grow(id); break; }
+            });
+            if (!any) if (const auto* t = world_->try_get<world::WorldTransform>(focus)) { lo = hi = t->position; any = true; }
+        } else {
+            world_->ecs().each([&](flecs::entity e, const world::Bounds&) { grow(e.id()); });
+        }
+        if (!any) return fail("nothing_to_see", "nothing with bounds to frame");
+        const Vec3 center = (lo + hi) * 0.5f;
+        const Vec3 half = (hi - lo) * 0.5f;
+        const float radius = std::max(length(half), 0.25f);
+        const float fov = 45.0f;
+        const float tan_half = std::tan(fov * 0.5f * std::numbers::pi_v<float> / 180.0f);
+        POCKET_TRY(frame_size, render_command("viewport", Json::object()));
+        const float aspect = std::max(frame_size.value("pixels", Json::object()).value("w", 16.0f), 1.0f) / std::max(frame_size.value("pixels", Json::object()).value("h", 9.0f), 1.0f);
+        struct View { const char* name; Vec3 dir; };
+        const View known[] = {{"front", {0, 0, 1}}, {"back", {0, 0, -1}}, {"right", {1, 0, 0}}, {"left", {-1, 0, 0}}, {"top", {0, 1, 0}}, {"bottom", {0, -1, 0}}, {"perspective", normalize(Vec3{1, 0.8f, 1})}};
+        std::vector<rhi::Image> shots;
+        Json list = Json::array();
+        for (const std::string& n : names) {
+            const View* v = nullptr;
+            for (const View& k : known) if (n == k.name) v = &k;
+            if (!v) return fail("bad_args", "no view named '{}' (front, back, right, left, top, bottom, perspective)", n);
+            const Vec3 up = std::fabs(v->dir.y) > 0.99f ? Vec3{0, 0, -1} : Vec3{0, 1, 0};
+            // Far enough that the box's corners fit the view: each corner's reach across the view,
+            // over the tangent of the half angle, plus how near it comes along the view.
+            const Vec3 right = normalize(cross(v->dir * -1.0f, up)), true_up = cross(right, v->dir * -1.0f);
+            float distance = 0;
+            for (int c = 0; c < 8; ++c) {
+                const Vec3 corner{(c & 1) ? half.x : -half.x, (c & 2) ? half.y : -half.y, (c & 4) ? half.z : -half.z};
+                const float along = dot(corner, v->dir);
+                const float need = std::max(std::fabs(dot(corner, right)) / (tan_half * aspect), std::fabs(dot(corner, true_up)) / tan_half);
+                distance = std::max(distance, need + along);
+            }
+            distance = std::max(distance * 1.08f, radius * 0.5f);
+            const Vec3 eye = center + v->dir * distance;
+            renderer_->set_view(renderer::ViewOverride{eye, center, up, fov});
+            POCKET_TRY_VOID(render_frame());
+            POCKET_TRY(img, device_->capture());
+            shots.push_back(std::move(img));
+            list.push_back(Json{{"view", n}, {"eye", Json{{"x", eye.x}, {"y", eye.y}, {"z", eye.z}}}});
+        }
+        renderer_->set_view(std::nullopt);
+        POCKET_TRY_VOID(render_frame());   // back to the scene's own camera
+        // The sheet: the shots in rows of three (two for up to four), each labelled by its place.
+        const std::uint32_t cols = shots.size() <= 4 ? std::min<std::uint32_t>(2, static_cast<std::uint32_t>(shots.size())) : 3;
+        const std::uint32_t rows = static_cast<std::uint32_t>((shots.size() + cols - 1) / cols);
+        const std::uint32_t w = shots[0].width, h = shots[0].height;
+        rhi::Image sheet;
+        sheet.width = w * cols;
+        sheet.height = h * rows;
+        sheet.rgba.assign(static_cast<std::size_t>(sheet.width) * sheet.height * 4, 0);
+        for (std::size_t k = 0; k < shots.size(); ++k) {
+            const std::uint32_t ox = static_cast<std::uint32_t>(k % cols) * w, oy = static_cast<std::uint32_t>(k / cols) * h;
+            for (std::uint32_t y = 0; y < h && y < shots[k].height; ++y) {
+                std::memcpy(&sheet.rgba[((static_cast<std::size_t>(oy) + y) * sheet.width + ox) * 4], &shots[k].rgba[static_cast<std::size_t>(y) * shots[k].width * 4], static_cast<std::size_t>(std::min(w, shots[k].width)) * 4);
+            }
+        }
+        POCKET_TRY_VOID(write_png(path, sheet));
+        return Json{{"path", path}, {"views", list}, {"columns", cols}, {"rows", rows}, {"width", sheet.width}, {"height", sheet.height},
+                    {"center", Json{{"x", center.x}, {"y", center.y}, {"z", center.z}}}, {"radius", radius}, {"entity", focus ? Json(world_->path(focus)) : Json(nullptr)}};
+    }
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("nav.")) return nav_command(name.substr(4), p);
@@ -5033,7 +5229,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");
