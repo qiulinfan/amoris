@@ -151,7 +151,7 @@ The sky around the scene (docs/design/rendering.md, Sky and environment light): 
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mode` | i32 | 1 | 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off. |
+| `mode` | i32 | 1 | 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off. |
 | `image` | string | "" | For mode 2: project-relative path of the panorama (2:1, the horizon across the middle). |
 | `zenith` | color | [0.25, 0.45, 0.8, 1.0] | Procedural: the color straight up. |
 | `horizon` | color | [0.75, 0.82, 0.9, 1.0] | Procedural: the color at the horizon. |
@@ -161,6 +161,10 @@ The sky around the scene (docs/design/rendering.md, Sky and environment light): 
 | `sun_size` | f32 | 1.5 | Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light. |
 | `diffuse` | f32 | 1.0 | How much the sky lights surfaces (0 leaves only the lights). |
 | `specular` | f32 | 1.0 | How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness). |
+| `haze` | f32 | 1.0 | Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun. |
+| `clouds` | f32 | 0.0 | Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md). |
+| `cloud_height` | f32 | 1500.0 | Mode 3: the clouds' height above the camera's ground, in units. |
+| `cloud_scale` | f32 | 900.0 | Mode 3: the size of the clouds' features, in units. |
 | `enabled` | bool | true | false turns the sky off without removing it. |
 
 ## MeshRenderer
@@ -475,6 +479,18 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `snow_line` | f32 | 0.85 | The fraction of `height` above which ground is snow; 1 or more for none. |
 | `texture_tile` | f32 | 4.0 | Units per repeat of the MeshRenderer's texture over the ground. |
 | `paintmap` | string | "" | A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none. |
+
+## Wind
+
+The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `direction` | f32 | 0.0 | Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction. |
+| `speed` | f32 | 3.0 | Units a second. |
+| `gusts` | f32 | 0.3 | How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong). |
+| `gust_length` | f32 | 20.0 | Units from one gust to the next along the wind. |
+| `enabled` | bool | true | False: no wind (the next enabled Wind by id, if any). |
 
 ## Water
 

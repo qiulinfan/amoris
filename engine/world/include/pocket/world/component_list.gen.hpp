@@ -30,6 +30,7 @@
     X(Body2D) \
     X(Character) \
     X(Terrain) \
+    X(Wind) \
     X(Water) \
     X(Scatter) \
     X(Vehicle) \

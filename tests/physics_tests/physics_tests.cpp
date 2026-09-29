@@ -1,5 +1,6 @@
 #include <pocket/physics/physics.hpp>
 #include <pocket/world/water.hpp>
+#include <pocket/world/wind.hpp>
 
 #include <pocket/assets/assets.hpp>
 
@@ -1292,4 +1293,50 @@ TEST_CASE("scattered copies that collide stop characters, bodies, rays and sweep
     REQUIRE(p.stats().scattered == 0);
     ray = p.raycast(w, Vec3{-5, 1, 0}, Vec3{1, 0, 0}, 20.0f, false);
     REQUIRE((!ray.has_value() || ray->entity != posts));
+}
+
+TEST_CASE("a Wind pulls damped bodies toward its velocity, gusts run along it, and without one they come to rest", "[physics][wind]") {
+    World w;
+    physics::Physics p;
+    // A floating ball (no gravity) with the air's drag, and a wind toward -z at 4 a second, steady.
+    const EntityId ball = body(w, "Ball", 1, Vec3{0, 5, 0}, 0.5f, Json{{"gravity_scale", 0}, {"linear_damping", 2}});
+    const EntityId gale = w.spawn("Gale", 0, Json{{"Wind", {{"direction", 90}, {"speed", 4}, {"gusts", 0}}}}).value();
+    for (int i = 0; i < 180; ++i) {
+        p.step(w, 1.0 / 60.0);
+        w.tick(1.0 / 60.0);
+    }
+    Vec3 v = w.try_get<Velocity>(ball)->linear;
+    INFO(v.x << "," << v.y << "," << v.z);
+    REQUIRE(v.z == Catch::Approx(-4).margin(0.05));   // 1 - e^-6 of the way in three seconds
+    REQUIRE(v.x == Catch::Approx(0).margin(1e-3));
+    // The wind stilled, the same drag brings it to rest.
+    Wind still = *w.try_get<Wind>(gale);
+    still.enabled = false;
+    w.ecs().entity(gale).set(still);
+    for (int i = 0; i < 180; ++i) {
+        p.step(w, 1.0 / 60.0);
+        w.tick(1.0 / 60.0);
+    }
+    REQUIRE(length(w.try_get<Velocity>(ball)->linear) < 0.02);
+    // Gusts: along the wind the speed rises and falls by up to half, about the wind's own on
+    // average, and the pattern moves downwind at the wind's speed.
+    still.enabled = true;
+    still.gusts = 0.5f;
+    still.direction = 0;
+    w.ecs().entity(gale).set(still);
+    const world::WindField f = world::wind_field(w);
+    REQUIRE(f.on);
+    double sum = 0, lo = 1e9, hi = -1e9;
+    for (int k = 0; k < 400; ++k) {
+        const float x = static_cast<float>(k) * 0.05f;   // one gust length (20) of samples
+        const float s = world::wind_velocity(f, x, 0, 0).x;
+        sum += s;
+        lo = std::min(lo, static_cast<double>(s));
+        hi = std::max(hi, static_cast<double>(s));
+    }
+    REQUIRE(sum / 400 == Catch::Approx(4).margin(0.1));
+    REQUIRE(lo >= 2 - 1e-3);
+    REQUIRE(hi <= 6 + 1e-3);
+    REQUIRE(hi - lo > 2);
+    REQUIRE(world::wind_velocity(f, 7, 3, 0).x == Catch::Approx(world::wind_velocity(f, 7 + 4 * 2.5f, 3, 2.5f).x).margin(1e-3));
 }

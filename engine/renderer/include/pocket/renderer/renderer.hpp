@@ -162,6 +162,7 @@ struct RenderStats {
     std::uint32_t shadow_faces = 0;       // faces of the shadow atlas they drew (a spot one, a point light six)
     bool has_camera = false;
     bool has_sun = false;
+    float sun_light[3] = {0, 0, 0};   // the sun light as it reaches the ground (linear; an atmosphere colours it)
     world::EntityId camera = 0;
     std::uint32_t asset_meshes = 0;   // distinct glTF meshes on the GPU
     std::uint32_t textures = 0;       // distinct images on the GPU

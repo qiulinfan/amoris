@@ -35,6 +35,9 @@ class Net {
     [[nodiscard]] int delay() const;
     [[nodiscard]] int port() const;
     [[nodiscard]] std::uint64_t seed() const;
+    // A player who came back into a running game and is still replaying it up to the others: the
+    // session runs its ticks as fast as they go, not at the clock's pace.
+    [[nodiscard]] bool catching_up() const;
 
     // This peer's input for `tick` (an array of input events), for everyone.
     void commit(std::int64_t tick, Json events);
@@ -47,7 +50,8 @@ class Net {
     void release(std::int64_t tick);
     // This peer's world hash after `tick`; the host compares everyone's.
     void report_hash(std::int64_t tick, const std::string& hash);
-    // What happened since the last call, for the event log: net.joined, net.started, net.left, net.desync.
+    // What happened since the last call, for the event log: net.joined, net.started, net.left,
+    // net.back, net.desync.
     std::vector<Json> take_notes();
     [[nodiscard]] Json info() const;
 

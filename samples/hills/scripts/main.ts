@@ -24,6 +24,10 @@ onStart(() => {
         }
     }
     world.spawn("Beacon", { components: { Transform: { position: { x: peak.x, y: peak.y + 1.5, z: peak.z }, scale: { x: 0.4, y: 3, z: 0.4 } }, MeshRenderer: { mesh: "cylinder", color: { r: 1, g: 0.35, b: 0.2, a: 1 }, emissive: { r: 1.5, g: 0.4, b: 0.1 } } } });
+    // Smoke from its top, rising and carried off by the scene's Wind (its drag pulls it to the air's speed).
+    world.spawn("Smoke", { components: { Transform: { position: { x: peak.x, y: peak.y + 3.2, z: peak.z } }, ParticleEmitter: {
+        rate: 14, speed: { x: 0.2, y: 0.6 }, spread: 25, lifetime: { x: 4, y: 6 }, gravity: { x: 0, y: 0.6, z: 0 }, drag: 0.8,
+        size: { x: 0.5, y: 2.2 }, color: { r: 0.55, g: 0.55, b: 0.55, a: 0.55 }, color_end: { r: 0.8, g: 0.8, b: 0.8, a: 0 }, world_space: true } } });
     // Trees on gentle grass above the water: a trunk that stops the player and a crown.
     for (let k = 0; k < 400 && trees < 45; k++) {
         const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;

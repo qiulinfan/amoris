@@ -2,6 +2,7 @@
 
 #include <pocket/core/log.hpp>
 #include <pocket/world/water.hpp>
+#include <pocket/world/wind.hpp>
 
 #include <algorithm>
 #include <array>
@@ -1178,11 +1179,18 @@ void Physics::step(world::World& w, double dt_d) {
         im.wet.clear();
         return;
     }
-    // 1. Forces.
+    // 1. Forces. With a Wind (docs/design/wind.md) the linear damping is the air's drag: it pulls a
+    //    body toward the wind's velocity where it is instead of toward rest.
+    const world::WindField wind = world::wind_field(w);
+    const auto wind_t = static_cast<float>(w.seconds());
     for (Body& b : im.bodies) {
         if (b.kind != 0 || b.sleeping) continue;
         b.velocity += s.gravity * (b.gravity_scale * dt);
-        b.velocity *= std::max(0.0f, 1.0f - b.linear_damping * dt);
+        if (wind.on) {
+            b.velocity += (world::wind_velocity(wind, b.position.x, b.position.z, wind_t) - b.velocity) * std::min(b.linear_damping * dt, 1.0f);
+        } else {
+            b.velocity *= std::max(0.0f, 1.0f - b.linear_damping * dt);
+        }
         b.angular *= std::max(0.0f, 1.0f - b.angular_damping * dt);
     }
     for (Body& b : im.bodies) {

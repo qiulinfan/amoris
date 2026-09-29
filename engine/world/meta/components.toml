@@ -142,7 +142,7 @@ fields = [
 name = "Sky"
 doc = "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out."
 fields = [
-    { name = "mode", type = "i32", default = 1, doc = "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off." },
+    { name = "mode", type = "i32", default = 1, doc = "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off." },
     { name = "image", type = "string", default = "", doc = "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle)." },
     { name = "zenith", type = "color", default = [0.25, 0.45, 0.8, 1.0], doc = "Procedural: the color straight up." },
     { name = "horizon", type = "color", default = [0.75, 0.82, 0.9, 1.0], doc = "Procedural: the color at the horizon." },
@@ -152,6 +152,10 @@ fields = [
     { name = "sun_size", type = "f32", default = 1.5, doc = "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light." },
     { name = "diffuse", type = "f32", default = 1.0, doc = "How much the sky lights surfaces (0 leaves only the lights)." },
     { name = "specular", type = "f32", default = 1.0, doc = "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness)." },
+    { name = "haze", type = "f32", default = 1.0, doc = "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun." },
+    { name = "clouds", type = "f32", default = 0.0, doc = "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md)." },
+    { name = "cloud_height", type = "f32", default = 1500.0, doc = "Mode 3: the clouds' height above the camera's ground, in units." },
+    { name = "cloud_scale", type = "f32", default = 900.0, doc = "Mode 3: the size of the clouds' features, in units." },
     { name = "enabled", type = "bool", default = true, doc = "false turns the sky off without removing it." },
 ]
 
@@ -530,6 +534,17 @@ fields = [
     { name = "snow_line", type = "f32", default = 0.85, doc = "The fraction of `height` above which ground is snow; 1 or more for none." },
     { name = "texture_tile", type = "f32", default = 4.0, doc = "Units per repeat of the MeshRenderer's texture over the ground." },
     { name = "paintmap", type = "string", default = "", doc = "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none." },
+]
+
+[[component]]
+name = "Wind"
+doc = "The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer."
+fields = [
+    { name = "direction", type = "f32", default = 0.0, doc = "Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction." },
+    { name = "speed", type = "f32", default = 3.0, doc = "Units a second." },
+    { name = "gusts", type = "f32", default = 0.3, doc = "How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong)." },
+    { name = "gust_length", type = "f32", default = 20.0, doc = "Units from one gust to the next along the wind." },
+    { name = "enabled", type = "bool", default = true, doc = "False: no wind (the next enabled Wind by id, if any)." },
 ]
 
 [[component]]

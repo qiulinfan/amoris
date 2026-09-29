@@ -44,6 +44,7 @@ export type { SpriteClip, PlayClipOptions } from "./sprites";
 export { audio } from "./audio";
 export { terrain } from "./terrain";
 export { water } from "./water";
+export { wind } from "./wind";
 export { timeline } from "./timeline";
 export { camera } from "./camera";
 export { i18n, t } from "./i18n";

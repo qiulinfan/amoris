@@ -303,6 +303,10 @@ struct Sky {
     float sun_size = 1.5f;
     float diffuse = 1.0f;
     float specular = 1.0f;
+    float haze = 1.0f;
+    float clouds = 0.0f;
+    float cloud_height = 1500.0f;
+    float cloud_scale = 900.0f;
     bool enabled = true;
     constexpr bool operator==(const Sky&) const = default;
 };
@@ -656,6 +660,20 @@ void from_json(const Json& j, Terrain& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Terrain& v, std::string_view path, float** out);
 
+/// The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.
+struct Wind {
+    float direction = 0.0f;
+    float speed = 3.0f;
+    float gusts = 0.3f;
+    float gust_length = 20.0f;
+    bool enabled = true;
+    constexpr bool operator==(const Wind&) const = default;
+};
+void to_json(Json& j, const Wind& v);
+void from_json(const Json& j, Wind& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Wind& v, std::string_view path, float** out);
+
 /// A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.
 struct Water {
     Vec2 size{40.0f, 40.0f};
@@ -891,6 +909,7 @@ void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Character& v);
 void hash_component(struct StateHasherRef& h, const Terrain& v);
+void hash_component(struct StateHasherRef& h, const Wind& v);
 void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);

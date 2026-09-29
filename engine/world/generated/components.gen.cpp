@@ -799,6 +799,10 @@ void to_json(Json& j, const Sky& v) {
     j["sun_size"] = v.sun_size;
     j["diffuse"] = v.diffuse;
     j["specular"] = v.specular;
+    j["haze"] = v.haze;
+    j["clouds"] = v.clouds;
+    j["cloud_height"] = v.cloud_height;
+    j["cloud_scale"] = v.cloud_scale;
     j["enabled"] = v.enabled;
 }
 
@@ -813,6 +817,10 @@ void from_json(const Json& j, Sky& v) {
     scalar_from_json(j, "sun_size", v.sun_size);
     scalar_from_json(j, "diffuse", v.diffuse);
     scalar_from_json(j, "specular", v.specular);
+    scalar_from_json(j, "haze", v.haze);
+    scalar_from_json(j, "clouds", v.clouds);
+    scalar_from_json(j, "cloud_height", v.cloud_height);
+    scalar_from_json(j, "cloud_scale", v.cloud_scale);
     scalar_from_json(j, "enabled", v.enabled);
 }
 
@@ -836,6 +844,10 @@ void hash_component(StateHasherRef& h, const Sky& v) {
     h.f32(v.sun_size);
     h.f32(v.diffuse);
     h.f32(v.specular);
+    h.f32(v.haze);
+    h.f32(v.clouds);
+    h.f32(v.cloud_height);
+    h.f32(v.cloud_scale);
     h.u8(v.enabled ? 1 : 0);
 }
 
@@ -861,6 +873,10 @@ std::size_t numeric_span(Sky& v, std::string_view path, float** out) {
     if (path == "sun_size") { *out = &v.sun_size; return 1; }
     if (path == "diffuse") { *out = &v.diffuse; return 1; }
     if (path == "specular") { *out = &v.specular; return 1; }
+    if (path == "haze") { *out = &v.haze; return 1; }
+    if (path == "clouds") { *out = &v.clouds; return 1; }
+    if (path == "cloud_height") { *out = &v.cloud_height; return 1; }
+    if (path == "cloud_scale") { *out = &v.cloud_scale; return 1; }
     return 0;
 }
 
@@ -2053,6 +2069,40 @@ std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Wind& v) {
+    j = Json::object();
+    j["direction"] = v.direction;
+    j["speed"] = v.speed;
+    j["gusts"] = v.gusts;
+    j["gust_length"] = v.gust_length;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Wind& v) {
+    scalar_from_json(j, "direction", v.direction);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "gusts", v.gusts);
+    scalar_from_json(j, "gust_length", v.gust_length);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Wind& v) {
+    h.f32(v.direction);
+    h.f32(v.speed);
+    h.f32(v.gusts);
+    h.f32(v.gust_length);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Wind& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "direction") { *out = &v.direction; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
+    if (path == "gusts") { *out = &v.gusts; return 1; }
+    if (path == "gust_length") { *out = &v.gust_length; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Water& v) {
     j = Json::object();
     vec_to_json(j["size"], v.size);
@@ -2729,8 +2779,8 @@ constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"steps", "i32", "Volumetric: samples along each ray, 4..128."},
     FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far."},
 }};
-constexpr std::array<FieldInfo, 11> kSkyFields = {{
-    FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off."},
+constexpr std::array<FieldInfo, 15> kSkyFields = {{
+    FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off."},
     FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle)."},
     FieldInfo{"zenith", "color", "Procedural: the color straight up."},
     FieldInfo{"horizon", "color", "Procedural: the color at the horizon."},
@@ -2740,6 +2790,10 @@ constexpr std::array<FieldInfo, 11> kSkyFields = {{
     FieldInfo{"sun_size", "f32", "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light."},
     FieldInfo{"diffuse", "f32", "How much the sky lights surfaces (0 leaves only the lights)."},
     FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness)."},
+    FieldInfo{"haze", "f32", "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun."},
+    FieldInfo{"clouds", "f32", "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md)."},
+    FieldInfo{"cloud_height", "f32", "Mode 3: the clouds' height above the camera's ground, in units."},
+    FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units."},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
 }};
 constexpr std::array<FieldInfo, 11> kMeshRendererFields = {{
@@ -2975,6 +3029,13 @@ constexpr std::array<FieldInfo, 14> kTerrainFields = {{
     FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground."},
     FieldInfo{"paintmap", "string", "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none."},
 }};
+constexpr std::array<FieldInfo, 5> kWindFields = {{
+    FieldInfo{"direction", "f32", "Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction."},
+    FieldInfo{"speed", "f32", "Units a second."},
+    FieldInfo{"gusts", "f32", "How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong)."},
+    FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind."},
+    FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any)."},
+}};
 constexpr std::array<FieldInfo, 14> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity."},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed."},
@@ -3096,7 +3157,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 38> kComponents = {{
+constexpr std::array<ComponentInfo, 39> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -3125,6 +3186,7 @@ constexpr std::array<ComponentInfo, 38> kComponents = {{
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Character", "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.", true, kCharacterFields},
     ComponentInfo{"Terrain", "Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.", true, kTerrainFields},
+    ComponentInfo{"Wind", "The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.", true, kWindFields},
     ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},

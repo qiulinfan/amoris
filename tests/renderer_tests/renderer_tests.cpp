@@ -2021,3 +2021,149 @@ TEST_CASE("scattered copies sway on the simulation clock and fade out past their
     REQUIRE(s.finish().has_value());
     std::filesystem::remove(ref);
 }
+
+TEST_CASE("a Wind carries dragged particles, answers wind.at, and leans swaying copies downwind", "[renderer][wind]") {
+    app::Options o = playground_options();
+    o.width = 192;
+    o.height = 128;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // No Wind: still air.
+    Json air = s.command("wind.at", Json{{"x", 3}, {"z", 4}}).value();
+    REQUIRE(air["entity"].is_null());
+    REQUIRE(air["speed"].get<double>() == 0);
+    REQUIRE(s.command("world.spawn", Json{{"name", "Breeze"}, {"components", Json{{"Wind", Json{{"direction", 0}, {"speed", 5}, {"gusts", 0}}}}}}).has_value());
+    air = s.command("wind.at", Json{{"x", 3}, {"z", 4}}).value();
+    REQUIRE(air["path"] == "/Breeze");
+    REQUIRE(air["velocity"]["x"].get<double>() == Catch::Approx(5).margin(1e-4));
+    REQUIRE(air["direction"]["z"].get<double>() == Catch::Approx(0).margin(1e-4));
+    // Smoke with drag 3 and no gravity, puffed out still: carried at the wind's speed.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Smoke"}, {"components", Json{{"Transform", Json::object()}, {"ParticleEmitter", Json{{"rate", 30}, {"speed", Json{{"x", 0}, {"y", 0}}}, {"gravity", Json{{"x", 0}, {"y", 0}, {"z", 0}}}, {"drag", 3}, {"lifetime", Json{{"x", 3}, {"y", 3}}}, {"world_space", true}}}}}}).has_value());
+    for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
+    const Json list = s.command("particles.list", Json{{"entity", "Smoke"}, {"limit", 500}}).value();
+    const Json& ps = list.contains("particles") ? list["particles"] : list;
+    int old = 0;
+    for (const Json& q : ps) {
+        if (q["age"].get<double>() < 1.5) continue;
+        ++old;
+        REQUIRE(q["velocity"]["x"].get<double>() == Catch::Approx(5).margin(0.1));   // 1 - e^-4.5 of the way
+        REQUIRE(q["position"]["x"].get<double>() > 4);
+    }
+    REQUIRE(old > 5);
+    // Reeds lean downwind: the same moment drawn with the wind turned about looks different.
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Smoke"}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Floor"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -0.5}, {"z", 0}}}, {"scale", Json{{"x", 20}, {"y", 1}, {"z", 20}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}, {"RigidBody", Json{{"kind", 1}}}, {"Collider", Json{{"shape", 0}, {"size", Json{{"x", 10}, {"y", 0.5}, {"z", 10}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Reeds"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 3}, {"z", 0}}}, {"scale", Json{{"x", 0.08}, {"y", 1.6}, {"z", 0.08}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0.9}, {"g", 0.85}, {"b", 0.4}, {"a", 1}}}}},
+        {"Scatter", Json{{"count", 300}, {"area", Json{{"x", 8}, {"y", 8}}}, {"seed", 2}, {"spacing", 0.3}, {"sway", 0.5}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 7}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    s.set_paused(true);
+    REQUIRE(s.idle_frame().has_value());
+    const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-wind.png";
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/test-wind.png"}, {"update", true}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Breeze"}, {"component", "Wind"}, {"value", Json{{"direction", 180}}}}).has_value());
+    REQUIRE(s.idle_frame().has_value());
+    const double turned = s.command("render.compare", Json{{"path", ".pocket/test-wind.png"}}).value()["fraction"].get<double>();
+    INFO("turned " << turned);
+    REQUIRE(turned > 0.02);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(ref);
+}
+
+TEST_CASE("the atmosphere: a blue day, a warm low sun that reddens its own light, a dark night, haze and drifting clouds", "[renderer][sky][atmosphere]") {
+    const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-clouds.png";
+    std::filesystem::remove(ref);
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 3}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json::object()}, {"Camera", Json{{"fov_degrees", 40}}}}}}).has_value());
+    // A rotation turning -z toward (yaw about y, then pitch up), in degrees.
+    auto turn = [](double yaw, double pitch) {
+        const double y = yaw * 3.14159265 / 360, p = pitch * 3.14159265 / 360;
+        return Json{{"x", std::cos(y) * std::sin(p)}, {"y", std::sin(y) * std::cos(p)}, {"z", -std::sin(y) * std::sin(p)}, {"w", std::cos(y) * std::cos(p)}};
+    };
+    // The sun at `elevation` degrees straight ahead (-z): its light shines the other way.
+    auto sun_at = [&](double elevation) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Transform"}, {"value", Json{{"rotation", turn(180, -elevation)}}}}).has_value());
+    };
+    auto look = [&](double yaw, double pitch) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"rotation", turn(yaw, pitch)}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+        const Json p = s.command("capture", Json{{"pixel", Json{{"x", 80}, {"y", 60}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    auto sun_light = [&]() {
+        const Json l = s.command("render.stats", Json::object()).value()["sun_light"];
+        return std::array<double, 3>{l["r"].get<double>(), l["g"].get<double>(), l["b"].get<double>()};
+    };
+    // Day: the sky overhead is blue, and says it is the atmosphere.
+    sun_at(60);
+    const auto zenith = look(0, 80);
+    INFO("zenith " << zenith[0] << "," << zenith[1] << "," << zenith[2]);
+    REQUIRE(s.command("render.stats", Json::object()).value()["sky"] == "atmosphere");
+    REQUIRE(zenith[2] > zenith[0] + 30);
+    REQUIRE(zenith[2] > zenith[1]);
+    const auto noon = sun_light();   // high up, nearly as the light says (white), a touch less blue
+    REQUIRE(noon[0] == Catch::Approx(1).margin(0.02));
+    REQUIRE(noon[2] == Catch::Approx(1).margin(0.06));
+    // A low sun: the sky toward it is warm, and its light on the block is redder than at noon.
+    sun_at(3);
+    const auto sunset = look(0, 6);
+    INFO("sunset " << sunset[0] << "," << sunset[1] << "," << sunset[2]);
+    REQUIRE(sunset[0] > sunset[2] + 30);
+    const auto low = sun_light();
+    INFO("sun light low " << low[0] << "," << low[1] << "," << low[2]);
+    REQUIRE(low[0] > 2 * low[2]);   // reddened
+    REQUIRE(low[0] < noon[0]);      // and dimmed
+    // Night: the sun gone below, the sky overhead nearly black and the sun light out.
+    sun_at(-6);
+    const auto night = look(0, 80);
+    INFO("night " << night[0] << "," << night[1] << "," << night[2]);
+    REQUIRE(sun_light()[0] == 0);
+    REQUIRE(night[0] + night[1] + night[2] < (zenith[0] + zenith[1] + zenith[2]) / 6);
+    // Haze whitens the day sky: the gap between blue and red closes.
+    sun_at(60);
+    const auto clear = look(90, 25);
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"haze", 6}}}}).has_value());
+    const auto hazy = look(90, 25);
+    INFO("clear " << clear[0] << "," << clear[2] << " hazy " << hazy[0] << "," << hazy[2]);
+    REQUIRE(hazy[2] - hazy[0] < clear[2] - clear[0] - 10);
+    // Clouds shade the ground under them: a floor seen from above, under a sky full of them, is darker.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Floor"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -2}, {"z", 0}}}, {"scale", Json{{"x", 40}, {"y", 1}, {"z", 40}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}}}}).has_value());
+    auto floor_seen = [&](double cover) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"clouds", cover}, {"haze", 1}}}}).has_value());
+        const auto p = look(0, -89);
+        return p[0] + p[1] + p[2];
+    };
+    const int open_floor = floor_seen(0), shaded_floor = floor_seen(1);
+    INFO("floor " << open_floor << " under clouds " << shaded_floor);
+    REQUIRE(shaded_floor < open_floor * 0.8);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Floor"}}).has_value());
+    // Clouds cover part of the sky and drift with the wind.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"haze", 1}, {"clouds", 0}}}}).has_value());
+    look(0, 50);
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/test-clouds.png"}, {"update", true}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"clouds", 0.7}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const double covered = s.command("render.compare", Json{{"path", ".pocket/test-clouds.png"}}).value()["fraction"].get<double>();
+    INFO("clouds cover " << covered);
+    REQUIRE(covered > 0.2);
+    // A wind of 10 carries them at 60 up there: two seconds later the view overhead differs.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Gale"}, {"components", Json{{"Wind", Json{{"speed", 10}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/test-clouds.png"}, {"update", true}}).has_value());
+    for (int i = 0; i < 120; ++i) REQUIRE(s.frame().has_value());
+    const double drifted = s.command("render.compare", Json{{"path", ".pocket/test-clouds.png"}, {"threshold", 4}}).value()["fraction"].get<double>();
+    INFO("drifted " << drifted);
+    REQUIRE(drifted > 0.02);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(ref);
+}

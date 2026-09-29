@@ -3,7 +3,12 @@
   {
    "name": "Sky",
    "components": {
-    "Sky": {}
+    "Sky": {
+     "mode": 3,
+     "clouds": 0.4,
+     "cloud_height": 350,
+     "cloud_scale": 160
+    }
    }
   },
   {
@@ -61,6 +66,17 @@
     },
     "Collider": {
      "shape": 3
+    }
+   }
+  },
+  {
+   "name": "Breeze",
+   "components": {
+    "Wind": {
+     "direction": 30,
+     "speed": 3,
+     "gusts": 0.35,
+     "gust_length": 24
     }
    }
   },

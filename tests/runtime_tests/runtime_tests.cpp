@@ -4348,7 +4348,7 @@ struct Peer {
     std::string error;
 };
 
-void play_peer(app::Options o, int until, const char* action, int sign, std::promise<int>* port, Peer& out, int perturb_at = -1) {
+void play_peer(app::Options o, int until, const char* action, int sign, std::promise<int>* port, Peer& out, int perturb_at = -1, int hold_at = 20, int pace_ms = 0) {
     app::Session s(o);
     if (auto r = s.start(); !r) {
         out.error = r.error().to_string();
@@ -4361,7 +4361,7 @@ void play_peer(app::Options o, int until, const char* action, int sign, std::pro
     for (;;) {
         const std::int64_t tick = s.command("state", Json::object()).value()["tick"].get<std::int64_t>();
         if (tick >= until || std::chrono::steady_clock::now() > deadline) break;
-        if (!held && tick >= 20) {
+        if (!held && tick >= hold_at) {
             s.command("input.hold", Json{{"action", action}, {"ticks", 60}, {"sign", sign}}).value();
             held = true;
         }
@@ -4370,6 +4370,7 @@ void play_peer(app::Options o, int until, const char* action, int sign, std::pro
             perturbed = true;
         }
         if (auto r = s.frame(); !r) { out.error = r.error().to_string(); break; }
+        if (pace_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(pace_ms));
     }
     // A little longer so the last hashes and inputs reach the host before anyone leaves.
     for (int i = 0; i < 30; ++i) (void)s.idle_frame();
@@ -4448,6 +4449,55 @@ TEST_CASE("a peer whose world drifts from the others' is caught by the host's ha
     REQUIRE(host.net["desyncs"].get<int>() >= 1);
     REQUIRE(host.net["first_desync"].get<int>() >= 70);
     REQUIRE(host.net["first_desync"].get<int>() <= 90);
+}
+
+TEST_CASE("a player who left comes back into the running game: it replays what it missed, is let back in, and plays in step", "[runtime][net][rejoin]") {
+    app::Options ho = arena_options();
+    ho.net_host = 0;
+    ho.net_players = 2;
+    std::promise<int> port;
+    auto port_ready = port.get_future();
+    Peer host, first, back;
+    // The host plays to tick 900 at a walking pace (a few ms a frame), so the game is still running
+    // when the other player comes back.
+    std::thread host_thread([&] { play_peer(ho, 900, "move_x", 1, &port, host, -1, 20, 4); });
+    const int p = port_ready.get();
+    REQUIRE(p > 0);
+    app::Options po = arena_options();
+    po.net_join = "127.0.0.1:" + std::to_string(p);
+    // Player 1 plays until tick 150 and leaves (its Blue walks south first).
+    std::thread first_thread([&] { play_peer(po, 150, "move_z", 1, nullptr, first); });
+    first_thread.join();
+    REQUIRE(first.error.empty());
+    // Someone comes back into its place: welcomed late, it replays from tick 0 and then plays,
+    // walking Blue west once it is back.
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::thread back_thread([&] { play_peer(po, 900, "move_x", -1, nullptr, back, -1, 700); });
+    host_thread.join();
+    back_thread.join();
+    INFO("host " << host.error << " " << host.state.dump() << " " << host.net.dump());
+    INFO("back " << back.error << " " << back.state.dump() << " " << back.net.dump());
+    REQUIRE(host.error.empty());
+    REQUIRE(back.error.empty());
+    REQUIRE(back.net["player"] == 1);
+    REQUIRE(back.net["late"] == true);
+    REQUIRE(back.net["catching_up"] == false);
+    const std::int64_t back_at = back.net["back_at"].get<std::int64_t>();
+    REQUIRE(back_at > 150);
+    REQUIRE(back_at < 700);   // back in before its key was pressed
+    // Away once, from after its last input until it was back.
+    REQUIRE(host.net["away"]["1"].size() == 1);
+    REQUIRE(host.net["away"]["1"][0][1].get<std::int64_t>() == back_at);
+    // The same game on both, through the absence and the replay: every exposed value and the whole
+    // run's hash chain; the hashes it reported while replaying matched the host's.
+    REQUIRE(host.state["tick"] == 900);
+    REQUIRE(back.state["tick"] == 900);
+    REQUIRE(host.state["state"] == back.state["state"]);
+    REQUIRE(host.state["state_hash"] == back.state["state_hash"]);
+    REQUIRE(host.net["replay_checks"].get<int>() >= 4);
+    REQUIRE(host.net["desyncs"] == 0);
+    // Blue walked west under the one who came back: its key counts again.
+    REQUIRE(host.state["state"]["blue.x"].get<double>() < -2.0);
 }
 
 TEST_CASE("water.height answers the moving surface, and a crate dropped in the lake floats on it", "[runtime][water]") {

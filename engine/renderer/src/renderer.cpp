@@ -1,5 +1,6 @@
 #include <pocket/renderer/renderer.hpp>
 #include <pocket/world/water.hpp>
+#include <pocket/world/wind.hpp>
 
 #include <pocket/core/log.hpp>
 #include <pocket/renderer/primitives.hpp>
@@ -62,6 +63,91 @@ constexpr WGPUTextureFormat kHdrFormat = WGPUTextureFormat_RGBA16Float;
 // light. Values over 1 are intensities and pass through (an emissive of 4 is four times white).
 float decode(float c) { return c <= 0.04045f ? c / 12.92f : (c <= 1.0f ? std::pow((c + 0.055f) / 1.055f, 2.4f) : c); }
 
+// The sun's light after the air on its way down (docs/design/rendering.md, Atmosphere; the same air
+// as kSkyWgsl's): its transmittance from the top of the atmosphere to the ground toward `toward_sun`,
+// over the transmittance straight up, so a noon sun is as its light says, a low one redder and
+// dimmer, and one below the horizon (the planet in the way) gone, fading over half a degree.
+Vec3 atmosphere_tint(Vec3 toward_sun, float haze) {
+    constexpr double kGround = 6360e3, kTop = 6420e3, kHr = 8000, kHm = 1200;
+    constexpr double kBr[3] = {5.8e-6, 13.5e-6, 33.1e-6};
+    const double bm = 21e-6 * 1.1 * std::max(static_cast<double>(haze), 0.0);
+    auto transmittance = [&](double dx, double dy, double dz, double out[3]) {
+        const double oy = kGround + 2.0;
+        const double b = oy * dy, c = oy * oy - kTop * kTop;
+        const double len = -b + std::sqrt(std::max(b * b - c, 0.0));
+        double od_r = 0, od_m = 0;
+        constexpr int kSteps = 64;
+        const double ds = len / kSteps;
+        for (int i = 0; i < kSteps; ++i) {
+            const double t = ds * (i + 0.5);
+            const double px = dx * t, py = oy + dy * t, pz = dz * t;
+            const double h = std::max(std::sqrt(px * px + py * py + pz * pz) - kGround, 0.0);
+            od_r += std::exp(-h / kHr) * ds;
+            od_m += std::exp(-h / kHm) * ds;
+        }
+        for (int k = 0; k < 3; ++k) out[k] = std::exp(-(kBr[k] * od_r + bm * od_m));
+    };
+    const Vec3 s = normalize(toward_sun);
+    const double lift = std::max(static_cast<double>(s.y), 0.0005);   // the air along the horizon at worst
+    const double len = std::sqrt(static_cast<double>(s.x) * s.x + static_cast<double>(s.z) * s.z);
+    const double horiz = std::sqrt(std::max(1.0 - lift * lift, 0.0));
+    double low[3], up[3];
+    transmittance(len > 1e-9 ? s.x / len * horiz : horiz, lift, len > 1e-9 ? s.z / len * horiz : 0.0, low);
+    transmittance(0, 1, 0, up);
+    const float fade = std::clamp((s.y + 0.0087f) / 0.0087f, 0.0f, 1.0f);   // the disc sinks over half a degree
+    return {static_cast<float>(low[0] / up[0]) * fade, static_cast<float>(low[1] / up[1]) * fade, static_cast<float>(low[2] / up[2]) * fade};
+}
+
+// The atmosphere's colour along direction d (at or above the horizon), as kSkyWgsl's `air` makes it:
+// the fog takes it (the mean around the horizon), so distance fades into the sky's own colour.
+Vec3 atmosphere_air(Vec3 d, Vec3 s, float haze, Vec3 sun) {
+    constexpr double kGround = 6360e3, kTop = 6420e3, kHr = 8000, kHm = 1200, kPi = 3.14159265358979;
+    constexpr double kBr[3] = {5.8e-6, 13.5e-6, 33.1e-6};
+    constexpr double kBm = 21e-6, kSunLight = 16.0;
+    const double hz = std::max(static_cast<double>(haze), 0.0);
+    auto to_top = [&](double ox, double oy, double oz, double dx, double dy, double dz) {
+        const double b = ox * dx + oy * dy + oz * dz, c = ox * ox + oy * oy + oz * oz - kTop * kTop;
+        return -b + std::sqrt(std::max(b * b - c, 0.0));
+    };
+    const double oy = kGround + 2.0;
+    const double len = to_top(0, oy, 0, d.x, d.y, d.z);
+    const double ds = len / 16;
+    double od_r = 0, od_m = 0, sr[3] = {0, 0, 0}, sm[3] = {0, 0, 0};
+    for (int i = 0; i < 16; ++i) {
+        const double t = ds * (i + 0.5);
+        const double px = d.x * t, py = oy + d.y * t, pz = d.z * t;
+        const double h = std::max(std::sqrt(px * px + py * py + pz * pz) - kGround, 0.0);
+        const double hr = std::exp(-h / kHr) * ds, hm = std::exp(-h / kHm) * ds;
+        od_r += hr;
+        od_m += hm;
+        const double ls = to_top(px, py, pz, s.x, s.y, s.z), lds = ls / 8;
+        double lr = 0, lm = 0;
+        bool lit = true;
+        for (int j = 0; j < 8 && lit; ++j) {
+            const double tt = lds * (j + 0.5);
+            const double qx = px + s.x * tt, qy = py + s.y * tt, qz = pz + s.z * tt;
+            const double hq = std::sqrt(qx * qx + qy * qy + qz * qz) - kGround;
+            if (hq < 0) lit = false;
+            lr += std::exp(-hq / kHr) * lds;
+            lm += std::exp(-hq / kHm) * lds;
+        }
+        if (!lit) continue;
+        for (int k = 0; k < 3; ++k) {
+            const double att = std::exp(-(kBr[k] * (0.5 * od_r + lr) + kBm * 1.1 * hz * (0.5 * od_m + lm)));
+            sr[k] += att * hr;
+            sm[k] += att * hm;
+        }
+    }
+    const double mu = d.x * s.x + d.y * s.y + d.z * s.z, g = 0.76;
+    const double phase_r = 3.0 / (16.0 * kPi) * (1.0 + mu * mu);
+    const double phase_m = 3.0 / (8.0 * kPi) * ((1.0 - g * g) * (1.0 + mu * mu)) / ((2.0 + g * g) * std::pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+    const double sc[3] = {sun.x, sun.y, sun.z};
+    Vec3 out;
+    float* o[3] = {&out.x, &out.y, &out.z};
+    for (int k = 0; k < 3; ++k) *o[k] = static_cast<float>(kSunLight * sc[k] * (sr[k] * kBr[k] * phase_r + sm[k] * kBm * hz * phase_m));
+    return out;
+}
+
 // A float as IEEE half bits (for uploading light levels into half-float textures), clamped to the largest half.
 std::uint16_t to_half(float f) {
     if (!(f == f)) return 0;
@@ -110,6 +196,10 @@ struct alignas(16) FrameUniforms {
     float probe_info[4];         // how many, the last prefiltered level, a capture, how many reflect
     float decals[4];             // how many
     float clock[4];              // simulated seconds now and a frame ago (swaying copies)
+    float wind[4];               // the Wind: where it blows to (x, z), its speed, 1 when there is one
+    float wind_gust[4];          // its gusts (fraction), 2 pi / gust length
+    float clouds[4];             // the atmosphere's clouds: cover, height, 1 / feature size, on
+    float cloud_drift[4];        // how far they have drifted (x, z)
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
@@ -201,6 +291,10 @@ struct Frame {
     probe_info: vec4f,
     decals: vec4f,
     clock: vec4f,
+    wind: vec4f,
+    wind_gust: vec4f,
+    clouds: vec4f,
+    cloud_drift: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -403,14 +497,27 @@ fn vertex_color(c: vec4f) -> vec4f {
     return vec4f(select(pow((c.rgb + 0.055) / 1.055, vec3f(2.4)), c.rgb / 12.92, c.rgb <= vec3f(0.04045)), c.a);
 }
 // A scattered copy in the wind (docs/design/terrain.md, Scattering): what is above its foot leans
-// by the square of its height there, toward a sway that runs across the field (neighbours move
-// alike, far ones not), at seconds t.
+// by the square of its height there, at seconds t. With a Wind (docs/design/wind.md) it leans
+// downwind by its sway at 3 units a second, more in stronger wind, and fluttering with the gusts
+// that run along it (world/wind.cpp's wind_gust); without one, it sways about its place in a
+// breeze that runs across the field (neighbours move alike, far ones not).
 fn sway(object: Object, local: vec3f, t: f32) -> vec3f {
     if (object.sway.x == 0.0) { return vec3f(0.0); }
     let h = clamp((local.y - object.sway.z) * object.sway.w, 0.0, 1.0);
     let at = object.model[3].xyz;
     let phase = dot(at.xz, vec2f(0.21, 0.13));
     let w = t * object.sway.y * 6.2831853;
+    if (frame.wind.w > 0.5) {
+        let d = frame.wind.xy;
+        let k = frame.wind_gust.y;
+        let along = dot(at.xz, d) - frame.wind.z * t;
+        let across = dot(at.xz, vec2f(-d.y, d.x));
+        let gust = 0.65 * sin(k * along) + 0.35 * sin(2.7 * k * along + 0.9 * k * across);
+        let strength = frame.wind.z / 3.0 * (1.0 + frame.wind_gust.x * gust);
+        let flutter = sin(w - phase);
+        let lean = d * (strength * (0.8 + 0.2 * flutter)) + vec2f(-d.y, d.x) * (0.12 * strength * flutter);
+        return vec3f(lean.x, 0.0, lean.y) * (object.sway.x * h * h);
+    }
     let lean = vec2f(sin(w - phase) + 0.3 * sin(2.3 * w - 1.7 * phase), 0.45 * sin(1.3 * w - 0.8 * phase));
     return vec3f(lean.x, 0.0, lean.y) * (object.sway.x * h * h / 1.3);
 }
@@ -634,7 +741,7 @@ fn shade(in: VsOut) -> vec4f {
             shadow = mix(1.0 - frame.shadow.z, 1.0, lit);
         }
     }
-    color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow;
+    color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l);
     // Point and spot lights: the ones the pixel's cluster lists.
     if (frame.clusters.w > 0u) {
         let at = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
@@ -765,17 +872,65 @@ struct SkyOut {
     out.ndc = vec2f(x, y);
     return out;
 }
+// The atmosphere's clouds (docs/design/rendering.md, Atmosphere): a layer of drifting noise at
+// their height, lit by the sun (brightest looking toward it) and the sky, thinning to the horizon.
+fn cloud_hash(i: vec2i) -> f32 {
+    var v = (u32(i.x) * 1597334677u) ^ (u32(i.y) * 3812015801u);
+    v = v ^ (v >> 16u);
+    v = v * 0x7feb352du;
+    v = v ^ (v >> 15u);
+    v = v * 0x846ca68bu;
+    v = v ^ (v >> 16u);
+    return f32(v) / 4294967295.0;
+}
+fn cloud_noise(p: vec2f) -> f32 {
+    let i = vec2i(floor(p));
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(cloud_hash(i), cloud_hash(i + vec2i(1, 0)), u.x), mix(cloud_hash(i + vec2i(0, 1)), cloud_hash(i + vec2i(1, 1)), u.x), u.y);
+}
+// How thick the clouds are where the layer (cloud_height above the camera) is over world x, z.
+fn cloud_density(xz: vec2f) -> f32 {
+    var n = 0.0;
+    var a = 0.5;
+    var q = (xz + frame.cloud_drift.xy) * frame.clouds.z;
+    for (var k = 0; k < 5; k = k + 1) {
+        n = n + a * cloud_noise(q);
+        q = q * 2.03 + vec2f(1.7, 9.2);
+        a = a * 0.5;
+    }
+    let edge = 0.75 - 0.5 * frame.clouds.x;
+    return smoothstep(edge, edge + 0.2, n);
+}
+// The sun's light the clouds let through to a point: the layer where the way to the sun crosses it
+// (a cloud's shadow on the ground, drifting with it).
+fn cloud_shade(p: vec3f, l: vec3f) -> f32 {
+    if (frame.clouds.w < 0.5 || l.y <= 0.02) { return 1.0; }
+    let rise = frame.camera_pos.y + frame.clouds.y - p.y;
+    return 1.0 - 0.7 * cloud_density(p.xz + l.xz * (rise / l.y));
+}
+fn clouded(d: vec3f, c: vec3f) -> vec3f {
+    if (frame.clouds.w < 0.5 || d.y <= 0.0) { return c; }
+    let t = frame.clouds.y / max(d.y, 0.03);
+    let density = cloud_density(frame.camera_pos.xz + d.xz * t);
+    if (density <= 0.0) { return c; }
+    let s = normalize(-frame.sun_dir.xyz);
+    let forward = pow(max(dot(d, s), 0.0), 6.0);
+    let sky_light = textureSampleLevel(env_tex, env_samp, env_uv(vec3f(0.0, 1.0, 0.0)), frame.env.w).rgb;
+    let body = frame.sun_color.rgb * (0.25 * clamp(s.y * 3.0 + 0.3, 0.0, 1.0) + 0.6 * forward) * (1.0 - 0.5 * density) + sky_light * 1.4;
+    return mix(c, body, density * smoothstep(0.0, 0.15, d.y) * 0.95);
+}
 fn sky_color(ndc: vec2f) -> vec3f {
     let far = frame.inv_view_proj * vec4f(ndc, 1.0, 1.0);
     let near = frame.inv_view_proj * vec4f(ndc, 0.0, 1.0);
     let d = normalize(far.xyz / far.w - near.xyz / near.w);
     var c = textureSampleLevel(env_tex, env_samp, env_uv(d), 0.0).rgb;
-    if (frame.sky.x > 0.5 && frame.sky.x < 1.5 && frame.sky.w > 0.5) {
+    if (((frame.sky.x > 0.5 && frame.sky.x < 1.5) || frame.sky.x > 2.5) && frame.sky.w > 0.5) {
         let mu = dot(d, normalize(-frame.sun_dir.xyz));
         let edge = frame.sky.y;
         c = c + frame.sun_color.rgb * frame.sky.z * smoothstep(edge, edge + (1.0 - edge) * 0.2, mu);
     }
-    return c;
+    return clouded(d, c);
 }
 @fragment fn fs_sky(in: SkyOut) -> FsOut {
     var out: FsOut;
@@ -1474,7 +1629,7 @@ fn encode(c: vec3f) -> vec3f {
 // the level above, the lobe widened by what that level already has), `irradiance` projects a small
 // level onto nine spherical harmonics for the diffuse light.
 constexpr const char* kSkyWgsl = R"WGSL(
-struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f };
+struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f, atmo: vec4f };
 @group(0) @binding(0) var<uniform> sp: SkyParams;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
@@ -1503,12 +1658,87 @@ fn procedural(d: vec3f) -> vec3f {
     }
     return c;
 }
+// The atmosphere (docs/design/rendering.md, Atmosphere): the sun's light scattered once on its way
+// through a planet's air toward the eye, by the air itself (Rayleigh: blue, all around) and by haze
+// (Mie: white, forward around the sun), each thinning with height, after Nishita. The renderer's
+// atmosphere_tint integrates the same air along the sun's way down for the sun light's colour.
+const R_GROUND = 6360e3;
+const R_TOP = 6420e3;
+const BETA_R = vec3f(5.8e-6, 13.5e-6, 33.1e-6);
+const BETA_M = 21e-6;
+const H_R = 8000.0;
+const H_M = 1200.0;
+const SUN_LIGHT = 16.0;   // the sun's light at the top of the air, for a light of intensity one
+// How far from o (inside) along d to the sphere of radius r; negative if the line misses it.
+fn to_sphere(o: vec3f, d: vec3f, r: f32) -> f32 {
+    let b = dot(o, d);
+    let c = dot(o, o) - r * r;
+    let disc = b * b - c;
+    if (disc < 0.0) { return -1.0; }
+    return -b + sqrt(disc);
+}
+fn air(d: vec3f, s: vec3f) -> vec3f {
+    let o = vec3f(0.0, R_GROUND + 2.0, 0.0);
+    let haze = max(sp.atmo.x, 0.0);
+    let len = to_sphere(o, d, R_TOP);
+    let steps = 16;
+    let ds = len / f32(steps);
+    var od_r = 0.0;
+    var od_m = 0.0;
+    var sum_r = vec3f(0.0);
+    var sum_m = vec3f(0.0);
+    for (var i = 0; i < steps; i = i + 1) {
+        let p = o + d * (ds * (f32(i) + 0.5));
+        let h = max(length(p) - R_GROUND, 0.0);
+        let hr = exp(-h / H_R) * ds;
+        let hm = exp(-h / H_M) * ds;
+        od_r = od_r + hr;
+        od_m = od_m + hm;
+        // The sun's light to here, unless the planet is in its way.
+        let ls = to_sphere(p, s, R_TOP);
+        let lds = ls / 8.0;
+        var lr = 0.0;
+        var lm = 0.0;
+        var lit = true;
+        for (var j = 0; j < 8; j = j + 1) {
+            let q = p + s * (lds * (f32(j) + 0.5));
+            let hq = length(q) - R_GROUND;
+            if (hq < 0.0) { lit = false; break; }
+            lr = lr + exp(-hq / H_R) * lds;
+            lm = lm + exp(-hq / H_M) * lds;
+        }
+        if (lit) {
+            // The view's own path counts half: light scattered more than once fills in what one
+            // scattering takes out along the horizon (it would glow orange at noon otherwise).
+            let tau = BETA_R * (0.5 * od_r + lr) + BETA_M * 1.1 * haze * (0.5 * od_m + lm);
+            let att = exp(-tau);
+            sum_r = sum_r + att * hr;
+            sum_m = sum_m + att * hm;
+        }
+    }
+    let mu = dot(d, s);
+    let phase_r = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
+    let g = 0.76;
+    let phase_m = 3.0 / (8.0 * PI) * ((1.0 - g * g) * (1.0 + mu * mu)) / ((2.0 + g * g) * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+    return SUN_LIGHT * sp.sun_color.rgb * (sum_r * BETA_R * phase_r + sum_m * BETA_M * haze * phase_m);
+}
+fn atmosphere(d: vec3f) -> vec3f {
+    if (sp.sun.w < 0.5) { return vec3f(0.0); }
+    let s = sp.sun.xyz;
+    if (d.y >= 0.0) { return air(normalize(vec3f(d.x, max(d.y, 0.02), d.z)), s); }
+    // Below the horizon: the ground, lit by the sun and the sky, fading from the horizon's air.
+    let horizon = air(normalize(vec3f(d.x, 0.02, d.z)), s);
+    let lit = sp.ground.rgb * sp.sun_color.rgb * (0.05 + 0.25 * max(s.y, 0.0));
+    return mix(horizon, lit, smoothstep(0.0, 0.08, -d.y));
+}
 @compute @workgroup_size(8, 8) fn fill(@builtin(global_invocation_id) id: vec3u) {
     if (f32(id.x) >= sp.size.x || f32(id.y) >= sp.size.y) { return; }
     let uv = (vec2f(id.xy) + 0.5) / sp.size.xy;
     let d = dir_of(uv);
     var c: vec3f;
-    if (sp.misc.x > 1.5) {
+    if (sp.misc.x > 2.5) {
+        c = atmosphere(d);
+    } else if (sp.misc.x > 1.5) {
         let r = sp.misc.y;
         let rd = vec3f(d.x * cos(r) + d.z * sin(r), d.y, -d.x * sin(r) + d.z * cos(r));
         c = textureSampleLevel(src, samp, uv_of(rd), 0.0).rgb;
@@ -2233,6 +2463,8 @@ struct Renderer::Impl {
     // MSAA: the scene draws into multisampled color and depth and resolves into the frame; the
     // ids then come from their own single-sample pass with these pipelines.
     float last_clock = 0;  // the simulated seconds of the last frame drawn (swaying copies' motion)
+    bool fog_from_sky = false;   // an atmosphere: the fog takes the sky's colour around the horizon
+    Vec3 fog_sky{0, 0, 0};
     bool clock_valid = false;
     int msaa = 1;          // requested (1 or 4)
     int msaa_applied = 1;  // what the scene pipelines were built with
@@ -3023,6 +3255,12 @@ struct Renderer::Impl {
             u.fog_color[0] = decode(fog_settings->color.r);
             u.fog_color[1] = decode(fog_settings->color.g);
             u.fog_color[2] = decode(fog_settings->color.b);
+            if (fog_from_sky) {
+                // Under an atmosphere the fog is the sky's own colour around the horizon.
+                u.fog_color[0] = fog_sky.x;
+                u.fog_color[1] = fog_sky.y;
+                u.fog_color[2] = fog_sky.z;
+            }
             u.fog[0] = std::max(fog_settings->density, 0.0f);
             u.fog[1] = fog_settings->height;
             u.fog[2] = std::max(fog_settings->falloff, 0.0f);
@@ -3066,6 +3304,7 @@ struct Renderer::Impl {
         float sun_color[4];
         float misc[4];         // mode, rotation (radians), GGX alpha for a prefilter level, intensity
         float size[4];         // the level's width and height
+        float atmo[4];         // mode 3: haze
     };
     static constexpr std::uint32_t kSkySlot = 256;
 
@@ -3312,7 +3551,7 @@ struct Renderer::Impl {
             }
         }
         char key[512];
-        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%g,%g,%g", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, toward_sun.x, toward_sun.y, toward_sun.z, sun_linear.x, sun_linear.y, sun_linear.z);
+        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%g,%g,%g|%g", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, toward_sun.x, toward_sun.y, toward_sun.z, sun_linear.x, sun_linear.y, sun_linear.z, sky.mode == 3 ? sky.haze : 0.0f);
         if (env_key == key) return true;
         SkyParams p{};
         auto color = [](float* out, const world::Color4& c) { out[0] = decode(c.r); out[1] = decode(c.g); out[2] = decode(c.b); out[3] = 1; };
@@ -3324,6 +3563,7 @@ struct Renderer::Impl {
         p.misc[0] = static_cast<float>(sky.mode);
         p.misc[1] = radians(sky.rotation);
         p.misc[3] = std::max(sky.intensity, 0.0f);
+        p.atmo[0] = std::max(sky.haze, 0.0f);
         std::vector<std::uint8_t> slots(static_cast<std::size_t>(kSkySlot) * kEnvLevels, 0);
         float prev_alpha = 0;
         for (std::uint32_t l = 0; l < kEnvLevels; ++l) {
@@ -6309,6 +6549,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.clock[1] = motion_known && im.clock_valid ? im.last_clock : clock_now;
     im.last_clock = clock_now;
     im.clock_valid = true;
+    if (const world::WindField wf = world::wind_field(world); wf.on) {
+        fu.wind[0] = wf.dir_x;
+        fu.wind[1] = wf.dir_z;
+        fu.wind[2] = wf.speed;
+        fu.wind[3] = 1;
+        fu.wind_gust[0] = wf.gusts;
+        fu.wind_gust[1] = 2 * std::numbers::pi_v<float> / wf.gust_length;
+    }
     if (im.taa.enabled) {
         auto halton = [](std::uint64_t i, std::uint64_t b) {
             float f = 1, r = 0;
@@ -6464,15 +6712,47 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     world::Sky sky;
     bool has_sky = false;
     world.ecs().each([&](flecs::entity, const world::Sky& s) {
-        if (!has_sky && s.enabled && (s.mode == 1 || s.mode == 2)) { sky = s; has_sky = true; }
+        if (!has_sky && s.enabled && s.mode >= 1 && s.mode <= 3) { sky = s; has_sky = true; }
     });
     bool env_on = false;
     if (has_sky) {
         const Vec3 toward = normalize(Vec3{-fu.sun_dir[0], -fu.sun_dir[1], -fu.sun_dir[2]});
         env_on = im.update_environment(frame, sky, have_sun, toward, Vec3{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]});
         if (!env_on) has_sky = false;
+        im.fog_from_sky = env_on && sky.mode == 3;
+        if (im.fog_from_sky) {
+            // The mean of the air a little above the horizon, all round (the sky's intensity with it).
+            Vec3 sum{0, 0, 0};
+            const Vec3 sun_now{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]};
+            for (int k = 0; k < 8; ++k) {
+                const float a = static_cast<float>(k) * std::numbers::pi_v<float> / 4;
+                sum += have_sun ? atmosphere_air(normalize(Vec3{std::cos(a), 0.05f, std::sin(a)}), toward, sky.haze, sun_now) : Vec3{0, 0, 0};
+            }
+            im.fog_sky = sum * (std::max(sky.intensity, 0.0f) / 8.0f);
+        }
+        if (env_on && sky.mode == 3 && have_sun) {
+            // The sun light through the air: as the light says at noon, redder and dimmer low down,
+            // gone below the horizon.
+            const Vec3 tint = atmosphere_tint(toward, sky.haze);
+            fu.sun_color[0] *= tint.x;
+            fu.sun_color[1] *= tint.y;
+            fu.sun_color[2] *= tint.z;
+        }
+        if (env_on && sky.mode == 3 && sky.clouds > 0) {
+            // Clouds drift with the Wind (six times faster up there), or at 12 along +x without one.
+            const auto t = static_cast<float>(world.seconds());
+            const world::WindField wf = world::wind_field(world);
+            const Vec3 v = wf.on ? Vec3{wf.dir_x * wf.speed * 6, 0, wf.dir_z * wf.speed * 6} : Vec3{12, 0, 0};
+            fu.clouds[0] = std::clamp(sky.clouds, 0.0f, 1.0f);
+            fu.clouds[1] = std::max(sky.cloud_height, 1.0f);
+            fu.clouds[2] = 1.0f / std::max(sky.cloud_scale, 1.0f);
+            fu.clouds[3] = 1;
+            fu.cloud_drift[0] = -v.x * t;
+            fu.cloud_drift[1] = -v.z * t;
+        }
     }
     to_array((im.camera.proj * im.camera.view).inverse(), fu.inv_view_proj);
+    for (int k = 0; k < 3; ++k) im.stats.sun_light[k] = have_sun ? fu.sun_color[k] : 0.0f;
     fu.env[0] = env_on && (sky.diffuse > 0 || sky.specular > 0) ? 1.0f : 0.0f;
     fu.env[1] = std::max(sky.diffuse, 0.0f);
     fu.env[2] = std::max(sky.specular, 0.0f);
@@ -7773,7 +8053,7 @@ Json Renderer::describe() const {
     j["hdr"] = true;
     j["tonemap"] = tonemap_name(static_cast<Tonemap>(s.tonemap));
     j["auto_exposure"] = s.auto_exposure;
-    j["sky"] = s.sky == 1 ? "procedural" : s.sky == 2 ? "image" : "none";
+    j["sky"] = s.sky == 1 ? "procedural" : s.sky == 2 ? "image" : s.sky == 3 ? "atmosphere" : "none";
     j["env_updates"] = s.env_updates;
     j["depth_prepass"] = s.depth_prepass;
     j["ao"] = s.ao;
@@ -7798,6 +8078,7 @@ Json Renderer::describe() const {
     j["lights"] = Json{{"clusters", Json::array({kClusterX, kClusterY, kClusterZ})}, {"culled", s.lights_culled}, {"dropped", s.lights_dropped}, {"entries", s.cluster_entries}, {"max_per_cluster", s.max_cluster_lights}};
     j["has_camera"] = s.has_camera;
     j["has_sun"] = s.has_sun;
+    j["sun_light"] = Json{{"r", s.sun_light[0]}, {"g", s.sun_light[1]}, {"b", s.sun_light[2]}};
     if (s.camera) j["camera"] = s.camera;
     const Viewport& v = impl_->applied;
     if (v.w != impl_->last_width || v.h != impl_->last_height) j["viewport"] = Json{{"x", v.x}, {"y", v.y}, {"w", v.w}, {"h", v.h}};

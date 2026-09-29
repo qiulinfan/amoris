@@ -1,6 +1,7 @@
 #include <pocket/renderer/particles.hpp>
 
 #include <pocket/core/hash.hpp>
+#include <pocket/world/wind.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -49,6 +50,9 @@ void Particles::spawn(EmitterPool& pool, const world::ParticleEmitter& e, const 
 
 void Particles::step(const world::World& world, float dt) {
     for (auto& [id, pool] : pools_) pool.seen = false;
+    // With a Wind (docs/design/wind.md), drag pulls a particle toward the air's velocity where it is.
+    const world::WindField wind = world::wind_field(world);
+    const auto wind_t = static_cast<float>(world.seconds());
     world.ecs().each([&](flecs::entity ent, const world::ParticleEmitter& e, const world::WorldTransform& t) {
         EmitterPool& pool = pool_for(ent.id(), e);
         pool.seen = true;
@@ -74,7 +78,13 @@ void Particles::step(const world::World& world, float dt) {
                 continue;
             }
             const Vec3 was = p.position;
-            p.velocity = (p.velocity + e.gravity * dt) * keep;
+            if (wind.on && e.drag > 0) {
+                const Vec3 at = p.position + origin;
+                const Vec3 air = world::wind_velocity(wind, at.x, at.z, wind_t);
+                p.velocity = air + (p.velocity + e.gravity * dt - air) * keep;
+            } else {
+                p.velocity = (p.velocity + e.gravity * dt) * keep;
+            }
             p.position += p.velocity * dt;
             // Bodies: a ray from where the particle was to where it goes; on a hit it is put on the
             // surface and bounces off it, or rests there once the bounce is spent and the surface faces up.

@@ -9,6 +9,12 @@
 //   anyone -> host -> others {"t":"in","tick":T,"p":k,"ev":[...]}   a player's input for tick T
 //   anyone -> host           {"t":"hash","tick":T,"h":"..."}        the world after tick T
 //   host -> everyone         {"t":"desync","tick":T,"hashes":{...}} {"t":"left","p":k,"tick":T}
+//
+// A player who comes back into a running game (the slot of one who left) is welcomed late: the
+// host sends every input run so far ({"t":"history",...}), the newcomer replays the game from tick 0
+// without waiting, says {"t":"ready","tick":T} once it has caught up, and the host names the tick
+// it is back in from ({"t":"back","p":k,"tick":T}) for everyone. The hashes it reports on the way
+// are checked against the host's own.
 #include <pocket/app/net.hpp>
 #include <pocket/app/websocket.hpp>
 
@@ -115,7 +121,18 @@ struct Net::Impl {
     std::vector<Link> links;                                      // host: one per joined player; a player: the host
     std::map<std::int64_t, std::map<int, Json>> inputs;           // tick -> player -> events
     std::map<int, std::int64_t> last_from;                        // player -> the last tick their input came for
-    std::map<int, std::int64_t> left;                             // player -> the first tick without them
+    // Absences: per player, the ticks without them, [from, until) (until -1: not back yet).
+    std::map<int, std::vector<std::pair<std::int64_t, std::int64_t>>> away;
+    // Host: every input run so far (the non-empty ones), for a player who comes back to replay; its
+    // own world hashes, to check that replay against; the last tick it ran.
+    std::map<std::int64_t, std::map<int, Json>> history;
+    std::map<std::int64_t, std::string> own_hashes;
+    std::int64_t ran = -1;
+    std::int64_t replay_checks = 0;
+    // A player welcomed late: replaying the game so far (every tick up to history_until has all its
+    // input once the history is here), then back in from back_at.
+    bool late = false, catching_up = false, history_received = false, ready_sent = false;
+    std::int64_t history_until = -1, back_at = -1, newest = -1, skipped_max = -1;
     std::map<std::int64_t, std::map<int, std::string>> hashes;    // host: tick -> player -> world hash
     std::vector<Json> notes;
     std::int64_t desyncs = 0, first_desync = -1;
@@ -143,6 +160,31 @@ struct Net::Impl {
         for (Link& l : links) if (l.alive && l.player != except) send(l, m);
     }
 
+    bool is_away(int p, std::int64_t tick) const {
+        auto it = away.find(p);
+        if (it == away.end()) return false;
+        for (const auto& [from, until] : it->second) if (tick >= from && (until < 0 || tick < until)) return true;
+        return false;
+    }
+    bool gone(int p) const {
+        auto it = away.find(p);
+        return it != away.end() && !it->second.empty() && it->second.back().second < 0;
+    }
+    Json away_json() const {
+        Json j = Json::object();
+        for (const auto& [p, spans] : away) {
+            Json list = Json::array();
+            for (const auto& [from, until] : spans) list.push_back(Json::array({from, until}));
+            j[std::to_string(p)] = list;
+        }
+        return j;
+    }
+    void mark_back(int p, std::int64_t tick) {
+        auto it = away.find(p);
+        if (it != away.end() && !it->second.empty() && it->second.back().second < 0) it->second.back().second = tick;
+        notes.push_back(Json{{"type", "net.back"}, {"player", p}, {"tick", tick}});
+    }
+
     void drop(Link& l) {
         if (!l.alive) return;
         l.alive = false;
@@ -156,7 +198,7 @@ struct Net::Impl {
             // Everyone goes on without them from the tick after the last input they sent.
             auto it = last_from.find(l.player);
             const std::int64_t at = it == last_from.end() ? delay : it->second + 1;
-            left[l.player] = at;
+            away[l.player].push_back({at, -1});
             broadcast(Json{{"t", "left"}, {"p", l.player}, {"tick", at}});
             notes.push_back(Json{{"type", "net.left"}, {"player", l.player}, {"tick", at}});
             log::warn("net", "player {} left; the game goes on without them from tick {}", l.player, at);
@@ -170,10 +212,7 @@ struct Net::Impl {
         auto it = hashes.find(tick);
         if (it == hashes.end()) return;
         int expected = 0;
-        for (int p = 0; p < players; ++p) {
-            auto l = left.find(p);
-            if (l == left.end() || l->second > tick) ++expected;
-        }
+        for (int p = 0; p < players; ++p) if (!is_away(p, tick)) ++expected;
         if (static_cast<int>(it->second.size()) < expected) return;
         const std::string& first = it->second.begin()->second;
         bool same = true;
@@ -201,8 +240,29 @@ struct Net::Impl {
                 broadcast(Json{{"t", "in"}, {"tick", tick}, {"p", from.player}, {"ev", ev}}, from.player);
             } else if (t == "hash" && m.contains("tick")) {
                 const std::int64_t tick = m["tick"].get<std::int64_t>();
-                hashes[tick][from.player] = m.value("h", "");
+                const std::string h = m.value("h", "");
+                // A tick long checked (a player replaying the game): against the host's own hash.
+                if (auto own = own_hashes.find(tick); own != own_hashes.end() && !hashes.contains(tick)) {
+                    ++replay_checks;
+                    if (own->second != h) {
+                        const Json hs{{"0", own->second}, {std::to_string(from.player), h}};
+                        ++desyncs;
+                        if (first_desync < 0) first_desync = tick;
+                        notes.push_back(Json{{"type", "net.desync"}, {"tick", tick}, {"hashes", hs}, {"replay", true}});
+                        broadcast(Json{{"t", "desync"}, {"tick", tick}, {"hashes", hs}});
+                        log::warn("net", "desync at tick {} in player {}'s replay", tick, from.player);
+                    }
+                    return;
+                }
+                hashes[tick][from.player] = h;
                 check_hashes(tick);
+            } else if (t == "ready" && gone(from.player)) {
+                // Caught up: back in from a tick far enough ahead that its input can reach everyone.
+                const std::int64_t at = std::max(ran, m.value("tick", std::int64_t{0})) + 2 * delay + 10;
+                last_from[from.player] = at - 1;
+                mark_back(from.player, at);
+                broadcast(Json{{"t", "back"}, {"p", from.player}, {"tick", at}});
+                log::info("net", "player {} has caught up and is back from tick {}", from.player, at);
             }
             return;
         }
@@ -211,13 +271,48 @@ struct Net::Impl {
             players = m.value("players", 2);
             seed = m.value("seed", std::uint64_t{1});
             delay = m.value("delay", 3);
+            if (m.value("late", false)) {
+                late = catching_up = started = true;
+                history_until = m.value("tick", std::int64_t{0}) - 1;
+                if (m.contains("away") && m["away"].is_object()) {
+                    for (const auto& [k, spans] : m["away"].items()) {
+                        for (const Json& s : spans) if (s.is_array() && s.size() == 2) away[std::stoi(k)].push_back({s[0].get<std::int64_t>(), s[1].get<std::int64_t>()});
+                    }
+                }
+                notes.push_back(Json{{"type", "net.started"}, {"players", players}, {"late", true}});
+            }
+        } else if (t == "history") {
+            if (m.contains("inputs") && m["inputs"].is_object()) {
+                for (const auto& [tk, byp] : m["inputs"].items()) {
+                    const std::int64_t tick = std::stoll(tk);
+                    newest = std::max(newest, tick);
+                    for (const auto& [pk, ev] : byp.items()) inputs[tick][std::stoi(pk)] = ev;
+                }
+            }
+            history_received = true;
+        } else if (t == "back") {
+            const int p = m.value("p", 0);
+            const std::int64_t tick = m.value("tick", std::int64_t{0});
+            mark_back(p, tick);
+            if (p == player && late) {
+                // In again: every tick from `tick` needs this peer's input; any already passed over
+                // while replaying goes out empty.
+                back_at = tick;
+                catching_up = false;
+                for (std::int64_t k = tick; k <= skipped_max; ++k) {
+                    inputs[k][player] = Json::array();
+                    if (!links.empty()) send(links[0], Json{{"t", "in"}, {"tick", k}, {"p", player}, {"ev", Json::array()}});
+                }
+            }
         } else if (t == "start") {
             started = true;
             notes.push_back(Json{{"type", "net.started"}, {"players", players}});
         } else if (t == "in" && m.contains("tick")) {
-            inputs[m["tick"].get<std::int64_t>()][m.value("p", 0)] = m.value("ev", Json::array());
+            const std::int64_t tick = m["tick"].get<std::int64_t>();
+            newest = std::max(newest, tick);
+            inputs[tick][m.value("p", 0)] = m.value("ev", Json::array());
         } else if (t == "left") {
-            left[m.value("p", 0)] = m.value("tick", std::int64_t{0});
+            away[m.value("p", 0)].push_back({m.value("tick", std::int64_t{0}), -1});
             notes.push_back(Json{{"type", "net.left"}, {"player", m.value("p", 0)}, {"tick", m.value("tick", std::int64_t{0})}});
         } else if (t == "desync") {
             ++desyncs;
@@ -355,7 +450,39 @@ struct Net::Impl {
         from.alive = false;
         from.fd = -1;
         {
-            if (started || next_player >= players) {
+            if (started) {
+                // A running game takes a newcomer only into the place of a player who left.
+                int slot = -1;
+                for (int p = 1; p < players && slot < 0; ++p) {
+                    bool here = false;
+                    for (const Link& o : links) here = here || (o.alive && o.player == p);
+                    if (!here && gone(p)) slot = p;
+                }
+                if (slot < 0) {
+                    send(l, Json{{"t", "full"}});
+                    flush_link(l);
+                    ::close(l.fd);
+                    return;
+                }
+                l.player = slot;
+                send(l, Json{{"t", "welcome"}, {"player", slot}, {"players", players}, {"seed", seed}, {"delay", delay}, {"late", true}, {"tick", ran}, {"away", away_json()}});
+                // Everything run so far (the non-empty inputs), then all that is in for the ticks not run yet.
+                Json in = Json::object();
+                auto add = [&](std::int64_t tick, const std::map<int, Json>& byp) {
+                    Json& at = in[std::to_string(tick)];
+                    if (!at.is_object()) at = Json::object();
+                    for (const auto& [pl, ev] : byp) at[std::to_string(pl)] = ev;
+                };
+                for (const auto& [tick, byp] : history) add(tick, byp);
+                for (const auto& [tick, byp] : inputs) add(tick, byp);
+                send(l, Json{{"t", "history"}, {"inputs", std::move(in)}});
+                const bool websocket = l.kind == Link::Kind::WsServer;
+                links.push_back(std::move(l));
+                notes.push_back(Json{{"type", "net.joined"}, {"player", slot}, {"websocket", websocket}, {"late", true}, {"tick", ran}});
+                log::info("net", "player {} came back into the running game at tick {}{}: it replays, then plays", slot, ran, websocket ? " over a WebSocket" : "");
+                return;
+            }
+            if (next_player >= players) {
                 send(l, Json{{"t", "full"}});
                 flush_link(l);
                 ::close(l.fd);
@@ -559,9 +686,14 @@ int Net::players() const { return impl_->players; }
 int Net::delay() const { return impl_->delay; }
 int Net::port() const { return impl_->port; }
 std::uint64_t Net::seed() const { return impl_->seed; }
+bool Net::catching_up() const { return impl_->catching_up; }
 
 void Net::commit(std::int64_t tick, Json events) {
     Impl& im = *impl_;
+    if (im.late && (im.back_at < 0 || tick < im.back_at)) {
+        im.skipped_max = std::max(im.skipped_max, tick);   // replaying: not in the game yet
+        return;
+    }
     im.inputs[tick][im.player] = events;
     im.last_from[im.player] = std::max(im.last_from[im.player], tick);
     const Json m{{"t", "in"}, {"tick", tick}, {"p", im.player}, {"ev", std::move(events)}};
@@ -573,11 +705,11 @@ void Net::commit(std::int64_t tick, Json events) {
 bool Net::ready(std::int64_t tick) const {
     const Impl& im = *impl_;
     if (tick < im.delay) return true;
+    if (im.late && tick <= im.history_until) return im.history_received;   // what was run before this peer came back
     auto it = im.inputs.find(tick);
     for (int p = 0; p < im.players; ++p) {
         if (it != im.inputs.end() && it->second.contains(p)) continue;
-        auto l = im.left.find(p);
-        if (l != im.left.end() && l->second <= tick) continue;
+        if (im.is_away(p, tick)) continue;
         return false;
     }
     return true;
@@ -590,8 +722,7 @@ std::vector<Json> Net::inputs(std::int64_t tick) const {
     if (it == im.inputs.end()) return out;
     for (const auto& [p, ev] : it->second) {
         if (p < 0 || p >= im.players) continue;
-        auto l = im.left.find(p);
-        if (l != im.left.end() && l->second <= tick) continue;   // after they left, nothing of theirs counts
+        if (im.is_away(p, tick)) continue;   // while they are away, nothing of theirs counts
         out[static_cast<std::size_t>(p)] = ev;
     }
     return out;
@@ -599,6 +730,17 @@ std::vector<Json> Net::inputs(std::int64_t tick) const {
 
 void Net::release(std::int64_t tick) {
     Impl& im = *impl_;
+    if (im.host) {
+        // Kept for a player who comes back and replays.
+        for (auto it = im.inputs.begin(); it != im.inputs.end() && it->first < tick; ++it) {
+            for (const auto& [p, ev] : it->second) if (ev.is_array() && !ev.empty()) im.history[it->first][p] = ev;
+        }
+        im.ran = tick;
+    } else if (im.late && im.catching_up && im.history_received && !im.ready_sent && tick >= im.newest - im.delay - 2 && !im.links.empty()) {
+        // Replayed up to where the others are: ask to be let back in.
+        im.send(im.links[0], Json{{"t", "ready"}, {"tick", tick}});
+        im.ready_sent = true;
+    }
     im.inputs.erase(im.inputs.begin(), im.inputs.lower_bound(tick));
     im.hashes.erase(im.hashes.begin(), im.hashes.lower_bound(tick - 600));
 }
@@ -606,6 +748,7 @@ void Net::release(std::int64_t tick) {
 void Net::report_hash(std::int64_t tick, const std::string& hash) {
     Impl& im = *impl_;
     if (im.host) {
+        im.own_hashes[tick] = hash;
         im.hashes[tick][0] = hash;
         im.check_hashes(tick);
     } else if (!im.links.empty()) {
@@ -631,9 +774,16 @@ Json Net::info() const {
     int connected = 0;
     for (const Link& l : im.links) connected += l.alive ? 1 : 0;
     j["connected"] = connected;
-    Json left = Json::object();
-    for (const auto& [p, t] : im.left) left[std::to_string(p)] = t;
+    Json left = Json::object();   // who is away now, and since when
+    for (const auto& [p, spans] : im.away) if (!spans.empty() && spans.back().second < 0) left[std::to_string(p)] = spans.back().first;
     j["left"] = left;
+    j["away"] = im.away_json();
+    if (im.host) j["replay_checks"] = im.replay_checks;
+    if (im.late) {
+        j["late"] = true;
+        j["catching_up"] = im.catching_up;
+        j["back_at"] = im.back_at;
+    }
     j["desyncs"] = im.desyncs;
     if (im.first_desync >= 0) j["first_desync"] = im.first_desync;
     j["pending_ticks"] = im.inputs.size();

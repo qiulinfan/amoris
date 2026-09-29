@@ -1,0 +1,42 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via extension --model deepseek/deepseek-flash --env-file /Users/qiulinfan/.omp/agent/.env",
+  "passed": 1,
+  "total": 1,
+  "seconds": 39.8,
+  "tasks": [
+    {
+      "name": "stormy_dusk",
+      "project": "hills",
+      "ok": true,
+      "seconds": 39.8,
+      "detail": "a cloudy sunset from the west, the sun light 0.55, 0.28, 0.05, a wind of 12 toward +x",
+      "answer": 0.547944188117981,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 37.8,
+        "turns": 13,
+        "tool_calls": 18,
+        "tools": {
+          "read": 5,
+          "bash": 13
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 21320,
+          "output": 6640,
+          "cache_read": 310656,
+          "total": 338616
+        },
+        "cost_usd": 0.008114
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0081,
+    "tokens": 338616,
+    "tool_calls": 18
+  }
+}

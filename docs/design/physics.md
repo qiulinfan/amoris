@@ -31,7 +31,7 @@ Layers decide by category; three rules decide for particular pairs. `Collider.gr
 
 The step runs once per fixed tick, before the world's own systems, on every entity that has a `Transform`, a `RigidBody` and a `Collider`:
 
-1. Gather bodies from the components (in entity order, so results do not depend on when things were spawned), apply gravity scaled per body and damping.
+1. Gather bodies from the components (in entity order, so results do not depend on when things were spawned), apply gravity scaled per body and damping (with a `Wind`, the linear damping pulls toward the wind's velocity instead of toward rest: `docs/design/wind.md`).
 2. Broadphase by sorting world AABBs along one axis; pairs that overlap on all three are tested by shape. Triggers produce contacts but no forces.
 3. Gather joints, solve joints and contacts together with sequential impulses (10 iterations by default): accumulated impulses are clamped, so contacts never pull and ropes never push; friction is Coulomb, restitution applies above a small approach speed.
 4. Integrate positions and rotations (rotation is skipped for `lock_rotation` bodies), project residual penetration out along contact normals, then pull joint anchors back together with a position pass, so a fast pendulum does not stretch and does not gain energy from a velocity bias.

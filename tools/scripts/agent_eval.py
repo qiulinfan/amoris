@@ -27,7 +27,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/timelines.md", "docs/design/cameras.md", "docs/design/localization.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/cameras.md", "docs/design/localization.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
 
 
 def near(a, b, tol=0.01):
@@ -720,6 +720,54 @@ def reed_field_check(env, answer):
     return True, f"{cp['placed']} reeds that sway 0.3 and stop what runs into them"
 
 
+def stormy_dusk_solve(env):
+    import math
+    env.command("world.set", {"entity": "Sky", "component": "Sky", "value": {"mode": 3, "clouds": 0.8}})
+    # The sun 4 degrees up in the west (-x): its light shines toward +x and down.
+    e = math.radians(4)
+    to_sun = (-math.cos(e), math.sin(e), 0.0)
+    d = (-to_sun[0], -to_sun[1], -to_sun[2])
+    yaw = math.atan2(-d[0], -d[2]) / 2
+    pitch = math.atan2(d[1], math.hypot(d[0], d[2])) / 2
+    rot = {"x": math.cos(yaw) * math.sin(pitch), "y": math.sin(yaw) * math.cos(pitch), "z": -math.sin(yaw) * math.sin(pitch), "w": math.cos(yaw) * math.cos(pitch)}
+    env.command("world.set", {"entity": "Sun", "component": "Transform", "value": {"rotation": rot}})
+    env.command("world.set", {"entity": "Breeze", "component": "Wind", "value": {"direction": 0, "speed": 12}})
+    env.command("step", {"ticks": 1})
+    return env.command("render.stats", {})["sun_light"]["r"]
+
+
+def stormy_dusk_check(env, answer):
+    sky = env.command("world.get", {"entity": "Sky", "component": "Sky"}) or {}
+    if sky.get("mode") != 3:
+        return False, f"the sky is in mode {sky.get('mode')}"
+    if abs(sky.get("clouds", 0) - 0.8) > 0.01:
+        return False, f"clouds {sky.get('clouds')}"
+    air = env.command("wind.at", {"x": 0, "z": 0})
+    if not air.get("entity") or abs(air.get("direction", {}).get("x", 0) - 1) > 0.02 or abs(air["direction"].get("z", 1)) > 0.02:
+        return False, f"the wind is {air}"
+    first = env.command("world.get", {"entity": air["entity"], "component": "Wind"})
+    if abs(first.get("speed", 0) - 12) > 0.01:
+        return False, f"the wind blows at {first.get('speed')}"
+    env.command("step", {"ticks": 1})
+    st = env.command("render.stats", {})
+    light = st["sun_light"]
+    # A sun 4 degrees up: reddened (more than twice as red as blue) and dimmed below its own intensity.
+    sun = env.command("world.get", {"entity": "Sun", "component": "Light"})
+    if not (light["r"] > 2 * light["b"] and light["r"] < sun["intensity"] * 0.9):
+        return False, f"the sun light reaching the ground is {light}"
+    tr = env.command("world.get", {"entity": "Sun", "component": "Transform"})["rotation"]
+    x, y, z, w = tr["x"], tr["y"], tr["z"], tr["w"]
+    # -Z turned by the rotation: where the light shines.
+    fx = -(2 * (x * z + w * y)); fy = -(2 * (y * z - w * x)); fz = -(1 - 2 * (x * x + y * y))
+    import math
+    elev = math.degrees(math.asin(max(-1, min(1, -fy))))
+    if abs(elev - 4) > 0.5 or fx < 0.9:
+        return False, f"the sun stands {elev:.1f} degrees up, its light shining toward ({fx:.2f}, {fy:.2f}, {fz:.2f})"
+    if not isinstance(answer, (int, float)) or abs(answer - light["r"]) > 0.01:
+        return False, f"answered {answer!r}, the sun light's red is {light['r']:.3f}"
+    return True, f"a cloudy sunset from the west, the sun light {light['r']:.2f}, {light['g']:.2f}, {light['b']:.2f}, a wind of 12 toward +x"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -767,6 +815,8 @@ TASKS = [
      "task": "Paint a sand road on the terrain named Hills: a straight road along z 0 from x -30 to x 30, its colour r 0.85, g 0.78, b 0.55, covering the ground fully (a coverage of at least 0.8) at least a unit to either side of the line, and leaving the ground 6.5 or more units from the line as it was. Answer with the paint's coverage at x 0, z 0 as the number \"answer\"."},
     {"name": "reed_field", "project": "hills", "ticks": 2, "solve": reed_field_solve, "check": reed_field_check,
      "task": "Plant a field of reeds that sway and block: spawn an entity named Reeds drawing thin boxes (a MeshRenderer with mesh \"cube\"; its Transform scale x 0.1, y 1.5, z 0.1) with a Scatter placing copies on the terrain named Hills over a 20 by 20 area centred on x 0, z 10, at least 100 of them standing, all the entity's own size (none bigger or smaller), whose tops sway 0.3 units in the wind, and each copy a collider 0.1 in radius. Answer with the number of reeds standing as the integer \"answer\"."},
+    {"name": "stormy_dusk", "project": "hills", "ticks": 2, "solve": stormy_dusk_solve, "check": stormy_dusk_check,
+     "task": "Make the hills a windy, cloudy sunset: the sky computed by the atmosphere with clouds covering 0.8 of it, the sun (the entity named Sun) standing 4 degrees above the horizon in the west (toward -x, so its light shines toward +x), and the wind (the entity named Breeze) blowing toward +x at 12 units a second. Then step one tick and answer with the red of the sun light as it reaches the ground, as the renderer reports it, as the number \"answer\"."},
     {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
      "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
 ]
