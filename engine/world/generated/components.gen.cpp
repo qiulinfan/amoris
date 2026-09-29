@@ -1978,6 +1978,7 @@ void to_json(Json& j, const Terrain& v) {
     j["rock_slope"] = v.rock_slope;
     j["snow_line"] = v.snow_line;
     j["texture_tile"] = v.texture_tile;
+    j["paintmap"] = v.paintmap;
 }
 
 void from_json(const Json& j, Terrain& v) {
@@ -1994,6 +1995,7 @@ void from_json(const Json& j, Terrain& v) {
     scalar_from_json(j, "rock_slope", v.rock_slope);
     scalar_from_json(j, "snow_line", v.snow_line);
     scalar_from_json(j, "texture_tile", v.texture_tile);
+    scalar_from_json(j, "paintmap", v.paintmap);
 }
 
 void hash_component(StateHasherRef& h, const Terrain& v) {
@@ -2020,6 +2022,7 @@ void hash_component(StateHasherRef& h, const Terrain& v) {
     h.f32(v.rock_slope);
     h.f32(v.snow_line);
     h.f32(v.texture_tile);
+    h.str(v.paintmap);
 }
 
 std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
@@ -2147,6 +2150,12 @@ void to_json(Json& j, const Scatter& v) {
     j["max_slope"] = v.max_slope;
     j["min_height"] = v.min_height;
     j["max_height"] = v.max_height;
+    j["max_paint"] = v.max_paint;
+    j["collide"] = v.collide;
+    j["collide_height"] = v.collide_height;
+    j["sway"] = v.sway;
+    j["sway_speed"] = v.sway_speed;
+    j["fade"] = v.fade;
     j["shade"] = v.shade;
     j["placed"] = v.placed;
 }
@@ -2164,6 +2173,12 @@ void from_json(const Json& j, Scatter& v) {
     scalar_from_json(j, "max_slope", v.max_slope);
     scalar_from_json(j, "min_height", v.min_height);
     scalar_from_json(j, "max_height", v.max_height);
+    scalar_from_json(j, "max_paint", v.max_paint);
+    scalar_from_json(j, "collide", v.collide);
+    scalar_from_json(j, "collide_height", v.collide_height);
+    scalar_from_json(j, "sway", v.sway);
+    scalar_from_json(j, "sway_speed", v.sway_speed);
+    scalar_from_json(j, "fade", v.fade);
     scalar_from_json(j, "shade", v.shade);
     scalar_from_json(j, "placed", v.placed);
 }
@@ -2183,6 +2198,12 @@ void hash_component(StateHasherRef& h, const Scatter& v) {
     h.f32(v.max_slope);
     h.f32(v.min_height);
     h.f32(v.max_height);
+    h.f32(v.max_paint);
+    h.f32(v.collide);
+    h.f32(v.collide_height);
+    h.f32(v.sway);
+    h.f32(v.sway_speed);
+    h.f32(v.fade);
     h.f32(v.shade);
     h.i64(static_cast<std::int64_t>(v.placed));
 }
@@ -2202,6 +2223,12 @@ std::size_t numeric_span(Scatter& v, std::string_view path, float** out) {
     if (path == "max_slope") { *out = &v.max_slope; return 1; }
     if (path == "min_height") { *out = &v.min_height; return 1; }
     if (path == "max_height") { *out = &v.max_height; return 1; }
+    if (path == "max_paint") { *out = &v.max_paint; return 1; }
+    if (path == "collide") { *out = &v.collide; return 1; }
+    if (path == "collide_height") { *out = &v.collide_height; return 1; }
+    if (path == "sway") { *out = &v.sway; return 1; }
+    if (path == "sway_speed") { *out = &v.sway_speed; return 1; }
+    if (path == "fade") { *out = &v.fade; return 1; }
     if (path == "shade") { *out = &v.shade; return 1; }
     return 0;
 }
@@ -2932,7 +2959,7 @@ constexpr std::array<FieldInfo, 19> kCharacterFields = {{
     FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine)."},
     FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 13> kTerrainFields = {{
+constexpr std::array<FieldInfo, 14> kTerrainFields = {{
     FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity."},
     FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity."},
     FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across."},
@@ -2946,6 +2973,7 @@ constexpr std::array<FieldInfo, 13> kTerrainFields = {{
     FieldInfo{"rock_slope", "f32", "Degrees from level above which ground is rock."},
     FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none."},
     FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground."},
+    FieldInfo{"paintmap", "string", "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none."},
 }};
 constexpr std::array<FieldInfo, 14> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity."},
@@ -2963,7 +2991,7 @@ constexpr std::array<FieldInfo, 14> kWaterFields = {{
     FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more."},
     FieldInfo{"enabled", "bool", "false stops it being drawn and buoying."},
 }};
-constexpr std::array<FieldInfo, 14> kScatterFields = {{
+constexpr std::array<FieldInfo, 20> kScatterFields = {{
     FieldInfo{"count", "i32", "Places tried (the most copies there can be; up to 20000)."},
     FieldInfo{"area", "vec2", "The extent along x and z, centred on the entity."},
     FieldInfo{"seed", "u32", "The same seed and settings place the same copies."},
@@ -2976,6 +3004,12 @@ constexpr std::array<FieldInfo, 14> kScatterFields = {{
     FieldInfo{"max_slope", "f32", "Degrees: no copy where the ground is steeper."},
     FieldInfo{"min_height", "f32", "No copy on ground lower than this (world y): above the water line."},
     FieldInfo{"max_height", "f32", "No copy on ground higher than this (world y): below the snow."},
+    FieldInfo{"max_paint", "f32", "No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1): 0.3 keeps a painted path clear of bushes; 1 places them on paint too."},
+    FieldInfo{"collide", "f32", "Above 0, every copy is a static collider: an upright capsule of this radius (in the entity's units, times the copy's size) standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. 0: the copies are only drawn."},
+    FieldInfo{"collide_height", "f32", "The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width)."},
+    FieldInfo{"sway", "f32", "How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still."},
+    FieldInfo{"sway_speed", "f32", "Sways a second, on the simulation clock (a paused game is still)."},
+    FieldInfo{"fade", "f32", "Copies farther from the camera than this are not drawn; over the last fifth of the distance they shrink into the ground. 0 draws them at any distance."},
     FieldInfo{"shade", "f32", "How much each copy's brightness varies, 0..1."},
     FieldInfo{"placed", "i32", "How many copies stand (written by the engine)."},
 }};

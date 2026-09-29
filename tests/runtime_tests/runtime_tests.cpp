@@ -4074,7 +4074,7 @@ TEST_CASE("a terrain is drawn, stood on and collided with; sculpting reshapes it
     const double before = st["player.y"].get<double>();
     Json sculpt = s.command("terrain.sculpt", Json{{"x", st["player.x"]}, {"z", st["player.z"]}, {"radius", 4}, {"amount", 1.5}}).value();
     REQUIRE(sculpt["samples"].get<int>() > 10);
-    REQUIRE(sculpt["revision"].get<int>() == 2);
+    REQUIRE(sculpt["revision"].get<int>() == info["revision"].get<int>() + 1);
     for (int i = 0; i < 20; ++i) REQUIRE(s.frame().has_value());
     st = state();
     REQUIRE(st["player.y"].get<double>() == Catch::Approx(before + 1.5).margin(0.1));
@@ -4162,6 +4162,181 @@ TEST_CASE("a Scatter strews copies over the ground within its limits, the same e
     run([&](app::Session& s) {
         REQUIRE(s.command("scatter.copies", Json{{"entity", "Bushes"}, {"limit", 20000}}).value()["copies"] == first);
     });
+}
+
+TEST_CASE("the hills' boulders are scattered copies that collide: counted by the physics, hit by rays, and in the player's way", "[runtime][terrain][scatter][collide]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "hills";
+    o.bundle = root() / "build" / "ts" / "hills.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 5; ++i) REQUIRE(s.frame().has_value());
+    const Json boulders = s.command("scatter.copies", Json{{"entity", "Boulders"}, {"limit", 1000}}).value();
+    const int placed = boulders["placed"].get<int>();
+    INFO(placed);
+    REQUIRE(placed > 20);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["scattered"] == placed);
+    const auto id = s.command("world.find", Json{{"path", "Boulders"}}).value().get<world::EntityId>();
+    // A ray down onto each of the first ten meets the Boulders above the ground there.
+    for (int k = 0; k < 10; ++k) {
+        const Json& c = boulders["copies"][k];
+        const Json hit = s.command("physics.raycast", Json{{"origin", Json{{"x", c["x"]}, {"y", 60}, {"z", c["z"]}}}, {"direction", Json{{"x", 0}, {"y", -1}, {"z", 0}}}}).value();
+        REQUIRE(hit["entity"].get<world::EntityId>() == id);
+        REQUIRE(hit["point"]["y"].get<double>() > c["y"].get<double>() + 0.5);
+    }
+    // Navigation baked around one leaves the ground under it out: a path from one side to the
+    // other through its centre goes round it.
+    {
+        const Json& b = boulders["copies"][1];
+        const double bx = b["x"].get<double>(), bz = b["z"].get<double>(), r = 0.42 * b["size"].get<double>();
+        REQUIRE(s.command("nav.bake", Json{{"min", Json{{"x", bx - 8}, {"y", 0}, {"z", bz - 8}}}, {"max", Json{{"x", bx + 8}, {"y", 14}, {"z", bz + 8}}}, {"cell", 0.25}, {"agent_radius", 0.3}, {"max_slope", 50}}).has_value());
+        auto at = [&](double x, double z) { return Json{{"x", x}, {"y", s.command("terrain.height", Json{{"x", x}, {"z", z}}).value()["height"].get<double>()}, {"z", z}}; };
+        const Json path = s.command("nav.path", Json{{"from", at(bx - 4, bz)}, {"to", at(bx + 4, bz)}}).value();
+        INFO(path.dump().substr(0, 600) << " boulder " << b.dump());
+        REQUIRE(path["partial"] == false);
+        const Json& pts = path["points"];
+        REQUIRE(pts.size() >= 2);
+        for (std::size_t k = 0; k + 1 < pts.size(); ++k) {
+            for (int q = 0; q <= 8; ++q) {
+                const double x = pts[k]["x"].get<double>() + (pts[k + 1]["x"].get<double>() - pts[k]["x"].get<double>()) * q / 8;
+                const double z = pts[k]["z"].get<double>() + (pts[k + 1]["z"].get<double>() - pts[k]["z"].get<double>()) * q / 8;
+                REQUIRE(std::hypot(x - bx, z - bz) > r);
+            }
+        }
+    }
+    // The player put beside one and walked at it never gets closer than their two radii: it is
+    // stopped, or slides round it (the boulder is round) off the line it walked.
+    const Json& c = boulders["copies"][0];
+    const Json g = s.command("terrain.height", Json{{"x", c["x"].get<double>() - 4}, {"z", c["z"]}}).value();
+    const auto player = s.command("world.find", Json{{"path", "Player"}}).value().get<world::EntityId>();
+    REQUIRE(s.command("world.set", Json{{"entity", player}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", c["x"].get<double>() - 4}, {"y", g["height"].get<double>() + 1.2}, {"z", c["z"]}}}}}}).has_value());
+    REQUIRE(s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 90}}).has_value());
+    const double reach = 0.42 * c["size"].get<double>() + 0.3;   // the boulder's capsule (entity scale x 1) and the player's
+    double closest = 1e9;
+    Json st;
+    for (int i = 0; i < 90; ++i) {
+        REQUIRE(s.frame().has_value());
+        st = s.command("state", Json::object()).value()["state"];
+        closest = std::min(closest, std::hypot(st["player.x"].get<double>() - c["x"].get<double>(), st["player.z"].get<double>() - c["z"].get<double>()));
+    }
+    INFO(st.dump() << " boulder " << c.dump() << " closest " << closest);
+    REQUIRE(closest > reach - 0.05);
+    REQUIRE((st["player.x"].get<double>() < c["x"].get<double>() || std::fabs(st["player.z"].get<double>() - c["z"].get<double>()) > 0.3));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("paint on a terrain: laid on and erased by a brush, drawn, answered by terrain.height, saved as a paintmap and kept through a new shape", "[runtime][terrain][paint]") {
+    const std::filesystem::path saved = root() / "samples" / "hills" / "assets" / "test-paint.png";
+    std::filesystem::remove(saved);
+    app::Options o;
+    o.project_dir = root() / "samples" / "hills";
+    o.bundle = root() / "build" / "ts" / "hills.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("pause", Json::object()).has_value());
+    const Json st = s.command("state", Json::object()).value()["state"];
+    const double px = st["player.x"].get<double>() + 2.5, pz = st["player.z"].get<double>() - 1.5;
+    auto ground = [&](double x, double z) { return s.command("terrain.height", Json{{"x", x}, {"z", z}}).value(); };
+    // The sample paints a dirt path from the player to the beacon at its start; the player stands on it.
+    REQUIRE(st["on_path"] == true);
+    REQUIRE(ground(st["player.x"].get<double>(), st["player.z"].get<double>())["paint"]["r"].get<double>() == Catch::Approx(0.6).margin(0.02));
+    // The sample's Scatters (max_paint 0.3) keep their bushes and stones off the path.
+    for (const char* name : {"Bushes", "Stones"}) {
+        const Json copies = s.command("scatter.copies", Json{{"entity", name}, {"limit", 20000}}).value()["copies"];
+        REQUIRE(copies.size() > 100);
+        for (const Json& c : copies) REQUIRE(ground(c["x"].get<double>(), c["z"].get<double>())["paint"]["a"].get<double>() <= 0.31);
+    }
+    // Cleared, the ground has no paint to answer.
+    REQUIRE(s.command("terrain.paints", Json{{"paint", Json::array()}}).has_value());
+    REQUIRE_FALSE(ground(px, pz).contains("paint"));
+    // What the camera sees there before and after red is painted on it.
+    auto pixel = [&]() {
+        REQUIRE(s.frame().has_value());
+        const Json g = ground(px, pz);
+        const Json r = s.command("render.project", Json{{"point", g["point"]}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+    };
+    const Json before = pixel();
+    Json painted = s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 1}, {"g", 0}, {"b", 0}}}, {"radius", 3}, {"amount", 1}}).value();
+    INFO(painted.dump());
+    REQUIRE(painted["samples"].get<int>() > 20);
+    REQUIRE(painted["paint"]["a"].get<double>() == Catch::Approx(1).margin(0.05));   // between samples, a little under full
+    const Json after = pixel();
+    INFO("before " << before.dump() << " after " << after.dump());
+    REQUIRE(after[0].get<int>() > before[0].get<int>() + 30);
+    REQUIRE(after[1].get<int>() < before[1].get<int>());
+    // The brush fades: full at the centre, about half halfway out, nothing past the radius.
+    Json centre = ground(px, pz)["paint"];
+    REQUIRE(centre["r"].get<double>() == Catch::Approx(1).margin(0.02));
+    REQUIRE(centre["g"].get<double>() == Catch::Approx(0).margin(0.02));
+    const double half = ground(px + 1.5, pz)["paint"]["a"].get<double>();
+    REQUIRE(half > 0.3);
+    REQUIRE(half < 0.7);
+    REQUIRE(ground(px + 3.5, pz)["paint"]["a"].get<double>() == 0);
+    Json info = s.command("terrain.info", Json::object()).value();
+    REQUIRE(info["painted"].get<double>() > 0);
+    REQUIRE(info["painted"].get<double>() < 0.05);
+    // Blue laid half over the red mixes them; erasing at full strength takes the paint away.
+    s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 1}}}, {"radius", 3}, {"amount", 0.5}}).value();
+    centre = ground(px, pz)["paint"];
+    REQUIRE(centre["r"].get<double>() == Catch::Approx(0.5).margin(0.03));
+    REQUIRE(centre["b"].get<double>() == Catch::Approx(0.5).margin(0.03));
+    REQUIRE(centre["a"].get<double>() == Catch::Approx(1).margin(0.03));
+    REQUIRE(s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"mode", "erase"}, {"radius", 3}, {"amount", 1}}).value()["paint"]["a"].get<double>() < 0.03);
+    REQUIRE_FALSE(s.command("terrain.paint", Json{{"x", px}, {"z", pz}}).has_value());   // painting needs a colour
+    s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 0.2}, {"g", 0.8}, {"b", 0.3}}}, {"radius", 3}, {"amount", 1}}).value();
+    // The grid read and set back whole (the editor's undo) is the same paint.
+    const Json grid = s.command("terrain.paints", Json::object()).value();
+    REQUIRE(grid["paint"].size() == 129u * 129u * 4u);
+    const double at_half = ground(px + 1.5, pz)["paint"]["a"].get<double>();
+    REQUIRE(at_half > 0.3);
+    REQUIRE(s.command("terrain.paints", Json{{"paint", Json::array()}}).has_value());
+    REQUIRE_FALSE(ground(px, pz).contains("paint"));
+    REQUIRE(s.command("terrain.paints", Json{{"paint", grid["paint"]}}).has_value());
+    REQUIRE(ground(px + 1.5, pz)["paint"]["a"].get<double>() == Catch::Approx(at_half).margin(1e-3));
+    // Saved as an RGBA PNG it becomes the paintmap and reads back to within a step of 8 bits.
+    Json sv = s.command("terrain.save", Json{{"path", "assets/test-paint.png"}, {"paint", true}}).value();
+    REQUIRE(std::filesystem::exists(saved));
+    const Json tc = s.command("world.get", Json{{"entity", info["entity"]}, {"component", "Terrain"}}).value();
+    REQUIRE(tc["paintmap"] == "assets/test-paint.png");
+    REQUIRE(s.command("terrain.paints", Json{{"paint", Json::array()}}).has_value());
+    REQUIRE(s.command("terrain.reset", Json{{"paint", true}}).has_value());   // back to the paintmap's
+    REQUIRE(ground(px + 1.5, pz)["paint"]["a"].get<double>() == Catch::Approx(at_half).margin(0.01));
+    // A new shape (another seed) keeps the paint; sculpting keeps it too.
+    Json next = tc;
+    next["seed"] = tc["seed"].get<int>() + 1;
+    REQUIRE(s.command("world.set", Json{{"entity", info["entity"]}, {"component", "Terrain"}, {"value", next}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(ground(px + 1.5, pz)["paint"]["a"].get<double>() == Catch::Approx(at_half).margin(0.01));
+    REQUIRE(s.command("terrain.sculpt", Json{{"x", px}, {"z", pz}, {"amount", 1}}).has_value());
+    REQUIRE(ground(px + 1.5, pz)["paint"]["a"].get<double>() == Catch::Approx(at_half).margin(0.01));
+    // A stroke through points paints the whole line between them in one change, and nothing off it.
+    const int rev = s.command("terrain.info", Json::object()).value()["revision"].get<int>();
+    REQUIRE(s.command("terrain.paints", Json{{"paint", Json::array()}}).has_value());
+    const Json line = s.command("terrain.paint", Json{{"points", Json::array({Json{{"x", px - 6}, {"z", pz}}, Json{{"x", px + 6}, {"z", pz}}})}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 0}}}, {"radius", 1}, {"amount", 0.8}}).value();
+    REQUIRE(line["revision"].get<int>() == rev + 2);   // the clearing, then the stroke
+    for (double x = px - 5.5; x <= px + 5.5; x += 0.37) REQUIRE(ground(x, pz)["paint"]["a"].get<double>() > 0.5);
+    REQUIRE(ground(px, pz + 2)["paint"]["a"].get<double>() == 0);   // the nearest samples are past the radius
+    REQUIRE_FALSE(s.command("terrain.paint", Json{{"points", Json::array()}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 0}}}}).has_value());
+    Json evs = s.command("events.since", Json{{"since", 0}, {"limit", 1000}}).value()["events"];
+    int count = 0;
+    for (const Json& e : evs) count += e["type"] == "terrain.painted" ? 1 : 0;
+    REQUIRE(count >= 5);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(saved);
 }
 
 namespace {

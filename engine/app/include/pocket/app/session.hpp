@@ -128,7 +128,7 @@ class Session {
     // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
     // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.
     struct TerrainState {
-        std::string shape_key, look_key, error;
+        std::string shape_key, look_key, paint_key, error;
         assets::Terrain grid;
         std::uint64_t revision = 0;
         std::string mesh;

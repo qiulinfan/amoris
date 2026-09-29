@@ -190,6 +190,9 @@
      },
      "seed": 3,
      "on": "Hills",
+     "sway": 0.07,
+     "sway_speed": 0.35,
+     "max_paint": 0.3,
      "scale": {
       "x": 0.6,
       "y": 1.4
@@ -231,6 +234,7 @@
      },
      "seed": 5,
      "on": "Hills",
+     "max_paint": 0.3,
      "scale": {
       "x": 0.4,
       "y": 1.6
@@ -240,6 +244,50 @@
      "align": 1,
      "sink": 0.15,
      "shade": 0.25
+    }
+   }
+  },
+  {
+   "name": "Boulders",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 1.0,
+      "y": 0.75,
+      "z": 0.9
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.48,
+      "g": 0.46,
+      "b": 0.43,
+      "a": 1
+     },
+     "roughness": 0.9
+    },
+    "Scatter": {
+     "count": 160,
+     "area": {
+      "x": 94,
+      "y": 94
+     },
+     "seed": 11,
+     "on": "Hills",
+     "max_paint": 0.3,
+     "scale": {
+      "x": 1.4,
+      "y": 2.6
+     },
+     "spacing": 4,
+     "max_slope": 30,
+     "min_height": 3.8,
+     "max_height": 9,
+     "sink": 0.35,
+     "shade": 0.2,
+     "collide": 0.42,
+     "collide_height": 0.8
     }
    }
   }

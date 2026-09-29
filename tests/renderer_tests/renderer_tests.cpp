@@ -1966,3 +1966,58 @@ TEST_CASE("decals paint the surfaces in their boxes, facing the projection, in o
     REQUIRE(s.command("render.stats", Json::object()).value()["decals"]["drawn"] == 0);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("scattered copies sway on the simulation clock and fade out past their distance", "[renderer][scatter][sway]") {
+    const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-sway.png";
+    std::filesystem::remove(ref);
+    app::Options o = playground_options();
+    o.width = 192;
+    o.height = 128;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Floor"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -0.5}, {"z", 0}}}, {"scale", Json{{"x", 20}, {"y", 1}, {"z", 20}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0.3}, {"g", 0.5}, {"b", 0.25}, {"a", 1}}}}}, {"RigidBody", Json{{"kind", 1}}}, {"Collider", Json{{"shape", 0}, {"size", Json{{"x", 10}, {"y", 0.5}, {"z", 10}}}}}}}}).has_value());
+    // Tall thin reeds over the floor (the Scatter finds it with a ray down), the camera 7 away.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Reeds"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 3}, {"z", 0}}}, {"scale", Json{{"x", 0.08}, {"y", 1.6}, {"z", 0.08}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0.9}, {"g", 0.85}, {"b", 0.4}, {"a", 1}}}}},
+        {"Scatter", Json{{"count", 300}, {"area", Json{{"x", 8}, {"y", 8}}}, {"seed", 2}, {"spacing", 0.3}, {"scale", Json{{"x", 0.8}, {"y", 1.2}}}, {"sway", 0.5}, {"sway_speed", 0.8}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 7}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.38}, {"y", 0.3}, {"z", 0.1}, {"w", 0.87}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int placed = s.command("scatter.copies", Json{{"entity", "Reeds"}}).value()["placed"].get<int>();
+    REQUIRE(placed > 100);
+    REQUIRE(s.command("render.stats", Json::object()).value()["scattered"] == placed);
+    // Swaying: a third of a second later the same view differs where the reeds are.
+    auto moved = [&](int ticks, bool idle = false) {
+        REQUIRE(s.command("render.compare", Json{{"path", ".pocket/test-sway.png"}, {"update", true}}).has_value());
+        for (int i = 0; i < ticks; ++i) REQUIRE((idle ? s.idle_frame() : s.frame()).has_value());
+        return s.command("render.compare", Json{{"path", ".pocket/test-sway.png"}}).value()["fraction"].get<double>();
+    };
+    const double swaying = moved(20);
+    INFO("swaying " << swaying);
+    REQUIRE(swaying > 0.01);
+    // Paused (frames drawn, no tick), the clock stands and so do they.
+    s.set_paused(true);
+    REQUIRE(moved(20, true) == 0.0);
+    s.set_paused(false);
+    // Without sway, time passing changes nothing.
+    Json sc = s.command("world.get", Json{{"entity", "Reeds"}, {"component", "Scatter"}}).value();
+    sc["sway"] = 0;
+    REQUIRE(s.command("world.set", Json{{"entity", "Reeds"}, {"component", "Scatter"}, {"value", sc}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(moved(20) == 0.0);
+    // Fading: past 7.5 units from the camera none are drawn, the nearer still are.
+    sc["fade"] = 7.5;
+    REQUIRE(s.command("world.set", Json{{"entity", "Reeds"}, {"component", "Scatter"}, {"value", sc}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int drawn = s.command("render.stats", Json::object()).value()["scattered"].get<int>();
+    INFO("drawn " << drawn << " of " << placed);
+    REQUIRE(drawn > 0);
+    REQUIRE(drawn < placed);
+    const Json copies = s.command("scatter.copies", Json{{"entity", "Reeds"}, {"limit", 1000}}).value()["copies"];
+    int near = 0;
+    for (const Json& c : copies) near += std::hypot(c["x"].get<double>(), c["y"].get<double>() - 1.5, c["z"].get<double>() - 7) < 7.5 ? 1 : 0;
+    REQUIRE(drawn == near);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(ref);
+}

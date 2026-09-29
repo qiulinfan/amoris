@@ -81,6 +81,7 @@ struct StepStats {
     std::uint32_t stepped = 0;             // characters that walked up an edge this step
     std::uint32_t pushed = 0;              // dynamic bodies a character pushed this step
     std::uint32_t floating = 0;            // bodies buoyed by water this step (once per body and water)
+    std::uint32_t scattered = 0;           // scattered copies standing as colliders (Scatter.collide)
 };
 
 class Physics {

@@ -68,7 +68,7 @@ A `MeshRenderer.mesh` or `world.instantiate {mesh}` can name any of these, and t
 
 ## Not yet
 
-KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not), `KHR_lights_punctual` and `KHR_materials_emissive_strength`: materials variants, draco; PLY files, and audio or font assets through the same store.
+KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not), `KHR_lights_punctual` and `KHR_materials_emissive_strength`: materials variants, draco; and audio or font assets through the same store.
 
 ## Tile maps
 

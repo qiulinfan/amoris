@@ -8,6 +8,7 @@
 #include <pocket/core/result.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -356,12 +357,17 @@ struct Terrain {
     int n = 0;
     float size_x = 64, size_z = 64, height = 8;
     std::vector<float> h;   // n * n, row j (along z) after row j - 1, x across a row
+    // Colour painted over the ground's own (terrain.paint): n * n of sRGB r, g, b and a weight 0..1,
+    // in the order of h; empty where nothing was ever painted.
+    std::vector<std::array<float, 4>> paint;
     [[nodiscard]] float cell_x() const { return size_x / static_cast<float>(std::max(n - 1, 1)); }
     [[nodiscard]] float cell_z() const { return size_z / static_cast<float>(std::max(n - 1, 1)); }
     [[nodiscard]] float at(int i, int j) const;
     // Height and normal at local (x, z); outside the grid, at its nearest edge.
     [[nodiscard]] float sample(float x, float z) const;
     [[nodiscard]] Vec3 normal(float x, float z) const;
+    // The paint at local (x, z), bilinear between samples; weight 0 where unpainted.
+    [[nodiscard]] std::array<float, 4> paint_at(float x, float z) const;
 };
 
 // From a greyscale image (8 or 16 bits; the first channel), resampled to n by n: black is 0, white `height`.
@@ -379,6 +385,10 @@ struct TerrainLook {
 Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& path);
 // A 16-bit greyscale PNG of the heights (0 is 0, 65535 is the terrain's height): what terrain_from_image reads back.
 std::string terrain_png16(const Terrain& t);
+// A paint map: an RGBA image (colour in sRGB, alpha the weight), its top row at -z, resampled to n by n.
+Result<std::vector<std::array<float, 4>>> terrain_paint_from_image(const std::string& bytes, const std::string& display_path, int n);
+// The paint as an 8-bit RGBA PNG, n by n: what terrain_paint_from_image reads back.
+std::string terrain_paint_png(const Terrain& t);
 
 class AssetStore {
    public:

@@ -648,6 +648,7 @@ struct Terrain {
     float rock_slope = 35.0f;
     float snow_line = 0.85f;
     float texture_tile = 4.0f;
+    std::string paintmap = "";
     constexpr bool operator==(const Terrain&) const = default;
 };
 void to_json(Json& j, const Terrain& v);
@@ -692,6 +693,12 @@ struct Scatter {
     float max_slope = 35.0f;
     float min_height = -1000.0f;
     float max_height = 1000.0f;
+    float max_paint = 1.0f;
+    float collide = 0.0f;
+    float collide_height = 2.0f;
+    float sway = 0.0f;
+    float sway_speed = 0.5f;
+    float fade = 0.0f;
     float shade = 0.15f;
     std::int32_t placed = 0;
     constexpr bool operator==(const Scatter&) const = default;

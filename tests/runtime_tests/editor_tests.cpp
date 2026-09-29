@@ -1088,6 +1088,29 @@ TEST_CASE("editor sculpts a terrain in the scene pane and undoes the stroke", "[
     double sum_after = 0, sum_lowered = 0;
     for (std::size_t k = 0; k < after.size(); ++k) { sum_after += after[k].get<double>(); sum_lowered += lowered[k].get<double>(); }
     REQUIRE(sum_lowered < sum_after);
+    // Paint mode lays the chosen colour (sand) along a drag; undo takes it away, redo lays it again.
+    ok(s.command("terrain.paints", Json{{"paint", Json::array()}}));   // the sample's own path cleared first
+    ok(s.command("ui.click", Json{{"id", find_named(s, "sculpt:paint")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "paint:sand")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.drag", Json{{"x", cx}, {"y", cy}, {"dx", -40}, {"dy", 0}, {"steps", 4}}));
+    ok(s.idle_frame());
+    info = ok(s.command("terrain.info", Json::object()));
+    INFO(info.dump());
+    REQUIRE(info["painted"].get<double>() > 0);
+    const Json paint = ok(s.command("terrain.paints", Json::object()))["paint"];
+    double best = 0, red = 0;
+    for (std::size_t k = 3; k < paint.size(); k += 4) if (paint[k].get<double>() > best) { best = paint[k].get<double>(); red = paint[k - 3].get<double>(); }
+    REQUIRE(best > 0.3);
+    REQUIRE(red == Catch::Approx(0.82).margin(0.02));
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "terrain:save-paint"}})).size() == 1);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("terrain.info", Json::object()))["painted"].get<double>() == 0);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("terrain.paints", Json::object()))["paint"] == paint);
     ok(s.finish());
     std::filesystem::remove_all(root() / "samples" / "hills" / ".pocket");
 }

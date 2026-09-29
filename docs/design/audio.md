@@ -49,4 +49,4 @@ A bus can duck under another: with `duck_by: "dialogue"`, `duck_amount: 0.3` and
 
 ## Not yet
 
-Compressed formats beyond Ogg Vorbis and MP3 (FLAC, Opus), more than one room at a time (a door between two rooms is a script changing the room) and early reflections that follow the walls (the reverb is one tail for the whole room; occlusion is a straight ray, so nothing bends around a corner either), effects on a bus beyond its low-pass (a bus with a reverb or an echo of its own), streaming WAV (a long WAV decodes whole; encode music as Ogg), and audio in the state hash (voices are deterministic but kept out of the hash like the interface).
+Compressed formats beyond Ogg Vorbis and MP3 (FLAC, Opus), more than one room at a time (a door between two rooms is a script changing the room) and early reflections that follow the walls (the reverb is one tail for the whole room; occlusion is a straight ray, so nothing bends around a corner either), a reverb of a bus's own (every bus sends to the one room's), streaming WAV (a long WAV decodes whole; encode music as Ogg), and audio in the state hash (voices are deterministic but kept out of the hash like the interface).

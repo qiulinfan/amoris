@@ -474,6 +474,7 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `rock_slope` | f32 | 35.0 | Degrees from level above which ground is rock. |
 | `snow_line` | f32 | 0.85 | The fraction of `height` above which ground is snow; 1 or more for none. |
 | `texture_tile` | f32 | 4.0 | Units per repeat of the MeshRenderer's texture over the ground. |
+| `paintmap` | string | "" | A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none. |
 
 ## Water
 
@@ -514,6 +515,12 @@ Many copies of the entity's MeshRenderer strewn over the ground below it (docs/d
 | `max_slope` | f32 | 35.0 | Degrees: no copy where the ground is steeper. |
 | `min_height` | f32 | -1000.0 | No copy on ground lower than this (world y): above the water line. |
 | `max_height` | f32 | 1000.0 | No copy on ground higher than this (world y): below the snow. |
+| `max_paint` | f32 | 1.0 | No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1): 0.3 keeps a painted path clear of bushes; 1 places them on paint too. |
+| `collide` | f32 | 0.0 | Above 0, every copy is a static collider: an upright capsule of this radius (in the entity's units, times the copy's size) standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. 0: the copies are only drawn. |
+| `collide_height` | f32 | 2.0 | The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width). |
+| `sway` | f32 | 0.0 | How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still. |
+| `sway_speed` | f32 | 0.5 | Sways a second, on the simulation clock (a paused game is still). |
+| `fade` | f32 | 0.0 | Copies farther from the camera than this are not drawn; over the last fifth of the distance they shrink into the ground. 0 draws them at any distance. |
 | `shade` | f32 | 0.15 | How much each copy's brightness varies, 0..1. |
 | `placed` | i32 | 0 | How many copies stand (written by the engine). |
 

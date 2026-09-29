@@ -647,6 +647,79 @@ def calm_lake_check(env, answer):
     return True, f"a still, clear lake at {h:.2f}"
 
 
+SAND = (0.85, 0.78, 0.55)
+ROAD_FAR = [(x, z) for x in range(-28, 29, 4) for z in (-6.5, 6.5)]
+
+
+def sand_road_before(env):
+    env.far_paint = [env.command("terrain.height", {"x": x, "z": z}).get("paint", {}).get("a", 0.0) for x, z in ROAD_FAR]
+    return True, ""
+
+
+def sand_road_solve(env):
+    points = [{"x": x, "z": 0} for x in range(-30, 31, 5)]
+    env.command("terrain.paint", {"points": points, "color": {"r": SAND[0], "g": SAND[1], "b": SAND[2]}, "radius": 2.5, "amount": 1})
+    return env.command("terrain.height", {"x": 0, "z": 0})["paint"]["a"]
+
+
+def sand_road_check(env, answer):
+    for x in range(-28, 29, 2):
+        for z in (-1, 0, 1):
+            p = env.command("terrain.height", {"x": x, "z": z}).get("paint")
+            if not p or p["a"] < 0.8:
+                return False, f"the ground at x {x}, z {z} is covered {p['a'] if p else 0:.2f}"
+            if abs(p["r"] - SAND[0]) > 0.08 or abs(p["g"] - SAND[1]) > 0.08 or abs(p["b"] - SAND[2]) > 0.08:
+                return False, f"the paint at x {x}, z {z} is {p}"
+    for (x, z), was in zip(ROAD_FAR, env.far_paint):
+        a = env.command("terrain.height", {"x": x, "z": z}).get("paint", {}).get("a", 0.0)
+        if abs(a - was) > 0.02:
+            return False, f"the ground at x {x}, z {z}, 6.5 from the road, changed its paint from {was:.2f} to {a:.2f}"
+    a = env.command("terrain.height", {"x": 0, "z": 0})["paint"]["a"]
+    if not isinstance(answer, (int, float)) or abs(answer - a) > 0.01:
+        return False, f"answered {answer!r}, the coverage at x 0, z 0 is {a:.3f}"
+    return True, "a sand road from x -30 to 30 along z 0, the ground beside it as it was"
+
+
+def reed_field_solve(env):
+    env.command("world.spawn", {"name": "Reeds", "components": {
+        "Transform": {"position": {"x": 0, "y": 20, "z": 10}, "scale": {"x": 0.1, "y": 1.5, "z": 0.1}},
+        "MeshRenderer": {"mesh": "cube", "color": {"r": 0.8, "g": 0.75, "b": 0.4, "a": 1}},
+        "Scatter": {"count": 400, "area": {"x": 20, "y": 20}, "on": "Hills", "scale": {"x": 1, "y": 1}, "sway": 0.3, "collide": 1.0}}})
+    env.command("step", {"ticks": 1})
+    return env.command("scatter.copies", {"entity": "Reeds"})["placed"]
+
+
+def reed_field_check(env, answer):
+    rid = env.command("world.find", {"path": "Reeds"})
+    if not isinstance(rid, int):
+        return False, "no entity named Reeds"
+    sc = env.command("world.get", {"entity": rid, "component": "Scatter"}) or {}
+    if abs(sc.get("sway", 0) - 0.3) > 0.01:
+        return False, f"the reeds sway {sc.get('sway')}"
+    env.command("step", {"ticks": 1})
+    cp = env.command("scatter.copies", {"entity": rid, "limit": 20000})
+    if cp["placed"] < 100:
+        return False, f"{cp['placed']} reeds stand"
+    for c in cp["copies"]:
+        if abs(c["x"]) > 10.01 or abs(c["z"] - 10) > 10.01:
+            return False, f"a reed stands at ({c['x']:.1f}, {c['z']:.1f}), outside the 20 by 20 area around x 0, z 10"
+    # Each a collider (a ray down onto a reed meets the Reeds above the ground), 0.1 in radius: the
+    # Scatter's collide times the entity's scale times the copy's size.
+    c = cp["copies"][0]
+    hit = env.command("physics.raycast", {"origin": {"x": c["x"], "y": c["y"] + 30, "z": c["z"]}, "direction": {"x": 0, "y": -1, "z": 0}})
+    if not hit or hit.get("entity") != rid or hit["point"]["y"] < c["y"] + 0.5:
+        return False, f"a ray down onto the first reed meets {hit}"
+    scale = (env.command("world.get", {"entity": rid, "component": "Transform"}) or {}).get("scale", {})
+    for c in cp["copies"]:
+        size = c["size"] / max(abs(scale.get("y", 1)), 1e-6)   # scatter.copies' size is the copy's height scale
+        r = sc.get("collide", 0) * scale.get("x", 1) * size
+        if abs(r - 0.1) > 0.005:
+            return False, f"a reed's collider is {r:.3f} in radius (collide {sc.get('collide')}, scale x {scale.get('x')}, size {size:.2f})"
+    if answer != cp["placed"]:
+        return False, f"answered {answer!r}, {cp['placed']} reeds stand"
+    return True, f"{cp['placed']} reeds that sway 0.3 and stop what runs into them"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -690,6 +763,10 @@ TASKS = [
      "task": "Give the walker a sprint: add an input action named sprint bound to the left Shift key (LShift) in project.toml, and edit scripts/main.ts so that while sprint is held the player walks at 9 units per second instead of 5 (and at 5 otherwise)."},
     {"name": "raft", "project": "hills", "ticks": 2, "solve": raft_solve, "check": raft_check,
      "task": "Float a raft on the lake: spawn an entity named Raft, a dynamic rigid body with a box collider 2 units long (x), 0.2 thick (y) and 1 wide (z), drawn as a brown box of that size, and drop it into the lake from a little above the water at x -33, z -22. It must float: run the game for 180 ticks and check that the raft's centre stays within 0.3 of the water's surface. Answer with the height of the water's surface under the raft after those ticks as the number \"answer\"."},
+    {"name": "sand_road", "project": "hills", "ticks": 2, "before": sand_road_before, "solve": sand_road_solve, "check": sand_road_check,
+     "task": "Paint a sand road on the terrain named Hills: a straight road along z 0 from x -30 to x 30, its colour r 0.85, g 0.78, b 0.55, covering the ground fully (a coverage of at least 0.8) at least a unit to either side of the line, and leaving the ground 6.5 or more units from the line as it was. Answer with the paint's coverage at x 0, z 0 as the number \"answer\"."},
+    {"name": "reed_field", "project": "hills", "ticks": 2, "solve": reed_field_solve, "check": reed_field_check,
+     "task": "Plant a field of reeds that sway and block: spawn an entity named Reeds drawing thin boxes (a MeshRenderer with mesh \"cube\"; its Transform scale x 0.1, y 1.5, z 0.1) with a Scatter placing copies on the terrain named Hills over a 20 by 20 area centred on x 0, z 10, at least 100 of them standing, all the entity's own size (none bigger or smaller), whose tops sway 0.3 units in the wind, and each copy a collider 0.1 in radius. Answer with the number of reeds standing as the integer \"answer\"."},
     {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
      "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
 ]

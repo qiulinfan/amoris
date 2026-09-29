@@ -60,9 +60,13 @@ const layout = signal<Layout>({ ...DEFAULT_LAYOUT });
 const gizmo = signal<GizmoView | null>(null);
 const historyVersion = signal(0);
 const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
-type SculptMode = "raise" | "lower" | "flatten" | "smooth";
-const sculpt = signal<{ mode: SculptMode; radius: number; strength: number } | null>(null);   // terrain sculpting in the scene pane while a Terrain is selected
-const sculptSettings = signal<{ mode: SculptMode; radius: number; strength: number }>({ mode: "raise", radius: 4, strength: 0.5 });
+type SculptMode = "raise" | "lower" | "flatten" | "smooth" | "paint" | "erase";
+type Rgb = { r: number; g: number; b: number };
+type SculptSettings = { mode: SculptMode; radius: number; strength: number; color: Rgb };
+const sculpt = signal<SculptSettings | null>(null);   // terrain sculpting (or painting) in the scene pane while a Terrain is selected
+const sculptSettings = signal<SculptSettings>({ mode: "raise", radius: 4, strength: 0.5, color: { r: 0.45, g: 0.35, b: 0.24 } });
+// Colours a terrain brush offers (sRGB): a dirt path, sand, dark grass, stone, a burnt patch.
+const PAINTS: Array<[string, Rgb]> = [["dirt", { r: 0.45, g: 0.35, b: 0.24 }], ["sand", { r: 0.82, g: 0.74, b: 0.55 }], ["moss", { r: 0.2, g: 0.33, b: 0.15 }], ["stone", { r: 0.55, g: 0.55, b: 0.55 }], ["ash", { r: 0.12, g: 0.11, b: 0.1 }]];
 const actions = signal<Record<string, ActionBindings>>({});   // the input map, shown and edited by the Input tab
 const buses = signal<Bus[]>([]);   // the Audio tab's buses, as audio.buses answers
 interface TypeError { file?: string; line?: number; column?: number; severity: string; message: string }
@@ -86,7 +90,7 @@ let mainRect = { x: 0, y: 0, w: 0, h: 0 };
 let frame = 0;
 let dragState: { ids: number[]; before: Map<number, Transform>; parents: Map<number, ParentFrame | undefined>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
 let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
-let sculptStroke: { entity: number; before: number[]; pos: { x: number; y: number }; target?: number; touches: number } | null = null;
+let sculptStroke: { entity: number; paint: boolean; before: number[]; pos: { x: number; y: number }; target?: number; touches: number } | null = null;
 
 /** JSON copy (structuredClone is not in the script host). */
 function clone<T>(v: T): T {
@@ -573,7 +577,8 @@ function sculptAt(x: number, y: number): void {
     if (!hit || hit.entity !== st.entity) return;
     if (b.mode === "flatten" && st.target === undefined) st.target = hit.point.y;
     try {
-        terrain.sculpt(hit.point.x, hit.point.z, { entity: st.entity, mode: b.mode, radius: b.radius, amount: b.mode === "raise" || b.mode === "lower" ? b.strength * 0.25 : b.strength * 0.5, target: st.target });
+        if (b.mode === "paint" || b.mode === "erase") terrain.paint(hit.point.x, hit.point.z, b.mode === "paint" ? b.color : null, { entity: st.entity, radius: b.radius, amount: Math.min(b.strength * 0.5, 1) });
+        else terrain.sculpt(hit.point.x, hit.point.z, { entity: st.entity, mode: b.mode, radius: b.radius, amount: b.mode === "raise" || b.mode === "lower" ? b.strength * 0.25 : b.strength * 0.5, target: st.target });
         st.touches++;
     } catch (err) {
         notice.set(`Sculpt failed: ${String(err)}`);
@@ -585,9 +590,15 @@ function endSculpt(): void {
     const st = sculptStroke;
     sculptStroke = null;
     if (!st || st.touches === 0) return;
-    const after = terrain.heights(st.entity).heights;
     const before = st.before;
-    history.record({ label: `sculpt the terrain (${st.touches} touch${st.touches === 1 ? "" : "es"})`, redo: () => { terrain.setHeights(after, st.entity); }, undo: () => { terrain.setHeights(before, st.entity); } });
+    const touches = `${st.touches} touch${st.touches === 1 ? "" : "es"}`;
+    if (st.paint) {
+        const after = terrain.paints(st.entity).paint;
+        history.record({ label: `paint the terrain (${touches})`, redo: () => { terrain.setPaints(after, st.entity); }, undo: () => { terrain.setPaints(before, st.entity); } });
+    } else {
+        const after = terrain.heights(st.entity).heights;
+        history.record({ label: `sculpt the terrain (${touches})`, redo: () => { terrain.setHeights(after, st.entity); }, undo: () => { terrain.setHeights(before, st.entity); } });
+    }
     historyVersion.update((v) => v + 1);
 }
 
@@ -614,8 +625,14 @@ function TerrainBrush(props: { id: number }) {
                 <Button label={b ? "Stop sculpting" : "Sculpt"} small primary={b !== null} name="sculpt" onClick={() => sculpt.set(b ? null : set)} />
             </Row>
             <Row wrap gap={4}>
-                {(["raise", "lower", "flatten", "smooth"] as const).map((m) => <Button key={m} label={m} small primary={set.mode === m} name={`sculpt:${m}`} onClick={() => pick({ mode: m })} />)}
+                {(["raise", "lower", "flatten", "smooth", "paint", "erase"] as const).map((m) => <Button key={m} label={m} small primary={set.mode === m} name={`sculpt:${m}`} onClick={() => pick({ mode: m })} />)}
             </Row>
+            {set.mode === "paint" ? (
+                <Row wrap gap={4} align="center">
+                    <box width={18} height={18} radius={3} border={1} borderColor={theme.border} background={[set.color.r, set.color.g, set.color.b]} name="paint:swatch" />
+                    {PAINTS.map(([label, c]) => <Button key={label} label={label} small primary={set.color.r === c.r && set.color.g === c.g && set.color.b === c.b} name={`paint:${label}`} onClick={() => pick({ color: c })} />)}
+                </Row>
+            ) : null}
             <Row gap={6}>
                 <box width={56}><Label text="radius" muted size={12} /></box>
                 <Slider value={set.radius} min={0.5} max={16} step={0.5} width={140} name="sculpt:radius" onInput={(v) => pick({ radius: v })} />
@@ -627,12 +644,12 @@ function TerrainBrush(props: { id: number }) {
                 <Label text={`${set.strength}`} muted size={12} />
             </Row>
             <Row gap={4}>
-                <Label text={`${info.source === "noise" ? "Noise" : info.source}${info.edited ? ", sculpted" : ""}; ${info.resolution} by ${info.resolution}, ${info.lowest.toFixed(1)} to ${info.highest.toFixed(1)} high. ${b ? "Click or drag on the ground." : ""}`} muted size={11} wrap flex={1} />
+                <Label text={`${info.source === "noise" ? "Noise" : info.source}${info.edited ? ", sculpted" : ""}; ${info.resolution} by ${info.resolution}, ${info.lowest.toFixed(1)} to ${info.highest.toFixed(1)} high${info.painted > 0 ? `, ${Math.round(info.painted * 100)}% painted` : ""}. ${b ? "Click or drag on the ground." : ""}`} muted size={11} wrap flex={1} />
             </Row>
             <Row gap={4}>
                 <Button label="Save heightmap" small name="terrain:save" onClick={() => {
                     try {
-                        const r = terrain.save(`assets/${name}-heights.png`, props.id);
+                        const r = terrain.save(`assets/${name}-heights.png`, { entity: props.id });
                         notice.set(`Heights saved to ${r.path}; the terrain reads its heightmap from it now (Save the scene to keep that).`);
                     } catch (err) {
                         notice.set(`Save failed: ${String(err)}`);
@@ -640,12 +657,30 @@ function TerrainBrush(props: { id: number }) {
                 }} />
                 <Button label="Reset" small name="terrain:reset" onClick={() => {
                     const before = terrain.heights(props.id).heights;
-                    terrain.reset(props.id);
+                    terrain.reset({ entity: props.id });
                     const after = terrain.heights(props.id).heights;
                     history.record({ label: "reset the terrain", redo: () => { terrain.setHeights(after, props.id); }, undo: () => { terrain.setHeights(before, props.id); } });
                     historyVersion.update((v) => v + 1);
                 }} />
             </Row>
+            {info.painted > 0 || info.paintmap ? (
+                <Row gap={4}>
+                    <Button label="Save paint" small name="terrain:save-paint" onClick={() => {
+                        try {
+                            const r = terrain.save(`assets/${name}-paint.png`, { paint: true, entity: props.id });
+                            notice.set(`Paint saved to ${r.path}; the terrain reads its paintmap from it now (Save the scene to keep that).`);
+                        } catch (err) {
+                            notice.set(`Save failed: ${String(err)}`);
+                        }
+                    }} />
+                    <Button label="Clear paint" small name="terrain:clear-paint" onClick={() => {
+                        const before = terrain.paints(props.id).paint;
+                        terrain.setPaints([], props.id);
+                        history.record({ label: "clear the terrain's paint", redo: () => { terrain.setPaints([], props.id); }, undo: () => { terrain.setPaints(before, props.id); } });
+                        historyVersion.update((v) => v + 1);
+                    }} />
+                </Row>
+            ) : null}
         </box>
     );
 }
@@ -936,7 +971,8 @@ function onViewportDown(e: UiEvent): void {
     endSculpt();
     const shaping = terrainSelected();
     if (sculpt() !== null && shaping !== 0) {
-        sculptStroke = { entity: shaping, before: terrain.heights(shaping).heights, pos: { x: e.x ?? 0, y: e.y ?? 0 }, touches: 0 };
+        const paint = sculpt()!.mode === "paint" || sculpt()!.mode === "erase";
+        sculptStroke = { entity: shaping, paint, before: paint ? terrain.paints(shaping).paint : terrain.heights(shaping).heights, pos: { x: e.x ?? 0, y: e.y ?? 0 }, touches: 0 };
         sculptAt(sculptStroke.pos.x, sculptStroke.pos.y);
         return;
     }

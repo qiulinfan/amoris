@@ -23,6 +23,7 @@ struct MeshShape;
 
 struct Body {
     EntityId id = 0;
+    std::uint32_t part = 0;   // a scattered copy's number (its Scatter is the id); 0 for an entity's own body
     int kind = 0;  // 0 dynamic, 1 static, 2 kinematic
     int shape = 0; // 0 box, 1 sphere, 2 capsule (half.x radius, half.y half length of the segment), 3 mesh
     const MeshShape* mesh = nullptr;  // shape 3: the triangles (null when the file is missing)
@@ -775,6 +776,39 @@ bool ray_box(Vec3 o, Vec3 dir, const Body& b, float& t, Vec3& normal) {
     return true;
 }
 
+// Scattered copies that collide (docs/design/terrain.md, Scattering): for a Scatter with `collide`
+// above 0, an upright static capsule on each copy's foot, known by the Scatter's entity and the copy's
+// number; `fn` also gets the rigid body and collider it stands for, for the queries' filters.
+template <class F>
+void each_scattered(const world::World& w, F&& fn) {
+    static const world::RigidBody kStatic = [] { world::RigidBody rb; rb.kind = 1; return rb; }();
+    static const world::Collider kCapsule = [] { world::Collider c; c.shape = 2; return c; }();
+    w.ecs().each([&](flecs::entity e, const world::Scatter& sc) {
+        if (sc.collide <= 0) return;
+        const auto* copies = w.derived_instances(e.id());
+        if (!copies) return;
+        for (std::size_t k = 0; k < copies->size(); ++k) {
+            const Mat4& m = (*copies)[k].model;
+            const float across = length(Vec3{m.m[0], m.m[1], m.m[2]}), up = length(Vec3{m.m[4], m.m[5], m.m[6]});
+            const float r = std::max(sc.collide * across, 0.01f);
+            const float h = std::max(sc.collide_height * up, 2 * r);
+            Body b;
+            b.id = e.id();
+            b.part = static_cast<std::uint32_t>(k + 1);
+            b.kind = 1;
+            b.shape = 2;
+            b.friction = kStatic.friction;
+            b.restitution = kStatic.restitution;
+            b.position = Vec3{m.m[12], m.m[13] + h * 0.5f, m.m[14]};
+            b.half = Vec3{r, h * 0.5f - r, r};
+            update_aabb(b);
+            fn(b, kStatic, kCapsule);
+        }
+    });
+}
+
+bool body_order(const Body& x, const Body& y) { return x.id < y.id || (x.id == y.id && x.part < y.part); }
+
 }  // namespace
 
 struct Physics::Impl {
@@ -854,7 +888,8 @@ struct Physics::Impl {
             if (auto it = sleep_timers.find(b.id); it != sleep_timers.end()) b.sleep_timer = it->second;
             bodies.push_back(b);
         });
-        std::sort(bodies.begin(), bodies.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
+        each_scattered(w, [&](const Body& b, const world::RigidBody&, const world::Collider&) { bodies.push_back(b); });
+        std::sort(bodies.begin(), bodies.end(), body_order);
         for (auto it = mesh_shapes.begin(); it != mesh_shapes.end();) {
             if (seen.contains(it->first)) ++it;
             else it = mesh_shapes.erase(it);  // the entity is gone or no longer a mesh collider
@@ -1133,6 +1168,7 @@ void Physics::step(world::World& w, double dt_d) {
     im.stats = StepStats{};
     im.stats.bodies = static_cast<std::uint32_t>(im.bodies.size());
     for (const Body& b : im.bodies) {
+        if (b.part != 0) im.stats.scattered++;
         if (!b.mesh) continue;
         im.stats.meshes++;
         im.stats.triangles += static_cast<std::uint32_t>(b.mesh->tri.size());
@@ -1364,7 +1400,7 @@ void Physics::step(world::World& w, double dt_d) {
     // 2. Broadphase: sort and sweep on x.
     std::vector<std::size_t> order(im.bodies.size());
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
-    std::sort(order.begin(), order.end(), [&](std::size_t x, std::size_t y) { return im.bodies[x].aabb_min.x < im.bodies[y].aabb_min.x || (im.bodies[x].aabb_min.x == im.bodies[y].aabb_min.x && im.bodies[x].id < im.bodies[y].id); });
+    std::sort(order.begin(), order.end(), [&](std::size_t x, std::size_t y) { return im.bodies[x].aabb_min.x < im.bodies[y].aabb_min.x || (im.bodies[x].aabb_min.x == im.bodies[y].aabb_min.x && body_order(im.bodies[x], im.bodies[y])); });
     std::vector<Manifold> manifolds;
     for (std::size_t i = 0; i < order.size(); ++i) {
         const Body& a = im.bodies[order[i]];
@@ -2308,6 +2344,17 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
             best.normal = n;
         }
     });
+    each_scattered(w, [&](const Body& b, const world::RigidBody& rb, const world::Collider& col) {
+        if (!accept(b.id, rb, col)) return;
+        float tt = 0;
+        Vec3 n;
+        if (!ray_capsule(origin, dir, b, tt, n) || tt >= best.distance) return;
+        found = true;
+        best.entity = b.id;
+        best.distance = tt;
+        best.point = origin + dir * tt;
+        best.normal = n;
+    });
     if (!found) return fail("no_hit", "nothing within {} units", max_distance);
     return best;
 }
@@ -2341,6 +2388,17 @@ Result<RayHit> Physics::sweep(const world::World& w, Vec3 origin, Vec3 direction
             best.normal = n;
         }
     });
+    each_scattered(w, [&](const Body& b, const world::RigidBody& rb, const world::Collider& col) {
+        if (!accept(b.id, rb, col)) return;
+        float tt = 0;
+        Vec3 n;
+        if (!sphere_cast_body(origin, dir, radius, b, best.distance, tt, n) || tt >= best.distance) return;
+        found = true;
+        best.entity = b.id;
+        best.distance = tt;
+        best.point = origin + dir * tt - n * radius;
+        best.normal = n;
+    });
     if (!found) return fail("no_hit", "nothing within {} units", max_distance);
     return best;
 }
@@ -2373,7 +2431,12 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
         }
         if (hit) out.push_back(e.id());
     });
+    each_scattered(w, [&](const Body& b, const world::RigidBody& rb, const world::Collider& col) {
+        Manifold m;
+        if (accept(b.id, rb, col) && collide_cs(b, probe, m, true)) out.push_back(b.id);
+    });
     std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());   // a Scatter once, however many of its copies
     return out;
 }
 
@@ -2413,7 +2476,8 @@ void Physics::move_characters(world::World& w, double dt_d) {
         b.trigger = col.is_trigger;
         (col.is_trigger ? triggers : solids).push_back(b);
     });
-    std::sort(solids.begin(), solids.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
+    each_scattered(w, [&](const Body& b, const world::RigidBody&, const world::Collider&) { solids.push_back(b); });
+    std::sort(solids.begin(), solids.end(), body_order);
     std::sort(triggers.begin(), triggers.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
     std::vector<std::pair<EntityId, world::Character>> movers;
     w.ecs().each([&](flecs::entity e, const world::Character& c) { if (e.has<world::Transform>()) movers.emplace_back(e.id(), c); });
@@ -2781,6 +2845,7 @@ Json Physics::describe() const {
     j["exceptions"] = impl_->ignored.size();
     j["characters"] = Json{{"count", s.characters}, {"grounded", s.characters_grounded}, {"landings", s.landings}, {"stepped", s.stepped}, {"pushed", s.pushed}};
     j["floating"] = s.floating;
+    j["scattered"] = s.scattered;
     j["gravity"] = Json{{"x", impl_->settings.gravity.x}, {"y", impl_->settings.gravity.y}, {"z", impl_->settings.gravity.z}};
     return j;
 }

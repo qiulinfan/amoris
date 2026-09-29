@@ -1,7 +1,8 @@
 // Rolling hills from noise (the Terrain component, docs/design/terrain.md) around a lake: the
 // player starts on the shore, trees grow where the ground is gentle grass above the water, and a
-// beacon marks the highest point. WASD or the left stick walks, Space or A jumps; the camera (a CameraRig) follows.
-import { events, expose, input, onStart, onTick, random, terrain, world } from "pocket";
+// beacon marks the highest point, and a dirt path painted on the ground (terrain.paintPath) winds from
+// the shore up to it. WASD or the left stick walks, Space or A jumps; the camera (a CameraRig) follows.
+import { events, expose, input, onStart, onTick, random, repro, terrain, world } from "pocket";
 
 const SPEED = 6;
 const JUMP = 7;
@@ -9,6 +10,7 @@ const WATER = 3.2;
 let player = 0;
 let trees = 0;
 let peak = { x: 0, y: 0, z: 0 };
+const DIRT = { r: 0.6, g: 0.47, b: 0.32 };
 
 onStart(() => {
     player = world.find("Player") ?? 0;
@@ -33,13 +35,23 @@ onStart(() => {
         trees++;
     }
     // The player starts on dry ground near the middle: the first place along a ray out that is above water.
+    let start = { x: 0, z: 0 };
     for (let r = 0; r < half; r += 1) {
         const g = terrain.height(r, r * 0.3);
         if (g.height > WATER + 0.5 && g.normal.y > 0.85) {
             world.set(player, "Transform", { position: { x: r, y: g.height + 1.0, z: r * 0.3 } });
+            start = { x: r, z: r * 0.3 };
             break;
         }
     }
+    // A path from there to the beacon, winding a little either side of the straight line.
+    const dx = peak.x - start.x, dz = peak.z - start.z, len = Math.hypot(dx, dz) || 1;
+    const points: Array<{ x: number; z: number }> = [];
+    for (let k = 0; k <= 24; k++) {
+        const t = k / 24, bend = repro.sin(t * repro.PI * 3) * 3 * repro.sin(t * repro.PI);
+        points.push({ x: start.x + dx * t - (dz / len) * bend, z: start.z + dz * t + (dx / len) * bend });
+    }
+    terrain.paintPath(points, DIRT, { radius: 1.6, amount: 0.6 });
 });
 
 onTick(({ dt }) => {
@@ -58,6 +70,10 @@ expose("player.x", () => Number(world.get(player, "Transform")!.position.x.toFix
 expose("player.y", () => Number(world.get(player, "Transform")!.position.y.toFixed(3)));
 expose("player.z", () => Number(world.get(player, "Transform")!.position.z.toFixed(3)));
 expose("player.grounded", () => world.get(player, "Character")!.grounded);
+expose("on_path", () => {
+    const p = world.get(player, "Transform")!.position;
+    return (terrain.height(p.x, p.z).paint?.a ?? 0) > 0.3;
+});
 expose("ground.y", () => {
     const p = world.get(player, "Transform")!.position;
     return Number(terrain.height(p.x, p.z).height.toFixed(3));

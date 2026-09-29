@@ -856,6 +856,7 @@ void Session::update_terrains() {
         bool remesh = false;
         if (st.shape_key != shape) {
             st.shape_key = shape;
+            std::vector<std::array<float, 4>> kept = std::move(st.grid.paint);
             const Vec2 size{std::max(tc.size.x, 0.01f), std::max(tc.size.y, 0.01f)};
             const int n = std::clamp(tc.resolution, 2, 1025);
             if (!tc.heightmap.empty()) {
@@ -875,7 +876,28 @@ void Session::update_terrains() {
                 st.grid = assets::terrain_from_noise(tc.seed, tc.scale, tc.octaves, n, size, tc.height);
                 st.error.clear();
             }
+            if (kept.size() == st.grid.h.size()) st.grid.paint = std::move(kept);
             st.edited = false;
+            remesh = true;
+        }
+        // The paint: read from the paintmap when it (or the grid's size) changes, kept otherwise, so a
+        // new heightmap or a sculpt does not wash it away.
+        const std::string paint = std::format("{}|{}", tc.paintmap, st.grid.n);
+        if (st.paint_key != paint) {
+            st.paint_key = paint;
+            st.grid.paint.clear();
+            if (!tc.paintmap.empty()) {
+                auto full = inside_dir(options_.project_dir, tc.paintmap);
+                auto bytes = full ? fs::read_text(*full) : Result<std::string>(std::unexpected(full.error()));
+                auto grid = bytes ? assets::terrain_paint_from_image(*bytes, tc.paintmap, st.grid.n) : Result<std::vector<std::array<float, 4>>>(std::unexpected(bytes.error()));
+                if (grid) {
+                    st.grid.paint = std::move(*grid);
+                } else {
+                    const std::string msg = grid.error().to_string();
+                    if (st.error != msg) log::warn("terrain", "{}: {}", world_->path(id), msg);
+                    st.error = msg;
+                }
+            }
             remesh = true;
         }
         if (st.look_key != look) {
@@ -909,8 +931,8 @@ void Session::update_scatters() {
                 wt = world_->try_get<world::WorldTransform>(id);
             }
             if (!wt) continue;
-            const std::string key = std::format("{}|{:.5g}x{:.5g}|{}|{}|{:.4g}..{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.5g}..{:.5g}|{:.4g}|{:.5g},{:.5g},{:.5g}|{:.4g},{:.4g},{:.4g}|{}",
-                sc.count, sc.area.x, sc.area.y, sc.seed, sc.on, sc.scale.x, sc.scale.y, sc.yaw, sc.align, sc.sink, sc.spacing, sc.max_slope, sc.min_height, sc.max_height, sc.shade,
+            const std::string key = std::format("{}|{:.5g}x{:.5g}|{}|{}|{:.4g}..{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.5g}..{:.5g}|{:.4g}|{:.4g}|{:.5g},{:.5g},{:.5g}|{:.4g},{:.4g},{:.4g}|{}",
+                sc.count, sc.area.x, sc.area.y, sc.seed, sc.on, sc.scale.x, sc.scale.y, sc.yaw, sc.align, sc.sink, sc.spacing, sc.max_slope, sc.min_height, sc.max_height, sc.max_paint, sc.shade,
                 wt->position.x, wt->position.y, wt->position.z, wt->scale.x, wt->scale.y, wt->scale.z, ground);
             if (scatter_keys_[id] == key) continue;
             scatter_keys_[id] = key;
@@ -923,7 +945,7 @@ void Session::update_scatters() {
             const Mat4 land_m = land_t ? Mat4::trs(land_t->position, land_t->rotation, land_t->scale) : Mat4::identity();
             const Mat4 land_inv = land_m.inverse_affine();
             const physics::Physics::Filter below = [&](world::EntityId other, const world::RigidBody& rb, const world::Collider& col) {
-                return rb.kind == 1 && !col.is_trigger && (target == 0 || other == target);
+                return rb.kind == 1 && !col.is_trigger && (target == 0 || other == target) && !world_->ecs().entity(other).has<world::Scatter>();   // not on copies
             };
             // One stream from the seed, five numbers a place whether it is kept or not, so the same
             // seed and settings always place the same copies.
@@ -948,6 +970,7 @@ void Session::update_scatters() {
                 if (land) {
                     const Vec3 l = land_inv.transform_point(Vec3{x, 0, z});
                     if (std::fabs(l.x) > land->grid.size_x * 0.5f || std::fabs(l.z) > land->grid.size_z * 0.5f) continue;
+                    if (sc.max_paint < 1.0f && land->grid.paint_at(l.x, l.z)[3] > sc.max_paint) continue;   // a painted path kept clear
                     point = land_m.transform_point(Vec3{l.x, land->grid.sample(l.x, l.z), l.z});
                     const Vec3 n = land->grid.normal(l.x, l.z);
                     normal = land_t ? normalize(land_t->rotation.rotate(Vec3{n.x / land_t->scale.x, n.y / std::max(std::fabs(land_t->scale.y), 1e-6f), n.z / land_t->scale.z})) : n;
@@ -1305,6 +1328,10 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         j["resolution"] = st.grid.n;
         j["source"] = tc.heightmap.empty() ? "noise" : tc.heightmap;
         j["edited"] = st.edited;
+        std::size_t painted = 0;
+        for (const auto& q : st.grid.paint) painted += q[3] > 0.01f ? 1 : 0;
+        j["painted"] = st.grid.h.empty() ? 0.0 : static_cast<double>(painted) / static_cast<double>(st.grid.h.size());
+        if (!tc.paintmap.empty()) j["paintmap"] = tc.paintmap;
         j["revision"] = st.revision;
         j["lowest"] = st.grid.h.empty() ? 0.0f : lo;
         j["highest"] = st.grid.h.empty() ? 0.0f : hi;
@@ -1319,7 +1346,110 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         const Vec3 world_point = m.transform_point(Vec3{l.x, h, l.z});
         Vec3 n = st.grid.normal(l.x, l.z);
         if (wt) n = normalize(wt->rotation.rotate(Vec3{n.x / wt->scale.x, n.y / std::max(std::fabs(wt->scale.y), 1e-6f), n.z / wt->scale.z}));
-        return Json{{"entity", id}, {"height", world_point.y}, {"point", vec(world_point)}, {"normal", vec(n)}, {"inside", inside(l)}};
+        Json out{{"entity", id}, {"height", world_point.y}, {"point", vec(world_point)}, {"normal", vec(n)}, {"inside", inside(l)}};
+        if (!st.grid.paint.empty()) {
+            const auto c = st.grid.paint_at(l.x, l.z);
+            out["paint"] = Json{{"r", c[0]}, {"g", c[1]}, {"b", c[2]}, {"a", c[3]}};
+        }
+        return out;
+    }
+    if (op == "paint") {
+        // A brush at (x, z), or dabbed along a stroke through `points`, laying a colour over the
+        // ground's own or taking paint away, `amount` at the centre fading to nothing at `radius` (a
+        // cosine, as the sculpting brush).
+        const bool stroke = p.contains("points");
+        if (stroke && (!p["points"].is_array() || p["points"].empty())) return fail("bad_args", "points is an array of {{x, z}}");
+        if (!stroke && (!p.contains("x") || !p.contains("z"))) return fail("bad_args", "terrain.paint needs x and z, or points");
+        const std::string mode = opt<std::string>(p, "mode", "paint");
+        if (mode != "paint" && mode != "erase") return fail("bad_args", "mode is paint or erase");
+        std::array<float, 3> color{0, 0, 0};
+        if (mode == "paint") {
+            if (!p.contains("color") || !p["color"].is_object()) return fail("bad_args", "terrain.paint needs a color {{r, g, b}} (sRGB, 0..1)");
+            color = {std::clamp(p["color"].value("r", 0.0f), 0.0f, 1.0f), std::clamp(p["color"].value("g", 0.0f), 0.0f, 1.0f), std::clamp(p["color"].value("b", 0.0f), 0.0f, 1.0f)};
+        }
+        const float radius = std::max(opt<float>(p, "radius", 3.0f), 1e-3f) / scale_xz;
+        const float amount = std::clamp(opt<float>(p, "amount", 0.5f), 0.0f, 1.0f);
+        assets::Terrain& g = st.grid;
+        // The dabs: the point, or every point of the stroke and enough between them (a quarter of
+        // the radius apart, at least a cell) that it is one line.
+        std::vector<Vec3> dabs;
+        if (stroke) {
+            Vec3 last{};
+            for (std::size_t k = 0; k < p["points"].size(); ++k) {
+                const Json& q = p["points"][k];
+                if (!q.is_object() || !q.contains("x") || !q.contains("z")) return fail("bad_args", "points[{}] is not {{x, z}}", k);
+                const Vec3 at = local(q.value("x", 0.0f), q.value("z", 0.0f));
+                if (k > 0) {
+                    const float len = repro::hypot(at.x - last.x, at.z - last.z);
+                    const float step = std::max(radius * 0.25f, std::min(g.cell_x(), g.cell_z()));
+                    for (int s = 1; static_cast<float>(s) * step < len; ++s) dabs.push_back(last + (at - last) * (static_cast<float>(s) * step / len));
+                }
+                dabs.push_back(at);
+                last = at;
+            }
+        } else {
+            dabs.push_back(local(opt<float>(p, "x", 0.0f), opt<float>(p, "z", 0.0f)));
+        }
+        if (g.paint.size() != g.h.size()) g.paint.assign(g.h.size(), {0, 0, 0, 0});
+        std::vector<char> touched(g.h.size(), 0);
+        for (const Vec3& c : dabs) {
+            // Only the samples under the brush.
+            const int i0 = std::max(0, static_cast<int>(std::floor((c.x - radius + g.size_x * 0.5f) / g.cell_x())));
+            const int i1 = std::min(g.n - 1, static_cast<int>(std::ceil((c.x + radius + g.size_x * 0.5f) / g.cell_x())));
+            const int j0 = std::max(0, static_cast<int>(std::floor((c.z - radius + g.size_z * 0.5f) / g.cell_z())));
+            const int j1 = std::min(g.n - 1, static_cast<int>(std::ceil((c.z + radius + g.size_z * 0.5f) / g.cell_z())));
+            for (int j = j0; j <= j1; ++j) {
+                for (int i = i0; i <= i1; ++i) {
+                    const float x = -g.size_x * 0.5f + static_cast<float>(i) * g.cell_x(), z = -g.size_z * 0.5f + static_cast<float>(j) * g.cell_z();
+                    const float d = repro::hypot(x - c.x, z - c.z);
+                    if (d >= radius) continue;
+                    const float s = amount * (0.5f + 0.5f * repro::cos(d / radius * std::numbers::pi_v<float>));
+                    const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(g.n) + static_cast<std::size_t>(i);
+                    auto& q = g.paint[k];
+                    const auto was = q;
+                    if (mode == "paint") {
+                        // The colour laid over what was painted: coverage s over the old coverage.
+                        const float a = s + q[3] * (1 - s);
+                        for (int ch = 0; ch < 3; ++ch) q[ch] = a > 1e-6f ? (color[ch] * s + q[ch] * q[3] * (1 - s)) / a : color[ch];
+                        q[3] = a;
+                    } else {
+                        q[3] *= 1 - s;
+                    }
+                    if (q != was) touched[k] = 1;
+                }
+            }
+        }
+        int changed = 0;
+        for (char t : touched) changed += t;
+        const Vec3 c = dabs.back();
+        if (changed > 0) {
+            remesh_terrain(id, st, tc);
+            const Vec3 at = m.transform_point(Vec3{c.x, 0, c.z});
+            world_->events().emit(clock_.tick, "terrain.painted", id, Json{{"mode", mode}, {"x", at.x}, {"z", at.z}, {"dabs", dabs.size()}, {"radius", radius * scale_xz}, {"samples", changed}, {"revision", st.revision}}, 0, "terrain");
+        }
+        const auto at = g.paint_at(c.x, c.z);
+        return Json{{"entity", id}, {"mode", mode}, {"samples", changed}, {"revision", st.revision}, {"paint", Json{{"r", at[0]}, {"g", at[1]}, {"b", at[2]}, {"a", at[3]}}}};
+    }
+    if (op == "paints") {
+        // The paint grid, four numbers a sample in the heights' order: read, or set whole (the
+        // editor's undo; an agent's own painter); an empty array clears it.
+        if (p.contains("paint")) {
+            const Json& ps = p["paint"];
+            const std::size_t want = st.grid.h.size() * 4;
+            if (!ps.is_array() || (!ps.empty() && ps.size() != want)) return fail("bad_args", "paint is an array of {} numbers ({} by {} samples, r g b a each), or empty", want, st.grid.n, st.grid.n);
+            std::vector<std::array<float, 4>> next(ps.empty() ? 0 : st.grid.h.size());
+            for (std::size_t k = 0; k < ps.size(); ++k) {
+                if (!ps[k].is_number()) return fail("bad_args", "paint[{}] is not a number", k);
+                next[k / 4][k % 4] = std::clamp(ps[k].get<float>(), 0.0f, 1.0f);
+            }
+            st.grid.paint = std::move(next);
+            remesh_terrain(id, st, tc);
+            world_->events().emit(clock_.tick, "terrain.painted", id, Json{{"mode", "set"}, {"samples", st.grid.paint.size()}, {"revision", st.revision}}, 0, "terrain");
+            return Json{{"entity", id}, {"resolution", st.grid.n}, {"revision", st.revision}};
+        }
+        Json arr = Json::array();
+        for (const auto& q : st.grid.paint) for (float v : q) arr.push_back(std::round(static_cast<double>(v) * 10000.0) / 10000.0);
+        return Json{{"entity", id}, {"resolution", st.grid.n}, {"paint", std::move(arr)}};
     }
     if (op == "sculpt") {
         // A brush at (x, z): raise, lower, flatten toward a height, or smooth, fading from full at the
@@ -1366,11 +1496,12 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         // The heights as a 16-bit PNG in the project; the Terrain then reads its heightmap from it.
         const std::string rel = opt<std::string>(p, "path", "");
         if (rel.empty()) return fail("bad_args", "terrain.save needs a project-relative path such as assets/island.png");
+        const bool paint = opt<bool>(p, "paint", false);
         POCKET_TRY(full, inside_dir(options_.project_dir, rel));
         std::filesystem::create_directories(full.parent_path());
-        POCKET_TRY_VOID(fs::write_text(full, assets::terrain_png16(st.grid)));
+        POCKET_TRY_VOID(fs::write_text(full, paint ? assets::terrain_paint_png(st.grid) : assets::terrain_png16(st.grid)));
         world::Terrain next = tc;
-        next.heightmap = rel;
+        (paint ? next.paintmap : next.heightmap) = rel;
         world_->ecs().entity(id).set<world::Terrain>(next);
         assets_->invalidate(rel);
         update_terrains();
@@ -1397,8 +1528,13 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         return Json{{"entity", id}, {"resolution", st.grid.n}, {"height", st.grid.height}, {"heights", std::move(arr)}};
     }
     if (op == "reset") {
-        // Back to what the heightmap or the noise makes, the edits dropped.
-        st.shape_key.clear();
+        // Back to what the heightmap or the noise makes, the edits dropped; or the paint back to its
+        // paintmap's (none without one).
+        if (opt<bool>(p, "paint", false)) {
+            st.paint_key.clear();
+        } else {
+            st.shape_key.clear();
+        }
         update_terrains();
         return Json{{"entity", id}, {"revision", terrains_[id].revision}};
     }
@@ -4878,7 +5014,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "timeline.play", "timeline.stop", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "timeline.play", "timeline.stop", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

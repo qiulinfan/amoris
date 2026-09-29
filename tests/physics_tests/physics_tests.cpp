@@ -1231,3 +1231,65 @@ TEST_CASE("a character walks down a beach into deep water, swims with its head o
     REQUIRE(hist["water.entered"] == 1);
     REQUIRE(hist["water.left"] == 1);
 }
+
+TEST_CASE("scattered copies that collide stop characters, bodies, rays and sweeps; without collide they are only drawn", "[physics][scatter]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // Three posts a Scatter placed (the session's placement stands in: the copies' matrices are set
+    // directly), 0.4 across times each copy's size and 2 tall; the middle one twice the size.
+    const EntityId posts = w.spawn("Posts", 0, Json{{"Transform", Json::object()}, {"Scatter", {{"count", 0}, {"collide", 0.4}, {"collide_height", 2}}}}).value();
+    std::vector<World::Instance> copies;
+    copies.push_back({Mat4::trs(Vec3{0, 0, 0}, Quat{}, Vec3{1, 1, 1}), 1});
+    copies.push_back({Mat4::trs(Vec3{0, 0, 4}, Quat{}, Vec3{2, 2, 2}), 1});
+    copies.push_back({Mat4::trs(Vec3{0, 0, -4}, Quat{}, Vec3{1, 1, 1}), 1});
+    w.set_derived_instances(posts, copies);
+    p.step(w, 1.0 / 60.0);
+    REQUIRE(p.stats().scattered == 3);
+    // A ray across meets the first post's side at x -0.4; one from above meets its top at y 2.
+    auto ray = p.raycast(w, Vec3{-5, 1, 0}, Vec3{1, 0, 0}, 20.0f, false);
+    REQUIRE(ray.has_value());
+    REQUIRE(ray->entity == posts);
+    REQUIRE(ray->point.x == Catch::Approx(-0.4).margin(1e-3));
+    REQUIRE(ray->normal.x == Catch::Approx(-1).margin(1e-3));
+    ray = p.raycast(w, Vec3{0, 10, 0}, Vec3{0, -1, 0}, 20.0f, false);
+    REQUIRE(ray.has_value());
+    REQUIRE(ray->entity == posts);
+    REQUIRE(ray->point.y == Catch::Approx(2).margin(1e-3));
+    // The bigger one is 0.8 across and 4 tall.
+    ray = p.raycast(w, Vec3{-5, 3, 4}, Vec3{1, 0, 0}, 20.0f, false);
+    REQUIRE(ray.has_value());
+    REQUIRE(ray->point.x == Catch::Approx(-0.8).margin(1e-3));
+    // A sphere swept at it stops a radius short; an overlap names the Scatter once.
+    auto sweep = p.sweep(w, Vec3{-5, 1, -4}, Vec3{1, 0, 0}, 0.5f, 20.0f, [](EntityId, const RigidBody&, const Collider&) { return true; });
+    REQUIRE(sweep.has_value());
+    REQUIRE(sweep->entity == posts);
+    REQUIRE(sweep->distance == Catch::Approx(5 - 0.4 - 0.5).margin(1e-3));
+    const auto near = p.overlap_sphere(w, Vec3{0, 1, 2}, 2.5f);
+    REQUIRE(std::count(near.begin(), near.end(), posts) == 1);
+    // A character walking at the first post is held at its side, its capsule's radius away.
+    const EntityId hero = character(w, "Hero", {-3, 1, 0});
+    walk(p, w, hero, {}, 30);
+    walk(p, w, hero, {4, 0, 0}, 90);
+    REQUIRE(w.try_get<Transform>(hero)->position.x == Catch::Approx(-0.4 - 0.3).margin(0.03));
+    REQUIRE(w.try_get<Character>(hero)->on_wall);
+    // A ball rolled at the last one bounces back off it.
+    const EntityId ball = body(w, "Ball", 1, Vec3{-3, 0.5, -4}, 0.5f, Json{{"restitution", 0.5}});
+    w.ecs().entity(ball).set(Velocity{Vec3{6, 0, 0}, Vec3{}});
+    float nearest = -10;
+    for (int i = 0; i < 90; ++i) {
+        p.step(w, 1.0 / 60.0);
+        w.tick(1.0 / 60.0);
+        nearest = std::max(nearest, w.try_get<Transform>(ball)->position.x);
+    }
+    REQUIRE(nearest < -0.4 - 0.5 + 0.05);
+    REQUIRE(w.try_get<Velocity>(ball)->linear.x < 0);
+    // Without collide the copies are only drawn: nothing counts them, the ray goes through.
+    Scatter sc = *w.try_get<Scatter>(posts);
+    sc.collide = 0;
+    w.ecs().entity(posts).set(sc);
+    p.step(w, 1.0 / 60.0);
+    REQUIRE(p.stats().scattered == 0);
+    ray = p.raycast(w, Vec3{-5, 1, 0}, Vec3{1, 0, 0}, 20.0f, false);
+    REQUIRE((!ray.has_value() || ray->entity != posts));
+}

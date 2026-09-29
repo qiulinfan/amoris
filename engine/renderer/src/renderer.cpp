@@ -80,7 +80,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 320;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 336;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -109,6 +109,7 @@ struct alignas(16) FrameUniforms {
     float probe_ext[8][4];       // half size, intensity (negative: no box projection)
     float probe_info[4];         // how many, the last prefiltered level, a capture, how many reflect
     float decals[4];             // how many
+    float clock[4];              // simulated seconds now and a frame ago (swaying copies)
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
@@ -145,6 +146,7 @@ struct alignas(16) ObjectUniforms {
     std::uint32_t morph[4];   // x: first vec4 of the asset's morph deltas, y: vertices per target, z: targets weighed (0: none)
     float morph_weights[8];   // one per target, up to eight
     float prev_model[16];     // the model last frame (TAA's motion vectors); the model itself when new or TAA is off
+    float sway[4];            // a swaying copy: how far its top leans (world units), sways a second, its mesh's local foot, 1 / its height; 0 reach for none
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -198,6 +200,7 @@ struct Frame {
     probe_ext: array<vec4f, 8>,
     probe_info: vec4f,
     decals: vec4f,
+    clock: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -354,6 +357,7 @@ struct Object {
     morph: vec4u,
     morph_weights: array<vec4f, 2>,
     prev_model: mat4x4f,
+    sway: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
@@ -398,14 +402,26 @@ struct VsOut {
 fn vertex_color(c: vec4f) -> vec4f {
     return vec4f(select(pow((c.rgb + 0.055) / 1.055, vec3f(2.4)), c.rgb / 12.92, c.rgb <= vec3f(0.04045)), c.a);
 }
+// A scattered copy in the wind (docs/design/terrain.md, Scattering): what is above its foot leans
+// by the square of its height there, toward a sway that runs across the field (neighbours move
+// alike, far ones not), at seconds t.
+fn sway(object: Object, local: vec3f, t: f32) -> vec3f {
+    if (object.sway.x == 0.0) { return vec3f(0.0); }
+    let h = clamp((local.y - object.sway.z) * object.sway.w, 0.0, 1.0);
+    let at = object.model[3].xyz;
+    let phase = dot(at.xz, vec2f(0.21, 0.13));
+    let w = t * object.sway.y * 6.2831853;
+    let lean = vec2f(sin(w - phase) + 0.3 * sin(2.3 * w - 1.7 * phase), 0.45 * sin(1.3 * w - 0.8 * phase));
+    return vec3f(lean.x, 0.0, lean.y) * (object.sway.x * h * h / 1.3);
+}
 @vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(5) vcolor: vec4f) -> VsOut {
     let object = objects[instance];
     var out: VsOut;
     let local = vec4f(morph_position(object, vid, position), 1.0);
-    let world = object.model * local;
+    let world = object.model * local + vec4f(sway(object, local.xyz, frame.clock.x), 0.0);
     out.clip = frame.view_proj * world;
     out.cur = frame.cur_view_proj * world;
-    out.prev = frame.prev_view_proj * (object.prev_model * local);
+    out.prev = frame.prev_view_proj * (object.prev_model * local + vec4f(sway(object, local.xyz, frame.clock.y), 0.0));
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
@@ -421,7 +437,8 @@ struct Cascade { view_proj: mat4x4f };
 @vertex fn vs_shadow(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
     let object = objects[instance];
     if ((object.id.y & 2u) != 0u) { return vec4f(0.0, 0.0, -2.0, 1.0); }   // casts no shadow: behind the near plane, clipped
-    return cascade.view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
+    let local = morph_position(object, vid, position);
+    return cascade.view_proj * (object.model * vec4f(local, 1.0) + vec4f(sway(object, local, frame.clock.x), 0.0));
 }
 
 // Cut-outs in the shadow passes: the same placement with the uv, and a fragment that drops what the
@@ -436,7 +453,8 @@ struct ShadowCut {
 @vertex fn vs_shadow_cut(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> ShadowCut {
     let object = objects[instance];
     var out: ShadowCut;
-    out.clip = cascade.view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
+    let local = morph_position(object, vid, position);
+    out.clip = cascade.view_proj * (object.model * vec4f(local, 1.0) + vec4f(sway(object, local, frame.clock.x), 0.0));
     if ((object.id.y & 2u) != 0u) { out.clip = vec4f(0.0, 0.0, -2.0, 1.0); }
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.instance = instance;
@@ -2214,6 +2232,8 @@ struct Renderer::Impl {
     std::uint32_t id_width = 0, id_height = 0;
     // MSAA: the scene draws into multisampled color and depth and resolves into the frame; the
     // ids then come from their own single-sample pass with these pipelines.
+    float last_clock = 0;  // the simulated seconds of the last frame drawn (swaying copies' motion)
+    bool clock_valid = false;
     int msaa = 1;          // requested (1 or 4)
     int msaa_applied = 1;  // what the scene pipelines were built with
     WGPUTexture ms_color = nullptr;
@@ -6283,6 +6303,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     Mat4 raster_vp = cur_vp;
     if (!im.taa.enabled) im.taa_valid = false;
     const bool motion_known = im.taa.enabled || im.motion_blur.enabled;   // last frame's view means something
+    // The simulation clock (swaying copies), and last frame's for their motion.
+    const auto clock_now = static_cast<float>(world.seconds());
+    fu.clock[0] = clock_now;
+    fu.clock[1] = motion_known && im.clock_valid ? im.last_clock : clock_now;
+    im.last_clock = clock_now;
+    im.clock_valid = true;
     if (im.taa.enabled) {
         auto halton = [](std::uint64_t i, std::uint64_t b) {
             float f = 1, r = 0;
@@ -6627,12 +6653,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     });
     // Scattered copies (World::derived_instances, a Scatter's): every draw of such an entity is
     // made once per copy at the copy's matrix, its colour shaded, culled on its own bounds; the
-    // entity's own draw goes. A copy draws the mesh's geometry as the file bakes it.
+    // entity's own draw goes. A copy draws the mesh's geometry as the file bakes it; its Scatter's
+    // sway goes to the vertex shader, and past its fade distance it is left out (shrunk into the
+    // ground over the last fifth).
     std::uint32_t scattered = 0;
     {
-        std::unordered_map<std::uint32_t, const std::vector<world::World::Instance>*> copies;
+        std::unordered_map<std::uint32_t, std::pair<const std::vector<world::World::Instance>*, const world::Scatter*>> copies;
         world.ecs().each([&](flecs::entity e, const world::MeshRenderer&) {
-            if (const auto* in = world.derived_instances(e.id())) copies[static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu)] = in;
+            if (const auto* in = world.derived_instances(e.id())) copies[static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu)] = {in, e.try_get<world::Scatter>()};
         });
         if (!copies.empty()) {
             auto largest_axis = [](const Mat4& m) {
@@ -6648,16 +6676,31 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 std::memcpy(base.m, d.object.model, sizeof base.m);
                 const float base_scale = std::max(largest_axis(base), 1e-6f);
                 const Vec3 local_centre = d.radius >= 0 ? base.inverse_affine().transform_point(d.center) : Vec3{0, 0, 0};
-                for (const world::World::Instance& inst : *it->second) {
+                const float local_radius = d.radius >= 0 ? d.radius / base_scale : 0.5f;
+                const world::Scatter* sc = it->second.second;
+                const float fade = sc ? sc->fade : 0.0f;
+                for (const world::World::Instance& inst : *it->second.first) {
                     if (kept.size() + made.size() >= kMaxObjects) break;
                     Draw c = d;
-                    to_array(inst.model, c.object.model);
-                    to_array(transpose(inst.model.inverse_affine()), c.object.normal);
-                    for (int k = 0; k < 3; ++k) c.object.color[k] *= inst.shade;
+                    Mat4 model = inst.model;
                     const Vec3 at{inst.model.at(3, 0), inst.model.at(3, 1), inst.model.at(3, 2)};
+                    if (fade > 0) {
+                        const float far = length(at - im.camera.position) / fade;
+                        if (far >= 1.0f) continue;
+                        if (far > 0.8f) model = model * Mat4::scale(Vec3{1, 1, 1} * ((1.0f - far) / 0.2f));   // shrinking about its foot
+                    }
+                    to_array(model, c.object.model);
+                    to_array(transpose(model.inverse_affine()), c.object.normal);
+                    for (int k = 0; k < 3; ++k) c.object.color[k] *= inst.shade;
                     if (d.radius >= 0) {
-                        c.center = inst.model.transform_point(local_centre);
-                        c.radius = d.radius / base_scale * largest_axis(inst.model);
+                        c.center = model.transform_point(local_centre);
+                        c.radius = d.radius / base_scale * largest_axis(model);
+                    }
+                    if (sc && sc->sway > 0) {
+                        c.object.sway[0] = sc->sway * largest_axis(inst.model) / base_scale;
+                        c.object.sway[1] = sc->sway_speed;
+                        c.object.sway[2] = local_centre.y - local_radius;
+                        c.object.sway[3] = 1.0f / std::max(2.0f * local_radius, 1e-4f);
                     }
                     const Vec3 to_cam = at - im.camera.position;
                     c.depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;

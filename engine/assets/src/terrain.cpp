@@ -47,6 +47,21 @@ float Terrain::sample(float x, float z) const {
     return h00 + (h11 - h01) * u + (h01 - h00) * v;
 }
 
+std::array<float, 4> Terrain::paint_at(float x, float z) const {
+    if (n < 2 || paint.size() != static_cast<std::size_t>(n) * static_cast<std::size_t>(n)) return {0, 0, 0, 0};
+    int i = 0, j = 0;
+    float u = 0, v = 0;
+    locate(*this, x, z, i, j, u, v);
+    auto p = [&](int a, int b) { return paint[static_cast<std::size_t>(b) * static_cast<std::size_t>(n) + static_cast<std::size_t>(a)]; };
+    std::array<float, 4> out{};
+    for (int c = 0; c < 4; ++c) {
+        const float top = p(i, j)[c] * (1 - u) + p(i + 1, j)[c] * u;
+        const float bottom = p(i, j + 1)[c] * (1 - u) + p(i + 1, j + 1)[c] * u;
+        out[c] = top * (1 - v) + bottom * v;
+    }
+    return out;
+}
+
 Vec3 Terrain::normal(float x, float z) const {
     if (n < 2) return {0, 1, 0};
     int i = 0, j = 0;
@@ -193,6 +208,13 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
             const float high = look.snow_line < 1.0f ? smooth(look.snow_line - 0.05f, look.snow_line + 0.05f, t.height > 0 ? y / t.height : 0.0f) : 0.0f;
             Vec3 c = look.grass + (look.rock - look.grass) * steep;
             c = c + (look.snow - c) * (high * (1.0f - steep * 0.7f));
+            // Paint over it by its weight (painted in sRGB, drawn in linear light like the rest).
+            if (!t.paint.empty()) {
+                const auto& p = t.paint[static_cast<std::size_t>(j) * static_cast<std::size_t>(n) + static_cast<std::size_t>(i)];
+                auto lin = [](float s) { s = std::clamp(s, 0.0f, 1.0f); return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f); };
+                const float w = std::clamp(p[3], 0.0f, 1.0f);
+                c = c + (Vec3{lin(p[0]), lin(p[1]), lin(p[2])} - c) * w;
+            }
             MeshVertex v;
             v.position = {x, y, z};
             v.normal = nrm;
@@ -275,6 +297,67 @@ std::string terrain_png16(const Terrain& t) {
     put_u32(ihdr, static_cast<std::uint32_t>(t.n));
     put_u32(ihdr, static_cast<std::uint32_t>(t.n));
     ihdr += std::string("\x10\x00\x00\x00\x00", 5);   // 16 bits, greyscale, deflate, no filter method, no interlace
+    chunk(out, "IHDR", ihdr);
+    chunk(out, "IDAT", std::string(reinterpret_cast<const char*>(z), static_cast<std::size_t>(zlen)));
+    std::free(z);
+    chunk(out, "IEND", "");
+    return out;
+}
+
+Result<std::vector<std::array<float, 4>>> terrain_paint_from_image(const std::string& bytes, const std::string& display_path, int n) {
+    int w = 0, hgt = 0, channels = 0;
+    stbi_uc* px = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()), static_cast<int>(bytes.size()), &w, &hgt, &channels, 4);
+    if (!px) return fail("bad_image", "{}: {}", display_path, stbi_failure_reason());
+    if (w < 2 || hgt < 2) {
+        stbi_image_free(px);
+        return fail("bad_image", "{}: a paint map needs at least 2 by 2 pixels", display_path);
+    }
+    n = std::clamp(n, 2, 1025);
+    std::vector<std::array<float, 4>> out(static_cast<std::size_t>(n) * static_cast<std::size_t>(n));
+    auto g = [&](int x, int y, int c) { return static_cast<float>(px[(static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) * 4 + static_cast<std::size_t>(c)]) / 255.0f; };
+    // Bilinear, as the heights; the colour weighed by its alpha so an unpainted neighbour's colour does not bleed in.
+    for (int j = 0; j < n; ++j) {
+        const float py = static_cast<float>(j) / static_cast<float>(n - 1) * static_cast<float>(hgt - 1);
+        const int y0 = std::min(static_cast<int>(py), hgt - 2);
+        const float fy = py - static_cast<float>(y0);
+        for (int i = 0; i < n; ++i) {
+            const float pxf = static_cast<float>(i) / static_cast<float>(n - 1) * static_cast<float>(w - 1);
+            const int x0 = std::min(static_cast<int>(pxf), w - 2);
+            const float fx = pxf - static_cast<float>(x0);
+            const float k[4] = {(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy};
+            const int xs[4] = {x0, x0 + 1, x0, x0 + 1}, ys[4] = {y0, y0, y0 + 1, y0 + 1};
+            std::array<float, 4> s{};
+            for (int q = 0; q < 4; ++q) {
+                const float a = g(xs[q], ys[q], 3) * k[q];
+                for (int c = 0; c < 3; ++c) s[c] += g(xs[q], ys[q], c) * a;
+                s[3] += a;
+            }
+            if (s[3] > 1e-6f) for (int c = 0; c < 3; ++c) s[c] /= s[3];
+            out[static_cast<std::size_t>(j) * static_cast<std::size_t>(n) + static_cast<std::size_t>(i)] = s;
+        }
+    }
+    stbi_image_free(px);
+    return out;
+}
+
+std::string terrain_paint_png(const Terrain& t) {
+    std::string raw;
+    raw.reserve(static_cast<std::size_t>(t.n) * (static_cast<std::size_t>(t.n) * 4 + 1));
+    const bool painted = t.paint.size() == static_cast<std::size_t>(t.n) * static_cast<std::size_t>(t.n);
+    for (int j = 0; j < t.n; ++j) {
+        raw.push_back(0);
+        for (int i = 0; i < t.n; ++i) {
+            const std::array<float, 4> p = painted ? t.paint[static_cast<std::size_t>(j) * static_cast<std::size_t>(t.n) + static_cast<std::size_t>(i)] : std::array<float, 4>{0, 0, 0, 0};
+            for (int c = 0; c < 4; ++c) raw.push_back(static_cast<char>(std::lround(std::clamp(p[c], 0.0f, 1.0f) * 255.0f)));
+        }
+    }
+    int zlen = 0;
+    unsigned char* z = stbi_zlib_compress(reinterpret_cast<unsigned char*>(raw.data()), static_cast<int>(raw.size()), &zlen, 8);
+    std::string out("\x89PNG\r\n\x1a\n", 8);
+    std::string ihdr;
+    put_u32(ihdr, static_cast<std::uint32_t>(t.n));
+    put_u32(ihdr, static_cast<std::uint32_t>(t.n));
+    ihdr += std::string("\x08\x06\x00\x00\x00", 5);   // 8 bits, RGBA, deflate, no filter method, no interlace
     chunk(out, "IHDR", ihdr);
     chunk(out, "IDAT", std::string(reinterpret_cast<const char*>(z), static_cast<std::size_t>(zlen)));
     std::free(z);

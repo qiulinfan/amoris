@@ -529,6 +529,7 @@ fields = [
     { name = "rock_slope", type = "f32", default = 35.0, doc = "Degrees from level above which ground is rock." },
     { name = "snow_line", type = "f32", default = 0.85, doc = "The fraction of `height` above which ground is snow; 1 or more for none." },
     { name = "texture_tile", type = "f32", default = 4.0, doc = "Units per repeat of the MeshRenderer's texture over the ground." },
+    { name = "paintmap", type = "string", default = "", doc = "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none." },
 ]
 
 [[component]]
@@ -567,6 +568,12 @@ fields = [
     { name = "max_slope", type = "f32", default = 35.0, doc = "Degrees: no copy where the ground is steeper." },
     { name = "min_height", type = "f32", default = -1000.0, doc = "No copy on ground lower than this (world y): above the water line." },
     { name = "max_height", type = "f32", default = 1000.0, doc = "No copy on ground higher than this (world y): below the snow." },
+    { name = "max_paint", type = "f32", default = 1.0, doc = "No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1): 0.3 keeps a painted path clear of bushes; 1 places them on paint too." },
+    { name = "collide", type = "f32", default = 0.0, doc = "Above 0, every copy is a static collider: an upright capsule of this radius (in the entity's units, times the copy's size) standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. 0: the copies are only drawn." },
+    { name = "collide_height", type = "f32", default = 2.0, doc = "The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width)." },
+    { name = "sway", type = "f32", default = 0.0, doc = "How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still." },
+    { name = "sway_speed", type = "f32", default = 0.5, doc = "Sways a second, on the simulation clock (a paused game is still)." },
+    { name = "fade", type = "f32", default = 0.0, doc = "Copies farther from the camera than this are not drawn; over the last fifth of the distance they shrink into the ground. 0 draws them at any distance." },
     { name = "shade", type = "f32", default = 0.15, doc = "How much each copy's brightness varies, 0..1." },
     { name = "placed", type = "i32", default = 0, doc = "How many copies stand (written by the engine)." },
 ]
