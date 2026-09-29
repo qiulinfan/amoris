@@ -1,6 +1,7 @@
 #include <pocket/ui/document.hpp>
 
 #include <pocket/core/log.hpp>
+#include <pocket/ui/syntax.hpp>
 
 #include <yoga/Yoga.h>
 
@@ -75,6 +76,9 @@ struct Node {
     int anchor = -1;         // input: the other end of the selection (byte offset), -1 for none
     bool multiline = false;  // input: Return is a new line (with meta or ctrl it commits), Up and Down move by rows
     int last_caret = -1;     // multiline input: the caret at the last paint; a caret that moved is scrolled into view
+    std::string syntax;      // multiline input: the language its value is coloured as ("ts", "json", "toml"), or a file name to take it from
+    std::vector<SyntaxRun> runs;   // the coloured runs of runs_text, cut at the last paint that needed them
+    std::string runs_text, runs_lang;
     std::uint32_t listeners = 0;
     // Layout results (absolute, points)
     Rect rect;
@@ -84,6 +88,25 @@ struct Node {
     std::vector<std::string> lines;
     float measured_width = -1;
 };
+
+// The colour of each kind of run in a coloured input, for a dark field.
+Color syntax_color(Syntax k) {
+    switch (k) {
+        case Syntax::Keyword: return {0.78f, 0.57f, 0.92f, 1};
+        case Syntax::String: return {0.76f, 0.91f, 0.55f, 1};
+        case Syntax::Number: return {0.97f, 0.55f, 0.42f, 1};
+        case Syntax::Comment: return {0.45f, 0.49f, 0.60f, 1};
+        case Syntax::Type: return {1.0f, 0.80f, 0.42f, 1};
+        case Syntax::Function: return {0.51f, 0.67f, 1.0f, 1};
+        case Syntax::Key: return {0.54f, 0.87f, 1.0f, 1};
+    }
+    return {1, 1, 1, 1};
+}
+
+// An input's language: its `syntax` as given, or the one its file name's extension stands for.
+std::string_view language_of(const std::string& syntax) {
+    return syntax.find('.') == std::string::npos ? std::string_view(syntax) : syntax_for_path(syntax);
+}
 
 Color parse_color(const Json& v, Color fallback) {
     if (v.is_string()) {
@@ -547,6 +570,7 @@ struct Document::Impl {
             }
             else if (k == "placeholder") n.placeholder = v.get<std::string>();
             else if (k == "multiline") { n.multiline = v.is_boolean() && v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
+            else if (k == "syntax") n.syntax = v.is_string() ? v.get<std::string>() : std::string();
             else if (k == "name") n.name = v.get<std::string>();
             else if (k == "disabled") n.disabled = v.get<bool>();
             else if (k == "on") {
@@ -640,6 +664,12 @@ struct Document::Impl {
                 n.scroll_y = std::clamp(n.scroll_y, 0.0f, max_scroll);
                 std::size_t sel_a = 0, sel_b = 0;
                 const bool selected = !placeholder && selection_of(n, sel_a, sel_b);
+                const std::string_view lang = placeholder ? std::string_view() : language_of(n.syntax);
+                if (!lang.empty() && (n.runs_text != n.value || n.runs_lang != lang)) {
+                    n.runs = syntax_runs(n.value, lang);
+                    n.runs_text = n.value;
+                    n.runs_lang = std::string(lang);
+                }
                 for (std::size_t i = 0; i < rows.size(); ++i) {
                     const float ty = inner.y + 2 + lh * static_cast<float>(i) - n.scroll_y;
                     if (ty + lh < inner.y || ty > inner.y + inner.h) continue;
@@ -652,7 +682,26 @@ struct Document::Impl {
                         const float x1 = inner.x + 1 + p.measure(line.substr(0, b - row.start), n.font_size) + (sel_b > row.end && row.hard ? 4.0f : 0.0f);
                         p.rect({x0, ty, std::max(x1 - x0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
                     }
-                    p.text(inner.x + 1, ty, line, n.font_size, c);
+                    if (lang.empty()) {
+                        p.text(inner.x + 1, ty, line, n.font_size, c);
+                        continue;
+                    }
+                    // The row in pieces: plain text in the input's color, each run in its kind's,
+                    // each piece placed where the text before it on the row ends.
+                    auto piece = [&](std::size_t a, std::size_t b, Color col) {
+                        if (b <= a) return;
+                        const float x = inner.x + 1 + p.measure(std::string_view(line).substr(0, a - row.start), n.font_size);
+                        p.text(x, ty, std::string_view(line).substr(a - row.start, b - a), n.font_size, col);
+                    };
+                    auto it = std::lower_bound(n.runs.begin(), n.runs.end(), row.start, [](const SyntaxRun& run, std::size_t at) { return run.end <= at; });
+                    std::size_t at = row.start;
+                    for (; it != n.runs.end() && it->start < row.end; ++it) {
+                        const std::size_t a = std::max(it->start, row.start), b = std::min(it->end, row.end);
+                        piece(at, a, c);
+                        piece(a, b, syntax_color(it->kind).with_alpha(op));
+                        at = b;
+                    }
+                    piece(at, row.end, c);
                 }
                 if (focused == n.id) {
                     const Row& row = rows[std::min(caret_row, rows.size() - 1)];
@@ -1289,6 +1338,7 @@ Json Document::describe(NodeId id) const {
         j["value"] = n->value;
         j["placeholder"] = n->placeholder;
         j["caret"] = n->caret;
+        if (!n->syntax.empty()) j["syntax"] = std::string(language_of(n->syntax));
         if (n->multiline) {
             j["multiline"] = true;
             if (n->text_wrap) j["wrap"] = true;

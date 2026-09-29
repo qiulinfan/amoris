@@ -70,6 +70,19 @@ fields = [
 ]
 
 [[component]]
+name = "Fog"
+doc = "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts."
+fields = [
+    { name = "color", type = "color", default = [0.7, 0.75, 0.8, 1.0], doc = "The fog's color as a color picker shows it (sRGB); the alpha is unused." },
+    { name = "density", type = "f32", default = 0.03, doc = "How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units)." },
+    { name = "height", type = "f32", default = 0.0, doc = "The height (world Y) where the fog has its density." },
+    { name = "falloff", type = "f32", default = 0.2, doc = "How fast it thins going up, per unit of height (0: the same at every height)." },
+    { name = "start", type = "f32", default = 0.0, doc = "Distance from the camera before any fog." },
+    { name = "max_opacity", type = "f32", default = 1.0, doc = "The most the fog hides, 0..1 (under 1, a far mountain still shows through)." },
+    { name = "enabled", type = "bool", default = true, doc = "false turns the fog off without removing it." },
+]
+
+[[component]]
 name = "Sky"
 doc = "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out."
 fields = [
@@ -377,6 +390,7 @@ fields = [
     { name = "volume", type = "f32", default = 1.0, doc = "Linear gain, 0..4." },
     { name = "pitch", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
     { name = "lowpass", type = "f32", default = 1.0, doc = "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice." },
+    { name = "reverb", type = "f32", default = 1.0, doc = "How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room." },
     { name = "loop", type = "bool", default = false, doc = "Restart when the clip ends." },
     { name = "autoplay", type = "bool", default = false, doc = "Start playing as soon as the component exists." },
     { name = "spatial", type = "bool", default = false, doc = "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)." },

@@ -1,0 +1,85 @@
+// Pocket for pi (and pi-compatible agents such as oh-my-pi): tools that drive a running Pocket
+// runtime through its control server, for agents without MCP. Load it with
+//   pi -e integrations/pi/pocket.ts
+// or copy it into ~/.pi/agent/extensions/. The runtime is $POCKET_RPC_URL, or the url given to
+// /pocket-attach; start one with `pocket run <project> -- --serve 4711 --paused` or `pocket editor <project> -- --serve 4711`.
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const LIMIT = 24000;   // characters of a result the model sees; the rest is cut with a note
+
+export default function (pi: ExtensionAPI) {
+    let url = (process.env.POCKET_RPC_URL ?? "").replace(/\/$/, "");
+
+    async function call(method: string, params: unknown): Promise<any> {
+        if (!url) throw new Error("no Pocket runtime: set POCKET_RPC_URL or run /pocket-attach <url>");
+        const res = await fetch(`${url}/rpc`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? {} }),
+        });
+        const body: any = await res.json();
+        if (body.error) throw new Error(`${method}: ${body.error.message}`);
+        return body.result;
+    }
+
+    function text(result: any): string {
+        // Text results (world.tree, transcript, ui.snapshot) as text, the rest as JSON.
+        const t = result && typeof result.text === "string" && Object.keys(result).length <= 3 ? result.text : JSON.stringify(result, null, 2);
+        return t.length > LIMIT ? `${t.slice(0, LIMIT)}\n[cut: ${t.length - LIMIT} more characters; ask for less, e.g. a depth, a limit or one entity]` : t;
+    }
+
+    pi.registerTool({
+        name: "pocket",
+        label: "Pocket",
+        description:
+            "Send one command to the running Pocket game engine and get its JSON result. Every engine feature is a command: " +
+            "world.tree {depth} (the scene as text), world.query {with, name}, world.describe {entity}, world.spawn {name, components}, " +
+            "world.set {entity, component, value}, world.destroy {entity}, step {ticks}, state, events.since {seq}, events.why {seq}, " +
+            "transcript, render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
+            "`commands` lists them all. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it.",
+        parameters: Type.Object({
+            method: Type.String({ description: "command name, e.g. world.tree" }),
+            params: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "the command's parameters as an object" })),
+        }),
+        async execute(_id, p: { method: string; params?: Record<string, unknown> }) {
+            const result = await call(p.method, p.params ?? {});
+            return { content: [{ type: "text", text: text(result) }], details: undefined };
+        },
+    });
+
+    pi.registerTool({
+        name: "pocket_look",
+        label: "Pocket look",
+        description: "See the running game: renders the current frame to a PNG and returns it as an image, with the visible entities and their pixel bounds.",
+        parameters: Type.Object({}),
+        async execute() {
+            const path = join(mkdtempSync(join(tmpdir(), "pocket-look-")), "frame.png");
+            const cap = await call("capture", { path });
+            const visible = await call("render.visible", { limit: 20 });
+            return {
+                content: [
+                    { type: "text", text: text({ width: cap.width, height: cap.height, visible: visible.visible ?? visible }) },
+                    { type: "image", data: readFileSync(path).toString("base64"), mimeType: "image/png" },
+                ],
+                details: undefined,
+            };
+        },
+    });
+
+    pi.registerCommand("pocket-attach", {
+        description: "Point the pocket tools at a running runtime's control server url",
+        handler: async (arg, ctx) => {
+            url = (arg ?? "").trim().replace(/\/$/, "");
+            try {
+                const state = await call("state", {});
+                ctx.ui.notify(`Pocket: attached to ${url} at tick ${state.tick}`, "info");
+            } catch (e) {
+                ctx.ui.notify(`Pocket: ${(e as Error).message}`, "error");
+            }
+        },
+    });
+}

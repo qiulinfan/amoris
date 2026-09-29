@@ -66,7 +66,9 @@ struct alignas(16) FrameUniforms {
     float cascade_far[4];        // the view depth each cascade reaches
     float cascade_texel[4];      // a texel of each cascade in world units (the lookup's normal offset)
     float camera_fwd[4];         // xyz: the camera's forward (view depth), w: cascades in use
+    float ao[4];                 // ambient occlusion: on, 1 / frame width, 1 / frame height
 };
+constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr std::uint32_t kCascades = 4;
 // The environment map: an equirectangular panorama with its GGX prefiltered levels as mips.
 constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
@@ -127,6 +129,7 @@ struct Frame {
     cascade_far: vec4f,
     cascade_texel: vec4f,
     camera_fwd: vec4f,
+    ao: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -135,6 +138,9 @@ struct Frame {
 @group(0) @binding(3) var env_tex: texture_2d<f32>;
 @group(0) @binding(4) var env_samp: sampler;
 @group(0) @binding(5) var<storage, read> sh: array<vec4f, 9>;
+// Ambient occlusion at half resolution (white when it is off), and a clamping sampler for it.
+@group(0) @binding(6) var ao_tex: texture_2d<f32>;
+@group(0) @binding(7) var ao_samp: sampler;
 fn env_uv(d: vec3f) -> vec2f {
     return vec2f(atan2(d.x, -d.z) / 6.2831853 + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
@@ -338,6 +344,10 @@ fn shade(in: VsOut) -> vec4f {
         let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, n)), roughness * frame.env.w).rgb;
         color = albedo * (1.0 - metallic) * sh_irradiance(n) * frame.env.y + spec * env_brdf(f0, roughness, ndv) * frame.env.z;
     }
+    // Ambient occlusion darkens only this light from all around, not the lights'.
+    if (frame.ao.x > 0.5) {
+        color = color * textureSampleLevel(ao_tex, ao_samp, in.clip.xy * frame.ao.yz, 0.0).r;
+    }
     // Directional light.
     let l = normalize(-frame.sun_dir.xyz);
     let ndl = max(dot(n, l), 0.0);
@@ -494,10 +504,31 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 )WGSL";
 
 constexpr const char* kPostWgsl = R"WGSL(
-struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f };
+struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f,
+               inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f };
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
+@group(0) @binding(3) var depth: texture_depth_2d;                // the depth prepass (fog reads distances from it)
+// Exponential height fog along the ray from the camera to the point (fog: density, base height,
+// falloff, start; fog2.x: the most it hides, fog2.y: on).
+fn fogged(c: vec3f, pos: vec2f) -> vec3f {
+    let dims = vec2f(textureDimensions(depth));
+    let d = textureLoad(depth, vec2i(pos.xy), 0);
+    let ndc = vec2f(pos.x / dims.x * 2.0 - 1.0, 1.0 - pos.y / dims.y * 2.0);
+    let far = post.inv_view_proj * vec4f(ndc, select(d, 1.0, d >= 1.0), 1.0);
+    let o = post.camera.xyz;
+    var p = far.xyz / far.w;
+    if (d >= 1.0) { p = o + normalize(p - o) * 1000.0; }   // the sky: a long way off
+    let dist = length(p - o);
+    let dy = p.y - o.y;
+    let base = post.fog.x * exp(-post.fog.z * (o.y - post.fog.y));
+    var amount = base * dist;
+    if (abs(post.fog.z * dy) > 1e-4) { amount = base * dist * (1.0 - exp(-post.fog.z * dy)) / (post.fog.z * dy); }
+    amount = amount * max(dist - post.fog.w, 0.0) / max(dist, 1e-4);
+    let f = min(1.0 - exp(-max(amount, 0.0)), post.fog2.x);
+    return mix(c, post.fog_color.rgb, f);
+}
 @vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
     let x = f32(i32(i & 1u) * 4 - 1);
     let y = f32(i32(i >> 1u) * 4 - 1);
@@ -547,7 +578,9 @@ fn encode(c: vec3f) -> vec3f {
     let s = textureLoad(hdr, vec2i(pos.xy), 0);
     var exposure = post.exposure;
     if (post.auto_on != 0u) { exposure = exposure * exp2(metered[0]); }
-    var c = max(s.rgb * exposure, vec3f(0.0));
+    var hdr_c = s.rgb;
+    if (post.fog2.y > 0.5) { hdr_c = fogged(hdr_c, pos.xy); }
+    var c = max(hdr_c * exposure, vec3f(0.0));
     switch post.op {
         case 1u: { c = aces(c); }
         case 2u: { c = agx(c); }
@@ -695,6 +728,92 @@ const PI = 3.14159265;
 }
 )WGSL";
 
+// Ambient occlusion from the depth prepass, at half resolution: for each point, its position and
+// normal from depth, then samples in a hemisphere around the normal (a spiral turned per pixel);
+// a sample the depth buffer has something in front of, within the radius, occludes. Then a blur
+// that keeps to one surface (neighbors at another depth count less).
+constexpr const char* kAoWgsl = R"WGSL(
+struct Ao { view_proj: mat4x4f, inv_view_proj: mat4x4f, camera: vec4f, fwd: vec4f, params: vec4f, size: vec4f };
+@group(0) @binding(0) var<uniform> ao: Ao;
+@group(0) @binding(1) var depth: texture_depth_2d;
+@group(0) @binding(2) var src: texture_2d<f32>;
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    return vec4f(x, y, 0.0, 1.0);
+}
+fn depth_at(px: vec2i) -> f32 {
+    let dims = vec2i(textureDimensions(depth));
+    return textureLoad(depth, clamp(px, vec2i(0), dims - vec2i(1)), 0);
+}
+fn world_at(px: vec2f, d: f32) -> vec3f {
+    let ndc = vec2f(px.x / ao.size.x * 2.0 - 1.0, 1.0 - px.y / ao.size.y * 2.0);
+    let w = ao.inv_view_proj * vec4f(ndc, d, 1.0);
+    return w.xyz / w.w;
+}
+fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
+@fragment fn fs_ao(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let full = vec2i(pos.xy * 2.0);
+    let d = depth_at(full);
+    if (d >= 1.0) { return vec4f(1.0); }
+    let fp = vec2f(full) + 0.5;
+    let p = world_at(fp, d);
+    // The normal from the neighbors on the nearer side, so an edge does not bend it.
+    let r = world_at(fp + vec2f(2.0, 0.0), depth_at(full + vec2i(2, 0)));
+    let l = world_at(fp - vec2f(2.0, 0.0), depth_at(full - vec2i(2, 0)));
+    let dn = world_at(fp + vec2f(0.0, 2.0), depth_at(full + vec2i(0, 2)));
+    let up = world_at(fp - vec2f(0.0, 2.0), depth_at(full - vec2i(0, 2)));
+    let dx = select(p - l, r - p, abs(view_depth(r) - view_depth(p)) < abs(view_depth(l) - view_depth(p)));
+    let dy = select(p - up, dn - p, abs(view_depth(dn) - view_depth(p)) < abs(view_depth(up) - view_depth(p)));
+    var n = normalize(cross(dy, dx));
+    if (dot(n, ao.camera.xyz - p) < 0.0) { n = -n; }
+    let t = normalize(cross(n, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.9)));
+    let b = cross(n, t);
+    let noise = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))));
+    let count = u32(ao.params.z);
+    let radius = ao.params.x;
+    let here = view_depth(p);
+    var occluded = 0.0;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let k = (f32(i) + 0.5) / f32(count);
+        let angle = f32(i) * 2.3999632 + noise * 6.2831853;
+        let spread = sqrt(k);
+        let dir = t * (cos(angle) * spread) + b * (sin(angle) * spread) + n * sqrt(1.0 - k);
+        let s = p + dir * radius * mix(0.25, 1.0, fract(k * 7.0 + noise));
+        let clip = ao.view_proj * vec4f(s, 1.0);
+        if (clip.w <= 0.0) { continue; }
+        let sn = clip.xy / clip.w;
+        let spx = vec2f((sn.x * 0.5 + 0.5) * ao.size.x, (0.5 - sn.y * 0.5) * ao.size.y);
+        let bd = depth_at(vec2i(spx));
+        if (bd >= 1.0) { continue; }
+        let behind = view_depth(world_at(spx, bd));
+        let at = view_depth(s);
+        if (behind < at - 0.02 * radius) {
+            occluded = occluded + smoothstep(0.0, 1.0, radius / max(abs(here - behind), 1e-4));
+        }
+    }
+    return vec4f(clamp(1.0 - ao.params.y * occluded / f32(count), 0.0, 1.0));
+}
+@fragment fn fs_ao_blur(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let c = vec2i(pos.xy);
+    let dims = vec2i(textureDimensions(src));
+    let center = view_depth(world_at(vec2f(c * 2) + 0.5, depth_at(c * 2)));
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var y = -2; y <= 2; y = y + 1) {
+        for (var x = -2; x <= 2; x = x + 1) {
+            let q = clamp(c + vec2i(x, y), vec2i(0), dims - vec2i(1));
+            let qd = depth_at(q * 2);
+            let vd = select(view_depth(world_at(vec2f(q * 2) + 0.5, qd)), 1e9, qd >= 1.0);
+            let w = 1.0 / (1.0 + abs(vd - center) * 8.0 / max(ao.params.x, 1e-3));
+            sum = sum + textureLoad(src, q, 0).r * w;
+            weight = weight + w;
+        }
+    }
+    return vec4f(sum / max(weight, 1e-4));
+}
+)WGSL";
+
 constexpr const char* kExposureWgsl = R"WGSL(
 struct Meter { viewport: vec4f, min_ev: f32, max_ev: f32, compensation: f32, rate: f32 };
 @group(0) @binding(0) var<uniform> meter: Meter;
@@ -824,6 +943,31 @@ struct Renderer::Impl {
     WGPUBuffer meter_state = nullptr;             // 4 floats: exposure EV, average EV, initialized
     WGPUBindGroup meter_bg = nullptr;
     bool meter_reset = true;                      // the next metered frame snaps instead of easing
+    WGPUTextureView post_depth = nullptr;         // the depth view the post group was made with
+    // The depth prepass: the id pass at one sample with a depth target of its own, sampled by the AO
+    // pass and the fog afterwards; a 1x1 stand-in when there is none.
+    WGPUTexture prepass_tex = nullptr;
+    WGPUTextureView prepass_view = nullptr;
+    std::uint32_t prepass_w = 0, prepass_h = 0;
+    WGPUTexture no_depth_tex = nullptr;
+    WGPUTextureView no_depth_view = nullptr;
+    bool split_applied = false;                   // whether the scene pipelines were built split (ids apart)
+    // Ambient occlusion: a half-size target, then a depth-aware blur into a second one.
+    AoSettings ao;
+    WGPUShaderModule ao_shader = nullptr;
+    WGPUBindGroupLayout ao_bgl = nullptr;
+    WGPUPipelineLayout ao_layout = nullptr;
+    WGPURenderPipeline ao_pipeline = nullptr;
+    WGPURenderPipeline ao_blur_pipeline = nullptr;
+    WGPUBuffer ao_uniforms = nullptr;
+    WGPUTexture ao_tex[2]{};
+    WGPUTextureView ao_view[2]{};
+    WGPUBindGroup ao_bg[2]{};
+    std::uint32_t ao_w = 0, ao_h = 0;
+    WGPUTexture ao_white_tex = nullptr;
+    WGPUTextureView ao_white_view = nullptr;
+    WGPUTextureView scene_ao = nullptr;           // the AO view the scene group was made with
+    WGPUBindGroupEntry scene_entries[8]{};        // the scene group's entries, to make it again when the AO target changes
     // The sky: its pipelines, the environment map (level views for the compute passes, one view of
     // every level for sampling), the harmonics buffer, the panorama's source texture.
     WGPUPipelineLayout sky_layout = nullptr;      // the scene group only
@@ -969,6 +1113,18 @@ struct Renderer::Impl {
         release_msaa_targets();
         release_hdr_target();
         release_sky();
+        release_ao_targets();
+        for (WGPURenderPipeline* p : {&ao_pipeline, &ao_blur_pipeline}) if (*p) wgpuRenderPipelineRelease(*p);
+        if (ao_layout) wgpuPipelineLayoutRelease(ao_layout);
+        if (ao_bgl) wgpuBindGroupLayoutRelease(ao_bgl);
+        if (ao_shader) wgpuShaderModuleRelease(ao_shader);
+        if (ao_uniforms) wgpuBufferRelease(ao_uniforms);
+        if (ao_white_view) wgpuTextureViewRelease(ao_white_view);
+        if (ao_white_tex) wgpuTextureRelease(ao_white_tex);
+        if (prepass_view) wgpuTextureViewRelease(prepass_view);
+        if (prepass_tex) wgpuTextureRelease(prepass_tex);
+        if (no_depth_view) wgpuTextureViewRelease(no_depth_view);
+        if (no_depth_tex) wgpuTextureRelease(no_depth_tex);
         if (post_uniforms) wgpuBufferRelease(post_uniforms);
         if (post_pipeline) wgpuRenderPipelineRelease(post_pipeline);
         if (post_layout) wgpuPipelineLayoutRelease(post_layout);
@@ -1264,6 +1420,11 @@ struct Renderer::Impl {
         float tint[4];
         float temperature, contrast, saturation, vignette;
         float viewport[4];
+        float inv_view_proj[16];
+        float camera[4];
+        float fog_color[4];      // linear
+        float fog[4];            // density, base height, falloff, start
+        float fog2[4];           // the most it hides, on
     };
     struct MeterUniforms {
         float viewport[4];
@@ -1286,7 +1447,7 @@ struct Renderer::Impl {
     Status create_post() {
         POCKET_TRY(module, device->create_shader("pocket.post", kPostWgsl));
         post_shader = module;
-        WGPUBindGroupLayoutEntry be[3]{};
+        WGPUBindGroupLayoutEntry be[4]{};
         be[0].binding = 0;
         be[0].visibility = WGPUShaderStage_Fragment;
         be[0].buffer.type = WGPUBufferBindingType_Uniform;
@@ -1299,9 +1460,13 @@ struct Renderer::Impl {
         be[2].visibility = WGPUShaderStage_Fragment;
         be[2].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
         be[2].buffer.minBindingSize = sizeof(float) * 4;
+        be[3].binding = 3;
+        be[3].visibility = WGPUShaderStage_Fragment;
+        be[3].texture.sampleType = WGPUTextureSampleType_Depth;
+        be[3].texture.viewDimension = WGPUTextureViewDimension_2D;
         WGPUBindGroupLayoutDescriptor bd{};
         bd.label = rhi::str("pocket.post");
-        bd.entryCount = 3;
+        bd.entryCount = 4;
         bd.entries = be;
         post_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
         WGPUPipelineLayoutDescriptor pld{};
@@ -1409,8 +1574,8 @@ struct Renderer::Impl {
             bgd.entries = entries;
             return wgpuDeviceCreateBindGroup(device->device(), &bgd);
         };
-        post_bg = group("pocket.post", post_bgl, post_uniforms, sizeof(PostUniforms));
         meter_bg = group("pocket.meter", meter_bgl, meter_uniforms, sizeof(MeterUniforms));
+        post_depth = nullptr;   // the post group is made at the frame, with the depth it reads
         hdr_w = w;
         hdr_h = h;
         return {};
@@ -1418,7 +1583,30 @@ struct Renderer::Impl {
 
     // Meter the viewport of the HDR target (auto exposure only), then draw the frame from it:
     // everything outside the viewport is the clear color, as the scene pass left it before.
-    Status draw_post(rhi::Frame& frame, rhi::Color clear) {
+    Status draw_post(rhi::Frame& frame, rhi::Color clear, const world::Fog* fog_settings) {
+        // The post group reads the prepass depth when there is one (for the fog).
+        WGPUTextureView depth_view = prepass_view && split_applied ? prepass_view : no_depth_view;
+        if (!post_bg || post_depth != depth_view) {
+            if (post_bg) wgpuBindGroupRelease(post_bg);
+            WGPUBindGroupEntry e[4]{};
+            e[0].binding = 0;
+            e[0].buffer = post_uniforms;
+            e[0].size = sizeof(PostUniforms);
+            e[1].binding = 1;
+            e[1].textureView = hdr_view;
+            e[2].binding = 2;
+            e[2].buffer = meter_state;
+            e[2].size = sizeof(float) * 4;
+            e[3].binding = 3;
+            e[3].textureView = depth_view;
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.post");
+            d.layout = post_bgl;
+            d.entryCount = 4;
+            d.entries = e;
+            post_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+            post_depth = depth_view;
+        }
         const bool metered = tonemap.auto_exposure;
         if (metered) {
             MeterUniforms mu{};
@@ -1464,6 +1652,19 @@ struct Renderer::Impl {
         u.viewport[1] = static_cast<float>(applied.y);
         u.viewport[2] = static_cast<float>(applied.w);
         u.viewport[3] = static_cast<float>(applied.h);
+        to_array((camera.proj * camera.view).inverse(), u.inv_view_proj);
+        u.camera[0] = camera.position.x; u.camera[1] = camera.position.y; u.camera[2] = camera.position.z;
+        if (fog_settings && depth_view == prepass_view) {
+            u.fog_color[0] = decode(fog_settings->color.r);
+            u.fog_color[1] = decode(fog_settings->color.g);
+            u.fog_color[2] = decode(fog_settings->color.b);
+            u.fog[0] = std::max(fog_settings->density, 0.0f);
+            u.fog[1] = fog_settings->height;
+            u.fog[2] = std::max(fog_settings->falloff, 0.0f);
+            u.fog[3] = std::max(fog_settings->start, 0.0f);
+            u.fog2[0] = std::clamp(fog_settings->max_opacity, 0.0f, 1.0f);
+            u.fog2[1] = 1.0f;
+        }
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
         WGPURenderPassColorAttachment ca{};
         ca.view = frame.color;
@@ -1790,6 +1991,217 @@ struct Renderer::Impl {
         return true;
     }
 
+    struct AoUniforms {
+        float view_proj[16];
+        float inv_view_proj[16];
+        float camera[4];
+        float fwd[4];
+        float params[4];   // radius, intensity, samples
+        float size[4];     // the full frame's width and height
+    };
+
+    void release_ao_targets() {
+        for (WGPUBindGroup& g : ao_bg) { if (g) wgpuBindGroupRelease(g); g = nullptr; }
+        for (int i = 0; i < 2; ++i) {
+            if (ao_view[i]) wgpuTextureViewRelease(ao_view[i]);
+            if (ao_tex[i]) wgpuTextureRelease(ao_tex[i]);
+            ao_view[i] = nullptr;
+            ao_tex[i] = nullptr;
+        }
+        ao_w = ao_h = 0;
+    }
+
+    // A single-sample texture and its view.
+    std::pair<WGPUTexture, WGPUTextureView> make_target(const char* label, std::uint32_t w, std::uint32_t h, WGPUTextureFormat format, WGPUTextureUsage usage) {
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str(label);
+        td.usage = usage;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {w, h, 1};
+        td.format = format;
+        td.mipLevelCount = 1;
+        td.sampleCount = 1;
+        WGPUTexture t = wgpuDeviceCreateTexture(device->device(), &td);
+        WGPUTextureViewDescriptor vd{};
+        vd.format = format;
+        vd.dimension = WGPUTextureViewDimension_2D;
+        vd.mipLevelCount = 1;
+        vd.arrayLayerCount = 1;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = usage;
+        return {t, t ? wgpuTextureCreateView(t, &vd) : nullptr};
+    }
+
+    Status create_ao() {
+        POCKET_TRY(module, device->create_shader("pocket.ao", kAoWgsl));
+        ao_shader = module;
+        WGPUBindGroupLayoutEntry be[3]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(AoUniforms);
+        be[1].binding = 1;
+        be[1].visibility = WGPUShaderStage_Fragment;
+        be[1].texture.sampleType = WGPUTextureSampleType_Depth;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 2;
+        be[2].visibility = WGPUShaderStage_Fragment;
+        be[2].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        be[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.ao");
+        bd.entryCount = 3;
+        bd.entries = be;
+        ao_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.ao");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &ao_bgl;
+        ao_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        auto make = [&](const char* label, const char* entry) -> WGPURenderPipeline {
+            WGPUColorTargetState ct{};
+            ct.format = WGPUTextureFormat_R8Unorm;
+            ct.writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState fs{};
+            fs.module = ao_shader;
+            fs.entryPoint = rhi::str(entry);
+            fs.targetCount = 1;
+            fs.targets = &ct;
+            WGPURenderPipelineDescriptor rpd{};
+            rpd.label = rhi::str(label);
+            rpd.layout = ao_layout;
+            rpd.vertex.module = ao_shader;
+            rpd.vertex.entryPoint = rhi::str("vs_screen");
+            rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            rpd.primitive.frontFace = WGPUFrontFace_CCW;
+            rpd.primitive.cullMode = WGPUCullMode_None;
+            rpd.multisample.count = 1;
+            rpd.multisample.mask = 0xFFFFFFFFu;
+            rpd.fragment = &fs;
+            return wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        };
+        ao_pipeline = make("pocket.ao", "fs_ao");
+        ao_blur_pipeline = make("pocket.ao.blur", "fs_ao_blur");
+        if (!ao_pipeline || !ao_blur_pipeline) return fail("gpu_pipeline_failed", "ambient occlusion pipelines could not be created");
+        ao_uniforms = device->create_buffer("pocket.ao", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(AoUniforms));
+        auto [wt, wv] = make_target("pocket.ao.white", 1, 1, WGPUTextureFormat_R8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        ao_white_tex = wt;
+        ao_white_view = wv;
+        const std::uint8_t one = 255;
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = ao_white_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout layout{};
+        layout.bytesPerRow = 1;
+        layout.rowsPerImage = 1;
+        WGPUExtent3D ext{1, 1, 1};
+        wgpuQueueWriteTexture(device->queue(), &dst, &one, 1, &layout, &ext);
+        auto [dt, dv] = make_target("pocket.depth.none", 1, 1, kPrepassDepth, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment);
+        no_depth_tex = dt;
+        no_depth_view = dv;
+        return {};
+    }
+
+    // The depth prepass target at the frame's size.
+    Status ensure_prepass(std::uint32_t w, std::uint32_t h) {
+        if (prepass_tex && prepass_w == w && prepass_h == h) return {};
+        if (prepass_view) wgpuTextureViewRelease(prepass_view);
+        if (prepass_tex) wgpuTextureRelease(prepass_tex);
+        auto [t, v] = make_target("pocket.prepass", w, h, kPrepassDepth, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        if (!t) return fail("gpu_texture_failed", "cannot create the depth prepass {}x{}", w, h);
+        prepass_tex = t;
+        prepass_view = v;
+        prepass_w = w;
+        prepass_h = h;
+        release_ao_targets();   // their groups read the old depth
+        post_depth = nullptr;   // and so does the post group
+        return {};
+    }
+
+    // The AO targets at half the frame, and their groups over the prepass depth.
+    Status ensure_ao_targets(std::uint32_t w, std::uint32_t h) {
+        const std::uint32_t aw = std::max(1u, (w + 1) / 2), ah = std::max(1u, (h + 1) / 2);
+        if (ao_tex[0] && ao_w == aw && ao_h == ah) return {};
+        release_ao_targets();
+        for (int i = 0; i < 2; ++i) {
+            auto [t, v] = make_target(i == 0 ? "pocket.ao.a" : "pocket.ao.b", aw, ah, WGPUTextureFormat_R8Unorm, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+            if (!t) return fail("gpu_texture_failed", "cannot create the AO target {}x{}", aw, ah);
+            ao_tex[i] = t;
+            ao_view[i] = v;
+        }
+        for (int i = 0; i < 2; ++i) {
+            WGPUBindGroupEntry e[3]{};
+            e[0].binding = 0;
+            e[0].buffer = ao_uniforms;
+            e[0].size = sizeof(AoUniforms);
+            e[1].binding = 1;
+            e[1].textureView = prepass_view;
+            e[2].binding = 2;
+            e[2].textureView = i == 0 ? ao_white_view : ao_view[0];
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.ao");
+            d.layout = ao_bgl;
+            d.entryCount = 3;
+            d.entries = e;
+            ao_bg[i] = wgpuDeviceCreateBindGroup(device->device(), &d);
+        }
+        ao_w = aw;
+        ao_h = ah;
+        scene_ao = nullptr;   // the scene group reads the new result
+        return {};
+    }
+
+    // The scene group reads the AO result (or the white texel); made again when that changes.
+    void make_scene_group(WGPUTextureView ao_view_now) {
+        if (scene_bg && scene_ao == ao_view_now) return;
+        if (scene_bg) wgpuBindGroupRelease(scene_bg);
+        scene_entries[6].binding = 6;
+        scene_entries[6].textureView = ao_view_now;
+        scene_entries[7].binding = 7;
+        scene_entries[7].sampler = bloom_sampler;
+        WGPUBindGroupDescriptor sbd{};
+        sbd.label = rhi::str("pocket.scene");
+        sbd.layout = scene_bgl;
+        sbd.entryCount = 8;
+        sbd.entries = scene_entries;
+        scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
+        scene_ao = ao_view_now;
+    }
+
+    // Ambient occlusion over the prepass depth: the raw pass into A, the blur into B.
+    void draw_ao(rhi::Frame& frame) {
+        AoUniforms u{};
+        to_array(camera.proj * camera.view, u.view_proj);
+        to_array((camera.proj * camera.view).inverse(), u.inv_view_proj);
+        u.camera[0] = camera.position.x; u.camera[1] = camera.position.y; u.camera[2] = camera.position.z;
+        u.fwd[0] = camera.forward.x; u.fwd[1] = camera.forward.y; u.fwd[2] = camera.forward.z;
+        u.params[0] = ao.radius;
+        u.params[1] = ao.intensity;
+        u.params[2] = static_cast<float>(ao.samples);
+        u.size[0] = static_cast<float>(frame.width);
+        u.size[1] = static_cast<float>(frame.height);
+        device->write_buffer(ao_uniforms, 0, &u, sizeof u);
+        for (int i = 0; i < 2; ++i) {
+            WGPURenderPassColorAttachment ca{};
+            ca.view = ao_view[i];
+            ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            ca.loadOp = WGPULoadOp_Clear;
+            ca.storeOp = WGPUStoreOp_Store;
+            ca.clearValue = {1, 1, 1, 1};
+            WGPURenderPassDescriptor rp{};
+            rp.label = rhi::str(i == 0 ? "pocket.ao" : "pocket.ao.blur");
+            rp.colorAttachmentCount = 1;
+            rp.colorAttachments = &ca;
+            WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+            wgpuRenderPassEncoderSetPipeline(enc, i == 0 ? ao_pipeline : ao_blur_pipeline);
+            wgpuRenderPassEncoderSetBindGroup(enc, 0, ao_bg[i], 0, nullptr);
+            wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(enc);
+            wgpuRenderPassEncoderRelease(enc);
+        }
+        stats.ao = true;
+    }
+
     void release_scene_pipelines() {
         if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
         sky_pipeline = nullptr;
@@ -1802,9 +2214,9 @@ struct Renderer::Impl {
     // The scene pipelines for a sample count: with one sample, color and id share a pass (two
     // targets); with more, the color pipelines are multisampled with one target and separate
     // single-sample pipelines write the ids.
-    Status create_scene_pipelines(int samples) {
+    Status create_scene_pipelines(int samples, bool prepass = false) {
         release_scene_pipelines();
-        const bool split = samples > 1;
+        const bool split = samples > 1 || prepass;
         WGPUColorTargetState targets[2]{};
         targets[0].format = kHdrFormat;
         targets[0].writeMask = WGPUColorWriteMask_All;
@@ -1932,6 +2344,7 @@ struct Renderer::Impl {
             ifs.targetCount = 1;
             ifs.targets = &idt;
             WGPUDepthStencilState ids = ds;
+            ids.format = kPrepassDepth;   // the id pass has a depth target of its own, sampled afterwards
             ids.depthWriteEnabled = WGPUOptionalBool_True;
             ids.depthCompare = WGPUCompareFunction_Less;
             WGPURenderPipelineDescriptor irpd = rpd;
@@ -1993,6 +2406,7 @@ struct Renderer::Impl {
             if (!sky_pipeline) return fail("gpu_pipeline_failed", "sky pipeline creation failed");
         }
         msaa_applied = samples;
+        split_applied = split;
         return {};
     }
 
@@ -2037,7 +2451,7 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[6]{};
+        WGPUBindGroupLayoutEntry se[8]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
@@ -2057,9 +2471,16 @@ struct Renderer::Impl {
         se[5].visibility = WGPUShaderStage_Fragment;
         se[5].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
         se[5].buffer.minBindingSize = sizeof(float) * 36;
+        se[6].binding = 6;
+        se[6].visibility = WGPUShaderStage_Fragment;
+        se[6].texture.sampleType = WGPUTextureSampleType_Float;
+        se[6].texture.viewDimension = WGPUTextureViewDimension_2D;
+        se[7].binding = 7;
+        se[7].visibility = WGPUShaderStage_Fragment;
+        se[7].sampler.type = WGPUSamplerBindingType_Filtering;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 6;
+        scene_ld.entryCount = 8;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -2272,7 +2693,8 @@ struct Renderer::Impl {
         ssd.maxAnisotropy = 1;
         shadow_sampler = wgpuDeviceCreateSampler(device->device(), &ssd);
         POCKET_TRY_VOID(create_sky());
-        WGPUBindGroupEntry sbe[6]{};
+        POCKET_TRY_VOID(create_ao());
+        WGPUBindGroupEntry* sbe = scene_entries;
         sbe[0] = fbe;
         sbe[1].binding = 1;
         sbe[1].textureView = shadow_view;
@@ -2285,12 +2707,7 @@ struct Renderer::Impl {
         sbe[5].binding = 5;
         sbe[5].buffer = sh_buffer;
         sbe[5].size = sizeof(float) * 36;
-        WGPUBindGroupDescriptor sbd{};
-        sbd.label = rhi::str("pocket.scene");
-        sbd.layout = scene_bgl;
-        sbd.entryCount = 6;
-        sbd.entries = sbe;
-        scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
+        make_scene_group(ao_white_view);
 
         WGPUBindGroupEntry obe[3]{};
         obe[0].binding = 0;
@@ -2762,7 +3179,18 @@ Renderer::ImageView Renderer::image_view(const std::string& path) {
 
 Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug) {
     Impl& im = *impl_;
-    if (im.msaa != im.msaa_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa));
+    // Fog and ambient occlusion read the depth of a prepass: the id pass at one sample with a depth
+    // target of its own (with MSAA that pass is there anyway).
+    world::Fog fog;
+    bool fog_on = false;
+    world.ecs().each([&](flecs::entity, const world::Fog& f) {
+        if (!fog_on && f.enabled && f.density > 0) { fog = f; fog_on = true; }
+    });
+    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on;
+    if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
+    if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
+    if (im.ao.enabled) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
+    im.make_scene_group(im.ao.enabled ? im.ao_view[1] : im.ao_white_view);
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
     POCKET_TRY_VOID(im.ensure_hdr_target(frame.width, frame.height));
     POCKET_TRY_VOID(im.ensure_msaa_targets(frame.width, frame.height, im.msaa_applied));
@@ -2926,6 +3354,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.sky[2] = sky.sun_size > 0 ? 40.0f : 0.0f;
     fu.sky[3] = have_sun ? 1.0f : 0.0f;
     im.stats.sky = has_sky ? sky.mode : 0;
+    fu.ao[0] = im.ao.enabled ? 1.0f : 0.0f;
+    fu.ao[1] = 1.0f / static_cast<float>(std::max(1u, frame.width));
+    fu.ao[2] = 1.0f / static_cast<float>(std::max(1u, frame.height));
     if (has_sky) fu.ambient[0] = fu.ambient[1] = fu.ambient[2] = 0.0f;   // the sky's light replaces the flat ambient, even at zero
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
@@ -3282,6 +3713,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.tonemap = 0;
     im.stats.auto_exposure = false;
     im.stats.env_updates = im.env_updates;
+    im.stats.depth_prepass = prepass;
+    im.stats.ao = false;
+    im.stats.fog = fog_on;
     im.stats.skinned = skinned_instances;
     im.stats.morphed = morphed_instances;
     im.stats.moving_parts = moving_parts;
@@ -3289,13 +3723,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.textures = static_cast<std::uint32_t>(im.textures.size());
     im.stats.materials = static_cast<std::uint32_t>(im.material_groups.size());
 
-    const bool split = im.msaa_applied > 1;  // color resolves from the multisampled target; ids get their own pass
+    const bool split = im.split_applied;   // ids (and depth) in a pass of their own; with MSAA the color resolves from the multisampled target
+    const bool resolve = im.msaa_applied > 1;
     WGPURenderPassColorAttachment ca[2]{};
-    ca[0].view = split ? im.ms_color_view : im.hdr_view;
-    ca[0].resolveTarget = split ? im.hdr_view : nullptr;
+    ca[0].view = resolve ? im.ms_color_view : im.hdr_view;
+    ca[0].resolveTarget = resolve ? im.hdr_view : nullptr;
     ca[0].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     ca[0].loadOp = WGPULoadOp_Clear;
-    ca[0].storeOp = split ? WGPUStoreOp_Discard : WGPUStoreOp_Store;
+    ca[0].storeOp = resolve ? WGPUStoreOp_Discard : WGPUStoreOp_Store;
     ca[0].clearValue = {decode(clear.r), decode(clear.g), decode(clear.b), clear.a};
     ca[1].view = im.id_view;
     ca[1].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
@@ -3303,7 +3738,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     ca[1].storeOp = WGPUStoreOp_Store;
     ca[1].clearValue = {0, 0, 0, 0};
     WGPURenderPassDepthStencilAttachment ds{};
-    ds.view = split ? im.ms_depth_view : frame.depth;
+    ds.view = resolve ? im.ms_depth_view : frame.depth;
     ds.depthLoadOp = WGPULoadOp_Clear;
     ds.depthStoreOp = WGPUStoreOp_Store;
     ds.depthClearValue = 1.0f;
@@ -3425,7 +3860,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ica.storeOp = WGPUStoreOp_Store;
         ica.clearValue = {0, 0, 0, 0};
         WGPURenderPassDepthStencilAttachment ids = ds;
-        ids.view = frame.depth;
+        ids.view = im.prepass_view;
         WGPURenderPassDescriptor irp{};
         irp.label = rhi::str("pocket.ids");
         irp.colorAttachmentCount = 1;
@@ -3441,6 +3876,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.stats.id_draws);
         wgpuRenderPassEncoderEnd(ipass);
         wgpuRenderPassEncoderRelease(ipass);
+        if (im.ao.enabled) im.draw_ao(frame);
     }
     WGPURenderPassDescriptor rp{};
     rp.label = rhi::str("pocket.scene");
@@ -3479,7 +3915,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
-    POCKET_TRY_VOID(im.draw_post(frame, clear));
+    POCKET_TRY_VOID(im.draw_post(frame, clear, fog_on ? &fog : nullptr));
     return {};
 }
 
@@ -3604,6 +4040,13 @@ void Renderer::set_grade(GradeSettings s) {
     impl_->grade = s;
 }
 GradeSettings Renderer::grade() const { return impl_->grade; }
+void Renderer::set_ao(AoSettings s) {
+    s.radius = std::clamp(s.radius, 0.01f, 50.0f);
+    s.intensity = std::clamp(s.intensity, 0.0f, 4.0f);
+    s.samples = std::clamp(s.samples, 4, 32);
+    impl_->ao = s;
+}
+AoSettings Renderer::ao() const { return impl_->ao; }
 void Renderer::set_tonemap(TonemapSettings s) {
     s.exposure = std::clamp(s.exposure, 0.0f, 64.0f);
     s.compensation = std::clamp(s.compensation, -16.0f, 16.0f);
@@ -3705,6 +4148,9 @@ Json Renderer::describe() const {
     j["auto_exposure"] = s.auto_exposure;
     j["sky"] = s.sky == 1 ? "procedural" : s.sky == 2 ? "image" : "none";
     j["env_updates"] = s.env_updates;
+    j["depth_prepass"] = s.depth_prepass;
+    j["ao"] = s.ao;
+    j["fog"] = s.fog;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;

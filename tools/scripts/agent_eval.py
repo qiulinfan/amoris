@@ -501,15 +501,19 @@ def run_external(cmd, env, task, timeout, project_dir):
                         + (f" This task edits files: change {task.get('entry', 'scripts/main.ts')} under project_dir; the harness bundles the project again and reloads the project (a fresh world from the scene, the script started again) when you are done." if task.get("script") else "")}
     proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})
     answer = None
+    metrics = {}
     for line in reversed(proc.stdout.strip().splitlines()):
         line = line.strip()
         if line.startswith("{"):
             try:
-                answer = json.loads(line).get("answer")
+                last = json.loads(line)
+                answer = last.get("answer")
+                # Whatever else the runner reports about the attempt (tokens, cost, tool calls) rides along.
+                metrics = {k: v for k, v in last.items() if k != "answer"}
                 break
             except json.JSONDecodeError:
                 continue
-    return answer, proc.returncode, proc.stderr[-2000:]
+    return answer, proc.returncode, proc.stderr[-2000:], metrics
 
 
 def run(runner="reference", tasks=None, timeout=300, log=print, project_root=None):
@@ -519,6 +523,7 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
     for t in chosen:
         t0 = time.time()
         answer = None
+        metrics = {}
         detail = ""
         ok = False
         error = None
@@ -526,7 +531,8 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         env = None
         try:
             project_dir = scratch_copy(t) if t.get("script") else os.path.join(project_root or ROOT, "samples", t["project"])
-            env = PocketEnv(project_dir, root=project_root)
+            # POCKET_EVAL_RUNTIME: a copy of the runtime to test (so a long run is not changed by a rebuild).
+            env = PocketEnv(project_dir, root=project_root, runtime=os.environ.get("POCKET_EVAL_RUNTIME") or None)
             if t["ticks"]:
                 env.command("step", {"ticks": t["ticks"]})
             if "before" in t:
@@ -539,7 +545,7 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
             elif runner == "null":
                 pass
             else:
-                answer, code, err = run_external(runner, env, t, timeout, project_dir)
+                answer, code, err, metrics = run_external(runner, env, t, timeout, project_dir)
                 if code != 0:
                     error = f"runner exited {code}: {err.strip()[-300:]}"
             if t.get("script"):
@@ -559,11 +565,24 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
             if t.get("script") and project_dir:
                 scratch_remove(project_dir)
         seconds = round(time.time() - t0, 1)
-        results.append({"name": t["name"], "project": t["project"], "ok": bool(ok), "seconds": seconds, "detail": detail, "answer": answer, "error": error})
-        log(f"{'pass' if ok else 'FAIL'}  {t['name']:<14} {t['project']:<11} {seconds:5.1f} s  {detail}{('  [' + error + ']') if error else ''}")
+        row = {"name": t["name"], "project": t["project"], "ok": bool(ok), "seconds": seconds, "detail": detail, "answer": answer, "error": error}
+        if metrics:
+            row["metrics"] = metrics
+        results.append(row)
+        spent = f"  {metrics.get('tool_calls', '?')} calls, {metrics.get('tokens', {}).get('total', '?')} tokens, ${metrics.get('cost_usd', 0):.4f}" if metrics else ""
+        log(f"{'pass' if ok else 'FAIL'}  {t['name']:<14} {t['project']:<11} {seconds:5.1f} s  {detail}{spent}{('  [' + error + ']') if error else ''}")
     passed = sum(1 for r in results if r["ok"])
     log(f"{passed}/{len(results)} passed with runner {runner!r} in {time.time() - started:.1f} s")
-    return {"runner": runner, "passed": passed, "total": len(results), "seconds": round(time.time() - started, 1), "tasks": results}
+    report = {"runner": runner, "passed": passed, "total": len(results), "seconds": round(time.time() - started, 1), "tasks": results}
+    spent = [r["metrics"] for r in results if "metrics" in r]
+    if spent:
+        report["totals"] = {
+            "cost_usd": round(sum(m.get("cost_usd", 0) for m in spent), 4),
+            "tokens": sum(m.get("tokens", {}).get("total", 0) for m in spent),
+            "tool_calls": sum(m.get("tool_calls", 0) for m in spent),
+        }
+        log(f"spent ${report['totals']['cost_usd']:.4f}, {report['totals']['tokens']} tokens, {report['totals']['tool_calls']} tool calls")
+    return report
 
 
 if __name__ == "__main__":

@@ -594,7 +594,7 @@ export function Panel(props: { title?: string; children?: unknown; flex?: number
         h("box", { flexGrow: 1, flexShrink: 1, padding: props.padding ?? 6, gap: props.gap ?? 4, overflow: props.scroll ? "scroll" : "hidden", direction: props.direction ?? "column" }, props.children));
 }
 
-export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean; wrap?: boolean }): VNode {
+export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean; wrap?: boolean; syntax?: string }): VNode {
     return h("input", {
         name: props.name,
         value: props.value,
@@ -603,6 +603,7 @@ export function TextInput(props: { value: string; onChange?: (value: string) => 
         height: props.height,
         multiline: props.multiline,
         textWrap: props.wrap,
+        syntax: props.syntax,
         flex: props.flex,
         disabled: props.disabled,
         color: theme.text,

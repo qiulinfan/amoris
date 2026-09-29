@@ -70,6 +70,15 @@ Rules that follow from the implementation:
 - New components are declared in `engine/world/meta/components.toml`; never hand-edit a `*.gen.*` file or `sdk/runtime/generated/`.
 - Anything a script can ask the world is a command (`command(name, params)`), and every command is also reachable over `--serve`; do not add script-only or agent-only paths.
 
+## Driving the engine from an agent
+
+A running runtime is the engine's interface: every feature is a command on its control server (`--serve <port>`), the same one scripts, the editor and tests use.
+
+- Start one: `./.pocket/pocket run <project> -- --headless --serve 4711 --paused --json`, or open the editor with `./.pocket/pocket editor <project> -- --serve 4711`.
+- Call it: the `pocket` MCP server (registered in `.mcp.json`; `runtime_attach {url}`, or it attaches to `$POCKET_RPC_URL`), the pi extension `integrations/pi/pocket.ts`, or `./.pocket/pocket rpc <method> '<params>'` in a shell.
+- Ask it: `help {command}` gives a command's parameters and purpose; a command refuses keys it does not take and names the right ones. `world.tree`, `world.query`, `world.describe`, `transcript` and `events.why` read the game as text; `capture` and `render.visible` show what the camera sees.
+- The runtime is paused; `step {ticks}` advances it. Entities are ids, names or paths (`Player`, `/Level/Player`).
+
 ## Repository layout
 
 ```

@@ -28,12 +28,20 @@ struct Config {
     double stream_seconds = 10.0;
 };
 
+// The room every voice plays in: a reverb tail fed by each voice's `reverb` send.
+struct ReverbSettings {
+    float room = 0.0f;     // how long the tail rings, 0..1: 0 is no reverb (a dry mix), 0.5 a room, 0.9 a hall
+    float damping = 0.5f;  // how fast the high end dies in the tail, 0..1
+    float mix = 0.3f;      // the tail's level against the dry voices, 0..1
+};
+
 struct PlayOptions {
     float volume = 1.0f;
     float pitch = 1.0f;   // playback rate multiplier
     bool loop = false;
     float pan = 0.0f;     // -1 left .. 1 right
     float lowpass = 1.0f; // how much of the high end is kept, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door)
+    float reverb = 1.0f;  // how much of the voice goes to the room's reverb, 0..1 (0 keeps interface clicks and music dry)
     std::uint64_t entity = 0;  // optional owner, reported in events
     std::string tag;      // optional label for stop/list
 };
@@ -45,6 +53,7 @@ struct VoiceInfo {
     double duration = 0;   // clip length in seconds
     float volume = 1, pitch = 1, pan = 0;
     float lowpass = 1;
+    float reverb = 1;
     bool loop = false;
     std::uint64_t entity = 0;
     std::string tag;
@@ -72,7 +81,10 @@ class Audio {
     std::uint32_t stop_clip(const std::string& clip);
     std::uint32_t stop_tag(const std::string& tag);
     std::uint32_t stop_all();
-    Status set(std::uint32_t voice, const Json& params);  // volume, pitch, loop, pan
+    Status set(std::uint32_t voice, const Json& params);  // volume, pitch, loop, pan, lowpass, reverb
+    // The room: a reverb every voice's send feeds (off at room 0). Takes effect at the next render.
+    void set_reverb(ReverbSettings s);
+    [[nodiscard]] ReverbSettings reverb() const;
     // Advance logical time; returns finished/looped events.
     std::vector<VoiceEvent> tick(double dt);
     // Render audio into the device stream (no-op without a device). Call once per frame.

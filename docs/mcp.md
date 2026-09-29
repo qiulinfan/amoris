@@ -20,6 +20,22 @@ args = ["--root", "/Users/you/aipocket", "mcp"]
 
 The binary comes from `scripts/bootstrap.sh`. On a machine where Xcode itself is unusable, set `DEVELOPER_DIR=/Library/Developer/CommandLineTools` in the client's environment for the server process.
 
+The repository's `.mcp.json` registers the same server for any client that reads a project's `.mcp.json` (Claude Code, oh-my-pi, Cursor): started at the repository root, they find the `pocket` server without a command.
+
+pi, oh-my-pi and other agents:
+
+- **oh-my-pi** (`omp`) reads `.mcp.json`: run it at the repository root and the `pocket` tools are there (it calls them through its `write` tool on `xd://mcp__pocket_<tool>`).
+- **pi** has no MCP by design; `integrations/pi/pocket.ts` is a pi extension with the same reach: a `pocket` tool (a command and its params) and `pocket_look` (the frame as an image, with what is visible). Load it with `pi -e integrations/pi/pocket.ts` or copy it into `~/.pi/agent/extensions/`; it drives `$POCKET_RPC_URL`, or the url `/pocket-attach <url>` sets.
+- **Any agent with a shell**: `pocket rpc <method> '<params>'` sends one command to `$POCKET_RPC_URL` (or `--url`) and prints the result: JSON, or the text of a text result such as `world.tree`. `pocket rpc help '{"command": "world.set"}'` says how to call a command.
+
+## Attaching to a running runtime
+
+The MCP server drives a runtime it started (`runtime_start`) or one that is already running: `runtime_attach {url}` attaches to any runtime's control server (an editor started with `-- --serve 4711`, a game under test, the agent benchmark's), and with `POCKET_RPC_URL` set in its environment the server attaches to that runtime by itself on the first call. `runtime_stop` lets an attached runtime go (`quit: true` stops it). So an agent can work on the game a person has open in the editor, and see what they see: `capture {image: true}` returns the frame as an image for a model that reads images.
+
+## Asking the engine how to call it
+
+Every command has a usage line and a summary in the engine itself: `help {command: "world.set"}` answers `world.set {entity, component, value, cause?}` and what it does, `help {}` all of them, `commands {usage: true}` the list with usages (the MCP tools `runtime_help` and `runtime_commands`). A command refuses a parameter it does not take and names the ones it takes (`world.query does not take 'pattern': it takes with?, without?, name?, under?, fields?, limit?`), so a guessed key fails at once instead of being ignored while the call looks like it worked; a mistyped command is answered with the names it is close to; and where a command takes an `entity` and no `path`, a `path` stands for it. `world.set` without a `value` object (or a `component`) says what it needs. These came from watching a model work (docs/agent-eval.md): its first `world.set` passed the fields under `fields`, was answered `{"ok": true}`, changed nothing, and the model spent a dozen calls reading the engine's source to find out why.
+
 ## Tools
 
 | Tool | What it does |

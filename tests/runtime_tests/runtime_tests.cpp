@@ -3728,3 +3728,72 @@ bpy.ops.export_scene.fbx(filepath=argv[1])
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(root() / "samples" / "assets" / ".imported");
 }
+
+TEST_CASE("the engine says how to call its commands and refuses parameters they do not take", "[runtime][help]") {
+    app::Session s(hello_options(10));
+    REQUIRE(s.start().has_value());
+    // Every command it lists has help, with a usage line and a summary.
+    const Json listed = s.command("commands", Json::object()).value();
+    for (const Json& c : listed) {
+        auto h = s.command("help", Json{{"command", c}});
+        INFO(c.dump());
+        REQUIRE(h.has_value());
+        REQUIRE_FALSE((*h)["summary"].get<std::string>().empty());
+    }
+    Json set = s.command("help", Json{{"command", "world.set"}}).value();
+    REQUIRE(set["usage"] == "world.set {entity, component, value, cause?}");
+    REQUIRE(set["params"] == Json::array({"entity", "component", "value", "cause"}));
+    Json usage = s.command("commands", Json{{"usage", true}}).value();
+    REQUIRE(usage.size() == listed.size());
+    // A mistyped command is answered with the names it is close to.
+    auto typo = s.command("world.spwan", Json::object());
+    REQUIRE_FALSE(typo.has_value());
+    REQUIRE(typo.error().message.find("world.spawn") != std::string::npos);
+    // A key a command does not take is refused, with the ones it takes, instead of being ignored.
+    auto wrong = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"fields", Json{{"color", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 1}}}}}});
+    REQUIRE_FALSE(wrong.has_value());
+    INFO(wrong.error().message);
+    REQUIRE(wrong.error().code == "bad_args");
+    REQUIRE(wrong.error().message.find("'fields'") != std::string::npos);
+    REQUIRE(wrong.error().message.find("entity, component, value") != std::string::npos);
+    auto pattern = s.command("world.query", Json{{"pattern", "*Ball*"}});
+    REQUIRE_FALSE(pattern.has_value());
+    REQUIRE(pattern.error().message.find("name?") != std::string::npos);
+    // world.set without a value, or without a component, says what it needs.
+    auto empty = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}});
+    REQUIRE_FALSE(empty.has_value());
+    REQUIRE(empty.error().message.find("value") != std::string::npos);
+    // `path` stands for `entity` where a command takes an entity.
+    Json described = s.command("world.describe", Json{{"path", "Ball"}}).value();
+    REQUIRE(described["name"] == "Ball");
+    REQUIRE(s.command("world.set", Json{{"path", "/Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"color", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}}).value()["color"]["g"].get<double>() == Catch::Approx(1.0));
+    // A command whose parameters run on into another's (env.step) is not held to the list.
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a script error stops the simulation, says so in state and in step, and a reload starts over", "[runtime][script_error]") {
+    app::Session s(hello_options(1000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // The hello script colors the Ball every tick: without the Ball, its next tick throws.
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Ball"}}).has_value());
+    (void)s.frame();
+    Json st = s.command("state", Json::object()).value();
+    INFO(st.dump());
+    REQUIRE(st["ok"] == false);
+    REQUIRE(st["errors"].size() >= 1);
+    REQUIRE(st["errors"].back()["message"].get<std::string>().find("no entity") != std::string::npos);
+    REQUIRE(st.contains("hint"));
+    auto step = s.command("step", Json{{"ticks", 1}});
+    REQUIRE_FALSE(step.has_value());
+    REQUIRE(step.error().code == "script_error");
+    REQUIRE(s.command("resume", Json::object()).error().code == "script_error");
+    // Commands still answer: the world can be read and fixed.
+    REQUIRE(s.command("world.find", Json{{"path", "Ball"}}).value().is_null());
+    Json reloaded = s.command("project.reload", Json::object()).value();
+    REQUIRE(reloaded["ok"] == true);
+    REQUIRE(s.command("state", Json::object()).value()["ok"] == true);
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.finish().has_value());
+}

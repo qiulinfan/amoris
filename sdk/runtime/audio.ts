@@ -8,6 +8,8 @@ export interface PlayOptions {
     pan?: number;
     /** How much of the high end is kept, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door). */
     lowpass?: number;
+    /** How much of the voice goes to the room's reverb (`audio.reverb`), 0..1; 0 keeps interface clicks and music dry. */
+    reverb?: number;
     entity?: number;
     tag?: string;
     /** Heard from where `entity` is: full within `near` of the camera, silent at `range`, panned to its side (docs/design/audio.md). */
@@ -47,8 +49,16 @@ export const audio = {
         const params = target === undefined ? { all: true } : typeof target === "number" ? { voice: target } : target;
         return cmd<{ stopped: number }>("audio.stop", params).stopped;
     },
-    set(voice: number, params: { volume?: number; pitch?: number; pan?: number; loop?: boolean; lowpass?: number }): void {
+    set(voice: number, params: { volume?: number; pitch?: number; pan?: number; loop?: boolean; lowpass?: number; reverb?: number }): void {
         cmd("audio.set", { voice, ...params });
+    },
+    /**
+     * The room every voice plays in: `room` is how long the tail rings (0 none, 0.5 a room, 0.9 a hall),
+     * `damping` how fast its high end dies, `mix` its level against the dry voices. A voice's `reverb`
+     * is its share. project.toml [audio.reverb] sets the default.
+     */
+    reverb(settings: { room?: number; damping?: number; mix?: number } = {}): { room: number; damping: number; mix: number } {
+        return cmd("audio.reverb", settings);
     },
     voices(): Voice[] {
         return cmd<Voice[]>("audio.list");

@@ -33,6 +33,15 @@ struct BloomSettings {
     float radius = 1.0f;      // the blur's spread, in half-resolution texels (1 tight, 4 wide)
 };
 
+// Ambient occlusion: the sky's and the ambient light darkened where geometry crowds a point (a
+// crevice, the ground under a crate), measured on screen from the depth prepass.
+struct AoSettings {
+    bool enabled = false;
+    float radius = 0.6f;       // how far around a point is looked at, in world units
+    float intensity = 1.0f;    // how dark a fully crowded point gets (0 none, 1 black)
+    int samples = 12;          // samples per point (4..32)
+};
+
 // How the HDR scene becomes the 8-bit frame: an exposure (fixed, or metered from the frame and
 // adapted over time), then a tone-mapping operator, then the sRGB encoding.
 enum class Tonemap : int { None = 0, Aces = 1, Agx = 2, Neutral = 3 };
@@ -82,6 +91,9 @@ struct RenderStats {
     bool grade = false;               // whether grading was applied in the final pass this frame
     int tonemap = 0;                  // the operator of the final pass (Tonemap)
     int sky = 0;                      // the Sky drawn (0 none, 1 procedural, 2 image)
+    bool depth_prepass = false;       // whether the ids and depth were drawn in a pass of their own first (MSAA, AO or fog)
+    bool ao = false;                  // whether ambient occlusion was computed this frame
+    bool fog = false;                 // whether fog was applied this frame
     std::uint32_t env_updates = 0;    // times the sky's environment light was rebuilt, over the renderer's life
     bool auto_exposure = false;       // whether the frame was metered for exposure
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
@@ -158,6 +170,9 @@ class Renderer {
     void set_grade(GradeSettings s);
     [[nodiscard]] GradeSettings grade() const;
     // Exposure and tone mapping of the HDR scene into the frame; takes effect at the next frame.
+    // Ambient occlusion (off by default); takes effect at the next frame.
+    void set_ao(AoSettings s);
+    [[nodiscard]] AoSettings ao() const;
     void set_tonemap(TonemapSettings s);
     [[nodiscard]] TonemapSettings tonemap() const;
     // Seconds between rendered frames, for the auto exposure's adaptation (a tick by default).

@@ -894,3 +894,64 @@ TEST_CASE("editor gizmo moves and turns a child exactly under a turned, scaled p
     REQUIRE(std::abs(turned["rotation"]["y"].get<double>()) < 0.1);
     ok(s.finish());
 }
+
+TEST_CASE("editor places a model with a light as its node tree, from the Place button, and reimports it", "[editor][assets][import]") {
+    // A glTF lamp: a shade (one triangle) and a point light two units above it.
+    const std::filesystem::path lamp = root() / "samples" / "physics" / "assets" / "lamp-test.gltf";
+    std::ofstream(lamp) << R"({"asset": {"version": "2.0"}, "extensionsUsed": ["KHR_lights_punctual"],
+        "extensions": {"KHR_lights_punctual": {"lights": [{"type": "point", "color": [1, 0.8, 0.6], "intensity": 100}]}},
+        "scene": 0, "scenes": [{"nodes": [0, 1]}],
+        "nodes": [{"name": "Shade", "mesh": 0}, {"name": "Bulb", "translation": [0, 2, 0], "extensions": {"KHR_lights_punctual": {"light": 0}}}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}]})";
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tab:assets")}}));
+    ok(s.idle_frame());
+    // Picked, it says what it carries, and Place and Reimport appear.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:assets/lamp-test.gltf")}}));
+    ok(s.idle_frame());
+    {
+        const std::string info = ok(s.command("ui.describe", Json{{"id", find_named(s, "asset-info")}})).value("text", "");
+        INFO(info);
+        REQUIRE(info.find(", 1 light") != std::string::npos);
+    }
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:place")}}));
+    ok(s.idle_frame());
+    INFO(ok(s.command("ui.describe", Json{{"id", find_named(s, "notice")}})).dump());
+    const Json root_id = ok(s.command("world.find", Json{{"path", "lamp-test"}}));
+    REQUIRE(root_id.is_number());
+    const Json bulb = ok(s.command("world.find", Json{{"path", "lamp-test/Bulb"}}));
+    REQUIRE(bulb.is_number());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", bulb}, {"component", "Light"}}))["kind"] == 1);
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "lamp-test/Shade"}, {"component", "MeshRenderer"}}))["mesh"] == "assets/lamp-test.gltf");
+    // One edit: undo takes the whole tree away, redo brings it back with its light.
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE_FALSE(ok(s.command("world.find", Json{{"path", "lamp-test"}})).is_number());
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "lamp-test/Bulb"}, {"component", "Light"}}))["kind"] == 1);
+    // A model without lights or cameras stays one drawable.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:assets/bowl.glb")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:place")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "bowl"}, {"component", "MeshRenderer"}}))["mesh"] == "assets/bowl.glb");
+    REQUIRE(ok(s.command("world.children", Json{{"entity", "bowl"}})).empty());
+    // Reimport reads the file again.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:reimport")}}));
+    ok(s.idle_frame());
+    {
+        const std::string notice = ok(s.command("ui.describe", Json{{"id", find_named(s, "notice")}})).dump();
+        INFO(notice);
+        REQUIRE(notice.find("imported again") != std::string::npos);
+    }
+    ok(s.finish());
+    std::filesystem::remove(lamp);
+    std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");   // the layout file the tab click wrote
+}

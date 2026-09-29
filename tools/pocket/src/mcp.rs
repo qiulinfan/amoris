@@ -17,10 +17,10 @@ use std::time::Duration;
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 struct RuntimeSession {
-    child: Child,
+    child: Option<Child>,   // None when attached to a runtime something else started
     url: String,
     project: String,
-    stdout: std::thread::JoinHandle<String>,
+    stdout: Option<std::thread::JoinHandle<String>>,
 }
 
 struct McpServer<'a> {
@@ -76,12 +76,16 @@ fn tools_list() -> Value {
             "size": { "type": "string", "description": "WxH render target size" },
             "history": { "type": "integer", "description": "keep the last N ticks for recorder.at/diff/track/first (time travel)" }
         }), &["project"])),
-        tool("runtime_stop", "Stop the running session and return its final JSON report.", obj_schema(json!({}), &[])),
+        tool("runtime_attach", "Attach to a runtime that is already running with its control server (started with --serve, an editor, a benchmark harness), by its url; tools then act on it. The server attaches to $POCKET_RPC_URL by itself when that is set.", obj_schema(json!({
+            "url": { "type": "string", "description": "the control server's base url, e.g. http://127.0.0.1:4711" }
+        }), &["url"])),
+        tool("runtime_stop", "Stop the running session and return its final JSON report; an attached runtime is let go (quit: true stops it too).", obj_schema(json!({ "quit": { "type": "boolean", "default": false } }), &[])),
         tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back), nav.* (nav.bake a walkability grid, nav.path / nav.reachable / nav.nearest over it) families plus state, step, capture, log.tail, report.", obj_schema(json!({
             "method": { "type": "string" },
             "params": { "type": "object" }
         }), &["method"])),
-        tool("runtime_commands", "List every command the running runtime understands.", obj_schema(json!({}), &[])),
+        tool("runtime_commands", "List every command the running runtime understands, with each one's parameters and what it does (usage).", obj_schema(json!({}), &[])),
+        tool("runtime_help", "How to call one command: its parameters (? optional, a | b alternatives) and what it does. A command refuses parameters it does not take and says which it takes.", obj_schema(json!({ "command": { "type": "string", "description": "e.g. world.set" } }), &["command"])),
         tool("world_tree", "The AI-native tree: one line per entity with the fields that differ from defaults.", obj_schema(json!({
             "root": { "description": "Entity id or path" },
             "depth": { "type": "integer", "default": -1 },
@@ -96,7 +100,7 @@ fn tools_list() -> Value {
             "fields": { "type": "array", "items": { "type": "string" } },
             "limit": { "type": "integer", "default": 200 }
         }), &[])),
-        tool("world_describe", "Everything about one entity: path, parent, children, component values.", obj_schema(json!({ "entity": { "description": "Entity id or path" } }), &["entity"])),
+        tool("world_describe", "Everything about one entity: path, parent, children, component values.", obj_schema(json!({ "entity": { "description": "Entity id, name or path" }, "path": { "type": "string", "description": "the entity's name or path, instead of entity" } }), &[])),
         tool("world_schema", "Component vocabulary: names, fields, types, docs, defaults.", obj_schema(json!({}), &[])),
         tool("step", "Advance the paused simulation by N ticks and return the state summary (tick, exposed state, hashes).", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 } }), &[])),
         tool("events_since", "Causal event log entries after a sequence number, oldest first.", obj_schema(json!({
@@ -104,10 +108,11 @@ fn tools_list() -> Value {
             "limit": { "type": "integer", "default": 200 },
             "type": { "type": "string", "description": "type prefix filter, e.g. 'player.'" }
         }), &[])),
-        tool("capture", "Write the last frame to a PNG (and optionally the entity id buffer) and return which entities are visible.", obj_schema(json!({
-            "path": { "type": "string" },
-            "ids": { "type": "string", "description": "PNG path for the false-color id buffer" }
-        }), &["path"])),
+        tool("capture", "Write the last frame to a PNG (and optionally the entity id buffer) and return which entities are visible; image: true also returns the frame itself, for a model that sees.", obj_schema(json!({
+            "path": { "type": "string", "description": "PNG path (default: build/mcp/capture.png in the workspace)" },
+            "ids": { "type": "string", "description": "PNG path for the false-color id buffer" },
+            "image": { "type": "boolean", "default": false }
+        }), &[])),
         tool("render_pick", "Entity under a pixel of the last frame.", obj_schema(json!({ "x": { "type": "number" }, "y": { "type": "number" } }), &["x", "y"])),
         tool("ui_snapshot", "The interface as text: one line per element with type, id, name, rectangle, text or value, listeners, focus and scroll state. Read this instead of screenshots.", obj_schema(json!({ "depth": { "type": "integer" }, "max_nodes": { "type": "integer" }, "root": { "type": "integer" } }), &[])),
         tool("ui_query", "Find interface elements by name, text substring or type (box, text, input).", obj_schema(json!({ "name": { "type": "string" }, "text": { "type": "string" }, "type": { "type": "string" } }), &[])),
@@ -137,7 +142,15 @@ impl<'a> McpServer<'a> {
     }
 
     fn rpc(&mut self, method: &str, params: Value) -> Result<Value> {
-        let session = self.session.as_ref().ok_or_else(|| anyhow!("no running session; call runtime_start first"))?;
+        if self.session.is_none() {
+            // A runtime someone else started and named in the environment (a benchmark, an editor).
+            if let Ok(url) = std::env::var("POCKET_RPC_URL") {
+                if !url.is_empty() {
+                    self.session = Some(RuntimeSession { child: None, url, project: "attached".into(), stdout: None });
+                }
+            }
+        }
+        let session = self.session.as_ref().ok_or_else(|| anyhow!("no running session; call runtime_start, or runtime_attach to a running one"))?;
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
         let resp = http_post(&session.url, "/rpc", &body)?;
         let v: Value = serde_json::from_str(&resp).context("runtime returned invalid JSON")?;
@@ -216,19 +229,59 @@ impl<'a> McpServer<'a> {
         };
         // Drain the rest of stderr in the background so the child never blocks on a full pipe.
         std::thread::spawn(move || for _ in lines {});
-        self.session = Some(RuntimeSession { child, url: url.clone(), project: project.to_string(), stdout: stdout_thread });
+        self.session = Some(RuntimeSession { child: Some(child), url: url.clone(), project: project.to_string(), stdout: Some(stdout_thread) });
         let state = self.rpc("state", json!({}))?;
         Ok(json!({ "project": project, "url": url, "state": state, "hint": "use step, world_tree, world_query, events_since, capture; runtime_stop returns the final report" }))
     }
 
-    fn stop_session(&mut self) -> Result<Value> {
+    fn attach(&mut self, args: &Value) -> Result<Value> {
+        if self.session.as_ref().map(|s| s.child.is_some()).unwrap_or(false) {
+            bail!("a session this server started is running; call runtime_stop first");
+        }
+        let url = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| anyhow!("url is required"))?.trim_end_matches('/').to_string();
+        self.session = Some(RuntimeSession { child: None, url: url.clone(), project: "attached".into(), stdout: None });
+        let state = self.rpc("state", json!({}))?;
+        Ok(json!({ "attached": url, "state": state }))
+    }
+
+    fn stop_session(&mut self, args: &Value) -> Result<Value> {
         let Some(mut session) = self.session.take() else { bail!("no running session") };
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "quit", "params": {} }).to_string();
+        let Some(mut child) = session.child.take() else {
+            // Attached: let it go, or stop it when asked.
+            if args.get("quit").and_then(|q| q.as_bool()).unwrap_or(false) {
+                let _ = http_post(&session.url, "/rpc", &body);
+                return Ok(json!({ "stopped": session.url }));
+            }
+            return Ok(json!({ "detached": session.url }));
+        };
         let _ = http_post(&session.url, "/rpc", &body);
-        let status = session.child.wait()?;
-        let out = session.stdout.join().unwrap_or_default();
+        let status = child.wait()?;
+        let out = session.stdout.take().map(|h| h.join().unwrap_or_default()).unwrap_or_default();
         let report: Value = serde_json::from_str(&out).unwrap_or(json!({ "raw": out }));
         Ok(json!({ "project": session.project, "exit_code": status.code(), "report": report }))
+    }
+
+    // A capture, with the frame itself as an image block when asked.
+    fn capture(&mut self, mut args: Value) -> Result<Value> {
+        let want_image = args.get("image").and_then(|i| i.as_bool()).unwrap_or(false);
+        if args.get("path").and_then(|p| p.as_str()).is_none() {
+            let dir = self.ws.root.join("build").join("mcp");
+            std::fs::create_dir_all(&dir)?;
+            args["path"] = json!(dir.join("capture.png").to_string_lossy());
+        }
+        let path = args["path"].as_str().unwrap_or_default().to_string();
+        if let Some(o) = args.as_object_mut() {
+            o.remove("image");   // the tool's own option, not the command's
+        }
+        let v = self.rpc("capture", args)?;
+        let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+        let mut content = vec![json!({ "type": "text", "text": text })];
+        if want_image {
+            let bytes = std::fs::read(&path).with_context(|| format!("reading {path}"))?;
+            content.push(json!({ "type": "image", "data": base64(&bytes), "mimeType": "image/png" }));
+        }
+        Ok(json!({ "content": content, "isError": false }))
     }
 
     fn call_tool(&mut self, name: &str, args: Value) -> Result<Value> {
@@ -261,20 +314,22 @@ impl<'a> McpServer<'a> {
                 Ok(Self::report_result(rep))
             }
             "runtime_start" => self.start_session(&args).map(|v| Self::text_result(v, false)),
-            "runtime_stop" => self.stop_session().map(|v| Self::text_result(v, false)),
+            "runtime_stop" => self.stop_session(&args).map(|v| Self::text_result(v, false)),
+            "runtime_attach" => self.attach(&args).map(|v| Self::text_result(v, false)),
             "runtime_command" => {
                 let method = s("method").ok_or_else(|| anyhow!("method is required"))?;
                 let params = args.get("params").cloned().unwrap_or(json!({}));
                 self.rpc(&method, params).map(|v| Self::text_result(v, false))
             }
-            "runtime_commands" => self.rpc("commands", json!({})).map(|v| Self::text_result(v, false)),
+            "runtime_commands" => self.rpc("commands", json!({ "usage": true })).map(|v| Self::text_result(v, false)),
+            "runtime_help" => self.rpc("help", args).map(|v| Self::text_result(v, false)),
             "world_tree" => self.rpc("world.tree", args).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false)),
             "world_query" => self.rpc("world.query", args).map(|v| Self::text_result(v, false)),
             "world_describe" => self.rpc("world.describe", args).map(|v| Self::text_result(v, false)),
             "world_schema" => self.rpc("world.schema", json!({})).map(|v| Self::text_result(v, false)),
             "step" => self.rpc("step", args).map(|v| Self::text_result(v, false)),
             "events_since" => self.rpc("events.since", args).map(|v| Self::text_result(v, false)),
-            "capture" => self.rpc("capture", args).map(|v| Self::text_result(v, false)),
+            "capture" => self.capture(args),
             "render_pick" => self.rpc("render.pick", args).map(|v| Self::text_result(v, false)),
             "ui_snapshot" => self.rpc("ui.snapshot", args).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false)),
             "ui_query" => self.rpc("ui.query", args).map(|v| Self::text_result(v, false)),
@@ -320,6 +375,60 @@ impl<'a> McpServer<'a> {
     }
 }
 
+fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// `pocket rpc <method> [params]`: one command to a running runtime, its result printed as JSON (a
+/// text result such as world.tree's printed as the text), for any agent that can run a shell.
+pub fn rpc_cli(method: &str, params: Option<&str>, url: Option<&str>) -> i32 {
+    let Some(url) = url.map(|s| s.to_string()).or_else(|| std::env::var("POCKET_RPC_URL").ok()).filter(|u| !u.is_empty()) else {
+        eprintln!("no runtime: pass --url or set POCKET_RPC_URL (start one with `pocket run <project> -- --serve 4711 --paused`)");
+        return 2;
+    };
+    let params: Value = match params {
+        None => json!({}),
+        Some(p) => match serde_json::from_str(p) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("params are not JSON: {e}");
+                return 2;
+            }
+        },
+    };
+    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
+    let reply = http_post(&url, "/rpc", &body).and_then(|r| serde_json::from_str::<Value>(&r).map_err(|e| anyhow!("the runtime's reply is not JSON: {e}")));
+    match reply {
+        Ok(v) => {
+            if let Some(err) = v.get("error") {
+                eprintln!("{}", err.get("message").and_then(|m| m.as_str()).unwrap_or("runtime error"));
+                println!("{}", serde_json::to_string_pretty(err).unwrap_or_default());
+                return 1;
+            }
+            let result = v.get("result").cloned().unwrap_or(Value::Null);
+            match result.as_object().and_then(|o| if o.len() <= 3 { o.get("text") } else { None }).and_then(|t| t.as_str()) {
+                Some(text) => println!("{text}"),
+                None => println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default()),
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            2
+        }
+    }
+}
+
 pub(crate) fn http_post(base: &str, path: &str, body: &str) -> Result<String> {
     let host = base.trim_start_matches("http://").trim_end_matches('/');
     let mut stream = TcpStream::connect(host).with_context(|| format!("connecting to {host}"))?;
@@ -360,7 +469,7 @@ pub fn serve(ws: &Workspace) -> Result<()> {
         }
     }
     if server.session.is_some() {
-        let _ = server.stop_session();
+        let _ = server.stop_session(&json!({}));   // a runtime it started stops; an attached one is let go
     }
     Ok(())
 }

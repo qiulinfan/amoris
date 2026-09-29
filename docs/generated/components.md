@@ -72,6 +72,20 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
 | `intensity` | f32 | 1.0 | Multiplier applied to color. |
 | `range` | f32 | 10.0 | Point light range in meters. |
 
+## Fog
+
+Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `color` | color | [0.7, 0.75, 0.8, 1.0] | The fog's color as a color picker shows it (sRGB); the alpha is unused. |
+| `density` | f32 | 0.03 | How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units). |
+| `height` | f32 | 0.0 | The height (world Y) where the fog has its density. |
+| `falloff` | f32 | 0.2 | How fast it thins going up, per unit of height (0: the same at every height). |
+| `start` | f32 | 0.0 | Distance from the camera before any fog. |
+| `max_opacity` | f32 | 1.0 | The most the fog hides, 0..1 (under 1, a far mountain still shows through). |
+| `enabled` | bool | true | false turns the fog off without removing it. |
+
 ## Sky
 
 The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.
@@ -364,6 +378,7 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `volume` | f32 | 1.0 | Linear gain, 0..4. |
 | `pitch` | f32 | 1.0 | Playback rate multiplier. |
 | `lowpass` | f32 | 1.0 | How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice. |
+| `reverb` | f32 | 1.0 | How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room. |
 | `loop` | bool | false | Restart when the clip ends. |
 | `autoplay` | bool | false | Start playing as soon as the component exists. |
 | `spatial` | bool | false | Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). |

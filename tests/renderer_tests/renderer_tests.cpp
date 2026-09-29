@@ -779,3 +779,112 @@ TEST_CASE("cascaded shadows keep a nearby shadow's edge sharp and still reach fa
     REQUIRE(s.command("render.shadows", Json{{"cascades", 9}}).value()["cascades"] == 4);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("ambient occlusion darkens the ground where a crate sits and leaves open ground alone; ids still come from the prepass", "[renderer][ao]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // Lit by a sky alone (the sun at zero), a crate on a wide floor, seen from above at an angle.
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"]["scale"] = Json{{"x", 40}, {"y", 1}, {"z", 40}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "plane"}, {"color", Json{{"r", 0.8}, {"g", 0.8}, {"b", 0.8}, {"a", 1}}}};
+    REQUIRE(s.command("world.spawn", floor).has_value());
+    Json crate;
+    crate["name"] = "Crate";
+    crate["components"]["Transform"]["position"] = Json{{"x", 0}, {"y", 0.5}, {"z", 0}};
+    crate["components"]["MeshRenderer"] = Json{{"mesh", "cube"}};
+    REQUIRE(s.command("world.spawn", crate).has_value());
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json::object();
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 0.0}};
+    REQUIRE(s.command("world.spawn", sun).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json::object()}}}}).has_value());
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 3.5}, {"z", 4}}}, {"rotation", Json{{"x", -0.3827}, {"y", 0}, {"z", 0}, {"w", 0.9239}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 50}};
+    REQUIRE(s.command("world.spawn", camera).has_value());
+    auto shot = [&]() {
+        REQUIRE(s.frame().has_value());
+        auto project = [&](Vec3 p) {
+            Json r = s.command("render.project", Json{{"point", Json{{"x", p.x}, {"y", p.y}, {"z", p.z}}}}).value();
+            return Json{{"x", r["x"]}, {"y", r["y"]}};
+        };
+        // The floor just in front of the crate's base, and open floor off to the side.
+        Json cap = s.command("capture", Json{{"pixels", Json::array({project({0, 0, 0.56f}), project({-2.5f, 0, 1.0f})})}}).value();
+        return std::make_pair(cap["pixels"][0][1].get<int>(), cap["pixels"][1][1].get<int>());
+    };
+    auto [near_off, open_off] = shot();
+    Json on = s.command("render.ao", Json{{"enabled", true}, {"radius", 0.6}}).value();
+    REQUIRE(on["enabled"] == true);
+    auto [near_on, open_on] = shot();
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("off " << near_off << "/" << open_off << " on " << near_on << "/" << open_on << " " << stats.dump());
+    REQUIRE(stats["ao"] == true);
+    REQUIRE(stats["depth_prepass"] == true);
+    REQUIRE(std::abs(near_off - open_off) < 12);          // without it, the base looks like open floor
+    REQUIRE(near_on < near_off - 15);                       // with it, the ground at the base is darker
+    REQUIRE(std::abs(open_on - open_off) < 8);              // and open floor is as it was
+    // The prepass also draws the ids: the crate is still picked where it is drawn.
+    Json pr = s.command("render.project", Json{{"entity", "Crate"}}).value();
+    REQUIRE(s.command("render.pick", Json{{"x", pr["x"]}, {"y", pr["y"]}}).value()["name"] == "Crate");
+    REQUIRE(s.command("render.ao", Json{{"enabled", false}}).value()["enabled"] == false);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["depth_prepass"] == false);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("fog fades what is far toward its color, thins with height and leaves what is near", "[renderer][fog]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A near and a far black block on the horizon line, a red fog.
+    auto block = [&](const char* name, float x, float z) {
+        Json b;
+        b["name"] = name;
+        b["components"]["Transform"] = Json{{"position", Json{{"x", x}, {"y", 1}, {"z", z}}}, {"scale", Json{{"x", 2}, {"y", 2}, {"z", 1}}}};
+        b["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}};
+        REQUIRE(s.command("world.spawn", b).has_value());
+    };
+    block("Near", -1.5f, -3);
+    block("Far", 6, -80);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 60}};
+    REQUIRE(s.command("world.spawn", camera).has_value());
+    auto red_at = [&](float z, float x) {
+        REQUIRE(s.frame().has_value());
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 1}, {"z", z + 0.5f}}}}).value();
+        Json cap = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value();
+        return cap["pixel"][0].get<int>();
+    };
+    const int near_plain = red_at(-3, -1.5f), far_plain = red_at(-80, 6);
+    REQUIRE(near_plain < 30);
+    REQUIRE(far_plain < 30);
+    Json fog;
+    fog["name"] = "Fog";
+    fog["components"]["Fog"] = Json{{"color", Json{{"r", 1}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"density", 0.05}, {"falloff", 0.0}};
+    REQUIRE(s.command("world.spawn", fog).has_value());
+    const int near_fog = red_at(-3, -1.5f), far_fog = red_at(-80, 6);
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("near " << near_plain << "->" << near_fog << " far " << far_plain << "->" << far_fog << " " << stats.dump());
+    REQUIRE(stats["fog"] == true);
+    REQUIRE(stats["depth_prepass"] == true);
+    REQUIRE(far_fog > 220);                 // eighty units at 0.05: almost all fog
+    REQUIRE(near_fog < far_fog - 60);       // three units: some, far less
+    // Thinning with height: a strong falloff from a base far below leaves the far block nearly clear.
+    REQUIRE(s.command("world.set", Json{{"entity", "Fog"}, {"component", "Fog"}, {"value", Json{{"height", -20.0}, {"falloff", 0.5}}}}).has_value());
+    const int far_thin = red_at(-80, 6);
+    INFO("thin " << far_thin);
+    REQUIRE(far_thin < far_fog - 100);
+    REQUIRE(s.finish().has_value());
+}

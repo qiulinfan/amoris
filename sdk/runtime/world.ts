@@ -279,6 +279,15 @@ export const render = {
      * keeps hues and only compresses near white. `metered` is what the meter settled on after the last frame.
      * project.toml [render.tonemap] sets the default.
      */
+    /**
+     * Ambient occlusion: the light from all around (a Sky's, or the flat ambient) darkened where
+     * geometry crowds a point, so a crate sits on the ground and a crevice is dark. `radius` is how far
+     * around a point is looked at (world units), `intensity` how dark a crowded point gets. Off by
+     * default; project.toml [render.ao] sets the default.
+     */
+    ao(settings: { enabled?: boolean; radius?: number; intensity?: number; samples?: number } = {}): { enabled: boolean; radius: number; intensity: number; samples: number } {
+        return command("render.ao", settings);
+    },
     tonemap(settings: { operator?: "none" | "aces" | "agx" | "neutral"; exposure?: number; auto_exposure?: boolean; compensation?: number; min_ev?: number; max_ev?: number; speed?: number } = {}): { operator: string; exposure: number; auto_exposure: boolean; compensation: number; min_ev: number; max_ev: number; speed: number; metered?: { exposure_ev: number; average_ev: number } } {
         return command("render.tonemap", settings);
     },

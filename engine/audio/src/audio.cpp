@@ -61,6 +61,7 @@ struct Voice {
     // A one-pole low-pass per channel: `lowpass` squared is the coefficient, so 1 passes the
     // clip through and small values muffle it.
     float lowpass = 1;
+    float reverb = 1;   // the send to the room
     float lp_l = 0, lp_r = 0;
     void filter(float& sl, float& sr) {
         if (lowpass >= 1) return;
@@ -72,10 +73,69 @@ struct Voice {
     }
 };
 
+// The room: four comb filters in parallel (the tail, damped in their feedback) into two all-pass
+// filters in series (the diffusion), the right channel's lines a little longer than the left's so
+// the tail has width. The lengths are Freeverb's at 44.1 kHz, scaled to the mixer's rate.
+struct Reverb {
+    struct Comb {
+        std::vector<float> buf;
+        std::size_t at = 0;
+        float store = 0;
+        float run(float in, float feedback, float damp) {
+            const float out = buf[at];
+            store = out * (1 - damp) + store * damp;
+            buf[at] = in + store * feedback;
+            if (++at >= buf.size()) at = 0;
+            return out;
+        }
+    };
+    struct AllPass {
+        std::vector<float> buf;
+        std::size_t at = 0;
+        float run(float in) {
+            const float out = buf[at];
+            buf[at] = in + out * 0.5f;
+            if (++at >= buf.size()) at = 0;
+            return out - in;
+        }
+    };
+    Comb comb[2][4];
+    AllPass pass[2][2];
+    bool ringing = false;   // something is in the lines: keep rendering the tail after the send stops
+
+    void setup(int rate) {
+        const int comb_len[4] = {1116, 1188, 1277, 1356}, pass_len[2] = {556, 441};
+        const double k = rate / 44100.0;
+        for (int ch = 0; ch < 2; ++ch) {
+            for (int i = 0; i < 4; ++i) comb[ch][i].buf.assign(static_cast<std::size_t>(comb_len[i] * k) + (ch ? 23 : 0), 0.0f);
+            for (int i = 0; i < 2; ++i) pass[ch][i].buf.assign(static_cast<std::size_t>(pass_len[i] * k) + (ch ? 23 : 0), 0.0f);
+        }
+        ringing = false;
+    }
+    void clear() {
+        for (auto& row : comb) for (auto& c : row) { std::fill(c.buf.begin(), c.buf.end(), 0.0f); c.store = 0; }
+        for (auto& row : pass) for (auto& p : row) std::fill(p.buf.begin(), p.buf.end(), 0.0f);
+        ringing = false;
+    }
+    // One frame: the mono send in, the wet stereo pair out.
+    void run(float send, float feedback, float damp, float& wl, float& wr) {
+        float out[2] = {0, 0};
+        for (int ch = 0; ch < 2; ++ch) {
+            for (auto& c : comb[ch]) out[ch] += c.run(send, feedback, damp);
+            for (auto& p : pass[ch]) out[ch] = p.run(out[ch]);
+        }
+        wl = out[0];
+        wr = out[1];
+    }
+};
+
 }  // namespace
 
 struct Audio::Impl {
     Config config;
+    ReverbSettings reverb_settings;
+    Reverb reverb;
+    std::vector<float> send;   // the mono send of the frames being rendered
     bool sdl_audio = false;
     SDL_AudioStream* stream = nullptr;  // bound to the default playback device
     std::string device_name;
@@ -197,6 +257,7 @@ struct Audio::Impl {
         i.pitch = v.pitch;
         i.pan = v.pan;
         i.lowpass = v.lowpass;
+        i.reverb = v.reverb;
         i.loop = v.loop;
         i.entity = v.entity;
         i.tag = v.tag;
@@ -258,6 +319,9 @@ struct Audio::Impl {
     void render(int frames) {
         mix.assign(static_cast<std::size_t>(frames) * 2, 0.0f);
         if (muted) return;
+        const bool room = reverb_settings.room > 0;
+        if (room && reverb.comb[0][0].buf.empty()) reverb.setup(config.sample_rate);
+        send.assign(room ? static_cast<std::size_t>(frames) : 0, 0.0f);
         for (Voice& v : voices) {
             if (v.render_done || !v.clip) continue;
             const Clip& c = *v.clip;
@@ -280,6 +344,7 @@ struct Audio::Impl {
                     v.filter(sl, sr);
                     mix[static_cast<std::size_t>(f) * 2] += sl * l;
                     mix[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
+                    if (room && v.reverb > 0) send[static_cast<std::size_t>(f)] += (sl * l + sr * r) * 0.5f * v.reverb;
                     pos += step;
                 }
                 v.render = pos;
@@ -304,9 +369,30 @@ struct Audio::Impl {
                 v.filter(sl, sr);
                 mix[static_cast<std::size_t>(f) * 2] += sl * l;
                 mix[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
+                if (room && v.reverb > 0) send[static_cast<std::size_t>(f)] += (sl * l + sr * r) * 0.5f * v.reverb;
                 pos += step;
             }
             v.render = pos;
+        }
+        if (room) {
+            // The tail: fed by the send, added at the mix level; kept running while it rings.
+            bool fed = false;
+            for (float s : send) fed = fed || std::fabs(s) > 1e-6f;
+            if (fed || reverb.ringing) {
+                const float feedback = 0.7f + reverb_settings.room * 0.28f, damp = reverb_settings.damping * 0.4f;
+                float energy = 0;
+                for (int f = 0; f < frames; ++f) {
+                    float wl = 0, wr = 0;
+                    // The combs ring up to many times what goes in: the send is scaled down first (Freeverb's gain for its 8 combs is 0.015; these are 4).
+                    reverb.run(send[static_cast<std::size_t>(f)] * 0.03f, feedback, damp, wl, wr);
+                    mix[static_cast<std::size_t>(f) * 2] += wl * reverb_settings.mix;
+                    mix[static_cast<std::size_t>(f) * 2 + 1] += wr * reverb_settings.mix;
+                    energy = std::max(energy, std::fabs(wl) + std::fabs(wr));
+                }
+                reverb.ringing = energy > 1e-5f;
+            }
+        } else if (reverb.ringing) {
+            reverb.clear();
         }
         for (float& s : mix) s = std::clamp(s, -1.0f, 1.0f);
     }
@@ -358,6 +444,7 @@ Result<std::uint32_t> Audio::play(const std::string& clip, const PlayOptions& op
     v.pitch = std::clamp(options.pitch, 0.05f, 8.0f);
     v.pan = std::clamp(options.pan, -1.0f, 1.0f);
     v.lowpass = std::clamp(options.lowpass, 0.0f, 1.0f);
+    v.reverb = std::clamp(options.reverb, 0.0f, 1.0f);
     v.loop = options.loop;
     v.entity = options.entity;
     v.tag = options.tag;
@@ -404,6 +491,7 @@ Status Audio::set(std::uint32_t voice, const Json& params) {
         if (params.contains("pitch") && params["pitch"].is_number()) v.pitch = std::clamp(params["pitch"].get<float>(), 0.05f, 8.0f);
         if (params.contains("pan") && params["pan"].is_number()) v.pan = std::clamp(params["pan"].get<float>(), -1.0f, 1.0f);
         if (params.contains("lowpass") && params["lowpass"].is_number()) v.lowpass = std::clamp(params["lowpass"].get<float>(), 0.0f, 1.0f);
+        if (params.contains("reverb") && params["reverb"].is_number()) v.reverb = std::clamp(params["reverb"].get<float>(), 0.0f, 1.0f);
         if (params.contains("loop") && params["loop"].is_boolean()) v.loop = params["loop"].get<bool>();
         return {};
     }
@@ -462,6 +550,13 @@ const std::vector<float>& Audio::render_frames(int frames) {
 }
 
 void Audio::set_master_volume(float v) { impl_->master = std::clamp(v, 0.0f, 2.0f); }
+void Audio::set_reverb(ReverbSettings s) {
+    s.room = std::clamp(s.room, 0.0f, 1.0f);
+    s.damping = std::clamp(s.damping, 0.0f, 1.0f);
+    s.mix = std::clamp(s.mix, 0.0f, 1.0f);
+    impl_->reverb_settings = s;
+}
+ReverbSettings Audio::reverb() const { return impl_->reverb_settings; }
 float Audio::master_volume() const { return impl_->master; }
 void Audio::set_muted(bool m) { impl_->muted = m; }
 bool Audio::muted() const { return impl_->muted; }
@@ -505,6 +600,7 @@ Json Audio::describe() const {
     j["plays"] = im.plays;
     j["master_volume"] = im.master;
     j["muted"] = im.muted;
+    j["reverb"] = Json{{"room", im.reverb_settings.room}, {"damping", im.reverb_settings.damping}, {"mix", im.reverb_settings.mix}, {"ringing", im.reverb.ringing}};
     j["frames_rendered"] = im.frames_rendered;
     return j;
 }

@@ -190,8 +190,20 @@ Result<Json> run(const Options& options) {
         }
     }
     session.set_paused(options.paused);
-    while (!session.finished() && session.ok()) {
-        if (server) server->pump(session.paused() ? 50 : 0);
+    bool stopped_by_error = false;
+    while (!session.finished() && (session.ok() || server)) {
+        if (server) server->pump(session.paused() || !session.ok() ? 50 : 0);
+        if (!session.ok()) {
+            // Serving, a script error stops the simulation but not the runtime: whoever drives it (an
+            // agent, the editor) reads the error in `state` and fixes it; project.reload clears it.
+            if (!stopped_by_error) {
+                log::warn("runtime", "a script error stopped the simulation; the control server keeps serving (state shows the error, project.reload starts over)");
+                stopped_by_error = true;
+            }
+            session.set_paused(true);
+            continue;
+        }
+        stopped_by_error = false;
         if (session.paused()) {
             // Paused: a window keeps polling input, running UI scripts and drawing (the editor
             // lives here); headless sessions only serve commands, and without a controller a

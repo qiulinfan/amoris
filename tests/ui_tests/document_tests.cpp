@@ -3,9 +3,11 @@
 #include <pocket/ui/document.hpp>
 #include <pocket/ui/font.hpp>
 #include <pocket/ui/painter.hpp>
+#include <pocket/ui/syntax.hpp>
 
 #include <catch_amalgamated.hpp>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 
@@ -728,4 +730,69 @@ TEST_CASE("a transition runs a changed prop from where it is to the new value, e
     f.apply(Json::parse(R"([["set", 55, {"transition": {}}], ["set", 55, {"left": 10}]])"));
     f.layout();
     REQUIRE(f.doc->rect_of(55).x == Catch::Approx(10));
+}
+
+TEST_CASE("a text area with a syntax colours keywords, strings, numbers, comments, types, calls and keys", "[ui][syntax]") {
+    auto kinds = [](std::string_view text, std::string_view lang) {
+        std::vector<std::pair<std::string, std::string>> out;
+        for (const auto& r : ui::syntax_runs(text, lang)) out.emplace_back(std::string(text.substr(r.start, r.end - r.start)), ui::syntax_name(r.kind));
+        return out;
+    };
+    using P = std::vector<std::pair<std::string, std::string>>;
+    // TypeScript: a member named like a keyword is not one; a call is a function; a capital is a type.
+    CHECK(kinds("const n: Count = total(3.5e-2); // done\nmap.delete(k);", "ts") ==
+          P{{"const", "keyword"}, {"Count", "type"}, {"total", "function"}, {"3.5e-2", "number"}, {"// done", "comment"}, {"delete", "function"}});
+    CHECK(kinds("let s = \"a\\\"b\" + 'c';", "ts") == P{{"let", "keyword"}, {"\"a\\\"b\"", "string"}, {"'c'", "string"}});
+    // A block comment and a template string run over lines; an unclosed quote stops at the line's end.
+    CHECK(kinds("/* one\ntwo */ `a\n${b}` \"open\nx", "ts") == P{{"/* one\ntwo */", "comment"}, {"`a\n${b}`", "string"}, {"\"open", "string"}});
+    CHECK(kinds("<Label text=\"hi\" size={12} />", "ts") == P{{"Label", "type"}, {"\"hi\"", "string"}, {"12", "number"}});
+    // JSON: a string before a colon is a key.
+    CHECK(kinds("{\"name\": \"Ball\", \"n\": -2.5e3, \"on\": [true, null]}", "json") ==
+          P{{"\"name\"", "key"}, {"\"Ball\"", "string"}, {"\"n\"", "key"}, {"-2.5e3", "number"}, {"\"on\"", "key"}, {"true", "keyword"}, {"null", "keyword"}});
+    // TOML: tables, keys, comments, strings, numbers and booleans.
+    CHECK(kinds("[render.tonemap] # grade\nexposure = 1.5\nname = \"x\" # c\nauto = true", "toml") ==
+          P{{"[render.tonemap]", "type"}, {"# grade", "comment"}, {"exposure", "key"}, {"1.5", "number"}, {"name", "key"}, {"\"x\"", "string"}, {"# c", "comment"}, {"auto", "key"}, {"true", "keyword"}});
+    CHECK(ui::syntax_runs("anything", "cobol").empty());
+    CHECK(ui::syntax_for_path("scripts/main.tsx") == "ts");
+    CHECK(ui::syntax_for_path("scenes/main.json") == "json");
+    CHECK(ui::syntax_for_path("project.toml") == "toml");
+    CHECK(ui::syntax_for_path("assets/jump.wav").empty());
+
+    // Painted: a keyword and a number in their colours, the rest in the input's own.
+    Fixture f(256, 128);
+    auto painter = ui::Painter::create(*f.device, *f.font);
+    REQUIRE(painter.has_value());
+    f.apply(Json::parse(R"([
+        ["create", 90, "input"], ["set", 90, {"position": "absolute", "left": 0, "top": 0, "width": 256, "height": 128, "multiline": true, "syntax": "scripts/main.ts", "fontSize": 24, "color": "#ffffff", "value": "const\n777\nplain"}], ["append", 1, 90]
+    ])"));
+    CHECK(f.doc->describe(90)["syntax"] == "ts");
+    f.doc->layout(256, 128, 1.0f);
+    auto frame = f.device->begin_frame();
+    REQUIRE(frame.has_value());
+    WGPURenderPassEncoder pass = f.device->begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+    (*painter)->begin(256, 128, 1.0f);
+    f.doc->paint(**painter);
+    REQUIRE((*painter)->flush(*frame).has_value());
+    REQUIRE(f.device->end_frame(*frame).has_value());
+    auto img = f.device->capture();
+    REQUIRE(img.has_value());
+    // The brightest pixel of each row band: its hue says which colour the text was drawn in.
+    const float lh = (*painter)->line_height(24);
+    auto brightest = [&](float y0, float y1) {
+        std::array<int, 3> best{0, 0, 0};
+        for (std::uint32_t y = static_cast<std::uint32_t>(y0); y < static_cast<std::uint32_t>(y1) && y < img->height; ++y)
+            for (std::uint32_t x = 0; x < 120; ++x) {
+                std::size_t i = (static_cast<std::size_t>(y) * img->width + x) * 4;
+                if (img->rgba[i] + img->rgba[i + 1] + img->rgba[i + 2] > best[0] + best[1] + best[2]) best = {img->rgba[i], img->rgba[i + 1], img->rgba[i + 2]};
+            }
+        return best;
+    };
+    const auto kw = brightest(2, 2 + lh), num = brightest(2 + lh, 2 + 2 * lh), plain = brightest(2 + 2 * lh, 2 + 3 * lh);
+    INFO("keyword " << kw[0] << "," << kw[1] << "," << kw[2] << " number " << num[0] << "," << num[1] << "," << num[2] << " plain " << plain[0] << "," << plain[1] << "," << plain[2]);
+    CHECK(kw[2] > kw[1] + 40);     // purple: blue well over green
+    CHECK(num[0] > num[2] + 60);   // orange: red well over blue
+    CHECK(plain[0] > 200);
+    CHECK(std::abs(plain[0] - plain[2]) < 20);   // white stays white
 }

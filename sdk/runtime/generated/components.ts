@@ -116,6 +116,24 @@ export interface Light {
     range: number;
 }
 
+/** Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts. */
+export interface Fog {
+    /** The fog's color as a color picker shows it (sRGB); the alpha is unused. */
+    color: Color;
+    /** How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units). */
+    density: number;
+    /** The height (world Y) where the fog has its density. */
+    height: number;
+    /** How fast it thins going up, per unit of height (0: the same at every height). */
+    falloff: number;
+    /** Distance from the camera before any fog. */
+    start: number;
+    /** The most the fog hides, 0..1 (under 1, a far mountain still shows through). */
+    max_opacity: number;
+    /** false turns the fog off without removing it. */
+    enabled: boolean;
+}
+
 /** The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out. */
 export interface Sky {
     /** 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off. */
@@ -540,6 +558,8 @@ export interface AudioSource {
     pitch: number;
     /** How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice. */
     lowpass: number;
+    /** How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room. */
+    reverb: number;
     /** Restart when the clip ends. */
     loop: boolean;
     /** Start playing as soon as the component exists. */
@@ -626,6 +646,7 @@ export interface Components {
     Lifetime: Lifetime;
     Camera: Camera;
     Light: Light;
+    Fog: Fog;
     Sky: Sky;
     MeshRenderer: MeshRenderer;
     Sprite: Sprite;
@@ -650,7 +671,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -661,6 +682,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
+    Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
@@ -676,7 +698,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
-    AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, occluded: false, playing: false, voice: 0 },
+    AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },

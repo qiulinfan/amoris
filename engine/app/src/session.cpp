@@ -1,5 +1,6 @@
 #include <pocket/app/session.hpp>
 
+#include "command_help.hpp"
 #include "journal.hpp"
 #include "web_fs.hpp"
 
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <format>
+#include <limits>
 #include <map>
 #include <thread>
 
@@ -312,6 +314,15 @@ Status Session::start() {
     }
     POCKET_TRY(audio, audio::Audio::create(ac));
     audio_ = std::move(audio);
+    // [audio.reverb] room = 0.5, damping, mix: the project's room.
+    if (project_.contains("audio") && project_["audio"].is_object() && project_["audio"].contains("reverb") && project_["audio"]["reverb"].is_object()) {
+        const Json& rj = project_["audio"]["reverb"];
+        audio::ReverbSettings r = audio_->reverb();
+        r.room = static_cast<float>(opt<double>(rj, "room", r.room));
+        r.damping = static_cast<float>(opt<double>(rj, "damping", r.damping));
+        r.mix = static_cast<float>(opt<double>(rj, "mix", r.mix));
+        audio_->set_reverb(r);
+    }
     if (project_.contains("input") && project_["input"].is_object()) gestures_.configure(project_["input"]);
     if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
         if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
@@ -358,6 +369,19 @@ Status Session::start() {
                 read_grade(g, gj);
             }
             renderer_->set_grade(g);
+        }
+        // [render.ao] enabled = true, radius, intensity, samples (a table: on unless it says enabled = false).
+        if (r.contains("ao") && (r["ao"].is_object() || r["ao"].is_boolean())) {
+            renderer::AoSettings a = renderer_->ao();
+            if (r["ao"].is_boolean()) {
+                a.enabled = r["ao"].get<bool>();
+            } else {
+                a.enabled = opt<bool>(r["ao"], "enabled", true);
+                a.radius = opt<float>(r["ao"], "radius", a.radius);
+                a.intensity = opt<float>(r["ao"], "intensity", a.intensity);
+                a.samples = opt<int>(r["ao"], "samples", a.samples);
+            }
+            renderer_->set_ao(a);
         }
         // [render.tonemap] operator = "agx", exposure, auto_exposure, compensation, min_ev, max_ev, speed.
         if (r.contains("tonemap") && r["tonemap"].is_object()) {
@@ -2038,6 +2062,16 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         renderer_->set_grade(g);
         return grade_json(renderer_->grade());
     }
+    if (op == "ao") {
+        renderer::AoSettings a = renderer_->ao();
+        a.enabled = opt<bool>(p, "enabled", a.enabled);
+        a.radius = opt<float>(p, "radius", a.radius);
+        a.intensity = opt<float>(p, "intensity", a.intensity);
+        a.samples = opt<int>(p, "samples", a.samples);
+        renderer_->set_ao(a);
+        a = renderer_->ao();
+        return Json{{"enabled", a.enabled}, {"radius", a.radius}, {"intensity", a.intensity}, {"samples", a.samples}};
+    }
     if (op == "tonemap") {
         // How the HDR scene becomes the frame: exposure (fixed or metered), the operator. The
         // answer carries what the meter settled on after the last frame when it is on.
@@ -2379,6 +2413,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         j["pitch"] = v.pitch;
         j["pan"] = v.pan;
         j["lowpass"] = v.lowpass;
+        j["reverb"] = v.reverb;
         j["loop"] = v.loop;
         j["entity"] = v.entity;
         j["tag"] = v.tag;
@@ -2393,6 +2428,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         o.pitch = static_cast<float>(opt<double>(p, "pitch", 1.0));
         o.pan = static_cast<float>(opt<double>(p, "pan", 0.0));
         o.lowpass = static_cast<float>(opt<double>(p, "lowpass", 1.0));
+        o.reverb = static_cast<float>(opt<double>(p, "reverb", 1.0));
         o.loop = opt<bool>(p, "loop", false);
         o.tag = opt<std::string>(p, "tag", "");
         if (p.contains("entity") && !p["entity"].is_null()) o.entity = resolve_entity(p["entity"]);
@@ -2431,6 +2467,17 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         if (p.contains("volume") && p["volume"].is_number()) a.set_master_volume(p["volume"].get<float>());
         if (p.contains("muted") && p["muted"].is_boolean()) a.set_muted(p["muted"].get<bool>());
         return Json{{"master_volume", a.master_volume()}, {"muted", a.muted()}};
+    }
+    if (op == "reverb") {
+        // The room every voice plays in: how long the tail rings, how fast its high end dies,
+        // how loud it is against the dry voices. Room 0 is no reverb.
+        audio::ReverbSettings r = a.reverb();
+        r.room = static_cast<float>(opt<double>(p, "room", r.room));
+        r.damping = static_cast<float>(opt<double>(p, "damping", r.damping));
+        r.mix = static_cast<float>(opt<double>(p, "mix", r.mix));
+        a.set_reverb(r);
+        r = a.reverb();
+        return Json{{"room", r.room}, {"damping", r.damping}, {"mix", r.mix}};
     }
     return fail("unknown_command", "unknown audio command '{}'", op);
 }
@@ -2490,6 +2537,7 @@ void Session::tick_audio(double dt) {
             o.volume = src.volume;
             o.pitch = src.pitch;
             o.lowpass = src.lowpass;
+            o.reverb = src.reverb;
             o.loop = src.loop;
             o.entity = e.id();
             auto id = audio_->play(src.clip, o);
@@ -2868,7 +2916,9 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     }
     if (op == "set") {
         POCKET_TRY(id, need_entity("entity"));
-        POCKET_TRY_VOID(w.set(id, opt<std::string>(p, "component", ""), p.value("value", Json::object()), cause));
+        if (!p.contains("value") || !p["value"].is_object()) return fail("bad_args", "world.set needs value: the fields to change as an object, e.g. {{entity: \"Ball\", component: \"MeshRenderer\", value: {{color: {{r: 0, g: 1, b: 0, a: 1}}}}}}");
+        if (!p.contains("component") || !p["component"].is_string()) return fail("bad_args", "world.set needs component: the component's name, e.g. \"MeshRenderer\" (world.schema lists them)");
+        POCKET_TRY_VOID(w.set(id, opt<std::string>(p, "component", ""), p["value"], cause));
         return Json{{"ok", true}};
     }
     if (op == "remove") {
@@ -3202,7 +3252,7 @@ Result<Json> Session::events_command(std::string_view op, const Json& p, std::st
         return Json{{"seq", seq}};
     }
     if (op == "since") {
-        auto list = ev.since(opt<std::uint64_t>(p, "seq", 0), static_cast<std::size_t>(opt<int>(p, "limit", 1000)), opt<std::string>(p, "type", ""));
+        auto list = ev.since(opt<std::uint64_t>(p, "seq", opt<std::uint64_t>(p, "since", 0)), static_cast<std::size_t>(opt<int>(p, "limit", 1000)), opt<std::string>(p, "type", ""));
         Json arr = Json::array();
         for (auto& e : list) arr.push_back(world::event_to_json(e));
         Json j;
@@ -3211,8 +3261,19 @@ Result<Json> Session::events_command(std::string_view op, const Json& p, std::st
         return j;
     }
     if (op == "recent") {
+        // The newest events, oldest first: `limit` (or `n`) of them, of a type when `type` names one
+        // (a prefix such as "player." takes the family).
+        const std::size_t limit = static_cast<std::size_t>(std::max(0, opt<int>(p, "limit", opt<int>(p, "n", 50))));
+        const std::string type = opt<std::string>(p, "type", "");
         Json arr = Json::array();
-        for (auto& e : ev.recent(static_cast<std::size_t>(opt<int>(p, "n", 50)))) arr.push_back(world::event_to_json(e));
+        if (type.empty()) {
+            for (auto& e : ev.recent(limit)) arr.push_back(world::event_to_json(e));
+            return arr;
+        }
+        std::vector<Json> picked;
+        for (auto& e : ev.recent(std::numeric_limits<std::size_t>::max())) if (e.type.starts_with(type)) picked.push_back(world::event_to_json(e));
+        const std::size_t from = picked.size() > limit ? picked.size() - limit : 0;
+        for (std::size_t i = from; i < picked.size(); ++i) arr.push_back(std::move(picked[i]));
         return arr;
     }
     if (op == "histogram") return ev.histogram(opt<std::uint64_t>(p, "seq", 0));
@@ -3443,7 +3504,35 @@ Result<Json> Session::recorder_command(std::string_view op, const Json& p) {
 
 Result<Json> Session::command(std::string_view name, const Json& params, std::string_view source) {
     if (!started_) return fail("not_started", "session not started");
-    const Json& p = params.is_object() ? params : Json::object();
+    const Json& given = params.is_object() ? params : Json::object();
+    // A parameter an agent got wrong is said at once: a key a command does not take is refused with
+    // the command's parameters (it would otherwise be ignored and the call look like it worked), and
+    // `path` stands for `entity` where a command takes an entity and no path.
+    Json adjusted;
+    const Json* chosen = &given;
+    const CommandHelp* h = command_help(name);
+    if (!h) {
+        // Every command has help (runtime_tests [help] holds it to that), so a name without is unknown.
+        const std::vector<std::string> near = command_suggestions(name);
+        return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");
+    }
+    {
+        const std::vector<std::string> keys = command_param_names(h->params);
+        auto takes = [&](const std::string& k) { return std::find(keys.begin(), keys.end(), k) != keys.end(); };
+        if (given.contains("path") && !given.contains("entity") && takes("entity") && !takes("path")) {
+            adjusted = given;
+            adjusted["entity"] = adjusted["path"];
+            adjusted.erase("path");
+            chosen = &adjusted;
+        }
+        if (!command_params_open(h->params)) {
+            for (const auto& [k, v] : chosen->items()) {
+                if (k == "cause" || takes(k)) continue;
+                return fail("bad_args", "{} does not take '{}': {} (help {{command: \"{}\"}} says more)", name, k, h->params.empty() ? std::string("it takes no parameters") : "it takes " + std::string(h->params), name);
+            }
+        }
+    }
+    const Json& p = *chosen;
     if (name.starts_with("world.")) return world_command(name.substr(6), p, source);
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("recorder.")) return recorder_command(name.substr(9), p);
@@ -3474,9 +3563,17 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         j["world_hash"] = hex64(world_->hash());
         j["paused"] = paused_;
         j["ok"] = errors_.empty();
+        if (!errors_.empty()) {
+            // What stopped the simulation (the last few), so the one driving it can fix it.
+            Json errs = Json::array();
+            for (std::size_t i = errors_.size() > 3 ? errors_.size() - 3 : 0; i < errors_.size(); ++i) errs.push_back(errors_[i]);
+            j["errors"] = errs;
+            j["hint"] = "a script error stopped the simulation: fix the script and project.reload (script.reload keeps the world)";
+        }
         return j;
     }
     if (name == "step") {
+        if (!errors_.empty()) return fail("script_error", "the simulation is stopped by a script error: {}; fix it and project.reload (state shows the errors)", errors_.back().value("message", std::string("unknown")));
         int ticks = opt<int>(p, "ticks", 1);
         if (ticks < 0 || ticks > 100000) return fail("bad_args", "ticks must be in [0, 100000]");
         stepping_ = true;
@@ -3490,7 +3587,11 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return command("state", Json::object(), source);
     }
     if (name == "pause") { paused_ = true; return Json{{"paused", true}}; }
-    if (name == "resume") { paused_ = false; return Json{{"paused", false}}; }
+    if (name == "resume") {
+        if (!errors_.empty()) return fail("script_error", "the simulation is stopped by a script error: {}; fix it and project.reload", errors_.back().value("message", std::string("unknown")));
+        paused_ = false;
+        return Json{{"paused", false}};
+    }
     if (name == "time.scale") {
         // Slow motion, fast forward and hit-stops: simulation seconds per real second, 0 to 8 (the
         // most ticks a frame runs), held for `seconds` of real time then 1 again, or until the next call.
@@ -3553,10 +3654,30 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return world::build_transcript(state_history_, world_->events(), to).to_json();
     }
     if (name == "report") return report();
-    if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "capture", "log.tail", "report", "commands"});
+    if (name == "help") {
+        // How to call a command, from the engine itself.
+        const std::string which = opt<std::string>(p, "command", "");
+        if (which.empty()) {
+            Json all = Json::array();
+            for (const CommandHelp& h : command_helps()) all.push_back(command_help_json(h));
+            return Json{{"commands", all}, {"note", "every command also answers help {command} on its own; parameters with ? are optional, a | b are alternatives"}};
+        }
+        if (const CommandHelp* h = command_help(which)) return command_help_json(*h);
+        return fail("unknown_command", "no command named '{}'{}", which, command_suggestions(which).empty() ? std::string() : "; did you mean " + Json(command_suggestions(which)).dump() + "?");
     }
-    return fail("unknown_command", "unknown command '{}'", name);
+    if (name == "commands" && opt<bool>(p, "usage", false)) {
+        Json all = Json::array();
+        for (const CommandHelp& h : command_helps()) {
+            Json j = command_help_json(h);
+            all.push_back(Json{{"usage", j["usage"]}, {"summary", j["summary"]}});
+        }
+        return all;
+    }
+    if (name == "commands") {
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+    }
+    const std::vector<std::string> near = command_suggestions(name);
+    return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");
 }
 
 Json Session::report() {

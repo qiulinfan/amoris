@@ -19,7 +19,7 @@ interface LogRow { seq: number; tick?: number; level: string; cat: string; msg: 
 interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 interface Layout { hierarchy: number; inspector: number; bottom: number }
-interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "other"; bytes: number; loaded: boolean }
+interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "blender" }
 type Tab = "console" | "events" | "transcript" | "assets" | "input" | "script";
 const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "script"];
 interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
@@ -597,8 +597,9 @@ function describeAsset(path: string): string {
         const d = command<Record<string, unknown>>("assets.describe", { path });
         if (typeof d.error === "string") return d.error;
         if (d.kind === "mesh") {
-            const clips = Array.isArray(d.clips) ? d.clips.length : 0;
-            return `${String(d.vertices)} vertices, ${String(d.triangles)} triangles, ${String(d.submeshes)} submeshes, ${String(d.nodes)} nodes${clips > 0 ? `, ${clips} clips` : ""}`;
+            const count = (v: unknown, one: string) => { const n = Array.isArray(v) ? v.length : 0; return n > 0 ? `, ${n} ${one}${n > 1 ? "s" : ""}` : ""; };
+            const via = d.importer === "blender" ? `; read through Blender, kept as ${String(d.converted)}` : d.importer === "obj" ? "; an OBJ" : d.importer === "stl" ? "; an STL" : "";
+            return `${String(d.vertices)} vertices, ${String(d.triangles)} triangles, ${String(d.submeshes)} submeshes, ${String(d.nodes)} nodes${count(d.clips, "clip")}${count(d.lights, "light")}${count(d.cameras, "camera")}${via}`;
         }
         if (d.kind === "tilemap") {
             const layers = Array.isArray(d.layers) ? d.layers.length : 0;
@@ -636,23 +637,51 @@ function assetComponents(row: AssetRow): { components: Record<string, unknown>; 
     return null;
 }
 
+/** What a model brings besides its geometry, which only its node tree keeps: its lights and
+ * cameras ("1 light and 1 camera"), or "" for a model placed as one drawable (none of either, or
+ * one whose skin or clips move it as a whole). */
+function modelExtras(path: string): string {
+    try {
+        const d = command<{ lights?: unknown[]; cameras?: unknown[]; clips?: unknown[]; skinned?: boolean }>("assets.describe", { path });
+        if (d.skinned || (d.clips?.length ?? 0) > 0) return "";
+        const parts: string[] = [];
+        const lights = d.lights?.length ?? 0, cameras = d.cameras?.length ?? 0;
+        if (lights > 0) parts.push(`${lights} light${lights > 1 ? "s" : ""}`);
+        if (cameras > 0) parts.push(`${cameras} camera${cameras > 1 ? "s" : ""}`);
+        return parts.join(" and ");
+    } catch {
+        return "";
+    }
+}
+
 /** An asset row dropped on the scene pane: an entity under the pointer, one undoable edit. */
 function placeAsset(row: AssetRow, e: UiEvent): void {
     if (e.x === undefined || e.y === undefined) return;
     // Inside the scene pane (by its rectangle: the gizmo's handles float over it and must not count as elsewhere).
     if (e.x < viewportRect.x || e.x >= viewportRect.x + viewportRect.w || e.y < viewportRect.y || e.y >= viewportRect.y + viewportRect.h) return;
+    placeAssetAt(row, e.x, e.y);
+}
+
+/** An asset placed where a point of the window (in points) looks at its plane: a mesh on the
+ * ground, a sprite or a map in the XY plane, a sound where it lands. A model with lights or cameras
+ * (a Blender scene, say) comes in as its node tree, so they come along; any other as one entity.
+ * One undoable edit. */
+function placeAssetAt(row: AssetRow, x: number, y: number): void {
     const made = assetComponents(row);
     if (!made) { notice.set(`${row.path}: nothing in the runtime reads this kind of file`); return; }
     const s = pixelScale();
-    const ray = render.unproject(e.x * s, e.y * s, made.plane, 0);
+    const ray = render.unproject(x * s, y * s, made.plane, 0);
     const position = ray.hit && ray.point ? ray.point : { x: 0, y: 0, z: 0 };
     const stem = (row.path.split("/").pop() ?? row.path).replace(/\.[^.]+$/, "");
     const name = uniqueName(stem, siblingNames(undefined));
+    const extras = row.kind === "mesh" ? modelExtras(row.path) : "";
     const ref = { id: 0, fragment: undefined as Scene | undefined };
     edit(
         `Place ${name}`,
         () => {
-            ref.id = ref.fragment ? world.instantiate(ref.fragment) : world.spawn(name, { components: { Transform: { position }, ...made.components } as never });
+            ref.id = ref.fragment ? world.instantiate(ref.fragment)
+                : extras ? world.instantiateMesh(row.path, { name, position })
+                : world.spawn(name, { components: { Transform: { position }, ...made.components } as never });
             refreshHierarchy();
             select(ref.id);
         },
@@ -663,7 +692,26 @@ function placeAsset(row: AssetRow, e: UiEvent): void {
             refreshHierarchy();
         },
     );
-    notice.set(`${name} placed at ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}${ray.hit ? "" : " (the pointer's ray misses the plane)"}`);
+    notice.set(`${name} placed at ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}${extras ? `, as its node tree with ${extras}` : ""}${ray.hit ? "" : " (the pointer's ray misses the plane)"}`);
+}
+
+/** The picked asset placed in the middle of the scene pane (the Place button). */
+function placePicked(): void {
+    const row = assetRows().find((r) => r.path === assetPick());
+    if (row) placeAssetAt(row, viewportRect.x + viewportRect.w / 2, viewportRect.y + viewportRect.h / 2);
+}
+
+/** The picked model read again from its file: a Blender-read one converted anew even when its
+ * content has not changed (a new Blender, say); the scene draws what came out. */
+function reimportPicked(): void {
+    const path = assetPick();
+    try {
+        const r = command<{ importer: string; seconds?: number; cached?: boolean }>("assets.import", { path, force: true });
+        assetInfo.set(describeAsset(path));
+        notice.set(`${path} imported again${r.importer === "blender" && r.seconds !== undefined ? ` through Blender in ${r.seconds.toFixed(1)} s` : ""}`);
+    } catch (e) {
+        notice.set(`${path} not imported: ${String(e)}`);
+    }
 }
 
 function onViewportDown(e: UiEvent): void {
@@ -1079,12 +1127,17 @@ function Bottom() {
         const list = assetRows();
         const picked = assetPick();
         body = [
-            <Label key="hint" text={list.length === 0 ? "No files under assets/." : picked ? `${picked}: ${assetInfo()}` : "Click a file to describe it; drag one onto the scene to place it."} muted size={12} name="asset-info" wrap />,
+            <Row key="hint" gap={8} align="center">
+                <Label text={list.length === 0 ? "No files under assets/." : picked ? `${picked}: ${assetInfo()}` : "Click a file to describe it; drag one onto the scene, or pick it and Place, to put it there."} muted size={12} name="asset-info" wrap flex={1} />
+                {picked ? <Button label="Place" small name="asset:place" onClick={placePicked} /> : null}
+                {picked && list.find((r) => r.path === picked)?.importer ? <Button label="Reimport" small name="asset:reimport" onClick={reimportPicked} /> : null}
+            </Row>,
             ...list.map((r) => (
                 <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" padding={[2, 6]} gap={8} radius={3} background={picked === r.path ? theme.accent : null} onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)}>
                     {r.kind === "image" ? <box width={16} height={16} image={r.path} name={`thumb:${r.path}`} /> : null}
                     <Label text={r.path} size={12} color={picked === r.path ? theme.accentText : theme.text} />
                     <Label text={r.kind} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
+                    {r.importer && r.importer !== "gltf" ? <Label text={r.importer === "blender" ? "via Blender" : r.importer.toUpperCase()} size={12} color={picked === r.path ? theme.accentText : theme.muted} name={`importer:${r.path}`} /> : null}
                     <Label text={r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
                     {r.loaded ? <Label text="loaded" size={12} color={picked === r.path ? theme.accentText : theme.ok} /> : null}
                 </box>
@@ -1108,7 +1161,7 @@ function Bottom() {
                         <Button label="Save" small primary={scriptDirty()} name="script:save" onClick={saveScript} />
                         <Label text="Cmd/Ctrl+Return saves. pocket editor --watch rebuilds and reloads the project after a save." muted size={12} wrap flex={1} />
                     </Row>
-                    <TextInput multiline flex={1} name="script:text" value={scriptText()} disabled={!path} onInput={(v) => { scriptText.set(v); scriptDirty.set(true); }} onChange={(v) => { scriptText.set(v); saveScript(); }} />
+                    <TextInput multiline flex={1} name="script:text" value={scriptText()} syntax={path || undefined} disabled={!path} onInput={(v) => { scriptText.set(v); scriptDirty.set(true); }} onChange={(v) => { scriptText.set(v); saveScript(); }} />
                 </box>
             </box>,
         ];

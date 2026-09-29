@@ -390,6 +390,55 @@ std::size_t numeric_span(Light& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Fog& v) {
+    j = Json::object();
+    vec_to_json(j["color"], v.color);
+    j["density"] = v.density;
+    j["height"] = v.height;
+    j["falloff"] = v.falloff;
+    j["start"] = v.start;
+    j["max_opacity"] = v.max_opacity;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Fog& v) {
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "height", v.height);
+    scalar_from_json(j, "falloff", v.falloff);
+    scalar_from_json(j, "start", v.start);
+    scalar_from_json(j, "max_opacity", v.max_opacity);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Fog& v) {
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.density);
+    h.f32(v.height);
+    h.f32(v.falloff);
+    h.f32(v.start);
+    h.f32(v.max_opacity);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Fog& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "density") { *out = &v.density; return 1; }
+    if (path == "height") { *out = &v.height; return 1; }
+    if (path == "falloff") { *out = &v.falloff; return 1; }
+    if (path == "start") { *out = &v.start; return 1; }
+    if (path == "max_opacity") { *out = &v.max_opacity; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Sky& v) {
     j = Json::object();
     j["mode"] = v.mode;
@@ -1450,6 +1499,7 @@ void to_json(Json& j, const AudioSource& v) {
     j["volume"] = v.volume;
     j["pitch"] = v.pitch;
     j["lowpass"] = v.lowpass;
+    j["reverb"] = v.reverb;
     j["loop"] = v.loop;
     j["autoplay"] = v.autoplay;
     j["spatial"] = v.spatial;
@@ -1466,6 +1516,7 @@ void from_json(const Json& j, AudioSource& v) {
     scalar_from_json(j, "volume", v.volume);
     scalar_from_json(j, "pitch", v.pitch);
     scalar_from_json(j, "lowpass", v.lowpass);
+    scalar_from_json(j, "reverb", v.reverb);
     scalar_from_json(j, "loop", v.loop);
     scalar_from_json(j, "autoplay", v.autoplay);
     scalar_from_json(j, "spatial", v.spatial);
@@ -1482,6 +1533,7 @@ void hash_component(StateHasherRef& h, const AudioSource& v) {
     h.f32(v.volume);
     h.f32(v.pitch);
     h.f32(v.lowpass);
+    h.f32(v.reverb);
     h.u8(v.loop ? 1 : 0);
     h.u8(v.autoplay ? 1 : 0);
     h.u8(v.spatial ? 1 : 0);
@@ -1498,6 +1550,7 @@ std::size_t numeric_span(AudioSource& v, std::string_view path, float** out) {
     if (path == "volume") { *out = &v.volume; return 1; }
     if (path == "pitch") { *out = &v.pitch; return 1; }
     if (path == "lowpass") { *out = &v.lowpass; return 1; }
+    if (path == "reverb") { *out = &v.reverb; return 1; }
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "range") { *out = &v.range; return 1; }
     if (path == "occlusion") { *out = &v.occlusion; return 1; }
@@ -1704,6 +1757,15 @@ constexpr std::array<FieldInfo, 4> kLightFields = {{
     FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused."},
     FieldInfo{"intensity", "f32", "Multiplier applied to color."},
     FieldInfo{"range", "f32", "Point light range in meters."},
+}};
+constexpr std::array<FieldInfo, 7> kFogFields = {{
+    FieldInfo{"color", "color", "The fog's color as a color picker shows it (sRGB); the alpha is unused."},
+    FieldInfo{"density", "f32", "How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units)."},
+    FieldInfo{"height", "f32", "The height (world Y) where the fog has its density."},
+    FieldInfo{"falloff", "f32", "How fast it thins going up, per unit of height (0: the same at every height)."},
+    FieldInfo{"start", "f32", "Distance from the camera before any fog."},
+    FieldInfo{"max_opacity", "f32", "The most the fog hides, 0..1 (under 1, a far mountain still shows through)."},
+    FieldInfo{"enabled", "bool", "false turns the fog off without removing it."},
 }};
 constexpr std::array<FieldInfo, 11> kSkyFields = {{
     FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off."},
@@ -1912,11 +1974,12 @@ constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
-constexpr std::array<FieldInfo, 13> kAudioSourceFields = {{
+constexpr std::array<FieldInfo, 14> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
     FieldInfo{"volume", "f32", "Linear gain, 0..4."},
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
     FieldInfo{"lowpass", "f32", "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice."},
+    FieldInfo{"reverb", "f32", "How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room."},
     FieldInfo{"loop", "bool", "Restart when the clip ends."},
     FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
     FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
@@ -1957,7 +2020,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 27> kComponents = {{
+constexpr std::array<ComponentInfo, 28> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -1965,6 +2028,7 @@ constexpr std::array<ComponentInfo, 27> kComponents = {{
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
+    ComponentInfo{"Fog", "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.", true, kFogFields},
     ComponentInfo{"Sky", "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.", true, kSkyFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
     ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},

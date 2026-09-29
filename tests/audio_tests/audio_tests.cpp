@@ -255,3 +255,61 @@ TEST_CASE("a low-passed voice is smoother than the clip and opens up again when 
     REQUIRE(muffled->set(*id, Json{{"lowpass", 5.0}}).has_value());
     REQUIRE(muffled->voices()[0].lowpass == Catch::Approx(1.0));
 }
+
+TEST_CASE("a room rings on after a voice stops, a dry voice does not feed it, and room 0 is silence", "[audio][reverb]") {
+    auto dry = headless_audio(), wet = headless_audio(), kept = headless_audio();
+    audio::ReverbSettings r;
+    r.room = 0.8f;
+    r.damping = 0.3f;
+    r.mix = 0.5f;
+    wet->set_reverb(r);
+    kept->set_reverb(r);
+    REQUIRE(wet->reverb().room == Catch::Approx(0.8));
+    audio::PlayOptions o;
+    REQUIRE(dry->play("assets/beep.wav", o).has_value());
+    auto id = wet->play("assets/beep.wav", o);
+    REQUIRE(id.has_value());
+    REQUIRE(wet->voices()[0].reverb == Catch::Approx(1.0));
+    o.reverb = 0.0f;
+    REQUIRE(kept->play("assets/beep.wav", o).has_value());
+    auto peak = [](const std::vector<float>& mix) {
+        float p = 0;
+        for (float x : mix) p = std::max(p, std::abs(x));
+        return p;
+    };
+    // The beep is three tenths of a second. A tenth at a time: while it plays, every mix has it;
+    // after it, the dry mix is silent while the room still rings, and the dry-sent voice's room is silent too.
+    float dry_peak[10], wet_peak[10], kept_peak[10];
+    for (int i = 0; i < 10; ++i) {
+        dry_peak[i] = peak(dry->render_frames(4800));
+        wet_peak[i] = peak(wet->render_frames(4800));
+        kept_peak[i] = peak(kept->render_frames(4800));
+    }
+    INFO("dry " << dry_peak[0] << " " << dry_peak[4] << " " << dry_peak[9] << ", wet " << wet_peak[0] << " " << wet_peak[4] << " " << wet_peak[9] << ", kept " << kept_peak[4]);
+    REQUIRE(dry_peak[0] > 0.1f);
+    REQUIRE(dry_peak[4] == 0.0f);
+    REQUIRE(dry_peak[9] == 0.0f);
+    REQUIRE(wet_peak[0] > 0.1f);
+    REQUIRE(wet_peak[4] > 0.005f);        // the tail
+    REQUIRE(wet_peak[4] < wet_peak[0]);
+    REQUIRE(wet_peak[9] < wet_peak[4]);   // dying away
+    REQUIRE(kept_peak[4] == 0.0f);
+    REQUIRE(wet->describe()["reverb"]["ringing"] == true);
+    // Room 0: the tail is dropped and the mix is dry again at once.
+    r.room = 0;
+    wet->set_reverb(r);
+    REQUIRE(peak(wet->render_frames(4800)) == 0.0f);
+    REQUIRE(wet->describe()["reverb"]["ringing"] == false);
+    // A voice's send can change while it plays; the settings clamp.
+    auto again = wet->play("assets/hum.wav", audio::PlayOptions{});
+    REQUIRE(again.has_value());
+    REQUIRE(wet->set(*again, Json{{"reverb", 0.25}}).has_value());
+    float send = -1;
+    for (const auto& v : wet->voices()) if (v.id == *again) send = v.reverb;
+    REQUIRE(send == Catch::Approx(0.25));
+    r.room = 3;
+    r.mix = -1;
+    wet->set_reverb(r);
+    REQUIRE(wet->reverb().room == Catch::Approx(1.0));
+    REQUIRE(wet->reverb().mix == Catch::Approx(0.0));
+}

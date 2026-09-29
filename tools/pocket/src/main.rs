@@ -127,6 +127,16 @@ enum Command {
     Graph,
     /// Serve the Model Context Protocol over stdio: build, test, run and drive live sessions.
     Mcp,
+    /// Send one command to a running runtime's control server and print its JSON result.
+    Rpc {
+        /// Command name, e.g. world.tree, world.spawn, step, capture (the command `commands` lists them).
+        method: String,
+        /// Parameters as a JSON object (default {}).
+        params: Option<String>,
+        /// The control server's base url (default: $POCKET_RPC_URL), e.g. http://127.0.0.1:4711.
+        #[arg(long)]
+        url: Option<String>,
+    },
     /// Create a project: project.toml, a scene, a prefab, assets/ and a first script; or a copy of a sample to start from (--from).
     New {
         name: Option<String>,
@@ -181,6 +191,9 @@ enum Command {
 
 fn main() {
     let cli = Cli::parse();
+    if let Command::Rpc { method, params, url } = &cli.command {
+        std::process::exit(mcp::rpc_cli(method, params.as_deref(), url.as_deref()));
+    }
     let json = cli.json;
     let result = run(cli);
     match result {
@@ -250,5 +263,6 @@ fn run(cli: Cli) -> Result<report::Report> {
             mcp::serve(&ws)?;
             Ok(report::Report::success("mcp", "stdio session ended"))
         }
+        Command::Rpc { .. } => unreachable!("handled before the workspace is opened"),
     }
 }
