@@ -1,0 +1,42 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via mcp --env-file ~/.omp/agent/.env",
+  "passed": 1,
+  "total": 1,
+  "seconds": 17.8,
+  "tasks": [
+    {
+      "name": "night_lamp",
+      "project": "hello",
+      "ok": true,
+      "seconds": 17.8,
+      "detail": "night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered 1",
+      "answer": 1,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "mcp",
+        "model": null,
+        "seconds": 17.4,
+        "turns": 9,
+        "tool_calls": 14,
+        "tools": {
+          "read": 2,
+          "write": 12
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 19998,
+          "output": 2056,
+          "cache_read": 190208,
+          "total": 212262
+        },
+        "cost_usd": 0.009608
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0096,
+    "tokens": 212262,
+    "tool_calls": 14
+  }
+}

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 namespace pocket::renderer {
 
@@ -67,7 +68,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 256;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 320;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -89,8 +90,12 @@ struct alignas(16) FrameUniforms {
     float cascade_texel[4];      // a texel of each cascade in world units (the lookup's normal offset)
     float camera_fwd[4];         // xyz: the camera's forward (view depth), w: cascades in use
     float ao[4];                 // ambient occlusion: on, 1 / frame width, 1 / frame height
+    float cur_view_proj[16];     // this frame's view-projection without the TAA jitter
+    float prev_view_proj[16];    // last frame's, without its jitter
+    float taa[4];                // on
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
+constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
 constexpr std::uint32_t kCascades = 4;
 // The environment map: an equirectangular panorama with its GGX prefiltered levels as mips.
 constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
@@ -106,6 +111,7 @@ struct alignas(16) ObjectUniforms {
     float emissive[4];        // linear RGB added after lighting; w: alpha cutoff (texels under it are cut out; 0 for none)
     std::uint32_t morph[4];   // x: first vec4 of the asset's morph deltas, y: vertices per target, z: targets weighed (0: none)
     float morph_weights[8];   // one per target, up to eight
+    float prev_model[16];     // the model last frame (TAA's motion vectors); the model itself when new or TAA is off
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -152,6 +158,9 @@ struct Frame {
     cascade_texel: vec4f,
     camera_fwd: vec4f,
     ao: vec4f,
+    cur_view_proj: mat4x4f,
+    prev_view_proj: mat4x4f,
+    taa: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -222,6 +231,7 @@ struct Object {
     emissive: vec4f,
     morph: vec4u,
     morph_weights: array<vec4f, 2>,
+    prev_model: mat4x4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
@@ -259,13 +269,18 @@ struct VsOut {
     @location(3) color: vec4f,
     @location(4) @interpolate(flat) id: u32,
     @location(5) @interpolate(flat) instance: u32,
+    @location(6) cur: vec4f,    // where the point is this frame and was last frame, unjittered (the id pass's motion)
+    @location(7) prev: vec4f,
 };
 
 @vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VsOut {
     let object = objects[instance];
     var out: VsOut;
-    let world = object.model * vec4f(morph_position(object, vid, position), 1.0);
+    let local = vec4f(morph_position(object, vid, position), 1.0);
+    let world = object.model * local;
     out.clip = frame.view_proj * world;
+    out.cur = frame.cur_view_proj * world;
+    out.prev = frame.prev_view_proj * (object.prev_model * local);
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
@@ -291,10 +306,14 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
 
 @vertex fn vs_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> VsOut {
     let object = objects[instance];
-    let model = object.model * skin_matrix(object.id.z, j, w);
+    let skin = skin_matrix(object.id.z, j, w);
+    let model = object.model * skin;
     var out: VsOut;
-    let world = model * vec4f(morph_position(object, vid, position), 1.0);
+    let local = vec4f(morph_position(object, vid, position), 1.0);
+    let world = model * local;
     out.clip = frame.view_proj * world;
+    out.cur = frame.cur_view_proj * world;
+    out.prev = frame.prev_view_proj * (object.prev_model * skin * local);   // this frame's pose: the joints' own motion is not followed
     out.world_pos = world.xyz;
     out.normal = normalize((model * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
@@ -480,11 +499,22 @@ fn shade(in: VsOut) -> vec4f {
 @fragment fn fs_color(in: VsOut) -> @location(0) vec4f {
     return shade(in);
 }
-@fragment fn fs_id(in: VsOut) -> @location(0) u32 {
+// The id pass writes the entity and the pixel's motion since last frame, in viewport units (y down).
+struct IdOut {
+    @location(0) id: u32,
+    @location(1) velocity: vec2f,
+};
+fn motion(in: VsOut) -> vec2f {
+    return (in.cur.xy / in.cur.w - in.prev.xy / in.prev.w) * vec2f(0.5, -0.5);
+}
+@fragment fn fs_id(in: VsOut) -> IdOut {
     let object = objects[in.instance];
     let a = textureSample(base_tex, base_samp, in.uv).a * in.color.a;
     if (object.emissive.w > 0.0 && a < object.emissive.w) { discard; }
-    return in.id;
+    var out: IdOut;
+    out.id = in.id;
+    out.velocity = motion(in);
+    return out;
 }
 
 // The sky behind everything: a full-screen triangle, the panorama in the view direction, and the
@@ -540,10 +570,13 @@ fn unlit(in: VsOut) -> vec4f {
     if (base.a < 0.02) { discard; }
     return base;
 }
-@fragment fn fs_unlit_id(in: VsOut) -> @location(0) u32 {
+@fragment fn fs_unlit_id(in: VsOut) -> IdOut {
     let base = unlit(in);
     if (base.a < 0.02) { discard; }
-    return in.id;
+    var out: IdOut;
+    out.id = in.id;
+    out.velocity = motion(in);
+    return out;
 }
 
 // Volumetric fog (docs/design/rendering.md, Volumetric light): each pixel of a half-size target
@@ -714,13 +747,30 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 
 constexpr const char* kPostWgsl = R"WGSL(
 struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f,
-               inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f };
+               inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f, lut: vec4f };
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
 @group(0) @binding(3) var depth: texture_depth_2d;                // the depth prepass (fog reads distances from it)
 @group(0) @binding(4) var volume: texture_2d<f32>;                // volumetric fog at half size: light gathered, what still shows
 @group(0) @binding(5) var volume_samp: sampler;
+// The grade's look-up table: N slices of N by N side by side (red across a slice, green down, blue
+// from slice to slice), read with the encoded color, the two nearest slices blended.
+@group(0) @binding(6) var lut_tex: texture_2d<f32>;
+@group(0) @binding(7) var lut_samp: sampler;
+fn graded(e: vec3f) -> vec3f {
+    let dims = textureDimensions(lut_tex);
+    let n = f32(dims.y);
+    if (dims.x != dims.y * dims.y || dims.y < 2u) { return e; }
+    let b = clamp(e.b, 0.0, 1.0) * (n - 1.0);
+    let b0 = floor(b);
+    let b1 = min(b0 + 1.0, n - 1.0);
+    let x = clamp(e.r, 0.0, 1.0) * (n - 1.0) + 0.5;
+    let y = (clamp(e.g, 0.0, 1.0) * (n - 1.0) + 0.5) / n;
+    let s0 = textureSampleLevel(lut_tex, lut_samp, vec2f((b0 * n + x) / (n * n), y), 0.0).rgb;
+    let s1 = textureSampleLevel(lut_tex, lut_samp, vec2f((b1 * n + x) / (n * n), y), 0.0).rgb;
+    return mix(s0, s1, b - b0);
+}
 // Exponential height fog along the ray from the camera to the point (fog: density, base height,
 // falloff, start; fog2.x: the most it hides, fog2.y: on).
 fn fogged(c: vec3f, pos: vec2f) -> vec3f {
@@ -845,6 +895,7 @@ fn encode(c: vec3f) -> vec3f {
     }
     var e = encode(clamp(c, vec3f(0.0), vec3f(1.0)));
     if (post.grade_on != 0u) { e = clamp((e - 0.5) * post.contrast + 0.5, vec3f(0.0), vec3f(1.0)); }
+    if (post.lut.x > 0.5) { e = mix(e, graded(e), post.lut.y); }
     return vec4f(e, 1.0);
 }
 )WGSL";
@@ -1061,6 +1112,177 @@ fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
 }
 )WGSL";
 
+// Temporal anti-aliasing (docs/design/rendering.md, Temporal anti-aliasing): this frame's HDR color
+// blended with the history found where the pixel was last frame (the id pass's motion, or the
+// camera's for the sky), the history first clipped to the range of this frame's 3x3 neighbourhood
+// in YCoCg so what moved away or was uncovered does not linger; colors are weighed down by their
+// luminance while they are blended, so one bright pixel does not flicker through the average.
+constexpr const char* kTaaWgsl = R"WGSL(
+struct Taa { reproject: mat4x4f, params: vec4f, viewport: vec4f };
+@group(0) @binding(0) var<uniform> taa: Taa;
+@group(0) @binding(1) var current: texture_2d<f32>;
+@group(0) @binding(2) var history: texture_2d<f32>;
+@group(0) @binding(3) var velocity: texture_2d<f32>;
+@group(0) @binding(4) var depth: texture_depth_2d;
+@group(0) @binding(5) var samp: sampler;
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    return vec4f(x, y, 0.0, 1.0);
+}
+fn luma(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
+fn weigh(c: vec3f) -> vec3f { return c / (1.0 + luma(c)); }
+fn unweigh(c: vec3f) -> vec3f { return c / max(1.0 - luma(c), 1e-4); }
+fn ycocg(c: vec3f) -> vec3f { return vec3f(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
+fn rgb(c: vec3f) -> vec3f { return vec3f(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+@fragment fn fs_taa(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let dims = vec2i(textureDimensions(current));
+    let p = vec2i(pos.xy);
+    let cur = weigh(textureLoad(current, p, 0).rgb);
+    if (taa.params.y > 0.5) { return vec4f(unweigh(cur), 1.0); }   // no history yet
+    var lo = vec3f(1e9);
+    var hi = vec3f(-1e9);
+    var closest = 2.0;
+    var at = p;
+    for (var j = -1; j <= 1; j = j + 1) {
+        for (var i = -1; i <= 1; i = i + 1) {
+            let q = clamp(p + vec2i(i, j), vec2i(0), dims - vec2i(1));
+            let c = ycocg(weigh(textureLoad(current, q, 0).rgb));
+            lo = min(lo, c);
+            hi = max(hi, c);
+            let d = textureLoad(depth, q, 0);
+            if (d < closest) { closest = d; at = q; }
+        }
+    }
+    // The motion of the nearest surface around (so an edge moves with what is in front of it).
+    var v = textureLoad(velocity, at, 0).xy;
+    if (closest >= 1.0) {
+        // Nothing drawn here: the sky moves only with the camera.
+        let uv = (pos.xy - taa.viewport.xy) / taa.viewport.zw;
+        let h = taa.reproject * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);
+        v = uv - vec2f(h.x / h.w * 0.5 + 0.5, 0.5 - h.y / h.w * 0.5);
+    }
+    let back = pos.xy - v * taa.viewport.zw;
+    if (back.x < taa.viewport.x || back.y < taa.viewport.y || back.x >= taa.viewport.x + taa.viewport.z || back.y >= taa.viewport.y + taa.viewport.w) {
+        return vec4f(unweigh(cur), 1.0);   // it came in from outside the view
+    }
+    let hist = ycocg(weigh(textureSampleLevel(history, samp, back / vec2f(dims), 0.0).rgb));
+    let blended = mix(clamp(hist, lo, hi), ycocg(cur), 1.0 - taa.params.x);
+    return vec4f(unweigh(rgb(blended)), 1.0);
+}
+)WGSL";
+
+// Depth of field and motion blur (docs/design/rendering.md): each a full-screen pass from the HDR
+// target into a scratch one, copied back. Depth of field gathers a golden-angle disc as wide as the
+// pixel's circle of confusion; a sample nearer than the pixel counts only as far as its own circle
+// reaches, so a sharp foreground does not bleed into the blurred background behind it. Motion blur
+// samples along the largest motion around the pixel (so a moving thing smears past its own edge),
+// the sky's motion taken from the camera.
+constexpr const char* kFxWgsl = R"WGSL(
+struct Fx { reproject: mat4x4f, inv_view_proj: mat4x4f, camera: vec4f, viewport: vec4f, dof: vec4f, blur: vec4f };
+@group(0) @binding(0) var<uniform> fx: Fx;
+@group(0) @binding(1) var scene: texture_2d<f32>;
+@group(0) @binding(2) var depth: texture_depth_2d;
+@group(0) @binding(3) var velocity: texture_2d<f32>;
+@group(0) @binding(4) var samp: sampler;
+@vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    return vec4f(x, y, 0.0, 1.0);
+}
+fn distance_at(px: vec2i) -> f32 {
+    let dims = vec2i(textureDimensions(depth));
+    let q = clamp(px, vec2i(0), dims - vec2i(1));
+    let d = textureLoad(depth, q, 0);
+    let uv = (vec2f(q) + vec2f(0.5) - fx.viewport.xy) / fx.viewport.zw;
+    let w = fx.inv_view_proj * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, select(d, 1.0, d >= 1.0), 1.0);
+    return length(w.xyz / w.w - fx.camera.xyz);
+}
+// The circle of confusion's radius in pixels: the aperture's blur times how far the point is from
+// the focus relative to its own distance (a thin lens), capped.
+fn coc(dist: f32) -> f32 {
+    let r = fx.dof.y * fx.viewport.w * abs(dist - fx.dof.x) / max(dist, 1e-3);
+    return min(r, fx.dof.z * fx.viewport.w);
+}
+@fragment fn fs_dof(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let dims = vec2f(textureDimensions(scene));
+    let here = distance_at(vec2i(pos.xy));
+    let radius = coc(here);
+    let center = textureLoad(scene, vec2i(pos.xy), 0);
+    if (radius < 0.5) { return center; }
+    var sum = center.rgb;
+    var wsum = 1.0;
+    let n = 24;
+    for (var k = 1; k <= n; k = k + 1) {
+        let r = radius * sqrt(f32(k) / f32(n));
+        let a = f32(k) * 2.39996323;
+        let o = vec2f(cos(a), sin(a)) * r;
+        // The texel whose depth decides the weight is the one whose color is taken (no filtering
+        // across an edge, which would pull a sharp foreground into the blur behind it).
+        let q = clamp(vec2i(pos.xy + o), vec2i(0), vec2i(dims) - vec2i(1));
+        let there = distance_at(q);
+        // A nearer sample counts as far as its own blur reaches this pixel.
+        var w = 1.0;
+        if (there < here * 0.98) { w = clamp(coc(there) / max(r, 1.0), 0.0, 1.0); }
+        sum = sum + textureLoad(scene, q, 0).rgb * w;
+        wsum = wsum + w;
+    }
+    return vec4f(sum / wsum, center.a);
+}
+fn motion_at(px: vec2i) -> vec2f {
+    let dims = vec2i(textureDimensions(depth));
+    let q = clamp(px, vec2i(0), dims - vec2i(1));
+    if (textureLoad(depth, q, 0) >= 1.0) {
+        let uv = (vec2f(q) + vec2f(0.5) - fx.viewport.xy) / fx.viewport.zw;
+        let h = fx.reproject * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);
+        return uv - vec2f(h.x / h.w * 0.5 + 0.5, 0.5 - h.y / h.w * 0.5);
+    }
+    return textureLoad(velocity, q, 0).xy;
+}
+@fragment fn fs_motion_blur(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let dims = vec2f(textureDimensions(scene));
+    // The largest motion around (every 6 pixels in a 5x5), so a moving thing smears past its edge.
+    var v = motion_at(vec2i(pos.xy));
+    for (var j = -2; j <= 2; j = j + 1) {
+        for (var i = -2; i <= 2; i = i + 1) {
+            let m = motion_at(vec2i(pos.xy) + vec2i(i, j) * 6);
+            if (dot(m, m) > dot(v, v)) { v = m; }
+        }
+    }
+    let step = v * fx.viewport.zw * fx.blur.x;   // pixels covered while the shutter is open
+    let center = textureLoad(scene, vec2i(pos.xy), 0);
+    if (dot(step, step) < 0.25) { return center; }
+    let n = max(i32(fx.blur.y), 2);
+    // A pixel that moves with the fastest motion around is smeared along it, what lies behind
+    // showing through; a pixel that stays takes only what passes over it (the samples that move and
+    // are nearer), keeping its own color for the rest, so a post beside a thrown ball is not smeared
+    // itself, nor the ball drawn over it from behind.
+    let own = motion_at(vec2i(pos.xy));
+    let moving = dot(own, own) >= 0.25 * dot(v, v);
+    let here = distance_at(vec2i(pos.xy));
+    var sum = vec3f(0.0);
+    var passing = 0.0;
+    for (var k = 0; k < n; k = k + 1) {
+        let t = f32(k) / f32(n - 1) - 0.5;
+        let p = pos.xy + step * t;
+        let c = textureSampleLevel(scene, samp, p / dims, 0.0).rgb;
+        if (moving) {
+            sum = sum + c;
+            passing = passing + 1.0;
+        } else {
+            let m = motion_at(vec2i(p));
+            // Only what passes in front: a ball behind a post does not smear over it.
+            if (dot(m, m) >= 0.25 * dot(v, v) && distance_at(vec2i(p)) <= here * 1.02) {
+                sum = sum + c;
+                passing = passing + 1.0;
+            }
+        }
+    }
+    if (moving) { return vec4f(sum / f32(n), center.a); }
+    return vec4f(center.rgb * (1.0 - passing / f32(n)) + sum / f32(n), center.a);
+}
+)WGSL";
+
 constexpr const char* kExposureWgsl = R"WGSL(
 struct Meter { viewport: vec4f, min_ev: f32, max_ev: f32, compensation: f32, rate: f32 };
 @group(0) @binding(0) var<uniform> meter: Meter;
@@ -1192,6 +1414,7 @@ struct Renderer::Impl {
     bool meter_reset = true;                      // the next metered frame snaps instead of easing
     WGPUTextureView post_depth = nullptr;         // the depth view the post group was made with
     WGPUTextureView post_volume = nullptr;        // and the volume view
+    WGPUTextureView post_lut = nullptr;           // and the look-up table's
     // Volumetric fog: the half-size target, a stand-in (nothing gathered, everything shows) when it
     // is off, the pass (the mesh module's vs_volume/fs_volume over the scene group and its own).
     WGPUTexture volume_tex = nullptr, volume_none_tex = nullptr;
@@ -1208,6 +1431,39 @@ struct Renderer::Impl {
     WGPUTexture prepass_tex = nullptr;
     WGPUTextureView prepass_view = nullptr;
     std::uint32_t prepass_w = 0, prepass_h = 0;
+    WGPUTexture velocity_tex = nullptr;       // the id pass's motion target, the prepass's size
+    WGPUTextureView velocity_view = nullptr;
+    // TAA: the settings, the resolved frames (two, one the history of the other), the pass, the
+    // jitter's frame count, last frame's unjittered view-projection and each object's model then.
+    TaaSettings taa;
+    DofSettings dof;
+    MotionBlurSettings motion_blur;
+    WGPUShaderModule fx_shader = nullptr;
+    WGPUBindGroupLayout fx_bgl = nullptr;
+    WGPUPipelineLayout fx_layout = nullptr;
+    WGPURenderPipeline dof_pipeline = nullptr, blur_pipeline = nullptr;
+    WGPUBuffer fx_uniforms = nullptr;
+    WGPUTexture fx_tex = nullptr;
+    WGPUTextureView fx_view = nullptr;
+    std::uint32_t fx_w = 0, fx_h = 0;
+    WGPUBindGroup fx_bg = nullptr;
+    WGPUTextureView fx_bg_scene = nullptr, fx_bg_depth = nullptr, fx_bg_velocity = nullptr;
+    WGPUTexture taa_tex[2] = {nullptr, nullptr};
+    WGPUTextureView taa_view[2] = {nullptr, nullptr};
+    std::uint32_t taa_w = 0, taa_h = 0;
+    int taa_next = 0;                          // the one written this frame
+    bool taa_valid = false;                    // whether the history holds a frame of this view
+    bool motion_prev_set = false;              // whether taa_prev_vp is last frame's (motion blur without TAA)
+    std::uint64_t taa_frame = 0;
+    Mat4 taa_prev_vp = Mat4::identity();
+    std::unordered_map<std::uint64_t, std::array<float, 16>> prev_models;
+    WGPUShaderModule taa_shader = nullptr;
+    WGPUBindGroupLayout taa_bgl = nullptr;
+    WGPUPipelineLayout taa_layout = nullptr;
+    WGPURenderPipeline taa_pipeline = nullptr;
+    WGPUBuffer taa_uniforms = nullptr;
+    WGPUBindGroup taa_bg[2] = {nullptr, nullptr};
+    WGPUTextureView taa_bg_current = nullptr, taa_bg_velocity = nullptr, taa_bg_depth = nullptr;   // what taa_bg was made over
     WGPUTexture no_depth_tex = nullptr;
     WGPUTextureView no_depth_view = nullptr;
     bool split_applied = false;                   // whether the scene pipelines were built split (ids apart)
@@ -1406,6 +1662,27 @@ struct Renderer::Impl {
         if (ao_white_tex) wgpuTextureRelease(ao_white_tex);
         if (prepass_view) wgpuTextureViewRelease(prepass_view);
         if (prepass_tex) wgpuTextureRelease(prepass_tex);
+        if (velocity_view) wgpuTextureViewRelease(velocity_view);
+        if (velocity_tex) wgpuTextureRelease(velocity_tex);
+        for (int k = 0; k < 2; ++k) {
+            if (taa_bg[k]) wgpuBindGroupRelease(taa_bg[k]);
+            if (taa_view[k]) wgpuTextureViewRelease(taa_view[k]);
+            if (taa_tex[k]) wgpuTextureRelease(taa_tex[k]);
+        }
+        if (taa_uniforms) wgpuBufferRelease(taa_uniforms);
+        if (taa_pipeline) wgpuRenderPipelineRelease(taa_pipeline);
+        if (taa_layout) wgpuPipelineLayoutRelease(taa_layout);
+        if (taa_bgl) wgpuBindGroupLayoutRelease(taa_bgl);
+        if (taa_shader) wgpuShaderModuleRelease(taa_shader);
+        if (fx_bg) wgpuBindGroupRelease(fx_bg);
+        if (fx_view) wgpuTextureViewRelease(fx_view);
+        if (fx_tex) wgpuTextureRelease(fx_tex);
+        if (fx_uniforms) wgpuBufferRelease(fx_uniforms);
+        if (dof_pipeline) wgpuRenderPipelineRelease(dof_pipeline);
+        if (blur_pipeline) wgpuRenderPipelineRelease(blur_pipeline);
+        if (fx_layout) wgpuPipelineLayoutRelease(fx_layout);
+        if (fx_bgl) wgpuBindGroupLayoutRelease(fx_bgl);
+        if (fx_shader) wgpuShaderModuleRelease(fx_shader);
         if (no_depth_view) wgpuTextureViewRelease(no_depth_view);
         if (no_depth_tex) wgpuTextureRelease(no_depth_tex);
         if (post_uniforms) wgpuBufferRelease(post_uniforms);
@@ -1717,6 +1994,20 @@ struct Renderer::Impl {
         float fog_color[4];      // linear
         float fog[4];            // density, base height, falloff, start
         float fog2[4];           // the most it hides, on, volumetric
+        float lut[4];            // on, strength
+    };
+    struct FxUniforms {
+        float reproject[16];     // last frame's view-projection times the inverse of this frame's
+        float inv_view_proj[16];
+        float camera[4];
+        float viewport[4];
+        float dof[4];            // focus, aperture, the most blur (fractions of the view's height)
+        float blur[4];           // strength, samples
+    };
+    struct TaaUniforms {
+        float reproject[16];     // last frame's view-projection times the inverse of this frame's (both unjittered)
+        float params[4];         // feedback, reset
+        float viewport[4];
     };
     struct VolumeUniforms {
         float medium[4];         // density, base height, falloff, anisotropy
@@ -1745,11 +2036,18 @@ struct Renderer::Impl {
     Status create_post() {
         POCKET_TRY(module, device->create_shader("pocket.post", kPostWgsl));
         post_shader = module;
-        WGPUBindGroupLayoutEntry be[6]{};
+        WGPUBindGroupLayoutEntry be[8]{};
         be[0].binding = 0;
         be[0].visibility = WGPUShaderStage_Fragment;
         be[0].buffer.type = WGPUBufferBindingType_Uniform;
         be[0].buffer.minBindingSize = sizeof(PostUniforms);
+        be[6].binding = 6;
+        be[6].visibility = WGPUShaderStage_Fragment;
+        be[6].texture.sampleType = WGPUTextureSampleType_Float;
+        be[6].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[7].binding = 7;
+        be[7].visibility = WGPUShaderStage_Fragment;
+        be[7].sampler.type = WGPUSamplerBindingType_Filtering;
         be[4].binding = 4;
         be[4].visibility = WGPUShaderStage_Fragment;
         be[4].texture.sampleType = WGPUTextureSampleType_Float;
@@ -1771,7 +2069,7 @@ struct Renderer::Impl {
         be[3].texture.viewDimension = WGPUTextureViewDimension_2D;
         WGPUBindGroupLayoutDescriptor bd{};
         bd.label = rhi::str("pocket.post");
-        bd.entryCount = 6;
+        bd.entryCount = 8;
         bd.entries = be;
         post_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
         WGPUPipelineLayoutDescriptor pld{};
@@ -1846,7 +2144,7 @@ struct Renderer::Impl {
         release_hdr_target();
         WGPUTextureDescriptor td{};
         td.label = rhi::str("pocket.hdr");
-        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc;
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst;
         td.dimension = WGPUTextureDimension_2D;
         td.size = {w, h, 1};
         td.format = kHdrFormat;
@@ -1892,9 +2190,27 @@ struct Renderer::Impl {
         // The post group reads the prepass depth when there is one (for the fog).
         WGPUTextureView depth_view = prepass_view && split_applied ? prepass_view : no_depth_view;
         WGPUTextureView volume_now = stats.volumetric ? volume_view : volume_none_view;
-        if (!post_bg || post_depth != depth_view || post_volume != volume_now) {
+        // The grade's look-up table, when it names an image of the right shape.
+        WGPUTextureView lut_now = white.view;
+        bool lut_on = false;
+        if (grade.enabled && !grade.lut.empty() && assets) {
+            if (auto img = assets->image(grade.lut); img && (*img)->height >= 2 && (*img)->width == (*img)->height * (*img)->height) {
+                lut_now = view_for(grade.lut, white, false);
+                lut_on = lut_now != white.view;
+            } else if (img) {
+                report_missing(grade.lut, "a look-up table is N slices of N by N side by side (N*N wide, N high)");
+            } else {
+                report_missing(grade.lut, img.error().message);
+            }
+        }
+        if (!post_bg || post_depth != depth_view || post_volume != volume_now || post_lut != lut_now) {
             if (post_bg) wgpuBindGroupRelease(post_bg);
-            WGPUBindGroupEntry e[6]{};
+            WGPUBindGroupEntry e[8]{};
+            e[6].binding = 6;
+            e[6].textureView = lut_now;
+            e[7].binding = 7;
+            e[7].sampler = bloom_sampler;
+            post_lut = lut_now;
             e[4].binding = 4;
             e[4].textureView = volume_now;
             e[5].binding = 5;
@@ -1913,7 +2229,7 @@ struct Renderer::Impl {
             WGPUBindGroupDescriptor d{};
             d.label = rhi::str("pocket.post");
             d.layout = post_bgl;
-            d.entryCount = 6;
+            d.entryCount = 8;
             d.entries = e;
             post_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
             post_depth = depth_view;
@@ -1977,6 +2293,9 @@ struct Renderer::Impl {
             u.fog2[1] = 1.0f;
             u.fog2[2] = stats.volumetric ? 1.0f : 0.0f;
         }
+        u.lut[0] = lut_on ? 1.0f : 0.0f;
+        u.lut[1] = std::clamp(grade.lut_strength, 0.0f, 1.0f);
+        stats.lut = lut_on;
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
         WGPURenderPassColorAttachment ca{};
         ca.view = frame.color;
@@ -2414,6 +2733,282 @@ struct Renderer::Impl {
         return {};
     }
 
+    // Depth of field and motion blur: one layout (uniforms, the HDR target, depth, motion, a sampler),
+    // two pipelines, a scratch target the pass draws into and is copied back from.
+    Status create_fx() {
+        POCKET_TRY(module, device->create_shader("pocket.fx", kFxWgsl));
+        fx_shader = module;
+        WGPUBindGroupLayoutEntry be[5]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(FxUniforms);
+        be[1].binding = 1;
+        be[1].visibility = WGPUShaderStage_Fragment;
+        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 2;
+        be[2].visibility = WGPUShaderStage_Fragment;
+        be[2].texture.sampleType = WGPUTextureSampleType_Depth;
+        be[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[3].binding = 3;
+        be[3].visibility = WGPUShaderStage_Fragment;
+        be[3].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        be[3].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[4].binding = 4;
+        be[4].visibility = WGPUShaderStage_Fragment;
+        be[4].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.fx");
+        bd.entryCount = 5;
+        bd.entries = be;
+        fx_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.fx");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &fx_bgl;
+        fx_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        auto make = [&](const char* label, const char* entry) {
+            WGPUColorTargetState ct{};
+            ct.format = kHdrFormat;
+            ct.writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState fs{};
+            fs.module = fx_shader;
+            fs.entryPoint = rhi::str(entry);
+            fs.targetCount = 1;
+            fs.targets = &ct;
+            WGPURenderPipelineDescriptor rpd{};
+            rpd.label = rhi::str(label);
+            rpd.layout = fx_layout;
+            rpd.vertex.module = fx_shader;
+            rpd.vertex.entryPoint = rhi::str("vs_screen");
+            rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            rpd.primitive.frontFace = WGPUFrontFace_CCW;
+            rpd.primitive.cullMode = WGPUCullMode_None;
+            rpd.multisample.count = 1;
+            rpd.multisample.mask = 0xFFFFFFFFu;
+            rpd.fragment = &fs;
+            return wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        };
+        dof_pipeline = make("pocket.dof", "fs_dof");
+        blur_pipeline = make("pocket.motion_blur", "fs_motion_blur");
+        if (!dof_pipeline || !blur_pipeline) return fail("gpu_pipeline_failed", "the depth of field or motion blur pipeline could not be created");
+        fx_uniforms = device->create_buffer("pocket.fx", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FxUniforms));
+        return {};
+    }
+
+    // One effect over the HDR target: drawn into the scratch target from it, then copied back.
+    Status apply_fx(rhi::Frame& frame, WGPURenderPipeline pipeline, const char* label, const FxUniforms& u) {
+        const std::uint32_t w = frame.width, h = frame.height;
+        if (!fx_tex || fx_w != w || fx_h != h) {
+            if (fx_view) wgpuTextureViewRelease(fx_view);
+            if (fx_tex) wgpuTextureRelease(fx_tex);
+            auto [t, v] = make_target("pocket.fx", w, h, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc);
+            if (!t) return fail("gpu_texture_failed", "cannot create the effects target {}x{}", w, h);
+            fx_tex = t;
+            fx_view = v;
+            fx_w = w;
+            fx_h = h;
+        }
+        if (!fx_bg || fx_bg_scene != hdr_view || fx_bg_depth != prepass_view || fx_bg_velocity != velocity_view) {
+            if (fx_bg) wgpuBindGroupRelease(fx_bg);
+            WGPUBindGroupEntry e[5]{};
+            e[0].binding = 0;
+            e[0].buffer = fx_uniforms;
+            e[0].size = sizeof(FxUniforms);
+            e[1].binding = 1;
+            e[1].textureView = hdr_view;
+            e[2].binding = 2;
+            e[2].textureView = prepass_view;
+            e[3].binding = 3;
+            e[3].textureView = velocity_view;
+            e[4].binding = 4;
+            e[4].sampler = bloom_sampler;
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.fx");
+            d.layout = fx_bgl;
+            d.entryCount = 5;
+            d.entries = e;
+            fx_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+            fx_bg_scene = hdr_view;
+            fx_bg_depth = prepass_view;
+            fx_bg_velocity = velocity_view;
+        }
+        device->write_buffer(fx_uniforms, 0, &u, sizeof u);
+        WGPURenderPassColorAttachment ca{};
+        ca.view = fx_view;
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, 1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str(label);
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        wgpuRenderPassEncoderSetPipeline(enc, pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, fx_bg, 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        WGPUTexelCopyTextureInfo src{};
+        src.texture = fx_tex;
+        src.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = hdr_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUExtent3D ext{w, h, 1};
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
+        stats.draw_calls++;
+        return {};
+    }
+
+    // The TAA resolve: a full-screen pass over this frame, the history, the motion and the depth.
+    Status create_taa() {
+        POCKET_TRY(module, device->create_shader("pocket.taa", kTaaWgsl));
+        taa_shader = module;
+        WGPUBindGroupLayoutEntry be[6]{};
+        be[0].binding = 0;
+        be[0].visibility = WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(TaaUniforms);
+        for (std::uint32_t b = 1; b <= 3; ++b) {
+            be[b].binding = b;
+            be[b].visibility = WGPUShaderStage_Fragment;
+            be[b].texture.sampleType = b == 2 ? WGPUTextureSampleType_Float : WGPUTextureSampleType_UnfilterableFloat;
+            be[b].texture.viewDimension = WGPUTextureViewDimension_2D;
+        }
+        be[4].binding = 4;
+        be[4].visibility = WGPUShaderStage_Fragment;
+        be[4].texture.sampleType = WGPUTextureSampleType_Depth;
+        be[4].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[5].binding = 5;
+        be[5].visibility = WGPUShaderStage_Fragment;
+        be[5].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.taa");
+        bd.entryCount = 6;
+        bd.entries = be;
+        taa_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.taa");
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &taa_bgl;
+        taa_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = taa_shader;
+        fs.entryPoint = rhi::str("fs_taa");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.taa");
+        rpd.layout = taa_layout;
+        rpd.vertex.module = taa_shader;
+        rpd.vertex.entryPoint = rhi::str("vs_screen");
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        taa_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!taa_pipeline) return fail("gpu_pipeline_failed", "the TAA pipeline could not be created");
+        taa_uniforms = device->create_buffer("pocket.taa", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(TaaUniforms));
+        return {};
+    }
+
+    // Resolve this frame against its history into the next resolved texture, and put the result in
+    // the HDR target for what follows (volumetric fog, bloom, the final pass).
+    Status resolve_taa(rhi::Frame& frame, const Mat4& reproject) {
+        const std::uint32_t w = frame.width, h = frame.height;
+        if (!taa_tex[0] || taa_w != w || taa_h != h) {
+            for (int k = 0; k < 2; ++k) {
+                if (taa_bg[k]) wgpuBindGroupRelease(taa_bg[k]);
+                if (taa_view[k]) wgpuTextureViewRelease(taa_view[k]);
+                if (taa_tex[k]) wgpuTextureRelease(taa_tex[k]);
+                taa_bg[k] = nullptr;
+                auto [t, v] = make_target(k == 0 ? "pocket.taa.a" : "pocket.taa.b", w, h, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc);
+                if (!t) return fail("gpu_texture_failed", "cannot create the TAA history {}x{}", w, h);
+                taa_tex[k] = t;
+                taa_view[k] = v;
+            }
+            taa_w = w;
+            taa_h = h;
+            taa_valid = false;
+        }
+        if (!taa_bg[0] || taa_bg_current != hdr_view || taa_bg_velocity != velocity_view || taa_bg_depth != prepass_view) {
+            for (int k = 0; k < 2; ++k) {
+                if (taa_bg[k]) wgpuBindGroupRelease(taa_bg[k]);
+                // Group k writes taa_view[k] and reads the other as its history.
+                WGPUBindGroupEntry e[6]{};
+                e[0].binding = 0;
+                e[0].buffer = taa_uniforms;
+                e[0].size = sizeof(TaaUniforms);
+                e[1].binding = 1;
+                e[1].textureView = hdr_view;
+                e[2].binding = 2;
+                e[2].textureView = taa_view[1 - k];
+                e[3].binding = 3;
+                e[3].textureView = velocity_view;
+                e[4].binding = 4;
+                e[4].textureView = prepass_view;
+                e[5].binding = 5;
+                e[5].sampler = bloom_sampler;
+                WGPUBindGroupDescriptor d{};
+                d.label = rhi::str("pocket.taa");
+                d.layout = taa_bgl;
+                d.entryCount = 6;
+                d.entries = e;
+                taa_bg[k] = wgpuDeviceCreateBindGroup(device->device(), &d);
+            }
+            taa_bg_current = hdr_view;
+            taa_bg_velocity = velocity_view;
+            taa_bg_depth = prepass_view;
+        }
+        TaaUniforms u{};
+        to_array(reproject, u.reproject);
+        u.params[0] = std::clamp(taa.feedback, 0.5f, 0.98f);
+        u.params[1] = taa_valid ? 0.0f : 1.0f;
+        u.viewport[0] = static_cast<float>(applied.x);
+        u.viewport[1] = static_cast<float>(applied.y);
+        u.viewport[2] = static_cast<float>(std::max(1u, applied.w));
+        u.viewport[3] = static_cast<float>(std::max(1u, applied.h));
+        device->write_buffer(taa_uniforms, 0, &u, sizeof u);
+        const int k = taa_next;
+        WGPURenderPassColorAttachment ca{};
+        ca.view = taa_view[k];
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, 1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.taa");
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        wgpuRenderPassEncoderSetPipeline(enc, taa_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, taa_bg[k], 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        WGPUTexelCopyTextureInfo src{};
+        src.texture = taa_tex[k];
+        src.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = hdr_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUExtent3D ext{w, h, 1};
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
+        taa_next = 1 - k;
+        taa_valid = true;
+        stats.taa = true;
+        stats.draw_calls++;
+        return {};
+    }
+
     // The volumetric fog's pass and its stand-in (docs/design/rendering.md, Volumetric light).
     Status create_volume() {
         WGPUBindGroupLayoutEntry ve[2]{};
@@ -2544,10 +3139,17 @@ struct Renderer::Impl {
         if (prepass_tex && prepass_w == w && prepass_h == h) return {};
         if (prepass_view) wgpuTextureViewRelease(prepass_view);
         if (prepass_tex) wgpuTextureRelease(prepass_tex);
+        if (velocity_view) wgpuTextureViewRelease(velocity_view);
+        if (velocity_tex) wgpuTextureRelease(velocity_tex);
+        taa_valid = false;
         auto [t, v] = make_target("pocket.prepass", w, h, kPrepassDepth, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
         if (!t) return fail("gpu_texture_failed", "cannot create the depth prepass {}x{}", w, h);
         prepass_tex = t;
         prepass_view = v;
+        auto [vt, vv] = make_target("pocket.velocity", w, h, kVelocityFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        if (!vt) return fail("gpu_texture_failed", "cannot create the motion target {}x{}", w, h);
+        velocity_tex = vt;
+        velocity_view = vv;
         prepass_w = w;
         prepass_h = h;
         release_ao_targets();   // their groups read the old depth
@@ -2776,14 +3378,16 @@ struct Renderer::Impl {
         }
         if (split) {
             // The id pass: one R32Uint target, one sample, its own depth test, the same vertex paths.
-            WGPUColorTargetState idt{};
-            idt.format = WGPUTextureFormat_R32Uint;
-            idt.writeMask = WGPUColorWriteMask_All;
+            WGPUColorTargetState idt[2]{};
+            idt[0].format = WGPUTextureFormat_R32Uint;
+            idt[0].writeMask = WGPUColorWriteMask_All;
+            idt[1].format = kVelocityFormat;   // the motion TAA follows
+            idt[1].writeMask = WGPUColorWriteMask_All;
             WGPUFragmentState ifs{};
             ifs.module = shader;
             ifs.entryPoint = rhi::str("fs_id");
-            ifs.targetCount = 1;
-            ifs.targets = &idt;
+            ifs.targetCount = 2;
+            ifs.targets = idt;
             WGPUDepthStencilState ids = ds;
             ids.format = kPrepassDepth;   // the id pass has a depth target of its own, sampled afterwards
             ids.depthWriteEnabled = WGPUOptionalBool_True;
@@ -3153,6 +3757,8 @@ struct Renderer::Impl {
         POCKET_TRY_VOID(create_sky());
         POCKET_TRY_VOID(create_ao());
         POCKET_TRY_VOID(create_volume());
+        POCKET_TRY_VOID(create_taa());
+        POCKET_TRY_VOID(create_fx());
         WGPUBindGroupEntry* sbe = scene_entries;
         sbe[0] = fbe;
         sbe[1].binding = 1;
@@ -3893,7 +4499,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     world.ecs().each([&](flecs::entity, const world::Fog& f) {
         if (!fog_on && f.enabled && f.density > 0) { fog = f; fog_on = true; }
     });
-    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on;
+    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled;
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
     if (im.ao.enabled) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
@@ -3917,7 +4523,32 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.camera = im.find_camera(world, aspect);
 
     FrameUniforms fu{};
-    to_array(im.camera.proj * im.camera.view, fu.view_proj);
+    // TAA: the projection shifted by a Halton (2, 3) point inside the pixel, a different one each of
+    // eight frames; the unjittered matrices say where things are now and were last frame.
+    const Mat4 cur_vp = im.camera.proj * im.camera.view;
+    Mat4 raster_vp = cur_vp;
+    if (!im.taa.enabled) im.taa_valid = false;
+    const bool motion_known = im.taa.enabled || im.motion_blur.enabled;   // last frame's view means something
+    if (im.taa.enabled) {
+        auto halton = [](std::uint64_t i, std::uint64_t b) {
+            float f = 1, r = 0;
+            for (; i > 0; i /= b) { f /= static_cast<float>(b); r += f * static_cast<float>(i % b); }
+            return r;
+        };
+        const std::uint64_t n = im.taa_frame % 8 + 1;
+        const float jx = (halton(n, 2) - 0.5f) * 2.0f / static_cast<float>(std::max(1u, im.applied.w));
+        const float jy = (halton(n, 3) - 0.5f) * 2.0f / static_cast<float>(std::max(1u, im.applied.h));
+        raster_vp = Mat4::translation({jx, jy, 0}) * im.camera.proj * im.camera.view;
+        ++im.taa_frame;
+        fu.taa[0] = 1.0f;
+    }
+    to_array(raster_vp, fu.view_proj);
+    to_array(cur_vp, fu.cur_view_proj);
+    const Mat4 prev_vp = (im.taa_valid || (motion_known && im.motion_prev_set)) ? im.taa_prev_vp : cur_vp;
+    im.motion_prev_set = motion_known;
+    to_array(prev_vp, fu.prev_view_proj);
+    const Mat4 taa_reproject = prev_vp * cur_vp.inverse();
+    im.taa_prev_vp = cur_vp;
     fu.camera_pos[0] = im.camera.position.x;
     fu.camera_pos[1] = im.camera.position.y;
     fu.camera_pos[2] = im.camera.position.z;
@@ -4236,6 +4867,23 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         return a.first < b.first;
     });
     if (im.joint_count > 0) im.device->write_buffer(im.joint_buffer, 0, im.joint_staging.data(), static_cast<std::uint64_t>(im.joint_count) * sizeof(float) * 16);
+    // Each object's model last frame, for TAA's motion: found by its entity and the order of its
+    // parts; an object new this frame, or any object while TAA is off, moves nowhere.
+    {
+        std::unordered_map<std::uint64_t, std::array<float, 16>> now;
+        std::unordered_map<std::uint32_t, std::uint32_t> parts;
+        for (auto& d : draws) {
+            ObjectUniforms& o = d.object;
+            std::memcpy(o.prev_model, o.model, sizeof o.model);
+            if (!im.taa.enabled && !im.motion_blur.enabled) continue;
+            const std::uint64_t key = (static_cast<std::uint64_t>(o.id[0]) << 16) | parts[o.id[0]]++;
+            if (auto it = im.prev_models.find(key); it != im.prev_models.end()) std::memcpy(o.prev_model, it->second.data(), sizeof o.prev_model);
+            std::array<float, 16> m{};
+            std::memcpy(m.data(), o.model, sizeof o.model);
+            now.emplace(key, m);
+        }
+        im.prev_models = std::move(now);
+    }
     for (std::size_t i = 0; i < draws.size(); ++i) std::memcpy(im.object_staging.data() + i * kObjectStride, &draws[i].object, sizeof(ObjectUniforms));
     // Sprites: unlit quads after every mesh, by layer then far to near, in runs per texture.
     struct SpriteDraw {
@@ -4413,7 +5061,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         if (a.sub != b.sub) return a.sub < b.sub;
         return a.texture < b.texture;
     });
-    for (std::size_t i = 0; i < sprites.size(); ++i) std::memcpy(im.object_staging.data() + (static_cast<std::size_t>(count) + i) * kObjectStride, &sprites[i].object, sizeof(ObjectUniforms));
+    for (std::size_t i = 0; i < sprites.size(); ++i) {
+        std::memcpy(sprites[i].object.prev_model, sprites[i].object.model, sizeof sprites[i].object.model);   // sprites move with the camera only
+        std::memcpy(im.object_staging.data() + (static_cast<std::size_t>(count) + i) * kObjectStride, &sprites[i].object, sizeof(ObjectUniforms));
+    }
     std::uint32_t total = count + static_cast<std::uint32_t>(sprites.size());
     if (total > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(total) * kObjectStride);
     im.stats.meshes = entities;
@@ -4607,10 +5258,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ica.clearValue = {0, 0, 0, 0};
         WGPURenderPassDepthStencilAttachment ids = ds;
         ids.view = im.prepass_view;
+        WGPURenderPassColorAttachment icas[2] = {ica, ica};
+        icas[1].view = im.velocity_view;
         WGPURenderPassDescriptor irp{};
         irp.label = rhi::str("pocket.ids");
-        irp.colorAttachmentCount = 1;
-        irp.colorAttachments = &ica;
+        irp.colorAttachmentCount = 2;
+        irp.colorAttachments = icas;
         irp.depthStencilAttachment = &ids;
         WGPURenderPassEncoder ipass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &irp);
         set_viewport(ipass);
@@ -4660,6 +5313,30 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
+    if (im.taa.enabled && split && im.velocity_view) POCKET_TRY_VOID(im.resolve_taa(frame, taa_reproject));
+    if ((im.dof.enabled || im.motion_blur.enabled) && split && im.velocity_view) {
+        Impl::FxUniforms u{};
+        to_array(taa_reproject, u.reproject);
+        to_array(cur_vp.inverse(), u.inv_view_proj);
+        u.camera[0] = im.camera.position.x; u.camera[1] = im.camera.position.y; u.camera[2] = im.camera.position.z;
+        u.viewport[0] = static_cast<float>(im.applied.x);
+        u.viewport[1] = static_cast<float>(im.applied.y);
+        u.viewport[2] = static_cast<float>(std::max(1u, im.applied.w));
+        u.viewport[3] = static_cast<float>(std::max(1u, im.applied.h));
+        u.dof[0] = im.dof.focus;
+        u.dof[1] = im.dof.aperture;
+        u.dof[2] = im.dof.max_blur;
+        u.blur[0] = im.motion_blur.strength;
+        u.blur[1] = static_cast<float>(im.motion_blur.samples);
+        if (im.dof.enabled) {
+            POCKET_TRY_VOID(im.apply_fx(frame, im.dof_pipeline, "pocket.dof", u));
+            im.stats.dof = true;
+        }
+        if (im.motion_blur.enabled) {
+            POCKET_TRY_VOID(im.apply_fx(frame, im.blur_pipeline, "pocket.motion_blur", u));
+            im.stats.motion_blur = true;
+        }
+    }
     im.stats.volumetric = fog_on && fog.volumetric && im.prepass_view && im.split_applied;
     if (im.stats.volumetric) POCKET_TRY_VOID(im.draw_volume(frame, fog));
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
@@ -4795,6 +5472,25 @@ void Renderer::set_ao(AoSettings s) {
     impl_->ao = s;
 }
 AoSettings Renderer::ao() const { return impl_->ao; }
+void Renderer::set_taa(TaaSettings s) {
+    s.feedback = std::clamp(s.feedback, 0.5f, 0.98f);
+    if (s.enabled && !impl_->taa.enabled) impl_->taa_valid = false;   // a history from before is not this view's
+    impl_->taa = s;
+}
+TaaSettings Renderer::taa() const { return impl_->taa; }
+void Renderer::set_dof(DofSettings s) {
+    s.focus = std::clamp(s.focus, 0.01f, 100000.0f);
+    s.aperture = std::clamp(s.aperture, 0.0f, 0.1f);
+    s.max_blur = std::clamp(s.max_blur, 0.0f, 0.1f);
+    impl_->dof = s;
+}
+DofSettings Renderer::dof() const { return impl_->dof; }
+void Renderer::set_motion_blur(MotionBlurSettings s) {
+    s.strength = std::clamp(s.strength, 0.0f, 2.0f);
+    s.samples = std::clamp(s.samples, 4, 32);
+    impl_->motion_blur = s;
+}
+MotionBlurSettings Renderer::motion_blur() const { return impl_->motion_blur; }
 void Renderer::set_tonemap(TonemapSettings s) {
     s.exposure = std::clamp(s.exposure, 0.0f, 64.0f);
     s.compensation = std::clamp(s.compensation, -16.0f, 16.0f);
@@ -4900,6 +5596,10 @@ Json Renderer::describe() const {
     j["ao"] = s.ao;
     j["fog"] = s.fog;
     j["volumetric"] = s.volumetric;
+    j["taa"] = s.taa;
+    j["lut"] = s.lut;
+    j["dof"] = s.dof;
+    j["motion_blur"] = s.motion_blur;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;

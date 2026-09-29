@@ -1,14 +1,14 @@
 {
   "runner": "null",
   "passed": 0,
-  "total": 15,
-  "seconds": 13.5,
+  "total": 16,
+  "seconds": 21.2,
   "tasks": [
     {
       "name": "spawn_named",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "no entity named Beacon",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": false,
-      "seconds": 2.7,
+      "seconds": 4.9,
       "detail": "1 enemies remain",
       "answer": null,
       "error": null
@@ -53,7 +53,7 @@
       "name": "path_length",
       "project": "playground",
       "ok": false,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "no number answered (truth 22.882)",
       "answer": null,
       "error": null
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": false,
-      "seconds": 1.3,
+      "seconds": 1.7,
       "detail": "no number answered (truth 5)",
       "answer": null,
       "error": null
@@ -71,8 +71,17 @@
       "name": "event_cause",
       "project": "playground",
       "ok": false,
-      "seconds": 4.1,
+      "seconds": 7.7,
       "detail": "answered None, the root cause is 'entity.spawned'",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "night_lamp",
+      "project": "hello",
+      "ok": false,
+      "seconds": 0.3,
+      "detail": "the Sun's intensity is 1.2000000476837158",
       "answer": null,
       "error": null
     },
@@ -89,7 +98,7 @@
       "name": "ball_lower",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "the ball starts its fall at y 2.9918",
       "answer": null,
       "error": null
@@ -98,7 +107,7 @@
       "name": "spawn_stars",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "no entity named Star0",
       "answer": null,
       "error": null
@@ -107,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": false,
-      "seconds": 0.9,
+      "seconds": 1.2,
       "detail": "rose 2.21 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -116,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": false,
-      "seconds": 1.3,
+      "seconds": 1.8,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 5 after 3.2 s",
       "answer": null,
       "error": null
@@ -134,8 +143,8 @@
       "name": "lamp_prefab",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
-      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-63096/prefabs/lamp.json",
+      "seconds": 0.4,
+      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-59711/prefabs/lamp.json",
       "answer": null,
       "error": null
     }

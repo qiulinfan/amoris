@@ -33,6 +33,23 @@ struct BloomSettings {
     float radius = 1.0f;      // the blur's spread, in half-resolution texels (1 tight, 4 wide)
 };
 
+// Depth of field: what is nearer or farther than the focus blurred by how far it is from it, as a
+// lens of the given aperture would (docs/design/rendering.md, Depth of field and motion blur).
+struct DofSettings {
+    bool enabled = false;
+    float focus = 10.0f;       // the distance in focus, in world units
+    float aperture = 0.01f;    // the blur of something at infinity, as a fraction of the view's height
+    float max_blur = 0.02f;    // the most any point is blurred, the same units
+};
+
+// Motion blur: each pixel smeared along its motion over the frame, as a shutter open for `strength`
+// of it would (0.5: half the frame).
+struct MotionBlurSettings {
+    bool enabled = false;
+    float strength = 0.5f;
+    int samples = 10;          // along each pixel's motion, 4..32
+};
+
 // Ambient occlusion: the sky's and the ambient light darkened where geometry crowds a point (a
 // crevice, the ground under a crate), measured on screen from the depth prepass.
 struct AoSettings {
@@ -40,6 +57,14 @@ struct AoSettings {
     float radius = 0.6f;       // how far around a point is looked at, in world units
     float intensity = 1.0f;    // how dark a fully crowded point gets (0 none, 1 black)
     int samples = 12;          // samples per point (4..32)
+};
+
+// Temporal anti-aliasing: the view shifted by a different fraction of a pixel every frame, and each
+// frame blended with the ones before it, found again where they were through the motion of the
+// camera and of every object, what no longer fits the neighbourhood thrown away.
+struct TaaSettings {
+    bool enabled = false;
+    float feedback = 0.9f;     // how much of the history each frame keeps (0.5..0.98)
 };
 
 // How the HDR scene becomes the 8-bit frame: an exposure (fixed, or metered from the frame and
@@ -67,6 +92,8 @@ struct GradeSettings {
     float saturation = 1.0f;     // 0 gray .. 1 as rendered .. 2 vivid
     rhi::Color tint{1, 1, 1, 1}; // multiplies the result (a color wash; white leaves it)
     float vignette = 0.0f;       // how dark the corners get (0 none, 1 black)
+    std::string lut;             // a look-up table image (a strip of N slices N by N, N*N wide), applied to the finished colors; empty for none
+    float lut_strength = 1.0f;   // how much of the table's look (0 none .. 1 all)
 };
 
 struct RenderStats {
@@ -95,6 +122,10 @@ struct RenderStats {
     bool ao = false;                  // whether ambient occlusion was computed this frame
     bool fog = false;                 // whether fog was applied this frame
     bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
+    bool taa = false;                 // whether the frame was resolved against its history (temporal anti-aliasing)
+    bool lut = false;                 // whether a look-up table graded the frame
+    bool dof = false;                 // whether depth of field was applied this frame
+    bool motion_blur = false;         // whether motion blur was applied this frame
     std::uint32_t env_updates = 0;    // times the sky's environment light was rebuilt, over the renderer's life
     bool auto_exposure = false;       // whether the frame was metered for exposure
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
@@ -181,6 +212,12 @@ class Renderer {
     // Exposure and tone mapping of the HDR scene into the frame; takes effect at the next frame.
     // Ambient occlusion (off by default); takes effect at the next frame.
     void set_ao(AoSettings s);
+    void set_taa(TaaSettings s);
+    [[nodiscard]] TaaSettings taa() const;
+    void set_dof(DofSettings s);
+    [[nodiscard]] DofSettings dof() const;
+    void set_motion_blur(MotionBlurSettings s);
+    [[nodiscard]] MotionBlurSettings motion_blur() const;
     [[nodiscard]] AoSettings ao() const;
     void set_tonemap(TonemapSettings s);
     [[nodiscard]] TonemapSettings tonemap() const;

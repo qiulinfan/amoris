@@ -86,6 +86,8 @@ void read_grade(renderer::GradeSettings& g, const Json& p) {
     g.saturation = opt<float>(p, "saturation", g.saturation);
     g.vignette = opt<float>(p, "vignette", g.vignette);
     if (p.is_object() && p.contains("tint")) read_tint(p["tint"], g.tint);
+    g.lut = opt<std::string>(p, "lut", g.lut);
+    g.lut_strength = opt<float>(p, "lut_strength", g.lut_strength);
 }
 
 // The tone-mapping settings from a command's params or a project's [render.tonemap] table; false
@@ -111,7 +113,7 @@ Json tonemap_json(const renderer::TonemapSettings& t) {
 }
 
 Json grade_json(const renderer::GradeSettings& g) {
-    return Json{{"enabled", g.enabled}, {"exposure", g.exposure}, {"filmic", g.filmic}, {"temperature", g.temperature}, {"contrast", g.contrast}, {"saturation", g.saturation}, {"tint", Json{{"r", g.tint.r}, {"g", g.tint.g}, {"b", g.tint.b}}}, {"vignette", g.vignette}};
+    return Json{{"enabled", g.enabled}, {"exposure", g.exposure}, {"filmic", g.filmic}, {"temperature", g.temperature}, {"contrast", g.contrast}, {"saturation", g.saturation}, {"tint", Json{{"r", g.tint.r}, {"g", g.tint.g}, {"b", g.tint.b}}}, {"vignette", g.vignette}, {"lut", g.lut}, {"lut_strength", g.lut_strength}};
 }
 
 std::vector<std::string> string_list(const Json& p, const char* key) {
@@ -369,6 +371,41 @@ Status Session::start() {
                 read_grade(g, gj);
             }
             renderer_->set_grade(g);
+        }
+        // [render.dof] focus, aperture, max_blur (on unless enabled = false); [render.motion_blur] strength, samples.
+        if (r.contains("dof") && (r["dof"].is_object() || r["dof"].is_boolean())) {
+            renderer::DofSettings d = renderer_->dof();
+            if (r["dof"].is_boolean()) {
+                d.enabled = r["dof"].get<bool>();
+            } else {
+                d.enabled = opt<bool>(r["dof"], "enabled", true);
+                d.focus = opt<float>(r["dof"], "focus", d.focus);
+                d.aperture = opt<float>(r["dof"], "aperture", d.aperture);
+                d.max_blur = opt<float>(r["dof"], "max_blur", d.max_blur);
+            }
+            renderer_->set_dof(d);
+        }
+        if (r.contains("motion_blur") && (r["motion_blur"].is_object() || r["motion_blur"].is_boolean())) {
+            renderer::MotionBlurSettings m = renderer_->motion_blur();
+            if (r["motion_blur"].is_boolean()) {
+                m.enabled = r["motion_blur"].get<bool>();
+            } else {
+                m.enabled = opt<bool>(r["motion_blur"], "enabled", true);
+                m.strength = opt<float>(r["motion_blur"], "strength", m.strength);
+                m.samples = opt<int>(r["motion_blur"], "samples", m.samples);
+            }
+            renderer_->set_motion_blur(m);
+        }
+        // [render] taa = true, or [render.taa] enabled, feedback.
+        if (r.contains("taa") && (r["taa"].is_object() || r["taa"].is_boolean())) {
+            renderer::TaaSettings t = renderer_->taa();
+            if (r["taa"].is_boolean()) {
+                t.enabled = r["taa"].get<bool>();
+            } else {
+                t.enabled = opt<bool>(r["taa"], "enabled", true);
+                t.feedback = opt<float>(r["taa"], "feedback", t.feedback);
+            }
+            renderer_->set_taa(t);
         }
         // [render.ao] enabled = true, radius, intensity, samples (a table: on unless it says enabled = false).
         if (r.contains("ao") && (r["ao"].is_object() || r["ao"].is_boolean())) {
@@ -2063,6 +2100,35 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         renderer_->set_grade(g);
         return grade_json(renderer_->grade());
     }
+    if (op == "dof") {
+        // Depth of field: a lens focused at `focus`, blurring what is nearer or farther.
+        renderer::DofSettings d = renderer_->dof();
+        d.enabled = opt<bool>(p, "enabled", d.enabled);
+        d.focus = opt<float>(p, "focus", d.focus);
+        d.aperture = opt<float>(p, "aperture", d.aperture);
+        d.max_blur = opt<float>(p, "max_blur", d.max_blur);
+        renderer_->set_dof(d);
+        d = renderer_->dof();
+        return Json{{"enabled", d.enabled}, {"focus", d.focus}, {"aperture", d.aperture}, {"max_blur", d.max_blur}};
+    }
+    if (op == "motion_blur") {
+        renderer::MotionBlurSettings m = renderer_->motion_blur();
+        m.enabled = opt<bool>(p, "enabled", m.enabled);
+        m.strength = opt<float>(p, "strength", m.strength);
+        m.samples = opt<int>(p, "samples", m.samples);
+        renderer_->set_motion_blur(m);
+        m = renderer_->motion_blur();
+        return Json{{"enabled", m.enabled}, {"strength", m.strength}, {"samples", m.samples}};
+    }
+    if (op == "taa") {
+        // Temporal anti-aliasing: the view jittered inside the pixel, frames blended through motion.
+        renderer::TaaSettings t = renderer_->taa();
+        t.enabled = opt<bool>(p, "enabled", t.enabled);
+        t.feedback = opt<float>(p, "feedback", t.feedback);
+        renderer_->set_taa(t);
+        t = renderer_->taa();
+        return Json{{"enabled", t.enabled}, {"feedback", t.feedback}};
+    }
     if (op == "ao") {
         renderer::AoSettings a = renderer_->ao();
         a.enabled = opt<bool>(p, "enabled", a.enabled);
@@ -3715,7 +3781,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

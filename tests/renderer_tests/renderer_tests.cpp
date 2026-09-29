@@ -1143,3 +1143,276 @@ TEST_CASE("volumetric fog shows a spot's beam in the air, and a slab in the beam
     REQUIRE(std::abs(lit_plain - outside_plain) < 8);
     REQUIRE(s.finish().has_value());
 }
+
+TEST_CASE("TAA smooths edges over a few frames, keeps flat areas and leaves no ghost behind a moving object", "[renderer][taa]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    // A glowing white card turned 20 degrees in front of a dark floor: without anti-aliasing each
+    // pixel on its edges is either the card or the floor.
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 30}, {"y", 0.2}, {"z", 30}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.1}, {"g", 0.1}, {"b", 0.12}, {"a", 1}}}};
+    spawn(floor);
+    Json card;
+    card["name"] = "Card";
+    card["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}, {"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0.17364818}, {"w", 0.98480775}}}, {"scale", Json{{"x", 2.4}, {"y", 1.6}, {"z", 0.05}}}};
+    card["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(card);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", Json{{"x", -0.5}, {"y", -0.3}, {"z", 0}, {"w", 0.81}}}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.2}};
+    spawn(sun);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 6}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 50}};
+    spawn(camera);
+    REQUIRE(s.command("render.shadows", Json{{"enabled", false}}).has_value());
+    // Pixels in between: brighter than the darkest around the card and darker than the card.
+    auto in_between = [&]() {
+        auto img = s.device().capture();
+        REQUIRE(img.has_value());
+        int n = 0;
+        for (std::uint32_t y = 0; y < img->height; ++y)
+            for (std::uint32_t x = 0; x < img->width; ++x) {
+                const std::uint8_t* a = &img->rgba[(y * img->width + x) * 4];
+                if (a[0] > 90 && a[0] < 215) ++n;
+            }
+        return n;
+    };
+    auto level_at = [&](double x, double y, double z) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return (p[0].get<int>() + p[1].get<int>() + p[2].get<int>()) / 3;
+    };
+    REQUIRE(s.frame().has_value());
+    const int between_plain = in_between();
+    const int floor_plain = level_at(0, 0, 2), card_plain = level_at(0, 1.5, 0.03);
+    Json on = s.command("render.taa", Json{{"enabled", true}}).value();
+    REQUIRE(on["enabled"] == true);
+    for (int i = 0; i < 16; ++i) REQUIRE(s.frame().has_value());
+    Json stats = s.command("render.stats", Json::object()).value();
+    const int between_taa = in_between();
+    const int floor_taa = level_at(0, 0, 2), card_taa = level_at(0, 1.5, 0.03);
+    INFO("pixels in between " << between_plain << " -> " << between_taa << ", floor " << floor_plain << " -> " << floor_taa << ", card " << card_plain << " -> " << card_taa << " " << stats.dump());
+    REQUIRE(stats["taa"] == true);
+    REQUIRE(stats["depth_prepass"] == true);
+    REQUIRE(card_plain > 240);
+    REQUIRE(between_plain < 20);                    // one sample: card or floor
+    REQUIRE(between_taa > 60);                      // the edges spread over pixels partly covered (about half of the rim)
+    REQUIRE(std::abs(floor_taa - floor_plain) < 5);   // a flat area stays what it was
+    REQUIRE(std::abs(card_taa - card_plain) < 5);
+    // A white block sliding over the dark floor: where it was a few frames ago is floor again, and
+    // where it is now is white, not a smear.
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Card"}}).has_value());
+    Json block;
+    block["name"] = "Slider";
+    block["components"]["Transform"] = Json{{"position", Json{{"x", -3}, {"y", 0.5}, {"z", 2}}}, {"scale", Json{{"x", 0.8}, {"y", 0.8}, {"z", 0.8}}}};
+    block["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(block);
+    double x = -3;
+    for (int i = 0; i < 12; ++i) {
+        x += 0.35;
+        REQUIRE(s.command("world.set", Json{{"entity", "Slider"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", x}, {"y", 0.5}, {"z", 2}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    }
+    const int left_behind = level_at(x - 6 * 0.35, 0.02, 2), here = level_at(x, 0.5, 2.41);
+    const int floor_there = level_at(x - 6 * 0.35, 0.02, 3.4);
+    INFO("where it was " << left_behind << " (floor " << floor_there << "), where it is " << here);
+    REQUIRE(std::abs(left_behind - floor_there) < 12);   // no ghost
+    REQUIRE(here > 200);                                 // the block itself is still there, bright
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).value()["enabled"] == false);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["taa"] == false);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("depth of field blurs what is out of focus; motion blur smears what moves", "[renderer][dof][motion_blur]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 30}, {"y", 0.2}, {"z", 30}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.1}, {"g", 0.1}, {"b", 0.12}, {"a", 1}}}};
+    spawn(floor);
+    Json card;
+    card["name"] = "Card";
+    card["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}, {"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0.17364818}, {"w", 0.98480775}}}, {"scale", Json{{"x", 2.4}, {"y", 1.6}, {"z", 0.05}}}};
+    card["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(card);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", Json{{"x", -0.5}, {"y", -0.3}, {"z", 0}, {"w", 0.81}}}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 1.2}};
+    spawn(sun);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 6}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 50}};
+    spawn(camera);
+    REQUIRE(s.command("render.shadows", Json{{"enabled", false}}).has_value());
+    auto in_between = [&]() {
+        auto img = s.device().capture();
+        REQUIRE(img.has_value());
+        int n = 0;
+        for (std::uint32_t y = 0; y < img->height; ++y)
+            for (std::uint32_t x = 0; x < img->width; ++x) {
+                const std::uint8_t* a = &img->rgba[(y * img->width + x) * 4];
+                if (a[0] > 90 && a[0] < 215) ++n;
+            }
+        return n;
+    };
+    // In focus on the card (six units off): its edges stay sharp. Focused a unit from the camera: blurred.
+    Json d = s.command("render.dof", Json{{"enabled", true}, {"focus", 6.0}, {"aperture", 0.02}}).value();
+    REQUIRE(d["enabled"] == true);
+    REQUIRE(s.frame().has_value());
+    const int sharp = in_between();
+    REQUIRE(s.command("render.dof", Json{{"focus", 1.0}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int blurred = in_between();
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("in between: focused " << sharp << ", out of focus " << blurred << " " << stats.dump());
+    REQUIRE(stats["dof"] == true);
+    REQUIRE(sharp < 20);
+    REQUIRE(blurred > 150);
+    REQUIRE(s.command("render.dof", Json{{"enabled", false}}).has_value());
+    // A white block sliding over the floor: with motion blur it trails a smear, without it is crisp.
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Card"}}).has_value());
+    Json block;
+    block["name"] = "Slider";
+    block["components"]["Transform"] = Json{{"position", Json{{"x", -3}, {"y", 0.5}, {"z", 2}}}, {"scale", Json{{"x", 0.8}, {"y", 0.8}, {"z", 0.8}}}};
+    block["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(block);
+    double x = -3;
+    auto slide = [&](int frames) {
+        for (int i = 0; i < frames; ++i) {
+            x += 0.3;
+            REQUIRE(s.command("world.set", Json{{"entity", "Slider"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", x}, {"y", 0.5}, {"z", 2}}}}}}).has_value());
+            REQUIRE(s.frame().has_value());
+        }
+    };
+    slide(3);
+    const int crisp = in_between();
+    REQUIRE(s.command("render.motion_blur", Json{{"enabled", true}, {"strength", 1.0}}).value()["enabled"] == true);
+    slide(3);
+    const int smeared = in_between();
+    stats = s.command("render.stats", Json::object()).value();
+    INFO("in between: still " << crisp << ", blurred " << smeared);
+    REQUIRE(stats["motion_blur"] == true);
+    REQUIRE(crisp < 20);
+    REQUIRE(smeared > 60);
+    // Standing still, nothing smears.
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(in_between() < 20);
+    REQUIRE(s.finish().has_value());
+}
+
+namespace {
+// A look-up table strip as an uncompressed TGA (N slices of N by N side by side), each texel the
+// color `f` gives the color it stands for.
+void write_lut(const std::filesystem::path& path, int n, auto f) {
+    const int w = n * n, h = n;
+    std::vector<std::uint8_t> bytes(18 + static_cast<std::size_t>(w * h * 4), 0);
+    bytes[2] = 2;   // uncompressed true color
+    bytes[12] = static_cast<std::uint8_t>(w & 0xFF); bytes[13] = static_cast<std::uint8_t>(w >> 8);
+    bytes[14] = static_cast<std::uint8_t>(h & 0xFF); bytes[15] = static_cast<std::uint8_t>(h >> 8);
+    bytes[16] = 32;
+    bytes[17] = 0x28;   // 8 alpha bits, rows from the top
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const float r = static_cast<float>(x % n) / static_cast<float>(n - 1), g = static_cast<float>(y) / static_cast<float>(n - 1), b = static_cast<float>(x / n) / static_cast<float>(n - 1);
+            const std::array<float, 3> c = f(r, g, b);
+            std::uint8_t* px = &bytes[18 + static_cast<std::size_t>((y * w + x) * 4)];
+            px[0] = static_cast<std::uint8_t>(std::lround(std::clamp(c[2], 0.0f, 1.0f) * 255));
+            px[1] = static_cast<std::uint8_t>(std::lround(std::clamp(c[1], 0.0f, 1.0f) * 255));
+            px[2] = static_cast<std::uint8_t>(std::lround(std::clamp(c[0], 0.0f, 1.0f) * 255));
+            px[3] = 255;
+        }
+    std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+}  // namespace
+
+TEST_CASE("a look-up table grades the finished frame: identity changes nothing, an inversion inverts, strength mixes", "[renderer][grade][lut]") {
+    const std::filesystem::path dir = root() / "samples" / "playground" / "assets";
+    std::filesystem::create_directories(dir);
+    write_lut(dir / "lut-identity.tga", 16, [](float r, float g, float b) { return std::array<float, 3>{r, g, b}; });
+    write_lut(dir / "lut-invert.tga", 16, [](float r, float g, float b) { return std::array<float, 3>{1 - r, 1 - g, 1 - b}; });
+    {
+        std::vector<std::uint8_t> bad(18 + 16 * 16 * 4, 255);
+        std::fill(bad.begin(), bad.begin() + 18, 0);
+        bad[2] = 2; bad[12] = 16; bad[14] = 16; bad[16] = 32; bad[17] = 0x28;
+        std::ofstream(dir / "lut-square.tga", std::ios::binary).write(reinterpret_cast<const char*>(bad.data()), static_cast<std::streamsize>(bad.size()));
+    }
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 30}, {"y", 0.2}, {"z", 30}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.1}, {"g", 0.1}, {"b", 0.12}, {"a", 1}}}};
+    spawn(floor);
+    Json card;
+    card["name"] = "Card";
+    card["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}, {"scale", Json{{"x", 2.4}, {"y", 1.6}, {"z", 0.05}}}};
+    card["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(card);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 6}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 50}};
+    spawn(camera);
+    auto level_at = [&](double x, double y, double z) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return (p[0].get<int>() + p[1].get<int>() + p[2].get<int>()) / 3;
+    };
+    REQUIRE(s.frame().has_value());
+    const int card0 = level_at(0, 1.5, 0.03), floor0 = level_at(0, 0, 2);
+    auto grade = [&](Json p) {
+        p["enabled"] = true;
+        REQUIRE(s.command("render.grade", p).has_value());
+        REQUIRE(s.frame().has_value());
+    };
+    grade(Json{{"lut", "assets/lut-identity.tga"}});
+    REQUIRE(s.command("render.stats", Json::object()).value()["lut"] == true);
+    const int card_id = level_at(0, 1.5, 0.03), floor_id = level_at(0, 0, 2);
+    grade(Json{{"lut", "assets/lut-invert.tga"}});
+    const int card_inv = level_at(0, 1.5, 0.03), floor_inv = level_at(0, 0, 2);
+    grade(Json{{"lut_strength", 0.5}});
+    const int card_half = level_at(0, 1.5, 0.03);
+    INFO("card " << card0 << " identity " << card_id << " inverted " << card_inv << " half " << card_half << "; floor " << floor0 << " identity " << floor_id << " inverted " << floor_inv);
+    REQUIRE(card0 > 240);
+    REQUIRE(std::abs(card_id - card0) <= 3);
+    REQUIRE(std::abs(floor_id - floor0) <= 3);
+    REQUIRE(card_inv < 15);
+    REQUIRE(std::abs(floor_inv - (255 - floor0)) <= 4);
+    REQUIRE(std::abs(card_half - 128) <= 6);
+    // A square picture is not a table: refused, reported, the frame left alone.
+    grade(Json{{"lut", "assets/lut-square.tga"}, {"lut_strength", 1.0}});
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["lut"] == false);
+    bool reported = false;
+    for (const Json& m : stats["assets"].value("missing", Json::array())) if (m.get<std::string>().find("lut-square") != std::string::npos) reported = true;
+    REQUIRE(reported);
+    REQUIRE(std::abs(level_at(0, 1.5, 0.03) - card0) <= 3);
+    REQUIRE(s.finish().has_value());
+    for (const char* f : {"lut-identity.tga", "lut-invert.tga", "lut-square.tga"}) std::filesystem::remove(dir / f);
+}

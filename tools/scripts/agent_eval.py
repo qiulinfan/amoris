@@ -27,7 +27,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/animation.md", "docs/generated/components.md"]
 
 
 def near(a, b, tol=0.01):
@@ -431,6 +431,36 @@ def lamp_prefab_check(env, answer):
     return True, "three lamps from the prefab, yellow spheres with a point light under each"
 
 
+def night_lamp_solve(env):
+    env.command("world.set", {"entity": "Sun", "component": "Light", "value": {"intensity": 0.05}})
+    env.command("world.spawn", {"name": "Lamp", "components": {"Transform": {"position": {"x": 0, "y": 2, "z": 0}},
+                "Light": {"kind": 1, "color": {"r": 1, "g": 0.7, "b": 0.4, "a": 1}, "intensity": 3, "range": 6, "shadows": True}}})
+    env.command("step", {"ticks": 1})
+    return env.command("render.stats", {})["light_shadows"]["lights"]
+
+
+def night_lamp_check(env, answer):
+    sun = env.command("world.get", {"entity": "Sun", "component": "Light"})
+    if not sun or sun.get("intensity", 1) > 0.051:
+        return False, f"the Sun's intensity is {sun and sun.get('intensity')}"
+    lamp = env.command("world.find", {"path": "Lamp"})
+    if not isinstance(lamp, int):
+        return False, "no entity named Lamp"
+    light = env.command("world.get", {"entity": lamp, "component": "Light"})
+    if not light or light.get("kind") != 1 or not light.get("shadows"):
+        return False, f"Lamp's light is {light}"
+    if not (near(light.get("intensity", 0), 3) and near(light.get("range", 0), 6) and color_is(light["color"], 1, 0.7, 0.4)):
+        return False, f"Lamp's light is {light}"
+    pos = env.command("world.get", {"entity": lamp, "component": "Transform"})["position"]
+    if not (near(pos["x"], 0) and near(pos["y"], 2) and near(pos["z"], 0)):
+        return False, f"Lamp at {pos}"
+    env.command("step", {"ticks": 1})
+    shadowed = env.command("render.stats", {})["light_shadows"]["lights"]
+    if answer != shadowed:
+        return False, f"answered {answer!r}, {shadowed} lights cast shadows"
+    return True, f"night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered {answer}"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -448,6 +478,8 @@ TASKS = [
      "task": "Answer with the number of entities the physics overlap query finds within radius 4 of the origin (x 0, y 0, z 0), as the integer \"answer\"."},
     {"name": "event_cause", "project": "playground", "ticks": 1500, "before": event_cause_before, "solve": event_cause_solve, "check": event_cause_check,
      "task": "Find the most recent event of type player.hit and answer with the type of the event at the root of its causes, as the string \"answer\"."},
+    {"name": "night_lamp", "project": "hello", "ticks": 0, "solve": night_lamp_solve, "check": night_lamp_check,
+     "task": "Make it night: set the intensity of the Light on the entity named Sun to 0.05, and spawn an entity named Lamp at x 0, y 2, z 0 with a warm point light that casts shadows (a Light of kind 1, color r 1, g 0.7, b 0.4, intensity 3, range 6). Then step the simulation one tick so a frame is drawn, and answer with the number of lights casting shadows in that frame as the renderer reports it, as the integer \"answer\"."},
     {"name": "expose_count", "project": "hello", "ticks": 0, "script": True, "solve": expose_count_solve, "check": expose_count_check,
      "task": "Edit scripts/main.ts in the project directory so that the project exposes a state key named \"answer\" whose value is the number of entities in the world (the SDK's expose and world.summary)."},
     {"name": "ball_lower", "project": "hello", "ticks": 0, "script": True, "solve": ball_lower_solve, "check": ball_lower_check,

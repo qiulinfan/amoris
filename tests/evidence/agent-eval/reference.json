@@ -1,8 +1,8 @@
 {
   "runner": "reference",
-  "passed": 15,
-  "total": 15,
-  "seconds": 14.2,
+  "passed": 16,
+  "total": 16,
+  "seconds": 22.4,
   "tasks": [
     {
       "name": "spawn_named",
@@ -26,7 +26,7 @@
       "name": "tile_edit",
       "project": "sprites",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "cell (3, 2) on ground holds gid 1",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": true,
-      "seconds": 2.6,
+      "seconds": 5.0,
       "detail": "0 enemies remain",
       "answer": null,
       "error": null
@@ -44,7 +44,7 @@
       "name": "play_clip",
       "project": "assets",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "Arm plays 'turn' loop True playing True",
       "answer": null,
       "error": null
@@ -53,7 +53,7 @@
       "name": "path_length",
       "project": "playground",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "answered 22.882, the path is 22.882",
       "answer": 22.882455825805664,
       "error": null
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": true,
-      "seconds": 1.3,
+      "seconds": 1.7,
       "detail": "answered 5, there are 5",
       "answer": 5,
       "error": null
@@ -71,16 +71,25 @@
       "name": "event_cause",
       "project": "playground",
       "ok": true,
-      "seconds": 4.1,
+      "seconds": 7.7,
       "detail": "answered 'entity.spawned', the root cause is 'entity.spawned'",
       "answer": "entity.spawned",
+      "error": null
+    },
+    {
+      "name": "night_lamp",
+      "project": "hello",
+      "ok": true,
+      "seconds": 0.4,
+      "detail": "night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered 1",
+      "answer": 1,
       "error": null
     },
     {
       "name": "expose_count",
       "project": "hello",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "answer 4, entities 4",
       "answer": null,
       "error": null
@@ -89,7 +98,7 @@
       "name": "ball_lower",
       "project": "hello",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "the ball starts its fall at y 0.9918",
       "answer": null,
       "error": null
@@ -98,7 +107,7 @@
       "name": "spawn_stars",
       "project": "hello",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "Star0 to Star4 along x at y 2, spheres",
       "answer": null,
       "error": null
@@ -107,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": true,
-      "seconds": 0.9,
+      "seconds": 1.2,
       "detail": "rose 3.79 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -116,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.3,
+      "seconds": 1.8,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
       "answer": null,
       "error": null
@@ -125,7 +134,7 @@
       "name": "jump_sound",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.0,
+      "seconds": 1.3,
       "detail": "assets/jump.wav plays after a jump and again after the next",
       "answer": null,
       "error": null
@@ -134,7 +143,7 @@
       "name": "lamp_prefab",
       "project": "hello",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "three lamps from the prefab, yellow spheres with a point light under each",
       "answer": null,
       "error": null
