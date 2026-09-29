@@ -1,5 +1,5 @@
-// Model formats beside glTF: Wavefront OBJ (with its MTL materials) and STL read here, and the
-// formats Blender reads (.blend, .fbx, .dae, .usd, .abc, .ply, ...) converted to glTF by running
+// Model formats beside glTF: Wavefront OBJ (with its MTL materials), STL and PLY read here, and
+// the formats Blender reads (.blend, .fbx, .dae, .usd, .abc, ...) converted to glTF by running
 // Blender headless once per file content (docs/design/assets.md, Importing models).
 #include <pocket/assets/assets.hpp>
 
@@ -289,8 +289,187 @@ Result<Mesh> parse_stl(const std::string& bytes, const std::string& display_path
     return mesh;
 }
 
+Result<Mesh> parse_ply(const std::string& bytes, const std::string& display_path) {
+    // The header: the format, then elements (name, count) each with its properties (a scalar, or a
+    // list with its count's type), up to end_header.
+    enum class Type { I8, U8, I16, U16, I32, U32, F32, F64 };
+    struct Property { std::string name; Type type = Type::F32; bool list = false; Type count = Type::U8; };
+    struct Element { std::string name; std::size_t count = 0; std::vector<Property> props; };
+    auto type_of = [](const std::string& t, Type& out) {
+        static const std::map<std::string, Type> names{{"char", Type::I8}, {"int8", Type::I8}, {"uchar", Type::U8}, {"uint8", Type::U8}, {"short", Type::I16}, {"int16", Type::I16},
+                                                       {"ushort", Type::U16}, {"uint16", Type::U16}, {"int", Type::I32}, {"int32", Type::I32}, {"uint", Type::U32}, {"uint32", Type::U32},
+                                                       {"float", Type::F32}, {"float32", Type::F32}, {"double", Type::F64}, {"float64", Type::F64}};
+        auto it = names.find(t);
+        if (it == names.end()) return false;
+        out = it->second;
+        return true;
+    };
+    if (bytes.rfind("ply", 0) != 0) return fail("bad_ply", "{}: not a PLY file", display_path);
+    std::size_t pos = 0;
+    std::string format;
+    std::vector<Element> elements;
+    bool ended = false;
+    while (pos < bytes.size()) {
+        const std::size_t eol = bytes.find('\n', pos);
+        if (eol == std::string::npos) break;
+        std::string line = bytes.substr(pos, eol - pos);
+        pos = eol + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto t = split_ws(line);
+        if (t.empty()) continue;
+        if (t[0] == "end_header") { ended = true; break; }
+        if (t[0] == "format" && t.size() >= 2) format = t[1];
+        else if (t[0] == "element" && t.size() >= 3) elements.push_back({t[1], static_cast<std::size_t>(std::strtoull(t[2].c_str(), nullptr, 10)), {}});
+        else if (t[0] == "property" && !elements.empty()) {
+            Property p;
+            if (t.size() >= 5 && t[1] == "list") {
+                p.list = true;
+                if (!type_of(t[2], p.count) || !type_of(t[3], p.type)) return fail("bad_ply", "{}: unknown property type in '{}'", display_path, line);
+                p.name = t[4];
+            } else if (t.size() >= 3) {
+                if (!type_of(t[1], p.type)) return fail("bad_ply", "{}: unknown property type in '{}'", display_path, line);
+                p.name = t[2];
+            }
+            elements.back().props.push_back(p);
+        }
+    }
+    if (!ended) return fail("bad_ply", "{}: the header has no end_header", display_path);
+    const bool ascii = format == "ascii", big = format == "binary_big_endian";
+    if (!ascii && !big && format != "binary_little_endian") return fail("bad_ply", "{}: unknown format '{}'", display_path, format);
+    // The body, value by value: words for ASCII, bytes (swapped when big-endian) for binary.
+    std::istringstream words(ascii ? bytes.substr(pos) : std::string());
+    bool short_body = false;
+    auto read = [&](Type type) -> double {
+        if (ascii) {
+            double v = 0;
+            if (!(words >> v)) short_body = true;
+            return v;
+        }
+        static constexpr std::size_t kSize[] = {1, 1, 2, 2, 4, 4, 4, 8};
+        const std::size_t n = kSize[static_cast<int>(type)];
+        if (pos + n > bytes.size()) { short_body = true; pos = bytes.size(); return 0; }
+        unsigned char b[8];
+        std::memcpy(b, bytes.data() + pos, n);
+        pos += n;
+        if (big) std::reverse(b, b + n);
+        switch (type) {
+            case Type::I8: { std::int8_t v; std::memcpy(&v, b, 1); return v; }
+            case Type::U8: return b[0];
+            case Type::I16: { std::int16_t v; std::memcpy(&v, b, 2); return v; }
+            case Type::U16: { std::uint16_t v; std::memcpy(&v, b, 2); return v; }
+            case Type::I32: { std::int32_t v; std::memcpy(&v, b, 4); return v; }
+            case Type::U32: { std::uint32_t v; std::memcpy(&v, b, 4); return v; }
+            case Type::F32: { float v; std::memcpy(&v, b, 4); return v; }
+            case Type::F64: { double v; std::memcpy(&v, b, 8); return v; }
+        }
+        return 0;
+    };
+    std::vector<Vec3> positions, normals;
+    std::vector<Vec2> uvs;
+    std::vector<Vec4> colors;
+    std::vector<std::vector<std::uint32_t>> faces;
+    for (const Element& el : elements) {
+        auto has = [&](std::initializer_list<const char*> names) {
+            for (const Property& p : el.props) for (const char* n : names) if (p.name == n) return true;
+            return false;
+        };
+        const bool vertex = el.name == "vertex", face = el.name == "face";
+        const bool with_normals = vertex && has({"nx"}) && has({"ny"}) && has({"nz"});
+        const bool with_uvs = vertex && (has({"s", "u", "texture_u", "texture_s"}));
+        const bool with_colors = vertex && has({"red"}) && has({"green"}) && has({"blue"});
+        for (std::size_t i = 0; i < el.count && !short_body; ++i) {
+            Vec3 p{}, n{};
+            Vec2 uv{};
+            Vec4 c{1, 1, 1, 1};
+            for (const Property& prop : el.props) {
+                if (prop.list) {
+                    const auto count = static_cast<std::size_t>(read(prop.count));
+                    std::vector<std::uint32_t> idx;
+                    idx.reserve(count);
+                    for (std::size_t k = 0; k < count; ++k) idx.push_back(static_cast<std::uint32_t>(read(prop.type)));
+                    if (face && (prop.name == "vertex_indices" || prop.name == "vertex_index")) faces.push_back(std::move(idx));
+                    continue;
+                }
+                const double v = read(prop.type);
+                if (!vertex) continue;
+                // Colours as bytes are 0..255, as floats 0..1; either way sRGB, made linear.
+                const bool integral = prop.type != Type::F32 && prop.type != Type::F64;
+                auto colour = [&](double x) { float f = static_cast<float>(integral ? x / 255.0 : x); f = std::clamp(f, 0.0f, 1.0f); return f <= 0.04045f ? f / 12.92f : std::pow((f + 0.055f) / 1.055f, 2.4f); };
+                const std::string& nm = prop.name;
+                if (nm == "x") p.x = static_cast<float>(v);
+                else if (nm == "y") p.y = static_cast<float>(v);
+                else if (nm == "z") p.z = static_cast<float>(v);
+                else if (nm == "nx") n.x = static_cast<float>(v);
+                else if (nm == "ny") n.y = static_cast<float>(v);
+                else if (nm == "nz") n.z = static_cast<float>(v);
+                else if (nm == "s" || nm == "u" || nm == "texture_u" || nm == "texture_s") uv.x = static_cast<float>(v);
+                else if (nm == "t" || nm == "v" || nm == "texture_v" || nm == "texture_t") uv.y = 1.0f - static_cast<float>(v);   // PLY's v runs up; images run down
+                else if (nm == "red") c.x = colour(v);
+                else if (nm == "green") c.y = colour(v);
+                else if (nm == "blue") c.z = colour(v);
+                else if (nm == "alpha") c.w = std::clamp(static_cast<float>(integral ? v / 255.0 : v), 0.0f, 1.0f);
+            }
+            if (vertex) {
+                positions.push_back(p);
+                if (with_normals) normals.push_back(n);
+                if (with_uvs) uvs.push_back(uv);
+                if (with_colors) colors.push_back(c);
+            }
+        }
+    }
+    if (short_body) return fail("bad_ply", "{}: the file ends before its elements do", display_path);
+    if (positions.empty()) return fail("bad_ply", "{}: no vertices", display_path);
+    if (faces.empty()) return fail("bad_ply", "{}: no faces (a point cloud is not a mesh)", display_path);
+    Mesh mesh;
+    mesh.path = display_path;
+    for (const auto& f : faces) {
+        for (std::uint32_t k : f) if (k >= positions.size()) return fail("bad_ply", "{}: a face refers to vertex {} of {}", display_path, k, positions.size());
+        for (std::size_t k = 1; k + 1 < f.size(); ++k) mesh.indices.insert(mesh.indices.end(), {f[0], f[k], f[k + 1]});
+    }
+    if (mesh.indices.empty()) return fail("bad_ply", "{}: no triangles", display_path);
+    // Normals the file leaves out: smoothed per vertex, weighted by face area.
+    std::vector<Vec3> smooth;
+    if (normals.empty()) {
+        smooth.assign(positions.size(), Vec3{0, 0, 0});
+        for (std::size_t k = 0; k + 2 < mesh.indices.size(); k += 3) {
+            const std::uint32_t a = mesh.indices[k], b = mesh.indices[k + 1], c = mesh.indices[k + 2];
+            const Vec3 fn = cross(positions[b] - positions[a], positions[c] - positions[a]);
+            for (std::uint32_t v : {a, b, c}) smooth[v] = smooth[v] + fn;
+        }
+    }
+    mesh.vertices.reserve(positions.size());
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        MeshVertex mv;
+        mv.position = positions[i];
+        const Vec3 n = normals.empty() ? smooth[i] : normals[i];
+        mv.normal = length(n) > 1e-20f ? normalize(n) : Vec3{0, 1, 0};
+        mv.uv = uvs.empty() ? Vec2{0, 0} : uvs[i];
+        if (!colors.empty()) mv.color = colors[i];
+        mesh.vertices.push_back(mv);
+    }
+    Material m;
+    m.name = "ply";
+    m.base_color = {0.8f, 0.8f, 0.8f, 1};
+    if (!colors.empty()) m.base_color = {1, 1, 1, 1};   // the vertices carry the colour
+    m.roughness = 0.7f;
+    mesh.materials.push_back(m);
+    Node node;
+    node.name = std::filesystem::path(display_path).stem().string();
+    node.rest = Mat4::identity();
+    mesh.nodes.push_back(node);
+    Submesh sm;
+    sm.index_count = static_cast<std::uint32_t>(mesh.indices.size());
+    sm.origin = 0;
+    mesh.submeshes.push_back(sm);
+    mesh.node_count = 1;
+    mesh.importer = "ply";
+    mesh.vertex_colors = !colors.empty();
+    finish_bounds(mesh);
+    return mesh;
+}
+
 bool blender_format(std::string_view ext) {
-    static const std::array<std::string_view, 12> kinds{".blend", ".fbx", ".dae", ".usd", ".usda", ".usdc", ".usdz", ".abc", ".ply", ".3ds", ".x3d", ".wrl"};
+    static const std::array<std::string_view, 11> kinds{".blend", ".fbx", ".dae", ".usd", ".usda", ".usdc", ".usdz", ".abc", ".3ds", ".x3d", ".wrl"};
     const std::string e = lower(std::string(ext));
     return std::find(kinds.begin(), kinds.end(), e) != kinds.end();
 }

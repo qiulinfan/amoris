@@ -329,7 +329,11 @@ Result<Image> decode_image(const std::string& bytes, const std::string& display_
 Result<Mesh> parse_obj(const std::string& text, const std::string& display_path, const std::function<Result<std::string>(const std::string&)>& read);
 // STL, binary or ASCII: one node, one gray material, flat normals.
 Result<Mesh> parse_stl(const std::string& bytes, const std::string& display_path);
-// Formats Blender reads and the engine converts through it (.blend, .fbx, .dae, .usd*, .abc, .ply, ...).
+// PLY, ASCII or binary: vertex positions with their normals, texture coordinates and colours when
+// given (normals smoothed when not), polygon faces fanned into triangles, one gray material (white
+// when the vertices are coloured).
+Result<Mesh> parse_ply(const std::string& bytes, const std::string& display_path);
+// Formats Blender reads and the engine converts through it (.blend, .fbx, .dae, .usd*, .abc, ...).
 bool blender_format(std::string_view extension);
 // Blender's executable: `configured`, else POCKET_BLENDER, the usual install places, PATH; "" for none.
 std::string find_blender(const std::string& configured);

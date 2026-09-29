@@ -490,6 +490,62 @@ std::size_t numeric_span(ReflectionProbe& v, std::string_view path, float** out)
     return 0;
 }
 
+void to_json(Json& j, const Decal& v) {
+    j = Json::object();
+    j["texture"] = v.texture;
+    vec_to_json(j["color"], v.color);
+    vec_to_json(j["size"], v.size);
+    j["roughness"] = v.roughness;
+    j["emissive"] = v.emissive;
+    j["angle"] = v.angle;
+    j["order"] = v.order;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Decal& v) {
+    scalar_from_json(j, "texture", v.texture);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    scalar_from_json(j, "roughness", v.roughness);
+    scalar_from_json(j, "emissive", v.emissive);
+    scalar_from_json(j, "angle", v.angle);
+    scalar_from_json(j, "order", v.order);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Decal& v) {
+    h.str(v.texture);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.size.z);
+    h.f32(v.roughness);
+    h.f32(v.emissive);
+    h.f32(v.angle);
+    h.i64(static_cast<std::int64_t>(v.order));
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Decal& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "size") { *out = &v.size.x; return 3; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "size.z") { *out = &v.size.z; return 1; }
+    if (path == "roughness") { *out = &v.roughness; return 1; }
+    if (path == "emissive") { *out = &v.emissive; return 1; }
+    if (path == "angle") { *out = &v.angle; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Fog& v) {
     j = Json::object();
     vec_to_json(j["color"], v.color);
@@ -1528,6 +1584,7 @@ void to_json(Json& j, const Character& v) {
     j["step"] = v.step;
     j["max_slope"] = v.max_slope;
     j["push"] = v.push;
+    j["swim_speed"] = v.swim_speed;
     j["mask"] = v.mask;
     j["grounded"] = v.grounded;
     vec_to_json(j["ground_normal"], v.ground_normal);
@@ -1536,6 +1593,8 @@ void to_json(Json& j, const Character& v) {
     vec_to_json(j["wall_normal"], v.wall_normal);
     j["on_ceiling"] = v.on_ceiling;
     j["stepped"] = v.stepped;
+    j["swimming"] = v.swimming;
+    j["submerged"] = v.submerged;
 }
 
 void from_json(const Json& j, Character& v) {
@@ -1547,6 +1606,7 @@ void from_json(const Json& j, Character& v) {
     scalar_from_json(j, "step", v.step);
     scalar_from_json(j, "max_slope", v.max_slope);
     scalar_from_json(j, "push", v.push);
+    scalar_from_json(j, "swim_speed", v.swim_speed);
     scalar_from_json(j, "mask", v.mask);
     scalar_from_json(j, "grounded", v.grounded);
     if (j.is_object() && j.contains("ground_normal")) vec_from_json(j["ground_normal"], v.ground_normal);
@@ -1555,6 +1615,8 @@ void from_json(const Json& j, Character& v) {
     if (j.is_object() && j.contains("wall_normal")) vec_from_json(j["wall_normal"], v.wall_normal);
     scalar_from_json(j, "on_ceiling", v.on_ceiling);
     scalar_from_json(j, "stepped", v.stepped);
+    scalar_from_json(j, "swimming", v.swimming);
+    scalar_from_json(j, "submerged", v.submerged);
 }
 
 void hash_component(StateHasherRef& h, const Character& v) {
@@ -1568,6 +1630,7 @@ void hash_component(StateHasherRef& h, const Character& v) {
     h.f32(v.step);
     h.f32(v.max_slope);
     h.f32(v.push);
+    h.f32(v.swim_speed);
     h.i64(static_cast<std::int64_t>(v.mask));
     h.u8(v.grounded ? 1 : 0);
     h.f32(v.ground_normal.x);
@@ -1580,6 +1643,8 @@ void hash_component(StateHasherRef& h, const Character& v) {
     h.f32(v.wall_normal.z);
     h.u8(v.on_ceiling ? 1 : 0);
     h.u8(v.stepped ? 1 : 0);
+    h.u8(v.swimming ? 1 : 0);
+    h.f32(v.submerged);
 }
 
 std::size_t numeric_span(Character& v, std::string_view path, float** out) {
@@ -1595,6 +1660,7 @@ std::size_t numeric_span(Character& v, std::string_view path, float** out) {
     if (path == "step") { *out = &v.step; return 1; }
     if (path == "max_slope") { *out = &v.max_slope; return 1; }
     if (path == "push") { *out = &v.push; return 1; }
+    if (path == "swim_speed") { *out = &v.swim_speed; return 1; }
     if (path == "ground_normal") { *out = &v.ground_normal.x; return 3; }
     if (path == "ground_normal.x") { *out = &v.ground_normal.x; return 1; }
     if (path == "ground_normal.y") { *out = &v.ground_normal.y; return 1; }
@@ -1603,6 +1669,7 @@ std::size_t numeric_span(Character& v, std::string_view path, float** out) {
     if (path == "wall_normal.x") { *out = &v.wall_normal.x; return 1; }
     if (path == "wall_normal.y") { *out = &v.wall_normal.y; return 1; }
     if (path == "wall_normal.z") { *out = &v.wall_normal.z; return 1; }
+    if (path == "submerged") { *out = &v.submerged; return 1; }
     return 0;
 }
 
@@ -1690,6 +1757,89 @@ std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
     if (path == "rock_slope") { *out = &v.rock_slope; return 1; }
     if (path == "snow_line") { *out = &v.snow_line; return 1; }
     if (path == "texture_tile") { *out = &v.texture_tile; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Water& v) {
+    j = Json::object();
+    vec_to_json(j["size"], v.size);
+    j["depth"] = v.depth;
+    vec_to_json(j["color"], v.color);
+    j["clarity"] = v.clarity;
+    j["wave_height"] = v.wave_height;
+    j["wave_length"] = v.wave_length;
+    j["wave_direction"] = v.wave_direction;
+    j["choppiness"] = v.choppiness;
+    j["ripples"] = v.ripples;
+    j["foam"] = v.foam;
+    vec_to_json(j["flow"], v.flow);
+    j["density"] = v.density;
+    j["drag"] = v.drag;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Water& v) {
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    scalar_from_json(j, "depth", v.depth);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    scalar_from_json(j, "clarity", v.clarity);
+    scalar_from_json(j, "wave_height", v.wave_height);
+    scalar_from_json(j, "wave_length", v.wave_length);
+    scalar_from_json(j, "wave_direction", v.wave_direction);
+    scalar_from_json(j, "choppiness", v.choppiness);
+    scalar_from_json(j, "ripples", v.ripples);
+    scalar_from_json(j, "foam", v.foam);
+    if (j.is_object() && j.contains("flow")) vec_from_json(j["flow"], v.flow);
+    scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "drag", v.drag);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Water& v) {
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.depth);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.clarity);
+    h.f32(v.wave_height);
+    h.f32(v.wave_length);
+    h.f32(v.wave_direction);
+    h.f32(v.choppiness);
+    h.f32(v.ripples);
+    h.f32(v.foam);
+    h.f32(v.flow.x);
+    h.f32(v.flow.y);
+    h.f32(v.density);
+    h.f32(v.drag);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Water& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "depth") { *out = &v.depth; return 1; }
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "clarity") { *out = &v.clarity; return 1; }
+    if (path == "wave_height") { *out = &v.wave_height; return 1; }
+    if (path == "wave_length") { *out = &v.wave_length; return 1; }
+    if (path == "wave_direction") { *out = &v.wave_direction; return 1; }
+    if (path == "choppiness") { *out = &v.choppiness; return 1; }
+    if (path == "ripples") { *out = &v.ripples; return 1; }
+    if (path == "foam") { *out = &v.foam; return 1; }
+    if (path == "flow") { *out = &v.flow.x; return 2; }
+    if (path == "flow.x") { *out = &v.flow.x; return 1; }
+    if (path == "flow.y") { *out = &v.flow.y; return 1; }
+    if (path == "density") { *out = &v.density; return 1; }
+    if (path == "drag") { *out = &v.drag; return 1; }
     return 0;
 }
 
@@ -2214,10 +2364,20 @@ constexpr std::array<FieldInfo, 7> kLightFields = {{
 }};
 constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
     FieldInfo{"size", "vec3", "The box it covers, centered on the entity, in world units (not turned with it)."},
-    FieldInfo{"intensity", "f32", "Multiplies what it reflects."},
+    FieldInfo{"intensity", "f32", "Multiplies what it reflects and the light it gives."},
     FieldInfo{"box_projection", "bool", "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky."},
-    FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time); otherwise when it appears, moves or changes size, or on render.probes {refresh: true}."},
+    FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}."},
     FieldInfo{"enabled", "bool", "false stops it being used, without removing it."},
+}};
+constexpr std::array<FieldInfo, 8> kDecalFields = {{
+    FieldInfo{"texture", "string", "A project image (its alpha is where it paints); empty is a soft round spot."},
+    FieldInfo{"color", "color", "Multiplies the image; alpha is the decal's opacity."},
+    FieldInfo{"size", "vec3", "The box's size along the entity's x, y (the projection's depth) and z, times its scale."},
+    FieldInfo{"roughness", "f32", "The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own."},
+    FieldInfo{"emissive", "f32", "How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units."},
+    FieldInfo{"angle", "f32", "Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean)."},
+    FieldInfo{"order", "i32", "Where decals overlap, a higher order paints over a lower (then the later entity)."},
+    FieldInfo{"enabled", "bool", "false stops it painting."},
 }};
 constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"color", "color", "The fog's color as a color picker shows it (sRGB); the alpha is unused."},
@@ -2421,7 +2581,7 @@ constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
     FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed."},
 }};
-constexpr std::array<FieldInfo, 16> kCharacterFields = {{
+constexpr std::array<FieldInfo, 19> kCharacterFields = {{
     FieldInfo{"velocity", "vec3", "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall."},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
     FieldInfo{"max_fall", "f32", "Fastest downward speed."},
@@ -2430,6 +2590,7 @@ constexpr std::array<FieldInfo, 16> kCharacterFields = {{
     FieldInfo{"step", "f32", "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it."},
     FieldInfo{"max_slope", "f32", "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down."},
     FieldInfo{"push", "f32", "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed)."},
+    FieldInfo{"swim_speed", "f32", "In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too."},
     FieldInfo{"mask", "u32", "Bits of the collision layers (Collider.layer) the character is stopped by; all by default."},
     FieldInfo{"grounded", "bool", "Standing on a floor no steeper than max_slope (written by the engine)."},
     FieldInfo{"ground_normal", "vec3", "The floor's normal where it stands (written by the engine)."},
@@ -2438,6 +2599,8 @@ constexpr std::array<FieldInfo, 16> kCharacterFields = {{
     FieldInfo{"wall_normal", "vec3", "That wall's normal (written by the engine)."},
     FieldInfo{"on_ceiling", "bool", "Its head hit something this tick (written by the engine)."},
     FieldInfo{"stepped", "bool", "Walked up an edge this tick (written by the engine)."},
+    FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine)."},
+    FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine)."},
 }};
 constexpr std::array<FieldInfo, 13> kTerrainFields = {{
     FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity."},
@@ -2453,6 +2616,22 @@ constexpr std::array<FieldInfo, 13> kTerrainFields = {{
     FieldInfo{"rock_slope", "f32", "Degrees from level above which ground is rock."},
     FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none."},
     FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground."},
+}};
+constexpr std::array<FieldInfo, 14> kWaterFields = {{
+    FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity."},
+    FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed."},
+    FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back)."},
+    FieldInfo{"clarity", "f32", "How deep one sees into it, in units: at this depth what lies below is mostly hidden by the water's colour."},
+    FieldInfo{"wave_height", "f32", "The height of the largest waves, crest over trough, in units; 0 is still water."},
+    FieldInfo{"wave_length", "f32", "The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length."},
+    FieldInfo{"wave_direction", "f32", "Where the waves run, in degrees about +y from +x (90 runs toward -z)."},
+    FieldInfo{"choppiness", "f32", "How sharp the crests are, 0 (rolling) to 1 (peaked)."},
+    FieldInfo{"ripples", "f32", "The strength of the small ripples on the waves, 0 for none."},
+    FieldInfo{"foam", "f32", "How far out from the shore foam reaches, in units of depth; 0 for none."},
+    FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples."},
+    FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default)."},
+    FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more."},
+    FieldInfo{"enabled", "bool", "false stops it being drawn and buoying."},
 }};
 constexpr std::array<FieldInfo, 14> kScatterFields = {{
     FieldInfo{"count", "i32", "Places tried (the most copies there can be; up to 20000)."},
@@ -2553,7 +2732,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 33> kComponents = {{
+constexpr std::array<ComponentInfo, 35> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -2561,7 +2740,8 @@ constexpr std::array<ComponentInfo, 33> kComponents = {{
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
-    ComponentInfo{"ReflectionProbe", "What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},
+    ComponentInfo{"ReflectionProbe", "The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},
+    ComponentInfo{"Decal", "An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.", true, kDecalFields},
     ComponentInfo{"Fog", "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.", true, kFogFields},
     ComponentInfo{"Sky", "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.", true, kSkyFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},
@@ -2578,6 +2758,7 @@ constexpr std::array<ComponentInfo, 33> kComponents = {{
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Character", "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.", true, kCharacterFields},
     ComponentInfo{"Terrain", "Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.", true, kTerrainFields},
+    ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
     ComponentInfo{"TopDown2D", "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).", true, kTopDown2DFields},

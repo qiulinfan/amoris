@@ -150,6 +150,8 @@ class World {
     [[nodiscard]] const std::vector<Instance>* derived_instances(EntityId id) const;
     [[nodiscard]] std::int64_t tick_index() const;
     void set_tick_index(std::int64_t tick);
+    // Simulated time: the tick index times the length of the last tick (what waves move by).
+    [[nodiscard]] double seconds() const;
     // Deterministic hash of every entity path and component value in tree order.
     [[nodiscard]] std::uint64_t hash() const;
 

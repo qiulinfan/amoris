@@ -1557,6 +1557,9 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
     } else if (ext == ".stl") {
         POCKET_TRY(bytes, fs::read_bytes(full));
         parsed = parse_stl(std::string(bytes.begin(), bytes.end()), path);
+    } else if (ext == ".ply") {
+        POCKET_TRY(bytes, fs::read_bytes(full));
+        parsed = parse_ply(std::string(bytes.begin(), bytes.end()), path);
     } else if (blender_format(ext)) {
         // Through Blender into glTF (cached by content), then read like any glTF.
         auto glb = converted_glb(path, full, false);
@@ -1708,7 +1711,7 @@ Result<Json> AssetStore::import(const std::string& path, bool force) {
         j["seconds"] = conv.seconds;
         j["blender"] = conv.blender;
     } else {
-        j["importer"] = ext == ".obj" ? "obj" : ext == ".stl" ? "stl" : "gltf";
+        j["importer"] = ext == ".obj" ? "obj" : ext == ".stl" ? "stl" : ext == ".ply" ? "ply" : "gltf";
     }
     invalidate(path);
     POCKET_TRY(mesh, this->mesh(path));
@@ -1744,13 +1747,13 @@ Json AssetStore::list() const {
         for (const auto& p : paths) {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            const bool model = ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || blender_format(ext);
+            const bool model = ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || ext == ".ply" || blender_format(ext);
             std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" ? "audio" : ext == ".mtl" ? "material" : "other";
 
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
             f["kind"] = kind;
-            if (model) f["importer"] = blender_format(ext) ? "blender" : ext == ".obj" ? "obj" : ext == ".stl" ? "stl" : "gltf";
+            if (model) f["importer"] = blender_format(ext) ? "blender" : ext == ".obj" ? "obj" : ext == ".stl" ? "stl" : ext == ".ply" ? "ply" : "gltf";
             f["bytes"] = std::filesystem::file_size(p);
             f["loaded"] = kind == "mesh" ? meshes_.contains(f["path"].get<std::string>()) : kind == "image" ? images_.contains(f["path"].get<std::string>()) : kind == "tilemap" ? tilemaps_.contains(f["path"].get<std::string>()) : false;
             files.push_back(f);
@@ -1783,7 +1786,7 @@ Json AssetStore::describe(const std::string& path) {
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     Json j;
     j["path"] = path;
-    if (ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || blender_format(ext)) {
+    if (ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || ext == ".ply" || blender_format(ext)) {
         auto m = mesh(path);
         if (!m) { j["error"] = m.error().to_string(); return j; }
         j = (*m)->describe();

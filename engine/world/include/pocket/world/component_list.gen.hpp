@@ -10,6 +10,7 @@
     X(Camera) \
     X(Light) \
     X(ReflectionProbe) \
+    X(Decal) \
     X(Fog) \
     X(Sky) \
     X(MeshRenderer) \
@@ -26,6 +27,7 @@
     X(Body2D) \
     X(Character) \
     X(Terrain) \
+    X(Water) \
     X(Scatter) \
     X(Vehicle) \
     X(TopDown2D) \

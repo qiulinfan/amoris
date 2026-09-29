@@ -53,7 +53,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket run audio -- --headless --frames 300 --json          # voices and audio events without a sound card (docs/design/audio.md)
 ./.pocket/pocket run swarm -- --headless --frames 120 --json          # 3000 entities per tick through typed arrays (tick.ms in state)
 ./.pocket/pocket scenario walker                                      # a 3D character (Character: stairs, slopes, a lift, crates) walked by a bot (docs/design/physics.md, Characters)
-./.pocket/pocket run hills -- --headless --frames 60 --json            # noise hills (Terrain), a character on them; terrain.height / terrain.sculpt (docs/design/terrain.md)
+./.pocket/pocket run hills -- --headless --frames 60 --json            # noise hills (Terrain), a character on them, a lake (Water) things float on; terrain.height / water.height (docs/design/terrain.md, docs/design/water.md)
 ./.pocket/pocket scenario drive                                       # a car on raycast wheels (Vehicle) through four gates on a terrain (docs/design/physics.md, Vehicles)
 ./.pocket/pocket run arena -- --net-host 7777   # and, elsewhere, -- --net-join HOST:7777: a lockstep two-player game (docs/design/networking.md)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)

@@ -11,6 +11,7 @@ Everything is produced from code so the repository carries no third-party binari
 Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samples/assets/assets)
        python3 tools/scripts/make_sample_assets.py --sounds [dir]   WAV clips for samples/audio/assets
        python3 tools/scripts/make_sample_assets.py --sprites [dir]  PNG sprites for samples/sprites/assets
+       python3 tools/scripts/make_sample_assets.py --decals [dir]   decal images for samples/showcase/assets
 """
 import base64
 import json
@@ -644,6 +645,62 @@ def bowl(radius=2.5, k=0.25, rings=20, segments=48):
     return glb(positions, normals, uvs, indices, material, [{"name": "bowl"}])
 
 
+def sigil(size=256):
+    """A ring of ticks around a compass rose: white where it glows, transparent elsewhere (a decal's image)."""
+    px = [0] * (size * size * 4)
+    c = size / 2
+    # The rose: eight points, the four on the axes long, the four between them short, joined to
+    # their neighbours' roots so each point is a thin diamond.
+    points = [((0.72 if k % 2 == 0 else 0.42) * math.cos(k * math.pi / 4), (0.72 if k % 2 == 0 else 0.42) * math.sin(k * math.pi / 4)) for k in range(8)]
+    roots = [(0.12 * math.cos(k * math.pi / 4 + math.pi / 8), 0.12 * math.sin(k * math.pi / 4 + math.pi / 8)) for k in range(8)]
+    edges = [(points[k], roots[k]) for k in range(8)] + [(points[k], roots[k - 1]) for k in range(8)]
+    def seg_dist(x, y, a, b):
+        ax, ay = a; bx, by = b
+        dx, dy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)))
+        return math.hypot(x - ax - t * dx, y - ay - t * dy)
+    for y in range(size):
+        for x in range(size):
+            u, v = (x + 0.5 - c) / c, (y + 0.5 - c) / c
+            r = math.hypot(u, v)
+            a = 0.0
+            for ring, width in ((0.92, 0.025), (0.78, 0.018)):
+                a = max(a, 1 - abs(r - ring) / width)
+            # Runes: short ticks between the rings, every 15 degrees.
+            ang = math.atan2(v, u)
+            k = round(ang / (math.pi / 12))
+            if 0.8 < r < 0.9 and abs(ang - k * math.pi / 12) * r < 0.012 * (2 if k % 3 == 0 else 1):
+                a = 1.0
+            d = min(seg_dist(u, v, e0, e1) for e0, e1 in edges)
+            a = max(a, 1 - d / 0.018)
+            a = max(0.0, min(1.0, a))
+            i = (y * size + x) * 4
+            px[i:i + 4] = [255, 255, 255, int(round(255 * a))]
+    return png(size, size, px)
+
+
+def arrow(size=128):
+    """A painted arrow pointing to the image's top (-z on the ground): yellow, worn at the edges."""
+    px = [0] * (size * size * 4)
+    for y in range(size):
+        for x in range(size):
+            u, v = (x + 0.5) / size - 0.5, (y + 0.5) / size - 0.5
+            head = v < -0.05 and abs(u) < (v + 0.45) * 0.9
+            shaft = -0.06 <= v < 0.42 and abs(u) < 0.11
+            wear = 0.75 + 0.25 * math.sin(x * 1.7 + y * 0.9) * math.sin(x * 0.4 - y * 1.3)
+            i = (y * size + x) * 4
+            px[i:i + 4] = [235, 190, 40, int(round(255 * wear)) if head or shaft else 0]
+    return png(size, size, px)
+
+
+def make_decals(out):
+    os.makedirs(out, exist_ok=True)
+    for name, data in (("sigil.png", sigil()), ("arrow.png", arrow())):
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
+        print(name, len(data), "bytes")
+
+
 def make_physics(out):
     os.makedirs(out, exist_ok=True)
     doc, buf = bowl()
@@ -654,6 +711,9 @@ def make_physics(out):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--physics":
         make_physics(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "physics", "assets"))
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--decals":
+        make_decals(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "showcase", "assets"))
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--sprites":
         make_sprites(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "sprites", "assets"))

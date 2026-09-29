@@ -1,6 +1,7 @@
 #include <pocket/physics/physics.hpp>
 
 #include <pocket/core/log.hpp>
+#include <pocket/world/water.hpp>
 
 #include <algorithm>
 #include <array>
@@ -782,6 +783,8 @@ struct Physics::Impl {
     std::vector<Contact> contacts;
     std::vector<JointInfo> joint_infos;
     std::set<std::pair<EntityId, EntityId>> touching;  // pairs in contact last step
+    std::set<std::pair<EntityId, EntityId>> wet;       // bodies in water last step (body, water)
+    std::set<std::pair<EntityId, EntityId>> character_wet;   // characters in water after their last move
     std::set<std::pair<EntityId, EntityId>> ignored;   // exceptions: pairs that never collide (ordered ids)
     std::set<std::pair<EntityId, EntityId>> joined;    // pairs a joint with collide_connected = false keeps apart, this step
     std::map<EntityId, float> sleep_timers;             // persists across steps (bodies are regathered)
@@ -1136,6 +1139,7 @@ void Physics::step(world::World& w, double dt_d) {
     }
     if (im.bodies.empty()) {
         im.touching.clear();
+        im.wet.clear();
         return;
     }
     // 1. Forces.
@@ -1228,6 +1232,113 @@ void Physics::step(world::World& w, double dt_d) {
         }
         veh.speed = speed;
         veh.grounded = grounded;
+    }
+    // 1c. Water (docs/design/water.md): a dynamic body's volume is cut into cells (27 across its
+    //     box, those of them inside a sphere or a capsule); a cell under the surface is pushed up by
+    //     the weight of the water it displaces and dragged toward the water's current, each at its own
+    //     place, so a body finds its level, rights itself and rides the waves.
+    {
+        struct Pool {
+            EntityId id;
+            world::Water water;
+            Vec3 center;
+        };
+        std::vector<Pool> pools;
+        w.ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {
+            if (wa.enabled && wa.size.x > 0 && wa.size.y > 0) pools.push_back({e.id(), wa, t.position});
+        });
+        std::sort(pools.begin(), pools.end(), [](const Pool& x, const Pool& y) { return x.id < y.id; });
+        std::set<std::pair<EntityId, EntityId>> wet;
+        const float g = length(s.gravity);
+        const Vec3 up = g > 0 ? s.gravity * (-1.0f / g) : Vec3{0, 1, 0};
+        const auto time = static_cast<float>(w.seconds());
+        std::vector<std::pair<Vec3, float>> cells;   // offsets in the body's frame, volumes
+        for (Body& b : im.bodies) {
+            if (pools.empty()) break;
+            if (b.kind != 0 || b.inv_mass <= 0 || b.shape == 3 || b.trigger) continue;
+            cells.clear();
+            const float pi = std::numbers::pi_v<float>;
+            if (b.shape == 0 || b.shape == 1) {
+                const Vec3 h = b.shape == 0 ? b.half : Vec3{b.half.x, b.half.x, b.half.x};
+                for (int i = -1; i <= 1; ++i)
+                    for (int j = -1; j <= 1; ++j)
+                        for (int k = -1; k <= 1; ++k) {
+                            const Vec3 o{h.x * i * (2.0f / 3.0f), h.y * j * (2.0f / 3.0f), h.z * k * (2.0f / 3.0f)};
+                            if (b.shape == 1 && length(o) > b.half.x) continue;
+                            cells.emplace_back(o, 0.0f);
+                        }
+                const float volume = b.shape == 0 ? 8.0f * h.x * h.y * h.z : 4.0f / 3.0f * pi * h.x * h.x * h.x;
+                for (auto& c : cells) c.second = volume / static_cast<float>(cells.size());
+            } else if (b.shape == 2) {
+                const float r = b.half.x, reach = b.half.y + b.half.x;
+                for (int i = -1; i <= 1; ++i)
+                    for (int j = 0; j < 5; ++j)
+                        for (int k = -1; k <= 1; ++k) {
+                            const Vec3 o{r * i * (2.0f / 3.0f), -reach + (static_cast<float>(j) + 0.5f) * reach * 0.4f, r * k * (2.0f / 3.0f)};
+                            const float along = std::clamp(o.y, -b.half.y, b.half.y);
+                            if (length(Vec3{o.x, o.y - along, o.z}) > r) continue;
+                            cells.emplace_back(o, 0.0f);
+                        }
+                const float volume = pi * r * r * 2.0f * b.half.y + 4.0f / 3.0f * pi * r * r * r;
+                for (auto& c : cells) c.second = volume / static_cast<float>(std::max<std::size_t>(cells.size(), 1));
+            }
+            if (cells.empty()) continue;
+            for (const Pool& p : pools) {
+                const world::Water& wa = p.water;
+                const float top = p.center.y + std::max(wa.wave_height, 0.0f), bottom = p.center.y - std::max(wa.depth, 0.0f);
+                if (b.aabb_max.x < p.center.x - wa.size.x * 0.5f || b.aabb_min.x > p.center.x + wa.size.x * 0.5f || b.aabb_max.z < p.center.z - wa.size.y * 0.5f ||
+                    b.aabb_min.z > p.center.z + wa.size.y * 0.5f || b.aabb_min.y > top || b.aabb_max.y < bottom)
+                    continue;
+                const bool moving = wa.wave_height > 0 || wa.flow.x != 0 || wa.flow.y != 0;
+                if (b.sleeping) {
+                    if (!moving) {
+                        wet.insert({b.id, p.id});
+                        im.stats.floating++;
+                        continue;
+                    }
+                    b.sleeping = false;
+                    b.sleep_timer = 0;
+                }
+                // Besides the drag, the water resists a body bobbing through its surface (heave) more
+                // strongly, as the waves it makes carry the motion away: floating things settle
+                // instead of bouncing.
+                constexpr float kHeave = 6.0f;
+                const float drag_k = std::max(wa.drag, 0.0f);
+                Vec3 lift_v{}, lift_w{}, drag_v{}, drag_w{};
+                float displaced = 0;
+                for (const auto& [o, volume] : cells) {
+                    const Vec3 arm = b.rotation.rotate(o);
+                    const Vec3 at = b.position + arm;
+                    if (!world::water_covers(wa, p.center, at.x, at.z) || at.y < bottom) continue;
+                    const world::WaterPoint surface = world::water_at(wa, p.center.y, at.x, at.z, time);
+                    const float under = std::clamp((surface.position.y - at.y) / std::cbrt(volume) + 0.5f, 0.0f, 1.0f);
+                    if (under <= 0) continue;
+                    const float v_under = volume * under;
+                    displaced += v_under;
+                    const Vec3 lift = up * (wa.density * g * v_under * dt);
+                    lift_v += lift * b.inv_mass;
+                    lift_w += mul3(b.inv_inertia_world, cross(arm, lift));
+                    const Vec3 rel = surface.velocity - (b.velocity + cross(b.angular, arm));
+                    const Vec3 rel_up = up * dot(rel, up);
+                    const Vec3 drag = ((rel - rel_up) * drag_k + rel_up * (drag_k + kHeave)) * (wa.density * v_under * dt);
+                    drag_v += drag * b.inv_mass;
+                    drag_w += mul3(b.inv_inertia_world, cross(arm, drag));
+                }
+                if (displaced <= 0) continue;
+                // The drag stops short of turning the motion around in one step.
+                const float k = (drag_k + kHeave) * wa.density * displaced * dt * b.inv_mass;
+                const float keep = k > 0.9f ? 0.9f / k : 1.0f;
+                b.velocity += lift_v + drag_v * keep;
+                b.angular += lift_w + drag_w * keep;
+                wet.insert({b.id, p.id});
+                im.stats.floating++;
+            }
+        }
+        for (const auto& pair : wet)
+            if (!im.wet.contains(pair)) w.events().emit(w.tick_index(), "water.entered", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.path(pair.second)}});
+        for (const auto& pair : im.wet)
+            if (!wet.contains(pair) && w.alive(pair.first)) w.events().emit(w.tick_index(), "water.left", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.alive(pair.second) ? w.path(pair.second) : std::string()}});
+        im.wet = std::move(wet);
     }
     // Pairs kept apart on purpose: exceptions whose bodies are gone are dropped; joints that say
     // their two bodies do not collide are noted for this step.
@@ -2306,6 +2417,14 @@ void Physics::move_characters(world::World& w, double dt_d) {
     std::sort(triggers.begin(), triggers.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
     std::vector<std::pair<EntityId, world::Character>> movers;
     w.ecs().each([&](flecs::entity e, const world::Character& c) { if (e.has<world::Transform>()) movers.emplace_back(e.id(), c); });
+    // The water they may swim in (docs/design/water.md), the first by id where bodies overlap.
+    std::vector<std::tuple<EntityId, world::Water, Vec3>> pools;
+    w.ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {
+        if (wa.enabled && wa.size.x > 0 && wa.size.y > 0) pools.emplace_back(e.id(), wa, t.position);
+    });
+    std::sort(pools.begin(), pools.end(), [](const auto& x, const auto& y) { return std::get<0>(x) < std::get<0>(y); });
+    const auto water_time = static_cast<float>(w.seconds());
+    std::set<std::pair<EntityId, EntityId>> wet;
     std::sort(movers.begin(), movers.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
     std::map<EntityId, Vec3> pushes;   // speed given to dynamic bodies, applied after every character moved
     im.stats.characters = static_cast<std::uint32_t>(movers.size());
@@ -2431,11 +2550,36 @@ void Physics::move_characters(world::World& w, double dt_d) {
             }
             if (!moved) break;
         }
-        // 3. Gravity, except for a character standing on the ground (a jump sets y above 0).
-        const bool walking = was_grounded && v.y <= 0;
-        if (walking) v.y = 0;
-        else v.y = std::max(v.y + c.gravity * dt, -std::fabs(c.max_fall));
-        const Vec3 horizontal_velocity{v.x, 0, v.z};
+        // 3. Gravity, except for a character standing on the ground (a jump sets y above 0) or
+        //    swimming: in water whose surface is more than a fifth of its height above its centre
+        //    (a tenth once swimming) it is held with its head out by a damped spring toward that
+        //    depth, moves across at swim_speed and is carried by the water's own motion.
+        float surface = 0;
+        EntityId pool = 0;
+        Vec3 stream{};
+        for (const auto& [pid, wa, centre] : pools) {
+            if (!world::water_covers(wa, centre, pos.x, pos.z) || pos.y + half_h < centre.y - std::max(wa.depth, 0.0f)) continue;
+            const world::WaterPoint s = world::water_at(wa, centre.y, pos.x, pos.z, water_time);
+            surface = s.position.y;
+            stream = Vec3{s.velocity.x, 0, s.velocity.z};
+            pool = pid;
+            break;
+        }
+        const float chest = pool ? surface - pos.y : -1e9f;
+        const bool swimming = pool && (chest > 0.2f * c.height || (c.swimming && chest > 0.1f * c.height));
+        c.swimming = swimming;
+        c.submerged = pool ? std::clamp((surface - (pos.y - half_h)) / (2.0f * half_h), 0.0f, 1.0f) : 0.0f;
+        if (c.submerged > 0) wet.insert({id, pool});
+        const bool walking = was_grounded && v.y <= 0 && !swimming;
+        if (swimming) {
+            constexpr float kFloatSpring = 30.0f, kFloatDamping = 9.0f;   // per second squared, per second
+            v.y += (kFloatSpring * (surface - 0.2f * c.height - pos.y) - kFloatDamping * v.y) * dt;
+        } else if (walking) {
+            v.y = 0;
+        } else {
+            v.y = std::max(v.y + c.gravity * dt, -std::fabs(c.max_fall));
+        }
+        const Vec3 horizontal_velocity = swimming ? Vec3{v.x, 0, v.z} * std::clamp(c.swim_speed, 0.0f, 10.0f) + stream : Vec3{v.x, 0, v.z};
         auto wall_hit = [&](const Hit& h) {
             c.on_wall = true;
             c.wall_normal = h.n;
@@ -2457,7 +2601,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
         // 4. Across: slid along walls, up walkable slopes; a walking capsule's foot is lifted by `lift`.
         const float raise = walking ? lift : 0.0f;
         const Vec3 start_across = pos;
-        Vec3 rest{v.x * dt, 0, v.z * dt};
+        Vec3 rest = horizontal_velocity * dt;
         for (int it = 0; it < 4 && length(rest) > 1e-6f; ++it) {
             const Hit h = sweep(capsule(pos, raise), rest);
             if (h.index < 0) { pos += rest; break; }
@@ -2594,6 +2738,11 @@ void Physics::move_characters(world::World& w, double dt_d) {
         }
         was_inside = std::move(inside);
     }
+    for (const auto& pair : wet)
+        if (!im.character_wet.contains(pair)) w.events().emit(w.tick_index(), "water.entered", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.path(pair.second)}, {"character", true}});
+    for (const auto& pair : im.character_wet)
+        if (!wet.contains(pair) && w.alive(pair.first)) w.events().emit(w.tick_index(), "water.left", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.alive(pair.second) ? w.path(pair.second) : std::string()}, {"character", true}});
+    im.character_wet = std::move(wet);
     for (auto it = im.character_triggers.begin(); it != im.character_triggers.end();) {
         if (w.ecs().is_alive(it->first) && w.entity(it->first).has<world::Character>()) ++it;
         else it = im.character_triggers.erase(it);
@@ -2631,6 +2780,7 @@ Json Physics::describe() const {
     j["ignored"] = s.ignored;
     j["exceptions"] = impl_->ignored.size();
     j["characters"] = Json{{"count", s.characters}, {"grounded", s.characters_grounded}, {"landings", s.landings}, {"stepped", s.stepped}, {"pushed", s.pushed}};
+    j["floating"] = s.floating;
     j["gravity"] = Json{{"x", impl_->settings.gravity.x}, {"y", impl_->settings.gravity.y}, {"z", impl_->settings.gravity.z}};
     return j;
 }

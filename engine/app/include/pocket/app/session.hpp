@@ -95,6 +95,7 @@ class Session {
     Result<Json> animation_command(std::string_view op, const Json& p);
     Result<Json> tilemap_command(std::string_view op, const Json& p);
     Result<Json> terrain_command(std::string_view op, const Json& p);
+    Result<Json> water_command(std::string_view op, const Json& p);
     Result<Json> assets_command(std::string_view op, const Json& p);
     Result<Json> audio_command(std::string_view op, const Json& p);
     Result<Json> input_command(std::string_view op, const Json& p);

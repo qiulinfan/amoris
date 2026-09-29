@@ -72,24 +72,25 @@
       "x": 0,
       "y": 3.2,
       "z": 0
-     },
-     "scale": {
-      "x": 96,
-      "y": 1,
-      "z": 96
      }
     },
-    "MeshRenderer": {
-     "mesh": "plane",
-     "color": {
-      "r": 0.2,
-      "g": 0.42,
-      "b": 0.6,
-      "a": 0.72
+    "Water": {
+     "size": {
+      "x": 96,
+      "y": 96
      },
-     "roughness": 0.08,
-     "metallic": 0,
-     "cast_shadows": false
+     "depth": 6,
+     "wave_height": 0.22,
+     "wave_length": 7,
+     "wave_direction": 30,
+     "color": {
+      "r": 0.05,
+      "g": 0.24,
+      "b": 0.28,
+      "a": 1
+     },
+     "clarity": 2.5,
+     "foam": 0.35
     }
    }
   },

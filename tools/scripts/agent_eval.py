@@ -27,7 +27,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
 
 
 def near(a, b, tol=0.01):

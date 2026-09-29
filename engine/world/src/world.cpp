@@ -156,6 +156,7 @@ struct World::Impl {
     EventLog events;
     std::vector<EntityId> roots;  // creation order
     std::int64_t tick = 0;
+    double tick_seconds = 1.0 / 60.0;
     flecs::query<Transform, Velocity> motion;
     flecs::query<Lifetime> lifetime;
     flecs::query<const MeshRenderer, const WorldTransform> bounds;
@@ -231,6 +232,7 @@ EventLog& World::events() { return impl_->events; }
 const EventLog& World::events() const { return impl_->events; }
 std::int64_t World::tick_index() const { return impl_->tick; }
 void World::set_tick_index(std::int64_t tick) { impl_->tick = tick; }
+double World::seconds() const { return static_cast<double>(impl_->tick) * impl_->tick_seconds; }
 
 Result<EntityId> World::spawn(std::string_view name, EntityId parent, const Json& components, std::uint64_t cause) {
     if (name.find('/') != std::string::npos || name.find(':') != std::string::npos) {
@@ -809,6 +811,7 @@ void World::update_transforms() {
 
 void World::tick(double dt) {
     auto fdt = static_cast<float>(dt);
+    if (dt > 0) impl_->tick_seconds = dt;
     // Motion: integrate velocity into the local transform.
     impl_->motion.each([fdt](flecs::entity, Transform& t, Velocity& v) {
         t.position += v.linear * fdt;

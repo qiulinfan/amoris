@@ -74,13 +74,27 @@ fields = [
 
 [[component]]
 name = "ReflectionProbe"
-doc = "What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap."
+doc = "The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap."
 fields = [
     { name = "size", type = "vec3", default = [10.0, 4.0, 10.0], doc = "The box it covers, centered on the entity, in world units (not turned with it)." },
-    { name = "intensity", type = "f32", default = 1.0, doc = "Multiplies what it reflects." },
+    { name = "intensity", type = "f32", default = 1.0, doc = "Multiplies what it reflects and the light it gives." },
     { name = "box_projection", type = "bool", default = true, doc = "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky." },
-    { name = "realtime", type = "bool", default = false, doc = "Capture again every frame (six views of the scene each time); otherwise when it appears, moves or changes size, or on render.probes {refresh: true}." },
+    { name = "realtime", type = "bool", default = false, doc = "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}." },
     { name = "enabled", type = "bool", default = true, doc = "false stops it being used, without removing it." },
+]
+
+[[component]]
+name = "Decal"
+doc = "An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection."
+fields = [
+    { name = "texture", type = "string", default = "", doc = "A project image (its alpha is where it paints); empty is a soft round spot." },
+    { name = "color", type = "color", default = [1.0, 1.0, 1.0, 1.0], doc = "Multiplies the image; alpha is the decal's opacity." },
+    { name = "size", type = "vec3", default = [2.0, 1.0, 2.0], doc = "The box's size along the entity's x, y (the projection's depth) and z, times its scale." },
+    { name = "roughness", type = "f32", default = -1.0, doc = "The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own." },
+    { name = "emissive", type = "f32", default = 0.0, doc = "How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units." },
+    { name = "angle", type = "f32", default = 60.0, doc = "Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean)." },
+    { name = "order", type = "i32", default = 0, doc = "Where decals overlap, a higher order paints over a lower (then the later entity)." },
+    { name = "enabled", type = "bool", default = true, doc = "false stops it painting." },
 ]
 
 [[component]]
@@ -401,6 +415,7 @@ fields = [
     { name = "step", type = "f32", default = 0.3, doc = "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it." },
     { name = "max_slope", type = "f32", default = 45.0, doc = "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down." },
     { name = "push", type = "f32", default = 1.0, doc = "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed)." },
+    { name = "swim_speed", type = "f32", default = 0.6, doc = "In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too." },
     { name = "mask", type = "u32", default = 4294967295, doc = "Bits of the collision layers (Collider.layer) the character is stopped by; all by default." },
     { name = "grounded", type = "bool", default = false, doc = "Standing on a floor no steeper than max_slope (written by the engine)." },
     { name = "ground_normal", type = "vec3", default = [0.0, 1.0, 0.0], doc = "The floor's normal where it stands (written by the engine)." },
@@ -409,6 +424,8 @@ fields = [
     { name = "wall_normal", type = "vec3", default = [0.0, 0.0, 0.0], doc = "That wall's normal (written by the engine)." },
     { name = "on_ceiling", type = "bool", default = false, doc = "Its head hit something this tick (written by the engine)." },
     { name = "stepped", type = "bool", default = false, doc = "Walked up an edge this tick (written by the engine)." },
+    { name = "swimming", type = "bool", default = false, doc = "Swimming: in water deeper than its chest, held with its head out (written by the engine)." },
+    { name = "submerged", type = "f32", default = 0.0, doc = "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine)." },
 ]
 
 [[component]]
@@ -428,6 +445,26 @@ fields = [
     { name = "rock_slope", type = "f32", default = 35.0, doc = "Degrees from level above which ground is rock." },
     { name = "snow_line", type = "f32", default = 0.85, doc = "The fraction of `height` above which ground is snow; 1 or more for none." },
     { name = "texture_tile", type = "f32", default = 4.0, doc = "Units per repeat of the MeshRenderer's texture over the ground." },
+]
+
+[[component]]
+name = "Water"
+doc = "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere."
+fields = [
+    { name = "size", type = "vec2", default = [40.0, 40.0], doc = "The surface's extent along x and z, centred on the entity." },
+    { name = "depth", type = "f32", default = 4.0, doc = "How far below the surface the water reaches: bodies deeper than this are not buoyed." },
+    { name = "color", type = "color", default = [0.03, 0.2, 0.24, 1.0], doc = "The colour deep water turns (the light it scatters back)." },
+    { name = "clarity", type = "f32", default = 4.0, doc = "How deep one sees into it, in units: at this depth what lies below is mostly hidden by the water's colour." },
+    { name = "wave_height", type = "f32", default = 0.3, doc = "The height of the largest waves, crest over trough, in units; 0 is still water." },
+    { name = "wave_length", type = "f32", default = 8.0, doc = "The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length." },
+    { name = "wave_direction", type = "f32", default = 0.0, doc = "Where the waves run, in degrees about +y from +x (90 runs toward -z)." },
+    { name = "choppiness", type = "f32", default = 0.5, doc = "How sharp the crests are, 0 (rolling) to 1 (peaked)." },
+    { name = "ripples", type = "f32", default = 1.0, doc = "The strength of the small ripples on the waves, 0 for none." },
+    { name = "foam", type = "f32", default = 0.5, doc = "How far out from the shore foam reaches, in units of depth; 0 for none." },
+    { name = "flow", type = "vec2", default = [0.0, 0.0], doc = "A current along x and z in units a second: it carries what floats, and the ripples." },
+    { name = "density", type = "f32", default = 2.0, doc = "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default)." },
+    { name = "drag", type = "f32", default = 1.0, doc = "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more." },
+    { name = "enabled", type = "bool", default = true, doc = "false stops it being drawn and buoying." },
 ]
 
 [[component]]

@@ -141,6 +141,10 @@ struct RenderStats {
     bool ssr = false;                 // whether screen-space reflections were traced this frame
     std::uint32_t probes = 0;         // reflection probes in use (captured)
     std::uint32_t probe_captures = 0; // probes captured this frame (at most one a frame)
+    std::uint32_t water = 0;          // bodies of water drawn
+    bool underwater = false;          // the camera is under a water surface
+    std::uint32_t decals = 0;         // decals painted this frame (the nearest in view, at most 64)
+    std::uint32_t decal_images = 0;   // decal images loaded (layers of the array besides the built-in spot)
     bool dof = false;                 // whether depth of field was applied this frame
     bool motion_blur = false;         // whether motion blur was applied this frame
     std::uint32_t env_updates = 0;    // times the sky's environment light was rebuilt, over the renderer's life

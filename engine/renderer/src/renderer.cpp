@@ -1,4 +1,5 @@
 #include <pocket/renderer/renderer.hpp>
+#include <pocket/world/water.hpp>
 
 #include <pocket/core/log.hpp>
 #include <pocket/renderer/primitives.hpp>
@@ -11,8 +12,10 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <format>
 #include <functional>
 #include <map>
+#include <numbers>
 #include <set>
 #include <unordered_map>
 
@@ -32,6 +35,14 @@ struct GpuLight {
     float color_kind[4];   // linear color times intensity, kind (1 point, 2 spot)
     float dir_cos[4];      // spot: the direction it shines, cos of the outer half-angle
     float cone[4];         // spot: cos of the inner half-angle; its first shadow face (-1: none); a texel's size at unit distance
+};
+// A decal as the shader reads it (docs/design/rendering.md, Decals).
+struct GpuDecal {
+    float inv[16];      // world to the box, -0.5 to 0.5 along each axis
+    float axis[4];      // the projection's direction, the cosine past which surfaces fade
+    float color[4];     // linear tint, opacity
+    float params[4];    // image layer, roughness (negative: the surface's), glow
+    float sphere[4];    // centre, radius squared
 };
 // Shadows of point and spot lights: one depth atlas of 512-texel faces, a spot's one face a
 // perspective view down its cone, a point light's six the faces of a cube around it.
@@ -96,7 +107,8 @@ struct alignas(16) FrameUniforms {
     float taa[4];                // on
     float probe_box[8][4];       // reflection probes in use: center, the array layer
     float probe_ext[8][4];       // half size, intensity (negative: no box projection)
-    float probe_info[4];         // how many, the last prefiltered level
+    float probe_info[4];         // how many, the last prefiltered level, a capture, how many reflect
+    float decals[4];             // how many
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
@@ -112,6 +124,14 @@ constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
 constexpr std::uint32_t kMaxProbes = 8;
 constexpr std::uint32_t kProbeFace = 128;
 constexpr std::uint32_t kProbeWidth = 256, kProbeHeight = 128, kProbeLevels = 5;
+// Captures a probe makes when it appears or is refreshed: each is lit by the one before, so a
+// closed room's light bounces off its walls this many times (the first sees only the lights).
+constexpr int kProbeBounces = 3;
+// Bodies of water drawn at once (the first by id).
+constexpr std::uint32_t kMaxWater = 8;
+// Decals: the nearest in view, and their images (layers of one array, 0 the built-in spot).
+constexpr std::uint32_t kMaxDecals = 64;
+constexpr std::uint32_t kDecalSize = 256, kDecalLayers = 16, kDecalLevels = 9;
 constexpr std::uint32_t kShadowMapSize = 2048;
 
 struct alignas(16) ObjectUniforms {
@@ -177,6 +197,7 @@ struct Frame {
     probe_box: array<vec4f, 8>,
     probe_ext: array<vec4f, 8>,
     probe_info: vec4f,
+    decals: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -198,11 +219,14 @@ struct ShadowFace { view_proj: mat4x4f, rect: vec4f };
 @group(0) @binding(10) var<storage, read> shadow_faces: array<ShadowFace>;
 @group(0) @binding(11) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(12) var probe_env: texture_2d_array<f32>;
+// Each probe's diffuse light: nine spherical harmonics of its capture (divided by pi), sixteen
+// vec4s a probe apart (the layer's slot).
+@group(0) @binding(13) var<storage, read> probe_sh: array<vec4f, 128>;
 // The reflection probe a point is in (the first whose box holds it, a room's own walls and floor
 // included): what arrives along the mirror direction from its capture, box-projected; w is how much
 // it counts, 1 in the box and fading over half a unit outside it, 0 away from every probe.
 fn probe_specular(p: vec3f, n: vec3f, v: vec3f, roughness: f32) -> vec4f {
-    let count = u32(frame.probe_info.x);
+    let count = u32(frame.probe_info.w);
     let r = reflect(-v, n);
     for (var i = 0u; i < count; i = i + 1u) {
         let c = frame.probe_box[i].xyz;
@@ -220,6 +244,64 @@ fn probe_specular(p: vec3f, n: vec3f, v: vec3f, roughness: f32) -> vec4f {
         return vec4f(s * abs(frame.probe_ext[i].w), 1.0 - outside / 0.5);
     }
     return vec4f(0.0);
+}
+// The diffuse light of the reflection probe a point is in (the same box as its reflections): its
+// capture's harmonics at the normal; w is how much it counts, as for the reflections.
+fn probe_diffuse(p: vec3f, n: vec3f) -> vec4f {
+    let count = u32(frame.probe_info.x);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let local = p - frame.probe_box[i].xyz;
+        let outside = length(max(abs(local) - frame.probe_ext[i].xyz, vec3f(0.0)));
+        if (outside > 0.5) { continue; }
+        let b = u32(frame.probe_box[i].w) * 16u;
+        let c = probe_sh[b].rgb * 0.282095
+            + probe_sh[b + 1u].rgb * (0.488603 * n.y) + probe_sh[b + 2u].rgb * (0.488603 * n.z) + probe_sh[b + 3u].rgb * (0.488603 * n.x)
+            + probe_sh[b + 4u].rgb * (1.092548 * n.x * n.y) + probe_sh[b + 5u].rgb * (1.092548 * n.y * n.z)
+            + probe_sh[b + 6u].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + probe_sh[b + 7u].rgb * (1.092548 * n.x * n.z)
+            + probe_sh[b + 8u].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+        return vec4f(max(c, vec3f(0.0)) * abs(frame.probe_ext[i].w), 1.0 - outside / 0.5);
+    }
+    return vec4f(0.0);
+}
+// Decals (docs/design/rendering.md, Decals): the boxes in view, each an image projected along its
+// -y onto whatever lies inside it, painted in order over the surface before it is lit (and before
+// the id pass writes the surface, so reflections see a wet puddle).
+struct Decal {
+    inv: mat4x4f,      // the world into the box, -0.5 to 0.5 along each axis
+    axis: vec4f,       // the projection's direction, the cosine past which surfaces fade
+    color: vec4f,      // tint, opacity
+    params: vec4f,     // image layer, roughness (negative: the surface's), glow
+    sphere: vec4f,     // around the box: centre, radius squared
+};
+@group(0) @binding(14) var<storage, read> decals: array<Decal>;
+@group(0) @binding(15) var decal_tex: texture_2d_array<f32>;
+@group(0) @binding(16) var decal_samp: sampler;
+struct Painted {
+    albedo: vec3f,
+    roughness: f32,
+    metallic: f32,
+    glow: vec3f,
+};
+fn paint_decals(p: vec3f, n: vec3f, dp1: vec3f, dp2: vec3f, surface: Painted) -> Painted {
+    var out = surface;
+    let count = u32(frame.decals.x);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let d = decals[i];
+        let to = p - d.sphere.xyz;
+        if (dot(to, to) > d.sphere.w) { continue; }
+        let l = (d.inv * vec4f(p, 1.0)).xyz;
+        if (any(abs(l) > vec3f(0.5))) { continue; }
+        // Faint on surfaces turned away from the projection and toward the box's two ends.
+        let fade = smoothstep(d.axis.w, min(d.axis.w + 0.2, 1.0), dot(n, -d.axis.xyz)) * (1.0 - smoothstep(0.4, 0.5, abs(l.y)));
+        if (fade <= 0.0) { continue; }
+        let t = textureSampleGrad(decal_tex, decal_samp, l.xz + vec2f(0.5), i32(d.params.x), (d.inv * vec4f(dp1, 0.0)).xz, (d.inv * vec4f(dp2, 0.0)).xz);
+        let a = clamp(t.a * d.color.a * fade, 0.0, 1.0);
+        out.albedo = mix(out.albedo, t.rgb * d.color.rgb, a);
+        out.metallic = mix(out.metallic, 0.0, a);
+        if (d.params.y >= 0.0) { out.roughness = mix(out.roughness, clamp(d.params.y, 0.04, 1.0), a); }
+        out.glow = out.glow + t.rgb * d.color.rgb * (d.params.z * a);
+    }
+    return out;
 }
 // How lit a point is by one face of a local light's shadow (0 shadowed .. 1 lit): moved off the
 // surface along its normal and toward the light by a texel's size there, filtered 3x3 inside the face.
@@ -436,6 +518,12 @@ fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f
     return (diffuse * ndl + spec);
 }
 
+// Whether a cascade's map holds a point (a probe's capture takes the finest that does).
+fn cascade_holds(c: i32, p: vec3f) -> bool {
+    let sp = frame.cascade_vp[c] * vec4f(p, 1.0);
+    let ndc = sp.xyz / sp.w;
+    return abs(ndc.x) < 0.98 && abs(ndc.y) < 0.98 && ndc.z >= 0.0 && ndc.z <= 1.0;
+}
 // How lit a point is by the sun in one cascade (0 shadowed .. 1 lit), outside the map lit.
 fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
     let p = world_pos + gn * frame.cascade_texel[c] * 1.5;
@@ -471,22 +559,26 @@ fn shade(in: VsOut) -> vec4f {
         n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z));
     }
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    let metallic = clamp(object.pbr.x * mr.b, 0.0, 1.0);
-    let roughness = clamp(object.pbr.y * mr.g, 0.04, 1.0);
-    let albedo = base.rgb;
+    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0)));
+    let metallic = paint.metallic;
+    let roughness = paint.roughness;
+    let albedo = paint.albedo;
     let f0 = mix(vec3f(0.04), albedo, metallic);
     var color = frame.ambient.rgb * mix(albedo, f0, metallic);
-    // Inside a reflection probe's box, what the probe saw takes the place of the sky's reflection.
+    // Inside a reflection probe's box, what the probe saw takes the place of the sky's light: its
+    // reflection, and its diffuse light from all around (a room lit by its lamps and walls, not the sky).
     let probe = probe_specular(in.world_pos, n, v, roughness);
+    let probe_d = probe_diffuse(in.world_pos, n);
     if (frame.env.x > 0.5) {
         // The sky's light instead of the flat ambient: diffuse from its harmonics, specular from the
         // prefiltered level matching the roughness, in the mirror direction.
         let ndv = max(dot(n, v), 1e-4);
         let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, n)), roughness * frame.env.w).rgb * frame.env.z;
-        color = albedo * (1.0 - metallic) * sh_irradiance(n) * frame.env.y + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv);
+        let diffuse = mix(sh_irradiance(n) * frame.env.y, probe_d.rgb, probe_d.w);
+        color = albedo * (1.0 - metallic) * diffuse + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv);
     } else if (probe.w > 0.0) {
         let ndv = max(dot(n, v), 1e-4);
-        color = mix(color, frame.ambient.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv), probe.w);
+        color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv), probe.w);
     }
     // Ambient occlusion darkens only this light from all around, not the lights'.
     if (frame.ao.x > 0.5) {
@@ -498,7 +590,16 @@ fn shade(in: VsOut) -> vec4f {
     // Shadow: the cascade covering this depth (blended into the next over the last tenth of it),
     // looked up a texel out along the surface's normal, with a 3x3 comparison filter.
     var shadow = 1.0;
-    if (frame.shadow.w > 0.5) {
+    if (frame.shadow.w > 0.5 && frame.probe_info.z > 0.5) {
+        // A probe's capture: the camera's cascades, the finest that holds the point (beyond them, lit).
+        let count = i32(frame.camera_fwd.w);
+        for (var c = 0; c < count; c = c + 1) {
+            if (cascade_holds(c, in.world_pos)) {
+                shadow = mix(1.0 - frame.shadow.z, 1.0, cascade_lit(c, in.world_pos, normalize(in.normal), ndl));
+                break;
+            }
+        }
+    } else if (frame.shadow.w > 0.5) {
         let depth = dot(in.world_pos - frame.camera_pos.xyz, frame.camera_fwd.xyz);
         let count = i32(frame.camera_fwd.w);
         var c = 0;
@@ -540,7 +641,7 @@ fn shade(in: VsOut) -> vec4f {
             }
             var lit = 1.0;
             let first_face = i32(li.cone.y);
-            if (first_face >= 0 && att * cone > 0.0) {
+            if (first_face >= 0 && att * cone > 0.0 && frame.probe_info.z < 0.5) {
                 var face = first_face;
                 if (li.color_kind.w < 1.5) {
                     // A point light: the cube face the direction from the light falls in (+X -X +Y -Y +Z -Z).
@@ -555,7 +656,7 @@ fn shade(in: VsOut) -> vec4f {
             color += li.color_kind.rgb * brdf(n, v, pl, albedo, metallic, roughness) * (att * att * cone * lit);
         }
     }
-    color += object.emissive.rgb * em;
+    color += object.emissive.rgb * em + paint.glow;
     return vec4f(color, base.a);
 }
 
@@ -623,11 +724,12 @@ fn motion(in: VsOut) -> vec2f {
     if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
     if (object.pbr.w > 0.5) { n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
+    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0)));
     var out: IdOut;
     out.id = in.id;
     out.velocity = motion(in);
-    out.surface = vec4f(oct_encode(n), clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0));
-    out.albedo = vec4f(base.rgb, 1.0);
+    out.surface = vec4f(oct_encode(n), paint.roughness, paint.metallic);
+    out.albedo = vec4f(paint.albedo, 1.0);
     return out;
 }
 
@@ -917,6 +1019,239 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32) -> vec3f {
     let floor_t = 1.0 - vol.albedo.w;
     if (trans < floor_t && trans < 1.0) { gathered = gathered * (1.0 - floor_t) / (1.0 - trans); trans = floor_t; }
     return vec4f(gathered * vol.albedo.rgb, trans);
+}
+
+// Water (docs/design/water.md): each body a grid over its extent moved by the Gerstner waves of
+// world::water_surface (the two must change together), drawn after the solid scene. What lies
+// below shows through, bent by the waves and fading into the water's colour with the depth the
+// view crosses; the sky, a probe and (through the surface target) screen-space reflections show at
+// glancing angles; the sun glints; foam gathers where it is shallow and on sharp crests. From below,
+// the surface shows the world above inside Snell's window and the water outside it, and a camera
+// under the surface sees everything through the water.
+struct WaterBody {
+    center: vec4f,            // the rest level's centre, w: the time
+    extent: vec4f,            // half size along x and z, grid cells along x and z
+    color: vec4f,             // the deep colour, w: clarity
+    dir_k: array<vec4f, 4>,   // per wave: direction x, z, wave number, angular speed
+    amp: array<vec4f, 4>,     // per wave: amplitude, steepness, phase
+    misc: vec4f,              // current x, z, ripples, foam
+    more: vec4f,              // the waves' amplitudes summed, choppiness
+    id: vec4u,                // the entity's id
+};
+@group(1) @binding(16) var<uniform> water: array<WaterBody, 8>;
+@group(1) @binding(17) var water_scene: texture_2d<f32>;
+@group(1) @binding(18) var water_depth: texture_depth_2d;
+@group(1) @binding(19) var water_samp: sampler;
+struct WaterOut {
+    @builtin(position) clip: vec4f,
+    @location(0) world_pos: vec3f,
+    @location(1) rest: vec2f,
+    @location(2) @interpolate(flat) body: u32,
+};
+fn water_phase(b: WaterBody, k: u32, rest: vec2f) -> f32 {
+    let d = b.dir_k[k];
+    let p = rest - b.misc.xy * b.center.w;
+    return d.z * dot(d.xy, p) - d.w * b.center.w + b.amp[k].z;
+}
+fn water_offset(b: WaterBody, rest: vec2f) -> vec3f {
+    var o = vec3f(0.0);
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let theta = water_phase(b, k, rest);
+        let a = b.amp[k];
+        let d = b.dir_k[k];
+        let qa = a.y * a.x;
+        o = o + vec3f(qa * d.x * cos(theta), a.x * sin(theta), qa * d.y * cos(theta));
+    }
+    return o;
+}
+fn water_normal(b: WaterBody, rest: vec2f) -> vec3f {
+    var n = vec3f(0.0, 1.0, 0.0);
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let theta = water_phase(b, k, rest);
+        let a = b.amp[k];
+        let d = b.dir_k[k];
+        let wa = d.z * a.x;
+        n = n - vec3f(d.x * wa * cos(theta), a.y * wa * sin(theta), d.y * wa * cos(theta));
+    }
+    return normalize(n);
+}
+fn water_hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+fn water_noise(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let a = water_hash(i);
+    let b = water_hash(i + vec2f(1.0, 0.0));
+    let c = water_hash(i + vec2f(0.0, 1.0));
+    let d = water_hash(i + vec2f(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+// The slope of the small ripples: two layers of noise drifting apart, carried by the current.
+fn water_ripples(b: WaterBody, rest: vec2f) -> vec2f {
+    let t = b.center.w;
+    let p = rest - b.misc.xy * t;
+    let q1 = p * 1.3 + vec2f(t * 0.31, t * 0.17);
+    let q2 = p * 3.1 + vec2f(-t * 0.43, t * 0.29);
+    let e = 0.05;
+    let h1 = water_noise(q1);
+    let h2 = water_noise(q2);
+    let dx = (water_noise(q1 + vec2f(e, 0.0)) - h1) * 1.3 + (water_noise(q2 + vec2f(e, 0.0)) - h2) * 3.1 * 0.35;
+    let dz = (water_noise(q1 + vec2f(0.0, e)) - h1) * 1.3 + (water_noise(q2 + vec2f(0.0, e)) - h2) * 3.1 * 0.35;
+    return vec2f(dx, dz) / e * 0.06;
+}
+fn water_world(px: vec2f, d: f32) -> vec3f {
+    let uv = (px - frame.viewport.xy) / frame.viewport.zw;
+    let h = frame.inv_view_proj * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    return h.xyz / h.w;
+}
+// The sun on a point of the water, through the camera's cascades.
+fn water_sun(p: vec3f, ndl: f32) -> f32 {
+    if (frame.shadow.w < 0.5) { return 1.0; }
+    let depth = dot(p - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+    let count = i32(frame.camera_fwd.w);
+    var c = 0;
+    while (c < count && depth > frame.cascade_far[c]) { c = c + 1; }
+    if (c >= count) { return 1.0; }
+    return mix(1.0 - frame.shadow.z, 1.0, cascade_lit(c, p, vec3f(0.0, 1.0, 0.0), ndl));
+}
+// The light the water scatters back toward the eye: its colour, lit by the sky (or a probe) and the sun.
+fn water_scatter(b: WaterBody, p: vec3f) -> vec3f {
+    var sky_light = frame.ambient.rgb;
+    if (frame.env.x > 0.5) { sky_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * frame.env.y; }
+    let probe = probe_diffuse(p, vec3f(0.0, 1.0, 0.0));
+    sky_light = mix(sky_light, probe.rgb, probe.w);
+    let l = normalize(-frame.sun_dir.xyz);
+    let sun = frame.sun_color.rgb * max(l.y, 0.0) * water_sun(p, max(l.y, 0.0));
+    return b.color.rgb * (sky_light + sun * 0.5);
+}
+// What light that crossed `through` units of water keeps: the hue it takes on, then the colour.
+fn water_absorb(b: WaterBody, seen: vec3f, through: f32, scatter: vec3f) -> vec3f {
+    let tone = b.color.rgb / max(max(b.color.r, max(b.color.g, b.color.b)), 1e-3);
+    let keep = exp(-3.0 * through / max(b.color.w, 0.01));
+    return seen * keep * mix(tone, vec3f(1.0), keep) + scatter * (1.0 - keep);
+}
+@vertex fn vs_water(@builtin(vertex_index) vi: u32, @builtin(instance_index) body: u32) -> WaterOut {
+    let b = water[body];
+    let nx = u32(b.extent.z);
+    let nz = u32(b.extent.w);
+    let cell = vi / 6u;
+    let corner = vi % 6u;
+    // Two triangles a cell, counter-clockwise seen from above.
+    var c = vec2u(0u, 0u);
+    if (corner == 1u || corner == 4u) { c = vec2u(0u, 1u); }
+    if (corner == 2u || corner == 3u) { c = vec2u(1u, 0u); }
+    if (corner == 5u) { c = vec2u(1u, 1u); }
+    let g = vec2u(cell % nx, cell / nx) + c;
+    let f = vec2f(g) / vec2f(f32(nx), f32(nz));
+    let rest = b.center.xz + mix(-b.extent.xy, b.extent.xy, f);
+    var o = water_offset(b, rest);
+    // The rim moves only up and down, so the water keeps meeting the shore and its neighbours.
+    if (g.x == 0u || g.x == nx) { o.x = 0.0; }
+    if (g.y == 0u || g.y == nz) { o.z = 0.0; }
+    let world = vec3f(rest.x + o.x, b.center.y + o.y, rest.y + o.z);
+    var out: WaterOut;
+    out.clip = frame.view_proj * vec4f(world, 1.0);
+    out.world_pos = world;
+    out.rest = rest;
+    out.body = body;
+    return out;
+}
+struct WaterFsOut {
+    @location(0) color: vec4f,
+    @location(1) id: u32,
+    @location(2) surface: vec4f,
+};
+@fragment fn fs_water(in: WaterOut, @builtin(front_facing) front: bool) -> WaterFsOut {
+    let b = water[in.body];
+    let px = in.clip.xy;
+    let dims = vec2f(textureDimensions(water_scene));
+    let dist = length(frame.camera_pos.xyz - in.world_pos);
+    let rs = water_ripples(b, in.rest) * (b.misc.z / (1.0 + dist * 0.06));
+    var n = normalize(water_normal(b, in.rest) - vec3f(rs.x, 0.0, rs.y));
+    if (!front) { n = -n; }
+    let v = normalize(frame.camera_pos.xyz - in.world_pos);
+    let ndv = max(dot(n, v), 1e-4);
+    // What lies behind the surface and how much water the view crosses to it; bent along the
+    // waves' slope, less where the water is thin, and not onto anything in front of the water.
+    let d0 = textureLoad(water_depth, vec2i(px), 0);
+    var through = 1e4;
+    if (d0 < 1.0) { through = length(water_world(px, d0) - in.world_pos); }
+    var q = clamp(px + n.xz * (frame.viewport.w * 0.04) * clamp(through, 0.0, 1.0), vec2f(0.5), dims - vec2f(0.5));
+    var d = textureLoad(water_depth, vec2i(q), 0);
+    if (d < in.clip.z) { q = px; d = d0; }
+    through = 1e4;
+    if (d < 1.0) { through = length(water_world(q, d) - in.world_pos); }
+    let behind = textureSampleLevel(water_scene, water_samp, q / dims, 0.0).rgb;
+    let scatter = water_scatter(b, in.world_pos);
+    var out: WaterFsOut;
+    out.id = b.id.x;
+    if (!front) {
+        // From below: the world above inside Snell's window, the water's own light outside it,
+        // both through the water between the eye and the surface.
+        let window = smoothstep(0.62, 0.72, ndv);
+        let above = behind * window + scatter * (1.0 - window);
+        out.color = vec4f(water_absorb(b, above, dist, scatter), 1.0);
+        out.surface = vec4f(oct_encode(n), 1.0, 0.0);
+        return out;
+    }
+    let under = water_absorb(b, behind, through, scatter);
+    // Reflected: the sky (or a probe) along the mirror direction; screen-space reflections, where
+    // on, trace the same direction from the surface target and take its place.
+    let rough = 0.04;
+    let r = reflect(-v, n);
+    var refl = frame.ambient.rgb;
+    if (frame.env.x > 0.5) { refl = textureSampleLevel(env_tex, env_samp, env_uv(r), rough * frame.env.w).rgb * frame.env.z; }
+    let probe = probe_specular(in.world_pos, n, v, rough);
+    refl = mix(refl, probe.rgb, probe.w);
+    let fresnel = env_brdf(vec3f(0.04), rough, ndv);
+    let l = normalize(-frame.sun_dir.xyz);
+    let glint = frame.sun_color.rgb * brdf(n, v, l, vec3f(0.0), 0.0, 0.12) * water_sun(in.world_pos, max(dot(n, l), 0.0));
+    var color = under * (vec3f(1.0) - fresnel) + refl * fresnel + glint;
+    // Foam: in the shallows (within `foam` of the ground below) and on the sharpest crests,
+    // broken up by drifting noise.
+    var foam = 0.0;
+    if (b.misc.w > 0.0 && d0 < 1.0) {
+        let below = in.world_pos.y - water_world(px, d0).y;
+        let shore = clamp(1.0 - below / b.misc.w, 0.0, 1.0);
+        foam = shore * shore;
+    }
+    let crest = (in.world_pos.y - b.center.y) / max(b.more.x, 1e-3);
+    foam = max(foam, smoothstep(0.6, 1.0, crest) * b.more.y * 0.7);
+    let t = b.center.w;
+    let pattern = water_noise(in.rest * 2.1 + vec2f(t * 0.23, -t * 0.11)) * 0.6 + water_noise(in.rest * 6.3 - vec2f(t * 0.17, t * 0.29)) * 0.4;
+    foam = smoothstep(0.3, 0.7, foam * (0.3 + pattern * 1.2));
+    let foam_light = water_scatter(b, in.world_pos) / max(b.color.rgb, vec3f(1e-3)) * 0.85;
+    color = mix(color, foam_light, foam);
+    out.color = vec4f(color, 1.0);
+    out.surface = vec4f(oct_encode(n), mix(rough, 1.0, foam), 0.0);
+    return out;
+}
+// A camera under a body's surface: everything seen through the water between it and the eye
+// (drawn before the surface, which covers what lies above it).
+struct WaterUnderOut {
+    @builtin(position) clip: vec4f,
+    @location(0) @interpolate(flat) body: u32,
+};
+@vertex fn vs_water_under(@builtin(vertex_index) i: u32, @builtin(instance_index) body: u32) -> WaterUnderOut {
+    var out: WaterUnderOut;
+    out.clip = vec4f(f32(i32(i & 1u) * 4 - 1), f32(i32(i >> 1u) * 4 - 1), 0.5, 1.0);
+    out.body = body;
+    return out;
+}
+@fragment fn fs_water_under(in: WaterUnderOut) -> @location(0) vec4f {
+    let b = water[in.body];
+    let pos = in.clip;
+    let d = textureLoad(water_depth, vec2i(pos.xy), 0);
+    var dist = 1e4;
+    var p = frame.camera_pos.xyz;
+    if (d < 1.0) {
+        p = water_world(pos.xy, d);
+        dist = length(p - frame.camera_pos.xyz);
+    }
+    let seen = textureLoad(water_scene, vec2i(pos.xy), 0).rgb;
+    return vec4f(water_absorb(b, seen, dist, water_scatter(b, frame.camera_pos.xyz)), 1.0);
 }
 )WGSL";
 
@@ -1700,6 +2035,38 @@ struct Renderer::Impl {
     WGPUBuffer ssr_uniforms = nullptr;
     WGPUBindGroup ssr_bg = nullptr;
     WGPUTextureView ssr_bg_scene = nullptr, ssr_bg_depth = nullptr, ssr_bg_surface = nullptr;
+    // Water (docs/design/water.md): this frame's bodies as the shader reads them, the pass that draws
+    // them after the solid scene (from a copy of it and of the prepass depth), the one that adds them
+    // to the prepass, and the camera's body when it is under a surface.
+    struct WaterGpu {
+        float center[4];     // the rest level's centre, the time
+        float extent[4];     // half size x, z; grid cells x, z
+        float color[4];      // the deep colour, clarity
+        float dir_k[4][4];   // per wave: direction x, z, wave number, angular speed
+        float amp[4][4];     // per wave: amplitude, steepness, phase
+        float misc[4];       // current x, z, ripples, foam
+        float more[4];       // the amplitudes summed, choppiness
+        std::uint32_t id[4];
+    };
+    std::vector<WaterGpu> water_bodies;
+    // Decals: this frame's, their images' array (a layer per image path, 0 the built-in spot).
+    WGPUBuffer decal_buffer = nullptr;
+    WGPUTexture decal_tex = nullptr;
+    WGPUTextureView decal_view = nullptr;
+    WGPUSampler decal_sampler = nullptr;
+    std::map<std::string, std::uint32_t> decal_layers;
+    std::vector<std::pair<world::Water, Vec3>> water_src;   // the components and centres behind them
+    int water_under = -1;
+    WGPUBindGroupLayout water_bgl = nullptr;
+    WGPUPipelineLayout water_layout = nullptr;
+    WGPURenderPipeline water_pipeline[2]{}, water_under_pipeline[2]{};   // against the frame's depth, against the prepass
+    WGPURenderPipeline water_depth_pipeline = nullptr;
+    WGPUBuffer water_uniforms = nullptr;
+    WGPUSampler water_sampler = nullptr;
+    WGPUTexture water_scene_tex = nullptr, water_depth_tex = nullptr;
+    WGPUTextureView water_scene_view = nullptr, water_depth_view = nullptr;
+    std::uint32_t water_w = 0, water_h = 0;
+    WGPUBindGroup water_bg = nullptr;
     WGPUTexture velocity_tex = nullptr;       // the id pass's motion target, the prepass's size
     WGPUTextureView velocity_view = nullptr;
     // TAA: the settings, the resolved frames (two, one the history of the other), the pass, the
@@ -1760,7 +2127,9 @@ struct Renderer::Impl {
     WGPUTexture ao_white_tex = nullptr;
     WGPUTextureView ao_white_view = nullptr;
     WGPUTextureView scene_ao = nullptr;           // the AO view the scene group was made with
-    WGPUBindGroupEntry scene_entries[13]{};       // the scene group's entries, to make it again when the AO target or the atlas changes
+    WGPUBindGroupEntry scene_entries[17]{};       // the scene group's entries, to make it again when the AO target or the atlas changes
+    WGPUBuffer probe_sh_buffer = nullptr;         // each probe's diffuse harmonics, 256 bytes a slot
+    WGPUBuffer probe_cluster_buffer = nullptr;    // a capture's one cluster: every local light that reaches the probe
     // Reflection probes: their slots (one array layer each), the panoramas, the six views a capture
     // draws, the passes that draw them and turn them into a panorama.
     struct ProbeSlot {
@@ -1768,6 +2137,7 @@ struct Renderer::Impl {
         Vec3 center{0, 0, 0}, size{0, 0, 0};
         float intensity = 1;
         bool box = true, realtime = false, captured = false;
+        int bounces = 0;           // captures still to make (kProbeBounces)
         std::uint64_t frame = 0;   // the frame it was last captured in
     };
     std::array<ProbeSlot, kMaxProbes> probe_slots{};
@@ -1976,6 +2346,16 @@ struct Renderer::Impl {
         if (ssr_pipeline) wgpuRenderPipelineRelease(ssr_pipeline);
         if (ssr_layout) wgpuPipelineLayoutRelease(ssr_layout);
         if (ssr_bgl) wgpuBindGroupLayoutRelease(ssr_bgl);
+        release_water_targets();
+        for (WGPURenderPipeline p : {water_pipeline[0], water_pipeline[1], water_under_pipeline[0], water_under_pipeline[1], water_depth_pipeline}) if (p) wgpuRenderPipelineRelease(p);
+        if (water_uniforms) wgpuBufferRelease(water_uniforms);
+        if (decal_buffer) wgpuBufferRelease(decal_buffer);
+        if (decal_view) wgpuTextureViewRelease(decal_view);
+        if (decal_tex) wgpuTextureRelease(decal_tex);
+        if (decal_sampler) wgpuSamplerRelease(decal_sampler);
+        if (water_sampler) wgpuSamplerRelease(water_sampler);
+        if (water_layout) wgpuPipelineLayoutRelease(water_layout);
+        if (water_bgl) wgpuBindGroupLayoutRelease(water_bgl);
         for (int k = 0; k < 2; ++k) {
             if (taa_bg[k]) wgpuBindGroupRelease(taa_bg[k]);
             if (taa_view[k]) wgpuTextureViewRelease(taa_view[k]);
@@ -2066,7 +2446,7 @@ struct Renderer::Impl {
         if (probe_fill_layout) wgpuPipelineLayoutRelease(probe_fill_layout);
         if (probe_fill_bgl) wgpuBindGroupLayoutRelease(probe_fill_bgl);
         if (probe_fill_shader) wgpuShaderModuleRelease(probe_fill_shader);
-        for (WGPUBuffer b : {probe_fill_params, probe_prefilter_params}) if (b) wgpuBufferRelease(b);
+        for (WGPUBuffer b : {probe_fill_params, probe_prefilter_params, probe_sh_buffer, probe_cluster_buffer}) if (b) wgpuBufferRelease(b);
         for (WGPUBuffer b : probe_frame_buf) if (b) wgpuBufferRelease(b);
         for (auto& layer : probe_level) for (WGPUTextureView v : layer) if (v) wgpuTextureViewRelease(v);
         for (WGPUTextureView v : probe_view) if (v) wgpuTextureViewRelease(v);
@@ -3239,17 +3619,20 @@ struct Renderer::Impl {
             const auto& [id, pv] = found[i];
             const auto& [p, at] = pv;
             const Vec3 size{std::max(p.size.x, 0.01f), std::max(p.size.y, 0.01f), std::max(p.size.z, 0.01f)};
-            if (s.entity != id || length(s.center - at) > 1e-4f || length(s.size - size) > 1e-4f) s = ProbeSlot{id, at, size};
+            if (s.entity != id || length(s.center - at) > 1e-4f || length(s.size - size) > 1e-4f) {
+                s = ProbeSlot{id, at, size};
+                s.bounces = kProbeBounces;
+            }
             s.intensity = std::max(p.intensity, 0.0f);
             s.box = p.box_projection;
             s.realtime = p.realtime;
         }
         probe_count = static_cast<std::uint32_t>(found.size());
-        if (probe_refresh) { for (auto& s : probe_slots) s.captured = false; probe_refresh = false; }
+        if (probe_refresh) { for (auto& s : probe_slots) s.bounces = kProbeBounces; probe_refresh = false; }
         int capture = -1;
         for (std::uint32_t k = 0; k < probe_count && capture < 0; ++k) {
             const std::uint32_t i = (probe_cursor + k) % probe_count;
-            if (!probe_slots[i].captured || probe_slots[i].realtime) capture = static_cast<int>(i);
+            if (probe_slots[i].bounces > 0 || probe_slots[i].realtime) capture = static_cast<int>(i);
         }
         if (capture >= 0) probe_cursor = static_cast<std::uint32_t>(capture) + 1;
         std::uint32_t used = 0;
@@ -3264,6 +3647,7 @@ struct Renderer::Impl {
         }
         fu.probe_info[0] = static_cast<float>(used);
         fu.probe_info[1] = static_cast<float>(kProbeLevels - 1);
+        fu.probe_info[3] = static_cast<float>(used);
         stats.probes = used;
         return capture;
     }
@@ -3332,6 +3716,445 @@ struct Renderer::Impl {
         ssr_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!ssr_pipeline) return fail("gpu_pipeline_failed", "the screen-space reflection pipeline could not be created");
         ssr_uniforms = device->create_buffer("pocket.ssr", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 8);
+        return {};
+    }
+
+    // One layer of the decal array from RGBA8 pixels of any size: resampled to kDecalSize square
+    // (bilinear), then its mip chain, each level averaging 2 by 2 weighted by alpha.
+    void write_decal_layer(std::uint32_t layer, std::uint32_t w, std::uint32_t h, const std::uint8_t* rgba) {
+        std::vector<std::uint8_t> level(static_cast<std::size_t>(kDecalSize) * kDecalSize * 4);
+        for (std::uint32_t y = 0; y < kDecalSize; ++y) {
+            const float fy = std::clamp((static_cast<float>(y) + 0.5f) * static_cast<float>(h) / kDecalSize - 0.5f, 0.0f, static_cast<float>(h - 1));
+            const auto y0 = static_cast<std::uint32_t>(fy), y1 = std::min(y0 + 1, h - 1);
+            for (std::uint32_t x = 0; x < kDecalSize; ++x) {
+                const float fx = std::clamp((static_cast<float>(x) + 0.5f) * static_cast<float>(w) / kDecalSize - 0.5f, 0.0f, static_cast<float>(w - 1));
+                const auto x0 = static_cast<std::uint32_t>(fx), x1 = std::min(x0 + 1, w - 1);
+                const float ax = fx - static_cast<float>(x0), ay = fy - static_cast<float>(y0);
+                for (int c = 0; c < 4; ++c) {
+                    auto at = [&](std::uint32_t px, std::uint32_t py) { return static_cast<float>(rgba[(static_cast<std::size_t>(py) * w + px) * 4 + static_cast<std::size_t>(c)]); };
+                    const float v = (at(x0, y0) * (1 - ax) + at(x1, y0) * ax) * (1 - ay) + (at(x0, y1) * (1 - ax) + at(x1, y1) * ax) * ay;
+                    level[(static_cast<std::size_t>(y) * kDecalSize + x) * 4 + static_cast<std::size_t>(c)] = static_cast<std::uint8_t>(std::lround(v));
+                }
+            }
+        }
+        std::uint32_t size = kDecalSize;
+        for (std::uint32_t l = 0; l < kDecalLevels; ++l) {
+            WGPUTexelCopyTextureInfo dst{};
+            dst.texture = decal_tex;
+            dst.mipLevel = l;
+            dst.origin = {0, 0, layer};
+            dst.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferLayout lay{};
+            lay.bytesPerRow = size * 4;
+            lay.rowsPerImage = size;
+            WGPUExtent3D ext{size, size, 1};
+            wgpuQueueWriteTexture(device->queue(), &dst, level.data(), level.size(), &lay, &ext);
+            if (size == 1) break;
+            const std::uint32_t half = size / 2;
+            std::vector<std::uint8_t> next(static_cast<std::size_t>(half) * half * 4);
+            for (std::uint32_t y = 0; y < half; ++y) {
+                for (std::uint32_t x = 0; x < half; ++x) {
+                    float weighted[3] = {0, 0, 0}, alpha = 0;
+                    for (std::uint32_t k = 0; k < 4; ++k) {
+                        const std::uint8_t* p = &level[((static_cast<std::size_t>(y) * 2 + (k >> 1)) * size + x * 2 + (k & 1)) * 4];
+                        const float a = static_cast<float>(p[3]) + 1e-3f;
+                        for (int c = 0; c < 3; ++c) weighted[c] += static_cast<float>(p[c]) * a;
+                        alpha += a;
+                    }
+                    std::uint8_t* q = &next[(static_cast<std::size_t>(y) * half + x) * 4];
+                    for (int c = 0; c < 3; ++c) q[c] = static_cast<std::uint8_t>(std::lround(weighted[c] / alpha));
+                    q[3] = static_cast<std::uint8_t>(std::lround(std::max(alpha - 4e-3f, 0.0f) / 4));
+                }
+            }
+            level.swap(next);
+            size = half;
+        }
+    }
+
+    // The decals' buffer, image array (sRGB: the images are colours), sampler, and the built-in
+    // soft round spot in layer 0.
+    Status create_decals() {
+        decal_buffer = device->create_buffer("pocket.decals", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, sizeof(GpuDecal) * kMaxDecals);
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str("pocket.decals");
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {kDecalSize, kDecalSize, kDecalLayers};
+        td.format = WGPUTextureFormat_RGBA8UnormSrgb;
+        td.mipLevelCount = kDecalLevels;
+        td.sampleCount = 1;
+        decal_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!decal_tex) return fail("gpu_texture_failed", "cannot create the decal images");
+        WGPUTextureViewDescriptor vd{};
+        vd.format = td.format;
+        vd.dimension = WGPUTextureViewDimension_2DArray;
+        vd.mipLevelCount = kDecalLevels;
+        vd.arrayLayerCount = kDecalLayers;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = td.usage;
+        decal_view = wgpuTextureCreateView(decal_tex, &vd);
+        std::vector<std::uint8_t> spot(64 * 64 * 4);
+        for (int y = 0; y < 64; ++y) {
+            for (int x = 0; x < 64; ++x) {
+                const float dx = (static_cast<float>(x) + 0.5f) / 32.0f - 1.0f, dy = (static_cast<float>(y) + 0.5f) / 32.0f - 1.0f;
+                const float r = std::sqrt(dx * dx + dy * dy);
+                const float a = std::clamp((1.0f - r) / 0.35f, 0.0f, 1.0f);
+                std::uint8_t* p = &spot[(static_cast<std::size_t>(y) * 64 + static_cast<std::size_t>(x)) * 4];
+                p[0] = p[1] = p[2] = 255;
+                p[3] = static_cast<std::uint8_t>(std::lround(255.0f * a * a * (3.0f - 2.0f * a)));
+            }
+        }
+        write_decal_layer(0, 64, 64, spot.data());
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.decals");
+        sd.addressModeU = WGPUAddressMode_ClampToEdge;
+        sd.addressModeV = WGPUAddressMode_ClampToEdge;
+        sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Linear;
+        sd.lodMinClamp = 0;
+        sd.lodMaxClamp = 32;
+        sd.maxAnisotropy = 8;
+        decal_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        return {};
+    }
+
+    // The array layer of a decal's image: loaded on first use into the next free layer; the spot
+    // for an empty path, and (reported missing) for an image that cannot be read or has no layer left.
+    std::uint32_t decal_layer(const std::string& path) {
+        if (path.empty()) return 0;
+        if (auto it = decal_layers.find(path); it != decal_layers.end()) return it->second;
+        if (failed.contains(path) || !assets) { note_missing(path); return 0; }
+        if (decal_layers.size() + 1 >= kDecalLayers) {
+            report_missing(path, std::format("more than {} decal images", kDecalLayers - 1));
+            return 0;
+        }
+        auto img = assets->image(path);
+        if (!img || (*img)->width == 0 || (*img)->height == 0) {
+            report_missing(path, img ? "empty image" : img.error().message);
+            return 0;
+        }
+        const auto layer = static_cast<std::uint32_t>(decal_layers.size() + 1);
+        write_decal_layer(layer, (*img)->width, (*img)->height, (*img)->rgba.data());
+        decal_layers[path] = layer;
+        return layer;
+    }
+
+    // The enabled decals whose boxes reach into the view, the nearest kMaxDecals, painted in order
+    // (then by entity).
+    void gather_decals(const world::World& w, FrameUniforms& fu) {
+        struct Found { std::uint64_t id; world::Decal d; Mat4 model; Vec3 centre; float radius; float dist; };
+        std::vector<Found> found;
+        const Mat4 vp = camera.proj * camera.view;
+        w.ecs().each([&](flecs::entity e, const world::Decal& d, const world::WorldTransform& t) {
+            if (!d.enabled || d.color.a <= 0) return;
+            const Vec3 box{t.scale.x * d.size.x, t.scale.y * d.size.y, t.scale.z * d.size.z};
+            if (std::fabs(box.x) < 1e-5f || std::fabs(box.y) < 1e-5f || std::fabs(box.z) < 1e-5f) return;
+            const float r = 0.5f * length(box);
+            const float depth = dot(t.position - camera.position, camera.forward);
+            if (depth + r < camera.near || depth - r > camera.far) return;
+            float nx0 = 1e30f, nx1 = -1e30f, ny0 = 1e30f, ny1 = -1e30f;
+            bool behind = false;
+            for (int k = 0; k < 8; ++k) {
+                const Vec3 c = t.position;
+                const Vec4 p = vp * Vec4{c.x + ((k & 1) ? r : -r), c.y + ((k & 2) ? r : -r), c.z + ((k & 4) ? r : -r), 1};
+                if (p.w <= 1e-4f) { behind = true; break; }
+                nx0 = std::min(nx0, p.x / p.w); nx1 = std::max(nx1, p.x / p.w);
+                ny0 = std::min(ny0, p.y / p.w); ny1 = std::max(ny1, p.y / p.w);
+            }
+            if (!behind && (nx1 < -1 || nx0 > 1 || ny1 < -1 || ny0 > 1)) return;
+            found.push_back({e.id(), d, Mat4::trs(t.position, t.rotation, box), t.position, r, length(t.position - camera.position)});
+        });
+        std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.dist < b.dist || (a.dist == b.dist && a.id < b.id); });
+        if (found.size() > kMaxDecals) found.resize(kMaxDecals);
+        std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.d.order < b.d.order || (a.d.order == b.d.order && a.id < b.id); });
+        std::vector<GpuDecal> out;
+        out.reserve(found.size());
+        for (const Found& f : found) {
+            GpuDecal g{};
+            to_array(f.model.inverse(), g.inv);
+            const Vec3 axis = normalize(f.model.transform_dir(Vec3{0, -1, 0}));
+            g.axis[0] = axis.x; g.axis[1] = axis.y; g.axis[2] = axis.z;
+            g.axis[3] = std::cos(std::clamp(f.d.angle, 1.0f, 89.0f) * std::numbers::pi_v<float> / 180.0f);
+            g.color[0] = decode(f.d.color.r); g.color[1] = decode(f.d.color.g); g.color[2] = decode(f.d.color.b); g.color[3] = std::clamp(f.d.color.a, 0.0f, 1.0f);
+            g.params[0] = static_cast<float>(decal_layer(f.d.texture));
+            g.params[1] = f.d.roughness;
+            g.params[2] = std::max(f.d.emissive, 0.0f);
+            g.sphere[0] = f.centre.x; g.sphere[1] = f.centre.y; g.sphere[2] = f.centre.z; g.sphere[3] = f.radius * f.radius;
+            out.push_back(g);
+        }
+        if (!out.empty()) device->write_buffer(decal_buffer, 0, out.data(), out.size() * sizeof(GpuDecal));
+        fu.decals[0] = static_cast<float>(out.size());
+        stats.decals = static_cast<std::uint32_t>(out.size());
+        stats.decal_images = static_cast<std::uint32_t>(decal_layers.size());
+    }
+
+    // Water: one layout (the bodies, the copies of the scene and of its depth, a sampler), the
+    // surface's pipelines against the frame's depth and against the prepass's (with MSAA the pass
+    // comes after the scene's and tests against the prepass), the view from under a surface, and
+    // the surface's depth alone for the prepass.
+    Status create_water() {
+        WGPUBindGroupLayoutEntry be[4]{};
+        be[0].binding = 16;
+        be[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        be[0].buffer.type = WGPUBufferBindingType_Uniform;
+        be[0].buffer.minBindingSize = sizeof(WaterGpu) * kMaxWater;
+        be[1].binding = 17;
+        be[1].visibility = WGPUShaderStage_Fragment;
+        be[1].texture.sampleType = WGPUTextureSampleType_Float;
+        be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[2].binding = 18;
+        be[2].visibility = WGPUShaderStage_Fragment;
+        be[2].texture.sampleType = WGPUTextureSampleType_Depth;
+        be[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[3].binding = 19;
+        be[3].visibility = WGPUShaderStage_Fragment;
+        be[3].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.water");
+        bd.entryCount = 4;
+        bd.entries = be;
+        water_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUBindGroupLayout layouts[2] = {scene_bgl, water_bgl};
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.water");
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
+        water_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState targets[3]{};
+        targets[0].format = kHdrFormat;
+        targets[1].format = WGPUTextureFormat_R32Uint;
+        targets[2].format = kSurfaceFormat;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.targetCount = 3;
+        fs.targets = targets;
+        WGPUDepthStencilState ds{};
+        ds.stencilFront.compare = WGPUCompareFunction_Always;
+        ds.stencilBack.compare = WGPUCompareFunction_Always;
+        ds.stencilReadMask = 0xFFFFFFFF;
+        ds.stencilWriteMask = 0xFFFFFFFF;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.layout = water_layout;
+        rpd.vertex.module = shader;
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;   // seen from below too
+        rpd.depthStencil = &ds;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        const WGPUTextureFormat depths[2] = {device->depth_format(), kPrepassDepth};
+        for (int v = 0; v < 2; ++v) {
+            ds.format = depths[v];
+            for (auto& t : targets) t.writeMask = WGPUColorWriteMask_All;
+            ds.depthWriteEnabled = WGPUOptionalBool_True;
+            ds.depthCompare = WGPUCompareFunction_Less;
+            rpd.label = rhi::str("pocket.water");
+            rpd.vertex.entryPoint = rhi::str("vs_water");
+            fs.entryPoint = rhi::str("fs_water");
+            water_pipeline[v] = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            if (!water_pipeline[v]) return fail("gpu_pipeline_failed", "the water pipeline could not be created");
+            // Under a surface: every pixel through the water, the ids and surfaces left as they are.
+            targets[1].writeMask = WGPUColorWriteMask_None;
+            targets[2].writeMask = WGPUColorWriteMask_None;
+            ds.depthWriteEnabled = WGPUOptionalBool_False;
+            ds.depthCompare = WGPUCompareFunction_Always;
+            rpd.label = rhi::str("pocket.water.under");
+            rpd.vertex.entryPoint = rhi::str("vs_water_under");
+            fs.entryPoint = rhi::str("fs_water_under");
+            water_under_pipeline[v] = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            if (!water_under_pipeline[v]) return fail("gpu_pipeline_failed", "the underwater pipeline could not be created");
+        }
+        ds.format = kPrepassDepth;
+        ds.depthWriteEnabled = WGPUOptionalBool_True;
+        ds.depthCompare = WGPUCompareFunction_Less;
+        rpd.label = rhi::str("pocket.water.depth");
+        rpd.vertex.entryPoint = rhi::str("vs_water");
+        rpd.fragment = nullptr;
+        water_depth_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!water_depth_pipeline) return fail("gpu_pipeline_failed", "the water depth pipeline could not be created");
+        water_uniforms = device->create_buffer("pocket.water", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(WaterGpu) * kMaxWater);
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.water");
+        sd.addressModeU = WGPUAddressMode_ClampToEdge;
+        sd.addressModeV = WGPUAddressMode_ClampToEdge;
+        sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.lodMinClamp = 0;
+        sd.lodMaxClamp = 1;
+        sd.maxAnisotropy = 1;
+        water_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        return {};
+    }
+
+    void release_water_targets() {
+        if (water_bg) wgpuBindGroupRelease(water_bg);
+        for (WGPUTextureView v : {water_scene_view, water_depth_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {water_scene_tex, water_depth_tex}) if (t) wgpuTextureRelease(t);
+        water_bg = nullptr;
+        water_scene_view = water_depth_view = nullptr;
+        water_scene_tex = water_depth_tex = nullptr;
+        water_w = water_h = 0;
+    }
+
+    // The copies the water reads, at the frame's size, and the group over them.
+    Status ensure_water_targets(std::uint32_t w, std::uint32_t h) {
+        if (water_scene_tex && water_w == w && water_h == h) return {};
+        release_water_targets();
+        auto [st, sv] = make_target("pocket.water.scene", w, h, kHdrFormat, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        auto [dt, dv] = make_target("pocket.water.depth", w, h, kPrepassDepth, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        if (!st || !dt) return fail("gpu_texture_failed", "cannot create the water's copies {}x{}", w, h);
+        water_scene_tex = st;
+        water_scene_view = sv;
+        water_depth_tex = dt;
+        water_depth_view = dv;
+        water_w = w;
+        water_h = h;
+        WGPUBindGroupEntry e[4]{};
+        e[0].binding = 16;
+        e[0].buffer = water_uniforms;
+        e[0].size = sizeof(WaterGpu) * kMaxWater;
+        e[1].binding = 17;
+        e[1].textureView = water_scene_view;
+        e[2].binding = 18;
+        e[2].textureView = water_depth_view;
+        e[3].binding = 19;
+        e[3].sampler = water_sampler;
+        WGPUBindGroupDescriptor d{};
+        d.label = rhi::str("pocket.water");
+        d.layout = water_bgl;
+        d.entryCount = 4;
+        d.entries = e;
+        water_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+        return {};
+    }
+
+    // The enabled bodies (the first kMaxWater by id) with their waves at the world's time.
+    void gather_water(const world::World& w) {
+        water_bodies.clear();
+        water_src.clear();
+        std::vector<std::pair<std::uint64_t, std::pair<world::Water, Vec3>>> found;
+        w.ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {
+            if (wa.enabled && wa.size.x > 0 && wa.size.y > 0) found.push_back({e.id(), {wa, t.position}});
+        });
+        std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (found.size() > kMaxWater) found.resize(kMaxWater);
+        const auto time = static_cast<float>(w.seconds());
+        for (const auto& [id, src] : found) {
+            const auto& [wa, c] = src;
+            WaterGpu g{};
+            g.center[0] = c.x; g.center[1] = c.y; g.center[2] = c.z; g.center[3] = time;
+            // Four vertices along the smallest wave, at most 256 cells a side; still water a cell every four units.
+            const float cell = wa.wave_height > 0 ? std::max(wa.wave_length * 0.24f / 4.0f, 0.05f) : 4.0f;
+            g.extent[0] = wa.size.x * 0.5f;
+            g.extent[1] = wa.size.y * 0.5f;
+            g.extent[2] = std::clamp(std::ceil(wa.size.x / cell), 1.0f, 256.0f);
+            g.extent[3] = std::clamp(std::ceil(wa.size.y / cell), 1.0f, 256.0f);
+            g.color[0] = decode(wa.color.r); g.color[1] = decode(wa.color.g); g.color[2] = decode(wa.color.b);
+            g.color[3] = std::max(wa.clarity, 0.01f);
+            const auto waves = world::water_waves(wa);
+            float sum = 0;
+            for (int k = 0; k < world::kWaterWaves; ++k) {
+                const world::Wave& v = waves[static_cast<std::size_t>(k)];
+                g.dir_k[k][0] = v.dir_x; g.dir_k[k][1] = v.dir_z; g.dir_k[k][2] = v.k; g.dir_k[k][3] = v.omega;
+                g.amp[k][0] = v.amplitude; g.amp[k][1] = v.steepness; g.amp[k][2] = v.phase;
+                sum += v.amplitude;
+            }
+            g.misc[0] = wa.flow.x; g.misc[1] = wa.flow.y; g.misc[2] = std::max(wa.ripples, 0.0f); g.misc[3] = std::max(wa.foam, 0.0f);
+            g.more[0] = sum;
+            g.more[1] = std::clamp(wa.choppiness, 0.0f, 1.0f);
+            g.id[0] = static_cast<std::uint32_t>(id & 0xFFFFFFFFu);
+            water_bodies.push_back(g);
+            water_src.emplace_back(wa, c);
+        }
+        stats.water = static_cast<std::uint32_t>(water_bodies.size());
+    }
+
+    // The water pass: the scene and its depth copied, the view from under a surface if the camera is
+    // under one, then every surface; tested against `depth` (the frame's, then the surfaces are also
+    // added to the prepass, or the prepass itself).
+    Status draw_water(rhi::Frame& frame, WGPUTextureView depth, bool on_prepass, const std::function<void(WGPURenderPassEncoder)>& set_viewport) {
+        POCKET_TRY_VOID(ensure_water_targets(frame.width, frame.height));
+        WGPUTexelCopyTextureInfo src{}, dst{};
+        src.aspect = WGPUTextureAspect_All;
+        dst.aspect = WGPUTextureAspect_All;
+        const WGPUExtent3D ext{frame.width, frame.height, 1};
+        src.texture = hdr_tex;
+        dst.texture = water_scene_tex;
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
+        src.texture = prepass_tex;
+        dst.texture = water_depth_tex;
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
+        water_under = -1;
+        for (std::size_t i = 0; i < water_src.size() && water_under < 0; ++i) {
+            const auto& [wa, c] = water_src[i];
+            const Vec3 eye = camera.position;
+            if (!world::water_covers(wa, c, eye.x, eye.z) || eye.y < c.y - std::max(wa.depth, 0.0f)) continue;
+            if (eye.y < world::water_at(wa, c.y, eye.x, eye.z, water_bodies[i].center[3]).position.y) water_under = static_cast<int>(i);
+        }
+        stats.underwater = water_under >= 0;
+        device->write_buffer(water_uniforms, 0, water_bodies.data(), water_bodies.size() * sizeof(WaterGpu));
+        WGPURenderPassColorAttachment ca[3]{};
+        const WGPUTextureView views[3] = {hdr_view, id_view, surface_view};
+        for (int k = 0; k < 3; ++k) {
+            ca[k].view = views[k];
+            ca[k].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            ca[k].loadOp = WGPULoadOp_Load;
+            ca[k].storeOp = WGPUStoreOp_Store;
+        }
+        WGPURenderPassDepthStencilAttachment ds{};
+        ds.view = depth;
+        ds.depthLoadOp = WGPULoadOp_Load;
+        ds.depthStoreOp = WGPUStoreOp_Store;
+        ds.stencilLoadOp = WGPULoadOp_Undefined;
+        ds.stencilStoreOp = WGPUStoreOp_Undefined;
+        ds.stencilReadOnly = true;
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.water");
+        rp.colorAttachmentCount = 3;
+        rp.colorAttachments = ca;
+        rp.depthStencilAttachment = &ds;
+        const int v = on_prepass ? 1 : 0;
+        auto draw_surfaces = [&](WGPURenderPassEncoder enc) {
+            wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+            wgpuRenderPassEncoderSetBindGroup(enc, 1, water_bg, 0, nullptr);
+            for (std::size_t i = 0; i < water_bodies.size(); ++i) {
+                const auto cells = static_cast<std::uint32_t>(water_bodies[i].extent[2] * water_bodies[i].extent[3]);
+                wgpuRenderPassEncoderDraw(enc, cells * 6, 1, 0, static_cast<std::uint32_t>(i));
+                stats.draw_calls++;
+            }
+        };
+        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        set_viewport(enc);
+        if (water_under >= 0) {
+            wgpuRenderPassEncoderSetPipeline(enc, water_under_pipeline[v]);
+            wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+            wgpuRenderPassEncoderSetBindGroup(enc, 1, water_bg, 0, nullptr);
+            wgpuRenderPassEncoderDraw(enc, 3, 1, 0, static_cast<std::uint32_t>(water_under));
+            stats.draw_calls++;
+        }
+        wgpuRenderPassEncoderSetPipeline(enc, water_pipeline[v]);
+        draw_surfaces(enc);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        if (!on_prepass) {
+            // The surfaces in the prepass too, for what reads it after (fog, reflections, TAA, depth of field).
+            WGPURenderPassDepthStencilAttachment pds = ds;
+            pds.view = prepass_view;
+            WGPURenderPassDescriptor prp{};
+            prp.label = rhi::str("pocket.water.depth");
+            prp.depthStencilAttachment = &pds;
+            WGPURenderPassEncoder penc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &prp);
+            set_viewport(penc);
+            wgpuRenderPassEncoderSetPipeline(penc, water_depth_pipeline);
+            draw_surfaces(penc);
+            wgpuRenderPassEncoderEnd(penc);
+            wgpuRenderPassEncoderRelease(penc);
+        }
         return {};
     }
 
@@ -3933,7 +4756,7 @@ struct Renderer::Impl {
         for (WGPUTextureView tv : {surface_view, albedo_view}) if (tv) wgpuTextureViewRelease(tv);
         for (WGPUTexture tt : {surface_tex, albedo_tex}) if (tt) wgpuTextureRelease(tt);
         taa_valid = false;
-        auto [t, v] = make_target("pocket.prepass", w, h, kPrepassDepth, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        auto [t, v] = make_target("pocket.prepass", w, h, kPrepassDepth, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc);
         if (!t) return fail("gpu_texture_failed", "cannot create the depth prepass {}x{}", w, h);
         prepass_tex = t;
         prepass_view = v;
@@ -4003,7 +4826,7 @@ struct Renderer::Impl {
         WGPUBindGroupDescriptor sbd{};
         sbd.label = rhi::str("pocket.scene");
         sbd.layout = scene_bgl;
-        sbd.entryCount = 13;
+        sbd.entryCount = 17;
         sbd.entries = scene_entries;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
         scene_ao = ao_view_now;
@@ -4298,7 +5121,7 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[13]{};
+        WGPUBindGroupLayoutEntry se[17]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
@@ -4344,9 +5167,24 @@ struct Renderer::Impl {
         se[12].visibility = WGPUShaderStage_Fragment;
         se[12].texture.sampleType = WGPUTextureSampleType_Float;
         se[12].texture.viewDimension = WGPUTextureViewDimension_2DArray;
+        se[13].binding = 13;
+        se[13].visibility = WGPUShaderStage_Fragment;
+        se[13].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        se[13].buffer.minBindingSize = sizeof(float) * 4 * 16 * kMaxProbes;
+        se[14].binding = 14;
+        se[14].visibility = WGPUShaderStage_Fragment;
+        se[14].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        se[14].buffer.minBindingSize = sizeof(GpuDecal);
+        se[15].binding = 15;
+        se[15].visibility = WGPUShaderStage_Fragment;
+        se[15].texture.sampleType = WGPUTextureSampleType_Float;
+        se[15].texture.viewDimension = WGPUTextureViewDimension_2DArray;
+        se[16].binding = 16;
+        se[16].visibility = WGPUShaderStage_Fragment;
+        se[16].sampler.type = WGPUSamplerBindingType_Filtering;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 13;
+        scene_ld.entryCount = 17;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -4592,11 +5430,29 @@ struct Renderer::Impl {
         POCKET_TRY_VOID(create_fx());
         POCKET_TRY_VOID(create_oit());
         POCKET_TRY_VOID(create_ssr());
+        POCKET_TRY_VOID(create_water());
         POCKET_TRY_VOID(create_probe_textures());
         POCKET_TRY_VOID(create_probe_passes());
         WGPUBindGroupEntry* sbe = scene_entries;
         sbe[12].binding = 12;
         sbe[12].textureView = probe_env_view;
+        {
+            const std::vector<float> zero(4 * 16 * kMaxProbes, 0.0f);
+            probe_sh_buffer = device->create_buffer("pocket.probes.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, zero.size() * sizeof(float), zero.data());
+            const std::vector<std::uint32_t> none(2 * kClusters + kMaxLights, 0u);
+            probe_cluster_buffer = device->create_buffer("pocket.probes.lights", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, none.size() * sizeof(std::uint32_t), none.data());
+        }
+        sbe[13].binding = 13;
+        sbe[13].buffer = probe_sh_buffer;
+        sbe[13].size = sizeof(float) * 4 * 16 * kMaxProbes;
+        POCKET_TRY_VOID(create_decals());
+        sbe[14].binding = 14;
+        sbe[14].buffer = decal_buffer;
+        sbe[14].size = sizeof(GpuDecal) * kMaxDecals;
+        sbe[15].binding = 15;
+        sbe[15].textureView = decal_view;
+        sbe[16].binding = 16;
+        sbe[16].sampler = decal_sampler;
         sbe[0] = fbe;
         sbe[1].binding = 1;
         sbe[1].textureView = shadow_view;
@@ -5362,7 +6218,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     world.ecs().each([&](flecs::entity, const world::Fog& f) {
         if (!fog_on && f.enabled && f.density > 0) { fog = f; fog_on = true; }
     });
-    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled;
+    // Water reads the prepass's depth and adds its surfaces to it.
+    im.gather_water(world);
+    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || !im.water_bodies.empty();
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
     if (im.ao.enabled) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
@@ -5383,6 +6241,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.applied = Viewport{x0, y0, static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)};
     float aspect = im.applied.h > 0 ? static_cast<float>(im.applied.w) / static_cast<float>(im.applied.h) : 1.0f;
     im.stats = RenderStats{};
+    im.stats.water = static_cast<std::uint32_t>(im.water_bodies.size());
     im.camera = im.find_camera(world, aspect);
 
     FrameUniforms fu{};
@@ -5570,6 +6429,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.ao[2] = 1.0f / static_cast<float>(std::max(1u, frame.height));
     if (has_sky) fu.ambient[0] = fu.ambient[1] = fu.ambient[2] = 0.0f;   // the sky's light replaces the flat ambient, even at zero
     const int probe_capture = im.gather_probes(world, fu);
+    im.gather_decals(world, fu);
     ++im.frame_number;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
@@ -6109,14 +6969,34 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         }
     }
     // A reflection probe's capture: the scene drawn six ways from its center with the frame's own
-    // shading (the sky, the sun, the ambient and what glows; no local lights, shadows, occlusion or
-    // probes, so it needs nothing of the camera's), then turned into its panorama and prefiltered.
+    // shading (the sky, the sun with the camera's cascades, the point and spot lights reaching the
+    // box without their shadows, what glows, and the probes' light: this one's from its capture
+    // before, none the first time), then turned into its panorama, prefiltered, and its diffuse
+    // light taken from it.
     if (probe_capture >= 0) {
         Impl::ProbeSlot& slot = im.probe_slots[static_cast<std::size_t>(probe_capture)];
+        if (!slot.captured) {
+            const std::array<float, 64> none{};
+            im.device->write_buffer(im.probe_sh_buffer, 256ull * static_cast<std::uint64_t>(probe_capture), none.data(), sizeof none);
+        }
         for (WGPUBindGroup g : im.probe_groups) wgpuBindGroupRelease(g);
         im.probe_groups.clear();
         const std::array<Mat4, 6> views = im.probe_views(slot.center);
         const rhi::Color bg{decode(clear.r), decode(clear.g), decode(clear.b), 1.0f};
+        // The point and spot lights whose reach touches the probe's box, as the one cluster its
+        // views look up (every pixel of a capture lists them all; no shadows, drawn after it).
+        std::vector<std::uint32_t> reach(2 * kClusters, 0u);
+        for (std::uint32_t li = 0; li < im.light_packed.size() && reach.size() < 2 * kClusters + kMaxLights; ++li) {
+            const GpuLight& g = im.light_packed[li];
+            const Vec3 at{g.pos_range[0], g.pos_range[1], g.pos_range[2]};
+            const Vec3 half = slot.size * 0.5f;
+            const Vec3 d{std::max(std::fabs(at.x - slot.center.x) - half.x, 0.0f), std::max(std::fabs(at.y - slot.center.y) - half.y, 0.0f), std::max(std::fabs(at.z - slot.center.z) - half.z, 0.0f)};
+            if (length(d) < g.pos_range[3]) reach.push_back(li);
+        }
+        const auto probe_lights = static_cast<std::uint32_t>(reach.size() - 2 * kClusters);
+        reach[0] = 2 * kClusters;
+        reach[1] = probe_lights;
+        im.device->write_buffer(im.probe_cluster_buffer, 0, reach.data(), reach.size() * sizeof(std::uint32_t));
         for (int f = 0; f < 6; ++f) {
             FrameUniforms pu = fu;
             to_array(views[static_cast<std::size_t>(f)], pu.view_proj);
@@ -6124,21 +7004,31 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             to_array(views[static_cast<std::size_t>(f)], pu.prev_view_proj);
             to_array(views[static_cast<std::size_t>(f)].inverse(), pu.inv_view_proj);
             pu.camera_pos[0] = slot.center.x; pu.camera_pos[1] = slot.center.y; pu.camera_pos[2] = slot.center.z;
-            pu.camera_fwd[3] = 0;
-            pu.clusters[3] = 0;
-            pu.shadow[3] = 0;
+            pu.clusters[0] = 1; pu.clusters[1] = 1; pu.clusters[2] = 1;
+            pu.clusters[3] = probe_lights;
+            pu.probe_info[2] = 1;   // a capture: no local lights' shadows, the sun's by the cascade holding the point
             pu.ao[0] = 0;
             pu.taa[0] = 0;
-            pu.probe_info[0] = 0;
+            if (!slot.captured) {
+                // Its own light, dark so far, for what is in its box (reflections only from the captured).
+                const auto k = static_cast<std::size_t>(fu.probe_info[0]);
+                pu.probe_box[k][0] = slot.center.x; pu.probe_box[k][1] = slot.center.y; pu.probe_box[k][2] = slot.center.z;
+                pu.probe_box[k][3] = static_cast<float>(probe_capture);
+                pu.probe_ext[k][0] = slot.size.x * 0.5f; pu.probe_ext[k][1] = slot.size.y * 0.5f; pu.probe_ext[k][2] = slot.size.z * 0.5f;
+                pu.probe_ext[k][3] = 1;
+                pu.probe_info[0] = static_cast<float>(k + 1);
+            }
             pu.viewport[0] = 0; pu.viewport[1] = 0; pu.viewport[2] = kProbeFace; pu.viewport[3] = kProbeFace;
             im.device->write_buffer(im.probe_frame_buf[f], 0, &pu, sizeof pu);
-            WGPUBindGroupEntry pe[13];
+            WGPUBindGroupEntry pe[17];
             std::memcpy(pe, im.scene_entries, sizeof pe);
             pe[0].buffer = im.probe_frame_buf[f];
+            pe[9].buffer = im.probe_cluster_buffer;
+            pe[9].size = sizeof(std::uint32_t) * (2ull * kClusters + kMaxLights);
             WGPUBindGroupDescriptor pd{};
             pd.label = rhi::str("pocket.probe.scene");
             pd.layout = im.scene_bgl;
-            pd.entryCount = 13;
+            pd.entryCount = 17;
             pd.entries = pe;
             WGPUBindGroup group = wgpuDeviceCreateBindGroup(im.device->device(), &pd);
             im.probe_groups.push_back(group);
@@ -6242,9 +7132,30 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuComputePassEncoderSetBindGroup(cp, 0, g, 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(cp, (std::max(1u, kProbeWidth >> l) + 7) / 8, (std::max(1u, kProbeHeight >> l) + 7) / 8, 1);
         }
+        {
+            // Its diffuse light: level 3 (32 by 16) projected onto nine harmonics in the probe's slot.
+            WGPUBindGroupEntry ie[2]{};
+            ie[0].binding = 0;
+            ie[0].textureView = im.probe_level[layer][3];
+            ie[1].binding = 1;
+            ie[1].buffer = im.probe_sh_buffer;
+            ie[1].offset = 256ull * layer;
+            ie[1].size = sizeof(float) * 36;
+            WGPUBindGroupDescriptor id{};
+            id.label = rhi::str("pocket.probe.irradiance");
+            id.layout = im.irr_bgl;
+            id.entryCount = 2;
+            id.entries = ie;
+            WGPUBindGroup ig = wgpuDeviceCreateBindGroup(im.device->device(), &id);
+            im.probe_groups.push_back(ig);
+            wgpuComputePassEncoderSetPipeline(cp, im.irradiance_pipeline);
+            wgpuComputePassEncoderSetBindGroup(cp, 0, ig, 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
+        }
         wgpuComputePassEncoderEnd(cp);
         wgpuComputePassEncoderRelease(cp);
         slot.captured = true;
+        slot.bounces = std::max(slot.bounces - 1, 0);
         slot.frame = im.frame_number;
         im.stats.probe_captures = 1;
     }
@@ -6439,6 +7350,24 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &arp2);
         set_viewport(pass);
     }
+    // Water, after what is solid (and translucent); without MSAA before the sprites and lines,
+    // which a pass after it draws, with MSAA after them (docs/design/water.md).
+    if (!im.water_bodies.empty() && split && !resolve) {
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        POCKET_TRY_VOID(im.draw_water(frame, frame.depth, false, set_viewport));
+        WGPURenderPassColorAttachment wca[2] = {ca[0], ca[1]};
+        wca[0].loadOp = WGPULoadOp_Load;
+        wca[1].loadOp = WGPULoadOp_Load;
+        WGPURenderPassDepthStencilAttachment wds = ds;
+        wds.depthLoadOp = WGPULoadOp_Load;
+        WGPURenderPassDescriptor wrp = rp;
+        wrp.label = rhi::str("pocket.scene.over_water");
+        wrp.colorAttachments = wca;
+        wrp.depthStencilAttachment = &wds;
+        pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &wrp);
+        set_viewport(pass);
+    }
     if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.stats.draw_calls);
     if (debug && !debug->vertices().empty()) {
         const auto& verts = debug->vertices();
@@ -6457,6 +7386,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
+    if (!im.water_bodies.empty() && split && resolve) POCKET_TRY_VOID(im.draw_water(frame, im.prepass_view, true, set_viewport));
     if (im.ssr.enabled && split && im.surface_view) POCKET_TRY_VOID(im.draw_ssr(frame));
     if (im.taa.enabled && split && im.velocity_view) POCKET_TRY_VOID(im.resolve_taa(frame, taa_reproject));
     if ((im.dof.enabled || im.motion_blur.enabled) && split && im.velocity_view) {
@@ -6646,7 +7576,7 @@ Json Renderer::probes() const {
     for (std::uint32_t i = 0; i < impl_->probe_count; ++i) {
         const Impl::ProbeSlot& s = impl_->probe_slots[i];
         list.push_back(Json{{"entity", s.entity}, {"layer", i}, {"center", Json{{"x", s.center.x}, {"y", s.center.y}, {"z", s.center.z}}}, {"size", Json{{"x", s.size.x}, {"y", s.size.y}, {"z", s.size.z}}},
-                            {"captured", s.captured}, {"frame", s.frame}, {"realtime", s.realtime}});
+                            {"captured", s.captured}, {"bounces", s.bounces}, {"frame", s.frame}, {"realtime", s.realtime}});
     }
     return Json{{"probes", list}, {"frame", impl_->frame_number}, {"max", kMaxProbes}};
 }
@@ -6769,6 +7699,8 @@ Json Renderer::describe() const {
     j["lut"] = s.lut;
     j["ssr"] = s.ssr;
     j["probes"] = Json{{"in_use", s.probes}, {"captured", s.probe_captures}};
+    j["water"] = Json{{"bodies", s.water}, {"underwater", s.underwater}};
+    j["decals"] = Json{{"drawn", s.decals}, {"images", s.decal_images}};
     j["dof"] = s.dof;
     j["motion_blur"] = s.motion_blur;
     j["id_draws"] = s.id_draws;

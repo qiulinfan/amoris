@@ -4273,3 +4273,50 @@ TEST_CASE("a peer whose world drifts from the others' is caught by the host's ha
     REQUIRE(host.net["first_desync"].get<int>() >= 70);
     REQUIRE(host.net["first_desync"].get<int>() <= 90);
 }
+
+TEST_CASE("water.height answers the moving surface, and a crate dropped in the lake floats on it", "[runtime][water]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "hills";
+    o.bundle = root() / "build" / "ts" / "hills.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 5; ++i) REQUIRE(s.frame().has_value());
+    // A deep spot of the lake: the lowest ground on a coarse look.
+    float bx = 0, bz = 0, low = 1e9f;
+    for (int i = -20; i <= 20; ++i) {
+        for (int j = -20; j <= 20; ++j) {
+            const float h = s.command("terrain.height", Json{{"x", i * 2.2}, {"z", j * 2.2}}).value()["height"].get<float>();
+            if (h < low) { low = h; bx = i * 2.2f; bz = j * 2.2f; }
+        }
+    }
+    INFO("deepest ground " << low << " at " << bx << ", " << bz);
+    REQUIRE(low < 3.2f - 1.5f);
+    Json w0 = s.command("water.height", Json{{"x", bx}, {"z", bz}}).value();
+    INFO(w0.dump());
+    REQUIRE(w0["path"] == "/Lake");
+    REQUIRE(w0["inside"] == true);
+    REQUIRE(w0["level"].get<double>() == Catch::Approx(3.2));
+    REQUIRE(std::fabs(w0["height"].get<double>() - 3.2) < 0.25);            // waves 0.22 high
+    REQUIRE(w0["bottom"].get<double>() == Catch::Approx(3.2 - 6));
+    REQUIRE(s.command("water.height", Json{{"x", 500}, {"z", 0}}).value()["entity"].is_null());
+    // The surface moves: over a second it is not where it was.
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("water.height", Json{{"x", bx}, {"z", bz}}).value()["height"].get<double>() != Catch::Approx(w0["height"].get<double>()).margin(1e-4));
+    // A crate 0.5 units a side of mass 0.1: the 0.125 cubic units of water it could displace weigh 0.25.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", bx}, {"y", 5.5}, {"z", bz}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}, {"RigidBody", Json{{"kind", 0}, {"mass", 0.1}}}, {"Collider", Json{{"shape", 0}, {"size", Json{{"x", 0.25}, {"y", 0.25}, {"z", 0.25}}}}}}}}).has_value());
+    for (int i = 0; i < 240; ++i) REQUIRE(s.frame().has_value());
+    const Json crate = s.command("world.get", Json{{"entity", "Crate"}, {"component", "Transform"}}).value();
+    const double cy = crate["position"]["y"].get<double>();
+    const Json here = s.command("water.height", Json{{"x", crate["position"]["x"]}, {"z", crate["position"]["z"]}}).value();
+    INFO("crate at " << cy << ", the surface at " << here["height"]);
+    REQUIRE(std::fabs(cy - here["height"].get<double>()) < 0.3);
+    REQUIRE(s.command("physics.stats", Json::object()).value()["floating"].get<int>() >= 1);
+    REQUIRE(s.command("events.histogram", Json::object()).value()["water.entered"].get<int>() >= 1);
+    REQUIRE(s.finish().has_value());
+}

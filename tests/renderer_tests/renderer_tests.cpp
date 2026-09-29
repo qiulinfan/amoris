@@ -1618,12 +1618,19 @@ TEST_CASE("a reflection probe makes a room's floor reflect the room, not the sky
     Json stats = s.command("render.stats", Json::object()).value();
     REQUIRE(stats["probes"]["captured"] == 1);
     REQUIRE(stats["probes"]["in_use"] == 0);       // captured this frame, used from the next
+    // Captured twice more, each lit by the one before (the light bouncing off the walls), then no more.
+    for (int bounce = 2; bounce <= 3; ++bounce) {
+        REQUIRE(s.frame().has_value());
+        stats = s.command("render.stats", Json::object()).value();
+        REQUIRE(stats["probes"]["in_use"] == 1);
+        REQUIRE(stats["probes"]["captured"] == 1);
+    }
     REQUIRE(s.frame().has_value());
     const auto room = pixel();
     stats = s.command("render.stats", Json::object()).value();
     INFO("floor before the red wall: sky " << sky[0] << "," << sky[1] << "," << sky[2] << " -> probe " << room[0] << "," << room[1] << "," << room[2] << " " << stats["probes"].dump());
     REQUIRE(stats["probes"]["in_use"] == 1);
-    REQUIRE(stats["probes"]["captured"] == 0);     // once is enough while it stays
+    REQUIRE(stats["probes"]["captured"] == 0);     // enough while it stays
     REQUIRE(sky[2] >= sky[0]);                     // the sky's blue
     REQUIRE(room[0] > room[2] + 40);               // the red wall
     Json list = s.command("render.probes", Json::object()).value();
@@ -1675,6 +1682,7 @@ TEST_CASE("the showcase sample has every part of the renderer on at once", "[ren
     REQUIRE(stats["bloom"] == true);
     REQUIRE(stats["ao"] == true);
     REQUIRE(stats["tonemap"] == "agx");
+    REQUIRE(stats["decals"]["drawn"].get<int>() >= 3);     // puddles, the sigil, the arrow (those in view)
     REQUIRE(stats["assets"].value("missing", Json::array()).empty());
     // The camera circles: its angle is exposed and moves.
     const double a0 = s.command("state", Json::object()).value()["state"]["camera.angle"].get<double>();
@@ -1746,4 +1754,202 @@ TEST_CASE("order-independent transparency blends interleaved translucent meshes 
     REQUIRE(std::abs(oit_a[2] - oit_b[2]) <= 3);
     REQUIRE(oit_a[0] > 40);
     REQUIRE(oit_a[2] > oit_a[0]);
+}
+
+TEST_CASE("a reflection probe lights a closed room from what it saw: its lamps, not the sky", "[renderer][probes][probediffuse]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto box = [&](const char* name, double x, double y, double z, double sx, double sy, double sz, Json mr) {
+        mr["mesh"] = "cube";
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}, {"scale", Json{{"x", sx}, {"y", sy}, {"z", sz}}}}}, {"MeshRenderer", mr}}}}).has_value());
+    };
+    const Json gray{{"color", Json{{"r", 0.7}, {"g", 0.7}, {"b", 0.7}, {"a", 1}}}, {"roughness", 1.0}};
+    box("Floor", 0, -0.1, 0, 10, 0.2, 10, gray);
+    box("Far", 0, 1.5, -5.1, 10, 3, 0.2, gray);
+    box("Left", -5.1, 1.5, 0, 0.2, 3, 10, gray);
+    box("Right", 5.1, 1.5, 0, 0.2, 3, 10, gray);
+    box("Back", 0, 1.5, 5.1, 10, 3, 0.2, gray);
+    box("Ceiling", 0, 3.1, 0, 10.4, 0.2, 10.4, gray);
+    // A white block in the room, its top facing the ceiling.
+    box("Block", 2.5, 0.5, -2.5, 1, 1, 1, Json{{"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}, {"roughness", 1.0}});
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 1}, {"intensity", 1.5}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.5}, {"y", 0.3}, {"z", 0.1}, {"w", 0.8}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2.0}}}}}}).has_value());
+    // A warm lamp in the far left corner whose reach stops well short of the block.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -4}, {"y", 2.5}, {"z", 3.5}}}}}, {"Light", Json{{"kind", 1}, {"color", Json{{"r", 1}, {"g", 0.55}, {"b", 0.2}, {"a", 1}}}, {"intensity", 12}, {"range", 3.5}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 2.6}, {"z", 4.2}}}, {"rotation", Json{{"x", -0.2}, {"y", 0}, {"z", 0}, {"w", 0.98}}}}}, {"Camera", Json{{"fov_degrees", 65}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json at = s.command("render.project", Json{{"point", Json{{"x", 2.5}, {"y", 1.0}, {"z", -2.5}}}}).value();
+    auto pixel = [&]() {
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    const auto sky = pixel();   // without a probe the block's top is lit by the sky above the roof
+    // Shadows black, so what lights the room is only what the probe saw.
+    REQUIRE(s.command("render.shadows", Json{{"strength", 1.0}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "RoomProbe"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}}}, {"ReflectionProbe", Json{{"size", Json{{"x", 10}, {"y", 3}, {"z", 10}}}}}}}}).has_value());
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.probes", Json::object()).value()["probes"][0]["bounces"] == 0);
+    const auto lamp = pixel();
+    // The lamp out: captured again, the room goes dark.
+    REQUIRE(s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"intensity", 0}}}}).has_value());
+    REQUIRE(s.command("render.probes", Json{{"refresh", true}}).has_value());
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    const auto dark = pixel();
+    INFO("block top: sky " << sky[0] << "," << sky[1] << "," << sky[2] << "; probe with the lamp " << lamp[0] << "," << lamp[1] << "," << lamp[2] << "; without " << dark[0] << "," << dark[1] << "," << dark[2]);
+    // Under the sky it is bright and cool; in the probe's light, lit by the lamp it saw, warm and
+    // much dimmer (the sun and the sky do not get in).
+    REQUIRE(sky[2] >= sky[0]);
+    REQUIRE(lamp[0] + lamp[1] + lamp[2] < (sky[0] + sky[1] + sky[2]) / 2);
+    REQUIRE(lamp[0] > lamp[2] + 5);
+    // The lamp's light reached the block only through the capture: without it, far darker (what
+    // is left is the lamp's light fading from the captures before, a bounce less each time).
+    REQUIRE(3 * (dark[0] + dark[1] + dark[2]) < lamp[0] + lamp[1] + lamp[2]);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("water shows the bed through it, deep water its colour, the sky at a glance, and is picked", "[renderer][water]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto box = [&](const char* name, double x, double y, double z, double sx, double sy, double sz) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}, {"scale", Json{{"x", sx}, {"y", sy}, {"z", sz}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0.85}, {"g", 0.75}, {"b", 0.55}, {"a", 1}}}, {"roughness", 1.0}}}}}}).has_value());
+    };
+    box("Bed", 0, -3, 0, 40, 2, 40);          // sand two units under the surface
+    box("Shelf", 5, -1.2, 0, 6, 2, 10);       // and a shelf a fifth of a unit under it
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 1}, {"intensity", 1.2}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.5}, {"y", 0.3}, {"z", 0.1}, {"w", 0.8}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2.0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lake"}, {"components", Json{{"Transform", Json::object()}, {"Water", Json{{"size", Json{{"x", 30}, {"y", 30}}}, {"wave_height", 0}, {"ripples", 0}, {"foam", 0}, {"clarity", 2.0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json::object()}, {"Camera", Json{{"fov_degrees", 60}}}}}}).has_value());
+    auto camera = [&](double y, double z, double pitch_x, double pitch_w) {
+        Json t{{"position", Json{{"x", 0}, {"y", y}, {"z", z}}}, {"rotation", Json{{"x", pitch_x}, {"y", 0}, {"z", 0}, {"w", pitch_w}}}};
+        REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", t}}).has_value());
+        REQUIRE(s.frame().has_value());
+    };
+    auto pixel_at = [&](double x, double y, double z) {
+        Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    auto set_water = [&](Json v) { REQUIRE(s.command("world.set", Json{{"entity", "Lake"}, {"component", "Water"}, {"value", v}}).has_value()); REQUIRE(s.frame().has_value()); };
+    // From above, looking down at 45 degrees.
+    camera(6, 6, -0.3827, 0.9239);
+    Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["water"]["bodies"] == 1);
+    REQUIRE(stats["water"]["underwater"] == false);
+    const auto deep = pixel_at(-3, -2, 0);
+    const auto shallow = pixel_at(5, -0.2, 0);
+    // The water is picked where it covers the bed.
+    Json at = s.command("render.project", Json{{"point", Json{{"x", -3}, {"y", 0}, {"z", 0}}}}).value();
+    REQUIRE(s.command("render.pick", Json{{"x", at["x"]}, {"y", at["y"]}}).value()["path"] == "/Lake");
+    set_water(Json{{"enabled", false}});
+    const auto deep_dry = pixel_at(-3, -2, 0);
+    const auto shallow_dry = pixel_at(5, -0.2, 0);
+    INFO("deep " << deep[0] << "," << deep[1] << "," << deep[2] << " (dry " << deep_dry[0] << "," << deep_dry[1] << "," << deep_dry[2] << "); shallow " << shallow[0] << "," << shallow[1] << "," << shallow[2] << " (dry " << shallow_dry[0] << "," << shallow_dry[1] << "," << shallow_dry[2] << ")");
+    // Sand under two units of water that clears at two: mostly the water's blue-green, the sand's red gone.
+    REQUIRE(deep[0] * 2 < deep_dry[0]);
+    REQUIRE(deep[2] > deep[0]);
+    // Under a fifth of a unit it still shows, a little dimmer and cooler.
+    REQUIRE(shallow[0] > deep[0] + 40);
+    REQUIRE(shallow[0] <= shallow_dry[0]);
+    REQUIRE(shallow[0] * 10 > shallow_dry[0] * 6);
+    // Nearly level, the far water mirrors the sky instead of showing the sand.
+    set_water(Json{{"enabled", true}});
+    camera(0.6, 12, -0.02, 0.9998);
+    const auto far = pixel_at(0, 0, -12);
+    set_water(Json{{"enabled", false}});
+    const auto far_dry = pixel_at(0, -2, -12);
+    INFO("far " << far[0] << "," << far[1] << "," << far[2] << " (dry " << far_dry[0] << "," << far_dry[1] << "," << far_dry[2] << ")");
+    REQUIRE(far[2] > far[0] + 20);
+    REQUIRE(far_dry[0] > far_dry[2]);
+    // Under the surface: everything seen through the water.
+    set_water(Json{{"enabled", true}});
+    camera(-1, 6, -0.3827, 0.9239);
+    stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["water"]["underwater"] == true);
+    const auto sunk = pixel_at(-3, -2, 0);
+    INFO("under the surface " << sunk[0] << "," << sunk[1] << "," << sunk[2]);
+    REQUIRE(sunk[2] > sunk[0]);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("decals paint the surfaces in their boxes, facing the projection, in order, and glow", "[renderer][decals]") {
+    // The assets project for its checker image; the test's scene stands 200 units along x from the
+    // sample's (whose script keeps running), seen by the sample's camera and lit by its sun.
+    app::Session s(assets_options());
+    REQUIRE(s.start().has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", components}}).has_value()); };
+    auto xyz = [](double x, double y, double z) { return Json{{"x", x + 200}, {"y", y}, {"z", z}}; };   // a place
+    auto v3 = [](double x, double y, double z) { return Json{{"x", x}, {"y", y}, {"z", z}}; };           // a size
+    auto rgba = [](double r, double g, double b, double a = 1) { return Json{{"r", r}, {"g", g}, {"b", b}, {"a", a}}; };
+    spawn("Floor", Json{{"Transform", Json{{"position", xyz(0, -0.1, 0)}, {"scale", v3(20, 0.2, 20)}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", rgba(0.5, 0.5, 0.5)}, {"roughness", 1.0}}}});
+    // A white block standing in the decal's box: its top is painted, its sides are not.
+    spawn("Block", Json{{"Transform", Json{{"position", xyz(0.55, 0.2, 0.55)}, {"scale", v3(0.4, 0.4, 0.4)}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", rgba(1, 1, 1)}, {"roughness", 1.0}}}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", -0.6}, {"y", 0.2}, {"z", 0.1}, {"w", 0.77}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Light"}, {"value", Json{{"intensity", 1.5}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", xyz(1.5, 4, 4)}, {"rotation", Json{{"x", -0.34}, {"y", 0.12}, {"z", 0.04}, {"w", 0.93}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"fov_degrees", 50}}}}).has_value());
+    spawn("Mark", Json{{"Transform", Json{{"position", xyz(0, 0.5, 0)}}}, {"Decal", Json{{"color", rgba(1, 0.1, 0.1)}, {"size", v3(2, 1.2, 2)}}}});
+    REQUIRE(s.frame().has_value());
+    auto pixel_at = [&](double x, double y, double z) {
+        Json at = s.command("render.project", Json{{"point", xyz(x, y, z)}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO(stats["decals"].dump());
+    REQUIRE(s.command("capture", Json{{"path", (root() / "build" / "test-out" / "decals.png").string()}}).has_value());
+    REQUIRE(stats["decals"]["drawn"] == 1);
+    const auto centre = pixel_at(-0.2, 0, -0.2);
+    const auto outside = pixel_at(-1.6, 0, -0.2);
+    const auto top = pixel_at(0.55, 0.4, 0.55);
+    const auto side = pixel_at(0.55, 0.2, 0.75);   // the face toward +z, the camera's side
+    INFO("centre " << centre[0] << "," << centre[1] << "," << centre[2] << "; outside " << outside[0] << "," << outside[1] << "," << outside[2] << "; top " << top[0] << "," << top[1] << "," << top[2] << "; side " << side[0] << "," << side[1] << "," << side[2]);
+    REQUIRE(centre[0] > centre[1] + 60);                       // red on the floor
+    REQUIRE(std::abs(outside[0] - outside[1]) < 12);           // grey beyond the box
+    REQUIRE(top[0] > top[1] + 60);                             // red on the block's top
+    REQUIRE(std::abs(side[0] - side[1]) < 12);                 // its side, turned away from the projection, left white
+    // A blue decal over it paints over the red when its order is higher, under it when lower.
+    spawn("Over", Json{{"Transform", Json{{"position", xyz(0, 0.5, 0)}}}, {"Decal", Json{{"color", rgba(0.1, 0.2, 1)}, {"size", v3(1.6, 1.2, 1.6)}, {"order", 1}}}});
+    REQUIRE(s.frame().has_value());
+    const auto over = pixel_at(-0.2, 0, -0.2);
+    REQUIRE(over[2] > over[0] + 60);
+    REQUIRE(s.command("world.set", Json{{"entity", "Over"}, {"component", "Decal"}, {"value", Json{{"order", -1}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto under = pixel_at(-0.2, 0, -0.2);
+    REQUIRE(under[0] > under[2] + 60);
+    // With the sun out, a glowing decal still shows.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Light"}, {"value", Json{{"intensity", 0}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Decal"}, {"value", Json{{"emissive", 2.0}, {"color", rgba(0.1, 1, 0.2)}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto glow = pixel_at(-0.2, 0, -0.2);
+    const auto dark = pixel_at(-1.6, 0, -0.2);
+    INFO("glow " << glow[0] << "," << glow[1] << "," << glow[2] << "; dark " << dark[0] << "," << dark[1] << "," << dark[2]);
+    REQUIRE(glow[1] > dark[1] + 80);
+    // An image: the checker's two colours across the box; one image loaded.
+    REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Decal"}, {"value", Json{{"texture", "assets/checker.png"}, {"emissive", 0.0}, {"color", rgba(1, 1, 1)}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Light"}, {"value", Json{{"intensity", 1.5}}}}).has_value());
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Over"}}).has_value());
+    REQUIRE(s.frame().has_value());
+    stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["decals"]["images"] == 1);
+    int lo = 255, hi = 0;
+    for (int i = 0; i < 8; ++i) {
+        const auto p = pixel_at(-0.85 + i * 0.1, 0, -0.5);
+        lo = std::min(lo, p[0] + p[1] + p[2]);
+        hi = std::max(hi, p[0] + p[1] + p[2]);
+    }
+    INFO("checker brightness from " << lo << " to " << hi);
+    REQUIRE(hi - lo > 90);
+    // Out of view, it is not painted.
+    REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Transform"}, {"value", Json{{"position", xyz(0, 0.5, 60)}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["decals"]["drawn"] == 0);
+    REQUIRE(s.finish().has_value());
 }

@@ -169,7 +169,7 @@ void from_json(const Json& j, Light& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Light& v, std::string_view path, float** out);
 
-/// What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap.
+/// The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.
 struct ReflectionProbe {
     Vec3 size{10.0f, 4.0f, 10.0f};
     float intensity = 1.0f;
@@ -182,6 +182,23 @@ void to_json(Json& j, const ReflectionProbe& v);
 void from_json(const Json& j, ReflectionProbe& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(ReflectionProbe& v, std::string_view path, float** out);
+
+/// An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.
+struct Decal {
+    std::string texture = "";
+    Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    Vec3 size{2.0f, 1.0f, 2.0f};
+    float roughness = -1.0f;
+    float emissive = 0.0f;
+    float angle = 60.0f;
+    std::int32_t order = 0;
+    bool enabled = true;
+    constexpr bool operator==(const Decal&) const = default;
+};
+void to_json(Json& j, const Decal& v);
+void from_json(const Json& j, Decal& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Decal& v, std::string_view path, float** out);
 
 /// Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.
 struct Fog {
@@ -493,6 +510,7 @@ struct Character {
     float step = 0.3f;
     float max_slope = 45.0f;
     float push = 1.0f;
+    float swim_speed = 0.6f;
     std::uint32_t mask = 4294967295;
     bool grounded = false;
     Vec3 ground_normal{0.0f, 1.0f, 0.0f};
@@ -501,6 +519,8 @@ struct Character {
     Vec3 wall_normal{0.0f, 0.0f, 0.0f};
     bool on_ceiling = false;
     bool stepped = false;
+    bool swimming = false;
+    float submerged = 0.0f;
     constexpr bool operator==(const Character&) const = default;
 };
 void to_json(Json& j, const Character& v);
@@ -529,6 +549,29 @@ void to_json(Json& j, const Terrain& v);
 void from_json(const Json& j, Terrain& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Terrain& v, std::string_view path, float** out);
+
+/// A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.
+struct Water {
+    Vec2 size{40.0f, 40.0f};
+    float depth = 4.0f;
+    Color4 color{0.03f, 0.2f, 0.24f, 1.0f};
+    float clarity = 4.0f;
+    float wave_height = 0.3f;
+    float wave_length = 8.0f;
+    float wave_direction = 0.0f;
+    float choppiness = 0.5f;
+    float ripples = 1.0f;
+    float foam = 0.5f;
+    Vec2 flow{0.0f, 0.0f};
+    float density = 2.0f;
+    float drag = 1.0f;
+    bool enabled = true;
+    constexpr bool operator==(const Water&) const = default;
+};
+void to_json(Json& j, const Water& v);
+void from_json(const Json& j, Water& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Water& v, std::string_view path, float** out);
 
 /// Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.
 struct Scatter {
@@ -716,6 +759,7 @@ void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const ReflectionProbe& v);
+void hash_component(struct StateHasherRef& h, const Decal& v);
 void hash_component(struct StateHasherRef& h, const Fog& v);
 void hash_component(struct StateHasherRef& h, const Sky& v);
 void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
@@ -732,6 +776,7 @@ void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Character& v);
 void hash_component(struct StateHasherRef& h, const Terrain& v);
+void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
 void hash_component(struct StateHasherRef& h, const TopDown2D& v);

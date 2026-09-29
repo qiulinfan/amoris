@@ -64,6 +64,7 @@ A `Character` is a player or a person walking about: an upright capsule (`radius
 - **In the air** it moves with its whole capsule: it lands on walkable ground (`character.landed` with the fall `speed`), stops rising under a ceiling and slides down steeper ground.
 - **Platforms.** Standing on a kinematic body, it moves with that body's `Velocity` (and turns with its angular velocity about the body's centre) before its own move, so a lift carries it up and a turning disc carries it round.
 - **Pushing.** A dynamic body it walks into is given the character's speed into it, times `push` (1 by default; 0 leaves bodies alone): crates are pushed along at walking pace.
+- **Swimming.** In water over its chest it swims with its head out, at `swim_speed` of its pace, carried by the water (`docs/design/water.md`, Swimming).
 - **Triggers.** It reports `trigger.enter` and `trigger.exit` for the trigger colliders its capsule overlaps after each move (with `character: true`), as a rigid body would; that is how a coin is picked up.
 - **Being seen.** The character is found by nothing but itself until the entity also has a kinematic `RigidBody` and a capsule `Collider` of the same size (`size.x` the radius, `size.y` half the straight part): then raycasts and sweeps hit it and dynamic bodies bump into it. The character passes over its own collider.
 
@@ -76,6 +77,10 @@ A `Vehicle` makes a dynamic body a car on raycast wheels. Each `Wheel` record ha
 The engine writes back `speed` (forward, negative backing up), `grounded` (wheels on the ground) and each wheel's `contact`, `compression` and `spin`, and places a wheel's `visual` (the name of an entity under the vehicle: a pivot whose children draw the tyre) where the wheel hangs, turned with the steering and rolled with the ground. Scripts set the three controls from input; the rest is the car's.
 
 `samples/drive` is a red car on 240 units of rolling grassland (a terrain with three thousand scattered tufts) with four gates to drive through in order; W and S or the triggers drive, A and D or the stick steer, Space brakes, and the camera chases the car. Its scenarios hold the car still on its brakes on the slope it starts on, let a bot that steers for the next gate's bearing drive through the first three in order (twelve seconds), and brake it to a stop from speed. `physics_tests` (`[vehicle]`) settle a car on its springs to the sag `g / (2 pi f)^2` predicts, accelerate it at what its grip allows up to its top speed along a straight line, turn it right while it stays upright, brake it to a stop that holds, and back it up.
+
+## Water
+
+A dynamic body in a `Water` body's extent is buoyed by the water it displaces, cell by cell, and dragged toward the water's own motion (waves and current), so it floats at the level its mass and volume give, rights itself and rides the waves; `water.entered` and `water.left` mark it going in and out. `docs/design/water.md` has the whole of it.
 
 ## Queries and commands
 

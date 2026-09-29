@@ -19,7 +19,7 @@ interface LogRow { seq: number; tick?: number; level: string; cat: string; msg: 
 interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 interface Layout { hierarchy: number; inspector: number; bottom: number }
-interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "blender" }
+interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "blender" }
 type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script";
 const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script"];
 interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
@@ -747,7 +747,7 @@ function describeAsset(path: string): string {
         if (typeof d.error === "string") return d.error;
         if (d.kind === "mesh") {
             const count = (v: unknown, one: string) => { const n = Array.isArray(v) ? v.length : 0; return n > 0 ? `, ${n} ${one}${n > 1 ? "s" : ""}` : ""; };
-            const via = d.importer === "blender" ? `; read through Blender, kept as ${String(d.converted)}` : d.importer === "obj" ? "; an OBJ" : d.importer === "stl" ? "; an STL" : "";
+            const via = d.importer === "blender" ? `; read through Blender, kept as ${String(d.converted)}` : d.importer === "obj" ? "; an OBJ" : d.importer === "stl" ? "; an STL" : d.importer === "ply" ? "; a PLY" : "";
             return `${String(d.vertices)} vertices, ${String(d.triangles)} triangles, ${String(d.submeshes)} submeshes, ${String(d.nodes)} nodes${count(d.clips, "clip")}${count(d.lights, "light")}${count(d.cameras, "camera")}${via}`;
         }
         if (d.kind === "tilemap") {

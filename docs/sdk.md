@@ -80,7 +80,7 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Physics, audio, interface
 
-`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component and the `Character` component for a 3D player (`docs/design/physics.md`); the `Terrain` component with `terrain.height(x, z)` to find the ground and `terrain.sculpt` to reshape it (`docs/design/terrain.md`); the `Body2D` component for platformers against tile maps and `TopDown2D` for top-down movers on maps of any orientation (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
+`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component and the `Character` component for a 3D player (`docs/design/physics.md`); the `Terrain` component with `terrain.height(x, z)` to find the ground and `terrain.sculpt` to reshape it (`docs/design/terrain.md`); the `Water` component with `water.height(x, z)` for the moving surface and `water.under(point)` (`docs/design/water.md`); the `Body2D` component for platformers against tile maps and `TopDown2D` for top-down movers on maps of any orientation (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
 
 ## Scenarios
 

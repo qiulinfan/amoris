@@ -3,6 +3,7 @@
 #include "command_help.hpp"
 #include "journal.hpp"
 #include "web_fs.hpp"
+#include <pocket/world/water.hpp>
 
 #include <stb_image_write.h>
 
@@ -993,6 +994,34 @@ Result<Json> Session::net_command(std::string_view op, const Json& p) {
         return j;
     }
     return fail("unknown_command", "unknown net command '{}'", op);
+}
+
+// Water (docs/design/water.md): the surface anywhere, moved by the same waves the renderer draws
+// and the physics floats things on.
+Result<Json> Session::water_command(std::string_view op, const Json& p) {
+    if (op != "height") return fail("unknown_command", "water.{} is not a command (water.height is)", op);
+    if (!p.contains("x") || !p.contains("z")) return fail("bad_args", "water.height needs x and z");
+    const float x = opt<float>(p, "x", 0.0f), z = opt<float>(p, "z", 0.0f);
+    auto vec = [](Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; };
+    // The water asked for, or the first by id (enabled) whose extent covers the point.
+    world::EntityId id = 0;
+    if (p.contains("entity") && !p["entity"].is_null()) {
+        id = resolve_entity(p["entity"]);
+        if (!id || !world_->try_get<world::Water>(id)) return fail("no_water", "{} has no Water", p["entity"].dump());
+    } else {
+        std::vector<world::EntityId> ids;
+        world_->ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {
+            if (wa.enabled && world::water_covers(wa, t.position, x, z)) ids.push_back(e.id());
+        });
+        if (ids.empty()) return Json{{"entity", nullptr}, {"inside", false}};
+        id = *std::min_element(ids.begin(), ids.end());
+    }
+    const world::Water wa = world_->ecs().entity(id).get<world::Water>();
+    const world::WorldTransform* wt = world_->try_get<world::WorldTransform>(id);
+    const Vec3 c = wt ? wt->position : Vec3{0, 0, 0};
+    const world::WaterPoint s = world::water_at(wa, c.y, x, z, static_cast<float>(world_->seconds()));
+    return Json{{"entity", id}, {"path", world_->path(id)}, {"height", s.position.y}, {"point", vec(s.position)}, {"normal", vec(s.normal)}, {"velocity", vec(s.velocity)},
+                {"level", c.y}, {"bottom", c.y - std::max(wa.depth, 0.0f)}, {"inside", world::water_covers(wa, c, x, z)}};
 }
 
 Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
@@ -4416,6 +4445,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("animation.")) return animation_command(name.substr(10), p);
     if (name.starts_with("tilemap.")) return tilemap_command(name.substr(8), p);
     if (name.starts_with("terrain.")) return terrain_command(name.substr(8), p);
+    if (name.starts_with("water.")) return water_command(name.substr(6), p);
     if (name.starts_with("net.")) return net_command(name.substr(4), p);
     if (name == "scatter.copies") {
         // Where a Scatter's copies stand (docs/design/terrain.md, Scattering): their points, sizes and shades.
@@ -4563,7 +4593,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

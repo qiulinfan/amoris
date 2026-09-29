@@ -77,15 +77,30 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point,
 
 ## ReflectionProbe
 
-What glossy surfaces inside a box reflect (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's. A room's floor then reflects the room, not the sky outside. Up to eight at once, the first by id where boxes overlap.
+The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `size` | vec3 | [10.0, 4.0, 10.0] | The box it covers, centered on the entity, in world units (not turned with it). |
-| `intensity` | f32 | 1.0 | Multiplies what it reflects. |
+| `intensity` | f32 | 1.0 | Multiplies what it reflects and the light it gives. |
 | `box_projection` | bool | true | Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky. |
-| `realtime` | bool | false | Capture again every frame (six views of the scene each time); otherwise when it appears, moves or changes size, or on render.probes {refresh: true}. |
+| `realtime` | bool | false | Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}. |
 | `enabled` | bool | true | false stops it being used, without removing it. |
+
+## Decal
+
+An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `texture` | string | "" | A project image (its alpha is where it paints); empty is a soft round spot. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Multiplies the image; alpha is the decal's opacity. |
+| `size` | vec3 | [2.0, 1.0, 2.0] | The box's size along the entity's x, y (the projection's depth) and z, times its scale. |
+| `roughness` | f32 | -1.0 | The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own. |
+| `emissive` | f32 | 0.0 | How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units. |
+| `angle` | f32 | 60.0 | Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean). |
+| `order` | i32 | 0 | Where decals overlap, a higher order paints over a lower (then the later entity). |
+| `enabled` | bool | true | false stops it painting. |
 
 ## Fog
 
@@ -373,6 +388,7 @@ A 3D character: an upright capsule centred on the entity that walks, climbs step
 | `step` | f32 | 0.3 | The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it. |
 | `max_slope` | f32 | 45.0 | The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down. |
 | `push` | f32 | 1.0 | How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). |
+| `swim_speed` | f32 | 0.6 | In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too. |
 | `mask` | u32 | 4294967295 | Bits of the collision layers (Collider.layer) the character is stopped by; all by default. |
 | `grounded` | bool | false | Standing on a floor no steeper than max_slope (written by the engine). |
 | `ground_normal` | vec3 | [0.0, 1.0, 0.0] | The floor's normal where it stands (written by the engine). |
@@ -381,6 +397,8 @@ A 3D character: an upright capsule centred on the entity that walks, climbs step
 | `wall_normal` | vec3 | [0.0, 0.0, 0.0] | That wall's normal (written by the engine). |
 | `on_ceiling` | bool | false | Its head hit something this tick (written by the engine). |
 | `stepped` | bool | false | Walked up an edge this tick (written by the engine). |
+| `swimming` | bool | false | Swimming: in water deeper than its chest, held with its head out (written by the engine). |
+| `submerged` | f32 | 0.0 | How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine). |
 
 ## Terrain
 
@@ -401,6 +419,27 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `rock_slope` | f32 | 35.0 | Degrees from level above which ground is rock. |
 | `snow_line` | f32 | 0.85 | The fraction of `height` above which ground is snow; 1 or more for none. |
 | `texture_tile` | f32 | 4.0 | Units per repeat of the MeshRenderer's texture over the ground. |
+
+## Water
+
+A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `size` | vec2 | [40.0, 40.0] | The surface's extent along x and z, centred on the entity. |
+| `depth` | f32 | 4.0 | How far below the surface the water reaches: bodies deeper than this are not buoyed. |
+| `color` | color | [0.03, 0.2, 0.24, 1.0] | The colour deep water turns (the light it scatters back). |
+| `clarity` | f32 | 4.0 | How deep one sees into it, in units: at this depth what lies below is mostly hidden by the water's colour. |
+| `wave_height` | f32 | 0.3 | The height of the largest waves, crest over trough, in units; 0 is still water. |
+| `wave_length` | f32 | 8.0 | The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length. |
+| `wave_direction` | f32 | 0.0 | Where the waves run, in degrees about +y from +x (90 runs toward -z). |
+| `choppiness` | f32 | 0.5 | How sharp the crests are, 0 (rolling) to 1 (peaked). |
+| `ripples` | f32 | 1.0 | The strength of the small ripples on the waves, 0 for none. |
+| `foam` | f32 | 0.5 | How far out from the shore foam reaches, in units of depth; 0 for none. |
+| `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. |
+| `density` | f32 | 2.0 | The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). |
+| `drag` | f32 | 1.0 | How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. |
+| `enabled` | bool | true | false stops it being drawn and buoying. |
 
 ## Scatter
 

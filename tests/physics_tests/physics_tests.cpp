@@ -1,4 +1,5 @@
 #include <pocket/physics/physics.hpp>
+#include <pocket/world/water.hpp>
 
 #include <pocket/assets/assets.hpp>
 
@@ -1098,4 +1099,135 @@ TEST_CASE("a vehicle settles on its springs, drives to its top speed, turns and 
     // Reverse backs it up.
     drive(p, w, c, -1, 0, 0, 60);
     REQUIRE(w.try_get<Vehicle>(c)->speed < -5.0f);
+}
+
+namespace {
+
+EntityId lake(World& w, Json water) {
+    Json wa = Json{{"size", {{"x", 20}, {"y", 20}}}, {"depth", 5}, {"wave_height", 0}};
+    for (auto& [k, v] : water.items()) wa[k] = v;
+    return w.spawn("Lake", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"Water", wa}}).value();
+}
+
+}  // namespace
+
+TEST_CASE("what is lighter than water floats at its level and what is heavier sinks", "[physics][water]") {
+    World w;
+    physics::Physics p;
+    w.spawn("Bottom", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", -4.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 20}, {"y", 0.5}, {"z", 20}}}}}}).value();
+    const EntityId water = lake(w, Json::object());
+    // A unit cube of mass 1 in water of density 2 displaces its weight half under: centred on the surface.
+    const EntityId cork = body(w, "Cork", 0, {-3, 2, 0}, 0.5f, Json{{"mass", 1.0}});
+    const EntityId stone = body(w, "Stone", 0, {3, 2, 0}, 0.5f, Json{{"mass", 3.0}});
+    const EntityId ball = body(w, "Ball", 1, {0, 2, 3}, 0.5f, Json{{"mass", 0.25}});
+    // A raft (a flat board) dropped tipped over rights itself.
+    const EntityId raft = w.spawn("Raft", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 1.5}, {"z", -4}}}, {"rotation", {{"x", 0.5}, {"y", 0}, {"z", 0}, {"w", 0.866}}}}}, {"RigidBody", {{"kind", 0}, {"mass", 1.0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1.0}, {"y", 0.15}, {"z", 0.8}}}}}}).value();
+    run(p, w, 600);
+    const float cork_y = w.try_get<Transform>(cork)->position.y;
+    const float ball_y = w.try_get<Transform>(ball)->position.y;
+    const Vec3 raft_up = w.try_get<Transform>(raft)->rotation.rotate(Vec3{0, 1, 0});
+    INFO("cork " << cork_y << " stone " << w.try_get<Transform>(stone)->position.y << " ball " << ball_y << " raft up " << raft_up.y << " at " << w.try_get<Transform>(raft)->position.y);
+    REQUIRE(cork_y == Catch::Approx(0.0).margin(0.08));
+    REQUIRE(w.try_get<Transform>(stone)->position.y == Catch::Approx(-3.5).margin(0.05));   // on the bottom
+    // A quarter of the water its whole volume weighs (0.25 of 1.05): mostly out of the water.
+    REQUIRE(ball_y > 0.05f);
+    REQUIRE(ball_y < 0.4f);
+    REQUIRE(raft_up.y > 0.98f);
+    // Its 0.96 cubic units weigh about half as much as that much water: half under, centred on the surface.
+    REQUIRE(w.try_get<Transform>(raft)->position.y == Catch::Approx(0.0).margin(0.05));
+    REQUIRE(std::fabs(w.try_get<Velocity>(cork)->linear.y) < 0.05f);
+    auto hist = w.events().histogram();
+    REQUIRE(hist["water.entered"].get<int>() == 4);
+    REQUIRE(p.stats().floating == 4);
+    // Lifted out, it leaves; dropped back, it enters again.
+    REQUIRE(w.set(cork, "Transform", Json{{"position", {{"x", -3}, {"y", 6}, {"z", 0}}}}).has_value());
+    REQUIRE(w.set(cork, "RigidBody", Json{{"sleeping", false}}).has_value());
+    run(p, w, 2);
+    REQUIRE(w.events().histogram()["water.left"].get<int>() == 1);
+    run(p, w, 120);
+    REQUIRE(w.events().histogram()["water.entered"].get<int>() == 5);
+    // Disabled, the water holds nothing up.
+    REQUIRE(w.set(water, "Water", Json{{"enabled", false}}).has_value());
+    run(p, w, 120);
+    REQUIRE(w.try_get<Transform>(cork)->position.y < -2.0f);
+}
+
+TEST_CASE("floating bodies ride the waves and drift with the current", "[physics][water]") {
+    World w;
+    physics::Physics p;
+    const EntityId water = lake(w, Json{{"wave_height", 0.8}, {"wave_length", 10}, {"choppiness", 0.8}});
+    const Water* wa = w.try_get<Water>(water);
+    // The surface over a point: the waves' sideways motion undone.
+    for (float x : {-3.0f, 0.4f, 2.7f}) {
+        const WaterPoint at = water_at(*wa, 0.0f, x, 1.5f, 2.3f);
+        REQUIRE(at.position.x == Catch::Approx(x).margin(1e-3));
+        REQUIRE(at.position.z == Catch::Approx(1.5).margin(1e-3));
+        REQUIRE(at.normal.y > 0.5f);
+    }
+    const EntityId cork = body(w, "Cork", 0, {0, 0.5f, 0}, 0.3f, Json{{"mass", 0.1}});
+    run(p, w, 120);
+    float lo = 1e9f, hi = -1e9f, worst = 0, mean = 0;
+    for (int i = 0; i < 180; ++i) {
+        run(p, w, 1);
+        const Vec3 at = w.try_get<Transform>(cork)->position;
+        lo = std::min(lo, at.y);
+        hi = std::max(hi, at.y);
+        const float level = water_at(*w.try_get<Water>(water), 0.0f, at.x, at.z, static_cast<float>(w.seconds())).position.y;
+        worst = std::max(worst, std::fabs(at.y - level));
+        mean += (at.y - level) / 180.0f;
+    }
+    INFO("cork between " << lo << " and " << hi << ", at most " << worst << " off the surface, " << mean << " above it on average");
+    REQUIRE(hi - lo > 0.4f);     // it rises and falls with waves 0.8 high
+    // A quarter of it under (0.1 of the 0.43 its volume of water weighs), its centre rides about
+    // 0.16 over the surface, pulled a little off it by the waves but never tossed out or pulled under.
+    REQUIRE(mean == Catch::Approx(0.16).margin(0.05));
+    REQUIRE(worst < 0.45f);
+    // A current of one unit a second along x carries it along, near its speed.
+    REQUIRE(w.set(water, "Water", Json{{"wave_height", 0}, {"flow", {{"x", 1}, {"y", 0}}}}).has_value());
+    const float x0 = w.try_get<Transform>(cork)->position.x;
+    run(p, w, 180);
+    INFO("drifted " << w.try_get<Transform>(cork)->position.x - x0);
+    REQUIRE(w.try_get<Transform>(cork)->position.x - x0 > 1.8f);
+    REQUIRE(w.try_get<Velocity>(cork)->linear.x == Catch::Approx(1.0).margin(0.15));
+}
+
+TEST_CASE("a character walks down a beach into deep water, swims with its head out and walks back out", "[physics][character][water]") {
+    World w;
+    physics::Physics p;
+    // A beach at 0 for x < -6, a 20 degree slope down to the bottom at -3 from x = 2.25 on, and water at 0.
+    solid(w, "Beach", {-13, -0.5f, 0}, {7, 0.5f, 6});
+    solid(w, "Slope", {-1.96f, -1.736f, 0}, {4.39f, 0.25f, 6}, Quat::from_axis_angle({0, 0, 1}, -20.0f * 3.14159265f / 180.0f));
+    solid(w, "Bottom", {11, -3.5f, 0}, {9, 0.5f, 6});
+    lake(w, Json{{"size", {{"x", 60}, {"y", 20}}}, {"depth", 6}});
+    const EntityId hero = character(w, "Hero", {-10, 1, 0});
+    walk(p, w, hero, {}, 30);
+    REQUIRE(w.try_get<Character>(hero)->grounded);
+    REQUIRE_FALSE(w.try_get<Character>(hero)->swimming);
+    REQUIRE(w.try_get<Character>(hero)->submerged == 0.0f);
+    // Walking out at 4: down the slope, wading, then swimming once the water is over its chest.
+    walk(p, w, hero, {4, 0, 0}, 300);
+    const Character* c = w.try_get<Character>(hero);
+    const Vec3 at = w.try_get<Transform>(hero)->position;
+    INFO("at " << at.x << ", " << at.y << " swimming " << c->swimming << " submerged " << c->submerged);
+    REQUIRE(c->swimming);
+    REQUIRE_FALSE(c->grounded);
+    REQUIRE(at.y == Catch::Approx(-0.36).margin(0.05));             // its centre a fifth of its height under the surface
+    REQUIRE(c->submerged == Catch::Approx(0.7).margin(0.03));
+    // To x = -2.5 at walking pace (1.9 s), then 3.1 s at 0.6 of it.
+    REQUIRE(at.x == Catch::Approx(-2.5 + 3.1 * 2.4).margin(0.8));
+    // It stays at the surface: no sinking, no bobbing up out.
+    walk(p, w, hero, {}, 120);
+    REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(-0.36).margin(0.03));
+    // Back to the beach: it swims to the slope, finds its feet and walks up out of the water.
+    walk(p, w, hero, {-4, 0, 0}, 300);
+    c = w.try_get<Character>(hero);
+    INFO("back at " << w.try_get<Transform>(hero)->position.x << ", " << w.try_get<Transform>(hero)->position.y);
+    REQUIRE(c->grounded);
+    REQUIRE_FALSE(c->swimming);
+    REQUIRE(w.try_get<Transform>(hero)->position.x < -7.0f);
+    REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(0.9).margin(0.03));
+    REQUIRE(c->submerged == 0.0f);
+    const Json hist = w.events().histogram();
+    REQUIRE(hist["water.entered"] == 1);
+    REQUIRE(hist["water.left"] == 1);
 }

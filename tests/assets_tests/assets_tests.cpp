@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
@@ -795,4 +796,77 @@ TEST_CASE("terrains: noise from a seed, heights the mesh draws, a 16-bit PNG tha
     REQUIRE(coarse->at(0, 0) == Catch::Approx(a.at(0, 0)).margin(1e-3));
     REQUIRE(coarse->at(16, 16) == Catch::Approx(a.at(64, 64)).margin(1e-3));
     REQUIRE_FALSE(assets::terrain_from_image("not a picture", "x.png", 17, {1, 1}, 1).has_value());
+}
+
+namespace {
+std::string parse_ply_error(assets::AssetStore& store, const std::string& path) {
+    auto m = store.mesh(path);
+    return m ? std::string() : m.error().message;
+}
+}  // namespace
+
+TEST_CASE("PLY files, ASCII and binary in either byte order, with normals, uvs and colours, and what they refuse", "[assets][ply]") {
+    const std::filesystem::path dir = project() / "assets" / "ply-test";
+    std::filesystem::create_directories(dir);
+    // A unit square as one quad, coloured red, green, blue and white (bytes, sRGB), no normals, and
+    // a comment and an extra property to skip.
+    std::ofstream(dir / "quad.ply") << "ply\nformat ascii 1.0\ncomment made by hand\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\n"
+                                        "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty float quality\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n"
+                                        "0 0 0 255 0 0 1\n1 0 0 0 255 0 1\n1 0 -1 0 0 255 1\n0 0 -1 255 255 255 1\n4 0 1 2 3\n";
+    // One triangle with normals and uvs, as binary, both byte orders; a trailing element of edges to skip.
+    auto binary = [&](const char* name, bool big) {
+        std::ofstream out(dir / name, std::ios::binary);
+        out << "ply\nformat " << (big ? "binary_big_endian" : "binary_little_endian") << " 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            << "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\nelement face 1\nproperty list uchar uint vertex_indices\n"
+            << "element edge 1\nproperty int vertex1\nproperty int vertex2\nend_header\n";
+        auto put = [&](const void* p, std::size_t n) {
+            unsigned char b[8];
+            std::memcpy(b, p, n);
+            if (big) std::reverse(b, b + n);
+            out.write(reinterpret_cast<const char*>(b), static_cast<std::streamsize>(n));
+        };
+        const float v[3][8] = {{0, 0, 0, 0, 0, 1, 0, 0}, {2, 0, 0, 0, 0, 1, 1, 0}, {0, 3, 0, 0, 0, 1, 0, 1}};
+        for (const auto& row : v) for (float f : row) put(&f, 4);
+        const std::uint8_t three = 3;
+        out.write(reinterpret_cast<const char*>(&three), 1);
+        for (std::uint32_t i : {0u, 1u, 2u}) put(&i, 4);
+        for (std::int32_t i : {0, 1}) put(&i, 4);
+    };
+    binary("tri-le.ply", false);
+    binary("tri-be.ply", true);
+    assets::AssetStore store(project());
+    auto q = store.mesh("assets/ply-test/quad.ply");
+    INFO((q ? std::string() : q.error().to_string()));
+    REQUIRE(q.has_value());
+    REQUIRE((*q)->importer == "ply");
+    REQUIRE((*q)->indices.size() == 6);                                   // the quad fanned into two triangles
+    REQUIRE((*q)->vertex_colors);
+    REQUIRE((*q)->vertices[0].color.x == Catch::Approx(1.0f));
+    REQUIRE((*q)->vertices[0].color.y == Catch::Approx(0.0f));
+    REQUIRE((*q)->vertices[3].color.z == Catch::Approx(1.0f));
+    REQUIRE((*q)->materials[0].base_color.x == Catch::Approx(1.0f));      // white: the vertices carry the colour
+    REQUIRE((*q)->vertices[0].normal.y == Catch::Approx(1.0f).margin(1e-4));   // smoothed: the square faces up
+    REQUIRE((*q)->aabb_min.z == Catch::Approx(-1.0f));
+    for (const char* name : {"assets/ply-test/tri-le.ply", "assets/ply-test/tri-be.ply"}) {
+        auto t = store.mesh(name);
+        INFO(name << ": " << (t ? std::string() : t.error().to_string()));
+        REQUIRE(t.has_value());
+        REQUIRE((*t)->indices.size() == 3);
+        REQUIRE_FALSE((*t)->vertex_colors);
+        REQUIRE((*t)->aabb_max.x == Catch::Approx(2.0f));
+        REQUIRE((*t)->aabb_max.y == Catch::Approx(3.0f));
+        REQUIRE((*t)->vertices[2].normal.z == Catch::Approx(1.0f));
+        REQUIRE((*t)->vertices[1].uv.x == Catch::Approx(1.0f));
+        REQUIRE((*t)->vertices[2].uv.y == Catch::Approx(0.0f));            // t 1 at the top of the image
+        REQUIRE((*t)->vertices[0].uv.y == Catch::Approx(1.0f));
+    }
+    // Refused: points without faces, a face past the vertices, a body shorter than the header.
+    std::ofstream(dir / "points.ply") << "ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 1 1\n";
+    std::ofstream(dir / "past.ply") << "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 7\n";
+    std::ofstream(dir / "short.ply") << "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n";
+    const auto points = parse_ply_error(store, "assets/ply-test/points.ply");
+    REQUIRE(points.find("point cloud") != std::string::npos);
+    REQUIRE(parse_ply_error(store, "assets/ply-test/past.ply").find("vertex 7") != std::string::npos);
+    REQUIRE(parse_ply_error(store, "assets/ply-test/short.ply").find("ends before") != std::string::npos);
+    std::filesystem::remove_all(dir);
 }
