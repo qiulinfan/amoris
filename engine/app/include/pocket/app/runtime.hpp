@@ -43,6 +43,10 @@ struct Options {
     std::string scenario;                  // which scenario of that bundle runs (empty: the first)
     std::filesystem::path save_dir;        // where save slots live (default: the OS user data directory for the project)
     std::filesystem::path font;            // UI font file; overrides the project config and POCKET_FONT
+    int net_host = -1;                     // lockstep host on this port (0: any free port); -1: not hosting
+    int net_players = 2;                   // players the host waits for, itself included
+    std::string net_join;                  // join a lockstep host at host:port
+    int net_delay = 3;                     // ticks between an input and the tick it acts on (the host's is used)
 };
 
 std::string usage();

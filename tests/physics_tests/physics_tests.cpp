@@ -1023,3 +1023,79 @@ TEST_CASE("a character walking through a trigger enters and leaves it", "[physic
     REQUIRE(hist["trigger.enter"] == 1);
     REQUIRE(hist["trigger.exit"] == 1);
 }
+
+namespace {
+
+EntityId car(World& w, Vec3 pos) {
+    Json wheels = Json::array();
+    for (int k = 0; k < 4; ++k) {
+        const float x = (k % 2 == 0) ? -0.8f : 0.8f, z = k < 2 ? -1.3f : 1.3f;   // front wheels at -z
+        wheels.push_back(Json{{"offset", {{"x", x}, {"y", -0.2}, {"z", z}}}, {"radius", 0.35}, {"rest", 0.3}, {"steer", k < 2}, {"drive", k >= 2}});
+    }
+    return w.spawn("Car", 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"RigidBody", {{"kind", 0}, {"mass", 1200}, {"friction", 0.3}}},
+        {"Collider", {{"shape", 0}, {"size", {{"x", 0.9}, {"y", 0.3}, {"z", 2.0}}}}}, {"Vehicle", {{"wheels", wheels}}}}).value();
+}
+
+void drive(physics::Physics& p, World& w, EntityId who, float throttle, float steer, float brake, int ticks) {
+    for (int i = 0; i < ticks; ++i) {
+        Vehicle v = *w.try_get<Vehicle>(who);
+        v.throttle = throttle;
+        v.steer = steer;
+        v.brake = brake;
+        w.ecs().entity(who).set(v);
+        w.set_tick_index(w.tick_index());
+        p.step(w, 1.0 / 60.0);
+        w.tick(1.0 / 60.0);
+    }
+}
+
+float yaw_of(const World& w, EntityId who) {
+    const Vec3 f = w.try_get<Transform>(who)->rotation.rotate(Vec3{0, 0, -1});
+    return std::atan2(-f.x, -f.z);
+}
+
+}  // namespace
+
+TEST_CASE("a vehicle settles on its springs, drives to its top speed, turns and brakes", "[physics][vehicle]") {
+    World w;
+    physics::Physics p;
+    w.spawn("Ground", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", -0.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 400}, {"y", 0.5}, {"z", 400}}}}}}).value();
+    const EntityId c = car(w, {0, 1.2f, 0});
+    drive(p, w, c, 0, 0, 0, 180);
+    const Vehicle* v = w.try_get<Vehicle>(c);
+    REQUIRE(v->grounded == 4);
+    for (const Wheel& wh : v->wheels) REQUIRE(wh.contact);
+    // The springs hold the weight: compressed by g / (2 pi f)^2 = 0.051 at 2.2 Hz, the body level.
+    const float sag = 9.81f / std::pow(2.0f * 3.14159265f * 2.2f, 2.0f);
+    REQUIRE(v->wheels[0].compression == Catch::Approx(sag).margin(0.01));
+    REQUIRE(w.try_get<Transform>(c)->position.y == Catch::Approx(0.2 + 0.3 - sag + 0.35).margin(0.02));
+    REQUIRE(std::fabs(v->speed) < 0.05f);
+    REQUIRE(std::fabs(w.try_get<Transform>(c)->rotation.rotate(Vec3{0, 1, 0}).y - 1.0f) < 0.001f);
+    // Full throttle asks 10 units per second squared of two driven wheels carrying half the weight:
+    // their grip (1.4 times their load) allows about 0.7 g, so the rear tyres set the pace; then up
+    // to the top speed of 25.
+    drive(p, w, c, 1, 0, 0, 60);
+    INFO("after a second " << w.try_get<Vehicle>(c)->speed);
+    REQUIRE(w.try_get<Vehicle>(c)->speed == Catch::Approx(1.4 * 9.81 * 0.5).margin(1.0));
+    drive(p, w, c, 1, 0, 0, 240);
+    REQUIRE(w.try_get<Vehicle>(c)->speed == Catch::Approx(25).margin(1.0));
+    REQUIRE(w.try_get<Transform>(c)->position.z < -60.0f);                  // forward is -z
+    REQUIRE(std::fabs(w.try_get<Transform>(c)->position.x) < 0.5f);        // straight
+    REQUIRE(w.try_get<Vehicle>(c)->wheels[2].spin > 100.0f);               // the wheels rolled forward
+    // Steering right turns it to the right (clockwise seen from above) while it stays upright.
+    const float yaw0 = yaw_of(w, c);
+    drive(p, w, c, 0.4f, 1, 0, 60);
+    const float turned = yaw_of(w, c) - yaw0;
+    INFO("turned " << turned);
+    REQUIRE(turned < -0.3f);
+    REQUIRE(w.try_get<Transform>(c)->rotation.rotate(Vec3{0, 1, 0}).y > 0.9f);
+    // Braking stops it, and it stays stopped.
+    drive(p, w, c, 0, 0, 1, 180);
+    REQUIRE(std::fabs(w.try_get<Vehicle>(c)->speed) < 0.1f);
+    const Vec3 at = w.try_get<Transform>(c)->position;
+    drive(p, w, c, 0, 0, 1, 60);
+    REQUIRE(length(w.try_get<Transform>(c)->position - at) < 0.05f);
+    // Reverse backs it up.
+    drive(p, w, c, -1, 0, 0, 60);
+    REQUIRE(w.try_get<Vehicle>(c)->speed < -5.0f);
+}

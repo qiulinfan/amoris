@@ -41,6 +41,10 @@ std::string usage() {
   --history N           keep the last N ticks for the recorder.* time-travel commands
   --scenario <bundle>   load a gameplay scenario bundle (script context "scenario") after the project
   --scenario-name NAME  which scenario of that bundle runs (default: the first)
+  --net-host PORT       host a lockstep game on PORT (0: any free port) for --net-players (default 2)
+  --net-players N       how many players the host waits for, itself included
+  --net-join HOST:PORT  join a lockstep game (the host's seed and input delay are used)
+  --net-delay N         ticks between an input and the tick it acts on (default 3)
 )";
 }
 
@@ -88,12 +92,17 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--replay") { POCKET_TRY(v, need(i, "--replay")); o.replay = v; ++i; }
         else if (a == "--save-dir") { POCKET_TRY(v, need(i, "--save-dir")); o.save_dir = v; ++i; }
         else if (a == "--font") { POCKET_TRY(v, need(i, "--font")); o.font = v; ++i; }
+        else if (a == "--net-host") { POCKET_TRY(v, need(i, "--net-host")); o.net_host = std::stoi(v); ++i; }
+        else if (a == "--net-players") { POCKET_TRY(v, need(i, "--net-players")); o.net_players = std::stoi(v); ++i; }
+        else if (a == "--net-join") { POCKET_TRY(v, need(i, "--net-join")); o.net_join = v; ++i; }
+        else if (a == "--net-delay") { POCKET_TRY(v, need(i, "--net-delay")); o.net_delay = std::stoi(v); ++i; }
         else if (a == "--help" || a == "-h") return fail("help", "{}", usage());
         else return fail("bad_args", "unknown argument '{}'", a);
     }
     if (o.bundle.empty()) return fail("bad_args", "--bundle is required");
     if (o.project_config.empty()) o.project_config = o.bundle.string() + ".project.json";
     if (!o.replay.empty() && !o.record.empty()) return fail("bad_args", "--record and --replay are exclusive");
+    if (o.net_host >= 0 && !o.net_join.empty()) return fail("bad_args", "--net-host and --net-join are exclusive");
     return o;
 }
 

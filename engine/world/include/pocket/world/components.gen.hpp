@@ -45,6 +45,25 @@ void from_json(const Json& j, IKLimit& v);
 std::size_t numeric_span(IKLimit& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const IKLimit& v);
 
+/// One wheel of a Vehicle (docs/design/physics.md, Vehicles): where its suspension hangs from the body, how long it is and how big the wheel, whether it steers and whether the engine drives it; the engine writes what it touches and turns.
+struct Wheel {
+    Vec3 offset{0.0f, 0.0f, 0.0f};
+    float radius = 0.35f;
+    float rest = 0.3f;
+    bool steer = false;
+    bool drive = false;
+    std::string visual = "";
+    bool contact = false;
+    float compression = 0.0f;
+    float spin = 0.0f;
+    constexpr bool operator==(const Wheel&) const = default;
+};
+void to_json(Json& j, const Wheel& v);
+void from_json(const Json& j, Wheel& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Wheel& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const Wheel& v);
+
 /// One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers.
 struct AnimationLayer {
     std::string clip = "";
@@ -489,6 +508,74 @@ void from_json(const Json& j, Character& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Character& v, std::string_view path, float** out);
 
+/// Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.
+struct Terrain {
+    Vec2 size{64.0f, 64.0f};
+    float height = 8.0f;
+    std::int32_t resolution = 129;
+    std::string heightmap = "";
+    std::uint32_t seed = 1;
+    float scale = 24.0f;
+    std::int32_t octaves = 4;
+    Color4 grass{0.3f, 0.45f, 0.22f, 1.0f};
+    Color4 rock{0.45f, 0.42f, 0.38f, 1.0f};
+    Color4 snow{0.92f, 0.93f, 0.95f, 1.0f};
+    float rock_slope = 35.0f;
+    float snow_line = 0.85f;
+    float texture_tile = 4.0f;
+    constexpr bool operator==(const Terrain&) const = default;
+};
+void to_json(Json& j, const Terrain& v);
+void from_json(const Json& j, Terrain& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Terrain& v, std::string_view path, float** out);
+
+/// Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.
+struct Scatter {
+    std::int32_t count = 500;
+    Vec2 area{32.0f, 32.0f};
+    std::uint32_t seed = 1;
+    std::string on = "";
+    Vec2 scale{0.8f, 1.2f};
+    float yaw = 360.0f;
+    float align = 0.0f;
+    float sink = 0.0f;
+    float spacing = 0.0f;
+    float max_slope = 35.0f;
+    float min_height = -1000.0f;
+    float max_height = 1000.0f;
+    float shade = 0.15f;
+    std::int32_t placed = 0;
+    constexpr bool operator==(const Scatter&) const = default;
+};
+void to_json(Json& j, const Scatter& v);
+void from_json(const Json& j, Scatter& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Scatter& v, std::string_view path, float** out);
+
+/// A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.
+struct Vehicle {
+    std::vector<Wheel> wheels = {};
+    float throttle = 0.0f;
+    float steer = 0.0f;
+    float brake = 0.0f;
+    float power = 10.0f;
+    float top_speed = 25.0f;
+    float braking = 18.0f;
+    float max_steer = 30.0f;
+    float grip = 1.4f;
+    float suspension_hz = 2.2f;
+    float damping = 0.45f;
+    float roll_resistance = 0.3f;
+    float speed = 0.0f;
+    std::int32_t grounded = 0;
+    constexpr bool operator==(const Vehicle&) const = default;
+};
+void to_json(Json& j, const Vehicle& v);
+void from_json(const Json& j, Vehicle& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Vehicle& v, std::string_view path, float** out);
+
 /// A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
 struct TopDown2D {
     Vec2 velocity{0.0f, 0.0f};
@@ -644,6 +731,9 @@ void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Character& v);
+void hash_component(struct StateHasherRef& h, const Terrain& v);
+void hash_component(struct StateHasherRef& h, const Scatter& v);
+void hash_component(struct StateHasherRef& h, const Vehicle& v);
 void hash_component(struct StateHasherRef& h, const TopDown2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);

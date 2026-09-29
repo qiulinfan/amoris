@@ -1531,6 +1531,16 @@ Result<std::filesystem::path> AssetStore::resolve(const std::string& path) const
 
 bool AssetStore::has_mesh(const std::string& path) const { return meshes_.contains(path); }
 
+void AssetStore::put_mesh(const std::string& path, Mesh mesh) {
+    mesh.path = path;
+    meshes_[path] = std::make_unique<Mesh>(std::move(mesh));
+    failures_.erase(path);
+}
+
+void AssetStore::forget_mesh(const std::string& path) {
+    meshes_.erase(path);
+}
+
 Result<const Mesh*> AssetStore::mesh(const std::string& path) {
     if (auto it = meshes_.find(path); it != meshes_.end()) return it->second.get();
     if (auto f = failures_.find("mesh:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);

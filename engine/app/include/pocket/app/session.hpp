@@ -4,6 +4,7 @@
 
 #include <pocket/app/gestures.hpp>
 #include <pocket/app/input_map.hpp>
+#include <pocket/app/net.hpp>
 #include <pocket/app/runtime.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/audio/audio.hpp>
@@ -93,6 +94,7 @@ class Session {
     Result<Json> particles_command(std::string_view op, const Json& p);
     Result<Json> animation_command(std::string_view op, const Json& p);
     Result<Json> tilemap_command(std::string_view op, const Json& p);
+    Result<Json> terrain_command(std::string_view op, const Json& p);
     Result<Json> assets_command(std::string_view op, const Json& p);
     Result<Json> audio_command(std::string_view op, const Json& p);
     Result<Json> input_command(std::string_view op, const Json& p);
@@ -102,6 +104,31 @@ class Session {
     [[nodiscard]] Json perf() const;
     void release_expired_holds();
     void apply_project_settings();   // project.toml's live settings: audio, input, sprite clips, render, physics
+    // Lockstep networking (docs/design/networking.md): this peer's input waits in net_queue_ until
+    // it is committed for the tick `delay` ahead; a tick runs once every player's input is in, each
+    // player's through their own input map (player 0's is input_map_).
+    std::unique_ptr<Net> net_;
+    Json net_queue_ = Json::array();
+    std::int64_t net_committed_ = -1;
+    std::vector<InputMap> player_maps_;
+    void net_pump();
+    bool net_tick_ready();
+    Result<Json> net_command(std::string_view op, const Json& p);
+    // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
+    // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.
+    struct TerrainState {
+        std::string shape_key, look_key, error;
+        assets::Terrain grid;
+        std::uint64_t revision = 0;
+        std::string mesh;
+        bool edited = false;
+    };
+    std::map<world::EntityId, TerrainState> terrains_;
+    void update_terrains();
+    // Scatters (docs/design/terrain.md, Scattering): copies placed again when their settings, place or ground change.
+    std::map<world::EntityId, std::string> scatter_keys_;
+    void update_scatters();
+    void remesh_terrain(world::EntityId id, TerrainState& st, const world::Terrain& tc);
     bool advance_rumble();   // starts the steps of rumble patterns that are due; whether any motor answered
     void tick_audio(double dt);
     // A spatial voice's volume and pan from its entity's place against the camera (docs/design/audio.md, Where a sound is).

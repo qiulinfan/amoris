@@ -16,13 +16,17 @@ export interface ActionState {
 
 // The snapshot lives on the shared registry: the bundle whose dispatch runs the tick (the last
 // one loaded) fills it, and every bundle's copy of this module reads the same object.
-function snapshot(): Record<string, ActionState> {
-    return registry.actions as Record<string, ActionState>;
+// In a lockstep game every player has their own states (player 0's are `actions`); without one,
+// only player 0 has any input, and the others' actions are all at rest.
+function snapshot(player = 0): Record<string, ActionState> {
+    if (player === 0) return registry.actions as Record<string, ActionState>;
+    return (registry.players?.[player] ?? {}) as Record<string, ActionState>;
 }
 
-/** Called by the SDK with each tick's snapshot. */
-export function setActionSnapshot(actions: Record<string, ActionState> | undefined): void {
+/** Called by the SDK with each tick's snapshot (and every player's, in a lockstep game). */
+export function setActionSnapshot(actions: Record<string, ActionState> | undefined, players?: Array<Record<string, ActionState>>): void {
     if (actions) registry.actions = actions;
+    registry.players = players;
 }
 
 function cmd<T>(name: string, params?: unknown): T {
@@ -37,22 +41,23 @@ export const input = {
         cmd("input.map", { actions });
         registry.actions = cmd<Record<string, ActionState>>("input.actions");
     },
-    action(name: string): ActionState {
-        return snapshot()[name] ?? empty;
+    /** An action's state; `player` picks whose in a lockstep game (docs/design/networking.md), 0 by default. */
+    action(name: string, player = 0): ActionState {
+        return snapshot(player)[name] ?? empty;
     },
-    down(name: string): boolean {
-        return (snapshot()[name] ?? empty).down;
+    down(name: string, player = 0): boolean {
+        return (snapshot(player)[name] ?? empty).down;
     },
     /** True on the tick the action went down. */
-    pressed(name: string): boolean {
-        return (snapshot()[name] ?? empty).pressed;
+    pressed(name: string, player = 0): boolean {
+        return (snapshot(player)[name] ?? empty).pressed;
     },
-    released(name: string): boolean {
-        return (snapshot()[name] ?? empty).released;
+    released(name: string, player = 0): boolean {
+        return (snapshot(player)[name] ?? empty).released;
     },
     /** -1..1 for axis-style actions (negative/positive keys or a pad stick). */
-    axis(name: string): number {
-        return (snapshot()[name] ?? empty).value;
+    axis(name: string, player = 0): number {
+        return (snapshot(player)[name] ?? empty).value;
     },
     /** Shake a gamepad (by index) for `ms` milliseconds, the low and high motors in 0..1; false without one. */
     rumble(pad = 0, low = 1, high = 1, ms = 200): boolean {

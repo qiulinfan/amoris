@@ -150,6 +150,8 @@ std::string format_component_compact(std::string_view component, const Json& val
 
 struct World::Impl {
     std::map<std::string, std::pair<Vec3, Vec3>> mesh_bounds;  // local AABB per asset mesh path
+    std::map<EntityId, std::string> derived_meshes;             // meshes the engine made for an entity (a terrain's)
+    std::map<EntityId, std::vector<World::Instance>> derived_instances;   // copies the engine placed (a scatter's)
     flecs::world ecs;
     EventLog events;
     std::vector<EntityId> roots;  // creation order
@@ -738,14 +740,35 @@ Status World::unpack(std::string_view component, const std::vector<std::string>&
 
 void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
 
+void World::set_derived_mesh(EntityId id, std::string path) {
+    if (path.empty()) impl_->derived_meshes.erase(id);
+    else impl_->derived_meshes[id] = std::move(path);
+}
+
+const std::string* World::derived_mesh(EntityId id) const {
+    auto it = impl_->derived_meshes.find(id);
+    return it == impl_->derived_meshes.end() ? nullptr : &it->second;
+}
+
+void World::set_derived_instances(EntityId id, std::vector<Instance> instances) { impl_->derived_instances[id] = std::move(instances); }
+void World::clear_derived_instances(EntityId id) { impl_->derived_instances.erase(id); }
+
+const std::vector<World::Instance>* World::derived_instances(EntityId id) const {
+    auto it = impl_->derived_instances.find(id);
+    return it == impl_->derived_instances.end() ? nullptr : &it->second;
+}
+
 void World::update_bounds() {
     // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives).
     // Adding Bounds is a structural change, so the writes are deferred until the query ends.
     impl_->ecs.defer_begin();
     impl_->bounds.each([this](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
         Vec3 lo{-0.5f, -0.5f, -0.5f}, hi{0.5f, 0.5f, 0.5f};
-        if (mr.mesh == "plane") { lo.y = 0; hi.y = 0; }
-        else if (auto it = impl_->mesh_bounds.find(mr.mesh); it != impl_->mesh_bounds.end()) { lo = it->second.first; hi = it->second.second; }
+        const std::string* derived = derived_mesh(e.id());
+        const std::string& mesh = derived ? *derived : mr.mesh;
+        if (mesh == "plane") { lo.y = 0; hi.y = 0; }
+        else if (mesh == "capsule") { lo.y = -1; hi.y = 1; }
+        else if (auto it = impl_->mesh_bounds.find(mesh); it != impl_->mesh_bounds.end()) { lo = it->second.first; hi = it->second.second; }
         Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
         Bounds b;
         bool first = true;

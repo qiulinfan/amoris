@@ -7,6 +7,7 @@
 #include <pocket/core/math.hpp>
 #include <pocket/core/result.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -342,6 +343,39 @@ struct Conversion {
 // content is there already (`force` converts again).
 Result<Conversion> convert_with_blender(const std::filesystem::path& source, const std::filesystem::path& out_glb, const std::string& blender, bool force);
 
+// A height field (docs/design/terrain.md): n by n samples over size_x by size_z centred on the
+// origin, heights in world units between 0 and `height`. Sample (i, j) is at x = -size_x/2 + i *
+// cell_x, z = -size_z/2 + j * cell_z; every cell is two triangles split along the diagonal from
+// (i, j) to (i + 1, j + 1), which sample() and normal() follow exactly, so what they answer is what
+// the mesh draws and the collider stops.
+struct Terrain {
+    int n = 0;
+    float size_x = 64, size_z = 64, height = 8;
+    std::vector<float> h;   // n * n, row j (along z) after row j - 1, x across a row
+    [[nodiscard]] float cell_x() const { return size_x / static_cast<float>(std::max(n - 1, 1)); }
+    [[nodiscard]] float cell_z() const { return size_z / static_cast<float>(std::max(n - 1, 1)); }
+    [[nodiscard]] float at(int i, int j) const;
+    // Height and normal at local (x, z); outside the grid, at its nearest edge.
+    [[nodiscard]] float sample(float x, float z) const;
+    [[nodiscard]] Vec3 normal(float x, float z) const;
+};
+
+// From a greyscale image (8 or 16 bits; the first channel), resampled to n by n: black is 0, white `height`.
+Result<Terrain> terrain_from_image(const std::string& bytes, const std::string& display_path, int n, Vec2 size, float height);
+// Fractal noise: `octaves` layers of gradient noise, the first with features `scale` units across,
+// each next twice as fine and half as tall, reproducible from `seed`, spread over 0..height.
+Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, Vec2 size, float height);
+// How a terrain is coloured: grass below, rock where steeper than rock_slope degrees, snow above
+// snow_line (a fraction of the height), blended across their borders; uv repeats every texture_tile units.
+struct TerrainLook {
+    Vec3 grass{0.30f, 0.45f, 0.22f}, rock{0.45f, 0.42f, 0.38f}, snow{0.92f, 0.93f, 0.95f};
+    float snow_line = 0.85f, rock_slope = 35.0f, texture_tile = 4.0f;
+};
+// The terrain as a mesh (vertex colours from the look, one grey material) at `path`.
+Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& path);
+// A 16-bit greyscale PNG of the heights (0 is 0, 65535 is the terrain's height): what terrain_from_image reads back.
+std::string terrain_png16(const Terrain& t);
+
 class AssetStore {
    public:
     explicit AssetStore(std::filesystem::path project_dir);
@@ -355,6 +389,9 @@ class AssetStore {
     // no file until saved to one, and reloading the assets keeps it. Refused for a name in use.
     Result<TileMap*> copy_tilemap(const std::string& path, const std::string& name);
     [[nodiscard]] bool has_mesh(const std::string& path) const;
+    // A mesh made in memory (a terrain's) under a path no file has; the next mesh(path) answers it.
+    void put_mesh(const std::string& path, Mesh mesh);
+    void forget_mesh(const std::string& path);
     // The simulation time the animated tiles are drawn at, in milliseconds; the session sets it
     // every tick, so the animations run on the simulation clock and pause with it.
     void set_tile_time(std::uint64_t ms) { tile_time_ms_ = ms; }

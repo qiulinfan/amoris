@@ -196,6 +196,21 @@ fields = [
 ]
 
 [[record]]
+name = "Wheel"
+doc = "One wheel of a Vehicle (docs/design/physics.md, Vehicles): where its suspension hangs from the body, how long it is and how big the wheel, whether it steers and whether the engine drives it; the engine writes what it touches and turns."
+fields = [
+    { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Where the suspension hangs from, in the body's frame (the top of its travel)." },
+    { name = "radius", type = "f32", default = 0.35, doc = "The wheel's radius." },
+    { name = "rest", type = "f32", default = 0.3, doc = "The suspension's length: how far below `offset` the wheel's centre hangs with nothing under it." },
+    { name = "steer", type = "bool", default = false, doc = "Turned by the vehicle's steer." },
+    { name = "drive", type = "bool", default = false, doc = "Pushed by the vehicle's throttle." },
+    { name = "visual", type = "string", default = "", doc = "The name of an entity under the vehicle that the engine places where the wheel is (its local position), turned with the steering and rolled with the ground (its local rotation): a pivot whose children draw the tyre. Empty for none." },
+    { name = "contact", type = "bool", default = false, doc = "On the ground this step (written by the engine)." },
+    { name = "compression", type = "f32", default = 0.0, doc = "How far the suspension is pushed in, 0..rest (written by the engine)." },
+    { name = "spin", type = "f32", default = 0.0, doc = "How far the wheel has rolled, in radians (written by the engine)." },
+]
+
+[[record]]
 name = "AnimationLayer"
 doc = "One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers."
 fields = [
@@ -394,6 +409,65 @@ fields = [
     { name = "wall_normal", type = "vec3", default = [0.0, 0.0, 0.0], doc = "That wall's normal (written by the engine)." },
     { name = "on_ceiling", type = "bool", default = false, doc = "Its head hit something this tick (written by the engine)." },
     { name = "stepped", type = "bool", default = false, doc = "Walked up an edge this tick (written by the engine)." },
+]
+
+[[component]]
+name = "Terrain"
+doc = "Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it."
+fields = [
+    { name = "size", type = "vec2", default = [64.0, 64.0], doc = "The extent along x and z, centred on the entity." },
+    { name = "height", type = "f32", default = 8.0, doc = "The height range: a heightmap's white, or the noise's highest point, is this high above the entity." },
+    { name = "resolution", type = "i32", default = 129, doc = "Samples along each side (2 to 1025): the grid has resolution - 1 cells across." },
+    { name = "heightmap", type = "string", default = "", doc = "A project-relative greyscale PNG (8 or 16 bits), black at 0 and white at `height`, its top row at -z; empty makes the heights from noise (seed, scale, octaves). terrain.save writes one." },
+    { name = "seed", type = "u32", default = 1, doc = "The noise's seed: the same seed, scale and octaves give the same hills." },
+    { name = "scale", type = "f32", default = 24.0, doc = "The size of the noise's largest features, in units." },
+    { name = "octaves", type = "i32", default = 4, doc = "Layers of noise, each twice as fine and half as tall as the one before (1 to 10)." },
+    { name = "grass", type = "color", default = [0.30, 0.45, 0.22, 1.0], doc = "The colour of flat and gentle ground." },
+    { name = "rock", type = "color", default = [0.45, 0.42, 0.38, 1.0], doc = "The colour of ground steeper than rock_slope." },
+    { name = "snow", type = "color", default = [0.92, 0.93, 0.95, 1.0], doc = "The colour above snow_line." },
+    { name = "rock_slope", type = "f32", default = 35.0, doc = "Degrees from level above which ground is rock." },
+    { name = "snow_line", type = "f32", default = 0.85, doc = "The fraction of `height` above which ground is snow; 1 or more for none." },
+    { name = "texture_tile", type = "f32", default = 4.0, doc = "Units per repeat of the MeshRenderer's texture over the ground." },
+]
+
+[[component]]
+name = "Scatter"
+doc = "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change."
+fields = [
+    { name = "count", type = "i32", default = 500, doc = "Places tried (the most copies there can be; up to 20000)." },
+    { name = "area", type = "vec2", default = [32.0, 32.0], doc = "The extent along x and z, centred on the entity." },
+    { name = "seed", type = "u32", default = 1, doc = "The same seed and settings place the same copies." },
+    { name = "on", type = "string", default = "", doc = "Path or name of the entity whose collider the copies stand on (a terrain); empty takes any static collider." },
+    { name = "scale", type = "vec2", default = [0.8, 1.2], doc = "The smallest and largest size, times the entity's scale." },
+    { name = "yaw", type = "f32", default = 360.0, doc = "Degrees of random turn about the vertical (0 keeps them all facing one way)." },
+    { name = "align", type = "f32", default = 0.0, doc = "How far each copy leans with the ground under it: 0 upright, 1 square to the slope." },
+    { name = "sink", type = "f32", default = 0.0, doc = "Units each copy is set into the ground (a stone half buried)." },
+    { name = "spacing", type = "f32", default = 0.0, doc = "The least distance between two copies; 0 lets them crowd." },
+    { name = "max_slope", type = "f32", default = 35.0, doc = "Degrees: no copy where the ground is steeper." },
+    { name = "min_height", type = "f32", default = -1000.0, doc = "No copy on ground lower than this (world y): above the water line." },
+    { name = "max_height", type = "f32", default = 1000.0, doc = "No copy on ground higher than this (world y): below the snow." },
+    { name = "shade", type = "f32", default = 0.15, doc = "How much each copy's brightness varies, 0..1." },
+    { name = "placed", type = "i32", default = 0, doc = "How many copies stand (written by the engine)." },
+]
+
+[[component]]
+name = "Vehicle"
+doc = "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels."
+fields = [
+    { name = "wheels", type = "list:Wheel", doc = "The wheels, each with its mount, suspension and role." },
+    { name = "throttle", type = "f32", default = 0.0, doc = "-1..1: forward drive at 1, reverse at -1." },
+    { name = "steer", type = "f32", default = 0.0, doc = "-1..1: the steering wheels turn left at -1 and right at 1, by max_steer degrees." },
+    { name = "brake", type = "f32", default = 0.0, doc = "0..1: how hard every wheel on the ground brakes." },
+    { name = "power", type = "f32", default = 10.0, doc = "The acceleration full throttle gives on level ground, units per second squared." },
+    { name = "top_speed", type = "f32", default = 25.0, doc = "The speed at which the engine stops pushing, units per second." },
+    { name = "braking", type = "f32", default = 18.0, doc = "The deceleration a full brake gives, units per second squared." },
+    { name = "max_steer", type = "f32", default = 30.0, doc = "Degrees the steering wheels turn at full steer." },
+    { name = "grip", type = "f32", default = 1.4, doc = "How much sideways force the tyres can hold, as a multiple of the load on them: above what the turn asks, the car slides." },
+    { name = "suspension_hz", type = "f32", default = 2.2, doc = "How stiff the springs are, as the bounce's frequency with the body's weight on them." },
+    { name = "damping", type = "f32", default = 0.45, doc = "How fast a bounce dies: 0 bounces on, 1 settles without overshoot." },
+    { name = "roll_resistance", type = "f32", default = 0.3, doc = "Units per second squared the wheels lose to rolling when nothing drives or brakes them." },
+    { name = "speed", type = "f32", default = 0.0, doc = "Forward speed, negative backing up (written by the engine)." },
+    { name = "grounded", type = "i32", default = 0, doc = "Wheels on the ground (written by the engine)." },
 ]
 
 [[component]]

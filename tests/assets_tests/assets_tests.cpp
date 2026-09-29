@@ -3,6 +3,8 @@
 
 #include <catch_amalgamated.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -746,4 +748,51 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     REQUIRE(p.has_value());
     REQUIRE_FALSE((*p)->vertex_colors);
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("terrains: noise from a seed, heights the mesh draws, a 16-bit PNG that reads back", "[assets][terrain]") {
+    const assets::Terrain a = assets::terrain_from_noise(7, 20.0f, 4, 65, {40, 30}, 10.0f);
+    const assets::Terrain b = assets::terrain_from_noise(7, 20.0f, 4, 65, {40, 30}, 10.0f);
+    const assets::Terrain c = assets::terrain_from_noise(8, 20.0f, 4, 65, {40, 30}, 10.0f);
+    REQUIRE(a.n == 65);
+    REQUIRE(a.h == b.h);   // the same seed makes the same hills
+    REQUIRE(a.h != c.h);
+    REQUIRE(*std::min_element(a.h.begin(), a.h.end()) == Catch::Approx(0).margin(1e-5));
+    REQUIRE(*std::max_element(a.h.begin(), a.h.end()) == Catch::Approx(10));
+    // sample() answers what the mesh's triangles hold: a point inside one is on its plane.
+    const assets::Mesh m = assets::terrain_mesh(a, {}, "terrain:test@1");
+    REQUIRE(m.vertices.size() == 65u * 65u);
+    REQUIRE(m.indices.size() == 64u * 64u * 6u);
+    REQUIRE(m.vertex_colors);
+    REQUIRE(m.aabb_min.x == Catch::Approx(-20));
+    REQUIRE(m.aabb_max.z == Catch::Approx(15));
+    for (int k = 0; k < 200; ++k) {
+        const std::size_t tri = static_cast<std::size_t>((k * 7919) % (m.indices.size() / 3));
+        const Vec3 p0 = m.vertices[m.indices[tri * 3]].position, p1 = m.vertices[m.indices[tri * 3 + 1]].position, p2 = m.vertices[m.indices[tri * 3 + 2]].position;
+        const float u = 0.2f + 0.1f * static_cast<float>(k % 3), v = 0.25f;
+        const Vec3 q = p0 + (p1 - p0) * u + (p2 - p0) * v;
+        INFO("triangle " << tri);
+        REQUIRE(a.sample(q.x, q.z) == Catch::Approx(q.y).margin(1e-3));
+        const Vec3 n = normalize(cross(p1 - p0, p2 - p0));
+        const Vec3 up = n.y < 0 ? n * -1.0f : n;
+        REQUIRE(a.normal(q.x, q.z).y == Catch::Approx(up.y).margin(1e-3));
+        REQUIRE(n.y > 0);   // wound to face up
+    }
+    // Outside the grid, the nearest edge answers.
+    REQUIRE(a.sample(1000, 0) == Catch::Approx(a.sample(20, 0)));
+    // The 16-bit PNG reads back to within a step of 65535.
+    const std::string png = assets::terrain_png16(a);
+    REQUIRE(png.substr(1, 3) == "PNG");
+    auto back = assets::terrain_from_image(png, "heights.png", 65, {40, 30}, 10.0f);
+    REQUIRE(back.has_value());
+    float worst = 0;
+    for (std::size_t k = 0; k < a.h.size(); ++k) worst = std::max(worst, std::fabs(back->h[k] - a.h[k]));
+    INFO("worst " << worst);
+    REQUIRE(worst < 10.0f / 65535.0f * 1.01f);
+    // Resampled to another resolution it keeps its corners.
+    auto coarse = assets::terrain_from_image(png, "heights.png", 17, {40, 30}, 10.0f);
+    REQUIRE(coarse.has_value());
+    REQUIRE(coarse->at(0, 0) == Catch::Approx(a.at(0, 0)).margin(1e-3));
+    REQUIRE(coarse->at(16, 16) == Catch::Approx(a.at(64, 64)).margin(1e-3));
+    REQUIRE_FALSE(assets::terrain_from_image("not a picture", "x.png", 17, {1, 1}, 1).has_value());
 }

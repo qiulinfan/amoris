@@ -4904,6 +4904,20 @@ struct Renderer::Impl {
             }
         }
         new_bounds.emplace_back(path, std::make_pair(src.aabb_min, src.aabb_max));
+        // An engine-made mesh (a terrain's, `terrain:<entity>@<revision>`) replaces its older revisions.
+        if (const auto at = path.find('@'); path.starts_with("terrain:") && at != std::string::npos) {
+            const std::string stem = path.substr(0, at + 1);
+            for (auto old = asset_meshes.begin(); old != asset_meshes.end();) {
+                if (old->first.starts_with(stem)) {
+                    if (old->second.gpu.vertices) wgpuBufferRelease(old->second.gpu.vertices);
+                    if (old->second.gpu.indices) wgpuBufferRelease(old->second.gpu.indices);
+                    if (old->second.gpu.skin) wgpuBufferRelease(old->second.gpu.skin);
+                    old = asset_meshes.erase(old);
+                } else {
+                    ++old;
+                }
+            }
+        }
         auto [it, inserted] = asset_meshes.emplace(path, std::move(am));
         return &it->second;
     }
@@ -5588,6 +5602,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr, const world::WorldTransform& t) {
         if (!mr.visible || count >= kMaxObjects) return;
         ++entities;
+        // A mesh the engine made for the entity (a terrain's) stands in for MeshRenderer.mesh.
+        const std::string* derived = world.derived_mesh(e.id());
+        const std::string& mesh_path = derived ? *derived : mr.mesh;
         Mat4 model = Mat4::trs(t.position, t.rotation, t.scale);
         ObjectUniforms ou{};
         to_array(model, ou.model);
@@ -5633,13 +5650,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
         ou.morph[0] = ou.morph[1] = ou.morph[2] = ou.morph[3] = 0;
         for (float& mw : ou.morph_weights) mw = 0;
-        int kind = Impl::primitive_index(mr.mesh);
+        int kind = Impl::primitive_index(mesh_path);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
-            push(&gm, 0, gm.index_count, mr.texture, {decode(mr.color.r), decode(mr.color.g), decode(mr.color.b), mr.color.a}, mr.mesh, nullptr);
+            push(&gm, 0, gm.index_count, mr.texture, {decode(mr.color.r), decode(mr.color.g), decode(mr.color.b), mr.color.a}, mesh_path, nullptr);
             return;
         }
-        Impl::AssetMesh* am = im.asset_mesh(mr.mesh);
+        Impl::AssetMesh* am = im.asset_mesh(mesh_path);
         if (!am) {
             // Missing asset: a magenta cube marks the spot instead of hiding the problem.
             const GpuMesh& gm = im.meshes[0];
@@ -5656,7 +5673,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 if (idx >= 0 && static_cast<std::size_t>(idx) < am->node_names.size()) only = idx;
             }
             if (only < 0) {
-                im.report_missing(mr.mesh + "#" + mr.node, "no such node in the file");
+                im.report_missing(mesh_path + "#" + mr.node, "no such node in the file");
                 return;
             }
         }
@@ -5708,7 +5725,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 to_array(transpose(placed.inverse_affine()), ou.normal);
                 if (part) ++moving_parts;
             }
-            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mr.mesh, &mat, skinned);
+            push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mesh_path, &mat, skinned);
             if (part || alone) {
                 to_array(model, ou.model);
                 to_array(transpose(model.inverse_affine()), ou.normal);
@@ -5716,6 +5733,51 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         }
         ou.id[2] = 0;
     });
+    // Scattered copies (World::derived_instances, a Scatter's): every draw of such an entity is
+    // made once per copy at the copy's matrix, its colour shaded, culled on its own bounds; the
+    // entity's own draw goes. A copy draws the mesh's geometry as the file bakes it.
+    std::uint32_t scattered = 0;
+    {
+        std::unordered_map<std::uint32_t, const std::vector<world::World::Instance>*> copies;
+        world.ecs().each([&](flecs::entity e, const world::MeshRenderer&) {
+            if (const auto* in = world.derived_instances(e.id())) copies[static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu)] = in;
+        });
+        if (!copies.empty()) {
+            auto largest_axis = [](const Mat4& m) {
+                return std::max({length(Vec3{m.at(0, 0), m.at(0, 1), m.at(0, 2)}), length(Vec3{m.at(1, 0), m.at(1, 1), m.at(1, 2)}), length(Vec3{m.at(2, 0), m.at(2, 1), m.at(2, 2)})});
+            };
+            std::vector<Draw> kept;
+            kept.reserve(draws.size());
+            std::vector<Draw> made;
+            for (Draw& d : draws) {
+                auto it = copies.find(d.object.id[0]);
+                if (it == copies.end()) { kept.push_back(std::move(d)); continue; }
+                Mat4 base;
+                std::memcpy(base.m, d.object.model, sizeof base.m);
+                const float base_scale = std::max(largest_axis(base), 1e-6f);
+                const Vec3 local_centre = d.radius >= 0 ? base.inverse_affine().transform_point(d.center) : Vec3{0, 0, 0};
+                for (const world::World::Instance& inst : *it->second) {
+                    if (kept.size() + made.size() >= kMaxObjects) break;
+                    Draw c = d;
+                    to_array(inst.model, c.object.model);
+                    to_array(transpose(inst.model.inverse_affine()), c.object.normal);
+                    for (int k = 0; k < 3; ++k) c.object.color[k] *= inst.shade;
+                    const Vec3 at{inst.model.at(3, 0), inst.model.at(3, 1), inst.model.at(3, 2)};
+                    if (d.radius >= 0) {
+                        c.center = inst.model.transform_point(local_centre);
+                        c.radius = d.radius / base_scale * largest_axis(inst.model);
+                    }
+                    const Vec3 to_cam = at - im.camera.position;
+                    c.depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
+                    made.push_back(std::move(c));
+                    ++scattered;
+                }
+            }
+            kept.insert(kept.end(), std::make_move_iterator(made.begin()), std::make_move_iterator(made.end()));
+            draws = std::move(kept);
+            count = static_cast<std::uint32_t>(draws.size());
+        }
+    }
     std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
         if (a.blend != b.blend) return !a.blend;            // opaque first
         if (a.blend) return a.depth > b.depth;              // translucent far to near
@@ -5927,6 +5989,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (total > 0) im.device->write_buffer(im.object_buffer, 0, im.object_staging.data(), static_cast<std::uint64_t>(total) * kObjectStride);
     im.stats.meshes = entities;
     im.stats.instances = total;
+    im.stats.scattered = scattered;
     im.stats.sprites = static_cast<std::uint32_t>(sprites.size()) - particle_count - tile_layers_parts(sprites) - image_quads;
     im.stats.particles = particle_count;
     im.stats.tile_layers = tile_layers;
@@ -6678,6 +6741,7 @@ Json Renderer::describe() const {
     j["shadow_cascades"] = s.shadow_cascades;
     j["shadow_distance"] = s.shadow_distance;
     j["instances"] = s.instances;
+    j["scattered"] = s.scattered;
     j["translucent"] = s.translucent;
     j["sprites"] = s.sprites;
     j["particles"] = s.particles;

@@ -1044,3 +1044,50 @@ TEST_CASE("editor's Script tab lists the type errors a watched rebundle found", 
     ok(s.finish());
     std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");
 }
+
+TEST_CASE("editor sculpts a terrain in the scene pane and undoes the stroke", "[editor][terrain]") {
+    app::Session s(editor_options("hills"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Hills")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "terrain-brush"}})).size() == 1);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "sculpt")}}));
+    ok(s.idle_frame());
+    const Json before = ok(s.command("terrain.heights", Json::object()))["heights"];
+    const int revision = ok(s.command("terrain.info", Json::object()))["revision"].get<int>();
+    // A drag across the middle of the scene pane raises the ground under it.
+    Json pane = ok(s.command("ui.query", Json{{"name", "viewport"}}));
+    REQUIRE(pane.size() == 1);
+    const Json r = pane[0]["rect"];
+    const double cx = r["x"].get<double>() + r["w"].get<double>() * 0.5, cy = r["y"].get<double>() + r["h"].get<double>() * 0.6;
+    ok(s.command("ui.drag", Json{{"x", cx}, {"y", cy}, {"dx", 40}, {"dy", 0}, {"steps", 4}}));
+    ok(s.idle_frame());
+    Json info = ok(s.command("terrain.info", Json::object()));
+    INFO(info.dump());
+    REQUIRE(info["edited"] == true);
+    REQUIRE(info["revision"].get<int>() > revision);
+    const Json after = ok(s.command("terrain.heights", Json::object()))["heights"];
+    double raised = 0;
+    for (std::size_t k = 0; k < after.size(); ++k) raised += after[k].get<double>() - before[k].get<double>();
+    REQUIRE(raised > 1.0);
+    // Undo puts every height back; redo raises them again.
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("terrain.heights", Json::object()))["heights"] == before);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("terrain.heights", Json::object()))["heights"] == after);
+    // Lower mode takes ground away.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "sculpt:lower")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"x", cx}, {"y", cy}}));
+    ok(s.idle_frame());
+    const Json lowered = ok(s.command("terrain.heights", Json::object()))["heights"];
+    double sum_after = 0, sum_lowered = 0;
+    for (std::size_t k = 0; k < after.size(); ++k) { sum_after += after[k].get<double>(); sum_lowered += lowered[k].get<double>(); }
+    REQUIRE(sum_lowered < sum_after);
+    ok(s.finish());
+    std::filesystem::remove_all(root() / "samples" / "hills" / ".pocket");
+}

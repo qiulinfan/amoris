@@ -111,6 +111,58 @@ std::size_t numeric_span(IKLimit& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Wheel& v) {
+    j = Json::object();
+    vec_to_json(j["offset"], v.offset);
+    j["radius"] = v.radius;
+    j["rest"] = v.rest;
+    j["steer"] = v.steer;
+    j["drive"] = v.drive;
+    j["visual"] = v.visual;
+    j["contact"] = v.contact;
+    j["compression"] = v.compression;
+    j["spin"] = v.spin;
+}
+
+void from_json(const Json& j, Wheel& v) {
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "radius", v.radius);
+    scalar_from_json(j, "rest", v.rest);
+    scalar_from_json(j, "steer", v.steer);
+    scalar_from_json(j, "drive", v.drive);
+    scalar_from_json(j, "visual", v.visual);
+    scalar_from_json(j, "contact", v.contact);
+    scalar_from_json(j, "compression", v.compression);
+    scalar_from_json(j, "spin", v.spin);
+}
+
+void hash_record(StateHasherRef& h, const Wheel& v) {
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
+    h.f32(v.radius);
+    h.f32(v.rest);
+    h.u8(v.steer ? 1 : 0);
+    h.u8(v.drive ? 1 : 0);
+    h.str(v.visual);
+    h.u8(v.contact ? 1 : 0);
+    h.f32(v.compression);
+    h.f32(v.spin);
+}
+
+std::size_t numeric_span(Wheel& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
+    if (path == "radius") { *out = &v.radius; return 1; }
+    if (path == "rest") { *out = &v.rest; return 1; }
+    if (path == "compression") { *out = &v.compression; return 1; }
+    if (path == "spin") { *out = &v.spin; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const AnimationLayer& v) {
     j = Json::object();
     j["clip"] = v.clip;
@@ -1554,6 +1606,245 @@ std::size_t numeric_span(Character& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Terrain& v) {
+    j = Json::object();
+    vec_to_json(j["size"], v.size);
+    j["height"] = v.height;
+    j["resolution"] = v.resolution;
+    j["heightmap"] = v.heightmap;
+    j["seed"] = v.seed;
+    j["scale"] = v.scale;
+    j["octaves"] = v.octaves;
+    vec_to_json(j["grass"], v.grass);
+    vec_to_json(j["rock"], v.rock);
+    vec_to_json(j["snow"], v.snow);
+    j["rock_slope"] = v.rock_slope;
+    j["snow_line"] = v.snow_line;
+    j["texture_tile"] = v.texture_tile;
+}
+
+void from_json(const Json& j, Terrain& v) {
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    scalar_from_json(j, "height", v.height);
+    scalar_from_json(j, "resolution", v.resolution);
+    scalar_from_json(j, "heightmap", v.heightmap);
+    scalar_from_json(j, "seed", v.seed);
+    scalar_from_json(j, "scale", v.scale);
+    scalar_from_json(j, "octaves", v.octaves);
+    if (j.is_object() && j.contains("grass")) vec_from_json(j["grass"], v.grass);
+    if (j.is_object() && j.contains("rock")) vec_from_json(j["rock"], v.rock);
+    if (j.is_object() && j.contains("snow")) vec_from_json(j["snow"], v.snow);
+    scalar_from_json(j, "rock_slope", v.rock_slope);
+    scalar_from_json(j, "snow_line", v.snow_line);
+    scalar_from_json(j, "texture_tile", v.texture_tile);
+}
+
+void hash_component(StateHasherRef& h, const Terrain& v) {
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.height);
+    h.i64(static_cast<std::int64_t>(v.resolution));
+    h.str(v.heightmap);
+    h.i64(static_cast<std::int64_t>(v.seed));
+    h.f32(v.scale);
+    h.i64(static_cast<std::int64_t>(v.octaves));
+    h.f32(v.grass.r);
+    h.f32(v.grass.g);
+    h.f32(v.grass.b);
+    h.f32(v.grass.a);
+    h.f32(v.rock.r);
+    h.f32(v.rock.g);
+    h.f32(v.rock.b);
+    h.f32(v.rock.a);
+    h.f32(v.snow.r);
+    h.f32(v.snow.g);
+    h.f32(v.snow.b);
+    h.f32(v.snow.a);
+    h.f32(v.rock_slope);
+    h.f32(v.snow_line);
+    h.f32(v.texture_tile);
+}
+
+std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "height") { *out = &v.height; return 1; }
+    if (path == "scale") { *out = &v.scale; return 1; }
+    if (path == "grass") { *out = &v.grass.r; return 4; }
+    if (path == "grass.r") { *out = &v.grass.r; return 1; }
+    if (path == "grass.g") { *out = &v.grass.g; return 1; }
+    if (path == "grass.b") { *out = &v.grass.b; return 1; }
+    if (path == "grass.a") { *out = &v.grass.a; return 1; }
+    if (path == "rock") { *out = &v.rock.r; return 4; }
+    if (path == "rock.r") { *out = &v.rock.r; return 1; }
+    if (path == "rock.g") { *out = &v.rock.g; return 1; }
+    if (path == "rock.b") { *out = &v.rock.b; return 1; }
+    if (path == "rock.a") { *out = &v.rock.a; return 1; }
+    if (path == "snow") { *out = &v.snow.r; return 4; }
+    if (path == "snow.r") { *out = &v.snow.r; return 1; }
+    if (path == "snow.g") { *out = &v.snow.g; return 1; }
+    if (path == "snow.b") { *out = &v.snow.b; return 1; }
+    if (path == "snow.a") { *out = &v.snow.a; return 1; }
+    if (path == "rock_slope") { *out = &v.rock_slope; return 1; }
+    if (path == "snow_line") { *out = &v.snow_line; return 1; }
+    if (path == "texture_tile") { *out = &v.texture_tile; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Scatter& v) {
+    j = Json::object();
+    j["count"] = v.count;
+    vec_to_json(j["area"], v.area);
+    j["seed"] = v.seed;
+    j["on"] = v.on;
+    vec_to_json(j["scale"], v.scale);
+    j["yaw"] = v.yaw;
+    j["align"] = v.align;
+    j["sink"] = v.sink;
+    j["spacing"] = v.spacing;
+    j["max_slope"] = v.max_slope;
+    j["min_height"] = v.min_height;
+    j["max_height"] = v.max_height;
+    j["shade"] = v.shade;
+    j["placed"] = v.placed;
+}
+
+void from_json(const Json& j, Scatter& v) {
+    scalar_from_json(j, "count", v.count);
+    if (j.is_object() && j.contains("area")) vec_from_json(j["area"], v.area);
+    scalar_from_json(j, "seed", v.seed);
+    scalar_from_json(j, "on", v.on);
+    if (j.is_object() && j.contains("scale")) vec_from_json(j["scale"], v.scale);
+    scalar_from_json(j, "yaw", v.yaw);
+    scalar_from_json(j, "align", v.align);
+    scalar_from_json(j, "sink", v.sink);
+    scalar_from_json(j, "spacing", v.spacing);
+    scalar_from_json(j, "max_slope", v.max_slope);
+    scalar_from_json(j, "min_height", v.min_height);
+    scalar_from_json(j, "max_height", v.max_height);
+    scalar_from_json(j, "shade", v.shade);
+    scalar_from_json(j, "placed", v.placed);
+}
+
+void hash_component(StateHasherRef& h, const Scatter& v) {
+    h.i64(static_cast<std::int64_t>(v.count));
+    h.f32(v.area.x);
+    h.f32(v.area.y);
+    h.i64(static_cast<std::int64_t>(v.seed));
+    h.str(v.on);
+    h.f32(v.scale.x);
+    h.f32(v.scale.y);
+    h.f32(v.yaw);
+    h.f32(v.align);
+    h.f32(v.sink);
+    h.f32(v.spacing);
+    h.f32(v.max_slope);
+    h.f32(v.min_height);
+    h.f32(v.max_height);
+    h.f32(v.shade);
+    h.i64(static_cast<std::int64_t>(v.placed));
+}
+
+std::size_t numeric_span(Scatter& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "area") { *out = &v.area.x; return 2; }
+    if (path == "area.x") { *out = &v.area.x; return 1; }
+    if (path == "area.y") { *out = &v.area.y; return 1; }
+    if (path == "scale") { *out = &v.scale.x; return 2; }
+    if (path == "scale.x") { *out = &v.scale.x; return 1; }
+    if (path == "scale.y") { *out = &v.scale.y; return 1; }
+    if (path == "yaw") { *out = &v.yaw; return 1; }
+    if (path == "align") { *out = &v.align; return 1; }
+    if (path == "sink") { *out = &v.sink; return 1; }
+    if (path == "spacing") { *out = &v.spacing; return 1; }
+    if (path == "max_slope") { *out = &v.max_slope; return 1; }
+    if (path == "min_height") { *out = &v.min_height; return 1; }
+    if (path == "max_height") { *out = &v.max_height; return 1; }
+    if (path == "shade") { *out = &v.shade; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Vehicle& v) {
+    j = Json::object();
+    j["wheels"] = Json::array();
+    for (const auto& x : v.wheels) { Json e; to_json(e, x); j["wheels"].push_back(std::move(e)); }
+    j["throttle"] = v.throttle;
+    j["steer"] = v.steer;
+    j["brake"] = v.brake;
+    j["power"] = v.power;
+    j["top_speed"] = v.top_speed;
+    j["braking"] = v.braking;
+    j["max_steer"] = v.max_steer;
+    j["grip"] = v.grip;
+    j["suspension_hz"] = v.suspension_hz;
+    j["damping"] = v.damping;
+    j["roll_resistance"] = v.roll_resistance;
+    j["speed"] = v.speed;
+    j["grounded"] = v.grounded;
+}
+
+void from_json(const Json& j, Vehicle& v) {
+    if (j.is_object() && j.contains("wheels") && j["wheels"].is_array()) {
+        v.wheels.clear();
+        for (const Json& e : j["wheels"]) { Wheel x; from_json(e, x); v.wheels.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "throttle", v.throttle);
+    scalar_from_json(j, "steer", v.steer);
+    scalar_from_json(j, "brake", v.brake);
+    scalar_from_json(j, "power", v.power);
+    scalar_from_json(j, "top_speed", v.top_speed);
+    scalar_from_json(j, "braking", v.braking);
+    scalar_from_json(j, "max_steer", v.max_steer);
+    scalar_from_json(j, "grip", v.grip);
+    scalar_from_json(j, "suspension_hz", v.suspension_hz);
+    scalar_from_json(j, "damping", v.damping);
+    scalar_from_json(j, "roll_resistance", v.roll_resistance);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "grounded", v.grounded);
+}
+
+void hash_component(StateHasherRef& h, const Vehicle& v) {
+    h.i64(static_cast<std::int64_t>(v.wheels.size()));
+    for (const auto& x : v.wheels) hash_record(h, x);
+    h.f32(v.throttle);
+    h.f32(v.steer);
+    h.f32(v.brake);
+    h.f32(v.power);
+    h.f32(v.top_speed);
+    h.f32(v.braking);
+    h.f32(v.max_steer);
+    h.f32(v.grip);
+    h.f32(v.suspension_hz);
+    h.f32(v.damping);
+    h.f32(v.roll_resistance);
+    h.f32(v.speed);
+    h.i64(static_cast<std::int64_t>(v.grounded));
+}
+
+std::size_t numeric_span(Vehicle& v, std::string_view path, float** out) {
+    (void)v;
+    if (path.starts_with("wheels.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.wheels.size()) return numeric_span(v.wheels[index], rest, out);
+    }
+    if (path == "throttle") { *out = &v.throttle; return 1; }
+    if (path == "steer") { *out = &v.steer; return 1; }
+    if (path == "brake") { *out = &v.brake; return 1; }
+    if (path == "power") { *out = &v.power; return 1; }
+    if (path == "top_speed") { *out = &v.top_speed; return 1; }
+    if (path == "braking") { *out = &v.braking; return 1; }
+    if (path == "max_steer") { *out = &v.max_steer; return 1; }
+    if (path == "grip") { *out = &v.grip; return 1; }
+    if (path == "suspension_hz") { *out = &v.suspension_hz; return 1; }
+    if (path == "damping") { *out = &v.damping; return 1; }
+    if (path == "roll_resistance") { *out = &v.roll_resistance; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const TopDown2D& v) {
     j = Json::object();
     vec_to_json(j["velocity"], v.velocity);
@@ -2148,6 +2439,53 @@ constexpr std::array<FieldInfo, 16> kCharacterFields = {{
     FieldInfo{"on_ceiling", "bool", "Its head hit something this tick (written by the engine)."},
     FieldInfo{"stepped", "bool", "Walked up an edge this tick (written by the engine)."},
 }};
+constexpr std::array<FieldInfo, 13> kTerrainFields = {{
+    FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity."},
+    FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity."},
+    FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across."},
+    FieldInfo{"heightmap", "string", "A project-relative greyscale PNG (8 or 16 bits), black at 0 and white at `height`, its top row at -z; empty makes the heights from noise (seed, scale, octaves). terrain.save writes one."},
+    FieldInfo{"seed", "u32", "The noise's seed: the same seed, scale and octaves give the same hills."},
+    FieldInfo{"scale", "f32", "The size of the noise's largest features, in units."},
+    FieldInfo{"octaves", "i32", "Layers of noise, each twice as fine and half as tall as the one before (1 to 10)."},
+    FieldInfo{"grass", "color", "The colour of flat and gentle ground."},
+    FieldInfo{"rock", "color", "The colour of ground steeper than rock_slope."},
+    FieldInfo{"snow", "color", "The colour above snow_line."},
+    FieldInfo{"rock_slope", "f32", "Degrees from level above which ground is rock."},
+    FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none."},
+    FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground."},
+}};
+constexpr std::array<FieldInfo, 14> kScatterFields = {{
+    FieldInfo{"count", "i32", "Places tried (the most copies there can be; up to 20000)."},
+    FieldInfo{"area", "vec2", "The extent along x and z, centred on the entity."},
+    FieldInfo{"seed", "u32", "The same seed and settings place the same copies."},
+    FieldInfo{"on", "string", "Path or name of the entity whose collider the copies stand on (a terrain); empty takes any static collider."},
+    FieldInfo{"scale", "vec2", "The smallest and largest size, times the entity's scale."},
+    FieldInfo{"yaw", "f32", "Degrees of random turn about the vertical (0 keeps them all facing one way)."},
+    FieldInfo{"align", "f32", "How far each copy leans with the ground under it: 0 upright, 1 square to the slope."},
+    FieldInfo{"sink", "f32", "Units each copy is set into the ground (a stone half buried)."},
+    FieldInfo{"spacing", "f32", "The least distance between two copies; 0 lets them crowd."},
+    FieldInfo{"max_slope", "f32", "Degrees: no copy where the ground is steeper."},
+    FieldInfo{"min_height", "f32", "No copy on ground lower than this (world y): above the water line."},
+    FieldInfo{"max_height", "f32", "No copy on ground higher than this (world y): below the snow."},
+    FieldInfo{"shade", "f32", "How much each copy's brightness varies, 0..1."},
+    FieldInfo{"placed", "i32", "How many copies stand (written by the engine)."},
+}};
+constexpr std::array<FieldInfo, 14> kVehicleFields = {{
+    FieldInfo{"wheels", "list:Wheel", "The wheels, each with its mount, suspension and role."},
+    FieldInfo{"throttle", "f32", "-1..1: forward drive at 1, reverse at -1."},
+    FieldInfo{"steer", "f32", "-1..1: the steering wheels turn left at -1 and right at 1, by max_steer degrees."},
+    FieldInfo{"brake", "f32", "0..1: how hard every wheel on the ground brakes."},
+    FieldInfo{"power", "f32", "The acceleration full throttle gives on level ground, units per second squared."},
+    FieldInfo{"top_speed", "f32", "The speed at which the engine stops pushing, units per second."},
+    FieldInfo{"braking", "f32", "The deceleration a full brake gives, units per second squared."},
+    FieldInfo{"max_steer", "f32", "Degrees the steering wheels turn at full steer."},
+    FieldInfo{"grip", "f32", "How much sideways force the tyres can hold, as a multiple of the load on them: above what the turn asks, the car slides."},
+    FieldInfo{"suspension_hz", "f32", "How stiff the springs are, as the bounce's frequency with the body's weight on them."},
+    FieldInfo{"damping", "f32", "How fast a bounce dies: 0 bounces on, 1 settles without overshoot."},
+    FieldInfo{"roll_resistance", "f32", "Units per second squared the wheels lose to rolling when nothing drives or brakes them."},
+    FieldInfo{"speed", "f32", "Forward speed, negative backing up (written by the engine)."},
+    FieldInfo{"grounded", "i32", "Wheels on the ground (written by the engine)."},
+}};
 constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second along X and Y."},
     FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width)."},
@@ -2215,7 +2553,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 30> kComponents = {{
+constexpr std::array<ComponentInfo, 33> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -2239,6 +2577,9 @@ constexpr std::array<ComponentInfo, 30> kComponents = {{
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Character", "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.", true, kCharacterFields},
+    ComponentInfo{"Terrain", "Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.", true, kTerrainFields},
+    ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
+    ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
     ComponentInfo{"TopDown2D", "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).", true, kTopDown2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},

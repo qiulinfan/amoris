@@ -26,6 +26,28 @@ export interface IKLimit {
     side: Vec3;
 }
 
+/** One wheel of a Vehicle (docs/design/physics.md, Vehicles): where its suspension hangs from the body, how long it is and how big the wheel, whether it steers and whether the engine drives it; the engine writes what it touches and turns. */
+export interface Wheel {
+    /** Where the suspension hangs from, in the body's frame (the top of its travel). */
+    offset: Vec3;
+    /** The wheel's radius. */
+    radius: number;
+    /** The suspension's length: how far below `offset` the wheel's centre hangs with nothing under it. */
+    rest: number;
+    /** Turned by the vehicle's steer. */
+    steer: boolean;
+    /** Pushed by the vehicle's throttle. */
+    drive: boolean;
+    /** The name of an entity under the vehicle that the engine places where the wheel is (its local position), turned with the steering and rolled with the ground (its local rotation): a pivot whose children draw the tyre. Empty for none. */
+    visual: string;
+    /** On the ground this step (written by the engine). */
+    contact: boolean;
+    /** How far the suspension is pushed in, 0..rest (written by the engine). */
+    compression: number;
+    /** How far the wheel has rolled, in radians (written by the engine). */
+    spin: number;
+}
+
 /** One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers. */
 export interface AnimationLayer {
     /** Clip name from the asset (animation.clips lists them). */
@@ -576,6 +598,100 @@ export interface Character {
     stepped: boolean;
 }
 
+/** Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it. */
+export interface Terrain {
+    /** The extent along x and z, centred on the entity. */
+    size: Vec2;
+    /** The height range: a heightmap's white, or the noise's highest point, is this high above the entity. */
+    height: number;
+    /** Samples along each side (2 to 1025): the grid has resolution - 1 cells across. */
+    resolution: number;
+    /** A project-relative greyscale PNG (8 or 16 bits), black at 0 and white at `height`, its top row at -z; empty makes the heights from noise (seed, scale, octaves). terrain.save writes one. */
+    heightmap: string;
+    /** The noise's seed: the same seed, scale and octaves give the same hills. */
+    seed: number;
+    /** The size of the noise's largest features, in units. */
+    scale: number;
+    /** Layers of noise, each twice as fine and half as tall as the one before (1 to 10). */
+    octaves: number;
+    /** The colour of flat and gentle ground. */
+    grass: Color;
+    /** The colour of ground steeper than rock_slope. */
+    rock: Color;
+    /** The colour above snow_line. */
+    snow: Color;
+    /** Degrees from level above which ground is rock. */
+    rock_slope: number;
+    /** The fraction of `height` above which ground is snow; 1 or more for none. */
+    snow_line: number;
+    /** Units per repeat of the MeshRenderer's texture over the ground. */
+    texture_tile: number;
+}
+
+/** Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change. */
+export interface Scatter {
+    /** Places tried (the most copies there can be; up to 20000). */
+    count: number;
+    /** The extent along x and z, centred on the entity. */
+    area: Vec2;
+    /** The same seed and settings place the same copies. */
+    seed: number;
+    /** Path or name of the entity whose collider the copies stand on (a terrain); empty takes any static collider. */
+    on: string;
+    /** The smallest and largest size, times the entity's scale. */
+    scale: Vec2;
+    /** Degrees of random turn about the vertical (0 keeps them all facing one way). */
+    yaw: number;
+    /** How far each copy leans with the ground under it: 0 upright, 1 square to the slope. */
+    align: number;
+    /** Units each copy is set into the ground (a stone half buried). */
+    sink: number;
+    /** The least distance between two copies; 0 lets them crowd. */
+    spacing: number;
+    /** Degrees: no copy where the ground is steeper. */
+    max_slope: number;
+    /** No copy on ground lower than this (world y): above the water line. */
+    min_height: number;
+    /** No copy on ground higher than this (world y): below the snow. */
+    max_height: number;
+    /** How much each copy's brightness varies, 0..1. */
+    shade: number;
+    /** How many copies stand (written by the engine). */
+    placed: number;
+}
+
+/** A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels. */
+export interface Vehicle {
+    /** The wheels, each with its mount, suspension and role. */
+    wheels: Wheel[];
+    /** -1..1: forward drive at 1, reverse at -1. */
+    throttle: number;
+    /** -1..1: the steering wheels turn left at -1 and right at 1, by max_steer degrees. */
+    steer: number;
+    /** 0..1: how hard every wheel on the ground brakes. */
+    brake: number;
+    /** The acceleration full throttle gives on level ground, units per second squared. */
+    power: number;
+    /** The speed at which the engine stops pushing, units per second. */
+    top_speed: number;
+    /** The deceleration a full brake gives, units per second squared. */
+    braking: number;
+    /** Degrees the steering wheels turn at full steer. */
+    max_steer: number;
+    /** How much sideways force the tyres can hold, as a multiple of the load on them: above what the turn asks, the car slides. */
+    grip: number;
+    /** How stiff the springs are, as the bounce's frequency with the body's weight on them. */
+    suspension_hz: number;
+    /** How fast a bounce dies: 0 bounces on, 1 settles without overshoot. */
+    damping: number;
+    /** Units per second squared the wheels lose to rolling when nothing drives or brakes them. */
+    roll_resistance: number;
+    /** Forward speed, negative backing up (written by the engine). */
+    speed: number;
+    /** Wheels on the ground (written by the engine). */
+    grounded: number;
+}
+
 /** A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform). */
 export interface TopDown2D {
     /** Units per second along X and Y. */
@@ -732,6 +848,9 @@ export interface Components {
     Joint: Joint;
     Body2D: Body2D;
     Character: Character;
+    Terrain: Terrain;
+    Scatter: Scatter;
+    Vehicle: Vehicle;
     TopDown2D: TopDown2D;
     Collider: Collider;
     AudioSource: AudioSource;
@@ -743,7 +862,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "ReflectionProbe", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "ReflectionProbe", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -770,6 +889,9 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false },
+    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4 },
+    Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, shade: 0.15, placed: 0 },
+    Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
@@ -783,12 +905,14 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
 export interface Records {
     MorphWeight: MorphWeight;
     IKLimit: IKLimit;
+    Wheel: Wheel;
     AnimationLayer: AnimationLayer;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     MorphWeight: { target: "", weight: 0 },
     IKLimit: { joint: "", min_bend: 0, max_bend: 180, side: { x: 0, y: 0, z: 0 } },
+    Wheel: { offset: { x: 0, y: 0, z: 0 }, radius: 0.35, rest: 0.3, steer: false, drive: false, visual: "", contact: false, compression: 0, spin: 0 },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
 };
 

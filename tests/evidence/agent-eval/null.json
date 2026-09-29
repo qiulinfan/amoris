@@ -1,8 +1,8 @@
 {
   "runner": "null",
   "passed": 0,
-  "total": 17,
-  "seconds": 24.2,
+  "total": 20,
+  "seconds": 30.3,
   "tasks": [
     {
       "name": "spawn_named",
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": false,
-      "seconds": 5.5,
+      "seconds": 5.6,
       "detail": "1 enemies remain",
       "answer": null,
       "error": null
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": false,
-      "seconds": 1.8,
+      "seconds": 1.9,
       "detail": "no number answered (truth 5)",
       "answer": null,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": false,
-      "seconds": 8.5,
+      "seconds": 8.7,
       "detail": "answered None, the root cause is 'entity.spawned'",
       "answer": null,
       "error": null
@@ -89,7 +89,7 @@
       "name": "expose_count",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.4,
       "detail": "no state key 'answer' after the reload",
       "answer": null,
       "error": null
@@ -98,7 +98,7 @@
       "name": "ball_lower",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.4,
       "detail": "the ball starts its fall at y 2.9918",
       "answer": null,
       "error": null
@@ -107,7 +107,7 @@
       "name": "spawn_stars",
       "project": "hello",
       "ok": false,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "no entity named Star0",
       "answer": null,
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": false,
-      "seconds": 1.9,
+      "seconds": 2.0,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 5 after 3.2 s",
       "answer": null,
       "error": null
@@ -143,8 +143,35 @@
       "name": "lamp_prefab",
       "project": "hello",
       "ok": false,
-      "seconds": 0.4,
-      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-17949/prefabs/lamp.json",
+      "seconds": 0.5,
+      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-44189/prefabs/lamp.json",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "hill_raise",
+      "project": "hills",
+      "ok": false,
+      "seconds": 1.0,
+      "detail": "the ground at (20.0, -20.0) stands 3.40 high",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "flowers",
+      "project": "hills",
+      "ok": false,
+      "seconds": 1.1,
+      "detail": "no entity named Flowers",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "car_speed",
+      "project": "drive",
+      "ok": false,
+      "seconds": 3.3,
+      "detail": "top_speed 25.0, power 10.0",
       "answer": null,
       "error": null
     },

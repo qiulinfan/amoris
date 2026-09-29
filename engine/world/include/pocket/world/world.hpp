@@ -134,6 +134,20 @@ class World {
     Status unpack(std::string_view component, const std::vector<std::string>& fields, const double* ids, std::size_t count, const float* data);
     // Local bounds of an asset mesh (by MeshRenderer.mesh path) so Bounds can be computed for it.
     void set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max);
+    // The mesh the engine made for an entity (a Terrain's, docs/design/terrain.md): the renderer
+    // draws it and a mesh collider collides as it in place of MeshRenderer.mesh and Collider.mesh.
+    // An empty path clears it.
+    void set_derived_mesh(EntityId id, std::string path);
+    [[nodiscard]] const std::string* derived_mesh(EntityId id) const;
+    // Copies of an entity's MeshRenderer the engine placed (a Scatter's): each drawn at its own
+    // world matrix, its colour scaled by `shade`, in place of the entity's one draw.
+    struct Instance {
+        Mat4 model;
+        float shade = 1;
+    };
+    void set_derived_instances(EntityId id, std::vector<Instance> instances);   // an empty list draws nothing
+    void clear_derived_instances(EntityId id);                                   // back to the entity's own draw
+    [[nodiscard]] const std::vector<Instance>* derived_instances(EntityId id) const;
     [[nodiscard]] std::int64_t tick_index() const;
     void set_tick_index(std::int64_t tick);
     // Deterministic hash of every entity path and component value in tree order.

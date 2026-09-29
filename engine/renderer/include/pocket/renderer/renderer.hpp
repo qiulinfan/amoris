@@ -115,6 +115,7 @@ struct RenderStats {
     int shadow_cascades = 0;          // cascades rendered this frame
     float shadow_distance = 0;        // view depth the last cascade reaches
     std::uint32_t instances = 0;      // objects drawn (one per entity, or per glTF material)
+    std::uint32_t scattered = 0;      // of which copies a Scatter placed (World::derived_instances)
     std::uint32_t sprites = 0;        // of which sprites
     std::uint32_t particles = 0;      // of which particles (drawn as sprites)
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances

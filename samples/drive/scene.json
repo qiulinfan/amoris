@@ -1,0 +1,889 @@
+{
+ "entities": [
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {}
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": {
+      "x": -0.35,
+      "y": 0.45,
+      "z": 0.18,
+      "w": 0.8
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 1.3
+    }
+   }
+  },
+  {
+   "name": "Haze",
+   "components": {
+    "Fog": {
+     "density": 0.004,
+     "color": {
+      "r": 0.75,
+      "g": 0.82,
+      "b": 0.9,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Land",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": -2,
+      "z": 0
+     }
+    },
+    "Terrain": {
+     "size": {
+      "x": 240,
+      "y": 240
+     },
+     "height": 5,
+     "resolution": 161,
+     "seed": 4,
+     "scale": 60,
+     "octaves": 3,
+     "snow_line": 1.5,
+     "rock_slope": 30,
+     "grass": {
+      "r": 0.42,
+      "g": 0.5,
+      "b": 0.28,
+      "a": 1
+     }
+    },
+    "MeshRenderer": {
+     "roughness": 0.95
+    },
+    "RigidBody": {
+     "kind": 1
+    },
+    "Collider": {
+     "shape": 3
+    }
+   }
+  },
+  {
+   "name": "Grass",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 0.6,
+      "y": 0.35,
+      "z": 0.6
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.35,
+      "g": 0.47,
+      "b": 0.22,
+      "a": 1
+     },
+     "roughness": 0.9
+    },
+    "Scatter": {
+     "count": 3000,
+     "area": {
+      "x": 230,
+      "y": 230
+     },
+     "seed": 9,
+     "on": "Land",
+     "scale": {
+      "x": 0.6,
+      "y": 1.6
+     },
+     "spacing": 1.5,
+     "max_slope": 25,
+     "sink": 0.05,
+     "shade": 0.25
+    }
+   }
+  },
+  {
+   "name": "Car",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 6,
+      "z": 0
+     }
+    },
+    "RigidBody": {
+     "kind": 0,
+     "mass": 1200,
+     "friction": 0.3
+    },
+    "Collider": {
+     "shape": 0,
+     "size": {
+      "x": 0.9,
+      "y": 0.3,
+      "z": 2.0
+     }
+    },
+    "Vehicle": {
+     "wheels": [
+      {
+       "offset": {
+        "x": -0.85,
+        "y": -0.2,
+        "z": -1.3
+       },
+       "radius": 0.35,
+       "rest": 0.3,
+       "steer": true,
+       "drive": false,
+       "visual": "FrontLeft"
+      },
+      {
+       "offset": {
+        "x": 0.85,
+        "y": -0.2,
+        "z": -1.3
+       },
+       "radius": 0.35,
+       "rest": 0.3,
+       "steer": true,
+       "drive": false,
+       "visual": "FrontRight"
+      },
+      {
+       "offset": {
+        "x": -0.85,
+        "y": -0.2,
+        "z": 1.3
+       },
+       "radius": 0.35,
+       "rest": 0.3,
+       "steer": false,
+       "drive": true,
+       "visual": "RearLeft"
+      },
+      {
+       "offset": {
+        "x": 0.85,
+        "y": -0.2,
+        "z": 1.3
+       },
+       "radius": 0.35,
+       "rest": 0.3,
+       "steer": false,
+       "drive": true,
+       "visual": "RearRight"
+      }
+     ]
+    }
+   },
+   "children": [
+    {
+     "name": "Body",
+     "components": {
+      "Transform": {
+       "scale": {
+        "x": 1.8,
+        "y": 0.55,
+        "z": 4.0
+       },
+       "position": {
+        "x": 0,
+        "y": 0.2,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.2,
+        "b": 0.15,
+        "a": 1
+       },
+       "roughness": 0.35,
+       "metallic": 0.4
+      }
+     }
+    },
+    {
+     "name": "Cabin",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 0.7,
+        "z": 0.3
+       },
+       "scale": {
+        "x": 1.5,
+        "y": 0.5,
+        "z": 1.9
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.15,
+        "g": 0.2,
+        "b": 0.28,
+        "a": 1
+       },
+       "roughness": 0.2,
+       "metallic": 0.3
+      }
+     }
+    },
+    {
+     "name": "FrontLeft",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -0.85,
+        "y": -0.5,
+        "z": -1.3
+       }
+      }
+     },
+     "children": [
+      {
+       "name": "Tyre",
+       "components": {
+        "Transform": {
+         "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0.7071067811865475,
+          "w": 0.7071067811865476
+         },
+         "scale": {
+          "x": 0.7,
+          "y": 0.3,
+          "z": 0.7
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.08,
+          "g": 0.08,
+          "b": 0.08,
+          "a": 1
+         },
+         "roughness": 0.9
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "FrontRight",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0.85,
+        "y": -0.5,
+        "z": -1.3
+       }
+      }
+     },
+     "children": [
+      {
+       "name": "Tyre",
+       "components": {
+        "Transform": {
+         "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0.7071067811865475,
+          "w": 0.7071067811865476
+         },
+         "scale": {
+          "x": 0.7,
+          "y": 0.3,
+          "z": 0.7
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.08,
+          "g": 0.08,
+          "b": 0.08,
+          "a": 1
+         },
+         "roughness": 0.9
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "RearLeft",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -0.85,
+        "y": -0.5,
+        "z": 1.3
+       }
+      }
+     },
+     "children": [
+      {
+       "name": "Tyre",
+       "components": {
+        "Transform": {
+         "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0.7071067811865475,
+          "w": 0.7071067811865476
+         },
+         "scale": {
+          "x": 0.7,
+          "y": 0.3,
+          "z": 0.7
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.08,
+          "g": 0.08,
+          "b": 0.08,
+          "a": 1
+         },
+         "roughness": 0.9
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "RearRight",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0.85,
+        "y": -0.5,
+        "z": 1.3
+       }
+      }
+     },
+     "children": [
+      {
+       "name": "Tyre",
+       "components": {
+        "Transform": {
+         "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0.7071067811865475,
+          "w": 0.7071067811865476
+         },
+         "scale": {
+          "x": 0.7,
+          "y": 0.3,
+          "z": 0.7
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.08,
+          "g": 0.08,
+          "b": 0.08,
+          "a": 1
+         },
+         "roughness": 0.9
+        }
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Camera",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 9,
+      "z": 14
+     },
+     "rotation": {
+      "x": -0.17364817766693033,
+      "y": 0,
+      "z": 0,
+      "w": 0.984807753012208
+     }
+    },
+    "Camera": {
+     "fov_degrees": 60,
+     "far": 600
+    }
+   }
+  },
+  {
+   "name": "Gates",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Gate1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 0,
+        "z": -45
+       }
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 4,
+        "y": 10,
+        "z": 1
+       },
+       "is_trigger": true
+      }
+     },
+     "children": [
+      {
+       "name": "PostL",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": -4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "PostR",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "Banner",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 4.1,
+          "z": 0
+         },
+         "scale": {
+          "x": 9.2,
+          "y": 0.6,
+          "z": 0.15
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cube",
+         "color": {
+          "r": 0.95,
+          "g": 0.95,
+          "b": 0.9,
+          "a": 1
+         },
+         "emissive": {
+          "r": 0.4,
+          "g": 0.4,
+          "b": 0.35
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Gate2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 25,
+        "y": 0,
+        "z": -95
+       }
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 4,
+        "y": 10,
+        "z": 1
+       },
+       "is_trigger": true
+      }
+     },
+     "children": [
+      {
+       "name": "PostL",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": -4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "PostR",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "Banner",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 4.1,
+          "z": 0
+         },
+         "scale": {
+          "x": 9.2,
+          "y": 0.6,
+          "z": 0.15
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cube",
+         "color": {
+          "r": 0.95,
+          "g": 0.95,
+          "b": 0.9,
+          "a": 1
+         },
+         "emissive": {
+          "r": 0.4,
+          "g": 0.4,
+          "b": 0.35
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Gate3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 70,
+        "y": 0,
+        "z": -110
+       }
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 4,
+        "y": 10,
+        "z": 1
+       },
+       "is_trigger": true
+      }
+     },
+     "children": [
+      {
+       "name": "PostL",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": -4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "PostR",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "Banner",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 4.1,
+          "z": 0
+         },
+         "scale": {
+          "x": 9.2,
+          "y": 0.6,
+          "z": 0.15
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cube",
+         "color": {
+          "r": 0.95,
+          "g": 0.95,
+          "b": 0.9,
+          "a": 1
+         },
+         "emissive": {
+          "r": 0.4,
+          "g": 0.4,
+          "b": 0.35
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Gate4",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 100,
+        "y": 0,
+        "z": -70
+       }
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 4,
+        "y": 10,
+        "z": 1
+       },
+       "is_trigger": true
+      }
+     },
+     "children": [
+      {
+       "name": "PostL",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": -4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "PostR",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 4.4,
+          "y": 2,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.35,
+          "y": 4,
+          "z": 0.35
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.55,
+          "b": 0.1,
+          "a": 1
+         }
+        }
+       }
+      },
+      {
+       "name": "Banner",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 4.1,
+          "z": 0
+         },
+         "scale": {
+          "x": 9.2,
+          "y": 0.6,
+          "z": 0.15
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cube",
+         "color": {
+          "r": 0.95,
+          "g": 0.95,
+          "b": 0.9,
+          "a": 1
+         },
+         "emissive": {
+          "r": 0.4,
+          "g": 0.4,
+          "b": 0.35
+         }
+        }
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

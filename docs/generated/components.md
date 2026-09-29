@@ -382,6 +382,68 @@ A 3D character: an upright capsule centred on the entity that walks, climbs step
 | `on_ceiling` | bool | false | Its head hit something this tick (written by the engine). |
 | `stepped` | bool | false | Walked up an edge this tick (written by the engine). |
 
+## Terrain
+
+Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `size` | vec2 | [64.0, 64.0] | The extent along x and z, centred on the entity. |
+| `height` | f32 | 8.0 | The height range: a heightmap's white, or the noise's highest point, is this high above the entity. |
+| `resolution` | i32 | 129 | Samples along each side (2 to 1025): the grid has resolution - 1 cells across. |
+| `heightmap` | string | "" | A project-relative greyscale PNG (8 or 16 bits), black at 0 and white at `height`, its top row at -z; empty makes the heights from noise (seed, scale, octaves). terrain.save writes one. |
+| `seed` | u32 | 1 | The noise's seed: the same seed, scale and octaves give the same hills. |
+| `scale` | f32 | 24.0 | The size of the noise's largest features, in units. |
+| `octaves` | i32 | 4 | Layers of noise, each twice as fine and half as tall as the one before (1 to 10). |
+| `grass` | color | [0.3, 0.45, 0.22, 1.0] | The colour of flat and gentle ground. |
+| `rock` | color | [0.45, 0.42, 0.38, 1.0] | The colour of ground steeper than rock_slope. |
+| `snow` | color | [0.92, 0.93, 0.95, 1.0] | The colour above snow_line. |
+| `rock_slope` | f32 | 35.0 | Degrees from level above which ground is rock. |
+| `snow_line` | f32 | 0.85 | The fraction of `height` above which ground is snow; 1 or more for none. |
+| `texture_tile` | f32 | 4.0 | Units per repeat of the MeshRenderer's texture over the ground. |
+
+## Scatter
+
+Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `count` | i32 | 500 | Places tried (the most copies there can be; up to 20000). |
+| `area` | vec2 | [32.0, 32.0] | The extent along x and z, centred on the entity. |
+| `seed` | u32 | 1 | The same seed and settings place the same copies. |
+| `on` | string | "" | Path or name of the entity whose collider the copies stand on (a terrain); empty takes any static collider. |
+| `scale` | vec2 | [0.8, 1.2] | The smallest and largest size, times the entity's scale. |
+| `yaw` | f32 | 360.0 | Degrees of random turn about the vertical (0 keeps them all facing one way). |
+| `align` | f32 | 0.0 | How far each copy leans with the ground under it: 0 upright, 1 square to the slope. |
+| `sink` | f32 | 0.0 | Units each copy is set into the ground (a stone half buried). |
+| `spacing` | f32 | 0.0 | The least distance between two copies; 0 lets them crowd. |
+| `max_slope` | f32 | 35.0 | Degrees: no copy where the ground is steeper. |
+| `min_height` | f32 | -1000.0 | No copy on ground lower than this (world y): above the water line. |
+| `max_height` | f32 | 1000.0 | No copy on ground higher than this (world y): below the snow. |
+| `shade` | f32 | 0.15 | How much each copy's brightness varies, 0..1. |
+| `placed` | i32 | 0 | How many copies stand (written by the engine). |
+
+## Vehicle
+
+A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `wheels` | list:Wheel | [] | The wheels, each with its mount, suspension and role. |
+| `throttle` | f32 | 0.0 | -1..1: forward drive at 1, reverse at -1. |
+| `steer` | f32 | 0.0 | -1..1: the steering wheels turn left at -1 and right at 1, by max_steer degrees. |
+| `brake` | f32 | 0.0 | 0..1: how hard every wheel on the ground brakes. |
+| `power` | f32 | 10.0 | The acceleration full throttle gives on level ground, units per second squared. |
+| `top_speed` | f32 | 25.0 | The speed at which the engine stops pushing, units per second. |
+| `braking` | f32 | 18.0 | The deceleration a full brake gives, units per second squared. |
+| `max_steer` | f32 | 30.0 | Degrees the steering wheels turn at full steer. |
+| `grip` | f32 | 1.4 | How much sideways force the tyres can hold, as a multiple of the load on them: above what the turn asks, the car slides. |
+| `suspension_hz` | f32 | 2.2 | How stiff the springs are, as the bounce's frequency with the body's weight on them. |
+| `damping` | f32 | 0.45 | How fast a bounce dies: 0 bounces on, 1 settles without overshoot. |
+| `roll_resistance` | f32 | 0.3 | Units per second squared the wheels lose to rolling when nothing drives or brakes them. |
+| `speed` | f32 | 0.0 | Forward speed, negative backing up (written by the engine). |
+| `grounded` | i32 | 0 | Wheels on the ground (written by the engine). |
+
 ## TopDown2D
 
 A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
@@ -506,6 +568,22 @@ The bend one joint of an IK chain may have, in degrees, measured between its bon
 | `min_bend` | f32 | 0.0 | The least the joint bends: a knee kept from locking straight. A hinge's may be negative, a few degrees back past straight. |
 | `max_bend` | f32 | 180.0 | The most the joint bends. |
 | `side` | vec3 | [0.0, 0.0, 0.0] | Set, the joint is a hinge: its bone turns about one axis only, across `side` and the bone above it, and bends toward `side` alone, between min_bend and max_bend; `side` is a direction in the entity's space with the mesh at rest, carried along as the bone above turns. Zero for a joint that bends any way within its cone. |
+
+## Wheel
+
+One wheel of a Vehicle (docs/design/physics.md, Vehicles): where its suspension hangs from the body, how long it is and how big the wheel, whether it steers and whether the engine drives it; the engine writes what it touches and turns.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `offset` | vec3 | [0.0, 0.0, 0.0] | Where the suspension hangs from, in the body's frame (the top of its travel). |
+| `radius` | f32 | 0.35 | The wheel's radius. |
+| `rest` | f32 | 0.3 | The suspension's length: how far below `offset` the wheel's centre hangs with nothing under it. |
+| `steer` | bool | false | Turned by the vehicle's steer. |
+| `drive` | bool | false | Pushed by the vehicle's throttle. |
+| `visual` | string | "" | The name of an entity under the vehicle that the engine places where the wheel is (its local position), turned with the steering and rolled with the ground (its local rotation): a pivot whose children draw the tyre. Empty for none. |
+| `contact` | bool | false | On the ground this step (written by the engine). |
+| `compression` | f32 | 0.0 | How far the suspension is pushed in, 0..rest (written by the engine). |
+| `spin` | f32 | 0.0 | How far the wheel has rolled, in radians (written by the engine). |
 
 ## AnimationLayer
 

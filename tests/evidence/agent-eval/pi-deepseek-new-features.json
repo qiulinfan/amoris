@@ -1,0 +1,100 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent pi --via extension --model deepseek/deepseek-flash --env-file ~/.omp/agent/.env",
+  "passed": 3,
+  "total": 3,
+  "seconds": 75.4,
+  "tasks": [
+    {
+      "name": "hill_raise",
+      "project": "hills",
+      "ok": true,
+      "seconds": 29.6,
+      "detail": "the ground at (20.0, -20.0) raised to 12.00, nothing moved 12 units away",
+      "answer": 12,
+      "error": null,
+      "metrics": {
+        "agent": "pi",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 27.7,
+        "turns": 9,
+        "tool_calls": 24,
+        "tools": {
+          "pocket": 23,
+          "read": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 8320,
+          "output": 4803,
+          "cache_read": 68096,
+          "total": 81219
+        },
+        "cost_usd": 0.008668
+      }
+    },
+    {
+      "name": "flowers",
+      "project": "hills",
+      "ok": true,
+      "seconds": 25.4,
+      "detail": "1092 red flowers on the hills, none on ground steeper than 20.0 degrees",
+      "answer": 1092,
+      "error": null,
+      "metrics": {
+        "agent": "pi",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 23.7,
+        "turns": 12,
+        "tool_calls": 18,
+        "tools": {
+          "pocket": 10,
+          "bash": 6,
+          "pocket_look": 2
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 32916,
+          "output": 2786,
+          "cache_read": 272896,
+          "total": 308598
+        },
+        "cost_usd": 0.014855
+      }
+    },
+    {
+      "name": "car_speed",
+      "project": "drive",
+      "ok": true,
+      "seconds": 20.5,
+      "detail": "top speed 35, power 14, driven to 28.61",
+      "answer": 28.606,
+      "error": null,
+      "metrics": {
+        "agent": "pi",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 16.9,
+        "turns": 8,
+        "tool_calls": 9,
+        "tools": {
+          "pocket": 9
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 8822,
+          "output": 1034,
+          "cache_read": 51584,
+          "total": 61440
+        },
+        "cost_usd": 0.004197
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0277,
+    "tokens": 451257,
+    "tool_calls": 51
+  }
+}

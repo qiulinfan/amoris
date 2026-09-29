@@ -23,6 +23,8 @@ export interface Registry {
     keysDown: Set<string>;
     /** The tick's action snapshot, shared by every bundle (each has its own copy of the SDK's modules). */
     actions: Record<string, unknown>;
+    /** Every player's action states in a lockstep game (docs/design/networking.md), player 0 first. */
+    players?: Array<Record<string, unknown>>;
 }
 
 export const registry: Registry = (() => {

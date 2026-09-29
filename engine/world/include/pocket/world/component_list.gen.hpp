@@ -25,6 +25,9 @@
     X(Joint) \
     X(Body2D) \
     X(Character) \
+    X(Terrain) \
+    X(Scatter) \
+    X(Vehicle) \
     X(TopDown2D) \
     X(Collider) \
     X(AudioSource) \

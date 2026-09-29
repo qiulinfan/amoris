@@ -1,0 +1,565 @@
+{
+ "entities": [
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {}
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": {
+      "x": -0.45,
+      "y": 0.2,
+      "z": 0.1,
+      "w": 0.86
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 1.2
+    }
+   }
+  },
+  {
+   "name": "Level",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Pitch",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": -0.5,
+        "z": 0
+       },
+       "scale": {
+        "x": 16,
+        "y": 1.0,
+        "z": 24
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.25,
+        "g": 0.55,
+        "b": 0.3,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 8,
+        "y": 0.5,
+        "z": 12
+       }
+      }
+     }
+    },
+    {
+     "name": "WallEast",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 8.5,
+        "y": 0.6,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 1.2,
+        "z": 24
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.85,
+        "b": 0.82,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 0.5,
+        "y": 0.6,
+        "z": 12
+       }
+      }
+     }
+    },
+    {
+     "name": "WallWest",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -8.5,
+        "y": 0.6,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 1.2,
+        "z": 24
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.85,
+        "b": 0.82,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 0.5,
+        "y": 0.6,
+        "z": 12
+       }
+      }
+     }
+    },
+    {
+     "name": "EndNorthLeft",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -5.25,
+        "y": 0.6,
+        "z": -12.5
+       },
+       "scale": {
+        "x": 5.5,
+        "y": 1.2,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.85,
+        "b": 0.82,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 2.75,
+        "y": 0.6,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "EndNorthRight",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 5.25,
+        "y": 0.6,
+        "z": -12.5
+       },
+       "scale": {
+        "x": 5.5,
+        "y": 1.2,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.85,
+        "b": 0.82,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 2.75,
+        "y": 0.6,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "GoalNorthBack",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 0.6,
+        "z": -14.0
+       },
+       "scale": {
+        "x": 5.0,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.9,
+        "g": 0.9,
+        "b": 0.9,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 2.5,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    },
+    {
+     "name": "EndSouthLeft",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -5.25,
+        "y": 0.6,
+        "z": 12.5
+       },
+       "scale": {
+        "x": 5.5,
+        "y": 1.2,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.85,
+        "b": 0.82,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 2.75,
+        "y": 0.6,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "EndSouthRight",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 5.25,
+        "y": 0.6,
+        "z": 12.5
+       },
+       "scale": {
+        "x": 5.5,
+        "y": 1.2,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.85,
+        "g": 0.85,
+        "b": 0.82,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 2.75,
+        "y": 0.6,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "GoalSouthBack",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 0.6,
+        "z": 14.0
+       },
+       "scale": {
+        "x": 5.0,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 0.9,
+        "g": 0.9,
+        "b": 0.9,
+        "a": 1
+       },
+       "roughness": 0.8
+      },
+      "RigidBody": {
+       "kind": 1
+      },
+      "Collider": {
+       "shape": 0,
+       "size": {
+        "x": 2.5,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "GoalNorth",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 1,
+      "z": -13.5
+     }
+    },
+    "RigidBody": {
+     "kind": 1
+    },
+    "Collider": {
+     "shape": 0,
+     "size": {
+      "x": 2.5,
+      "y": 1,
+      "z": 0.9
+     },
+     "is_trigger": true
+    }
+   }
+  },
+  {
+   "name": "GoalSouth",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 1,
+      "z": 13.5
+     }
+    },
+    "RigidBody": {
+     "kind": 1
+    },
+    "Collider": {
+     "shape": 0,
+     "size": {
+      "x": 2.5,
+      "y": 1,
+      "z": 0.9
+     },
+     "is_trigger": true
+    }
+   }
+  },
+  {
+   "name": "Ball",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.5,
+      "z": 0
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.95,
+      "g": 0.95,
+      "b": 0.95,
+      "a": 1
+     }
+    },
+    "RigidBody": {
+     "kind": 0,
+     "mass": 0.5,
+     "restitution": 0.6,
+     "friction": 0.4,
+     "linear_damping": 0.4,
+     "angular_damping": 0.3
+    },
+    "Collider": {
+     "shape": 1,
+     "size": {
+      "x": 0.5,
+      "y": 0.5,
+      "z": 0.5
+     }
+    }
+   }
+  },
+  {
+   "name": "Red",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.9,
+      "z": 6
+     },
+     "scale": {
+      "x": 0.8,
+      "y": 0.9,
+      "z": 0.8
+     }
+    },
+    "Character": {
+     "radius": 0.4,
+     "push": 1.2
+    },
+    "MeshRenderer": {
+     "mesh": "capsule",
+     "color": {
+      "r": 0.9,
+      "g": 0.25,
+      "b": 0.2,
+      "a": 1
+     }
+    },
+    "RigidBody": {
+     "kind": 2
+    },
+    "Collider": {
+     "shape": 2,
+     "size": {
+      "x": 0.4,
+      "y": 0.5,
+      "z": 0.4
+     }
+    }
+   }
+  },
+  {
+   "name": "Blue",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.9,
+      "z": -6
+     },
+     "scale": {
+      "x": 0.8,
+      "y": 0.9,
+      "z": 0.8
+     }
+    },
+    "Character": {
+     "radius": 0.4,
+     "push": 1.2
+    },
+    "MeshRenderer": {
+     "mesh": "capsule",
+     "color": {
+      "r": 0.2,
+      "g": 0.4,
+      "b": 0.95,
+      "a": 1
+     }
+    },
+    "RigidBody": {
+     "kind": 2
+    },
+    "Collider": {
+     "shape": 2,
+     "size": {
+      "x": 0.4,
+      "y": 0.5,
+      "z": 0.4
+     }
+    }
+   }
+  },
+  {
+   "name": "Camera",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 22,
+      "z": 16
+     },
+     "rotation": {
+      "x": -0.4617,
+      "y": 0,
+      "z": 0,
+      "w": 0.887
+     }
+    },
+    "Camera": {
+     "fov_degrees": 50
+    }
+   }
+  }
+ ]
+}

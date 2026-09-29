@@ -42,6 +42,8 @@ export type { ClipInfo, PoseJoint, PlayAnimationOptions } from "./animation";
 export type { ParticleStats } from "./particles";
 export type { SpriteClip, PlayClipOptions } from "./sprites";
 export { audio } from "./audio";
+export { terrain } from "./terrain";
+export { net } from "./net";
 export { input } from "./input";
 export { tween, ease } from "./tween";
 export type { Easing, EaseName, TweenOptions, TweenHandle } from "./tween";
@@ -51,6 +53,8 @@ export type { ActionState, Binding } from "./input";
 import { setActionSnapshot } from "./input";
 import type { ActionState as ActionStateT } from "./input";
 export type { PlayOptions, Voice, Bus, BusSettings } from "./audio";
+export type { TerrainInfo, Ground, SculptOptions } from "./terrain";
+export type { NetInfo } from "./net";
 export type { RayHit, Contact, JointState } from "./physics";
 import { dispatchContacts } from "./physics";
 import { dispatchUiEvents, flushUi, unmountContext } from "./ui";
@@ -80,10 +84,14 @@ export interface Tick {
     time: number;
     /** Action states from the input map (see `input`), when one is configured. */
     actions?: Record<string, ActionStateT>;
+    /** In a lockstep game, every player's action states, player 0 first (docs/design/networking.md). */
+    players?: Array<Record<string, ActionStateT>>;
 }
 
 export interface InputEvent {
     type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis" | "touch_down" | "touch_up" | "touch_move" | "gesture";
+    /** In a lockstep game, whose input this is (docs/design/networking.md). */
+    player?: number;
     /** Touch events: the finger's index (0 is the one that also acts as the mouse) and how hard it presses, 0..1 (1 where the screen cannot tell). */
     finger?: number;
     pressure?: number;
@@ -311,7 +319,7 @@ export function isActive(): boolean {
             return undefined;
         }
         case "tick":
-            setActionSnapshot((arg as Tick).actions);
+            setActionSnapshot((arg as Tick).actions, (arg as Tick).players);
             for (const h of selected(context)) for (const f of h.tick) f(arg as Tick);
             return undefined;
         case "frame":

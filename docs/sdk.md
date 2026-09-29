@@ -29,6 +29,10 @@ Gameplay reads only `t.dt` and never the wall clock, which is what makes runs re
 
 `input.axis("move_x")`, `input.pressed("jump")`, `input.down`, `input.released`; the map comes from `project.toml` `[input.actions]` or `input.map({...})` (`docs/design/input.md`). `isKeyDown("Space")` reads the raw keyboard.
 
+## Players
+
+In a lockstep network game (`docs/design/networking.md`) every player has their own action states: `input.axis("move_x", player)`, `input.down(name, player)`, `input.pressed(name, player)`; `onInput` events carry `player`; `net.info()` says which player this peer is (for its camera and interface, never the game's logic). Without a network game only player 0 has input.
+
 ## Time
 
 ```ts
@@ -76,7 +80,7 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 ## Physics, audio, interface
 
-`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component (`docs/design/physics.md`); the `Body2D` component for platformers against tile maps and `TopDown2D` for top-down movers on maps of any orientation (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
+`physics.raycast`, `physics.overlap`, `physics.joints`, `onContacts`, the `Joint` component and the `Character` component for a 3D player (`docs/design/physics.md`); the `Terrain` component with `terrain.height(x, z)` to find the ground and `terrain.sculpt` to reshape it (`docs/design/terrain.md`); the `Body2D` component for platformers against tile maps and `TopDown2D` for top-down movers on maps of any orientation (`docs/design/tilemaps.md`); `audio.play("sounds/hit.wav", { volume, pitch, loop })` and the `AudioSource` component (`docs/design/audio.md`); `mount(() => <Hud />)` with signals and components on Pocket UI (`docs/design/pocket-ui.md`).
 
 ## Scenarios
 

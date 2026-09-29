@@ -7,6 +7,7 @@
 #include <cmath>
 #include <format>
 #include <map>
+#include <numbers>
 #include <set>
 #include <string>
 #include <tuple>
@@ -794,9 +795,10 @@ struct Physics::Impl {
 
     // The triangles of a shape 3 collider, built for the entity's transform (and rebuilt when it
     // or the file changes); null when there is no store, no path, or no usable triangles.
-    const MeshShape* mesh_for(EntityId id, const world::Collider& col, const world::Transform& t, const world::MeshRenderer* mr) const {
+    const MeshShape* mesh_for(EntityId id, const world::Collider& col, const world::Transform& t, const world::MeshRenderer* mr, const std::string* derived) const {
         if (!assets) return nullptr;
-        const std::string path = !col.mesh.empty() ? col.mesh : (mr ? mr->mesh : std::string());
+        // A mesh the engine made for the entity (a terrain's) comes first.
+        const std::string path = derived ? *derived : !col.mesh.empty() ? col.mesh : (mr ? mr->mesh : std::string());
         if (path.empty()) return nullptr;
         const Vec3 pos = t.position + t.rotation.rotate(col.offset);
         const std::string key = std::format("{}|{:.6g},{:.6g},{:.6g}|{:.6g},{:.6g},{:.6g},{:.6g}|{:.6g},{:.6g},{:.6g}", path, pos.x, pos.y, pos.z, t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w, t.scale.x, t.scale.y, t.scale.z);
@@ -823,7 +825,7 @@ struct Physics::Impl {
             b.kind = rb.kind;
             b.shape = col.shape;
             if (col.shape == 3) {
-                b.mesh = mesh_for(b.id, col, t, e.try_get<world::MeshRenderer>());
+                b.mesh = mesh_for(b.id, col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(b.id));
                 seen.insert(b.id);
             }
             b.trigger = col.is_trigger;
@@ -1146,6 +1148,86 @@ void Physics::step(world::World& w, double dt_d) {
     for (Body& b : im.bodies) {
         update_aabb(b);
         b.inv_inertia_world = inertia_inverse(b);
+    }
+    // 1b. Vehicles (docs/design/physics.md, Vehicles): every wheel's suspension is a ray cast down
+    //     from its mount. A wheel on the ground pushes the body up (a spring and a damper), drives
+    //     it, brakes it and holds it from sliding sideways, within what its load and the grip allow.
+    std::vector<std::pair<EntityId, world::Vehicle>> vehicles;
+    w.ecs().each([&](flecs::entity e, const world::Vehicle& veh) { vehicles.emplace_back(e.id(), veh); });
+    std::sort(vehicles.begin(), vehicles.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+    for (auto& [vid, veh] : vehicles) {
+        auto bit = std::lower_bound(im.bodies.begin(), im.bodies.end(), vid, [](const Body& x, EntityId id) { return x.id < id; });
+        const world::Transform* vt = w.try_get<world::Transform>(vid);
+        if (bit == im.bodies.end() || bit->id != vid || bit->kind != 0 || !vt) continue;
+        Body& b = *bit;
+        if (veh.throttle != 0 || veh.steer != 0) { b.sleeping = false; b.sleep_timer = 0; }
+        if (b.sleeping) continue;
+        const float mass = b.inv_mass > 0 ? 1.0f / b.inv_mass : 1.0f;
+        const float share = mass / static_cast<float>(std::max<std::size_t>(veh.wheels.size(), 1));
+        const float omega = 2.0f * std::numbers::pi_v<float> * std::max(veh.suspension_hz, 0.1f);
+        const float k = share * omega * omega, c = 2.0f * std::max(veh.damping, 0.0f) * std::sqrt(k * share);
+        const Vec3 up = b.rotation.rotate(Vec3{0, 1, 0}), ahead = b.rotation.rotate(Vec3{0, 0, -1});
+        int driven = 0;
+        for (const world::Wheel& wh : veh.wheels) driven += wh.drive ? 1 : 0;
+        const float speed = dot(b.velocity, ahead);
+        // Every wheel reads the body as the step found it; their pushes are added together after,
+        // so no wheel is favoured by coming first (a car on a straight road goes straight).
+        const Vec3 v0 = b.velocity, w0 = b.angular;
+        std::vector<std::pair<Vec3, Vec3>> pushes;
+        auto push = [&](Vec3 impulse, Vec3 arm) { pushes.emplace_back(impulse, arm); };
+        int grounded = 0;
+        for (world::Wheel& wh : veh.wheels) {
+            const Vec3 mount = vt->position + b.rotation.rotate(wh.offset);
+            const float reach = std::max(wh.rest, 0.0f) + std::max(wh.radius, 0.01f);
+            auto hit = raycast(w, mount, up * -1.0f, reach, [&](EntityId other, const world::RigidBody&, const world::Collider& col) { return other != vid && !col.is_trigger; });
+            const float was = wh.compression;
+            if (!hit) {
+                wh.contact = false;
+                wh.compression = 0;
+                continue;
+            }
+            ++grounded;
+            wh.contact = true;
+            wh.compression = std::clamp(reach - hit->distance, 0.0f, std::max(wh.rest, 0.0f));
+            const Vec3 arm = hit->point - b.position;
+            // The spring and the damper, pushing only.
+            const float load = std::max(0.0f, k * wh.compression + c * (wh.compression - was) / std::max(dt, 1e-6f));
+            push(up * (load * dt), arm);
+            // The wheel's own frame on the ground: turned by the steering, along the surface.
+            const float turn = wh.steer ? std::clamp(veh.steer, -1.0f, 1.0f) * veh.max_steer * std::numbers::pi_v<float> / 180.0f : 0.0f;
+            Vec3 along = Quat::from_axis_angle(up, -turn).rotate(ahead);
+            along = normalize(along - hit->normal * dot(along, hit->normal));
+            const Vec3 side = normalize(cross(along, hit->normal));
+            const Vec3 v = v0 + cross(w0, arm);
+            const float v_along = dot(v, along), v_side = dot(v, side);
+            float f_along = 0;
+            if (wh.drive && driven > 0) {
+                const float throttle = std::clamp(veh.throttle, -1.0f, 1.0f);
+                const bool pushing_on = throttle * speed <= 0 || std::fabs(speed) < veh.top_speed;
+                if (pushing_on) f_along += throttle * veh.power * mass / static_cast<float>(driven);
+            }
+            // Braking and rolling slow the wheel toward a stop, never past it.
+            float slow = std::clamp(veh.brake, 0.0f, 1.0f) * veh.braking * share;
+            if (veh.throttle == 0 && veh.brake == 0) slow += veh.roll_resistance * share;
+            if (slow > 0) f_along -= std::copysign(std::min(slow, std::fabs(v_along) * share / std::max(dt, 1e-6f)), v_along);
+            // Sideways: what it takes to stop this wheel's share of the body sliding.
+            float f_side = -v_side * share / std::max(dt, 1e-6f);
+            // Within the friction circle of the load on the wheel.
+            const float limit = std::max(veh.grip, 0.0f) * load;
+            const float total = std::hypot(f_along, f_side);
+            if (total > limit && total > 0) { f_along *= limit / total; f_side *= limit / total; }
+            // Tyre forces act at the contact, raised most of the way to the centre of mass so a turn
+            // leans the body rather than rolls it over.
+            const Vec3 lifted = arm - up * (dot(arm, up) * 0.7f);
+            push((along * f_along + side * f_side) * dt, lifted);
+            wh.spin += v_along * dt / std::max(wh.radius, 0.01f);
+        }
+        for (const auto& [impulse, arm] : pushes) {
+            b.velocity += impulse * b.inv_mass;
+            b.angular += mul3(b.inv_inertia_world, cross(arm, impulse));
+        }
+        veh.speed = speed;
+        veh.grounded = grounded;
     }
     // Pairs kept apart on purpose: exceptions whose bodies are gone are dropped; joints that say
     // their two bodies do not collide are noted for this step.
@@ -2029,6 +2111,27 @@ void Physics::step(world::World& w, double dt_d) {
     im.sleep_timers.clear();
     for (const Body& b : im.bodies) if (b.kind == 0) im.sleep_timers[b.id] = b.sleep_timer;
     im.write_back(w, dt);
+    // The vehicles' wheels as the step left them, and their visuals placed under the body: hanging
+    // `rest - compression` below the mount, turned by the steering, rolled by the ground.
+    for (auto& [vid, veh] : vehicles) {
+        for (const world::Wheel& wh : veh.wheels) {
+            if (wh.visual.empty()) continue;
+            // The visual by name among the vehicle's descendants (so two cars' FrontLeft stay apart).
+            EntityId visual = 0;
+            std::vector<EntityId> open = w.children(vid);
+            for (std::size_t q = 0; q < open.size() && !visual; ++q) {
+                if (w.name(open[q]) == wh.visual) { visual = open[q]; break; }
+                for (EntityId ch : w.children(open[q])) open.push_back(ch);
+            }
+            if (!visual || !w.ecs().entity(visual).has<world::Transform>()) continue;
+            const float turn = wh.steer ? std::clamp(veh.steer, -1.0f, 1.0f) * veh.max_steer * std::numbers::pi_v<float> / 180.0f : 0.0f;
+            world::Transform vt = w.ecs().entity(visual).get<world::Transform>();
+            vt.position = wh.offset - Vec3{0, std::max(wh.rest, 0.0f) - wh.compression, 0};
+            vt.rotation = normalize(Quat::from_axis_angle(Vec3{0, 1, 0}, -turn) * Quat::from_axis_angle(Vec3{1, 0, 0}, -wh.spin));
+            w.ecs().entity(visual).set<world::Transform>(vt);
+        }
+        w.ecs().entity(vid).set<world::Vehicle>(veh);
+    }
 }
 
 Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 direction, float max_distance, bool include_triggers) const {
@@ -2054,7 +2157,7 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
         if (b.shape == 3) {
             // Down the tree, nearest triangle first found by shrinking the reach; both faces hit,
             // the normal facing the ray.
-            const MeshShape* ms = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>());
+            const MeshShape* ms = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
             if (!ms) return;
             float reach = best.distance;
             std::vector<std::uint32_t> stack{0};
@@ -2113,7 +2216,7 @@ Result<RayHit> Physics::sweep(const world::World& w, Vec3 origin, Vec3 direction
         b.shape = col.shape;
         b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
         if (b.shape == 3) {
-            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>());
+            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
             if (!b.mesh) return;
         }
         float tt = 0;
@@ -2151,7 +2254,7 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
         Manifold m;
         bool hit = false;
         if (b.shape == 3) {
-            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>());
+            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
             update_aabb(probe);
             hit = collide_mesh(probe, b, m, false);
         } else {
@@ -2187,7 +2290,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
         b.rotation = t.rotation;
         b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
         if (b.shape == 3) {
-            b.mesh = im.mesh_for(b.id, col, t, e.try_get<world::MeshRenderer>());
+            b.mesh = im.mesh_for(b.id, col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(b.id));
             if (!b.mesh) return;
         }
         b.inv_mass = (rb.kind == 0 && rb.mass > 0) ? 1.0f / rb.mass : 0.0f;
@@ -2302,6 +2405,8 @@ void Physics::move_characters(world::World& w, double dt_d) {
         }
         // 2. Out of anything it overlaps (it was placed inside, or a body moved into it). Touching
         //    counts too: the moves below must start apart, or a wall it rests on stops them at once.
+        //    Ground that rose into it (a terrain sculpted up, a platform rising faster than a step)
+        //    lifts it onto its top when that top is walkable; anything else pushes it out.
         for (int pass = 0; pass < 4; ++pass) {
             bool moved = false;
             for (const Body& b : solids) {
@@ -2310,6 +2415,17 @@ void Physics::move_characters(world::World& w, double dt_d) {
                 Vec3 n;
                 float depth = 0;
                 if (!overlap_pair(at, b, n, nullptr, &depth)) continue;
+                const Vec3 above{pos.x, pos.y + half_h + r, pos.z};
+                float t = 0;
+                Vec3 top;
+                if (sphere_cast_body(above, Vec3{0, -1, 0}, r, b, 2.0f * half_h + r, t, top) && top.y >= cos_max) {
+                    const float centre = above.y - t + seg + kSkin * 0.5f;
+                    if (centre > pos.y) {
+                        pos.y = centre;
+                        moved = true;
+                        continue;
+                    }
+                }
                 pos += normalize(n) * (std::max(depth, 0.0f) + kSkin * 0.5f);
                 moved = true;
             }

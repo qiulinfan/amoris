@@ -1,0 +1,238 @@
+{
+ "entities": [
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {}
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": {
+      "x": -0.33,
+      "y": 0.42,
+      "z": 0.16,
+      "w": 0.83
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 1.3
+    }
+   }
+  },
+  {
+   "name": "Haze",
+   "components": {
+    "Fog": {
+     "density": 0.006,
+     "color": {
+      "r": 0.72,
+      "g": 0.8,
+      "b": 0.9,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Hills",
+   "components": {
+    "Transform": {},
+    "Terrain": {
+     "size": {
+      "x": 96,
+      "y": 96
+     },
+     "height": 12,
+     "seed": 11,
+     "scale": 36,
+     "octaves": 5,
+     "snow_line": 0.82,
+     "rock_slope": 38
+    },
+    "MeshRenderer": {
+     "roughness": 0.95
+    },
+    "RigidBody": {
+     "kind": 1
+    },
+    "Collider": {
+     "shape": 3
+    }
+   }
+  },
+  {
+   "name": "Lake",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 3.2,
+      "z": 0
+     },
+     "scale": {
+      "x": 96,
+      "y": 1,
+      "z": 96
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "plane",
+     "color": {
+      "r": 0.2,
+      "g": 0.42,
+      "b": 0.6,
+      "a": 0.72
+     },
+     "roughness": 0.08,
+     "metallic": 0,
+     "cast_shadows": false
+    }
+   }
+  },
+  {
+   "name": "Player",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 20,
+      "z": 0
+     },
+     "scale": {
+      "x": 0.6,
+      "y": 0.9,
+      "z": 0.6
+     }
+    },
+    "Character": {},
+    "MeshRenderer": {
+     "mesh": "capsule",
+     "color": {
+      "r": 0.9,
+      "g": 0.45,
+      "b": 0.2,
+      "a": 1
+     }
+    },
+    "RigidBody": {
+     "kind": 2
+    },
+    "Collider": {
+     "shape": 2,
+     "size": {
+      "x": 0.3,
+      "y": 0.6,
+      "z": 0.3
+     }
+    }
+   }
+  },
+  {
+   "name": "Camera",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 30,
+      "z": 38
+     },
+     "rotation": {
+      "x": -0.3007,
+      "y": 0,
+      "z": 0,
+      "w": 0.9537
+     }
+    },
+    "Camera": {
+     "fov_degrees": 55,
+     "far": 400
+    }
+   }
+  },
+  {
+   "name": "Bushes",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 0.9,
+      "y": 0.65,
+      "z": 0.9
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.24,
+      "g": 0.44,
+      "b": 0.2,
+      "a": 1
+     },
+     "roughness": 0.9
+    },
+    "Scatter": {
+     "count": 2500,
+     "area": {
+      "x": 94,
+      "y": 94
+     },
+     "seed": 3,
+     "on": "Hills",
+     "scale": {
+      "x": 0.6,
+      "y": 1.4
+     },
+     "spacing": 0.9,
+     "max_slope": 28,
+     "min_height": 3.6,
+     "max_height": 8.5,
+     "sink": 0.08,
+     "shade": 0.2
+    }
+   }
+  },
+  {
+   "name": "Stones",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 0.7,
+      "y": 0.45,
+      "z": 0.55
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.52,
+      "g": 0.5,
+      "b": 0.47,
+      "a": 1
+     },
+     "roughness": 0.85
+    },
+    "Scatter": {
+     "count": 400,
+     "area": {
+      "x": 94,
+      "y": 94
+     },
+     "seed": 5,
+     "on": "Hills",
+     "scale": {
+      "x": 0.4,
+      "y": 1.6
+     },
+     "spacing": 1.2,
+     "max_slope": 60,
+     "align": 1,
+     "sink": 0.15,
+     "shade": 0.25
+    }
+   }
+  }
+ ]
+}

@@ -3,7 +3,7 @@
 // (hierarchy, inspector, console, transcript) is also reachable by `ui_snapshot`, and every
 // button is reachable by `ui_click`. Every edit is undoable (editor/history.ts) and the scene
 // pane has a translate gizmo (editor/gizmo.ts) that agents drag with `ui.drag`.
-import { Button, Checkbox, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, render, setProjectRoot, signal, theme, tilemap, ui, world } from "pocket";
+import { Button, Checkbox, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, physics, render, setProjectRoot, signal, terrain, theme, tilemap, ui, world } from "pocket";
 import type { Bus, ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } from "pocket";
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
@@ -53,6 +53,9 @@ const layout = signal<Layout>({ ...DEFAULT_LAYOUT });
 const gizmo = signal<GizmoView | null>(null);
 const historyVersion = signal(0);
 const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
+type SculptMode = "raise" | "lower" | "flatten" | "smooth";
+const sculpt = signal<{ mode: SculptMode; radius: number; strength: number } | null>(null);   // terrain sculpting in the scene pane while a Terrain is selected
+const sculptSettings = signal<{ mode: SculptMode; radius: number; strength: number }>({ mode: "raise", radius: 4, strength: 0.5 });
 const actions = signal<Record<string, ActionBindings>>({});   // the input map, shown and edited by the Input tab
 const buses = signal<Bus[]>([]);   // the Audio tab's buses, as audio.buses answers
 interface TypeError { file?: string; line?: number; column?: number; severity: string; message: string }
@@ -76,6 +79,7 @@ let mainRect = { x: 0, y: 0, w: 0, h: 0 };
 let frame = 0;
 let dragState: { ids: number[]; before: Map<number, Transform>; parents: Map<number, ParentFrame | undefined>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
 let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
+let sculptStroke: { entity: number; before: number[]; pos: { x: number; y: number }; target?: number; touches: number } | null = null;
 
 /** JSON copy (structuredClone is not in the script host). */
 function clone<T>(v: T): T {
@@ -133,6 +137,7 @@ function select(id: number, mode: "replace" | "toggle" = "replace"): void {
     selection.set(s);
     addingComponent.set(false);
     if (brush() !== null && (s.length === 0 || !world.has(s[s.length - 1], "TileMap"))) brush.set(null);
+    if (sculpt() !== null && (s.length === 0 || !world.has(s[s.length - 1], "Terrain"))) sculpt.set(null);
     refreshSelected();
 }
 
@@ -487,6 +492,101 @@ function TileBrush(props: { id: number }) {
     );
 }
 
+// ------------------------------------------------------------------------------------ terrain brush
+function terrainSelected(): number {
+    const id = selected();
+    return id !== 0 && world.has(id, "Terrain") ? id : 0;
+}
+
+/** Sculpt the selected terrain under a scene-pane point (in points): the ray from the camera through
+ * it finds the ground, and the brush works there. */
+function sculptAt(x: number, y: number): void {
+    const b = sculpt();
+    const st = sculptStroke;
+    if (!b || !st) return;
+    const s = pixelScale();
+    const ray = render.unproject(x * s, y * s, "xz", 0);
+    const hit = physics.raycast(ray.origin, ray.direction, { max_distance: 5000 });
+    if (!hit || hit.entity !== st.entity) return;
+    if (b.mode === "flatten" && st.target === undefined) st.target = hit.point.y;
+    try {
+        terrain.sculpt(hit.point.x, hit.point.z, { entity: st.entity, mode: b.mode, radius: b.radius, amount: b.mode === "raise" || b.mode === "lower" ? b.strength * 0.25 : b.strength * 0.5, target: st.target });
+        st.touches++;
+    } catch (err) {
+        notice.set(`Sculpt failed: ${String(err)}`);
+    }
+}
+
+/** One stroke is one undo step: the whole grid before and after. */
+function endSculpt(): void {
+    const st = sculptStroke;
+    sculptStroke = null;
+    if (!st || st.touches === 0) return;
+    const after = terrain.heights(st.entity).heights;
+    const before = st.before;
+    history.record({ label: `sculpt the terrain (${st.touches} touch${st.touches === 1 ? "" : "es"})`, redo: () => { terrain.setHeights(after, st.entity); }, undo: () => { terrain.setHeights(before, st.entity); } });
+    historyVersion.update((v) => v + 1);
+}
+
+function TerrainBrush(props: { id: number }) {
+    let info;
+    try {
+        info = terrain.info(props.id);
+    } catch (err) {
+        return <Label text={`Terrain: ${String(err)}`} muted wrap />;
+    }
+    const b = sculpt();
+    const set = sculptSettings();
+    const pick = (next: Partial<typeof set>) => {
+        const merged = { ...set, ...next };
+        sculptSettings.set(merged);
+        if (b) sculpt.set(merged);
+    };
+    const name = world.describe(props.id).name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "terrain";
+    return (
+        <box gap={4} padding={[4, 0]} name="terrain-brush">
+            <Row>
+                <Label text="Sculpt" size={13} />
+                <box flex={1} />
+                <Button label={b ? "Stop sculpting" : "Sculpt"} small primary={b !== null} name="sculpt" onClick={() => sculpt.set(b ? null : set)} />
+            </Row>
+            <Row wrap gap={4}>
+                {(["raise", "lower", "flatten", "smooth"] as const).map((m) => <Button key={m} label={m} small primary={set.mode === m} name={`sculpt:${m}`} onClick={() => pick({ mode: m })} />)}
+            </Row>
+            <Row gap={6}>
+                <box width={56}><Label text="radius" muted size={12} /></box>
+                <Slider value={set.radius} min={0.5} max={16} step={0.5} width={140} name="sculpt:radius" onInput={(v) => pick({ radius: v })} />
+                <Label text={`${set.radius}`} muted size={12} />
+            </Row>
+            <Row gap={6}>
+                <box width={56}><Label text="strength" muted size={12} /></box>
+                <Slider value={set.strength} min={0.05} max={2} step={0.05} width={140} name="sculpt:strength" onInput={(v) => pick({ strength: v })} />
+                <Label text={`${set.strength}`} muted size={12} />
+            </Row>
+            <Row gap={4}>
+                <Label text={`${info.source === "noise" ? "Noise" : info.source}${info.edited ? ", sculpted" : ""}; ${info.resolution} by ${info.resolution}, ${info.lowest.toFixed(1)} to ${info.highest.toFixed(1)} high. ${b ? "Click or drag on the ground." : ""}`} muted size={11} wrap flex={1} />
+            </Row>
+            <Row gap={4}>
+                <Button label="Save heightmap" small name="terrain:save" onClick={() => {
+                    try {
+                        const r = terrain.save(`assets/${name}-heights.png`, props.id);
+                        notice.set(`Heights saved to ${r.path}; the terrain reads its heightmap from it now (Save the scene to keep that).`);
+                    } catch (err) {
+                        notice.set(`Save failed: ${String(err)}`);
+                    }
+                }} />
+                <Button label="Reset" small name="terrain:reset" onClick={() => {
+                    const before = terrain.heights(props.id).heights;
+                    terrain.reset(props.id);
+                    const after = terrain.heights(props.id).heights;
+                    history.record({ label: "reset the terrain", redo: () => { terrain.setHeights(after, props.id); }, undo: () => { terrain.setHeights(before, props.id); } });
+                    historyVersion.update((v) => v + 1);
+                }} />
+            </Row>
+        </box>
+    );
+}
+
 /** A hierarchy row dragged onto another becomes its child; dropped on the panel's own background it
  * becomes a root. One undoable edit; a row dropped on itself or its own descendant is left alone. */
 function dropRow(id: number, e: UiEvent): void {
@@ -770,6 +870,13 @@ function reimportPicked(): void {
 
 function onViewportDown(e: UiEvent): void {
     endStroke();
+    endSculpt();
+    const shaping = terrainSelected();
+    if (sculpt() !== null && shaping !== 0) {
+        sculptStroke = { entity: shaping, before: terrain.heights(shaping).heights, pos: { x: e.x ?? 0, y: e.y ?? 0 }, touches: 0 };
+        sculptAt(sculptStroke.pos.x, sculptStroke.pos.y);
+        return;
+    }
     const painting = tileMapSelected();
     if (brush() !== null && painting !== 0) {
         stroke = { entity: painting, layer: brush()!.layer, pos: { x: e.x ?? 0, y: e.y ?? 0 }, cells: new Map() };
@@ -786,9 +893,16 @@ function onViewportDown(e: UiEvent): void {
 
 function onViewportUp(): void {
     endStroke();
+    endSculpt();
 }
 
 function onViewportDrag(e: UiEvent): void {
+    if (sculptStroke) {
+        sculptStroke.pos.x += e.dx ?? 0;
+        sculptStroke.pos.y += e.dy ?? 0;
+        sculptAt(sculptStroke.pos.x, sculptStroke.pos.y);
+        return;
+    }
     if (stroke) {
         stroke.pos.x += e.dx ?? 0;
         stroke.pos.y += e.dy ?? 0;
@@ -812,7 +926,8 @@ function onViewportWheel(e: UiEvent): void {
 /** Handle positions in points relative to the main row (the handles are its absolute children). */
 function updateGizmo(): void {
     const id = selected();
-    if (id === 0 || mainRect.w === 0) {
+    // While a brush works the scene pane (tiles, sculpting) the handles are out of its way.
+    if (id === 0 || mainRect.w === 0 || brush() !== null || sculpt() !== null) {
         if (gizmo() !== null) gizmo.set(null);
         return;
     }
@@ -1109,6 +1224,7 @@ function Inspector() {
             </Row>
             <Label text={`${d.path}  #${d.id}`} muted size={11} />
             {present.includes("TileMap") ? <TileBrush id={d.id} /> : null}
+            {present.includes("Terrain") ? <TerrainBrush id={d.id} /> : null}
             {schema.filter((c) => present.includes(c.name)).map((c) => (
                 <box key={c.name} gap={4} padding={[4, 0]} borderColor={theme.border} border={0}>
                     <Row>

@@ -1,8 +1,8 @@
 {
   "runner": "reference",
-  "passed": 17,
-  "total": 17,
-  "seconds": 25.9,
+  "passed": 20,
+  "total": 20,
+  "seconds": 38.5,
   "tasks": [
     {
       "name": "spawn_named",
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": true,
-      "seconds": 5.4,
+      "seconds": 5.7,
       "detail": "0 enemies remain",
       "answer": null,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": true,
-      "seconds": 8.4,
+      "seconds": 8.8,
       "detail": "answered 'entity.spawned', the root cause is 'entity.spawned'",
       "answer": "entity.spawned",
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.9,
+      "seconds": 2.0,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
       "answer": null,
       "error": null
@@ -146,6 +146,33 @@
       "seconds": 0.5,
       "detail": "three lamps from the prefab, yellow spheres with a point light under each",
       "answer": null,
+      "error": null
+    },
+    {
+      "name": "hill_raise",
+      "project": "hills",
+      "ok": true,
+      "seconds": 1.2,
+      "detail": "the ground at (20.0, -20.0) raised to 10.28, nothing moved 12 units away",
+      "answer": 10.282926559448242,
+      "error": null
+    },
+    {
+      "name": "flowers",
+      "project": "hills",
+      "ok": true,
+      "seconds": 1.1,
+      "detail": "164 red flowers on the hills, none on ground steeper than 19.9 degrees",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "car_speed",
+      "project": "drive",
+      "ok": true,
+      "seconds": 9.6,
+      "detail": "top speed 35, power 14, driven to 28.61",
+      "answer": 28.606060028076172,
       "error": null
     },
     {

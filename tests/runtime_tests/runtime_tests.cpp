@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <thread>
 
 using namespace pocket;
@@ -4026,4 +4027,249 @@ TEST_CASE("project.reload reads project.toml's settings again: the input map, bu
     REQUIRE(s.command("input.describe", Json::object()).value().contains("dash"));
     REQUIRE(s.finish().has_value());
     std::filesystem::remove(config);
+}
+
+TEST_CASE("a terrain is drawn, stood on and collided with; sculpting reshapes it under the player; it saves as a heightmap", "[runtime][terrain]") {
+    const std::filesystem::path saved = root() / "samples" / "hills" / "assets" / "test-heights.png";
+    std::filesystem::remove(saved);
+    app::Options o;
+    o.project_dir = root() / "samples" / "hills";
+    o.bundle = root() / "build" / "ts" / "hills.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    auto state = [&]() { return s.command("state", Json::object()).value()["state"]; };
+    Json info = s.command("terrain.info", Json::object()).value();
+    INFO(info.dump());
+    REQUIRE(info["source"] == "noise");
+    REQUIRE(info["resolution"] == 129);
+    REQUIRE(info["highest"].get<double>() == Catch::Approx(12));
+    // Drawn as a mesh the engine made, and a mesh collider of its triangles.
+    Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["assets"]["meshes"].get<int>() >= 1);
+    Json ph = s.command("physics.stats", Json::object()).value();
+    REQUIRE(ph["meshes"].get<int>() >= 1);
+    REQUIRE(ph["triangles"].get<int>() >= 128 * 128 * 2);
+    // The player stands on it: its centre half its height above the ground under it (a little more
+    // on a slope, where the round foot touches the ground uphill of the centre).
+    Json st = state();
+    INFO(st.dump());
+    REQUIRE(st["player.grounded"] == true);
+    REQUIRE(st["player.y"].get<double>() - st["ground.y"].get<double>() > 0.89);
+    REQUIRE(st["player.y"].get<double>() - st["ground.y"].get<double>() < 1.0);
+    // A ray down from above finds the ground where terrain.height says it is.
+    const double px = st["player.x"].get<double>() + 3, pz = st["player.z"].get<double>();
+    Json ground = s.command("terrain.height", Json{{"x", px}, {"z", pz}}).value();
+    Json hit = s.command("physics.raycast", Json{{"origin", Json{{"x", px}, {"y", 50}, {"z", pz}}}, {"direction", Json{{"x", 0}, {"y", -1}, {"z", 0}}}}).value();
+    REQUIRE(hit["entity"] == info["entity"]);
+    REQUIRE(hit["point"]["y"].get<double>() == Catch::Approx(ground["height"].get<double>()).margin(0.01));
+    // Raising the ground under the player lifts the player with it.
+    const double before = st["player.y"].get<double>();
+    Json sculpt = s.command("terrain.sculpt", Json{{"x", st["player.x"]}, {"z", st["player.z"]}, {"radius", 4}, {"amount", 1.5}}).value();
+    REQUIRE(sculpt["samples"].get<int>() > 10);
+    REQUIRE(sculpt["revision"].get<int>() == 2);
+    for (int i = 0; i < 20; ++i) REQUIRE(s.frame().has_value());
+    st = state();
+    REQUIRE(st["player.y"].get<double>() == Catch::Approx(before + 1.5).margin(0.1));
+    REQUIRE(st["player.grounded"] == true);
+    REQUIRE(s.command("terrain.info", Json::object()).value()["edited"] == true);
+    REQUIRE(s.command("events.recent", Json{{"n", 50}, {"type", "terrain.sculpted"}}).value().size() == 1);
+    // Flatten toward a height; smooth; bad modes are refused.
+    Json flat = s.command("terrain.sculpt", Json{{"x", px + 10}, {"z", pz}, {"radius", 3}, {"mode", "flatten"}, {"target", 6}, {"amount", 1}}).value();
+    REQUIRE(flat["height"].get<double>() == Catch::Approx(6).margin(0.05));
+    REQUIRE(s.command("terrain.sculpt", Json{{"x", px}, {"z", pz}, {"mode", "smooth"}}).has_value());
+    REQUIRE_FALSE(s.command("terrain.sculpt", Json{{"x", px}, {"z", pz}, {"mode", "dig"}}).has_value());
+    // Saved as a 16-bit heightmap, the terrain reads its heights back from it, sculpting kept.
+    const double lifted = s.command("terrain.height", Json{{"x", st["player.x"]}, {"z", st["player.z"]}}).value()["height"].get<double>();
+    REQUIRE(s.command("terrain.save", Json{{"path", "assets/test-heights.png"}}).has_value());
+    REQUIRE(std::filesystem::exists(saved));
+    info = s.command("terrain.info", Json::object()).value();
+    REQUIRE(info["source"] == "assets/test-heights.png");
+    REQUIRE(s.command("world.get", Json{{"entity", "Hills"}, {"component", "Terrain"}}).value()["heightmap"] == "assets/test-heights.png");
+    REQUIRE(s.command("terrain.height", Json{{"x", st["player.x"]}, {"z", st["player.z"]}}).value()["height"].get<double>() == Catch::Approx(lifted).margin(0.002));
+    // Back to noise: the heightmap cleared, the hills as they were.
+    REQUIRE(s.command("world.set", Json{{"entity", "Hills"}, {"component", "Terrain"}, {"value", Json{{"heightmap", ""}}}}).has_value());
+    REQUIRE(s.command("terrain.height", Json{{"x", st["player.x"]}, {"z", st["player.z"]}}).value()["height"].get<double>() == Catch::Approx(before - 0.9).margin(0.06));
+    REQUIRE_FALSE(s.command("terrain.info", Json{{"entity", "Player"}}).has_value());
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(saved);
+}
+
+TEST_CASE("a Scatter strews copies over the ground within its limits, the same every run, and follows the ground when it is sculpted", "[runtime][terrain][scatter]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "hills";
+    o.bundle = root() / "build" / "ts" / "hills.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    auto run = [&](auto&& body) {
+        app::Session s(o);
+        REQUIRE(s.start().has_value());
+        for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+        body(s);
+        REQUIRE(s.finish().has_value());
+    };
+    Json first;
+    run([&](app::Session& s) {
+        Json bushes = s.command("scatter.copies", Json{{"entity", "Bushes"}, {"limit", 20000}}).value();
+        const int placed = bushes["placed"].get<int>();
+        INFO(placed);
+        REQUIRE(placed > 500);
+        REQUIRE(s.command("world.get", Json{{"entity", "Bushes"}, {"component", "Scatter"}}).value()["placed"] == placed);
+        // Every copy on gentle ground between the water and the snow, sunk by 0.08, none closer than the spacing.
+        const double cos_max = std::cos(28.0 * 3.14159265 / 180.0);
+        const Json& copies = bushes["copies"];
+        for (std::size_t k = 0; k < copies.size(); ++k) {
+            const Json& c = copies[k];
+            Json g = s.command("terrain.height", Json{{"x", c["x"]}, {"z", c["z"]}}).value();
+            INFO(c.dump() << " on " << g.dump());
+            REQUIRE(c["y"].get<double>() == Catch::Approx(g["height"].get<double>() - 0.08).margin(1e-3));
+            REQUIRE(g["normal"]["y"].get<double>() >= cos_max - 1e-4);
+            REQUIRE(g["height"].get<double>() >= 3.6);
+            REQUIRE(g["height"].get<double>() <= 8.5);
+            if (k > 0) {
+                const Json& d = copies[k - 1];
+                REQUIRE(std::hypot(c["x"].get<double>() - d["x"].get<double>(), c["z"].get<double>() - d["z"].get<double>()) >= 0.9 - 1e-4);
+            }
+        }
+        // Drawn as copies: many objects, few draw calls.
+        Json stats = s.command("render.stats", Json::object()).value();
+        REQUIRE(stats["scattered"].get<int>() >= placed);
+        REQUIRE(stats["draw_calls"].get<int>() < 40);
+        first = copies;
+        // Raising the ground under a copy lifts it; lowering the scatter's bounds re-places it.
+        const Json c0 = copies[0];
+        s.command("terrain.sculpt", Json{{"x", c0["x"]}, {"z", c0["z"]}, {"radius", 2}, {"amount", 0.5}}).value();
+        Json after = s.command("scatter.copies", Json{{"entity", "Bushes"}, {"limit", 20000}}).value()["copies"];
+        bool lifted = false;
+        for (const Json& c : after) if (std::hypot(c["x"].get<double>() - c0["x"].get<double>(), c["z"].get<double>() - c0["z"].get<double>()) < 1e-4 && c["y"].get<double>() > c0["y"].get<double>() + 0.3) lifted = true;
+        REQUIRE(lifted);
+        REQUIRE(s.command("world.set", Json{{"entity", "Bushes"}, {"component", "Scatter"}, {"value", Json{{"count", 0}}}}).has_value());
+        REQUIRE(s.command("scatter.copies", Json{{"entity", "Bushes"}}).value()["placed"] == 0);
+        REQUIRE_FALSE(s.command("scatter.copies", Json{{"entity", "Hills"}}).has_value());
+    });
+    // Another run places the same copies.
+    run([&](app::Session& s) {
+        REQUIRE(s.command("scatter.copies", Json{{"entity", "Bushes"}, {"limit", 20000}}).value()["copies"] == first);
+    });
+}
+
+namespace {
+
+// One peer of a lockstep arena game on its own thread: run until `until` ticks, pressing its move
+// action at tick 20, then report its state.
+struct Peer {
+    Json state, net;
+    std::string error;
+};
+
+void play_peer(app::Options o, int until, const char* action, int sign, std::promise<int>* port, Peer& out, int perturb_at = -1) {
+    app::Session s(o);
+    if (auto r = s.start(); !r) {
+        out.error = r.error().to_string();
+        if (port) port->set_value(-1);
+        return;
+    }
+    if (port) port->set_value(s.command("net.info", Json::object()).value()["port"].get<int>());
+    bool held = false, perturbed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (;;) {
+        const std::int64_t tick = s.command("state", Json::object()).value()["tick"].get<std::int64_t>();
+        if (tick >= until || std::chrono::steady_clock::now() > deadline) break;
+        if (!held && tick >= 20) {
+            s.command("input.hold", Json{{"action", action}, {"ticks", 60}, {"sign", sign}}).value();
+            held = true;
+        }
+        if (perturb_at >= 0 && !perturbed && tick >= perturb_at) {
+            s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 3}}}}}}).value();
+            perturbed = true;
+        }
+        if (auto r = s.frame(); !r) { out.error = r.error().to_string(); break; }
+    }
+    // A little longer so the last hashes and inputs reach the host before anyone leaves.
+    for (int i = 0; i < 30; ++i) (void)s.idle_frame();
+    out.state = s.command("state", Json::object()).value();
+    out.net = s.command("net.info", Json::object()).value();
+    (void)s.finish();
+}
+
+app::Options arena_options() {
+    app::Options o;
+    o.project_dir = root() / "samples" / "arena";
+    o.bundle = root() / "build" / "ts" / "arena.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    return o;
+}
+
+}  // namespace
+
+TEST_CASE("two peers play a lockstep game: each moves its own player, and their worlds stay the same", "[runtime][net]") {
+    app::Options ho = arena_options();
+    ho.net_host = 0;
+    ho.net_players = 2;
+    std::promise<int> port;
+    auto port_ready = port.get_future();
+    Peer host, player;
+    std::thread host_thread([&] { play_peer(ho, 240, "move_x", 1, &port, host); });
+    const int p = port_ready.get();
+    REQUIRE(p > 0);
+    app::Options po = arena_options();
+    po.net_join = "127.0.0.1:" + std::to_string(p);
+    std::thread player_thread([&] { play_peer(po, 240, "move_z", 1, nullptr, player); });
+    host_thread.join();
+    player_thread.join();
+    INFO("host " << host.error << " " << host.state.dump() << " " << host.net.dump());
+    INFO("player " << player.error << " " << player.state.dump() << " " << player.net.dump());
+    REQUIRE(host.error.empty());
+    REQUIRE(player.error.empty());
+    REQUIRE(host.net["mode"] == "host");
+    REQUIRE(player.net["mode"] == "player");
+    REQUIRE(player.net["player"] == 1);
+    REQUIRE(host.state["tick"] == 240);
+    REQUIRE(player.state["tick"] == 240);
+    // The same game on both: every exposed value and the whole run's hash chain.
+    REQUIRE(host.state["state"] == player.state["state"]);
+    REQUIRE(host.state["state_hash"] == player.state["state_hash"]);
+    // Each peer's key moved its own player: Red (the host's) to the right, Blue (the other's) south.
+    REQUIRE(host.state["state"]["red.x"].get<double>() > 3.0);
+    REQUIRE(host.state["state"]["blue.z"].get<double>() > -6.0 + 3.0);
+    REQUIRE(host.state["state"]["red.z"].get<double>() == Catch::Approx(6).margin(0.05));
+    REQUIRE(host.state["state"]["blue.x"].get<double>() == Catch::Approx(0).margin(0.05));
+    REQUIRE(host.net["desyncs"] == 0);
+}
+
+TEST_CASE("a peer whose world drifts from the others' is caught by the host's hash check", "[runtime][net]") {
+    app::Options ho = arena_options();
+    ho.net_host = 0;
+    std::promise<int> port;
+    auto port_ready = port.get_future();
+    Peer host, player;
+    std::thread host_thread([&] { play_peer(ho, 150, "move_x", 1, &port, host); });
+    const int p = port_ready.get();
+    REQUIRE(p > 0);
+    app::Options po = arena_options();
+    po.net_join = "127.0.0.1:" + std::to_string(p);
+    // The joining peer moves the ball on its own at tick 70: its world is no longer the host's.
+    std::thread player_thread([&] { play_peer(po, 150, "move_z", 1, nullptr, player, 70); });
+    host_thread.join();
+    player_thread.join();
+    INFO(host.net.dump() << " / " << player.net.dump());
+    REQUIRE(host.error.empty());
+    REQUIRE(host.net["desyncs"].get<int>() >= 1);
+    REQUIRE(host.net["first_desync"].get<int>() >= 70);
+    REQUIRE(host.net["first_desync"].get<int>() <= 90);
 }

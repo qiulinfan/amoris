@@ -27,7 +27,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
 
 
 def near(a, b, tol=0.01):
@@ -505,6 +505,88 @@ def walker_sprint_check(env, answer):
     return ok, f"a second of walking covers {plain:.2f}, with sprint held {fast:.2f} (5 and 9 wanted)"
 
 
+# ---- the terrain, scattering and vehicle tasks
+HILL_AT = (20.0, -20.0)
+HILL_FAR = [(HILL_AT[0] + 12, HILL_AT[1]), (HILL_AT[0] - 12, HILL_AT[1]), (HILL_AT[0], HILL_AT[1] + 12), (HILL_AT[0], HILL_AT[1] - 12)]
+
+
+def hill_raise_before(env):
+    h = env.command("terrain.height", {"x": HILL_AT[0], "z": HILL_AT[1]})["height"]
+    env.far_heights = [env.command("terrain.height", {"x": x, "z": z})["height"] for x, z in HILL_FAR]
+    return h < 9.5, f"the ground at {HILL_AT} stands {h:.2f} high"
+
+
+def hill_raise_solve(env):
+    h = 0.0
+    for _ in range(40):
+        r = env.command("terrain.sculpt", {"x": HILL_AT[0], "z": HILL_AT[1], "radius": 6, "amount": 1})
+        h = r["height"]
+        if h >= 10:
+            break
+    return env.command("terrain.height", {"x": HILL_AT[0], "z": HILL_AT[1]})["height"]
+
+
+def hill_raise_check(env, answer):
+    h = env.command("terrain.height", {"x": HILL_AT[0], "z": HILL_AT[1]})["height"]
+    if h < 10:
+        return False, f"the ground at {HILL_AT} stands {h:.2f} high"
+    far = [env.command("terrain.height", {"x": x, "z": z})["height"] for x, z in HILL_FAR]
+    moved = max(abs(a - b) for a, b in zip(far, env.far_heights))
+    if moved > 0.01:
+        return False, f"the ground 12 units away moved by {moved:.3f}"
+    if not isinstance(answer, (int, float)) or abs(answer - h) > 0.05:
+        return False, f"answered {answer!r}, the ground stands {h:.3f} high"
+    return True, f"the ground at {HILL_AT} raised to {h:.2f}, nothing moved 12 units away"
+
+
+def flowers_solve(env):
+    env.command("world.spawn", {"name": "Flowers", "components": {"Transform": {"scale": {"x": 0.3, "y": 0.3, "z": 0.3}}, "MeshRenderer": {"mesh": "sphere", "color": {"r": 0.9, "g": 0.1, "b": 0.15, "a": 1}},
+                "Scatter": {"count": 400, "area": {"x": 94, "y": 94}, "on": "Hills", "max_slope": 20}}})
+
+
+def flowers_check(env, answer):
+    fid = env.command("world.find", {"path": "Flowers"})
+    if not isinstance(fid, int):
+        return False, "no entity named Flowers"
+    mr = env.command("world.get", {"entity": fid, "component": "MeshRenderer"})
+    if not mr or mr.get("mesh") != "sphere" or not color_is(mr["color"], 1, 0, 0.1):
+        return False, f"Flowers draws {mr}"
+    copies = env.command("scatter.copies", {"entity": fid, "limit": 20000})
+    placed = copies["placed"]
+    if placed < 50:
+        return False, f"{placed} flowers stand"
+    import math
+    steepest = 0.0
+    for c in copies["copies"]:
+        g = env.command("terrain.height", {"x": c["x"], "z": c["z"]})
+        if abs(g["height"] - c["y"]) > 0.3:
+            return False, f"a flower at ({c['x']:.1f}, {c['z']:.1f}) stands at {c['y']:.2f} over ground at {g['height']:.2f}"
+        steepest = max(steepest, math.degrees(math.acos(max(-1.0, min(1.0, g["normal"]["y"])))))
+    if steepest > 20.5:
+        return False, f"a flower stands on ground {steepest:.1f} degrees steep"
+    return True, f"{placed} red flowers on the hills, none on ground steeper than {steepest:.1f} degrees"
+
+
+def car_speed_solve(env):
+    env.command("world.set", {"entity": "Car", "component": "Vehicle", "value": {"top_speed": 35, "power": 14}})
+    env.command("input.hold", {"action": "throttle", "ticks": 300})
+    env.command("step", {"ticks": 300})
+    return env.command("world.get", {"entity": "Car", "component": "Vehicle"})["speed"]
+
+
+def car_speed_check(env, answer):
+    v = env.command("world.get", {"entity": "Car", "component": "Vehicle"})
+    if not near(v.get("top_speed", 0), 35) or not near(v.get("power", 0), 14):
+        return False, f"top_speed {v.get('top_speed')}, power {v.get('power')}"
+    if not isinstance(answer, (int, float)):
+        return False, f"answered {answer!r}"
+    if answer < 26:
+        return False, f"answered {answer:.2f}: not past the old top speed of 25"
+    if abs(answer - v["speed"]) > 3:
+        return False, f"answered {answer:.2f}, the car is going {v['speed']:.2f}"
+    return True, f"top speed 35, power 14, driven to {answer:.2f}"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -538,6 +620,12 @@ TASKS = [
      "task": "Give the jump a sound: write a short WAV file (mono 16-bit PCM, at least a tenth of a second, any tone) under assets/ in the project directory, and edit scripts/main.tsx so that it plays through the SDK's audio.play each time the player jumps from the ground, and at no other time."},
     {"name": "lamp_prefab", "project": "hello", "ticks": 0, "script": True, "solve": lamp_prefab_solve, "check": lamp_prefab_check,
      "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
+    {"name": "hill_raise", "project": "hills", "ticks": 2, "before": hill_raise_before, "solve": hill_raise_solve, "check": hill_raise_check,
+     "task": "Raise the ground of the terrain named Hills at x 20, z -20 until it stands at least 10 units high there, without changing the ground 12 or more units away from that point; then answer with the ground's height at x 20, z -20 as the number \"answer\"."},
+    {"name": "flowers", "project": "hills", "ticks": 2, "solve": flowers_solve, "check": flowers_check,
+     "task": "Strew red flowers over the terrain named Hills: spawn an entity named Flowers that draws small red spheres (a MeshRenderer with mesh \"sphere\" and color r 1, g 0, b 0.1) with a Scatter placing copies on Hills over the whole terrain, only where the ground is no steeper than 20 degrees. At least 50 flowers must stand."},
+    {"name": "car_speed", "project": "drive", "ticks": 120, "solve": car_speed_solve, "check": car_speed_check,
+     "task": "Make the car named Car faster: set its Vehicle's top_speed to 35 and power to 14, then drive it with the throttle action held for 300 ticks (5 seconds of game time) and answer with the car's speed at the end as the number \"answer\" (the game's script sets the car's throttle from the throttle action every tick)."},
     {"name": "walker_sprint", "project": "walker", "ticks": 0, "script": True, "solve": walker_sprint_solve, "check": walker_sprint_check,
      "task": "Give the walker a sprint: add an input action named sprint bound to the left Shift key (LShift) in project.toml, and edit scripts/main.ts so that while sprint is held the player walks at 9 units per second instead of 5 (and at 5 otherwise)."},
 ]
