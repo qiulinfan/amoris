@@ -927,3 +927,40 @@ TEST_CASE("the arrows and a pad walk the focus by place, A presses, B and Escape
     key("Tab");
     REQUIRE(f.doc->focused() == 50);
 }
+
+TEST_CASE("a prop set to null (the tree reused an element without it) goes back to its default", "[ui][unset]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 30, "box"], ["set", 30, {"direction": "row", "width": 200, "height": 60, "gap": 10, "overflow": "scroll", "name": "strip", "position": "relative", "left": 7}],
+        ["append", 1, 30],
+        ["create", 31, "box"], ["set", 31, {"flex": 1, "height": 20}], ["append", 30, 31],
+        ["create", 32, "box"], ["set", 32, {"flex": 1, "height": 20}], ["append", 30, 32]
+    ])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(30).x == 7);
+    REQUIRE(f.doc->rect_of(32).x > f.doc->rect_of(31).x);    // a row
+    // Every one of those taken away at once: no throw, and the element is a plain column box again.
+    f.apply(Json::parse(R"([["set", 30, {"direction": null, "gap": null, "overflow": null, "name": null, "position": null, "left": null, "justify": null, "align": null, "wrap": null, "display": null, "radius": null, "opacity": null, "fontSize": null, "textAlign": null}],
+        ["set", 31, {"flex": null}], ["set", 32, {"flex": null}]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(30).x == 0);
+    REQUIRE(f.doc->rect_of(32).y > f.doc->rect_of(31).y);    // a column
+    REQUIRE(f.doc->rect_of(32).x == f.doc->rect_of(31).x);
+}
+
+TEST_CASE("a prop taken away beside one set applies in that order: flex after flexGrow's reset", "[ui][unset]") {
+    Fixture f;
+    f.apply(Json::parse(R"([
+        ["create", 40, "box"], ["set", 40, {"direction": "column", "width": 100, "height": 200}], ["append", 1, 40],
+        ["create", 41, "box"], ["set", 41, {"flexGrow": 1, "flexShrink": 1}], ["append", 40, 41]
+    ])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(41).h == 200);
+    // The same element now given `flex` in place of flexGrow and flexShrink (null before the value in the object).
+    f.apply(Json::parse(R"([["set", 41, {"flexGrow": null, "flexShrink": null, "flex": 1}]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(41).h == 200);
+    f.apply(Json::parse(R"([["set", 41, {"flex": 1, "flexGrow": null}]])"));
+    f.layout();
+    REQUIRE(f.doc->rect_of(41).h == 200);
+}

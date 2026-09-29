@@ -2080,6 +2080,11 @@ struct Renderer::Impl {
     WGPUTexture oit_accum_tex = nullptr, oit_reveal_tex = nullptr;
     WGPUTextureView oit_accum_view = nullptr, oit_reveal_view = nullptr;
     std::uint32_t oit_w = 0, oit_h = 0;
+    // With MSAA: the same pipelines at 4 samples, and multisampled targets resolved into the two above.
+    WGPURenderPipeline oit_ms_pipeline = nullptr, oit_ms_skinned_pipeline = nullptr, oit_ms_composite_pipeline = nullptr;
+    WGPUTexture oit_ms_accum_tex = nullptr, oit_ms_reveal_tex = nullptr;
+    WGPUTextureView oit_ms_accum_view = nullptr, oit_ms_reveal_view = nullptr;
+    int oit_samples = 1;
     WGPUBindGroup oit_bg = nullptr;
     DofSettings dof;
     MotionBlurSettings motion_blur;
@@ -2433,10 +2438,10 @@ struct Renderer::Impl {
         if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
         if (shadow_cut_pipeline) wgpuRenderPipelineRelease(shadow_cut_pipeline);
-        for (WGPURenderPipeline p : {oit_pipeline, oit_skinned_pipeline, oit_composite_pipeline}) if (p) wgpuRenderPipelineRelease(p);
+        for (WGPURenderPipeline p : {oit_pipeline, oit_skinned_pipeline, oit_composite_pipeline, oit_ms_pipeline, oit_ms_skinned_pipeline, oit_ms_composite_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         if (oit_bg) wgpuBindGroupRelease(oit_bg);
-        for (WGPUTextureView v : {oit_accum_view, oit_reveal_view}) if (v) wgpuTextureViewRelease(v);
-        for (WGPUTexture t : {oit_accum_tex, oit_reveal_tex}) if (t) wgpuTextureRelease(t);
+        for (WGPUTextureView v : {oit_accum_view, oit_reveal_view, oit_ms_accum_view, oit_ms_reveal_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {oit_accum_tex, oit_reveal_tex, oit_ms_accum_tex, oit_ms_reveal_tex}) if (t) wgpuTextureRelease(t);
         if (oit_layout) wgpuPipelineLayoutRelease(oit_layout);
         if (oit_bgl) wgpuBindGroupLayoutRelease(oit_bgl);
         if (oit_shader) wgpuShaderModuleRelease(oit_shader);
@@ -3356,7 +3361,7 @@ struct Renderer::Impl {
     }
 
     // A single-sample texture and its view.
-    std::pair<WGPUTexture, WGPUTextureView> make_target(const char* label, std::uint32_t w, std::uint32_t h, WGPUTextureFormat format, WGPUTextureUsage usage) {
+    std::pair<WGPUTexture, WGPUTextureView> make_target(const char* label, std::uint32_t w, std::uint32_t h, WGPUTextureFormat format, WGPUTextureUsage usage, std::uint32_t samples = 1) {
         WGPUTextureDescriptor td{};
         td.label = rhi::str(label);
         td.usage = usage;
@@ -3364,7 +3369,7 @@ struct Renderer::Impl {
         td.size = {w, h, 1};
         td.format = format;
         td.mipLevelCount = 1;
-        td.sampleCount = 1;
+        td.sampleCount = samples;
         WGPUTexture t = wgpuDeviceCreateTexture(device->device(), &td);
         WGPUTextureViewDescriptor vd{};
         vd.format = format;
@@ -4399,6 +4404,13 @@ struct Renderer::Impl {
         rpd.vertex.bufferCount = 2;
         rpd.vertex.buffers = vbls;
         oit_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        rpd.multisample.count = 4;   // WebGPU multisamples at 1 or 4 only
+        oit_ms_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        rpd.label = rhi::str("pocket.oit.msaa");
+        rpd.vertex.entryPoint = rhi::str("vs");
+        rpd.vertex.bufferCount = 1;
+        rpd.vertex.buffers = &vbl;
+        oit_ms_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         POCKET_TRY(module, device->create_shader("pocket.oit", kOitCompositeWgsl));
         oit_shader = module;
         WGPUBindGroupLayoutEntry be[2]{};
@@ -4442,16 +4454,26 @@ struct Renderer::Impl {
         c.multisample.mask = 0xFFFFFFFFu;
         c.fragment = &cfs;
         oit_composite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &c);
-        if (!oit_pipeline || !oit_skinned_pipeline || !oit_composite_pipeline) return fail("gpu_pipeline_failed", "order-independent transparency pipelines could not be created");
+        c.label = rhi::str("pocket.oit.composite.msaa");
+        c.multisample.count = 4;
+        oit_ms_composite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &c);
+        if (!oit_pipeline || !oit_skinned_pipeline || !oit_composite_pipeline || !oit_ms_pipeline || !oit_ms_skinned_pipeline || !oit_ms_composite_pipeline) return fail("gpu_pipeline_failed", "order-independent transparency pipelines could not be created");
         return {};
     }
 
     // Its two targets at the frame's size, and the composite's group over them.
-    Status ensure_oit_targets(std::uint32_t w, std::uint32_t h) {
-        if (oit_accum_tex && oit_w == w && oit_h == h) return {};
+    // With MSAA, multisampled ones too, which the accumulation pass resolves into them.
+    Status ensure_oit_targets(std::uint32_t w, std::uint32_t h, int samples) {
+        if (oit_accum_tex && oit_w == w && oit_h == h && oit_samples == samples) return {};
         if (oit_bg) wgpuBindGroupRelease(oit_bg);
-        for (WGPUTextureView v : {oit_accum_view, oit_reveal_view}) if (v) wgpuTextureViewRelease(v);
-        for (WGPUTexture t : {oit_accum_tex, oit_reveal_tex}) if (t) wgpuTextureRelease(t);
+        for (WGPUTextureView* v : {&oit_accum_view, &oit_reveal_view, &oit_ms_accum_view, &oit_ms_reveal_view}) {
+            if (*v) wgpuTextureViewRelease(*v);
+            *v = nullptr;
+        }
+        for (WGPUTexture* t : {&oit_accum_tex, &oit_reveal_tex, &oit_ms_accum_tex, &oit_ms_reveal_tex}) {
+            if (*t) wgpuTextureRelease(*t);
+            *t = nullptr;
+        }
         auto [at, av] = make_target("pocket.oit.accum", w, h, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
         auto [rt, rv] = make_target("pocket.oit.reveal", w, h, WGPUTextureFormat_R16Float, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
         if (!at || !rt) return fail("gpu_texture_failed", "cannot create the transparency targets {}x{}", w, h);
@@ -4459,8 +4481,18 @@ struct Renderer::Impl {
         oit_accum_view = av;
         oit_reveal_tex = rt;
         oit_reveal_view = rv;
+        if (samples > 1) {
+            auto [mat, mav] = make_target("pocket.oit.accum.msaa", w, h, kHdrFormat, WGPUTextureUsage_RenderAttachment, static_cast<std::uint32_t>(samples));
+            auto [mrt, mrv] = make_target("pocket.oit.reveal.msaa", w, h, WGPUTextureFormat_R16Float, WGPUTextureUsage_RenderAttachment, static_cast<std::uint32_t>(samples));
+            if (!mat || !mrt) return fail("gpu_texture_failed", "cannot create the multisampled transparency targets {}x{}", w, h);
+            oit_ms_accum_tex = mat;
+            oit_ms_accum_view = mav;
+            oit_ms_reveal_tex = mrt;
+            oit_ms_reveal_view = mrv;
+        }
         oit_w = w;
         oit_h = h;
+        oit_samples = samples;
         WGPUBindGroupEntry e[2]{};
         e[0].binding = 0;
         e[0].textureView = oit_accum_view;
@@ -7270,10 +7302,19 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderRelease(ipass);
         if (im.ao.enabled) im.draw_ao(frame);
     }
+    // Order-independent transparency: the translucent meshes leave this pass for their own, and
+    // what is drawn after them (sprites, lines) waits for a pass after the composite. With MSAA
+    // this first part keeps its samples, unresolved, for the composite to be laid over.
+    const bool oit = im.oit && translucent_instances > 0;
+    WGPURenderPassColorAttachment first[2] = {ca[0], ca[1]};
+    if (oit && resolve) {
+        first[0].resolveTarget = nullptr;
+        first[0].storeOp = WGPUStoreOp_Store;
+    }
     WGPURenderPassDescriptor rp{};
     rp.label = rhi::str("pocket.scene");
     rp.colorAttachmentCount = split ? 1 : 2;
-    rp.colorAttachments = ca;
+    rp.colorAttachments = first;
     rp.depthStencilAttachment = &ds;
     WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
     set_viewport(pass);
@@ -7283,9 +7324,6 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         im.stats.draw_calls++;
     }
-    // Order-independent transparency (not with MSAA): the translucent meshes leave this pass for
-    // their own, and what is drawn after them (sprites, lines) waits for a pass after the composite.
-    const bool oit = im.oit && !resolve && translucent_instances > 0;
     const std::function<bool(std::size_t)> opaque_only = [&](std::size_t k) { return !draws[k].blend; };
     const std::function<bool(std::size_t)> translucent_only = [&](std::size_t k) { return draws[k].blend; };
     if (!draws.empty()) {
@@ -7296,15 +7334,19 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (oit) {
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
-        POCKET_TRY_VOID(im.ensure_oit_targets(frame.width, frame.height));
+        // With MSAA the accumulation is multisampled against the scene's multisampled depth and
+        // resolved (averaged) into the targets the composite reads.
+        POCKET_TRY_VOID(im.ensure_oit_targets(frame.width, frame.height, resolve ? im.msaa_applied : 1));
         WGPURenderPassColorAttachment oca[2]{};
-        oca[0].view = im.oit_accum_view;
+        oca[0].view = resolve ? im.oit_ms_accum_view : im.oit_accum_view;
+        oca[0].resolveTarget = resolve ? im.oit_accum_view : nullptr;
         oca[0].depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         oca[0].loadOp = WGPULoadOp_Clear;
-        oca[0].storeOp = WGPUStoreOp_Store;
+        oca[0].storeOp = resolve ? WGPUStoreOp_Discard : WGPUStoreOp_Store;
         oca[0].clearValue = {0, 0, 0, 0};
         oca[1] = oca[0];
-        oca[1].view = im.oit_reveal_view;
+        oca[1].view = resolve ? im.oit_ms_reveal_view : im.oit_reveal_view;
+        oca[1].resolveTarget = resolve ? im.oit_reveal_view : nullptr;
         oca[1].clearValue = {1, 1, 1, 1};
         WGPURenderPassDepthStencilAttachment ods = ds;
         ods.depthLoadOp = WGPULoadOp_Load;
@@ -7317,11 +7359,11 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         set_viewport(opass);
         wgpuRenderPassEncoderSetBindGroup(opass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(opass, 1, im.object_bg, 0, nullptr);
-        draw_runs(opass, true, im.stats.draw_calls, im.oit_pipeline, im.oit_skinned_pipeline, nullptr, nullptr, nullptr, &translucent_only);
+        draw_runs(opass, true, im.stats.draw_calls, resolve ? im.oit_ms_pipeline : im.oit_pipeline, resolve ? im.oit_ms_skinned_pipeline : im.oit_skinned_pipeline, nullptr, nullptr, nullptr, &translucent_only);
         wgpuRenderPassEncoderEnd(opass);
         wgpuRenderPassEncoderRelease(opass);
         WGPURenderPassColorAttachment cca{};
-        cca.view = im.hdr_view;
+        cca.view = resolve ? im.ms_color_view : im.hdr_view;   // every sample, resolved with the sprites and lines
         cca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         cca.loadOp = WGPULoadOp_Load;
         cca.storeOp = WGPUStoreOp_Store;
@@ -7330,7 +7372,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         crp.colorAttachmentCount = 1;
         crp.colorAttachments = &cca;
         WGPURenderPassEncoder cpass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &crp);
-        wgpuRenderPassEncoderSetPipeline(cpass, im.oit_composite_pipeline);
+        wgpuRenderPassEncoderSetPipeline(cpass, resolve ? im.oit_ms_composite_pipeline : im.oit_composite_pipeline);
         wgpuRenderPassEncoderSetBindGroup(cpass, 0, im.oit_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(cpass, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(cpass);

@@ -50,6 +50,7 @@ export { i18n, t } from "./i18n";
 export { net } from "./net";
 export { input } from "./input";
 export { tween, ease } from "./tween";
+export { repro } from "./repro";
 export type { Easing, EaseName, TweenOptions, TweenHandle } from "./tween";
 export { timer, time, wait, nextTick, lastTick } from "./timer";
 export type { TimerHandle } from "./timer";

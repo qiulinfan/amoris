@@ -21,8 +21,8 @@ std::array<Wave, kWaterWaves> water_waves(const Water& w) {
     for (int i = 0; i < kWaterWaves; ++i) {
         Wave& v = out[static_cast<std::size_t>(i)];
         const float a = base + kTurn[i];
-        v.dir_x = std::cos(a);
-        v.dir_z = -std::sin(a);
+        v.dir_x = repro::cos(a);
+        v.dir_z = -repro::sin(a);
         v.k = 2.0f * std::numbers::pi_v<float> / (length * kLength[i]);
         v.omega = std::sqrt(9.81f * v.k);
         v.amplitude = amplitude * kHeight[i];
@@ -41,7 +41,7 @@ WaterPoint water_surface(const Water& w, float level, float x, float z, float t)
     Vec3 vel{w.flow.x, 0, w.flow.y};
     for (const Wave& v : waves) {
         const float theta = v.k * (v.dir_x * px + v.dir_z * pz) - v.omega * t + v.phase;
-        const float s = std::sin(theta), c = std::cos(theta);
+        const float s = repro::sin(theta), c = repro::cos(theta);
         const float qa = v.steepness * v.amplitude;
         p.x += qa * v.dir_x * c;
         p.z += qa * v.dir_z * c;
@@ -69,7 +69,7 @@ WaterPoint water_at(const Water& w, float level, float x, float z, float t) {
         float jxx = 1, jxz = 0, jzz = 1;
         for (const Wave& v : waves) {
             const float theta = v.k * (v.dir_x * px + v.dir_z * pz) - v.omega * t + v.phase;
-            const float qa = v.steepness * v.amplitude, c = std::cos(theta), s = std::sin(theta);
+            const float qa = v.steepness * v.amplitude, c = repro::cos(theta), s = repro::sin(theta);
             fx += qa * v.dir_x * c;
             fz += qa * v.dir_z * c;
             const float d = -qa * v.k * s;

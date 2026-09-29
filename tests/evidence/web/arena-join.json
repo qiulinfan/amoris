@@ -1,0 +1,51 @@
+{
+ "what": "samples/arena: a native host (debug build, macOS arm64) and a browser (wasm-small, JSPI) joined over a WebSocket, both players steered; the host compares world hashes every 30 ticks",
+ "host": "pocket_runtime --project samples/arena --headless --net-host 7788",
+ "browser": "http://127.0.0.1:4718/arena/?v=67&join=ws://127.0.0.1:7788",
+ "host_net": {
+  "mode": "host",
+  "player": 0,
+  "players": 2,
+  "started": true,
+  "delay": 3,
+  "port": 7788,
+  "connected": 1,
+  "left": {},
+  "desyncs": 0,
+  "pending_ticks": 5,
+  "bytes_in": 99515,
+  "bytes_out": 86300,
+  "tick": 2282,
+  "waiting": true,
+  "queued": 0
+ },
+ "browser_net_at_capture": {
+  "tick": 2279,
+  "desyncs": 0,
+  "player": 1,
+  "players": 2,
+  "connected": 1
+ },
+ "goals": [
+  {
+   "tick": 486,
+   "player": 1,
+   "red": 0,
+   "blue": 1
+  },
+  {
+   "tick": 1044,
+   "player": 0,
+   "red": 1,
+   "blue": 1
+  },
+  {
+   "tick": 1303,
+   "player": 0,
+   "red": 2,
+   "blue": 1
+  }
+ ],
+ "collisions": 16,
+ "desync_events": 0
+}

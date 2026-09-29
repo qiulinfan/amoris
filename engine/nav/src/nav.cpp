@@ -22,7 +22,7 @@ bool step_ok(const Grid& g, std::size_t a, std::size_t b) {
 float link_cost(const Grid& g, std::size_t a, std::size_t b) {
     const int ax = static_cast<int>(a % static_cast<std::size_t>(g.width)), ay = static_cast<int>(a / static_cast<std::size_t>(g.width));
     const int bx = static_cast<int>(b % static_cast<std::size_t>(g.width)), by = static_cast<int>(b / static_cast<std::size_t>(g.width));
-    return std::hypot(static_cast<float>(bx - ax), static_cast<float>(by - ay)) + 1.0f;  // a jump costs a little more than walking
+    return repro::hypot(static_cast<float>(bx - ax), static_cast<float>(by - ay)) + 1.0f;  // a jump costs a little more than walking
 }
 
 // Orthogonal neighbours, diagonals between two free orthogonal cells (no corner cutting), the
@@ -34,7 +34,7 @@ bool stagger_index(const Grid& g, int i) { return (i % 2 != 0) == g.stagger_odd;
 float center_distance(const Grid& g, int ax, int ay, int bx, int by) {
     const Vec3 a = g.center_of(ax, ay), b = g.center_of(bx, by);
     const float dx = b.x - a.x, dy = g.plane == 0 ? b.z - a.z : b.y - a.y;
-    return std::hypot(dx, dy) / g.cell;
+    return repro::hypot(dx, dy) / g.cell;
 }
 
 template <typename F>
@@ -115,7 +115,7 @@ float heuristic(const Grid& g, std::size_t a, std::size_t b) {
 bool line_of_sight(const Grid& g, int ax, int ay, int bx, int by) {
     const Vec3 a = g.center_of(ax, ay), b = g.center_of(bx, by);
     const float dx = b.x - a.x, dy = g.plane == 0 ? b.z - a.z : b.y - a.y;
-    const float dist = std::hypot(dx, dy);
+    const float dist = repro::hypot(dx, dy);
     const int samples = std::max(1, static_cast<int>(std::ceil(dist / (g.cell * 0.25f))));
     std::size_t prev = g.index(ax, ay);
     for (int i = 1; i <= samples; ++i) {
@@ -244,7 +244,7 @@ Status Nav::bake_colliders(const world::World& w, const physics::Physics& ph, co
     const std::size_t n = static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
     g.walkable.assign(n, 0);
     g.ground.assign(n, 0.0f);
-    const float cos_slope = std::cos(radians(p.max_slope_degrees));
+    const float cos_slope = repro::cos(radians(p.max_slope_degrees));
     const physics::Physics::Filter static_only = [](EntityId, const world::RigidBody& rb, const world::Collider& col) { return rb.kind == 1 && !col.is_trigger; };
     const float top = p.max.y + 1.0f, span = (p.max.y - p.min.y) + 2.0f;
     for (int y = 0; y < g.height; ++y) {
@@ -886,7 +886,7 @@ void Nav::step(world::World& w, float dt) {
             for (int k = 1; k <= 8; ++k) {
                 for (int side : {1, -1}) {
                     const float ang = static_cast<float>(side * k) * (kPi / 8.0f);
-                    const float c = std::cos(ang), s = std::sin(ang);
+                    const float c = repro::cos(ang), s = repro::sin(ang);
                     const P2 dir{(pl.desired.u * c - pl.desired.v * s) / dlen, (pl.desired.u * s + pl.desired.v * c) / dlen};
                     candidates.push_back(mul(dir, dlen));
                     candidates.push_back(mul(dir, dlen * 0.5f));

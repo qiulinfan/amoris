@@ -103,7 +103,7 @@ constexpr CommandHelp kHelp[] = {
     {"audio.play", "clip, volume?, pitch?, pan?, lowpass?, reverb?, loop?, entity?, tag?, bus?, spatial?, near?, range?, occlusion?, doppler?", "Start a clip (project-relative WAV, Ogg or MP3) on a bus (main by default); answers the voice id. A spatial voice follows its entity: volume and pan by where it is, pitch by how it moves (doppler)."},
     {"audio.stop", "voice | clip | tag | bus | all", "Stop voices; answers how many."},
     {"audio.set", "voice, volume?, pitch?, pan?, lowpass?, reverb?, loop?, bus?", "Change a playing voice (or move it to another bus)."},
-    {"audio.bus", "name, volume?, muted?, lowpass?, duck_by?, duck_amount?, duck_seconds?", "A bus: its voices set as one (music, effects, dialogue): volume, mute, a low-pass over its mix, and ducking to duck_amount while a voice plays on the duck_by bus. Answers the bus."},
+    {"audio.bus", "name, volume?, muted?, lowpass?, highpass?, echo?, echo_feedback?, echo_mix?, reverb?, duck_by?, duck_amount?, duck_seconds?", "A bus: its voices set as one (music, effects, dialogue): volume, mute, a low-pass and a high-pass over its mix, an echo (seconds apart, feedback, mix), its share of the room's reverb, and ducking to duck_amount while a voice plays on the duck_by bus. Answers the bus."},
     {"audio.buses", "", "Every bus with its settings, its ducking gain right now and its voices."},
     {"audio.list", "", "Every voice with its position, duration, volume, pan."},
     {"audio.clips", "", "Loaded clips with lengths and sizes."},

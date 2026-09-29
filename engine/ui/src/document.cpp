@@ -573,6 +573,17 @@ struct Document::Impl {
     }
 
     void apply_style(Node& n, const Json& props) {
+        // Props taken away first, then the ones set: `flex: 1` beside `flexGrow: null` (an element
+        // reused with the one in place of the other) must end up growing.
+        bool unset = false, set = false;
+        for (auto& [k, v] : props.items()) (v.is_null() ? unset : set) = true;
+        if (unset && set) {
+            Json first = Json::object(), then = Json::object();
+            for (auto& [k, v] : props.items()) (v.is_null() ? first : then)[k] = v;
+            apply_style(n, first);
+            apply_style(n, then);
+            return;
+        }
         YGNodeRef y = n.yoga;
         for (auto& [k, v] : props.items()) {
             if (k == "animation") {
@@ -590,6 +601,35 @@ struct Document::Impl {
                 continue;
             }
             if (auto tr = n.transition.find(k); tr != n.transition.end() && start_transition(n, k, v, tr->second)) continue;
+            if (v.is_null()) {
+                // A prop the element no longer has (the tree reused it without it): back to what it
+                // would be without it, rather than reading null as a value.
+                static const std::map<std::string, Json, std::less<>> kUnset = {
+                    {"direction", "column"}, {"flexDirection", "column"}, {"wrap", "nowrap"}, {"flexWrap", "nowrap"},
+                    {"justify", "start"}, {"justifyContent", "start"}, {"align", "stretch"}, {"alignItems", "stretch"}, {"alignSelf", "auto"},
+                    {"position", "relative"}, {"overflow", "visible"}, {"display", "flex"}, {"flexGrow", 0}, {"flexShrink", 0}, {"gap", 0},
+                    {"margin", 0}, {"padding", 0}};
+                if (k == "flex") { YGNodeStyleSetFlexGrow(y, 0); YGNodeStyleSetFlexShrink(y, 0); YGNodeStyleSetFlexBasisAuto(y); continue; }
+                if (k == "name") { n.name.clear(); continue; }
+                if (k == "placeholder") { n.placeholder.clear(); continue; }
+                if (k == "textAlign") { n.text_align = TextAlign::Left; continue; }
+                if (k == "textWrap" || k == "wrapText") { n.text_wrap = false; if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); continue; }
+                if (k == "radius" || k == "borderRadius") { n.radius = 0; continue; }
+                if (k == "opacity") { n.opacity = 1; continue; }
+                if (k == "disabled") { n.disabled = false; continue; }
+                if (k == "fontSize") { n.font_size = Node{}.font_size; if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); continue; }
+                if (k == "scrollTop" || k == "autofocus") continue;
+                if (k == "left" || k == "top" || k == "right" || k == "bottom") {
+                    YGNodeStyleSetPosition(y, k == "left" ? YGEdgeLeft : k == "top" ? YGEdgeTop : k == "right" ? YGEdgeRight : YGEdgeBottom, YGUndefined);
+                    continue;
+                }
+                if (auto it = kUnset.find(k); it != kUnset.end()) {
+                    Json one = Json::object();
+                    one[k] = it->second;
+                    apply_style(n, one);
+                    continue;
+                }
+            }
             if (k == "width") apply_dim(v, YGNodeStyleSetWidth, YGNodeStyleSetWidthPercent, YGNodeStyleSetWidthAuto, y);
             else if (k == "height") apply_dim(v, YGNodeStyleSetHeight, YGNodeStyleSetHeightPercent, YGNodeStyleSetHeightAuto, y);
             else if (k == "minWidth") apply_dim(v, YGNodeStyleSetMinWidth, YGNodeStyleSetMinWidthPercent, nullptr, y);

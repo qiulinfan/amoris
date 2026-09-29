@@ -10,3 +10,5 @@
 - `editor-physics-headless.png`: the capture taken at the end of that session.
 
 Reproduce: `pocket test --filter runtime` (the `[editor]` cases do the same in-process), or `pocket editor physics` for the window.
+
+- `docks.png` (2026-09-29): the physics sample in the editor at 1280 by 720 after rearranging its docks: the left dock widened and the Audio tab dragged into it beside the hierarchy (the mixer in front), the Events tab dragged beside the inspector on the right (the inspector in front, its tab naming the selected Bowl), the other tabs left at the bottom. `runtime_tests "[docks]"` drags the tabs the same way and reopens the editor to find them where they were left.

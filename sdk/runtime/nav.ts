@@ -1,6 +1,7 @@
 // Navigation (docs/design/navigation.md): a walkability grid baked from the static colliders or a
 // tile map, and A* paths over it, for scripts that steer things and agents that ask "can it get
 // there" and "which way". Every call is a runtime command.
+import { repro } from "./repro";
 import { command, world, type EntityRef, type Vec3 } from "./world";
 
 export interface NavPath {
@@ -161,7 +162,7 @@ export const nav = {
             const k = Math.ceil((i + 1) / 2), sign = i % 2 === 0 ? 1 : -1;
             if (shape === "line") return { entity, forward: 0, side: sign * k * spacing };
             if (shape === "wedge") return { entity, forward: -k * spacing, side: sign * k * spacing };
-            if (shape === "circle") { const a = (2 * Math.PI * (i + 1)) / (n + 1); return { entity, forward: Math.cos(a) * spacing, side: Math.sin(a) * spacing }; }
+            if (shape === "circle") { const a = (2 * Math.PI * (i + 1)) / (n + 1); return { entity, forward: repro.cos(a) * spacing, side: repro.sin(a) * spacing }; }
             return { entity, forward: -(i + 1) * spacing, side: 0 };
         });
         for (const s of slots) nav.slot(s.entity, leader, { forward: s.forward, side: s.side }, agent);

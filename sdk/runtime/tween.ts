@@ -2,6 +2,7 @@
 // easing curve. Driven by ticks (never the wall clock), so tweens are deterministic, pause with
 // the game and appear in transcripts like any other change.
 import { own } from "./registry";
+import { repro } from "./repro";
 import type { Tick } from "./pocket";
 import { world } from "./world";
 import type { DeepPartial, EntityRef } from "./world";
@@ -25,12 +26,12 @@ export const ease = {
     cubicIn: ((t) => t * t * t) as Easing,
     cubicOut: ((t) => 1 + (t - 1) * (t - 1) * (t - 1)) as Easing,
     cubicInOut: ((t) => (t < 0.5 ? 4 * t * t * t : 1 + (t - 1) * (2 * t - 2) * (2 * t - 2))) as Easing,
-    sineIn: ((t) => 1 - Math.cos((t * Math.PI) / 2)) as Easing,
-    sineOut: ((t) => Math.sin((t * Math.PI) / 2)) as Easing,
-    sineInOut: ((t) => -(Math.cos(Math.PI * t) - 1) / 2) as Easing,
-    expoOut: ((t) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t))) as Easing,
-    backOut: ((t) => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2)) as Easing,
-    elasticOut: ((t) => (t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1)) as Easing,
+    sineIn: ((t) => 1 - repro.cos((t * Math.PI) / 2)) as Easing,
+    sineOut: ((t) => repro.sin((t * Math.PI) / 2)) as Easing,
+    sineInOut: ((t) => -(repro.cos(Math.PI * t) - 1) / 2) as Easing,
+    expoOut: ((t) => (t >= 1 ? 1 : 1 - repro.pow(2, -10 * t))) as Easing,
+    backOut: ((t) => 1 + 2.70158 * repro.pow(t - 1, 3) + 1.70158 * repro.pow(t - 1, 2)) as Easing,
+    elasticOut: ((t) => (t <= 0 ? 0 : t >= 1 ? 1 : repro.pow(2, -10 * t) * repro.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1)) as Easing,
     bounceOut,
 };
 export type EaseName = keyof typeof ease;
@@ -191,7 +192,7 @@ function mix(from: Tree, to: Tree, t: number): Tree {
             if (isQuat(a) && isQuat(b)) {
                 let sign = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0 ? -1 : 1;
                 let x = a.x + (b.x * sign - a.x) * t, y = a.y + (b.y * sign - a.y) * t, z = a.z + (b.z * sign - a.z) * t, w = a.w + (b.w * sign - a.w) * t;
-                const l = Math.hypot(x, y, z, w) || 1;
+                const l = repro.hypot(x, y, z, w) || 1;
                 out[k] = { x: x / l, y: y / l, z: z / l, w: w / l };
             } else out[k] = mix(a as Tree, b as Tree, t);
         } else out[k] = t >= 1 ? b : a;

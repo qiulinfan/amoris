@@ -1,6 +1,7 @@
 #include <pocket/app/runtime.hpp>
 #include <pocket/app/server.hpp>
 #include <pocket/app/session.hpp>
+#include <pocket/app/websocket.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
 
@@ -4630,4 +4631,71 @@ TEST_CASE("locale commands read the language files, switch the language and chec
     REQUIRE(missing.error().message.find("the project has: bad, en, fr") != std::string::npos);
     REQUIRE_FALSE(s.command("locale.set", Json{{"lang", "../en"}}).has_value());
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("WebSocket pieces: SHA-1, the RFC's accept key, frames of every length form, masked and not, arriving in parts", "[runtime][net][websocket]") {
+    namespace ws = app::ws;
+    // SHA-1 of "abc" (FIPS 180), and RFC 6455's example handshake.
+    const auto d = ws::sha1("abc");
+    REQUIRE(ws::base64(d.data(), d.size()) == "qZk+NkcGgWq6PiVxeFDCbJzQ2J0=");
+    REQUIRE(ws::accept_key("dGhlIHNhbXBsZSBub25jZQ==") == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    const std::uint8_t mask[4] = {0x37, 0xfa, 0x21, 0x3d};
+    // RFC 6455 5.7: a masked "Hello" from a client.
+    const std::string hello = ws::frame("Hello", ws::Text, mask);
+    REQUIRE(hello == std::string("\x81\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58", 11));
+    for (std::size_t size : {std::size_t{5}, std::size_t{125}, std::size_t{126}, std::size_t{300}, std::size_t{65535}, std::size_t{70000}}) {
+        std::string payload(size, 'x');
+        for (std::size_t i = 0; i < size; ++i) payload[i] = static_cast<char>('a' + i % 26);
+        for (const std::uint8_t* m : {static_cast<const std::uint8_t*>(nullptr), mask}) {
+            std::string wire = ws::frame(payload, ws::Text, m) + ws::frame("next", ws::Ping, m);
+            // Arriving a few bytes at a time: nothing until it is whole, then exactly it.
+            std::string in;
+            int op = 0;
+            std::string got;
+            std::size_t fed = 0;
+            bool whole = false;
+            while (!whole) {
+                const std::size_t take = std::min<std::size_t>(size < 1000 ? 3 : 4099, wire.size() - fed);
+                in.append(wire, fed, take);
+                fed += take;
+                whole = ws::take(in, op, got);
+                if (!whole) REQUIRE(fed < wire.size());
+            }
+            INFO(size << (m ? " masked" : ""));
+            REQUIRE(op == ws::Text);
+            REQUIRE(got == payload);
+            in.append(wire, fed, std::string::npos);
+            REQUIRE(ws::take(in, op, got));
+            REQUIRE(op == ws::Ping);
+            REQUIRE(got == "next");
+            REQUIRE(in.empty());
+        }
+    }
+}
+
+TEST_CASE("a peer joins a lockstep game over a WebSocket (as a browser does) and plays in step", "[runtime][net][websocket]") {
+    app::Options ho = arena_options();
+    ho.net_host = 0;
+    ho.net_players = 2;
+    std::promise<int> port;
+    auto port_ready = port.get_future();
+    Peer host, player;
+    std::thread host_thread([&] { play_peer(ho, 180, "move_x", 1, &port, host); });
+    const int p = port_ready.get();
+    REQUIRE(p > 0);
+    app::Options po = arena_options();
+    po.net_join = "ws://127.0.0.1:" + std::to_string(p) + "/";
+    std::thread player_thread([&] { play_peer(po, 180, "move_z", 1, nullptr, player); });
+    host_thread.join();
+    player_thread.join();
+    INFO("host " << host.error << " " << host.net.dump());
+    INFO("player " << player.error << " " << player.net.dump());
+    REQUIRE(host.error.empty());
+    REQUIRE(player.error.empty());
+    REQUIRE(player.net["player"] == 1);
+    REQUIRE(host.state["tick"] == 180);
+    REQUIRE(player.state["tick"] == 180);
+    REQUIRE(host.state["state_hash"] == player.state["state_hash"]);
+    REQUIRE(host.state["state"]["blue.z"].get<double>() > -6.0 + 2.0);    // the WebSocket peer's key moved its player
+    REQUIRE(host.net["desyncs"] == 0);
 }

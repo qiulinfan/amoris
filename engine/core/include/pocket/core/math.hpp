@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <numbers>
 
+#include <pocket/core/repro.hpp>
+
 namespace pocket {
 
 struct Vec2 {
@@ -46,8 +48,9 @@ struct Quat {
     float x = 0, y = 0, z = 0, w = 1;
     static Quat from_axis_angle(Vec3 axis, float radians) {
         Vec3 n = normalize(axis);
-        float s = std::sin(radians * 0.5f);
-        return {n.x * s, n.y * s, n.z * s, std::cos(radians * 0.5f)};
+        float s, c;
+        repro::sincos(radians * 0.5f, s, c);
+        return {n.x * s, n.y * s, n.z * s, c};
     }
     static Quat from_euler(Vec3 radians_xyz) {  // yaw(Y) * pitch(X) * roll(Z)
         Quat qx = from_axis_angle({1, 0, 0}, radians_xyz.x);

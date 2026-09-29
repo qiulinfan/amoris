@@ -45,6 +45,16 @@ export interface BusSettings {
     muted?: boolean;
     /** Over the bus's whole mix, 0..1: 1 as it is, small values muffle it (a pause menu). */
     lowpass?: number;
+    /** 0..1: 0 as it is, larger values thin it out (a radio, a phone). */
+    highpass?: number;
+    /** Seconds between the repeats of an echo, 0 for none (up to 2): a canyon, a hall. */
+    echo?: number;
+    /** 0..0.9: how much of each repeat comes back again. */
+    echo_feedback?: number;
+    /** 0..1: how loud the repeats are beside the sound. */
+    echo_mix?: number;
+    /** 0..2: how much of the bus the room's reverb gets. */
+    reverb?: number;
     /** Another bus: while a voice plays on it, this one falls to `duck_amount` (music under dialogue); "" for none. */
     duck_by?: string;
     duck_amount?: number;

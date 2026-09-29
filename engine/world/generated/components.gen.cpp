@@ -1522,7 +1522,7 @@ void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
     h.f32(v.bounce);
     h.f32(v.floor_friction);
     h.f32(v.stretch);
-    h.i64(static_cast<std::int64_t>(v.child));
+    h.entity(v.child);
     h.i64(static_cast<std::int64_t>(v.child_count));
     h.u8(v.collide ? 1 : 0);
 }
@@ -1836,7 +1836,7 @@ void hash_component(StateHasherRef& h, const Body2D& v) {
     h.u8(v.kinematic ? 1 : 0);
     h.u8(v.one_way ? 1 : 0);
     h.f32(v.step);
-    h.i64(static_cast<std::int64_t>(v.riding));
+    h.entity(v.riding);
     h.i64(static_cast<std::int64_t>(v.on_slope));
     h.f32(v.mass);
     h.u8(v.collide_bodies ? 1 : 0);
@@ -1926,7 +1926,7 @@ void hash_component(StateHasherRef& h, const Character& v) {
     h.f32(v.ground_normal.x);
     h.f32(v.ground_normal.y);
     h.f32(v.ground_normal.z);
-    h.i64(static_cast<std::int64_t>(v.ground));
+    h.entity(v.ground);
     h.u8(v.on_wall ? 1 : 0);
     h.f32(v.wall_normal.x);
     h.f32(v.wall_normal.y);
@@ -2534,7 +2534,7 @@ void hash_component(StateHasherRef& h, const NavAgent& v) {
     h.f32(v.goal.x);
     h.f32(v.goal.y);
     h.f32(v.goal.z);
-    h.i64(static_cast<std::int64_t>(v.target));
+    h.entity(v.target);
     h.f32(v.offset.x);
     h.f32(v.offset.y);
     h.f32(v.offset.z);

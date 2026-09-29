@@ -31,12 +31,12 @@ bool ease_value(std::string_view name, float t, float& out) {
     else if (name == "cubicIn") out = t * t * t;
     else if (name == "cubicOut") out = 1 + (t - 1) * (t - 1) * (t - 1);
     else if (name == "cubicInOut") out = t < 0.5f ? 4 * t * t * t : 1 + (t - 1) * (2 * t - 2) * (2 * t - 2);
-    else if (name == "sineIn") out = 1 - std::cos(t * pi / 2);
-    else if (name == "sineOut") out = std::sin(t * pi / 2);
-    else if (name == "sineInOut") out = -(std::cos(pi * t) - 1) / 2;
-    else if (name == "expoOut") out = t >= 1 ? 1.0f : 1 - std::pow(2.0f, -10 * t);
-    else if (name == "backOut") out = 1 + 2.70158f * std::pow(t - 1, 3.0f) + 1.70158f * std::pow(t - 1, 2.0f);
-    else if (name == "elasticOut") out = t <= 0 ? 0.0f : t >= 1 ? 1.0f : std::pow(2.0f, -10 * t) * std::sin((t * 10 - 0.75f) * (2 * pi / 3)) + 1;
+    else if (name == "sineIn") out = 1 - repro::cos(t * pi / 2);
+    else if (name == "sineOut") out = repro::sin(t * pi / 2);
+    else if (name == "sineInOut") out = -(repro::cos(pi * t) - 1) / 2;
+    else if (name == "expoOut") out = t >= 1 ? 1.0f : 1 - repro::pow(2.0f, -10 * t);
+    else if (name == "backOut") out = 1 + 2.70158f * repro::pow(t - 1, 3.0f) + 1.70158f * repro::pow(t - 1, 2.0f);
+    else if (name == "elasticOut") out = t <= 0 ? 0.0f : t >= 1 ? 1.0f : repro::pow(2.0f, -10 * t) * repro::sin((t * 10 - 0.75f) * (2 * pi / 3)) + 1;
     else if (name == "bounceOut") out = bounce(t);
     else return false;
     return true;

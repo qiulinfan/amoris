@@ -10,6 +10,7 @@
 #include <cmath>
 #include <functional>
 #include <sstream>
+#include <unordered_map>
 
 namespace pocket::world {
 
@@ -877,7 +878,19 @@ void World::tick(double dt) {
 }
 
 std::uint64_t World::hash() const {
+    // An entity a component refers to is hashed as its place in the walk below (1 the first root).
+    std::unordered_map<std::uint64_t, std::uint64_t> order;
+    for (EntityId r : roots()) {
+        impl_->visit(r, 0, [&](EntityId id, int) {
+            order.emplace(id, order.size() + 1);
+            return true;
+        });
+    }
     StateHasherRef h;
+    h.key_of = [&](std::uint64_t id) {
+        auto it = order.find(id);
+        return it == order.end() ? ~std::uint64_t{0} : it->second;
+    };
     for (EntityId r : roots()) {
         impl_->visit(r, 0, [&](EntityId id, int depth) {
             flecs::entity e = impl_->ecs.entity(id);
@@ -910,6 +923,11 @@ void World::component_hashes(EntityId id, const std::function<void(std::string_v
     for (const auto& op : ops_table()) {
         if (!op.serialized || !op.has(e)) continue;
         StateHasherRef h;
+        h.key_of = [this](std::uint64_t id) {
+            StateHasherRef p;
+            p.str(path(id));
+            return p.digest();
+        };
         op.hash(h, e);
         fn(op.name, h.digest());
     }

@@ -53,8 +53,9 @@ class Particles {
     [[nodiscard]] Json stats() const;
     // The live particles of one emitter (position, velocity, age, life, resting), up to `limit`.
     [[nodiscard]] Json list(world::EntityId emitter, std::size_t limit) const;
-    // Deterministic fold of every live particle (count, positions, ages), for state hashes.
-    [[nodiscard]] std::uint64_t hash() const;
+    // Deterministic fold of every live particle (count, positions, ages), for state hashes; each
+    // emitter is known by its path in `world`, not its id, as World::hash knows entities.
+    [[nodiscard]] std::uint64_t hash(const world::World& world) const;
     [[nodiscard]] const std::map<world::EntityId, EmitterPool>& pools() const { return pools_; }
     // Where colliding particles ask what they hit: a ray from `from` to `to` in world space,
     // nullopt for nothing. The runtime plugs the physics in; without a collider, `collide` does nothing.

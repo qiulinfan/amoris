@@ -27,14 +27,14 @@ void Particles::spawn(EmitterPool& pool, const world::ParticleEmitter& e, const 
     Vec3 u = normalize(cross(helper, axis));
     Vec3 v = cross(axis, u);
     const float half = radians(std::clamp(e.spread, 0.0f, 180.0f));
-    const float cos_half = std::cos(half);
+    const float cos_half = repro::cos(half);
     for (int i = 0; i < count; ++i) {
         Random& r = pool.rng;
         // Uniform direction within the cone: uniform in cos(theta) over [cos(half), 1].
         const float cz = cos_half + (1.0f - cos_half) * r.next_float();
         const float sz = std::sqrt(std::max(0.0f, 1.0f - cz * cz));
         const float phi = 2.0f * kPi * r.next_float();
-        Vec3 local = axis * cz + u * (sz * std::cos(phi)) + v * (sz * std::sin(phi));
+        Vec3 local = axis * cz + u * (sz * repro::cos(phi)) + v * (sz * repro::sin(phi));
         Vec3 dir = t.rotation.rotate(local);
         const float speed = e.speed.x + (e.speed.y - e.speed.x) * r.next_float();
         Particle p;
@@ -196,10 +196,12 @@ Json Particles::list(world::EntityId emitter, std::size_t limit) const {
     return arr;
 }
 
-std::uint64_t Particles::hash() const {
-    StateHasher h;
+std::uint64_t Particles::hash(const world::World& world) const {
+    // Summed, so the pools' order (by id) does not matter.
+    std::uint64_t sum = 0;
     for (const auto& [id, pool] : pools_) {
-        h.u64(id);
+        StateHasher h;
+        h.str(world.path(id));
         h.u32(static_cast<std::uint32_t>(pool.alive.size()));
         for (const Particle& p : pool.alive) {
             h.f32(p.position.x);
@@ -207,8 +209,9 @@ std::uint64_t Particles::hash() const {
             h.f32(p.position.z);
             h.f32(p.age);
         }
+        sum += h.digest();
     }
-    return h.digest();
+    return sum;
 }
 
 }  // namespace pocket::renderer

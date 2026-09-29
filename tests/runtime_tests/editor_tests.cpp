@@ -710,7 +710,7 @@ TEST_CASE("inspector shows list fields as JSON and takes them back", "[editor][l
     for (int i = 0; i < 20; ++i) ok(s.idle_frame());
     ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Arm")}}));
     for (int i = 0; i < 3; ++i) ok(s.idle_frame());
-    std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 14}}))["text"].get<std::string>();
+    std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 16}, {"max_nodes", 2000}}))["text"].get<std::string>();
     INFO(snap);
     REQUIRE(snap.find("layers (0)") != std::string::npos);
     // A layer added through the command shows up in the field once the inspector refreshes.
@@ -718,7 +718,7 @@ TEST_CASE("inspector shows list fields as JSON and takes them back", "[editor][l
     for (int i = 0; i < 20; ++i) ok(s.idle_frame());
     ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Arm")}}));
     for (int i = 0; i < 3; ++i) ok(s.idle_frame());
-    snap = ok(s.command("ui.snapshot", Json{{"depth", 14}}))["text"].get<std::string>();
+    snap = ok(s.command("ui.snapshot", Json{{"depth", 16}, {"max_nodes", 2000}}))["text"].get<std::string>();
     INFO(snap);
     REQUIRE(snap.find("layers (1)") != std::string::npos);
     REQUIRE(snap.find("\"clip\":\"nod\"") != std::string::npos);
@@ -1090,4 +1090,63 @@ TEST_CASE("editor sculpts a terrain in the scene pane and undoes the stroke", "[
     REQUIRE(sum_lowered < sum_after);
     ok(s.finish());
     std::filesystem::remove_all(root() / "samples" / "hills" / ".pocket");
+}
+
+TEST_CASE("editor docks: a tab dragged to another dock moves its pane there, an emptied dock gives the scene its room, and the layout comes back", "[editor][docks]") {
+    std::filesystem::path saved = root() / "samples" / "physics" / ".pocket" / "editor.json";
+    std::filesystem::remove(saved);
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{saved};
+    auto rect = [](app::Session& s, const char* name) {
+        Json q = ok(s.command("ui.query", Json{{"name", name}}));
+        INFO("looking for " << name << ": " << q.dump());
+        REQUIRE(q.size() == 1);
+        return q[0]["rect"];
+    };
+    auto drag_onto = [&](app::Session& s, const char* tab, const Json& target) {
+        const Json from = rect(s, tab);
+        const double dx = target["x"].get<double>() + target["w"].get<double>() / 2 - (from["x"].get<double>() + from["w"].get<double>() / 2);
+        const double dy = target["y"].get<double>() + target["h"].get<double>() / 2 - (from["y"].get<double>() + from["h"].get<double>() / 2);
+        ok(s.command("ui.drag", Json{{"id", find_named(s, tab)}, {"dx", dx}, {"dy", dy}}));
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    };
+    {
+        app::Session s(editor_options("physics"));
+        ok(s.start());
+        s.set_paused(true);
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+        // The default: the hierarchy on the left, the inspector on the right, the tabs at the bottom.
+        REQUIRE(rect(s, "tab:audio")["y"].get<double>() > rect(s, "viewport")["y"].get<double>() + rect(s, "viewport")["h"].get<double>());
+        const double scene_w = rect(s, "viewport")["w"].get<double>();
+        // Audio onto the left dock: its tab and pane there, in front; the hierarchy a tab beside it.
+        drag_onto(s, "tab:audio", rect(s, "hierarchy"));
+        REQUIRE(rect(s, "tab:audio")["x"].get<double>() < 240);
+        REQUIRE(rect(s, "tab:audio")["y"].get<double>() < rect(s, "viewport")["y"].get<double>() + 40);
+        REQUIRE(rect(s, "pane:audio")["x"].get<double>() < 240);
+        REQUIRE(ok(s.command("ui.query", Json{{"name", "hierarchy"}})).empty());
+        ok(s.command("ui.click", Json{{"id", find_named(s, "tab:hierarchy")}}));
+        ok(s.idle_frame());
+        REQUIRE(rect(s, "hierarchy")["x"].get<double>() < 240);
+        REQUIRE(ok(s.command("ui.query", Json{{"name", "pane:audio"}})).empty());
+        // The inspector down to the bottom dock: the right dock is empty and gone, the scene wider.
+        drag_onto(s, "tab:inspector", rect(s, "bottom"));
+        REQUIRE(ok(s.command("ui.query", Json{{"name", "dock:right"}})).empty());
+        REQUIRE(rect(s, "viewport")["w"].get<double>() > scene_w + 300);
+        REQUIRE(rect(s, "inspector")["y"].get<double>() > rect(s, "viewport")["y"].get<double>() + rect(s, "viewport")["h"].get<double>());
+        // A tab dropped in the middle of the scene stays where it was.
+        drag_onto(s, "tab:console", rect(s, "viewport"));
+        REQUIRE(rect(s, "tab:console")["y"].get<double>() > rect(s, "viewport")["y"].get<double>() + rect(s, "viewport")["h"].get<double>());
+        ok(s.finish());
+    }
+    REQUIRE(std::filesystem::exists(saved));
+    {
+        // Opened again: the panes where they were left.
+        app::Session s(editor_options("physics"));
+        ok(s.start());
+        s.set_paused(true);
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+        REQUIRE(rect(s, "tab:audio")["x"].get<double>() < 240);
+        REQUIRE(ok(s.command("ui.query", Json{{"name", "dock:right"}})).empty());
+        REQUIRE(rect(s, "tab:inspector")["y"].get<double>() > rect(s, "viewport")["y"].get<double>() + rect(s, "viewport")["h"].get<double>());
+        ok(s.finish());
+    }
 }

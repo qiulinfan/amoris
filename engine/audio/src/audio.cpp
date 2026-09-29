@@ -157,9 +157,13 @@ struct Audio::Impl {
         float duck = 1.0f;
         bool ducked = false;
         float applied = -1.0f;
-        float lp_l = 0, lp_r = 0;
+        float lp_l = 0, lp_r = 0, hp_l = 0, hp_r = 0;
         std::vector<float> dry, send;
         bool used = false;
+        // The echo: a stereo delay line two seconds long, where it writes, and whether it still rings.
+        std::vector<float> echo_line;
+        std::size_t echo_at = 0, quiet = 0;   // frames since anything audible went into the line
+        bool echoing = false;
     };
     std::map<std::string, Bus> buses = {{"main", Bus{}}};
     Bus& bus_of(const std::string& name) { return buses[name.empty() ? std::string("main") : name]; }
@@ -447,14 +451,29 @@ struct Audio::Impl {
             }
             v.render = pos;
         }
-        // Each bus into the mix and the room's send: its gain ramped from the last slice's, its
-        // low-pass over the dry mix (the send stays open, so a muffled bus still fills the room).
+        // Each bus into the mix and the room's send: its gain ramped from the last slice's, then
+        // over its dry mix a low-pass, a high-pass and an echo (the send stays open, scaled by the
+        // bus's reverb, so a muffled bus still fills the room). An echo rings on after its voices end.
         for (auto& [name, b] : buses) {
             const float target = bus_gain(b);
             const float from = b.applied < 0 ? target : b.applied;
             b.applied = target;
-            if (!b.used) continue;
-            const float lp = b.settings.lowpass, a = std::max(lp * lp, 1e-4f);
+            const BusSettings& s = b.settings;
+            const bool echo = s.echo > 0;
+            if (!echo && !b.echo_line.empty()) { b.echo_line.clear(); b.echoing = false; }
+            if (!b.used && !(echo && b.echoing)) continue;
+            if (!b.used) {
+                b.dry.assign(static_cast<std::size_t>(frames) * 2, 0.0f);
+                b.send.assign(room ? static_cast<std::size_t>(frames) : 0, 0.0f);
+            }
+            const float lp = s.lowpass, a = std::max(lp * lp, 1e-4f);
+            const float hp = s.highpass, ha = std::min(hp * hp, 1.0f);
+            std::size_t delay = 0;
+            if (echo) {
+                const auto cap = static_cast<std::size_t>(config.sample_rate) * 2 + 1;
+                if (b.echo_line.size() != cap * 2) { b.echo_line.assign(cap * 2, 0.0f); b.echo_at = 0; }
+                delay = std::clamp<std::size_t>(static_cast<std::size_t>(std::lround(s.echo * static_cast<float>(config.sample_rate))), 1, cap - 1);
+            }
             for (int f = 0; f < frames; ++f) {
                 const float g = (from + (target - from) * static_cast<float>(f + 1) / static_cast<float>(frames)) * master;
                 float sl = b.dry[static_cast<std::size_t>(f) * 2], sr = b.dry[static_cast<std::size_t>(f) * 2 + 1];
@@ -464,10 +483,33 @@ struct Audio::Impl {
                     sl = b.lp_l;
                     sr = b.lp_r;
                 }
+                if (hp > 0) {
+                    // What a slow low-pass lets through, taken away: the lows go, the rest stays.
+                    b.hp_l += ha * (sl - b.hp_l);
+                    b.hp_r += ha * (sr - b.hp_r);
+                    sl -= b.hp_l;
+                    sr -= b.hp_r;
+                }
+                if (echo) {
+                    const std::size_t cap = b.echo_line.size() / 2;
+                    const std::size_t back = (b.echo_at + cap - delay) % cap;
+                    const float el = b.echo_line[back * 2], er = b.echo_line[back * 2 + 1];
+                    const float fb = std::clamp(s.echo_feedback, 0.0f, 0.9f);
+                    const float wl = sl + el * fb, wr = sr + er * fb;
+                    b.echo_line[b.echo_at * 2] = wl;
+                    b.echo_line[b.echo_at * 2 + 1] = wr;
+                    b.echo_at = (b.echo_at + 1) % cap;
+                    b.quiet = std::fabs(wl) + std::fabs(wr) > 1e-5f ? 0 : b.quiet + 1;
+                    const float m = std::clamp(s.echo_mix, 0.0f, 1.0f);
+                    sl += el * m;
+                    sr += er * m;
+                }
                 mix[static_cast<std::size_t>(f) * 2] += sl * g;
                 mix[static_cast<std::size_t>(f) * 2 + 1] += sr * g;
-                if (room) send[static_cast<std::size_t>(f)] += b.send[static_cast<std::size_t>(f)] * g;
+                if (room) send[static_cast<std::size_t>(f)] += b.send[static_cast<std::size_t>(f)] * g * s.reverb;
             }
+            // Ringing while something audible went into the line within the last delay: it comes out yet.
+            if (echo) b.echoing = b.quiet < delay;
         }
         if (room) {
             // The tail: fed by the send, added at the mix level; kept running while it rings.
@@ -585,6 +627,11 @@ std::uint32_t Audio::stop_bus(const std::string& bus) {
 void Audio::set_bus(const std::string& name, BusSettings s) {
     s.volume = std::clamp(s.volume, 0.0f, 2.0f);
     s.lowpass = std::clamp(s.lowpass, 0.0f, 1.0f);
+    s.highpass = std::clamp(s.highpass, 0.0f, 1.0f);
+    s.echo = std::clamp(s.echo, 0.0f, 2.0f);
+    s.echo_feedback = std::clamp(s.echo_feedback, 0.0f, 0.9f);
+    s.echo_mix = std::clamp(s.echo_mix, 0.0f, 1.0f);
+    s.reverb = std::clamp(s.reverb, 0.0f, 2.0f);
     s.duck_amount = std::clamp(s.duck_amount, 0.0f, 1.0f);
     s.duck_seconds = std::clamp(s.duck_seconds, 0.0f, 10.0f);
     if (s.duck_by == name) s.duck_by.clear();   // a bus does not duck under itself

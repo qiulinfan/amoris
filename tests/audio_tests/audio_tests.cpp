@@ -473,3 +473,75 @@ TEST_CASE("an MP3 clip decodes whole or streams, like an Ogg", "[audio][mp3]") {
     REQUIRE_FALSE(bad.has_value());
     REQUIRE(bad.error().code == "bad_audio");
 }
+
+TEST_CASE("a bus thins with a high-pass, echoes with feedback and rings on, and sends to the room by its reverb", "[audio][buses][busfx]") {
+    const int rate = audio::Config{}.sample_rate;
+    auto peak_in = [](const std::vector<float>& mix, std::size_t from, std::size_t to) {
+        float p = 0;
+        for (std::size_t i = from * 2; i < std::min(to * 2, mix.size()); ++i) p = std::max(p, std::abs(mix[i]));
+        return p;
+    };
+    // A high-pass: the hum's low body goes (a slow average of it), its edges stay.
+    auto lows = [](const std::vector<float>& mix) {
+        float lp = 0, sum = 0;
+        for (std::size_t i = 0; i < mix.size(); i += 2) { lp += 0.002f * (mix[i] - lp); sum += std::abs(lp); }
+        return sum;
+    };
+    auto plain = headless_audio(), thin = headless_audio();
+    audio::PlayOptions o;
+    o.reverb = 0;
+    o.bus = "radio";
+    REQUIRE(plain->play("assets/hum.wav", o).has_value());
+    REQUIRE(thin->play("assets/hum.wav", o).has_value());
+    audio::BusSettings radio;
+    radio.highpass = 0.3f;
+    thin->set_bus("radio", radio);
+    REQUIRE(thin->bus("radio").highpass == Catch::Approx(0.3f));
+    const std::vector<float> a = plain->render_frames(rate / 2), b = thin->render_frames(rate / 2);
+    INFO("lows plain " << lows(a) << ", thinned " << lows(b));
+    REQUIRE(lows(b) < lows(a) * 0.3f);
+    REQUIRE(peak_in(b, 0, rate / 2) > 0.05f);
+    // An echo a quarter second apart, half of each repeat fed back, at full mix: the click, then
+    // itself again at 0.25 s, half as loud at 0.5 s, a quarter at 0.75 s, long after the 30 ms click ended.
+    auto canyon = headless_audio();
+    audio::BusSettings e;
+    e.echo = 0.25f;
+    e.echo_feedback = 0.5f;
+    e.echo_mix = 1.0f;
+    canyon->set_bus("canyon", e);
+    o.bus = "canyon";
+    REQUIRE(canyon->play("assets/click.wav", o).has_value());
+    const std::vector<float> m = canyon->render_frames(rate);
+    const auto q = static_cast<std::size_t>(rate / 4);
+    const float first = peak_in(m, 0, q / 2), gap = peak_in(m, q / 2, q - 10), second = peak_in(m, q, q + q / 2), third = peak_in(m, 2 * q, 2 * q + q / 2), fourth = peak_in(m, 3 * q, 3 * q + q / 2);
+    INFO("click " << first << ", gap " << gap << ", echoes " << second << " " << third << " " << fourth);
+    REQUIRE(first > 0.1f);
+    REQUIRE(gap < first * 0.01f);
+    REQUIRE(second == Catch::Approx(first).epsilon(0.1));
+    REQUIRE(third == Catch::Approx(first * 0.5f).epsilon(0.1));
+    REQUIRE(fourth == Catch::Approx(first * 0.25f).epsilon(0.1));
+    // Echo off: it stops at once.
+    e.echo = 0;
+    canyon->set_bus("canyon", e);
+    REQUIRE(peak_in(canyon->render_frames(rate / 2), 0, rate / 2) == 0.0f);
+    // The room hears a bus by its reverb: none at 0, so no tail after the beep.
+    audio::ReverbSettings r;
+    r.room = 0.8f;
+    r.mix = 0.5f;
+    auto open = headless_audio(), closed = headless_audio();
+    open->set_reverb(r);
+    closed->set_reverb(r);
+    audio::BusSettings dry;
+    dry.reverb = 0;
+    closed->set_bus("sfx", dry);
+    o.bus = "sfx";
+    o.reverb = 1;
+    REQUIRE(open->play("assets/beep.wav", o).has_value());
+    REQUIRE(closed->play("assets/beep.wav", o).has_value());
+    (void)open->render_frames(rate / 2);
+    (void)closed->render_frames(rate / 2);
+    const float open_tail = peak_in(open->render_frames(rate / 4), 0, rate / 4), closed_tail = peak_in(closed->render_frames(rate / 4), 0, rate / 4);
+    INFO("tails " << open_tail << " and " << closed_tail);
+    REQUIRE(open_tail > 1e-3f);
+    REQUIRE(closed_tail == 0.0f);
+}

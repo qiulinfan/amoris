@@ -4,7 +4,7 @@
 // button is reachable by `ui_click`. Every edit is undoable (editor/history.ts) and the scene
 // pane has a translate gizmo (editor/gizmo.ts) that agents drag with `ui.drag`.
 import { Button, Checkbox, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, physics, render, setProjectRoot, signal, terrain, theme, tilemap, ui, world } from "pocket";
-import type { Bus, ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } from "pocket";
+import type { Bus, ComponentName, Described, Dim, Scene, Transform, UiEvent, VNode, WorldEvent } from "pocket";
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
 import * as history from "./history";
@@ -18,15 +18,23 @@ interface TreeRow { id: number; name: string; path: string; depth: number }
 interface LogRow { seq: number; tick?: number; level: string; cat: string; msg: string }
 interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
-interface Layout { hierarchy: number; inspector: number; bottom: number }
+// The panes live in three docks (left, right, bottom), each showing one of its panes at a time
+// behind tabs; a tab dragged onto another dock moves its pane there. The widths keep their first
+// names: `hierarchy` is the left dock's, `inspector` the right's.
+interface Layout { hierarchy: number; inspector: number; bottom: number; docks: Record<Dock, Pane[]>; active: Record<Dock, Pane | "">; }
 interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "blender" }
 type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script";
 const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script"];
+type Pane = "hierarchy" | "inspector" | Tab;
+type Dock = "left" | "right" | "bottom";
+const PANES: Pane[] = ["hierarchy", "inspector", ...TABS];
+const DOCKS: Dock[] = ["left", "right", "bottom"];
+const PANE_LABELS: Record<Pane, string> = { hierarchy: "Hierarchy", inspector: "Inspector", console: "Console", events: "Events", transcript: "Transcript", assets: "Assets", input: "Input", audio: "Audio", script: "Script" };
 interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
 const LAYOUT_PATH = ".pocket/editor.json";
-const DEFAULT_LAYOUT: Layout = { hierarchy: 240, inspector: 320, bottom: 200 };
+const DEFAULT_LAYOUT: Layout = { hierarchy: 240, inspector: 320, bottom: 200, docks: { left: ["hierarchy"], right: ["inspector"], bottom: [...TABS] }, active: { left: "hierarchy", right: "inspector", bottom: "console" } };
 
 const info = command<{ name: string; scene: string | null; contexts: string[]; window: { width: number; height: number } }>("project.info");
 const schema = command<{ components: SchemaComponent[] }>("world.schema").components;
@@ -40,7 +48,6 @@ const localAxes = signal(false);  // gizmo handles on the entity's own axes inst
 const snapStep = signal(0.5);     // the grid a snapped move lands on, cycled by the toolbar
 const SNAP_STEPS = [0.1, 0.25, 0.5, 1, 2];
 const SNAP_ANGLE = Math.PI / 12, SNAP_SCALE = 0.25;
-const tab = signal<Tab>("console");
 const status = signal({ tick: 0, hash: "", entities: 0, frames: 0 });
 const rows = signal<TreeRow[]>([]);
 const described = signal<Described | null>(null);
@@ -169,8 +176,16 @@ function thumbFor(path: string): string {
     return thumb;
 }
 
+/** Refresh what every dock shows now (the tabs' data; the hierarchy and inspector refresh themselves). */
 function refreshBottom(): void {
-    const t = tab();
+    const l = layout();
+    for (const d of DOCKS) {
+        const p = l.active[d];
+        if (p !== "" && p !== "hierarchy" && p !== "inspector") refreshTab(p);
+    }
+}
+
+function refreshTab(t: Tab): void {
     if (t === "console") logs.set(command<LogRow[]>("log.tail", { n: 40 }));
     else if (t === "events") recentEvents.set(command<WorldEvent[]>("events.recent", { n: 40 }));
     else if (t === "assets" || t === "script") {
@@ -188,8 +203,7 @@ function loadLayout(): void {
     try {
         const r = command<{ text: string }>("project.read", { path: LAYOUT_PATH });
         const j = JSON.parse(r.text) as { layout?: Partial<Layout>; tab?: Tab; snap?: boolean; snap_step?: number; local?: boolean };
-        if (j.layout) layout.set({ ...DEFAULT_LAYOUT, ...j.layout });
-        if (j.tab !== undefined && TABS.includes(j.tab)) tab.set(j.tab);
+        if (j.layout) layout.set(normalizeLayout({ ...DEFAULT_LAYOUT, ...j.layout }, j.tab));
         if (j.snap === true) snap.set(true);
         if (j.local === true) localAxes.set(true);
         if (typeof j.snap_step === "number" && SNAP_STEPS.includes(j.snap_step)) snapStep.set(j.snap_step);
@@ -198,9 +212,58 @@ function loadLayout(): void {
     }
 }
 
+// A saved layout made whole: every pane in exactly one dock (one the file lacks goes to the bottom),
+// each dock showing one of its own; a layout from before the docks gets them as they were.
+function normalizeLayout(l: Layout, legacyTab?: Tab): Layout {
+    const seen = new Set<Pane>();
+    const docks = { left: [] as Pane[], right: [] as Pane[], bottom: [] as Pane[] };
+    for (const d of DOCKS) for (const p of (l.docks?.[d] ?? DEFAULT_LAYOUT.docks[d])) if (PANES.includes(p) && !seen.has(p)) { docks[d].push(p); seen.add(p); }
+    for (const p of PANES) if (!seen.has(p)) docks.bottom.push(p);
+    const active = { ...DEFAULT_LAYOUT.active, ...(l.active ?? {}) };
+    if (legacyTab !== undefined && docks.bottom.includes(legacyTab)) active.bottom = legacyTab;
+    for (const d of DOCKS) if (!docks[d].includes(active[d] as Pane)) active[d] = docks[d][0] ?? "";
+    return { ...l, docks, active };
+}
+
+/** Show a pane: the dock it is in brings it to the front. */
+function showPane(p: Pane): void {
+    const l = layout();
+    const d = DOCKS.find((k) => l.docks[k].includes(p));
+    if (d === undefined) return;
+    layout.set({ ...l, active: { ...l.active, [d]: p } });
+    refreshBottom();
+    saveLayout();
+}
+
+/** Move a pane to a dock (the end of its tabs, in front); the dock it left shows its first pane. */
+function movePane(p: Pane, to: Dock): void {
+    const l = layout();
+    const from = DOCKS.find((k) => l.docks[k].includes(p));
+    if (from === undefined || from === to) { showPane(p); return; }
+    const docks = { ...l.docks, [from]: l.docks[from].filter((x) => x !== p), [to]: [...l.docks[to], p] };
+    const active = { ...l.active, [to]: p, [from]: l.active[from] === p ? (docks[from][0] ?? "") : l.active[from] };
+    layout.set({ ...l, docks, active });
+    notice.set(`${PANE_LABELS[p]} moved to the ${to} dock`);
+    refreshBottom();
+    saveLayout();
+}
+
+/** Where a tab dropped at (x, y) goes: the dock under it, or the edge of the scene pane it is near. */
+function dockAt(x: number, y: number): Dock | null {
+    const vp = viewportRect, main = mainRect;
+    if (main.w === 0) return null;
+    if (y >= main.y + main.h) return "bottom";
+    if (x < vp.x) return "left";
+    if (x >= vp.x + vp.w) return "right";
+    if (x < vp.x + vp.w * 0.15) return "left";
+    if (x >= vp.x + vp.w * 0.85) return "right";
+    if (y >= vp.y + vp.h * 0.85) return "bottom";
+    return null;
+}
+
 function saveLayout(): void {
     try {
-        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), tab: tab(), snap: snap(), snap_step: snapStep(), local: localAxes() } });
+        command("project.write", { path: LAYOUT_PATH, json: { layout: layout(), snap: snap(), snap_step: snapStep(), local: localAxes() } });
     } catch (e) {
         notice.set(`Layout not saved: ${String(e)}`);
     }
@@ -714,7 +777,7 @@ function setBus(name: string, settings: Partial<Bus>): void {
 
 function saveMixer(): void {
     const out: Record<string, Partial<Bus>> = {};
-    for (const b of buses()) out[b.name] = { volume: b.volume, muted: b.muted, lowpass: b.lowpass, duck_by: b.duck_by, duck_amount: b.duck_amount, duck_seconds: b.duck_seconds };
+    for (const b of buses()) out[b.name] = { volume: b.volume, muted: b.muted, lowpass: b.lowpass, highpass: b.highpass, echo: b.echo, echo_feedback: b.echo_feedback, echo_mix: b.echo_mix, reverb: b.reverb, duck_by: b.duck_by, duck_amount: b.duck_amount, duck_seconds: b.duck_seconds };
     try {
         command("project.write", { path: "audio.json", json: { buses: out } });
         notice.set(`Mixer saved to audio.json (${buses().length} buses); it applies over the project.toml buses`);
@@ -1140,11 +1203,11 @@ function Toolbar() {
     );
 }
 
-function Hierarchy() {
+function Hierarchy(props: { width: Dim; grow?: boolean }) {
     const list = rows();
     const sel = selection();
     return (
-        <Panel title={`Hierarchy (${list.length})`} width={layout().hierarchy} scroll name="hierarchy" padding={2} gap={0}>
+        <Panel width={props.width} flex={props.grow ? 1 : undefined} scroll name="hierarchy" padding={2} gap={0}>
             {list.length === 0 ? <Label text="No entities. Press Play or Spawn." muted wrap /> : null}
             {list.map((r) => (
                 <box key={r.id} onClick={(e) => select(r.id, e.mods?.includes("shift") || e.mods?.includes("meta") || e.mods?.includes("ctrl") ? "toggle" : "replace")} onDrag={() => undefined} onDragEnd={(e) => dropRow(r.id, e)} padding={[3, 6]} radius={3} background={sel.includes(r.id) ? theme.accent : null} name={`entity:${r.name}`}>
@@ -1204,12 +1267,12 @@ function formatNumber(v: unknown): string {
     return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, "");
 }
 
-function Inspector() {
+function Inspector(props: { width: Dim; grow?: boolean }) {
     const d = described();
     const extra = selection().length - 1;
     if (!d) {
         return (
-            <Panel title="Inspector" width={layout().inspector} name="inspector">
+            <Panel width={props.width} flex={props.grow ? 1 : undefined} name="inspector">
                 <Label text="Select an entity in the hierarchy or click it in the scene. Shift-click adds to the selection." muted wrap />
             </Panel>
         );
@@ -1217,7 +1280,7 @@ function Inspector() {
     const present = Object.keys(d.components);
     const missing = schema.filter((c) => c.serialized && !present.includes(c.name));
     return (
-        <Panel title={`Inspector: ${d.name}${extra > 0 ? ` (+${extra} more)` : ""}`} width={layout().inspector} scroll name="inspector" gap={8}>
+        <Panel width={props.width} flex={props.grow ? 1 : undefined} scroll name="inspector" gap={8}>
             <Row gap={4}>
                 <Label text="name" muted />
                 <TextInput value={d.name} flex={1} name="entity-name" onChange={(v) => { if (v.length > 0) renameEntity(d.id, v); }} />
@@ -1250,10 +1313,8 @@ function Inspector() {
     );
 }
 
-function Bottom() {
-    const t = tab();
-    const st = status();
-    const tabButton = (id: typeof t, label: string) => <Button label={label} small primary={t === id} name={`tab:${id}`} onClick={() => { tab.set(id); refreshBottom(); saveLayout(); }} />;
+/** What a tab pane shows (its body), in whichever dock it is. */
+function TabBody(t: Tab): VNode[] {
     let body;
     if (t === "console") {
         body = logs().map((l) => <Label key={l.seq} text={`${l.tick !== undefined ? `[${l.tick}] ` : ""}${l.level} ${l.cat}: ${l.msg}`} size={12} color={l.level === "error" ? theme.danger : l.level === "warn" ? "#f0c060" : theme.text} />);
@@ -1311,7 +1372,13 @@ function Bottom() {
                     <box width={40}><Label text={pct(b.volume)} muted size={12} /></box>
                     <Checkbox checked={b.muted} label="mute" name={`bus:${b.name}:muted`} onChange={(c) => setBus(b.name, { muted: c })} />
                     <Label text="low-pass" muted size={12} />
-                    <Slider value={b.lowpass} step={0.05} width={100} name={`bus:${b.name}:lowpass`} onInput={(v) => setBus(b.name, { lowpass: v })} />
+                    <Slider value={b.lowpass} step={0.05} width={80} name={`bus:${b.name}:lowpass`} onInput={(v) => setBus(b.name, { lowpass: v })} />
+                    <Label text="high-pass" muted size={12} />
+                    <Slider value={b.highpass} step={0.05} width={80} name={`bus:${b.name}:highpass`} onInput={(v) => setBus(b.name, { highpass: v })} />
+                    <Label text={b.echo > 0 ? `echo ${b.echo.toFixed(2)} s` : "echo"} muted size={12} />
+                    <Slider value={b.echo} max={1} step={0.05} width={80} name={`bus:${b.name}:echo`} onInput={(v) => setBus(b.name, { echo: v })} />
+                    <Label text="room" muted size={12} />
+                    <Slider value={b.reverb} max={2} step={0.1} width={60} name={`bus:${b.name}:reverb`} onInput={(v) => setBus(b.name, { reverb: v })} />
                     <Label text={`${b.voices} voice${b.voices === 1 ? "" : "s"}${b.duck_by ? ` · ducks under ${b.duck_by} to ${pct(b.duck_amount)} in ${b.duck_seconds} s${b.ducked ? `, now ${pct(b.duck)}` : ""}` : ""}`} muted size={12} />
                 </Row>
             )),
@@ -1375,16 +1442,72 @@ function Bottom() {
     } else {
         body = transcriptText().split("\n").map((line, i) => <Label key={i} text={line} size={12} />);
     }
+    return body as VNode[];
+}
+
+/** A pane's tab label: the hierarchy counts its entities, the inspector names what it shows. */
+function paneLabel(p: Pane): string {
+    if (p === "hierarchy") return `Hierarchy (${rows().length})`;
+    if (p === "inspector") {
+        const d = described();
+        const extra = selection().length - 1;
+        return d ? `Inspector: ${d.name}${extra > 0 ? ` (+${extra} more)` : ""}` : "Inspector";
+    }
+    return PANE_LABELS[p];
+}
+
+/** A dock's tab: click shows its pane, a drag onto another dock (or near an edge of the scene) moves it there. */
+function DockTab(props: { pane: Pane; active: boolean }) {
+    const p = props.pane;
     return (
-        <box height={layout().bottom} direction="column" background={theme.panel} borderColor={theme.border} border={1} name="bottom">
+        <box name={`tab:${p}`} padding={[2, 8]} radius={4} background={props.active ? theme.accent : theme.panel} borderColor={theme.border} border={1}
+            onClick={() => showPane(p)} onDrag={() => undefined}
+            onDragEnd={(e) => { const to = e.x !== undefined && e.y !== undefined ? dockAt(e.x, e.y) : null; if (to) movePane(p, to); }}>
+            <Label text={paneLabel(p)} size={12} color={props.active ? "#ffffff" : theme.text} />
+        </box>
+    );
+}
+
+/** A pane's own content at a dock's width; `grow` fills the height of a dock with tabs above it. */
+function PaneView(p: Pane, width: Dim, grow = false): VNode {
+    if (p === "hierarchy") return <Hierarchy width={width} grow={grow} />;
+    if (p === "inspector") return <Inspector width={width} grow={grow} />;
+    return (
+        <box width={width} flex={grow ? 1 : undefined} direction="column" background={theme.panel} borderColor={theme.border} border={1} name={`pane:${p}`}>
+            <box flex={1} overflow="scroll" padding={[4, 8]} gap={1} name={`${p}-body`}>
+                {TabBody(p)}
+            </box>
+        </box>
+    );
+}
+
+/** The left or right dock: its tabs above the pane in front (none when it holds no pane). */
+function SideDock(props: { dock: "left" | "right" }) {
+    const l = layout();
+    const panes = l.docks[props.dock];
+    const active = l.active[props.dock];
+    if (panes.length === 0 || active === "") return null;
+    const width = props.dock === "left" ? l.hierarchy : l.inspector;
+    return (
+        <box width={width} direction="column" name={`dock:${props.dock}`}>
+            <Row padding={[1, 4]} gap={3} wrap background={theme.panelAlt}>
+                {panes.map((p) => <DockTab key={p} pane={p} active={p === active} />)}
+            </Row>
+            {PaneView(active, "100%", true)}
+        </box>
+    );
+}
+
+/** The bottom dock: its tabs and the status on one strip, the pane in front below (just the strip when it holds none). */
+function Bottom() {
+    const l = layout();
+    const st = status();
+    const panes = l.docks.bottom;
+    const active = l.active.bottom;
+    return (
+        <box height={panes.length > 0 ? l.bottom : undefined} direction="column" background={theme.panel} borderColor={theme.border} border={1} name="bottom">
             <Row padding={[3, 6]} gap={4} background={theme.panelAlt}>
-                {tabButton("console", "Console")}
-                {tabButton("events", "Events")}
-                {tabButton("transcript", "Transcript")}
-                {tabButton("assets", "Assets")}
-                {tabButton("input", "Input")}
-                {tabButton("audio", "Audio")}
-                {tabButton("script", "Script")}
+                {panes.map((p) => <DockTab key={p} pane={p} active={p === active} />)}
                 <box flex={1} />
                 <Label text={notice()} muted size={12} name="notice" />
                 <box width={12} />
@@ -1392,9 +1515,11 @@ function Bottom() {
                 <Label text={`${st.entities} entities`} muted size={12} name="entities" />
                 <Label text={st.hash} muted size={12} name="hash" />
             </Row>
-            <box flex={1} overflow="scroll" padding={[4, 8]} gap={1} name="bottom-body">
-                {body}
-            </box>
+            {active === "" ? null : active === "hierarchy" || active === "inspector" ? PaneView(active, "100%", true) : (
+                <box flex={1} overflow="scroll" padding={[4, 8]} gap={1} name="bottom-body">
+                    {TabBody(active)}
+                </box>
+            )}
         </box>
     );
 }
@@ -1463,15 +1588,15 @@ function Editor() {
                 <Toolbar />
             </box>
             <Row flex={1} gap={0} align="stretch" name="main">
-                <Hierarchy />
-                <Splitter name="split:hierarchy" onDrag={(e) => layout.update((l) => ({ ...l, hierarchy: clamp(l.hierarchy + (e.dx ?? 0), 120, 600) }))} />
+                <SideDock dock="left" />
+                {layout().docks.left.length > 0 ? <Splitter name="split:hierarchy" onDrag={(e) => layout.update((l) => ({ ...l, hierarchy: clamp(l.hierarchy + (e.dx ?? 0), 120, 600) }))} /> : null}
                 <box flex={1} name="viewport" onMouseDown={onViewportDown} onMouseUp={onViewportUp} onDrag={onViewportDrag} onDragEnd={onViewportUp} onWheel={onViewportWheel} overflow="hidden" />
-                <Splitter name="split:inspector" onDrag={(e) => layout.update((l) => ({ ...l, inspector: clamp(l.inspector - (e.dx ?? 0), 160, 700) }))} />
-                <Inspector />
+                {layout().docks.right.length > 0 ? <Splitter name="split:inspector" onDrag={(e) => layout.update((l) => ({ ...l, inspector: clamp(l.inspector - (e.dx ?? 0), 160, 700) }))} /> : null}
+                <SideDock dock="right" />
                 {GizmoHandles()}
                 {ViewBar()}
             </Row>
-            <Splitter name="split:bottom" vertical onDrag={(e) => layout.update((l) => ({ ...l, bottom: clamp(l.bottom - (e.dy ?? 0), 60, 600) }))} />
+            {layout().docks.bottom.length > 0 ? <Splitter name="split:bottom" vertical onDrag={(e) => layout.update((l) => ({ ...l, bottom: clamp(l.bottom - (e.dy ?? 0), 60, 600) }))} /> : null}
             <Bottom />
         </box>
     );

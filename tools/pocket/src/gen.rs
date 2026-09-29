@@ -297,7 +297,8 @@ fn emit_struct_cpp(o: &mut String, name: &str, fields: &[Field], records: &[Reco
         match f.ty.as_str() {
             "f32" => o.push_str(&format!("    h.f32(v.{});\n", f.name)),
             "f64" => o.push_str(&format!("    h.f64(v.{});\n", f.name)),
-            "i32" | "u32" | "i64" | "entity" => o.push_str(&format!("    h.i64(static_cast<std::int64_t>(v.{}));\n", f.name)),
+            "i32" | "u32" | "i64" => o.push_str(&format!("    h.i64(static_cast<std::int64_t>(v.{}));\n", f.name)),
+            "entity" => o.push_str(&format!("    h.entity(v.{});\n", f.name)),
             "bool" => o.push_str(&format!("    h.u8(v.{} ? 1 : 0);\n", f.name)),
             "string" => o.push_str(&format!("    h.str(v.{});\n", f.name)),
             _ if info.list.is_some() => o.push_str(&format!("    h.i64(static_cast<std::int64_t>(v.{0}.size()));\n    for (const auto& x : v.{0}) hash_record(h, x);\n", f.name)),

@@ -10,8 +10,10 @@ module_dirs = ["engine", "third_party", "tests", "tools"]
 [toolchain]
 cxx_standard = "c++26"
 warnings = ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", "-Wno-missing-field-initializers"]
-cxx_flags = ["-fvisibility=hidden"]
-c_flags = []
+# No fused multiply-adds: a lockstep game's peers (docs/design/networking.md) must compute the same
+# floats, and a wasm build has no FMA while an arm64 one would fuse a * b + c.
+cxx_flags = ["-fvisibility=hidden", "-ffp-contract=off"]
+c_flags = ["-ffp-contract=off"]
 defines = ["POCKET_VERSION_MAJOR=0", "POCKET_VERSION_MINOR=0", "POCKET_VERSION_PATCH=1"]
 macos_deployment_target = "14.0"
 
@@ -35,7 +37,7 @@ warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-ini
 cxx_flags = ["-O2", "-fno-exceptions", "--use-port=sdl3", "--use-port=emdawnwebgpu"]
 c_flags = ["-O2", "--use-port=sdl3"]
 defines = ["NDEBUG=1", "POCKET_WEB=1"]
-link_flags = ["-O2", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sASYNCIFY=1", "-sASYNCIFY_STACK_SIZE=131072", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
+link_flags = ["-O2", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sASYNCIFY=1", "-sASYNCIFY_STACK_SIZE=131072", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-lwebsocket.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
 
 # The same runtime with JavaScript Promise Integration instead of Asyncify: no instrumented code, so
 # a smaller and faster module, for browsers that have JSPI (Chrome; docs/web.md). `pocket pack <name>
@@ -46,7 +48,7 @@ warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-ini
 cxx_flags = ["-O2", "-fno-exceptions", "--use-port=sdl3", "--use-port=emdawnwebgpu"]
 c_flags = ["-O2", "--use-port=sdl3"]
 defines = ["NDEBUG=1", "POCKET_WEB=1"]
-link_flags = ["-O2", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
+link_flags = ["-O2", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-lwebsocket.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
 
 # The smallest runtime: JSPI at -Oz with link-time optimization, a fifth smaller than wasm-jspi and
 # about two fifths slower at stepping the simulation (docs/web.md, Costs). `pocket pack <name> --web --config wasm-small`.
@@ -56,7 +58,7 @@ warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-ini
 cxx_flags = ["-Oz", "-flto", "-fno-exceptions", "--use-port=sdl3", "--use-port=emdawnwebgpu"]
 c_flags = ["-Oz", "-flto", "--use-port=sdl3"]
 defines = ["NDEBUG=1", "POCKET_WEB=1"]
-link_flags = ["-Oz", "-flto", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
+link_flags = ["-Oz", "-flto", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-lwebsocket.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
 
 [[dependencies]]
 name = "sdl3"

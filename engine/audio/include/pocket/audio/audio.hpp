@@ -41,6 +41,11 @@ struct BusSettings {
     float volume = 1.0f;         // 0..2
     bool muted = false;
     float lowpass = 1.0f;        // over the bus's whole mix, 0..1: 1 as it is, small values muffle it
+    float highpass = 0.0f;       // 0..1: 0 as it is, larger values thin it out (a radio, a phone)
+    float echo = 0.0f;           // seconds between the repeats of an echo, 0 for none (up to 2)
+    float echo_feedback = 0.35f; // 0..0.9: how much of each repeat comes back again
+    float echo_mix = 0.4f;       // 0..1: how loud the repeats are beside the sound
+    float reverb = 1.0f;         // 0..2: how much of the bus the room gets (its voices' sends scaled)
     std::string duck_by;         // another bus: while a voice plays on it, this one falls to duck_amount
     float duck_amount = 0.3f;    // 0..1
     float duck_seconds = 0.25f;  // how long the fall and the recovery take

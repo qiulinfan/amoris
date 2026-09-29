@@ -7,6 +7,7 @@
 #include <pocket/core/log.hpp>
 #include <pocket/core/math.hpp>
 #include <pocket/core/random.hpp>
+#include <pocket/core/repro.hpp>
 #include <pocket/core/result.hpp>
 #include <pocket/core/time.hpp>
 #include <pocket/core/version.hpp>

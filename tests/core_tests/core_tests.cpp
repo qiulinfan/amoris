@@ -2,8 +2,11 @@
 
 #include <catch_amalgamated.hpp>
 
+#include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 
 using namespace pocket;
 
@@ -124,4 +127,94 @@ TEST_CASE("Mat4 inverse undoes projections", "[core]") {
     Mat4 singular;
     for (float& f : singular.m) f = 0;
     REQUIRE(singular.inverse().at(0, 0) == 1.0f);  // identity when there is no inverse
+}
+
+namespace {
+
+// How many floats apart two floats are (0 the same).
+std::int64_t ulps(float a, float b) {
+    auto key = [](float f) {
+        const auto i = std::bit_cast<std::int32_t>(f);
+        return i < 0 ? std::int64_t{INT32_MIN} - i : std::int64_t{i};
+    };
+    return std::llabs(key(a) - key(b));
+}
+
+}  // namespace
+
+TEST_CASE("Reproducible math is as close as libm and pinned to the bit", "[core][repro]") {
+    // Each function against the double libm rounded to float, over a sweep; the sweep's results
+    // fold into a hash pinned here, so a build whose results differ in one bit fails (a web build
+    // and a native one must agree, docs/design/networking.md).
+    StateHasher h;
+    std::int64_t worst_trig = 0, worst_inv = 0, worst_exp = 0;
+    for (int i = -200000; i <= 200000; ++i) {
+        const float x = static_cast<float>(i) * 0.00049f;
+        const float s = repro::sin(x), c = repro::cos(x);
+        worst_trig = std::max({worst_trig, ulps(s, static_cast<float>(std::sin(static_cast<double>(x)))), ulps(c, static_cast<float>(std::cos(static_cast<double>(x))))});
+        float s2, c2;
+        repro::sincos(x, s2, c2);
+        REQUIRE(s2 == s);
+        REQUIRE(c2 == c);
+        h.f32(s);
+        h.f32(c);
+    }
+    for (float x : {1000.5f, -31415.9f, 123456.7f, 1e-8f, -0.0f}) {
+        worst_trig = std::max(worst_trig, ulps(repro::sin(x), static_cast<float>(std::sin(static_cast<double>(x)))));
+        h.f32(repro::sin(x));
+    }
+    for (int i = -60; i <= 60; ++i) {
+        for (int j = -60; j <= 60; ++j) {
+            const float y = static_cast<float>(i) * 0.37f, x = static_cast<float>(j) * 0.41f;
+            const float a = repro::atan2(y, x);
+            worst_inv = std::max(worst_inv, ulps(a, static_cast<float>(std::atan2(static_cast<double>(y), static_cast<double>(x)))));
+            const float hy = repro::hypot(x, y);
+            REQUIRE(ulps(hy, static_cast<float>(std::hypot(static_cast<double>(x), static_cast<double>(y)))) <= 1);
+            h.f32(a);
+            h.f32(hy);
+        }
+    }
+    for (int i = -1000; i <= 1000; ++i) {
+        const float x = static_cast<float>(i) / 1000.0f;
+        worst_inv = std::max({worst_inv, ulps(repro::asin(x), static_cast<float>(std::asin(static_cast<double>(x)))), ulps(repro::acos(x), static_cast<float>(std::acos(static_cast<double>(x)))),
+                              ulps(repro::atan(x * 50), static_cast<float>(std::atan(static_cast<double>(x * 50))))});
+        h.f32(repro::asin(x));
+        h.f32(repro::acos(x));
+    }
+    for (int i = -8000; i <= 8000; ++i) {
+        const float x = static_cast<float>(i) * 0.01f;
+        worst_exp = std::max(worst_exp, ulps(repro::exp(x), static_cast<float>(std::exp(static_cast<double>(x)))));
+        const float l = std::ldexp(1.0f + static_cast<float>(i + 8000) / 16001.0f, i / 300);
+        worst_exp = std::max(worst_exp, ulps(repro::log(l), static_cast<float>(std::log(static_cast<double>(l)))));
+        worst_exp = std::max(worst_exp, ulps(repro::cbrt(x * 13), static_cast<float>(std::cbrt(static_cast<double>(x * 13)))));
+        h.f32(repro::exp(x));
+        h.f32(repro::log(l));
+        h.f32(repro::cbrt(x * 13));
+    }
+    for (int i = 0; i <= 200; ++i) {
+        for (int j = -40; j <= 40; ++j) {
+            const float b = static_cast<float>(i) * 0.05f, e = static_cast<float>(j) * 0.25f;
+            worst_exp = std::max(worst_exp, ulps(repro::pow(b, e), static_cast<float>(std::pow(static_cast<double>(b), static_cast<double>(e)))));
+            h.f32(repro::pow(b, e));
+        }
+    }
+    CHECK(worst_trig <= 1);
+    CHECK(worst_inv <= 1);
+    CHECK(worst_exp <= 1);
+    // Edges as <cmath> has them.
+    CHECK(repro::pow(-2.0f, 3.0f) == -8.0f);
+    CHECK(repro::pow(-2.0f, 2.0f) == 4.0f);
+    CHECK(std::isnan(repro::pow(-2.0f, 0.5f)));
+    CHECK(repro::pow(0.0f, -1.0f) == std::numeric_limits<float>::infinity());
+    CHECK(repro::pow(5.0f, 0.0f) == 1.0f);
+    CHECK(repro::atan2(0.0f, -1.0f) == std::numbers::pi_v<float>);
+    CHECK(repro::atan2(-0.0f, -1.0f) == -std::numbers::pi_v<float>);
+    CHECK(repro::atan2(1.0f, 0.0f) == std::numbers::pi_v<float> / 2);
+    CHECK(repro::exp(0.0f) == 1.0f);
+    CHECK(repro::log(1.0f) == 0.0f);
+    CHECK(repro::cbrt(-27.0f) == -3.0f);
+    CHECK(std::isnan(repro::sin(std::numeric_limits<float>::infinity())));
+    CHECK(std::isnan(repro::asin(1.5f)));
+    INFO("sweep hash " << hex64(h.digest()));
+    CHECK(hex64(h.digest()) == "62265331655f6ff2");
 }

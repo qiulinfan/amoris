@@ -27,6 +27,7 @@ Lua is not used. CMake is not used for our own code (it may be invoked by `pocke
 6. Reference sources are read-only. PocketEngine and aipocket may be ported from (they are ours). Unreal Engine source (Epic EULA) and Unity's C# reference source (Unity Reference-Only License) are for studying design only: never copy code, identifiers or comments from them. See `docs/ue5-lessons.md` and `docs/unity-lessons.md`.
 7. User-facing explanations match the language the human uses (currently Chinese). Code, identifiers, commit messages and repository documentation are English.
 8. Commit only when asked. AI-authored commits end with the agent's co-author trailer.
+9. Code that changes the world during a tick (physics, water, characters, rigs, timelines, navigation, particles, the SDK's tweens) takes sin, cos, atan2, exp, pow and the like from `pocket::repro` (C++) or `repro` (SDK), not `<cmath>` or `Math`: a native and a web peer of a lockstep game must compute the same bits (`docs/design/networking.md`, Determinism). Drawing may use either.
 
 ## Daily commands
 

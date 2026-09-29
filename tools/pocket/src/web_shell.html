@@ -32,7 +32,9 @@
 // on its command line can go here (--size WxH, --log-level, --paused, --seed ...).
 var Module = {
   canvas: document.getElementById("canvas"),
-  arguments: ["--project", "/game/project", "--bundle", "/game/project.js", "--project-config", "/game/project.json"__POCKET_EXTRA_ARGS__],
+  // ?join=ws://host:port joins a lockstep game a native runtime hosts (docs/design/networking.md, Browsers).
+  arguments: ["--project", "/game/project", "--bundle", "/game/project.js", "--project-config", "/game/project.json"__POCKET_EXTRA_ARGS__].concat(
+    new URLSearchParams(location.search).get("join") ? ["--net-join", new URLSearchParams(location.search).get("join")] : []),
   print: (text) => console.log(text),
   printErr: (text) => console.error(text),
   setStatus: (text) => { document.getElementById("status").textContent = text; },

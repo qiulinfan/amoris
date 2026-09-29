@@ -9,7 +9,7 @@ pocket run arena -- --net-host 7777                  # player 0, waits for one m
 pocket run arena -- --net-join 192.168.1.20:7777     # player 1
 ```
 
-`--net-host PORT` (0 for any free port) listens for `--net-players` players in all, itself included (2 by default); `--net-join HOST:PORT` connects to a host, takes the player number it is given and the host's seed (before anything is made from it, so the scene, the scripts' `onStart` and every random number are the same on every peer) and the host's input delay (`--net-delay`, 3 ticks). Until every player is in, the peers draw and wait: no tick runs, and those frames do not count against `--frames`. Then all of them start at tick 0.
+`--net-host PORT` (0 for any free port) listens for `--net-players` players in all, itself included (2 by default); `--net-join HOST:PORT` (or `ws://HOST:PORT/`, over a WebSocket) connects to a host, takes the player number it is given and the host's seed (before anything is made from it, so the scene, the scripts' `onStart` and every random number are the same on every peer) and the host's input delay (`--net-delay`, 3 ticks). Until every player is in, the peers draw and wait: no tick runs, and those frames do not count against `--frames`. Then all of them start at tick 0.
 
 ## A tick
 
@@ -19,13 +19,29 @@ Gameplay reads each player's actions by number: `input.axis("move_x", p)`, `inpu
 
 ## Staying one game
 
-Every thirtieth tick each peer reports its world's hash (the world state and the particles) for the tick just run; the host compares them and, when they differ, emits `net.desync` with the tick and every peer's hash into the event log, sends it to everyone, and counts it in `net.info` (`desyncs`, `first_desync`). A desync means something outside the lockstep changed a world: a command that edits the world on one peer only (an agent's `world.set`), a script reading this peer's own facts into the game (the time of day, `net.info`, a file), or code that depends on something other than the tick and the inputs. `runtime_tests` (`[net]`) plays the arena as two peers on two threads over TCP: each presses its own move action at tick 20, both reach tick 240 with the same exposed state and the same hash chain over the whole run, Red moved by the host's key and Blue by the other's; and a peer that moves the ball on its own at tick 70 is caught by the host at the next check (tick 89).
+Every thirtieth tick each peer reports its world's hash (the world state and the particles) for the tick just run; the host compares them and, when they differ, emits `net.desync` with the tick and every peer's hash into the event log, sends it to everyone, and counts it in `net.info` (`desyncs`, `first_desync`). A desync means something outside the lockstep changed a world: a command that edits the world on one peer only (an agent's `world.set`), a script reading this peer's own facts into the game (the time of day, `net.info`, a file), or code that depends on something other than the tick and the inputs. `runtime_tests` (`[net]`) plays the arena as two peers on two threads over TCP: each presses its own move action at tick 20, both reach tick 240 with the same exposed state and the same hash chain over the whole run, Red moved by the host's key and Blue by the other's; and a peer that moves the ball on its own at tick 70 is caught by the host at the next check (tick 89); a third plays the arena with the other peer joined over a WebSocket (`ws://127.0.0.1:PORT/`), 180 ticks with the same hashes and no desync.
 
 When a player's connection drops, the host decides the tick from which the game goes on without them (the one after their last input) and tells everyone, so every peer stops waiting for them at the same tick (`net.left`); their actions stay at rest from then on.
 
 ## The wire
 
-TCP between each player and the host, one JSON object per line: the host's `welcome` (player number, players, seed, delay), `start` once everyone is in, `in` (a player's input events for a tick, which the host relays to the others), `hash`, `desync` and `left`. A tick's input is a few dozen bytes when nothing is pressed.
+Between each player and the host, JSON objects: the host's `welcome` (player number, players, seed, delay), `start` once everyone is in, `in` (a player's input events for a tick, which the host relays to the others), `hash`, `desync` and `left`. A tick's input is a few dozen bytes when nothing is pressed. They go over TCP, one object per line after the player's `hello`, or over a WebSocket, one object per text frame (RFC 6455: the HTTP upgrade, masked frames from the player, pings answered); the host tells the two apart by a newcomer's first bytes, so one port takes both and a game can mix them. `engine/app/src/websocket.cpp` has the handshake's key (SHA-1, base64) and the framing; `runtime_tests` (`[websocket]`) check them against RFC 6455's own example and frames of 5 to 70000 bytes arriving in pieces.
+
+## Browsers
+
+A browser cannot open a TCP connection, so a web build (`docs/web.md`) joins over a WebSocket: open the page with `?join=ws://HOST:PORT` and it passes `--net-join` to the runtime, which connects before the scene is made (a native peer can join the same way with `--net-join ws://HOST:PORT/`). The host is a native runtime with `--net-host`; a browser cannot listen. The host speaks plain `ws://`, so the page must be served over `http://` (a page from `https://` may only open `wss://`, which needs a TLS proxy in front of the host). A browser draws, and so ticks, only while its tab is shown: a peer in a hidden tab stops and the others wait for it.
+
+Checked: `samples/arena` with a native host and the browser build (`wasm-small`) joined from Chrome, both players steering, three goals and sixteen collisions in 1392 ticks, no desync (`tests/evidence/web/arena-join.json` and `.png`).
+
+## Determinism
+
+A lockstep game is one game only if every peer computes the same bits, and a browser and a native peer are different builds: another compiler's code, another C library, another JavaScript engine. Three things make them agree.
+
+- **No fused multiply-adds.** An arm64 build would fuse `a * b + c` into one instruction with one rounding where WebAssembly rounds twice; `pocket.toml` builds everything with `-ffp-contract=off`, so both round twice.
+- **Reproducible math.** The platform's `sin`, `cos`, `atan2`, `exp`, `pow` differ in the last bit between macOS's libm and the musl in a web build, and between JavaScriptCore (native scripts), V8 and other engines. `pocket::repro` (`engine/core/include/pocket/core/repro.hpp`) computes them from `+ - * /` and `sqrt` alone, in double, rounded to float once, which IEEE 754 fixes to the bit; the physics, water, characters, camera rigs, timelines, navigation, particles and `Quat::from_axis_angle` use it. Scripts have the same in the SDK: `repro.sin`, `repro.cos`, `repro.atan2`, `repro.pow`... (`sdk/runtime/repro.ts`, in doubles, from the same operations), which the SDK's tweens and formations use; game logic that runs in lockstep should use them too, and `Math.sin` only for what is drawn. Both are about as accurate as the libraries they replace (`core_tests` `[repro]`: within an ulp of the double libm rounded to float; `tests/ts/repro.test.ts`: within a few ulps of `Math`), and each pins a hash of its results over a sweep of inputs: the C++ one holds natively and compiled to WebAssembly under node (`python3 tools/scripts/wasm_core_tests.py`), the TypeScript one on JavaScriptCore and on V8.
+- **Hashes that know entities by their place.** A component field that holds an entity (`Character.ground`, a rigid body's `riding`) is hashed as that entity's place in the world's walk, not its id: the ids depend on how many entities the build made before the scene, and a web build makes fewer.
+
+With these, the arena run 300 ticks with the same inputs gives the same hash at every tick natively (debug) and in the browser (`wasm-small`), through the kicks and a goal. Code that reads anything but the tick and the inputs still drifts, as in any lockstep game (see Staying one game); so does a script using `Math.sin` for the game on two different JavaScript engines.
 
 ## The sample
 
@@ -33,4 +49,4 @@ TCP between each player and the host, one JSON object per line: the host's `welc
 
 ## Not yet
 
-Rollback (predicting the others' input and correcting, instead of waiting for it), players joining a game already running (they would need the world or the whole input history), relays through a server for peers that cannot reach each other, and the browser build (it has no TCP; WebSockets or WebRTC would carry the same messages).
+Rollback (predicting the others' input and correcting, instead of waiting for it), players joining a game already running (they would need the world or the whole input history), relays through a server for peers that cannot reach each other, a browser hosting (WebRTC between browsers), `wss://` in the runtime itself, and a hidden tab going on ticking on a timer.

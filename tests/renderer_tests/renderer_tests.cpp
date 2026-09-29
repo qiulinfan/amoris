@@ -1726,7 +1726,7 @@ TEST_CASE("a light's shadow faces draw only the casters it reaches", "[renderer]
 TEST_CASE("order-independent transparency blends interleaved translucent meshes alike whichever is drawn first", "[renderer][oit]") {
     // A thin red pane and a blue box around it share a center, so sorting by entity depth cannot
     // tell them apart: sorted blending draws them in the order they were made, OIT does not care.
-    auto center = [&](bool blue_first, bool oit) {
+    auto center = [&](bool blue_first, bool oit, int msaa = 1) {
         app::Options o = playground_options();
         o.width = 160;
         o.height = 90;
@@ -1740,8 +1740,11 @@ TEST_CASE("order-independent transparency blends interleaved translucent meshes 
         REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 5}}}}}, {"Camera", Json{{"fov_degrees", 40}}}}}}).has_value());
         REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 0}, {"intensity", 1.0}}}}}}).has_value());
         REQUIRE(s.command("render.oit", Json{{"enabled", oit}}).value()["enabled"] == oit);
+        REQUIRE(s.command("render.msaa", Json{{"samples", msaa}}).value()["msaa"].get<int>() == msaa);
         REQUIRE(s.frame().has_value());
-        REQUIRE(s.command("render.stats", Json::object()).value()["oit"] == oit);
+        const Json stats = s.command("render.stats", Json::object()).value();
+        REQUIRE(stats["oit"] == oit);
+        REQUIRE(stats["msaa"].get<int>() == msaa);
         Json r = s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}).value();
         Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
         REQUIRE(s.finish().has_value());
@@ -1757,6 +1760,13 @@ TEST_CASE("order-independent transparency blends interleaved translucent meshes 
     REQUIRE(std::abs(oit_a[2] - oit_b[2]) <= 3);
     REQUIRE(oit_a[0] > 40);
     REQUIRE(oit_a[2] > oit_a[0]);
+    // With MSAA the same: accumulated at four samples and resolved before the composite.
+    const auto ms_a = center(false, true, 4), ms_b = center(true, true, 4);
+    INFO("oit with msaa " << ms_a[0] << "," << ms_a[2] << " vs " << ms_b[0] << "," << ms_b[2]);
+    REQUIRE(std::abs(ms_a[0] - ms_b[0]) <= 3);
+    REQUIRE(std::abs(ms_a[2] - ms_b[2]) <= 3);
+    REQUIRE(std::abs(ms_a[0] - oit_a[0]) <= 3);
+    REQUIRE(std::abs(ms_a[2] - oit_a[2]) <= 3);
 }
 
 TEST_CASE("a reflection probe lights a closed room from what it saw: its lamps, not the sky", "[renderer][probes][probediffuse]") {

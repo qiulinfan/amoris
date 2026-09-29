@@ -1,20 +1,31 @@
 // Lockstep networking (docs/design/networking.md): TCP between each player and the host, one JSON
-// object per line.
+// object per line, or a WebSocket, one JSON object per frame (a browser cannot open TCP). The host
+// tells them apart by a newcomer's first bytes: a TCP player says hello, a WebSocket asks for the
+// upgrade.
 //
+//   joining player -> host   {"t":"hello"} (TCP) or the WebSocket handshake
 //   host -> joining player   {"t":"welcome","player":k,"players":n,"seed":s,"delay":d}
 //   host -> everyone         {"t":"start"} once every player is in
 //   anyone -> host -> others {"t":"in","tick":T,"p":k,"ev":[...]}   a player's input for tick T
 //   anyone -> host           {"t":"hash","tick":T,"h":"..."}        the world after tick T
 //   host -> everyone         {"t":"desync","tick":T,"hashes":{...}} {"t":"left","p":k,"tick":T}
 #include <pocket/app/net.hpp>
+#include <pocket/app/websocket.hpp>
 
 #include <pocket/core/log.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <map>
+#include <random>
 #include <thread>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <emscripten/websocket.h>
+#endif
 
 #ifndef __EMSCRIPTEN__
 #include <arpa/inet.h>
@@ -38,7 +49,43 @@ struct Link {
     std::string in, out;
     int player = -1;
     bool alive = true;
+    // How it talks: JSON lines over TCP, or a JSON message a WebSocket frame (the host's frames
+    // unmasked, a client's masked); a newcomer at the host is Unknown until its first bytes say.
+    // A browser's socket (Web) hands whole messages to callbacks, which queue them as lines.
+    enum class Kind { Unknown, Tcp, WsServer, WsClient, Web } kind = Kind::Tcp;
+    int web = 0;                       // Web: the browser's socket
+    bool open = false;                 // Web: the socket is open (messages wait in the outbox until then)
+    std::vector<std::string> outbox;   // Web: messages to send
 };
+
+// "ws://host:port/path" or "host:port": whether it is a WebSocket, the host and the port.
+bool parse_address(const std::string& address, bool& websocket, std::string& host, std::string& port) {
+    std::string rest = address;
+    websocket = rest.rfind("ws://", 0) == 0;
+    if (websocket) rest = rest.substr(5);
+    if (const auto slash = rest.find('/'); slash != std::string::npos) rest = rest.substr(0, slash);
+    const auto colon = rest.rfind(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= rest.size()) return false;
+    host = rest.substr(0, colon);
+    port = rest.substr(colon + 1);
+    return true;
+}
+
+// A header's value in an HTTP request (names are case-insensitive), empty when absent.
+std::string header(const std::string& request, std::string_view name) {
+    std::string lower = request;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string key(name);
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (std::size_t at = lower.find(key + ":"); at != std::string::npos; at = lower.find(key + ":", at + 1)) {
+        if (at != 0 && lower[at - 1] != '\n') continue;
+        std::size_t v = at + key.size() + 1;
+        const std::size_t end = request.find("\r\n", v);
+        while (v < end && request[v] == ' ') ++v;
+        return request.substr(v, end - v);
+    }
+    return {};
+}
 
 #ifndef __EMSCRIPTEN__
 #ifdef MSG_NOSIGNAL
@@ -73,11 +120,24 @@ struct Net::Impl {
     std::vector<Json> notes;
     std::int64_t desyncs = 0, first_desync = -1;
     std::uint64_t bytes_in = 0, bytes_out = 0;
+    std::vector<Link> pending;                                    // host: connected, not yet known to be a player
+    std::minstd_rand masks{static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count())};
 
     void send(Link& l, const Json& m) {
         if (!l.alive) return;
-        l.out += m.dump();
-        l.out += '\n';
+        const std::string text = m.dump();
+        if (l.kind == Link::Kind::WsServer) {
+            l.out += ws::frame(text, ws::Text);
+        } else if (l.kind == Link::Kind::WsClient) {
+            std::uint8_t mask[4];
+            for (auto& b : mask) b = static_cast<std::uint8_t>(masks());
+            l.out += ws::frame(text, ws::Text, mask);
+        } else if (l.kind == Link::Kind::Web) {
+            l.outbox.push_back(text);
+        } else {
+            l.out += text;
+            l.out += '\n';
+        }
     }
     void broadcast(const Json& m, int except = -1) {
         for (Link& l : links) if (l.alive && l.player != except) send(l, m);
@@ -88,6 +148,8 @@ struct Net::Impl {
         l.alive = false;
 #ifndef __EMSCRIPTEN__
         if (l.fd >= 0) ::close(l.fd);
+#else
+        if (l.web > 0) { emscripten_websocket_close(l.web, 1000, "gone"); emscripten_websocket_delete(l.web); l.web = 0; }
 #endif
         l.fd = -1;
         if (host && l.player > 0) {
@@ -166,10 +228,11 @@ struct Net::Impl {
         }
     }
 
-    void read_link(Link& l) {
+    // What arrived on a native socket, appended to the link's input.
+    void receive(Link& l) {
 #ifndef __EMSCRIPTEN__
         char buf[65536];
-        while (l.alive) {
+        while (l.alive && l.fd >= 0) {
             const ssize_t n = ::recv(l.fd, buf, sizeof buf, 0);
             if (n > 0) {
                 l.in.append(buf, static_cast<std::size_t>(n));
@@ -180,6 +243,31 @@ struct Net::Impl {
             drop(l);
             break;
         }
+#else
+        (void)l;
+#endif
+    }
+
+    void read_link(Link& l) {
+        receive(l);
+        if (l.kind == Link::Kind::WsServer || l.kind == Link::Kind::WsClient) {
+            // Frames: text and binary carry a message; a ping is answered; a close ends it.
+            int op = 0;
+            std::string msg;
+            while (l.alive && ws::take(l.in, op, msg)) {
+                if (op == ws::Text || op == ws::Binary) {
+                    Json m = Json::parse(msg, nullptr, false);
+                    if (m.is_object()) handle(l, m);
+                } else if (op == ws::Ping) {
+                    std::uint8_t mask[4];
+                    for (auto& b : mask) b = static_cast<std::uint8_t>(masks());
+                    l.out += ws::frame(msg, ws::Pong, l.kind == Link::Kind::WsClient ? mask : nullptr);
+                } else if (op == ws::Close) {
+                    drop(l);
+                }
+            }
+            return;
+        }
         std::size_t start = 0;
         for (std::size_t nl = l.in.find('\n'); nl != std::string::npos; nl = l.in.find('\n', start)) {
             Json m = Json::parse(l.in.substr(start, nl - start), nullptr, false);
@@ -187,13 +275,18 @@ struct Net::Impl {
             if (m.is_object()) handle(l, m);
         }
         l.in.erase(0, start);
-#else
-        (void)l;
-#endif
     }
 
     void flush_link(Link& l) {
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+        if (l.kind == Link::Kind::Web && l.alive && l.open) {
+            for (const std::string& m : l.outbox) {
+                emscripten_websocket_send_utf8_text(l.web, m.c_str());
+                bytes_out += m.size();
+            }
+            l.outbox.clear();
+        }
+#else
         while (l.alive && !l.out.empty()) {
             const ssize_t n = ::send(l.fd, l.out.data(), l.out.size(), kSendFlags);
             if (n > 0) {
@@ -204,11 +297,12 @@ struct Net::Impl {
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) break;
             drop(l);
         }
-#else
-        (void)l;
 #endif
     }
 
+    // Newcomers: accepted, then told apart by their first bytes (a TCP player's hello line, a
+    // WebSocket's upgrade request) and let in, or turned away (the game full or started, or bytes
+    // that are neither).
     void accept_players() {
 #ifndef __EMSCRIPTEN__
         if (listen_fd < 0) return;
@@ -218,17 +312,61 @@ struct Net::Impl {
             quiet_socket(fd);
             Link l;
             l.fd = fd;
+            l.kind = Link::Kind::Unknown;
+            pending.push_back(std::move(l));
+        }
+        for (Link& l : pending) {
+            receive(l);
+            if (!l.alive) continue;
+            if (l.in.rfind("GET ", 0) == 0) {
+                const std::size_t end = l.in.find("\r\n\r\n");
+                if (end == std::string::npos) { if (l.in.size() > 16384) drop(l); continue; }
+                const std::string key = header(l.in.substr(0, end + 2), "Sec-WebSocket-Key");
+                if (key.empty()) {
+                    l.out += "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+                    flush_link(l);
+                    drop(l);
+                    continue;
+                }
+                l.out += "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + ws::accept_key(key) + "\r\n\r\n";
+                l.in.erase(0, end + 4);
+                l.kind = Link::Kind::WsServer;
+                admit(l);
+            } else if (!l.in.empty() && l.in[0] == '{') {
+                const std::size_t nl = l.in.find('\n');
+                if (nl == std::string::npos) { if (l.in.size() > 16384) drop(l); continue; }
+                const Json hello = Json::parse(l.in.substr(0, nl), nullptr, false);
+                l.in.erase(0, nl + 1);
+                if (!hello.is_object() || hello.value("t", "") != "hello") { drop(l); continue; }
+                l.kind = Link::Kind::Tcp;
+                admit(l);
+            } else if (!l.in.empty()) {
+                drop(l);
+            }
+        }
+        pending.erase(std::remove_if(pending.begin(), pending.end(), [](const Link& l) { return !l.alive || l.kind != Link::Kind::Unknown; }), pending.end());
+#endif
+    }
+
+    // A newcomer whose way of talking is known: a player, or turned away.
+    void admit(Link& from) {
+#ifndef __EMSCRIPTEN__
+        Link l = std::move(from);
+        from.alive = false;
+        from.fd = -1;
+        {
             if (started || next_player >= players) {
                 send(l, Json{{"t", "full"}});
                 flush_link(l);
-                ::close(fd);
-                continue;
+                ::close(l.fd);
+                return;
             }
             l.player = next_player++;
             send(l, Json{{"t", "welcome"}, {"player", l.player}, {"players", players}, {"seed", seed}, {"delay", delay}});
+            const bool websocket = l.kind == Link::Kind::WsServer;
             links.push_back(std::move(l));
-            notes.push_back(Json{{"type", "net.joined"}, {"player", links.back().player}});
-            log::info("net", "player {} joined ({} of {})", links.back().player, next_player, players);
+            notes.push_back(Json{{"type", "net.joined"}, {"player", links.back().player}, {"websocket", websocket}});
+            log::info("net", "player {} joined ({} of {}){}", links.back().player, next_player, players, websocket ? " over a WebSocket" : "");
             if (next_player >= players) {
                 started = true;
                 broadcast(Json{{"t", "start"}});
@@ -248,7 +386,13 @@ Net::~Net() {
         impl_->flush_link(l);
         if (l.fd >= 0) ::close(l.fd);
     }
+    for (Link& l : impl_->pending) if (l.fd >= 0) ::close(l.fd);
     if (impl_->listen_fd >= 0) ::close(impl_->listen_fd);
+#else
+    for (Link& l : impl_->links) {
+        impl_->flush_link(l);
+        if (l.web > 0) { emscripten_websocket_close(l.web, 1000, "bye"); emscripten_websocket_delete(l.web); }
+    }
 #endif
 }
 
@@ -288,21 +432,63 @@ Result<std::unique_ptr<Net>> Net::host(int port, int players, int delay, std::ui
 }
 
 Result<std::unique_ptr<Net>> Net::join(const std::string& address, double timeout) {
+    bool websocket = false;
+    std::string hostname, service;
+    if (!parse_address(address, websocket, hostname, service)) return fail("bad_args", "join needs host:port or ws://host:port, got '{}'", address);
+    std::unique_ptr<Net> net(new Net());
+    Impl& im = *net->impl_;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
+    im.player = -1;
 #ifdef __EMSCRIPTEN__
-    (void)address; (void)timeout;
-    return fail("unsupported", "networking is not in the browser build");
+    // The browser's own WebSocket: its callbacks queue what arrives as lines and mark it open or
+    // gone; the wait for the welcome sleeps, so the page's event loop runs them.
+    Link l;
+    l.kind = Link::Kind::Web;
+    l.player = 0;
+    im.links.push_back(std::move(l));
+    EmscriptenWebSocketCreateAttributes attr;
+    emscripten_websocket_init_create_attributes(&attr);
+    const std::string url = "ws://" + hostname + ":" + service;
+    attr.url = url.c_str();
+    attr.createOnMainThread = EM_TRUE;
+    const EMSCRIPTEN_WEBSOCKET_T sock = emscripten_websocket_new(&attr);
+    if (sock <= 0) return fail("net_error", "cannot open a WebSocket to {}", url);
+    im.links[0].web = sock;
+    auto on_open = [](int, const EmscriptenWebSocketOpenEvent*, void* user) -> EM_BOOL {
+        static_cast<Impl*>(user)->links[0].open = true;
+        return EM_TRUE;
+    };
+    auto on_message = [](int, const EmscriptenWebSocketMessageEvent* e, void* user) -> EM_BOOL {
+        Impl* impl = static_cast<Impl*>(user);
+        if (e->isText && e->data) {
+            impl->links[0].in += reinterpret_cast<const char*>(e->data);
+            impl->links[0].in += '\n';
+            impl->bytes_in += e->numBytes;
+        }
+        return EM_TRUE;
+    };
+    static const auto on_gone = [](int, const void*, void* user) -> EM_BOOL {
+        Impl* impl = static_cast<Impl*>(user);
+        impl->links[0].open = false;
+        impl->drop(impl->links[0]);
+        return EM_TRUE;
+    };
+    emscripten_websocket_set_onopen_callback(sock, &im, on_open);
+    emscripten_websocket_set_onmessage_callback(sock, &im, on_message);
+    emscripten_websocket_set_onclose_callback(sock, &im, [](int t, const EmscriptenWebSocketCloseEvent* e, void* u) -> EM_BOOL { return on_gone(t, e, u); });
+    emscripten_websocket_set_onerror_callback(sock, &im, [](int t, const EmscriptenWebSocketErrorEvent* e, void* u) -> EM_BOOL { return on_gone(t, e, u); });
+    while (im.player < 0) {
+        emscripten_sleep(10);
+        im.read_link(im.links[0]);
+        if (!im.links[0].alive) return fail("net_error", "the host at {} closed the connection (no game there, or it is full or running)", url);
+        if (std::chrono::steady_clock::now() > until) return fail("net_error", "the host at {} did not welcome us in {} s", url, timeout);
+    }
 #else
-    const auto colon = address.rfind(':');
-    if (colon == std::string::npos) return fail("bad_args", "join needs host:port, got '{}'", address);
-    const std::string hostname = address.substr(0, colon), service = address.substr(colon + 1);
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* found = nullptr;
     if (getaddrinfo(hostname.c_str(), service.c_str(), &hints, &found) != 0 || !found) return fail("net_error", "cannot resolve {}", address);
-    std::unique_ptr<Net> net(new Net());
-    Impl& im = *net->impl_;
-    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
     int fd = -1;
     // The host may still be starting: try again until the timeout.
     while (fd < 0) {
@@ -322,18 +508,41 @@ Result<std::unique_ptr<Net>> Net::join(const std::string& address, double timeou
     l.fd = fd;
     l.player = 0;
     im.links.push_back(std::move(l));
-    bool welcomed = false;
-    im.player = -1;
-    while (!welcomed) {
-        im.read_link(im.links[0]);
-        welcomed = im.player >= 0;
-        if (!im.links[0].alive) return fail("net_error", "the host at {} closed the connection (the game may be full or running)", address);
-        if (!welcomed && std::chrono::steady_clock::now() > until) return fail("net_error", "the host at {} did not welcome us in {} s", address, timeout);
-        if (!welcomed) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Link& host = im.links[0];
+    if (websocket) {
+        // The upgrade, then frames.
+        std::uint8_t nonce[16];
+        for (auto& b : nonce) b = static_cast<std::uint8_t>(im.masks());
+        const std::string key = ws::base64(nonce, sizeof nonce);
+        host.out += "GET / HTTP/1.1\r\nHost: " + hostname + ":" + service + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        im.flush_link(host);
+        std::size_t end = std::string::npos;
+        while (end == std::string::npos) {
+            im.receive(host);
+            end = host.in.find("\r\n\r\n");
+            if (!host.alive) return fail("net_error", "the host at {} closed the connection during the WebSocket handshake", address);
+            if (end == std::string::npos && std::chrono::steady_clock::now() > until) return fail("net_error", "the host at {} did not answer the WebSocket handshake in {} s", address, timeout);
+            if (end == std::string::npos) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const std::string answer = host.in.substr(0, end + 2);
+        host.in.erase(0, end + 4);
+        if (answer.find(" 101 ") == std::string::npos || header(answer, "Sec-WebSocket-Accept") != ws::accept_key(key)) return fail("net_error", "the host at {} refused the WebSocket: {}", address, answer.substr(0, answer.find("\r\n")));
+        host.kind = Link::Kind::WsClient;
+    } else {
+        host.kind = Link::Kind::Tcp;
+        im.send(host, Json{{"t", "hello"}});
+        im.flush_link(host);
     }
+    while (im.player < 0) {
+        im.read_link(im.links[0]);
+        im.flush_link(im.links[0]);
+        if (!im.links[0].alive) return fail("net_error", "the host at {} closed the connection (the game may be full or running)", address);
+        if (im.player < 0 && std::chrono::steady_clock::now() > until) return fail("net_error", "the host at {} did not welcome us in {} s", address, timeout);
+        if (im.player < 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+#endif
     log::info("net", "joined {} as player {} of {} (seed {}, input delay {} ticks)", address, im.player, im.players, im.seed, im.delay);
     return net;
-#endif
 }
 
 void Net::pump() {

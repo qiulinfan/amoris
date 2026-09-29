@@ -1218,7 +1218,7 @@ void Physics::step(world::World& w, double dt_d) {
             float f_side = -v_side * share / std::max(dt, 1e-6f);
             // Within the friction circle of the load on the wheel.
             const float limit = std::max(veh.grip, 0.0f) * load;
-            const float total = std::hypot(f_along, f_side);
+            const float total = repro::hypot(f_along, f_side);
             if (total > limit && total > 0) { f_along *= limit / total; f_side *= limit / total; }
             // Tyre forces act at the contact, raised most of the way to the centre of mass so a turn
             // leans the body rather than rolls it over.
@@ -1311,7 +1311,7 @@ void Physics::step(world::World& w, double dt_d) {
                     const Vec3 at = b.position + arm;
                     if (!world::water_covers(wa, p.center, at.x, at.z) || at.y < bottom) continue;
                     const world::WaterPoint surface = world::water_at(wa, p.center.y, at.x, at.z, time);
-                    const float under = std::clamp((surface.position.y - at.y) / std::cbrt(volume) + 0.5f, 0.0f, 1.0f);
+                    const float under = std::clamp((surface.position.y - at.y) / repro::cbrt(volume) + 0.5f, 0.0f, 1.0f);
                     if (under <= 0) continue;
                     const float v_under = volume * under;
                     displaced += v_under;
@@ -1461,7 +1461,7 @@ void Physics::step(world::World& w, double dt_d) {
     auto hinge_angle = [](const JointState& js, const Quat& rot_a, const Quat& rot_b) {
         const Vec3 axis_w = rot_a.rotate(js.axis_a);
         const Vec3 ua = rot_a.rotate(js.perp_a), ub = rot_b.rotate(js.ref_b);
-        return std::atan2(dot(cross(ub, ua), axis_w), dot(ub, ua));
+        return repro::atan2(dot(cross(ub, ua), axis_w), dot(ub, ua));
     };
     auto body_index = [&](EntityId id) -> std::size_t {
         auto it = std::lower_bound(im.bodies.begin(), im.bodies.end(), id, [](const Body& b, EntityId v) { return b.id < v; });
@@ -2126,7 +2126,7 @@ void Physics::step(world::World& w, double dt_d) {
                 Vec3 c = cross(axis_a_w, axis_b_w);
                 float sin_err = length(c);
                 if (sin_err > 1e-5f) {
-                    float ang = std::asin(std::min(1.0f, sin_err));
+                    float ang = repro::asin(std::min(1.0f, sin_err));
                     if (dot(axis_a_w, axis_b_w) < 0) ang = kPi - ang;
                     Vec3 n = c * (1.0f / sin_err);
                     float ka = a_dyn ? dot(n, mul3(a.inv_inertia_world, n)) : 0.0f, kb = b_dyn ? dot(n, mul3(bp->inv_inertia_world, n)) : 0.0f;
@@ -2435,7 +2435,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
         const float half_h = std::max(c.height * 0.5f, r);
         const float seg = half_h - r;                                  // half the straight part
         const float lift = std::clamp(c.step, 0.0f, 2.0f * seg);       // how far the walking capsule's foot is raised
-        const float cos_max = std::cos(std::clamp(c.max_slope, 0.0f, 89.0f) * 3.14159265f / 180.0f);
+        const float cos_max = repro::cos(std::clamp(c.max_slope, 0.0f, 89.0f) * 3.14159265f / 180.0f);
         auto usable = [&](const Body& b) { return b.id != id && (b.layer & c.mask); };
         // The capsule at `center`, lifted by `raise` at its foot (its top stays).
         auto capsule = [&](Vec3 center, float raise) {

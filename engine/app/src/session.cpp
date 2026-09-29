@@ -80,6 +80,11 @@ audio::BusSettings bus_settings(audio::BusSettings s, const Json& p) {
     s.volume = static_cast<float>(opt<double>(p, "volume", s.volume));
     s.muted = opt<bool>(p, "muted", s.muted);
     s.lowpass = static_cast<float>(opt<double>(p, "lowpass", s.lowpass));
+    s.highpass = static_cast<float>(opt<double>(p, "highpass", s.highpass));
+    s.echo = static_cast<float>(opt<double>(p, "echo", s.echo));
+    s.echo_feedback = static_cast<float>(opt<double>(p, "echo_feedback", s.echo_feedback));
+    s.echo_mix = static_cast<float>(opt<double>(p, "echo_mix", s.echo_mix));
+    s.reverb = static_cast<float>(opt<double>(p, "reverb", s.reverb));
     if (p.contains("duck_by")) s.duck_by = p["duck_by"].is_string() ? p["duck_by"].get<std::string>() : std::string();
     s.duck_amount = static_cast<float>(opt<double>(p, "duck_amount", s.duck_amount));
     s.duck_seconds = static_cast<float>(opt<double>(p, "duck_seconds", s.duck_seconds));
@@ -733,7 +738,7 @@ void Session::run_tick() {
         hasher_.i64(tick);
         hasher_.str(s.dump());
         hasher_.u64(world_->hash());
-        hasher_.u64(particles_->hash());
+        hasher_.u64(particles_->hash(*world_));
         hasher_.f32(clear_.r);
         hasher_.f32(clear_.g);
         hasher_.f32(clear_.b);
@@ -777,7 +782,7 @@ Status Session::run_ticks(int ticks) {
         run_tick();
         if (net_) {
             // Every thirtieth tick each peer tells the host what its world is; the host compares.
-            if (clock_.tick % 30 == 0) net_->report_hash(clock_.tick - 1, hex64(world_->hash() ^ (particles_->hash() * 1099511628211ull)));
+            if (clock_.tick % 30 == 0) net_->report_hash(clock_.tick - 1, hex64(world_->hash() ^ (particles_->hash(*world_) * 1099511628211ull)));
             net_->release(clock_.tick - 1);
         }
     }
@@ -931,7 +936,7 @@ void Session::update_scatters() {
                 z ^= z >> 31;
                 return static_cast<float>(z >> 40) / static_cast<float>(1ull << 24);
             };
-            const float cos_max = std::cos(std::clamp(sc.max_slope, 0.0f, 90.0f) * std::numbers::pi_v<float> / 180.0f);
+            const float cos_max = repro::cos(std::clamp(sc.max_slope, 0.0f, 90.0f) * std::numbers::pi_v<float> / 180.0f);
             const float cell = std::max(sc.spacing, 1e-3f);
             std::unordered_map<std::int64_t, std::vector<Vec2>> near;
             std::vector<world::World::Instance> copies;
@@ -960,7 +965,7 @@ void Session::update_scatters() {
                         for (std::int64_t dz = -1; dz <= 1 && !crowded; ++dz) {
                             auto it = near.find((cx + dx) * 1000003 + (cz + dz));
                             if (it == near.end()) continue;
-                            for (const Vec2& q : it->second) if (std::hypot(q.x - x, q.y - z) < sc.spacing) { crowded = true; break; }
+                            for (const Vec2& q : it->second) if (repro::hypot(q.x - x, q.y - z) < sc.spacing) { crowded = true; break; }
                         }
                     }
                     if (crowded) continue;
@@ -969,7 +974,7 @@ void Session::update_scatters() {
                 // Turned about the vertical, leaned toward the ground's slope by `align`, sized and shaded.
                 Quat rot = Quat::from_axis_angle(Vec3{0, 1, 0}, (ryaw - 0.5f) * sc.yaw * std::numbers::pi_v<float> / 180.0f);
                 const Vec3 axis = cross(Vec3{0, 1, 0}, normal);
-                if (sc.align > 0 && length(axis) > 1e-5f) rot = Quat::from_axis_angle(normalize(axis), std::acos(std::clamp(normal.y, -1.0f, 1.0f)) * std::clamp(sc.align, 0.0f, 1.0f)) * rot;
+                if (sc.align > 0 && length(axis) > 1e-5f) rot = Quat::from_axis_angle(normalize(axis), repro::acos(std::clamp(normal.y, -1.0f, 1.0f)) * std::clamp(sc.align, 0.0f, 1.0f)) * rot;
                 const float size = sc.scale.x + (sc.scale.y - sc.scale.x) * rscale;
                 const Vec3 at{point.x, point.y - sc.sink, point.z};
                 copies.push_back({Mat4::trs(at, normalize(rot), wt->scale * size), std::max(0.0f, 1.0f + (rshade * 2.0f - 1.0f) * sc.shade)});
@@ -1149,7 +1154,7 @@ void Session::update_camera_rigs(float dt) {
         }
         const Vec3 pivot = at + Vec3{0, rig.height, 0};
         const bool fresh = !rig_base_.contains(id);
-        auto ease = [&](float seconds) { return seconds > 0 ? 1.0f - std::exp(-dt / seconds) : 1.0f; };
+        auto ease = [&](float seconds) { return seconds > 0 ? 1.0f - repro::exp(-dt / seconds) : 1.0f; };
         Vec3 want;
         if (rig.mode == 2) {
             want = pivot + rig.offset;
@@ -1157,7 +1162,7 @@ void Session::update_camera_rigs(float dt) {
             float yaw = rig.yaw;
             if (rig.mode == 0) {
                 const Vec3 f = turned.rotate(Vec3{0, 0, -1});
-                const float heading = std::atan2(-f.x, -f.z) / kDeg;
+                const float heading = repro::atan2(-f.x, -f.z) / kDeg;
                 float gap = std::fmod(heading - rig.heading + 540.0f, 360.0f) - 180.0f;
                 rig.heading = fresh ? heading : rig.heading + gap * ease(rig.turn);
                 rig.heading = std::fmod(rig.heading + 540.0f, 360.0f) - 180.0f;
@@ -1170,7 +1175,7 @@ void Session::update_camera_rigs(float dt) {
                 yaw = rig.yaw;
             }
             const float y = yaw * kDeg, p = rig.pitch * kDeg;
-            const Vec3 look{-std::sin(y) * std::cos(p), std::sin(p), -std::cos(y) * std::cos(p)};
+            const Vec3 look{-repro::sin(y) * repro::cos(p), repro::sin(p), -repro::cos(y) * repro::cos(p)};
             want = pivot - look * std::max(rig.distance, 0.0f);
         }
         const Vec3 base = fresh ? want : rig_base_[id];
@@ -1189,11 +1194,11 @@ void Session::update_camera_rigs(float dt) {
         rig_base_[id] = pos;
         // Looking at the pivot, trembling by the trauma's square.
         const Vec3 to = pivot - pos;
-        float yaw = std::atan2(-to.x, -to.z), pitch = std::atan2(to.y, std::sqrt(to.x * to.x + to.z * to.z)), roll = 0;
+        float yaw = repro::atan2(-to.x, -to.z), pitch = repro::atan2(to.y, std::sqrt(to.x * to.x + to.z * to.z)), roll = 0;
         const float s = std::clamp(rig.shake, 0.0f, 1.0f);
         if (s > 0) {
             const float k = s * s;
-            auto wave = [&](float a, float b, float c) { return 0.6f * std::sin(time * a + c) + 0.4f * std::sin(time * b + 2.0f * c); };
+            auto wave = [&](float a, float b, float c) { return 0.6f * repro::sin(time * a + c) + 0.4f * repro::sin(time * b + 2.0f * c); };
             yaw += k * 4.0f * kDeg * wave(37.1f, 23.3f, 0.3f);
             pitch += k * 4.0f * kDeg * wave(31.7f, 19.9f, 1.7f);
             roll += k * 2.0f * kDeg * wave(29.3f, 41.1f, 2.9f);
@@ -1332,9 +1337,9 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         for (int j = 0; j < g.n; ++j) {
             for (int i = 0; i < g.n; ++i) {
                 const float x = -g.size_x * 0.5f + static_cast<float>(i) * g.cell_x(), z = -g.size_z * 0.5f + static_cast<float>(j) * g.cell_z();
-                const float d = std::hypot(x - c.x, z - c.z);
+                const float d = repro::hypot(x - c.x, z - c.z);
                 if (d >= radius) continue;
-                const float w = 0.5f + 0.5f * std::cos(d / radius * std::numbers::pi_v<float>);
+                const float w = 0.5f + 0.5f * repro::cos(d / radius * std::numbers::pi_v<float>);
                 float& h = g.h[static_cast<std::size_t>(j) * static_cast<std::size_t>(g.n) + static_cast<std::size_t>(i)];
                 const float was = h;
                 if (mode == "raise") h += amount / scale_y * w;
@@ -3454,6 +3459,11 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         j["volume"] = round(b.settings.volume);
         j["muted"] = b.settings.muted;
         j["lowpass"] = round(b.settings.lowpass);
+        j["highpass"] = round(b.settings.highpass);
+        j["echo"] = round(b.settings.echo);
+        j["echo_feedback"] = round(b.settings.echo_feedback);
+        j["echo_mix"] = round(b.settings.echo_mix);
+        j["reverb"] = round(b.settings.reverb);
         j["duck_by"] = b.settings.duck_by;
         j["duck_amount"] = round(b.settings.duck_amount);
         j["duck_seconds"] = round(b.settings.duck_seconds);
