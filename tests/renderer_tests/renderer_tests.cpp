@@ -264,6 +264,18 @@ TEST_CASE("debug lines draw over the scene and overlays follow colliders", "[ren
     REQUIRE(s.command("render.debug", Json{{"all", false}}).value()["axes"] == false);
     REQUIRE(s.frame().has_value());
     REQUIRE(s.command("render.stats", Json::object()).value()["debug_lines"].get<int>() == 0);
+    // Light overlays: the sun an arrow and a dot (3 + 24 lines), a point light the sphere it reaches
+    // and a dot (72 + 24), a spot its cone (the outer circle, four edges, the inner circle) and a dot (24 + 4 + 24 + 24).
+    REQUIRE(s.command("render.debug", Json{{"lights", true}}).value()["lights"] == true);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["debug_lines"].get<int>() == 27);
+    REQUIRE(s.command("world.spawn", Json{{"name", "Bulb"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -2}, {"y", 1}, {"z", 0}}}}}, {"Light", Json{{"kind", 1}, {"range", 3}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Beam"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 2}, {"y", 3}, {"z", 0}}}, {"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}}}, {"Light", Json{{"kind", 2}, {"range", 4}, {"outer_angle", 25}, {"inner_angle", 15}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["debug_lines"].get<int>() == 27 + 96 + 76);
+    REQUIRE(s.command("render.debug", Json{{"lights", false}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["debug_lines"].get<int>() == 0);
     REQUIRE(s.finish().has_value());
 }
 
@@ -886,5 +898,248 @@ TEST_CASE("fog fades what is far toward its color, thins with height and leaves 
     const int far_thin = red_at(-80, 6);
     INFO("thin " << far_thin);
     REQUIRE(far_thin < far_fog - 100);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("spot lights light a cone; any number of point lights reach the pixels they touch through the clusters", "[renderer][lights]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    const Json down{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}};   // -Z turned to -Y
+    // A white floor seen from straight above, a sun of no strength (so no default key light).
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 60}, {"y", 0.2}, {"z", 60}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(floor);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", down}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 0}};
+    spawn(sun);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 12}, {"z", 0}}}, {"rotation", down}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 60}};
+    spawn(camera);
+    auto pixel_at = [&](float x, float z) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 0}, {"z", z}}}}).value();
+        Json cap = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value();
+        return std::array<int, 3>{cap["pixel"][0].get<int>(), cap["pixel"][1].get<int>(), cap["pixel"][2].get<int>()};
+    };
+
+    SECTION("a spot's cone") {
+        Json spot;
+        spot["name"] = "Spot";
+        spot["components"]["Transform"] = Json{{"position", Json{{"x", -4}, {"y", 3}, {"z", 0}}}, {"rotation", down}};
+        spot["components"]["Light"] = Json{{"kind", 2}, {"intensity", 3}, {"range", 5}, {"inner_angle", 15}, {"outer_angle", 20}};
+        spawn(spot);
+        Json point;
+        point["name"] = "Point";
+        point["components"]["Transform"] = Json{{"position", Json{{"x", 4}, {"y", 3}, {"z", 0}}}};
+        point["components"]["Light"] = Json{{"kind", 1}, {"intensity", 3}, {"range", 5}};
+        spawn(point);
+        REQUIRE(s.frame().has_value());
+        const int ambient = pixel_at(0, -5)[0];
+        const int spot_center = pixel_at(-4, 0)[0], spot_aside = pixel_at(-4, 2)[0];
+        const int point_center = pixel_at(4, 0)[0], point_aside = pixel_at(4, 2)[0];
+        Json stats = s.command("render.stats", Json::object()).value();
+        INFO("ambient " << ambient << " spot " << spot_center << "/" << spot_aside << " point " << point_center << "/" << point_aside << " " << stats.dump());
+        REQUIRE(stats["spot_lights"] == 1);
+        REQUIRE(stats["point_lights"] == 1);
+        REQUIRE(spot_center > ambient + 80);        // inside the cone: lit
+        REQUIRE(spot_aside < ambient + 6);          // two units aside, well outside twenty degrees: dark
+        REQUIRE(point_aside > ambient + 30);        // the same place beside a point light is lit
+        REQUIRE(std::abs(spot_center - point_center) < 12);   // under the cone's axis a spot is a point light
+        // Turned to shine sideways, the spot leaves the floor under it dark.
+        REQUIRE(s.command("world.set", Json{{"entity", "Spot"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+        REQUIRE(pixel_at(-4, 0)[0] < ambient + 6);
+    }
+
+    SECTION("four hundred lights, culled to the view and listed by cluster") {
+        // A grid of small colored lights two units apart, each reaching 1.5: the floor under one is
+        // lit by that one alone, in its color. The view covers about 24 by 14 units of the 40 by 40.
+        for (int i = 0; i < 20; ++i)
+            for (int j = 0; j < 20; ++j) {
+                const int k = (i + j) % 3;
+                Json l;
+                l["name"] = "L" + std::to_string(i) + "_" + std::to_string(j);
+                l["components"]["Transform"] = Json{{"position", Json{{"x", -19 + 2 * i}, {"y", 0.5}, {"z", -19 + 2 * j}}}};
+                l["components"]["Light"] = Json{{"kind", 1}, {"intensity", 2}, {"range", 1.5}, {"color", Json{{"r", k == 0 ? 1 : 0}, {"g", k == 1 ? 1 : 0}, {"b", k == 2 ? 1 : 0}, {"a", 1}}}};
+                spawn(l);
+            }
+        REQUIRE(s.frame().has_value());
+        Json stats = s.command("render.stats", Json::object()).value();
+        INFO(stats.dump());
+        const int visible = stats["point_lights"].get<int>();
+        REQUIRE(visible > 60);                                   // far past the old eight
+        REQUIRE(visible < 400);
+        REQUIRE(stats["lights"]["culled"].get<int>() == 400 - visible);
+        REQUIRE(stats["lights"]["dropped"] == 0);
+        REQUIRE(stats["lights"]["clusters"] == Json::array({16, 9, 24}));
+        REQUIRE(stats["lights"]["entries"].get<int>() >= visible);
+        REQUIRE(stats["lights"]["max_per_cluster"].get<int>() <= 20);   // a cluster lists only the lights near it, not all of them
+        auto dominant = [](std::array<int, 3> p) { return p[0] > p[1] + 40 && p[0] > p[2] + 40 ? 0 : p[1] > p[0] + 40 && p[1] > p[2] + 40 ? 1 : p[2] > p[0] + 40 && p[2] > p[1] + 40 ? 2 : -1; };
+        const auto red = pixel_at(-1, -1), green = pixel_at(1, -1), blue = pixel_at(1, 1), edge = pixel_at(9, 5);
+        INFO("red " << red[0] << "," << red[1] << "," << red[2] << " green " << green[0] << "," << green[1] << "," << green[2] << " blue " << blue[0] << "," << blue[1] << "," << blue[2] << " edge " << edge[0] << "," << edge[1] << "," << edge[2]);
+        REQUIRE(dominant(red) == 0);     // (i + j) % 3 == 0 at (-1, -1)
+        REQUIRE(dominant(green) == 1);
+        REQUIRE(dominant(blue) == 2);
+        REQUIRE(dominant(edge) == ((14 + 12) % 3));   // near the corner of the view, a light is found as well
+        // Past the budget: the farthest lights go and the nearest stay.
+        for (int i = 0; i < 1000; ++i) {
+            Json l;
+            l["name"] = "M" + std::to_string(i);
+            l["components"]["Transform"] = Json{{"position", Json{{"x", -8 + (i % 40) * 0.4}, {"y", 2}, {"z", -5 + (i / 40) * 0.4}}}};
+            l["components"]["Light"] = Json{{"kind", 1}, {"intensity", 1}, {"range", 0.3}};
+            spawn(l);
+        }
+        REQUIRE(s.frame().has_value());
+        stats = s.command("render.stats", Json::object()).value();
+        INFO(stats.dump());
+        REQUIRE(stats["point_lights"] == 1024);
+        REQUIRE(stats["lights"]["dropped"].get<int>() == visible + 1000 - 1024);
+        REQUIRE(dominant(pixel_at(-1, -1)) == 0);   // the floor's lights under the middle of the view are among the nearest and stay
+    }
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("point and spot lights cast shadows from the atlas when asked", "[renderer][lights][lightshadows]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    const Json down{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}};
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 60}, {"y", 0.2}, {"z", 60}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}};
+    spawn(floor);
+    // A block standing in the light's way: its shadow falls on the floor beyond it, toward +x.
+    Json block;
+    block["name"] = "Block";
+    block["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 0.5}, {"z", 0}}}};
+    block["components"]["MeshRenderer"] = Json{{"mesh", "cube"}};
+    spawn(block);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", down}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 0}};
+    spawn(sun);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 12}, {"z", 0}}}, {"rotation", down}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 60}};
+    spawn(camera);
+    auto red_at = [&](float x, float z) {
+        REQUIRE(s.frame().has_value());
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 0}, {"z", z}}}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"][0].get<int>();
+    };
+    auto check = [&](Json light, int faces) {
+        light["name"] = "Lamp";
+        spawn(light);
+        const int shade_off = red_at(1.1f, 0), open_off = red_at(-3, 1.5f);
+        REQUIRE(s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"shadows", true}}}}).has_value());
+        const int shade_on = red_at(1.1f, 0), open_on = red_at(-3, 1.5f);
+        Json stats = s.command("render.stats", Json::object()).value();
+        INFO("shade " << shade_off << "->" << shade_on << " open " << open_off << "->" << open_on << " " << stats["light_shadows"].dump());
+        REQUIRE(stats["light_shadows"]["lights"] == 1);
+        REQUIRE(stats["light_shadows"]["faces"] == faces);
+        REQUIRE(shade_on < shade_off - 60);          // the floor behind the block goes dark
+        REQUIRE(std::abs(open_on - open_off) < 6);   // open floor keeps its light: no acne, no leak
+        // A mesh that casts no shadow lets the light through.
+        REQUIRE(s.command("world.set", Json{{"entity", "Block"}, {"component", "MeshRenderer"}, {"value", Json{{"cast_shadows", false}}}}).has_value());
+        REQUIRE(std::abs(red_at(1.1f, 0) - shade_off) < 6);
+        REQUIRE(s.command("world.set", Json{{"entity", "Block"}, {"component", "MeshRenderer"}, {"value", Json{{"cast_shadows", true}}}}).has_value());
+        REQUIRE(s.command("world.destroy", Json{{"entity", "Lamp"}}).has_value());
+    };
+    SECTION("a spot") {
+        Json spot;
+        spot["components"]["Transform"] = Json{{"position", Json{{"x", -2}, {"y", 4}, {"z", 0}}}, {"rotation", down}};
+        spot["components"]["Light"] = Json{{"kind", 2}, {"intensity", 4}, {"range", 12}, {"inner_angle", 45}, {"outer_angle", 55}};
+        check(spot, 1);
+    }
+    SECTION("a point light, a cube of six faces") {
+        Json point;
+        point["components"]["Transform"] = Json{{"position", Json{{"x", -2}, {"y", 3}, {"z", 0}}}};
+        point["components"]["Light"] = Json{{"kind", 1}, {"intensity", 4}, {"range", 12}};
+        check(point, 6);
+    }
+    SECTION("off with render.shadows") {
+        REQUIRE(s.command("render.shadows", Json{{"enabled", false}}).has_value());
+        Json point;
+        point["name"] = "Lamp";
+        point["components"]["Transform"] = Json{{"position", Json{{"x", -2}, {"y", 3}, {"z", 0}}}};
+        point["components"]["Light"] = Json{{"kind", 1}, {"intensity", 4}, {"range", 12}, {"shadows", true}};
+        spawn(point);
+        REQUIRE(s.frame().has_value());
+        REQUIRE(s.command("render.stats", Json::object()).value()["light_shadows"]["faces"] == 0);
+    }
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("volumetric fog shows a spot's beam in the air, and a slab in the beam cuts a shaft of shadow", "[renderer][fog][volumetric]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    const Json down{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}};
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", down}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 0}};
+    spawn(sun);
+    // A beam straight down, a slab over the right half of it halfway down.
+    Json spot;
+    spot["name"] = "Beam";
+    spot["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 6}, {"z", 0}}}, {"rotation", down}};
+    spot["components"]["Light"] = Json{{"kind", 2}, {"intensity", 6}, {"range", 12}, {"inner_angle", 12}, {"outer_angle", 15}, {"shadows", true}};
+    spawn(spot);
+    Json slab;
+    slab["name"] = "Slab";
+    slab["components"]["Transform"] = Json{{"position", Json{{"x", 1}, {"y", 3}, {"z", 0}}}, {"scale", Json{{"x", 2}, {"y", 0.1}, {"z", 2}}}};
+    slab["components"]["MeshRenderer"] = Json{{"mesh", "cube"}};
+    spawn(slab);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", 2}, {"z", 8}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 50}};
+    spawn(camera);
+    Json fog;
+    fog["name"] = "Mist";
+    fog["components"]["Fog"] = Json{{"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}, {"density", 0.08}, {"falloff", 0.0}, {"volumetric", true}, {"anisotropy", 0.0}, {"steps", 64}, {"distance", 20}};
+    spawn(fog);
+    auto level_at = [&](float x, float y) {
+        Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", 0}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return (p[0].get<int>() + p[1].get<int>() + p[2].get<int>()) / 3;
+    };
+    REQUIRE(s.frame().has_value());
+    const int lit = level_at(-0.25f, 1.5f), shaded = level_at(0.25f, 1.5f), outside = level_at(-1.5f, 1.5f), above = level_at(0.25f, 4.2f);
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("lit " << lit << " shaded " << shaded << " outside " << outside << " above " << above << " " << stats.dump());
+    REQUIRE(stats["volumetric"] == true);
+    REQUIRE(lit > outside + 20);        // the beam shows in the air
+    REQUIRE(shaded < lit - 15);         // under the slab the beam is cut
+    REQUIRE(above > shaded + 10);       // over the slab the same side is lit
+    // The plain fog shows no beam.
+    REQUIRE(s.command("world.set", Json{{"entity", "Mist"}, {"component", "Fog"}, {"value", Json{{"volumetric", false}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int lit_plain = level_at(-0.25f, 1.5f), outside_plain = level_at(-1.5f, 1.5f);
+    INFO("plain lit " << lit_plain << " outside " << outside_plain);
+    REQUIRE(s.command("render.stats", Json::object()).value()["volumetric"] == false);
+    REQUIRE(std::abs(lit_plain - outside_plain) < 8);
     REQUIRE(s.finish().has_value());
 }

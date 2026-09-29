@@ -94,12 +94,20 @@ struct RenderStats {
     bool depth_prepass = false;       // whether the ids and depth were drawn in a pass of their own first (MSAA, AO or fog)
     bool ao = false;                  // whether ambient occlusion was computed this frame
     bool fog = false;                 // whether fog was applied this frame
+    bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
     std::uint32_t env_updates = 0;    // times the sky's environment light was rebuilt, over the renderer's life
     bool auto_exposure = false;       // whether the frame was metered for exposure
     std::uint32_t id_draws = 0;       // draws of the separate id pass (MSAA only)
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t meshes = 0;
-    std::uint32_t point_lights = 0;
+    std::uint32_t point_lights = 0;       // point lights in view this frame
+    std::uint32_t spot_lights = 0;        // spot lights in view this frame
+    std::uint32_t lights_culled = 0;      // point and spot lights out of view, left out
+    std::uint32_t lights_dropped = 0;     // in view but over the budget (lights or cluster entries): the farthest go
+    std::uint32_t cluster_entries = 0;    // light indices over all clusters
+    std::uint32_t max_cluster_lights = 0; // the most lights one cluster lists
+    std::uint32_t shadow_lights = 0;      // point and spot lights casting shadows this frame
+    std::uint32_t shadow_faces = 0;       // faces of the shadow atlas they drew (a spot one, a point light six)
     bool has_camera = false;
     bool has_sun = false;
     world::EntityId camera = 0;
@@ -125,6 +133,7 @@ struct CameraView {
     Mat4 proj;
     Vec3 position;
     Vec3 forward{0, 0, -1};   // world-space view direction
+    float near = 0.1f, far = 1000.0f;
 };
 
 class Renderer {

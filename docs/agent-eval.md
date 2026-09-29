@@ -36,7 +36,33 @@ python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,rec
 
 `reference` is the harness checking itself: every solution is one or two commands, which is the point. `null` sets the floor. Any other value is a shell command run once per task with the task as JSON on stdin (`task`, `project`, `rpc_url`, `docs`, `notes`); it may print a JSON object with an `answer` as its last line, and `POCKET_RPC_URL` is in its environment. A runner that wraps a model gives it the docs listed and the RPC; what it does in between is its own business. `--json` prints the report (`runner`, `passed`, `total`, per task `ok`, `seconds`, `detail`, `answer`, `error`), and the exit code is 0 only for a full pass.
 
-`tests/evidence/agent-eval/reference.json` and `null.json` are the two built-in runners' reports. No model has been scored yet: running one costs money, which is the user's call; the harness is ready for it.
+`tests/evidence/agent-eval/reference.json` and `null.json` are the two built-in runners' reports; coding agents with a model are below.
+
+## Coding agents
+
+`tools/scripts/runners/pi_agent.py` hands each task to a pi-family coding agent, oh-my-pi (`omp`) or pi, with the model it is set up for or the one `--model` names, and prints the answer with what the task cost: tokens, dollars, tool calls by tool, turns and seconds; the harness adds them up as `totals`. `--via` says how the agent reaches the engine: `mcp` through the `pocket` MCP server (`docs/mcp.md`), declared in a `.mcp.json` the runner writes where the agent starts; `shell` through `pocket rpc`; `extension` through pi's `pocket` and `pocket_look` tools (`integrations/pi/pocket.ts`). The agent starts in the project copy for a task that edits files and in an empty directory otherwise, never in the repository, so nothing it writes can land in the engine's sources. `--env-file` loads a provider's key file into the agent's environment without printing it, and `POCKET_EVAL_RUNTIME` names a copy of the runtime for the harness to start, so builds made while a long run goes on do not change what it measures.
+
+```bash
+POCKET_EVAL_RUNTIME=build/eval-runtime/pocket_runtime python3 tools/scripts/agent_eval.py --timeout 900 --json \
+    --runner "python3 tools/scripts/runners/pi_agent.py --agent pi --via extension --model deepseek/deepseek-flash --env-file ~/.omp/agent/.env"
+```
+
+## Results
+
+2026-09-29, the debug build, one run of each:
+
+| Agent | Model | Reach | Passed | Wall time | Tokens | Cost | Tool calls | Report |
+|---|---|---|---|---|---|---|---|---|
+| oh-my-pi 18.4.3 | DeepSeek V4 Flash | MCP, started at the repository root | 14/15 | 27 min | 10.2 M | $0.30 | 309 | `omp-deepseek-mcp.json` |
+| oh-my-pi 18.4.3 | DeepSeek V4 Flash | MCP, started outside the repository | 15/15 | 12.6 min | 8.2 M | $0.22 | 275 | `omp-deepseek-mcp-2.json` |
+| pi 0.87.1 | DeepSeek Flash (`deepseek/deepseek-flash`) | the pi extension | 15/15 | 8.4 min | 3.3 M | $0.15 | 208 | `pi-deepseek-extension.json` |
+
+A cheap model passes every task through the engine's commands and docs, for a few cents a task: the claim of `docs/agent-first.md` measured instead of asserted. What the runs showed:
+
+- **The cost is in design, not in commands.** In the last two runs every command task and one-line edit took between 4 and 35 seconds and at most three cents. The two mechanics and the two file tasks took most of the time and money (oh-my-pi 588 of 759 seconds and $0.16 of $0.22; pi 323 of 501 seconds and $0.09 of $0.15): the agent reads the game's script, decides where the state goes, edits, and plays the result, often more than once. The coin that comes back after three seconds was the most expensive task in all three runs.
+- **The first failure was the engine's.** In the first run oh-my-pi destroyed the playground's enemies correctly, the game's own script then touched one, and the runtime exited under the harness. A served runtime now keeps serving after a script error (the simulation stops, `state` says why), and the task passes in every later run.
+- **Watching the agents changed the interface.** Before these runs a first trace had an agent pass `world.set` its fields under the wrong key, be told `{"ok": true}`, and spend a dozen calls reading the engine's C++ to learn why nothing changed. Commands now refuse a parameter they do not take and name the ones they do, and every command explains itself (`help`, `commands {usage: true}`; `docs/mcp.md`). In these runs the agents still read files in the command tasks (25 to 45 reads, greps and shell calls beside 41 to 56 engine calls), mostly the docs the task lists.
+- **Context is the bill.** Over nine tenths of every run's tokens are cache reads of the conversation so far, so what an agent carries into each turn decides the cost. Started at the repository root, oh-my-pi also took in its guidance files and wandered into the engine's source (it once wrote a stray file there); started outside, the same agent and model finished everything in under half the time for three quarters of the cost. pi with the two-tool extension carried the least and was the cheapest and fastest.
 
 ## Limits
 

@@ -134,12 +134,15 @@ void from_json(const Json& j, Camera& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Camera& v, std::string_view path, float** out);
 
-/// A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
+/// A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).
 struct Light {
     std::int32_t kind = 0;
     Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
     float intensity = 1.0f;
     float range = 10.0f;
+    float inner_angle = 20.0f;
+    float outer_angle = 30.0f;
+    bool shadows = false;
     constexpr bool operator==(const Light&) const = default;
 };
 void to_json(Json& j, const Light& v);
@@ -156,6 +159,10 @@ struct Fog {
     float start = 0.0f;
     float max_opacity = 1.0f;
     bool enabled = true;
+    bool volumetric = false;
+    float anisotropy = 0.6f;
+    std::int32_t steps = 32;
+    float distance = 60.0f;
     constexpr bool operator==(const Fog&) const = default;
 };
 void to_json(Json& j, const Fog& v);
@@ -195,6 +202,7 @@ struct MeshRenderer {
     float cutoff = 0.0f;
     std::string normal_map = "";
     bool visible = true;
+    bool cast_shadows = true;
     constexpr bool operator==(const MeshRenderer&) const = default;
 };
 void to_json(Json& j, const MeshRenderer& v);

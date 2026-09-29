@@ -129,7 +129,7 @@ class Session {
     std::vector<std::string> physics_layers_;  // [physics] layers names, bit 0 first
     std::vector<std::vector<Vec3>> nav_paths_;  // the last paths asked for, drawn by the nav overlay
     world::Recorder recorder_;
-    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false, nav = false; } debug_flags_;
+    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false, nav = false, lights = false; } debug_flags_;
     struct DebugShape {
         int kind = 0;  // 0 line, 1 box, 2 sphere
         Vec3 a, b;     // line ends; box center + half; sphere center (radius in b.x)

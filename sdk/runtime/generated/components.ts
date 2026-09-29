@@ -104,16 +104,22 @@ export interface Camera {
     active: boolean;
 }
 
-/** A light source. kind 0 = directional (shines along -Z of the entity), 1 = point. */
+/** A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights). */
 export interface Light {
-    /** 0 directional, 1 point. */
+    /** 0 directional, 1 point, 2 spot. */
     kind: number;
     /** Color as a color picker shows it (sRGB), decoded to linear light; alpha unused. */
     color: Color;
     /** Multiplier applied to color. */
     intensity: number;
-    /** Point light range in meters. */
+    /** Point and spot light range in meters: the light fades to nothing there. */
     range: number;
+    /** Spot: the half-angle of the cone in degrees inside which the light is full. */
+    inner_angle: number;
+    /** Spot: the half-angle in degrees where it has faded out (at most 89.5). */
+    outer_angle: number;
+    /** Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'. */
+    shadows: boolean;
 }
 
 /** Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts. */
@@ -132,6 +138,14 @@ export interface Fog {
     max_opacity: number;
     /** false turns the fog off without removing it. */
     enabled: boolean;
+    /** Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint. */
+    volumetric: boolean;
+    /** Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist). */
+    anisotropy: number;
+    /** Volumetric: samples along each ray, 4..128. */
+    steps: number;
+    /** Volumetric: how far along each ray the fog is marched; the sky counts as that far. */
+    distance: number;
 }
 
 /** The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out. */
@@ -182,6 +196,8 @@ export interface MeshRenderer {
     normal_map: string;
     /** Whether the mesh is drawn. */
     visible: boolean;
+    /** Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. */
+    cast_shadows: boolean;
 }
 
 /** A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z. */
@@ -681,10 +697,10 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Health: { current: 100, max: 100 },
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
-    Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10 },
-    Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true },
+    Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
+    Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 32, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, enabled: true },
-    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true },
+    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true, cast_shadows: true },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },

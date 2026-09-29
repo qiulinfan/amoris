@@ -8,10 +8,13 @@ money, tool calls, turns and seconds.
         --runner "python3 tools/scripts/runners/pi_agent.py --agent omp --via mcp"
 
 How the agent reaches the engine (--via):
-    mcp        it starts at the repository root, where .mcp.json gives it the `pocket` MCP server
-               (attached to the harness's runtime through POCKET_RPC_URL) and AGENTS.md its guidance
-    shell      it starts in an empty directory and reaches the engine with `pocket rpc` in the shell
+    mcp        the `pocket` MCP server (`pocket mcp`, attached to the harness's runtime through
+               POCKET_RPC_URL), declared in a .mcp.json the runner writes where the agent starts
+    shell      `pocket rpc` in the shell
     extension  pi's own tools from integrations/pi/pocket.ts (`pocket`, `pocket_look`)
+
+The agent starts in the project copy for a task that edits files and in an empty directory for the
+rest, never in the repository, so nothing it writes can land in the engine's sources.
 """
 import argparse
 import json
@@ -61,19 +64,21 @@ def main():
     )
 
     scratch = None
-    if a.via == "mcp":
-        cwd = ROOT
-    elif edits_files and project_dir:
+    if edits_files and project_dir:
         cwd = project_dir
     else:
         scratch = tempfile.mkdtemp(prefix="pocket-agent-")
         cwd = scratch
+    if a.via == "mcp":
+        server = {"command": pocket, "args": ["--root", ROOT, "mcp"]}
+        with open(os.path.join(cwd, ".mcp.json"), "w") as f:
+            json.dump({"mcpServers": {"pocket": server}}, f, indent=2)
     agent = shutil.which(a.agent) or a.agent
     is_omp = os.path.basename(agent).startswith("omp")
     cmd = [agent, "-p", "--no-session", "--mode", "json"]
     if is_omp:
         cmd += ["--no-title", "--auto-approve", "--max-time", str(a.max_time), "--cwd", cwd]
-        if a.via != "mcp" and project_dir:
+        if project_dir and cwd != project_dir:
             cmd += ["--add-dir", project_dir]
     if a.via == "extension":
         cmd += ["-e", os.path.join(ROOT, "integrations", "pi", "pocket.ts")]

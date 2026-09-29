@@ -3659,6 +3659,10 @@ bpy.context.active_object.name = 'Lamp'
 bpy.context.active_object.data.energy = 1000
 bpy.ops.object.camera_add(location=(0, -6, 2))
 bpy.context.active_object.name = 'Eye'
+bpy.ops.object.light_add(type='SPOT', location=(-2, 0, 4))
+bpy.context.active_object.name = 'Beam'
+bpy.context.active_object.data.energy = 500
+bpy.context.active_object.data.spot_size = 0.6981317   # forty degrees across
 bpy.ops.wm.save_as_mainfile(filepath=argv[0])
 bpy.ops.export_scene.fbx(filepath=argv[1])
 )PY";
@@ -3684,7 +3688,7 @@ bpy.ops.export_scene.fbx(filepath=argv[1])
     REQUIRE(first["cached"] == false);
     REQUIRE(first["blender_found"] == true);
     REQUIRE(first["converted"] == ".imported/assets/import-test/scene.blend.glb");
-    REQUIRE(first["mesh"]["lights"].size() == 1);
+    REQUIRE(first["mesh"]["lights"].size() == 2);
     REQUIRE(first["mesh"]["cameras"].size() == 1);
     REQUIRE(first["mesh"]["materials"][0]["name"] == "RedPaint");
     REQUIRE(first["mesh"]["materials"][0]["roughness"].get<double>() == Catch::Approx(0.3).margin(0.01));
@@ -3707,6 +3711,14 @@ bpy.ops.export_scene.fbx(filepath=argv[1])
     Json light = s.command("world.get", Json{{"entity", lamp}, {"component", "Light"}}).value();
     REQUIRE(light["kind"] == 1);
     REQUIRE(light["intensity"].get<double>() > 1.0);
+    // The spot keeps its cone: forty degrees across is twenty each side of its axis, pointing down.
+    const Json beam = child("Beam");
+    REQUIRE(!beam.is_null());
+    Json spot = s.command("world.get", Json{{"entity", beam}, {"component", "Light"}}).value();
+    INFO(spot.dump());
+    REQUIRE(spot["kind"] == 2);
+    REQUIRE(spot["outer_angle"].get<double>() == Catch::Approx(20.0).margin(0.1));
+    REQUIRE(spot["inner_angle"].get<double>() < spot["outer_angle"].get<double>());
     Json cam = s.command("world.get", Json{{"entity", eye}, {"component", "Camera"}}).value();
     REQUIRE(cam["active"] == false);
     // Blender's Z up is Y up here: the lamp three units above the ground.

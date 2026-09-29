@@ -8,3 +8,11 @@ python3 tools/scripts/agent_eval.py --runner null --json > tests/evidence/agent-
 ```
 
 `reference.json`: the harness's own solutions pass all fifteen tasks in about fifteen seconds of wall time (each task starts its sample in a fresh runtime; the playground tasks run up to 1500 ticks of setup first; the seven script tasks copy and bundle their sample, edit its files, bundle it again and reload the project; the two mechanic tasks then play the result: a jump pressed again in the air, a coin stood on and waited for; the two file tasks read the file back through the runtime and then play or look: a jump that is heard, three lamps from a prefab). `null.json`: a runner that does nothing fails all fifteen, which shows the checks demand the change, the edit or the answer rather than the setup. The question tasks report the truth beside the answer in `detail` (the playground path is 22.882 units, five bodies lie within four units of the physics arena's origin, the root cause of the last hit is the enemy's `entity.spawned`).
+
+Coding agents with a model (2026-09-29, `docs/agent-eval.md`, Results), through `tools/scripts/runners/pi_agent.py` with the runtime frozen at `build/eval-runtime/pocket_runtime` (`POCKET_EVAL_RUNTIME`) and the DeepSeek key loaded from `~/.omp/agent/.env` (`--env-file`; never printed):
+
+- `omp-deepseek-mcp.json`: oh-my-pi 18.4.3, its default DeepSeek V4 Flash, over MCP, started at the repository root: 14 of 15 in 27 minutes for $0.30. `clear_enemies` failed because the runtime exited on a script error after the enemies were destroyed; the served runtime has kept serving since, and the task passes alone (21 s, 18 calls).
+- `omp-deepseek-mcp-2.json`: the same agent and model over MCP, started outside the repository (the runner writes a `.mcp.json` into the project copy or an empty directory): 15 of 15 in 12.6 minutes for $0.22.
+- `pi-deepseek-extension.json`: pi 0.87.1 with `deepseek/deepseek-flash` and `integrations/pi/pocket.ts`: 15 of 15 in 8.4 minutes for $0.15.
+
+Each task's `metrics` holds its tokens (input, output, cache reads), cost, tool calls by tool, turns and seconds.

@@ -2022,11 +2022,12 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
     if (op == "debug") {
         if (p.contains("colliders") && p["colliders"].is_boolean()) debug_flags_.colliders = p["colliders"].get<bool>();
         if (p.contains("joints") && p["joints"].is_boolean()) debug_flags_.joints = p["joints"].get<bool>();
+        if (p.contains("lights") && p["lights"].is_boolean()) debug_flags_.lights = p["lights"].get<bool>();
         if (p.contains("nav") && p["nav"].is_boolean()) debug_flags_.nav = p["nav"].get<bool>();
         if (p.contains("bounds") && p["bounds"].is_boolean()) debug_flags_.bounds = p["bounds"].get<bool>();
         if (p.contains("axes") && p["axes"].is_boolean()) debug_flags_.axes = p["axes"].get<bool>();
-        if (p.contains("all") && p["all"].is_boolean()) debug_flags_.colliders = debug_flags_.joints = debug_flags_.bounds = debug_flags_.axes = debug_flags_.nav = p["all"].get<bool>();
-        return Json{{"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lines", renderer_->stats().debug_lines}};
+        if (p.contains("all") && p["all"].is_boolean()) debug_flags_.colliders = debug_flags_.joints = debug_flags_.bounds = debug_flags_.axes = debug_flags_.nav = debug_flags_.lights = p["all"].get<bool>();
+        return Json{{"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lights", debug_flags_.lights}, {"lines", renderer_->stats().debug_lines}};
     }
     if (op == "msaa") {
         // 1 or 4 samples per pixel; anything above one means four.
@@ -3121,7 +3122,11 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
                     const assets::LightDef& l = mesh->lights[static_cast<std::size_t>(n.light)];
                     auto enc = [](float c) { c = std::clamp(c, 0.0f, 1.0f); return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
                     const float m = std::max({l.color.x, l.color.y, l.color.z, 1e-6f});
-                    Json light{{"kind", l.type == 0 ? 0 : 1}, {"color", {{"r", enc(l.color.x / m)}, {"g", enc(l.color.y / m)}, {"b", enc(l.color.z / m)}, {"a", 1.0}}}};
+                    Json light{{"kind", l.type == 0 ? 0 : l.type == 2 ? 2 : 1}, {"color", {{"r", enc(l.color.x / m)}, {"g", enc(l.color.y / m)}, {"b", enc(l.color.z / m)}, {"a", 1.0}}}};
+                    if (l.type == 2) {
+                        light["inner_angle"] = l.inner_cone * 180.0f / 3.14159265f;
+                        light["outer_angle"] = l.outer_cone * 180.0f / 3.14159265f;
+                    }
                     if (l.type == 0) {
                         light["intensity"] = l.intensity * m;
                     } else {
@@ -3400,6 +3405,42 @@ void Session::build_debug_draw() {
     if (debug_flags_.bounds) {
         w.ecs().each([&](flecs::entity, const world::Bounds& b) { debug_draw_.aabb(b.min, b.max, {0.4f, 0.8f, 1.0f, 1}); });
     }
+    if (debug_flags_.lights) {
+        // Each light in its own color: the sun as an arrow along its direction from where its entity
+        // stands, a point light as the sphere it reaches, a spot as its cone out to its range (the
+        // outer edge full, the inner one faint).
+        w.ecs().each([&](flecs::entity, const world::Light& l, const world::WorldTransform& t) {
+            const rhi::Color color{std::min(l.color.r, 1.0f), std::min(l.color.g, 1.0f), std::min(l.color.b, 1.0f), 1};
+            const rhi::Color faint{color.r, color.g, color.b, 0.45f};
+            const Vec3 p = t.position;
+            const Vec3 dir = normalize(t.rotation.rotate({0, 0, -1}));
+            const Vec3 side = normalize(t.rotation.rotate({1, 0, 0})), up = normalize(t.rotation.rotate({0, 1, 0}));
+            if (l.kind == 0) {
+                const Vec3 tip = p + dir * 1.5f;
+                debug_draw_.line(p, tip, color);
+                debug_draw_.line(tip, tip - dir * 0.3f + side * 0.15f, color);
+                debug_draw_.line(tip, tip - dir * 0.3f - side * 0.15f, color);
+                debug_draw_.sphere(p, 0.08f, color, 8);
+                return;
+            }
+            const float range = l.range > 0 ? l.range : 0.001f;
+            debug_draw_.sphere(p, std::min(0.1f, range * 0.25f), color, 8);
+            if (l.kind != 2) {
+                debug_draw_.sphere(p, range, color);
+                return;
+            }
+            const float outer = radians(std::clamp(l.outer_angle, 0.5f, 89.5f));
+            const float inner = radians(std::clamp(l.inner_angle, 0.0f, std::clamp(l.outer_angle, 0.5f, 89.5f)));
+            const Vec3 end = p + dir * (range * std::cos(outer));
+            const float r = range * std::sin(outer);
+            debug_draw_.circle(end, side, up, r, color);
+            for (int k = 0; k < 4; ++k) {
+                const float a = static_cast<float>(k) * 1.5707963f;
+                debug_draw_.line(p, end + (side * std::cos(a) + up * std::sin(a)) * r, color);
+            }
+            debug_draw_.circle(p + dir * (range * std::cos(inner)), side, up, range * std::sin(inner), faint);
+        });
+    }
     if (debug_flags_.axes) debug_draw_.axes({0, 0, 0}, 1.0f);
     std::int64_t tick = clock_.tick;
     std::erase_if(debug_shapes_, [&](const DebugShape& d) { return tick >= d.until_tick; });
@@ -3459,7 +3500,7 @@ Result<Json> Session::debug_command(std::string_view op, const Json& p) {
         return Json{{"cleared", n}};
     }
     if (op == "stats") {
-        return Json{{"shapes", debug_shapes_.size()}, {"lines", renderer_->stats().debug_lines}, {"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}};
+        return Json{{"shapes", debug_shapes_.size()}, {"lines", renderer_->stats().debug_lines}, {"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lights", debug_flags_.lights}};
     }
     return fail("unknown_command", "unknown debug command '{}'", op);
 }

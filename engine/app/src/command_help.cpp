@@ -73,7 +73,7 @@ constexpr CommandHelp kHelp[] = {
     {"render.grade", "enabled?, exposure?, filmic?, temperature?, contrast?, saturation?, tint?, vignette?", "The frame's look: exposure, warmth, contrast, saturation, tint, vignette."},
     {"render.tonemap", "operator?, exposure?, auto_exposure?, compensation?, min_ev?, max_ev?, speed?", "How the HDR scene becomes the frame: exposure (fixed or metered) and the operator (none, aces, agx, neutral)."},
     {"render.ao", "enabled?, radius?, intensity?, samples?", "Ambient occlusion: the sky's and ambient light darkened where geometry crowds a point (crevices, contact with the ground)."},
-    {"render.debug", "colliders?, joints?, bounds?, axes?, nav?, all?", "Engine overlays drawn as lines: colliders, joints, bounds, axes, the navigation grid."},
+    {"render.debug", "colliders?, joints?, bounds?, axes?, nav?, lights?, all?", "Engine overlays drawn as lines: colliders, joints, bounds, axes, the navigation grid, lights (a point light's reach, a spot's cone, the sun's direction)."},
     {"debug.line", "a, b, color?, ticks?", "Draw a line for some ticks."},
     {"debug.box", "center, half, rotation?, color?, ticks?", "Draw a box for some ticks."},
     {"debug.sphere", "center, radius, color?, ticks?", "Draw a sphere for some ticks."},

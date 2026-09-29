@@ -18,7 +18,29 @@ namespace pocket::renderer {
 
 namespace {
 
-constexpr std::uint32_t kMaxPointLights = 8;
+// Point and spot lights live in a storage buffer and reach a pixel through a froxel grid: the view
+// cut into tiles across and down and into slices of depth spaced by its logarithm, each cluster
+// listing the lights whose reach touches it (docs/design/rendering.md, Many lights).
+constexpr std::uint32_t kMaxLights = 1024;
+constexpr std::uint32_t kClusterX = 16, kClusterY = 9, kClusterZ = 24;
+constexpr std::uint32_t kClusters = kClusterX * kClusterY * kClusterZ;
+constexpr std::uint32_t kMaxClusterEntries = 1u << 18;   // light indices over all clusters
+struct GpuLight {
+    float pos_range[4];    // world position, range
+    float color_kind[4];   // linear color times intensity, kind (1 point, 2 spot)
+    float dir_cos[4];      // spot: the direction it shines, cos of the outer half-angle
+    float cone[4];         // spot: cos of the inner half-angle; its first shadow face (-1: none); a texel's size at unit distance
+};
+// Shadows of point and spot lights: one depth atlas of 512-texel faces, a spot's one face a
+// perspective view down its cone, a point light's six the faces of a cube around it.
+constexpr std::uint32_t kFaceSize = 512;
+constexpr std::uint32_t kFaceTiles = 8;   // across and down
+constexpr std::uint32_t kAtlasSize = kFaceSize * kFaceTiles;
+constexpr std::uint32_t kMaxFaces = kFaceTiles * kFaceTiles;
+struct GpuFace {
+    float view_proj[16];
+    float rect[4];         // the face's corner in the atlas (u, v), its size in uv, a texel in uv
+};
 // The scene is drawn into a half-float target (lighting in linear light, values over 1 kept), and
 // a final pass exposes, tone-maps and sRGB-encodes it into the 8-bit frame.
 constexpr WGPUTextureFormat kHdrFormat = WGPUTextureFormat_RGBA16Float;
@@ -54,9 +76,9 @@ struct alignas(16) FrameUniforms {
     float sun_dir[4];
     float sun_color[4];
     float ambient[4];
-    std::uint32_t point_count[4];
-    float point_pos[kMaxPointLights][4];
-    float point_color[kMaxPointLights][4];
+    std::uint32_t clusters[4];   // tiles across, tiles down, depth slices, point and spot lights this frame
+    float cluster_z[4];          // near, far, slices / ln(far / near), ln(near)
+    float viewport[4];           // the scene's rectangle in pixels: x, y, w, h
     float light_view_proj[16];   // the sun's orthographic view for the shadow map
     float shadow[4];             // texel size, depth bias, strength, enabled
     float inv_view_proj[16];     // clip to world, for the sky's view directions
@@ -78,7 +100,7 @@ struct alignas(16) ObjectUniforms {
     float model[16];
     float normal[16];
     float color[4];
-    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit)
+    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit, 2 = casts no shadow)
     float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
     float pbr[4];             // metallic, roughness, normal scale, 1 when a normal map is bound
     float emissive[4];        // linear RGB added after lighting; w: alpha cutoff (texels under it are cut out; 0 for none)
@@ -117,9 +139,9 @@ struct Frame {
     sun_dir: vec4f,
     sun_color: vec4f,
     ambient: vec4f,
-    point_count: vec4u,
-    point_pos: array<vec4f, 8>,
-    point_color: array<vec4f, 8>,
+    clusters: vec4u,
+    cluster_z: vec4f,
+    viewport: vec4f,
     light_view_proj: mat4x4f,
     shadow: vec4f,
     inv_view_proj: mat4x4f,
@@ -141,6 +163,35 @@ struct Frame {
 // Ambient occlusion at half resolution (white when it is off), and a clamping sampler for it.
 @group(0) @binding(6) var ao_tex: texture_2d<f32>;
 @group(0) @binding(7) var ao_samp: sampler;
+// Point and spot lights, nearest first, and the froxel grid over them: per cluster the index of its
+// first entry and its count, the entries (indices into local_lights) after the grid.
+struct LocalLight { pos_range: vec4f, color_kind: vec4f, dir_cos: vec4f, cone: vec4f };
+@group(0) @binding(8) var<storage, read> local_lights: array<LocalLight>;
+@group(0) @binding(9) var<storage, read> cluster_data: array<u32>;
+// Their shadows: per face the view it was drawn from and where it sits in the atlas.
+struct ShadowFace { view_proj: mat4x4f, rect: vec4f };
+@group(0) @binding(10) var<storage, read> shadow_faces: array<ShadowFace>;
+@group(0) @binding(11) var shadow_atlas: texture_depth_2d;
+// How lit a point is by one face of a local light's shadow (0 shadowed .. 1 lit): moved off the
+// surface along its normal and toward the light by a texel's size there, filtered 3x3 inside the face.
+fn face_lit(face: i32, world_pos: vec3f, gn: vec3f, pl: vec3f, texel: f32) -> f32 {
+    let f = shadow_faces[face];
+    let p = world_pos + gn * (texel * 1.5) + pl * texel;
+    let sp = f.view_proj * vec4f(p, 1.0);
+    if (sp.w <= 0.0) { return 1.0; }
+    let ndc = sp.xyz / sp.w;
+    if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
+    let uv = f.rect.xy + vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * f.rect.z;
+    let lo = f.rect.xy + vec2f(f.rect.w * 0.5);
+    let hi = f.rect.xy + vec2f(f.rect.z - f.rect.w * 0.5);
+    var lit = 0.0;
+    for (var j = -1; j <= 1; j = j + 1) {
+        for (var i = -1; i <= 1; i = i + 1) {
+            lit = lit + textureSampleCompareLevel(shadow_atlas, shadow_samp, clamp(uv + vec2f(f32(i), f32(j)) * f.rect.w, lo, hi), ndc.z);
+        }
+    }
+    return lit / 9.0;
+}
 fn env_uv(d: vec3f) -> vec2f {
     return vec2f(atan2(d.x, -d.z) / 6.2831853 + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
@@ -229,6 +280,7 @@ struct Cascade { view_proj: mat4x4f };
 @group(2) @binding(5) var<uniform> cascade: Cascade;
 @vertex fn vs_shadow(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> @builtin(position) vec4f {
     let object = objects[instance];
+    if ((object.id.y & 2u) != 0u) { return vec4f(0.0, 0.0, -2.0, 1.0); }   // casts no shadow: behind the near plane, clipped
     return cascade.view_proj * (object.model * vec4f(morph_position(object, vid, position), 1.0));
 }
 
@@ -254,6 +306,7 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
 
 @vertex fn vs_shadow_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f) -> @builtin(position) vec4f {
     let object = objects[instance];
+    if ((object.id.y & 2u) != 0u) { return vec4f(0.0, 0.0, -2.0, 1.0); }
     let model = object.model * skin_matrix(object.id.z, j, w);
     return cascade.view_proj * (model * vec4f(morph_position(object, vid, position), 1.0));
 }
@@ -372,14 +425,44 @@ fn shade(in: VsOut) -> vec4f {
         }
     }
     color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow;
-    // Point lights.
-    for (var i = 0u; i < frame.point_count.x; i = i + 1u) {
-        let to_light = frame.point_pos[i].xyz - in.world_pos;
-        let dist = length(to_light);
-        let range = frame.point_pos[i].w;
-        let att = clamp(1.0 - (dist * dist) / (range * range), 0.0, 1.0);
-        let pl = to_light / max(dist, 0.0001);
-        color += frame.point_color[i].rgb * brdf(n, v, pl, albedo, metallic, roughness) * att * att;
+    // Point and spot lights: the ones the pixel's cluster lists.
+    if (frame.clusters.w > 0u) {
+        let at = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
+        let cx = min(u32(max(at.x, 0.0) * f32(frame.clusters.x)), frame.clusters.x - 1u);
+        let cy = min(u32(max(at.y, 0.0) * f32(frame.clusters.y)), frame.clusters.y - 1u);
+        let depth = dot(in.world_pos - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+        let slice = (log(max(depth, frame.cluster_z.x)) - frame.cluster_z.w) * frame.cluster_z.z;
+        let cz = min(u32(max(slice, 0.0)), frame.clusters.z - 1u);
+        let cluster = (cz * frame.clusters.y + cy) * frame.clusters.x + cx;
+        let first = cluster_data[cluster * 2u];
+        let count = cluster_data[cluster * 2u + 1u];
+        for (var k = 0u; k < count; k = k + 1u) {
+            let li = local_lights[cluster_data[first + k]];
+            let to_light = li.pos_range.xyz - in.world_pos;
+            let dist = length(to_light);
+            let range = li.pos_range.w;
+            let att = clamp(1.0 - (dist * dist) / (range * range), 0.0, 1.0);
+            let pl = to_light / max(dist, 0.0001);
+            var cone = 1.0;
+            if (li.color_kind.w > 1.5) {
+                cone = smoothstep(li.dir_cos.w, li.cone.x, dot(-pl, li.dir_cos.xyz));
+            }
+            var lit = 1.0;
+            let first_face = i32(li.cone.y);
+            if (first_face >= 0 && att * cone > 0.0) {
+                var face = first_face;
+                if (li.color_kind.w < 1.5) {
+                    // A point light: the cube face the direction from the light falls in (+X -X +Y -Y +Z -Z).
+                    let d = -pl;
+                    let a = abs(d);
+                    if (a.x >= a.y && a.x >= a.z) { face = first_face + select(1, 0, d.x > 0.0); }
+                    else if (a.y >= a.z) { face = first_face + select(3, 2, d.y > 0.0); }
+                    else { face = first_face + select(5, 4, d.z > 0.0); }
+                }
+                lit = face_lit(face, in.world_pos, normalize(in.normal), pl, li.cone.z * dist);
+            }
+            color += li.color_kind.rgb * brdf(n, v, pl, albedo, metallic, roughness) * (att * att * cone * lit);
+        }
     }
     color += object.emissive.rgb * em;
     return vec4f(color, base.a);
@@ -462,6 +545,132 @@ fn unlit(in: VsOut) -> vec4f {
     if (base.a < 0.02) { discard; }
     return in.id;
 }
+
+// Volumetric fog (docs/design/rendering.md, Volumetric light): each pixel of a half-size target
+// marches its view ray through the fog to the depth the prepass left, gathering at every step the
+// sun's light through its cascades (so what blocks the sun cuts a shaft) and the point and spot
+// lights' through the clusters and their shadow faces, scattered toward the eye by the
+// Henyey-Greenstein phase; it writes the light gathered and how much of what lies behind still shows.
+struct Vol { medium: vec4f, albedo: vec4f, march: vec4f, target_size: vec4f };
+@group(1) @binding(8) var<uniform> vol: Vol;
+@group(1) @binding(9) var vol_depth: texture_depth_2d;
+// Henyey-Greenstein, scaled so an even medium (g = 0) scatters 1: lit fog then matches a lit white
+// surface, the engine's convention for light of intensity one.
+fn phase_hg(cos_t: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    return (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cos_t, 1e-4), 1.5);
+}
+fn sun_visible(p: vec3f) -> f32 {
+    let count = i32(frame.camera_fwd.w);
+    if (frame.shadow.w < 0.5 || count == 0) { return 1.0; }
+    let depth = dot(p - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+    var c = 0;
+    while (c < count && depth > frame.cascade_far[c]) { c = c + 1; }
+    if (c >= count) { return 1.0; }
+    let sp = frame.cascade_vp[c] * vec4f(p, 1.0);
+    let ndc = sp.xyz / sp.w;
+    let suv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 || ndc.z > 1.0) { return 1.0; }
+    return textureSampleCompareLevel(shadow_map, shadow_samp, suv, c, ndc.z - frame.shadow.y);
+}
+fn face_visible(face: i32, p: vec3f) -> f32 {
+    let f = shadow_faces[face];
+    let sp = f.view_proj * vec4f(p, 1.0);
+    if (sp.w <= 0.0) { return 1.0; }
+    let ndc = sp.xyz / sp.w;
+    if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
+    return textureSampleCompareLevel(shadow_atlas, shadow_samp, f.rect.xy + vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * f.rect.z, ndc.z);
+}
+// The point and spot lights reaching a point of the fog, each scattered toward the eye.
+fn local_scatter(p: vec3f, dir: vec3f, g: f32) -> vec3f {
+    if (frame.clusters.w == 0u) { return vec3f(0.0); }
+    let clip = frame.view_proj * vec4f(p, 1.0);
+    if (clip.w <= 0.0) { return vec3f(0.0); }
+    let at = vec2f(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+    let cx = min(u32(clamp(at.x, 0.0, 1.0) * f32(frame.clusters.x)), frame.clusters.x - 1u);
+    let cy = min(u32(clamp(at.y, 0.0, 1.0) * f32(frame.clusters.y)), frame.clusters.y - 1u);
+    let depth = dot(p - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+    let slice = (log(max(depth, frame.cluster_z.x)) - frame.cluster_z.w) * frame.cluster_z.z;
+    let cz = min(u32(max(slice, 0.0)), frame.clusters.z - 1u);
+    let cluster = (cz * frame.clusters.y + cy) * frame.clusters.x + cx;
+    let first = cluster_data[cluster * 2u];
+    let count = cluster_data[cluster * 2u + 1u];
+    var sum = vec3f(0.0);
+    for (var k = 0u; k < count; k = k + 1u) {
+        let li = local_lights[cluster_data[first + k]];
+        let to_light = li.pos_range.xyz - p;
+        let dist = length(to_light);
+        let range = li.pos_range.w;
+        let att = clamp(1.0 - (dist * dist) / (range * range), 0.0, 1.0);
+        if (att <= 0.0) { continue; }
+        let pl = to_light / max(dist, 0.0001);
+        var cone = 1.0;
+        if (li.color_kind.w > 1.5) { cone = smoothstep(li.dir_cos.w, li.cone.x, dot(-pl, li.dir_cos.xyz)); }
+        if (cone <= 0.0) { continue; }
+        var lit = 1.0;
+        let first_face = i32(li.cone.y);
+        if (first_face >= 0) {
+            var face = first_face;
+            if (li.color_kind.w < 1.5) {
+                let d = -pl;
+                let a = abs(d);
+                if (a.x >= a.y && a.x >= a.z) { face = first_face + select(1, 0, d.x > 0.0); }
+                else if (a.y >= a.z) { face = first_face + select(3, 2, d.y > 0.0); }
+                else { face = first_face + select(5, 4, d.z > 0.0); }
+            }
+            lit = face_visible(face, p);
+        }
+        sum = sum + li.color_kind.rgb * (att * att * cone * lit * phase_hg(dot(pl, dir), g));
+    }
+    return sum;
+}
+@vertex fn vs_volume(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    return vec4f(x, y, 0.0, 1.0);
+}
+@fragment fn fs_volume(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    // The full-size pixel at the middle of this one's 2x2 block, and where it is in the scene's viewport.
+    let dims = vec2i(textureDimensions(vol_depth));
+    let full = min(vec2i(pos.xy * 2.0), dims - vec2i(1));
+    let d = textureLoad(vol_depth, full, 0);
+    let uv = (vec2f(full) + vec2f(1.0) - frame.viewport.xy) / frame.viewport.zw;
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let near_h = frame.inv_view_proj * vec4f(ndc, 0.0, 1.0);
+    let far_h = frame.inv_view_proj * vec4f(ndc, select(d, 1.0, d >= 1.0), 1.0);
+    let start = near_h.xyz / near_h.w;
+    let ray = far_h.xyz / far_h.w - start;
+    var len = length(ray);
+    let dir = ray / max(len, 1e-5);
+    if (d >= 1.0) { len = vol.march.y; }   // the sky: as far as the march goes
+    len = min(len, vol.march.y);
+    let steps = max(u32(vol.march.x), 1u);
+    let dt = len / f32(steps);
+    // Each pixel starts its steps at its own offset (interleaved gradient noise), so banding turns to grain.
+    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))));
+    let g = vol.medium.w;
+    let sun_phase = phase_hg(dot(frame.sun_dir.xyz, -dir), g);
+    var ambient = frame.ambient.rgb;
+    if (frame.env.x > 0.5) { ambient = ambient + sh_irradiance(vec3f(0.0, 1.0, 0.0)) * frame.env.y; }
+    var trans = 1.0;
+    var gathered = vec3f(0.0);
+    for (var i = 0u; i < steps; i = i + 1u) {
+        let t = (f32(i) + jitter) * dt;
+        if (t < vol.march.z) { continue; }
+        let p = start + dir * t;
+        let sigma = vol.medium.x * exp(-vol.medium.z * (p.y - vol.medium.y));
+        if (sigma <= 1e-6) { continue; }
+        let light = ambient + frame.sun_color.rgb * (sun_phase * sun_visible(p)) + local_scatter(p, dir, g);
+        let step_t = exp(-sigma * dt);
+        gathered = gathered + trans * light * (1.0 - step_t);
+        trans = trans * step_t;
+        if (trans < 0.005) { break; }
+    }
+    // The most the fog may hide: what it gathered shrinks with what it may cover.
+    let floor_t = 1.0 - vol.albedo.w;
+    if (trans < floor_t && trans < 1.0) { gathered = gathered * (1.0 - floor_t) / (1.0 - trans); trans = floor_t; }
+    return vec4f(gathered * vol.albedo.rgb, trans);
+}
 )WGSL";
 
 constexpr const char* kBloomWgsl = R"WGSL(
@@ -510,12 +719,14 @@ struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, 
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
 @group(0) @binding(3) var depth: texture_depth_2d;                // the depth prepass (fog reads distances from it)
+@group(0) @binding(4) var volume: texture_2d<f32>;                // volumetric fog at half size: light gathered, what still shows
+@group(0) @binding(5) var volume_samp: sampler;
 // Exponential height fog along the ray from the camera to the point (fog: density, base height,
 // falloff, start; fog2.x: the most it hides, fog2.y: on).
 fn fogged(c: vec3f, pos: vec2f) -> vec3f {
-    let dims = vec2f(textureDimensions(depth));
     let d = textureLoad(depth, vec2i(pos.xy), 0);
-    let ndc = vec2f(pos.x / dims.x * 2.0 - 1.0, 1.0 - pos.y / dims.y * 2.0);
+    let uv = (pos.xy - post.viewport.xy) / max(post.viewport.zw, vec2f(1.0));
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let far = post.inv_view_proj * vec4f(ndc, select(d, 1.0, d >= 1.0), 1.0);
     let o = post.camera.xyz;
     var p = far.xyz / far.w;
@@ -528,6 +739,37 @@ fn fogged(c: vec3f, pos: vec2f) -> vec3f {
     amount = amount * max(dist - post.fog.w, 0.0) / max(dist, 1e-4);
     let f = min(1.0 - exp(-max(amount, 0.0)), post.fog2.x);
     return mix(c, post.fog_color.rgb, f);
+}
+// A full-size pixel's distance from the camera, from the prepass depth (the sky: the far plane).
+fn view_distance(px: vec2i) -> f32 {
+    let d = textureLoad(depth, px, 0);
+    let uv = (vec2f(px) + vec2f(0.5) - post.viewport.xy) / max(post.viewport.zw, vec2f(1.0));
+    let w = post.inv_view_proj * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, select(d, 1.0, d >= 1.0), 1.0);
+    return length(w.xyz / w.w - post.camera.xyz);
+}
+// The volumetric fog at a full-size pixel: the four half-size texels around it, each weighed by
+// how near it is (bilinear) and by how close the depth it was marched to is to this pixel's, so fog
+// marched past a slat's edge does not bleed onto the slat (a joint bilateral upsample).
+fn volume_at(pos: vec2f) -> vec4f {
+    let vdims = vec2i(textureDimensions(volume));
+    let fdims = vec2i(textureDimensions(depth));
+    let here = view_distance(vec2i(pos));
+    let base = (pos - vec2f(1.0)) * 0.5;   // half-size texel i was marched from full-size pixel 2i + 1
+    let i0 = vec2i(floor(base));
+    let f = base - vec2f(i0);
+    var sum = vec4f(0.0);
+    var wsum = 0.0;
+    for (var j = 0; j < 2; j = j + 1) {
+        for (var i = 0; i < 2; i = i + 1) {
+            let c = clamp(i0 + vec2i(i, j), vec2i(0), vdims - vec2i(1));
+            let bw = select(1.0 - f.x, f.x, i == 1) * select(1.0 - f.y, f.y, j == 1);
+            let there = view_distance(min(c * 2 + vec2i(1), fdims - vec2i(1)));
+            let w = max(bw, 1e-3) / (1e-3 + abs(there - here) / max(here, 0.01));
+            sum = sum + textureLoad(volume, c, 0) * w;
+            wsum = wsum + w;
+        }
+    }
+    return sum / max(wsum, 1e-6);
 }
 @vertex fn vs_screen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
     let x = f32(i32(i & 1u) * 4 - 1);
@@ -579,7 +821,12 @@ fn encode(c: vec3f) -> vec3f {
     var exposure = post.exposure;
     if (post.auto_on != 0u) { exposure = exposure * exp2(metered[0]); }
     var hdr_c = s.rgb;
-    if (post.fog2.y > 0.5) { hdr_c = fogged(hdr_c, pos.xy); }
+    if (post.fog2.z > 0.5) {
+        let v = volume_at(pos.xy);
+        hdr_c = hdr_c * v.a + v.rgb;
+    } else if (post.fog2.y > 0.5) {
+        hdr_c = fogged(hdr_c, pos.xy);
+    }
     var c = max(hdr_c * exposure, vec3f(0.0));
     switch post.op {
         case 1u: { c = aces(c); }
@@ -944,6 +1191,18 @@ struct Renderer::Impl {
     WGPUBindGroup meter_bg = nullptr;
     bool meter_reset = true;                      // the next metered frame snaps instead of easing
     WGPUTextureView post_depth = nullptr;         // the depth view the post group was made with
+    WGPUTextureView post_volume = nullptr;        // and the volume view
+    // Volumetric fog: the half-size target, a stand-in (nothing gathered, everything shows) when it
+    // is off, the pass (the mesh module's vs_volume/fs_volume over the scene group and its own).
+    WGPUTexture volume_tex = nullptr, volume_none_tex = nullptr;
+    WGPUTextureView volume_view = nullptr, volume_none_view = nullptr;
+    std::uint32_t volume_w = 0, volume_h = 0;
+    WGPUBindGroupLayout volume_bgl = nullptr;
+    WGPUPipelineLayout volume_layout = nullptr;
+    WGPURenderPipeline volume_pipeline = nullptr;
+    WGPUBuffer volume_uniforms = nullptr;
+    WGPUBindGroup volume_bg = nullptr;
+    WGPUTextureView volume_depth = nullptr;       // the depth view volume_bg reads
     // The depth prepass: the id pass at one sample with a depth target of its own, sampled by the AO
     // pass and the fog afterwards; a 1x1 stand-in when there is none.
     WGPUTexture prepass_tex = nullptr;
@@ -967,7 +1226,7 @@ struct Renderer::Impl {
     WGPUTexture ao_white_tex = nullptr;
     WGPUTextureView ao_white_view = nullptr;
     WGPUTextureView scene_ao = nullptr;           // the AO view the scene group was made with
-    WGPUBindGroupEntry scene_entries[8]{};        // the scene group's entries, to make it again when the AO target changes
+    WGPUBindGroupEntry scene_entries[12]{};       // the scene group's entries, to make it again when the AO target or the atlas changes
     // The sky: its pipelines, the environment map (level views for the compute passes, one view of
     // every level for sampling), the harmonics buffer, the panorama's source texture.
     WGPUPipelineLayout sky_layout = nullptr;      // the scene group only
@@ -995,6 +1254,23 @@ struct Renderer::Impl {
     std::uint32_t env_updates = 0;
     WGPUBuffer frame_buffer = nullptr;
     WGPUBuffer object_buffer = nullptr;
+    WGPUBuffer light_buffer = nullptr;     // point and spot lights (GpuLight), nearest first
+    WGPUBuffer cluster_buffer = nullptr;   // the froxel grid (first entry and count per cluster), then the entries
+    std::vector<GpuLight> light_staging, light_packed;
+    std::vector<std::uint32_t> cluster_staging;
+    std::vector<std::pair<Vec3, Vec3>> cluster_box;   // each cluster's box in view space, this frame
+    // Local lights' shadows: the atlas (made when a light first asks for shadows; a 1x1 stand-in
+    // until then), the faces' views for the shadow pass (256-byte slots, dynamic offsets) and for
+    // the lookup (GpuFace).
+    WGPUTexture atlas_texture = nullptr;
+    WGPUTextureView atlas_view = nullptr;
+    WGPUTexture atlas_stub = nullptr;
+    WGPUTextureView atlas_stub_view = nullptr;
+    WGPUTextureView scene_atlas = nullptr;   // the atlas view the scene group was made with
+    WGPUBuffer face_slots = nullptr;
+    WGPUBindGroup face_bg = nullptr;
+    WGPUBuffer face_buffer = nullptr;
+    std::vector<GpuFace> faces;
     WGPUBindGroup frame_bg = nullptr;
     WGPUBindGroup object_bg = nullptr;
     WGPUTexture id_texture = nullptr;
@@ -1119,6 +1395,13 @@ struct Renderer::Impl {
         if (ao_bgl) wgpuBindGroupLayoutRelease(ao_bgl);
         if (ao_shader) wgpuShaderModuleRelease(ao_shader);
         if (ao_uniforms) wgpuBufferRelease(ao_uniforms);
+        if (volume_bg) wgpuBindGroupRelease(volume_bg);
+        if (volume_uniforms) wgpuBufferRelease(volume_uniforms);
+        if (volume_pipeline) wgpuRenderPipelineRelease(volume_pipeline);
+        if (volume_layout) wgpuPipelineLayoutRelease(volume_layout);
+        if (volume_bgl) wgpuBindGroupLayoutRelease(volume_bgl);
+        for (WGPUTextureView v : {volume_view, volume_none_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {volume_tex, volume_none_tex}) if (t) wgpuTextureRelease(t);
         if (ao_white_view) wgpuTextureViewRelease(ao_white_view);
         if (ao_white_tex) wgpuTextureRelease(ao_white_tex);
         if (prepass_view) wgpuTextureViewRelease(prepass_view);
@@ -1150,6 +1433,15 @@ struct Renderer::Impl {
         if (frame_bg) wgpuBindGroupRelease(frame_bg);
         if (object_buffer) wgpuBufferRelease(object_buffer);
         if (frame_buffer) wgpuBufferRelease(frame_buffer);
+        if (light_buffer) wgpuBufferRelease(light_buffer);
+        if (cluster_buffer) wgpuBufferRelease(cluster_buffer);
+        if (face_bg) wgpuBindGroupRelease(face_bg);
+        if (face_slots) wgpuBufferRelease(face_slots);
+        if (face_buffer) wgpuBufferRelease(face_buffer);
+        if (atlas_view) wgpuTextureViewRelease(atlas_view);
+        if (atlas_texture) wgpuTextureRelease(atlas_texture);
+        if (atlas_stub_view) wgpuTextureViewRelease(atlas_stub_view);
+        if (atlas_stub) wgpuTextureRelease(atlas_stub);
         if (shadow_pipeline) wgpuRenderPipelineRelease(shadow_pipeline);
         if (shadow_layout) wgpuPipelineLayoutRelease(shadow_layout);
         if (scene_bg) wgpuBindGroupRelease(scene_bg);
@@ -1424,7 +1716,13 @@ struct Renderer::Impl {
         float camera[4];
         float fog_color[4];      // linear
         float fog[4];            // density, base height, falloff, start
-        float fog2[4];           // the most it hides, on
+        float fog2[4];           // the most it hides, on, volumetric
+    };
+    struct VolumeUniforms {
+        float medium[4];         // density, base height, falloff, anisotropy
+        float albedo[4];         // the fog's color (linear), the most it hides
+        float march[4];          // steps, distance, start
+        float target_size[4];
     };
     struct MeterUniforms {
         float viewport[4];
@@ -1447,11 +1745,18 @@ struct Renderer::Impl {
     Status create_post() {
         POCKET_TRY(module, device->create_shader("pocket.post", kPostWgsl));
         post_shader = module;
-        WGPUBindGroupLayoutEntry be[4]{};
+        WGPUBindGroupLayoutEntry be[6]{};
         be[0].binding = 0;
         be[0].visibility = WGPUShaderStage_Fragment;
         be[0].buffer.type = WGPUBufferBindingType_Uniform;
         be[0].buffer.minBindingSize = sizeof(PostUniforms);
+        be[4].binding = 4;
+        be[4].visibility = WGPUShaderStage_Fragment;
+        be[4].texture.sampleType = WGPUTextureSampleType_Float;
+        be[4].texture.viewDimension = WGPUTextureViewDimension_2D;
+        be[5].binding = 5;
+        be[5].visibility = WGPUShaderStage_Fragment;
+        be[5].sampler.type = WGPUSamplerBindingType_Filtering;
         be[1].binding = 1;
         be[1].visibility = WGPUShaderStage_Fragment;
         be[1].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
@@ -1466,7 +1771,7 @@ struct Renderer::Impl {
         be[3].texture.viewDimension = WGPUTextureViewDimension_2D;
         WGPUBindGroupLayoutDescriptor bd{};
         bd.label = rhi::str("pocket.post");
-        bd.entryCount = 4;
+        bd.entryCount = 6;
         bd.entries = be;
         post_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
         WGPUPipelineLayoutDescriptor pld{};
@@ -1586,9 +1891,15 @@ struct Renderer::Impl {
     Status draw_post(rhi::Frame& frame, rhi::Color clear, const world::Fog* fog_settings) {
         // The post group reads the prepass depth when there is one (for the fog).
         WGPUTextureView depth_view = prepass_view && split_applied ? prepass_view : no_depth_view;
-        if (!post_bg || post_depth != depth_view) {
+        WGPUTextureView volume_now = stats.volumetric ? volume_view : volume_none_view;
+        if (!post_bg || post_depth != depth_view || post_volume != volume_now) {
             if (post_bg) wgpuBindGroupRelease(post_bg);
-            WGPUBindGroupEntry e[4]{};
+            WGPUBindGroupEntry e[6]{};
+            e[4].binding = 4;
+            e[4].textureView = volume_now;
+            e[5].binding = 5;
+            e[5].sampler = bloom_sampler;
+            post_volume = volume_now;
             e[0].binding = 0;
             e[0].buffer = post_uniforms;
             e[0].size = sizeof(PostUniforms);
@@ -1602,7 +1913,7 @@ struct Renderer::Impl {
             WGPUBindGroupDescriptor d{};
             d.label = rhi::str("pocket.post");
             d.layout = post_bgl;
-            d.entryCount = 4;
+            d.entryCount = 6;
             d.entries = e;
             post_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
             post_depth = depth_view;
@@ -1664,6 +1975,7 @@ struct Renderer::Impl {
             u.fog[3] = std::max(fog_settings->start, 0.0f);
             u.fog2[0] = std::clamp(fog_settings->max_opacity, 0.0f, 1.0f);
             u.fog2[1] = 1.0f;
+            u.fog2[2] = stats.volumetric ? 1.0f : 0.0f;
         }
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
         WGPURenderPassColorAttachment ca{};
@@ -2102,6 +2414,131 @@ struct Renderer::Impl {
         return {};
     }
 
+    // The volumetric fog's pass and its stand-in (docs/design/rendering.md, Volumetric light).
+    Status create_volume() {
+        WGPUBindGroupLayoutEntry ve[2]{};
+        ve[0].binding = 8;
+        ve[0].visibility = WGPUShaderStage_Fragment;
+        ve[0].buffer.type = WGPUBufferBindingType_Uniform;
+        ve[0].buffer.minBindingSize = sizeof(VolumeUniforms);
+        ve[1].binding = 9;
+        ve[1].visibility = WGPUShaderStage_Fragment;
+        ve[1].texture.sampleType = WGPUTextureSampleType_Depth;
+        ve[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        WGPUBindGroupLayoutDescriptor vd{};
+        vd.label = rhi::str("pocket.volume");
+        vd.entryCount = 2;
+        vd.entries = ve;
+        volume_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &vd);
+        WGPUBindGroupLayout layouts[2] = {scene_bgl, volume_bgl};
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.volume");
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
+        volume_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str("fs_volume");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.volume");
+        rpd.layout = volume_layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs_volume");
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        volume_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!volume_pipeline) return fail("gpu_pipeline_failed", "the volumetric fog pipeline could not be created");
+        volume_uniforms = device->create_buffer("pocket.volume", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(VolumeUniforms));
+        auto [nt, nv] = make_target("pocket.volume.none", 1, 1, kHdrFormat, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        volume_none_tex = nt;
+        volume_none_view = nv;
+        const std::uint16_t none[4] = {0, 0, 0, to_half(1.0f)};
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = volume_none_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout layout{};
+        layout.bytesPerRow = sizeof none;
+        layout.rowsPerImage = 1;
+        WGPUExtent3D ext{1, 1, 1};
+        wgpuQueueWriteTexture(device->queue(), &dst, none, sizeof none, &layout, &ext);
+        return {};
+    }
+
+    // March the fog into the half-size target (the prepass depth must be there).
+    Status draw_volume(rhi::Frame& frame, const world::Fog& fog) {
+        const std::uint32_t vw = std::max(1u, (frame.width + 1) / 2), vh = std::max(1u, (frame.height + 1) / 2);
+        if (!volume_tex || volume_w != vw || volume_h != vh) {
+            if (volume_view) wgpuTextureViewRelease(volume_view);
+            if (volume_tex) wgpuTextureRelease(volume_tex);
+            auto [t, v] = make_target("pocket.volume", vw, vh, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+            if (!t) return fail("gpu_texture_failed", "cannot create the volumetric fog target {}x{}", vw, vh);
+            volume_tex = t;
+            volume_view = v;
+            volume_w = vw;
+            volume_h = vh;
+            post_volume = nullptr;
+        }
+        if (!volume_bg || volume_depth != prepass_view) {
+            if (volume_bg) wgpuBindGroupRelease(volume_bg);
+            WGPUBindGroupEntry e[2]{};
+            e[0].binding = 8;
+            e[0].buffer = volume_uniforms;
+            e[0].size = sizeof(VolumeUniforms);
+            e[1].binding = 9;
+            e[1].textureView = prepass_view;
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.volume");
+            d.layout = volume_bgl;
+            d.entryCount = 2;
+            d.entries = e;
+            volume_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+            volume_depth = prepass_view;
+        }
+        VolumeUniforms u{};
+        u.medium[0] = std::max(fog.density, 0.0f);
+        u.medium[1] = fog.height;
+        u.medium[2] = std::max(fog.falloff, 0.0f);
+        u.medium[3] = std::clamp(fog.anisotropy, -0.9f, 0.9f);
+        u.albedo[0] = decode(fog.color.r);
+        u.albedo[1] = decode(fog.color.g);
+        u.albedo[2] = decode(fog.color.b);
+        u.albedo[3] = std::clamp(fog.max_opacity, 0.0f, 1.0f);
+        u.march[0] = static_cast<float>(std::clamp(fog.steps, 4, 128));
+        u.march[1] = std::max(fog.distance, 0.1f);
+        u.march[2] = std::max(fog.start, 0.0f);
+        u.target_size[0] = static_cast<float>(vw);
+        u.target_size[1] = static_cast<float>(vh);
+        device->write_buffer(volume_uniforms, 0, &u, sizeof u);
+        WGPURenderPassColorAttachment ca{};
+        ca.view = volume_view;
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, 1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.volume");
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        wgpuRenderPassEncoderSetPipeline(enc, volume_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(enc, 1, volume_bg, 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        stats.draw_calls++;
+        return {};
+    }
+
     // The depth prepass target at the frame's size.
     Status ensure_prepass(std::uint32_t w, std::uint32_t h) {
         if (prepass_tex && prepass_w == w && prepass_h == h) return {};
@@ -2153,8 +2590,12 @@ struct Renderer::Impl {
 
     // The scene group reads the AO result (or the white texel); made again when that changes.
     void make_scene_group(WGPUTextureView ao_view_now) {
-        if (scene_bg && scene_ao == ao_view_now) return;
+        WGPUTextureView atlas_now = atlas_view ? atlas_view : atlas_stub_view;
+        if (scene_bg && scene_ao == ao_view_now && scene_atlas == atlas_now) return;
         if (scene_bg) wgpuBindGroupRelease(scene_bg);
+        scene_entries[11].binding = 11;
+        scene_entries[11].textureView = atlas_now;
+        scene_atlas = atlas_now;
         scene_entries[6].binding = 6;
         scene_entries[6].textureView = ao_view_now;
         scene_entries[7].binding = 7;
@@ -2162,7 +2603,7 @@ struct Renderer::Impl {
         WGPUBindGroupDescriptor sbd{};
         sbd.label = rhi::str("pocket.scene");
         sbd.layout = scene_bgl;
-        sbd.entryCount = 8;
+        sbd.entryCount = 12;
         sbd.entries = scene_entries;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
         scene_ao = ao_view_now;
@@ -2451,7 +2892,7 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[8]{};
+        WGPUBindGroupLayoutEntry se[12]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
@@ -2478,9 +2919,24 @@ struct Renderer::Impl {
         se[7].binding = 7;
         se[7].visibility = WGPUShaderStage_Fragment;
         se[7].sampler.type = WGPUSamplerBindingType_Filtering;
+        for (std::uint32_t b = 8; b < 10; ++b) {
+            se[b].binding = b;
+            se[b].visibility = WGPUShaderStage_Fragment;
+            se[b].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        }
+        se[8].buffer.minBindingSize = sizeof(GpuLight);
+        se[9].buffer.minBindingSize = sizeof(std::uint32_t) * 2 * kClusters;
+        se[10].binding = 10;
+        se[10].visibility = WGPUShaderStage_Fragment;
+        se[10].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        se[10].buffer.minBindingSize = sizeof(GpuFace);
+        se[11].binding = 11;
+        se[11].visibility = WGPUShaderStage_Fragment;
+        se[11].texture.sampleType = WGPUTextureSampleType_Depth;
+        se[11].texture.viewDimension = WGPUTextureViewDimension_2D;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 8;
+        scene_ld.entryCount = 12;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -2630,6 +3086,8 @@ struct Renderer::Impl {
         morph_buffer = device->create_buffer("pocket.morphs", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxMorphVec4) * sizeof(float) * 4);
 
         frame_buffer = device->create_buffer("pocket.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
+        light_buffer = device->create_buffer("pocket.lights", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, sizeof(GpuLight) * kMaxLights);
+        cluster_buffer = device->create_buffer("pocket.clusters", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, sizeof(std::uint32_t) * (2ull * kClusters + kMaxClusterEntries));
         object_buffer = device->create_buffer("pocket.objects", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kObjectStride) * kMaxObjects);
         object_staging.resize(static_cast<std::size_t>(kObjectStride) * kMaxObjects);
 
@@ -2694,6 +3152,7 @@ struct Renderer::Impl {
         shadow_sampler = wgpuDeviceCreateSampler(device->device(), &ssd);
         POCKET_TRY_VOID(create_sky());
         POCKET_TRY_VOID(create_ao());
+        POCKET_TRY_VOID(create_volume());
         WGPUBindGroupEntry* sbe = scene_entries;
         sbe[0] = fbe;
         sbe[1].binding = 1;
@@ -2707,6 +3166,42 @@ struct Renderer::Impl {
         sbe[5].binding = 5;
         sbe[5].buffer = sh_buffer;
         sbe[5].size = sizeof(float) * 36;
+        sbe[8].binding = 8;
+        sbe[8].buffer = light_buffer;
+        sbe[8].size = sizeof(GpuLight) * kMaxLights;
+        sbe[9].binding = 9;
+        sbe[9].buffer = cluster_buffer;
+        sbe[9].size = sizeof(std::uint32_t) * (2ull * kClusters + kMaxClusterEntries);
+        face_buffer = device->create_buffer("pocket.shadow.faces", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, sizeof(GpuFace) * kMaxFaces);
+        sbe[10].binding = 10;
+        sbe[10].buffer = face_buffer;
+        sbe[10].size = sizeof(GpuFace) * kMaxFaces;
+        {
+            WGPUTextureDescriptor td{};
+            td.label = rhi::str("pocket.shadow.atlas.stub");
+            td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+            td.dimension = WGPUTextureDimension_2D;
+            td.size = {1, 1, 1};
+            td.format = WGPUTextureFormat_Depth32Float;
+            td.mipLevelCount = 1;
+            td.sampleCount = 1;
+            atlas_stub = wgpuDeviceCreateTexture(device->device(), &td);
+            if (!atlas_stub) return fail("gpu_texture_failed", "cannot create the shadow atlas stand-in");
+            atlas_stub_view = wgpuTextureCreateView(atlas_stub, nullptr);
+        }
+        face_slots = device->create_buffer("pocket.shadow.face_slots", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 256ull * kMaxFaces);
+        {
+            WGPUBindGroupEntry fse{};
+            fse.binding = 5;
+            fse.buffer = face_slots;
+            fse.size = sizeof(float) * 16;
+            WGPUBindGroupDescriptor fsd{};
+            fsd.label = rhi::str("pocket.shadow.face");
+            fsd.layout = cascade_bgl;
+            fsd.entryCount = 1;
+            fsd.entries = &fse;
+            face_bg = wgpuDeviceCreateBindGroup(device->device(), &fsd);
+        }
         make_scene_group(ao_white_view);
 
         WGPUBindGroupEntry obe[3]{};
@@ -3128,6 +3623,8 @@ struct Renderer::Impl {
             cv.proj = Mat4::perspective(radians(60), aspect, 0.1f, 1000.0f);
             cv.position = ct.position;
             cv.forward = normalize(target - ct.position);
+            cv.near = 0.1f;
+            cv.far = 1000.0f;
             return cv;
         }
         Vec3 forward = ct.rotation.rotate({0, 0, -1});
@@ -3142,7 +3639,217 @@ struct Renderer::Impl {
         }
         cv.position = ct.position;
         cv.forward = forward;
+        cv.near = cam.near;
+        cv.far = cam.far;
         return cv;
+    }
+
+    // Faces of the shadow atlas for the kept lights that cast shadows, nearest first while faces
+    // last: a spot's view down its cone (a little wider than the cone), a point light's six views
+    // along the axes (a little wider than 90 degrees, so the 3x3 filter at a face's edge still reads
+    // that face). Each light's first face and a texel's size at unit distance go into its cone.
+    void assign_shadow_faces() {
+        faces.clear();
+        for (GpuLight& g : light_packed) {
+            const bool wants = g.cone[1] >= 0.0f;
+            g.cone[1] = -1.0f;
+            if (!wants || !shadows.enabled) continue;
+            const bool spot = g.color_kind[3] > 1.5f;
+            const std::uint32_t need = spot ? 1u : 6u;
+            if (faces.size() + need > kMaxFaces) continue;
+            if (!atlas_texture && !create_atlas()) return;
+            const Vec3 at{g.pos_range[0], g.pos_range[1], g.pos_range[2]};
+            const float range = g.pos_range[3];
+            const float near = std::clamp(range * 0.005f, 0.02f, 0.2f);
+            float half_tan = 0;
+            auto add_face = [&](Vec3 dir, Vec3 up, float fov) {
+                const Mat4 vp = Mat4::perspective(fov, 1.0f, near, range) * Mat4::look_at(at, at + dir, up);
+                GpuFace f{};
+                to_array(vp, f.view_proj);
+                const auto slot = static_cast<std::uint32_t>(faces.size());
+                f.rect[0] = static_cast<float>(slot % kFaceTiles) / kFaceTiles;
+                f.rect[1] = static_cast<float>(slot / kFaceTiles) / kFaceTiles;
+                f.rect[2] = 1.0f / kFaceTiles;
+                f.rect[3] = 1.0f / kAtlasSize;
+                faces.push_back(f);
+            };
+            g.cone[1] = static_cast<float>(faces.size());
+            if (spot) {
+                const Vec3 dir{g.dir_cos[0], g.dir_cos[1], g.dir_cos[2]};
+                const float outer = std::acos(std::clamp(g.dir_cos[3], -1.0f, 1.0f));
+                const float fov = std::min(2.0f * outer * 1.08f + radians(2.0f), radians(170.0f));
+                const Vec3 up = std::fabs(dir.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+                add_face(dir, up, fov);
+                half_tan = std::tan(fov * 0.5f);
+            } else {
+                half_tan = 1.0f + 3.0f / (kFaceSize * 0.5f);
+                const float fov = 2.0f * std::atan(half_tan);
+                add_face({1, 0, 0}, {0, 1, 0}, fov);
+                add_face({-1, 0, 0}, {0, 1, 0}, fov);
+                add_face({0, 1, 0}, {0, 0, 1}, fov);
+                add_face({0, -1, 0}, {0, 0, 1}, fov);
+                add_face({0, 0, 1}, {0, 1, 0}, fov);
+                add_face({0, 0, -1}, {0, 1, 0}, fov);
+            }
+            g.cone[2] = 2.0f * half_tan / static_cast<float>(kFaceSize);
+            ++stats.shadow_lights;
+        }
+        stats.shadow_faces = static_cast<std::uint32_t>(faces.size());
+        if (faces.empty()) return;
+        device->write_buffer(face_buffer, 0, faces.data(), faces.size() * sizeof(GpuFace));
+        std::vector<std::uint8_t> slots(256 * faces.size(), 0);
+        for (std::size_t i = 0; i < faces.size(); ++i) std::memcpy(slots.data() + 256 * i, faces[i].view_proj, sizeof(float) * 16);
+        device->write_buffer(face_slots, 0, slots.data(), slots.size());
+    }
+
+    bool create_atlas() {
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str("pocket.shadow.atlas");
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {kAtlasSize, kAtlasSize, 1};
+        td.format = WGPUTextureFormat_Depth32Float;
+        td.mipLevelCount = 1;
+        td.sampleCount = 1;
+        atlas_texture = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!atlas_texture) return false;
+        atlas_view = wgpuTextureCreateView(atlas_texture, nullptr);
+        make_scene_group(scene_ao);
+        return true;
+    }
+
+    // Point and spot lights into the froxel grid (docs/design/rendering.md, Many lights): each
+    // light's sphere of reach, seen from the camera, covers a rectangle of tiles (the screen box of
+    // its corners, the whole screen when one is behind the eye) and a run of depth slices; of the
+    // clusters there, those whose box in view space the sphere touches list it. A light wholly out
+    // of view is left out; the nearest come first, so when the budget runs out it is the farthest
+    // that go.
+    void cluster_lights(FrameUniforms& fu) {
+        const Mat4 vp = camera.proj * camera.view;
+        const float near = std::max(camera.near, 0.05f);
+        const float far = std::max(camera.far, near * 2.0f);
+        const float scale = static_cast<float>(kClusterZ) / std::log(far / near);
+        const float ln_near = std::log(near);
+        auto slice_of = [&](float z) { return static_cast<std::uint32_t>(std::clamp((std::log(std::max(z, near)) - ln_near) * scale, 0.0f, static_cast<float>(kClusterZ - 1))); };
+        auto tile = [](float t, std::uint32_t n) { return static_cast<std::uint32_t>(std::clamp(t * static_cast<float>(n), 0.0f, static_cast<float>(n - 1))); };
+        // Every cluster's box in view space: its tile's corner rays (or, for an orthographic camera,
+        // corner lines) between the depths its slice spans.
+        const Mat4 inv_proj = camera.proj.inverse();
+        const bool ortho = std::fabs(camera.proj.at(3, 3) - 1.0f) < 1e-5f;
+        std::array<Vec3, (kClusterX + 1) * (kClusterY + 1)> corner{};
+        for (std::uint32_t y = 0; y <= kClusterY; ++y)
+            for (std::uint32_t x = 0; x <= kClusterX; ++x) {
+                const float nx = -1.0f + 2.0f * static_cast<float>(x) / kClusterX, ny = 1.0f - 2.0f * static_cast<float>(y) / kClusterY;
+                const Vec4 p = inv_proj * Vec4{nx, ny, 0.5f, 1.0f};
+                const Vec3 q{p.x / p.w, p.y / p.w, p.z / p.w};
+                // Perspective: the ray's point at depth 1; orthographic: the line's x and y.
+                corner[y * (kClusterX + 1) + x] = ortho ? Vec3{q.x, q.y, 0} : Vec3{q.x / -q.z, q.y / -q.z, 1};
+            }
+        cluster_box.resize(kClusters);
+        for (std::uint32_t z = 0; z < kClusterZ; ++z) {
+            const float d0 = near * std::exp(static_cast<float>(z) / scale), d1 = near * std::exp(static_cast<float>(z + 1) / scale);
+            for (std::uint32_t y = 0; y < kClusterY; ++y)
+                for (std::uint32_t x = 0; x < kClusterX; ++x) {
+                    Vec3 lo{1e30f, 1e30f, -d1}, hi{-1e30f, -1e30f, -d0};
+                    for (std::uint32_t k = 0; k < 4; ++k) {
+                        const Vec3 c = corner[(y + (k >> 1)) * (kClusterX + 1) + x + (k & 1)];
+                        for (const float d : {d0, d1}) {
+                            const float px = ortho ? c.x : c.x * d, py = ortho ? c.y : c.y * d;
+                            lo.x = std::min(lo.x, px); hi.x = std::max(hi.x, px);
+                            lo.y = std::min(lo.y, py); hi.y = std::max(hi.y, py);
+                        }
+                    }
+                    cluster_box[(z * kClusterY + y) * kClusterX + x] = {lo, hi};
+                }
+        }
+        struct Span { std::uint32_t light, x0, x1, y0, y1, z0, z1; float dist; Vec3 view; float r; };
+        std::vector<Span> spans;
+        spans.reserve(light_staging.size());
+        for (std::uint32_t i = 0; i < light_staging.size(); ++i) {
+            const GpuLight& g = light_staging[i];
+            const Vec3 c{g.pos_range[0], g.pos_range[1], g.pos_range[2]};
+            const float r = g.pos_range[3];
+            const float d = dot(c - camera.position, camera.forward);
+            if (d + r < near || d - r > far) { ++stats.lights_culled; continue; }
+            float u0 = 0, u1 = 1, v0 = 0, v1 = 1;
+            float nx0 = 1e30f, nx1 = -1e30f, ny0 = 1e30f, ny1 = -1e30f;
+            bool behind = false;
+            for (int k = 0; k < 8; ++k) {
+                const Vec4 p = vp * Vec4{c.x + ((k & 1) ? r : -r), c.y + ((k & 2) ? r : -r), c.z + ((k & 4) ? r : -r), 1};
+                if (p.w <= 1e-4f) { behind = true; break; }
+                nx0 = std::min(nx0, p.x / p.w); nx1 = std::max(nx1, p.x / p.w);
+                ny0 = std::min(ny0, p.y / p.w); ny1 = std::max(ny1, p.y / p.w);
+            }
+            if (!behind) {
+                if (nx1 < -1 || nx0 > 1 || ny1 < -1 || ny0 > 1) { ++stats.lights_culled; continue; }
+                u0 = (nx0 + 1) * 0.5f; u1 = (nx1 + 1) * 0.5f;
+                v0 = (1 - ny1) * 0.5f; v1 = (1 - ny0) * 0.5f;
+            }
+            spans.push_back({i, tile(u0, kClusterX), tile(u1, kClusterX), tile(v0, kClusterY), tile(v1, kClusterY), slice_of(d - r), slice_of(d + r), length(c - camera.position), camera.view.transform_point(c), r});
+        }
+        std::stable_sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.dist < b.dist; });
+        // The clusters each light touches, within the budgets; then the lists laid out after the grid.
+        std::vector<std::uint32_t> counts(kClusters, 0);
+        std::vector<std::uint32_t> hits;
+        std::vector<std::pair<std::size_t, std::size_t>> hit_range(spans.size());
+        std::uint32_t total = 0;
+        std::size_t kept = 0;
+        for (std::size_t si = 0; si < spans.size(); ++si) {
+            Span& s = spans[si];
+            const std::size_t start = hits.size();
+            if (kept < kMaxLights) {
+                for (std::uint32_t z = s.z0; z <= s.z1; ++z)
+                    for (std::uint32_t y = s.y0; y <= s.y1; ++y)
+                        for (std::uint32_t x = s.x0; x <= s.x1; ++x) {
+                            const std::uint32_t c = (z * kClusterY + y) * kClusterX + x;
+                            const auto& [lo, hi] = cluster_box[c];
+                            const float dx = std::max({lo.x - s.view.x, 0.0f, s.view.x - hi.x});
+                            const float dy = std::max({lo.y - s.view.y, 0.0f, s.view.y - hi.y});
+                            const float dz = std::max({lo.z - s.view.z, 0.0f, s.view.z - hi.z});
+                            if (dx * dx + dy * dy + dz * dz <= s.r * s.r) hits.push_back(c);
+                        }
+            }
+            const auto n = static_cast<std::uint32_t>(hits.size() - start);
+            if (kept == kMaxLights || total + n > kMaxClusterEntries) {
+                ++stats.lights_dropped;
+                s.light = UINT32_MAX;
+                hits.resize(start);
+                continue;
+            }
+            hit_range[si] = {start, hits.size()};
+            total += n;
+            ++kept;
+            for (std::size_t h = start; h < hits.size(); ++h) ++counts[hits[h]];
+        }
+        cluster_staging.assign(2ull * kClusters + total, 0);
+        std::uint32_t running = 2 * kClusters;
+        for (std::uint32_t c = 0; c < kClusters; ++c) {
+            cluster_staging[2 * c] = running;
+            running += counts[c];
+            stats.max_cluster_lights = std::max(stats.max_cluster_lights, counts[c]);
+        }
+        light_packed.clear();
+        for (std::size_t si = 0; si < spans.size(); ++si) {
+            const Span& s = spans[si];
+            if (s.light == UINT32_MAX) continue;
+            const auto slot = static_cast<std::uint32_t>(light_packed.size());
+            light_packed.push_back(light_staging[s.light]);
+            if (light_staging[s.light].color_kind[3] > 1.5f) ++stats.spot_lights;
+            else ++stats.point_lights;
+            for (std::size_t h = hit_range[si].first; h < hit_range[si].second; ++h) {
+                const std::uint32_t c = hits[h];
+                cluster_staging[cluster_staging[2 * c] + cluster_staging[2 * c + 1]++] = slot;
+            }
+        }
+        stats.cluster_entries = total;
+        assign_shadow_faces();
+        fu.clusters[0] = kClusterX; fu.clusters[1] = kClusterY; fu.clusters[2] = kClusterZ;
+        fu.clusters[3] = static_cast<std::uint32_t>(light_packed.size());
+        fu.cluster_z[0] = near; fu.cluster_z[1] = far; fu.cluster_z[2] = scale; fu.cluster_z[3] = ln_near;
+        fu.viewport[0] = static_cast<float>(applied.x); fu.viewport[1] = static_cast<float>(applied.y);
+        fu.viewport[2] = static_cast<float>(std::max(1u, applied.w)); fu.viewport[3] = static_cast<float>(std::max(1u, applied.h));
+        if (!light_packed.empty()) device->write_buffer(light_buffer, 0, light_packed.data(), light_packed.size() * sizeof(GpuLight));
+        device->write_buffer(cluster_buffer, 0, cluster_staging.data(), cluster_staging.size() * sizeof(std::uint32_t));
     }
 };
 
@@ -3218,7 +3925,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.sun_dir[0] = 0.3f; fu.sun_dir[1] = -1.0f; fu.sun_dir[2] = -0.4f;
     fu.sun_color[0] = 0; fu.sun_color[1] = 0; fu.sun_color[2] = 0;
     bool have_sun = false;
-    std::uint32_t points = 0;
+    im.light_staging.clear();
     world.ecs().each([&](flecs::entity, const world::Light& l, const world::WorldTransform& t) {
         if (l.kind == 0) {
             if (have_sun) return;
@@ -3228,24 +3935,34 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             fu.sun_color[0] = decode(l.color.r) * l.intensity;
             fu.sun_color[1] = decode(l.color.g) * l.intensity;
             fu.sun_color[2] = decode(l.color.b) * l.intensity;
-        } else if (points < kMaxPointLights) {
-            fu.point_pos[points][0] = t.position.x;
-            fu.point_pos[points][1] = t.position.y;
-            fu.point_pos[points][2] = t.position.z;
-            fu.point_pos[points][3] = l.range > 0 ? l.range : 0.001f;
-            fu.point_color[points][0] = decode(l.color.r) * l.intensity;
-            fu.point_color[points][1] = decode(l.color.g) * l.intensity;
-            fu.point_color[points][2] = decode(l.color.b) * l.intensity;
-            ++points;
+        } else {
+            GpuLight g{};
+            g.pos_range[0] = t.position.x;
+            g.pos_range[1] = t.position.y;
+            g.pos_range[2] = t.position.z;
+            g.pos_range[3] = l.range > 0 ? l.range : 0.001f;
+            g.color_kind[0] = decode(l.color.r) * l.intensity;
+            g.color_kind[1] = decode(l.color.g) * l.intensity;
+            g.color_kind[2] = decode(l.color.b) * l.intensity;
+            g.color_kind[3] = l.kind == 2 ? 2.0f : 1.0f;
+            g.cone[1] = l.shadows ? 0.0f : -1.0f;   // asks for shadows; the face comes with the clustering
+            if (l.kind == 2) {
+                const Vec3 dir = normalize(t.rotation.rotate({0, 0, -1}));
+                const float outer = std::clamp(l.outer_angle, 0.5f, 89.5f);
+                const float inner = std::clamp(l.inner_angle, 0.0f, outer - 0.25f);
+                g.dir_cos[0] = dir.x; g.dir_cos[1] = dir.y; g.dir_cos[2] = dir.z;
+                g.dir_cos[3] = std::cos(radians(outer));
+                g.cone[0] = std::cos(radians(inner));
+            }
+            im.light_staging.push_back(g);
         }
     });
     if (!have_sun) {
         // Default key light so a scene without lights is still visible.
         fu.sun_color[0] = decode(0.9f); fu.sun_color[1] = decode(0.88f); fu.sun_color[2] = decode(0.85f);
     }
-    fu.point_count[0] = points;
+    im.cluster_lights(fu);
     im.stats.has_sun = have_sun;
-    im.stats.point_lights = points;
     // The sun's orthographic view fits a sphere around everything with Bounds.
     bool shadows_on = im.shadows.enabled;
     {
@@ -3391,6 +4108,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         to_array(model, ou.model);
         to_array(transpose(model.inverse_affine()), ou.normal);
         ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
+        ou.id[1] = mr.cast_shadows ? 0u : 2u;
         // Material inputs: the asset's material, overridden per entity by the MeshRenderer.
         auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, const assets::Material* mat, bool skinned = false) {
             if (count >= kMaxObjects) return;
@@ -3809,6 +4527,34 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderRelease(spass);
         }
     }
+    // The local lights' shadow faces: one pass over the atlas, each face drawn into its own square.
+    if (!im.faces.empty() && im.atlas_view && !draws.empty()) {
+        WGPURenderPassDepthStencilAttachment ads{};
+        ads.view = im.atlas_view;
+        ads.depthLoadOp = WGPULoadOp_Clear;
+        ads.depthStoreOp = WGPUStoreOp_Store;
+        ads.depthClearValue = 1.0f;
+        ads.stencilLoadOp = WGPULoadOp_Undefined;
+        ads.stencilStoreOp = WGPUStoreOp_Undefined;
+        ads.stencilReadOnly = true;
+        WGPURenderPassDescriptor arp{};
+        arp.label = rhi::str("pocket.shadow.local");
+        arp.colorAttachmentCount = 0;
+        arp.depthStencilAttachment = &ads;
+        WGPURenderPassEncoder apass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &arp);
+        wgpuRenderPassEncoderSetBindGroup(apass, 0, im.frame_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(apass, 1, im.object_bg, 0, nullptr);
+        for (std::size_t f = 0; f < im.faces.size(); ++f) {
+            const auto x = static_cast<std::uint32_t>(f % kFaceTiles) * kFaceSize, y = static_cast<std::uint32_t>(f / kFaceTiles) * kFaceSize;
+            wgpuRenderPassEncoderSetViewport(apass, static_cast<float>(x), static_cast<float>(y), kFaceSize, kFaceSize, 0.0f, 1.0f);
+            wgpuRenderPassEncoderSetScissorRect(apass, x, y, kFaceSize, kFaceSize);
+            const std::uint32_t offset = 256u * static_cast<std::uint32_t>(f);
+            wgpuRenderPassEncoderSetBindGroup(apass, 2, im.face_bg, 1, &offset);
+            draw_runs(apass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline);
+        }
+        wgpuRenderPassEncoderEnd(apass);
+        wgpuRenderPassEncoderRelease(apass);
+    }
     // Sprites and tile layers in draw order; the same loop serves the color pass and the id pass.
     auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, std::uint32_t& counter) {
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
@@ -3914,6 +4660,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
+    im.stats.volumetric = fog_on && fog.volumetric && im.prepass_view && im.split_applied;
+    if (im.stats.volumetric) POCKET_TRY_VOID(im.draw_volume(frame, fog));
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
     POCKET_TRY_VOID(im.draw_post(frame, clear, fog_on ? &fog : nullptr));
     return {};
@@ -4151,11 +4899,15 @@ Json Renderer::describe() const {
     j["depth_prepass"] = s.depth_prepass;
     j["ao"] = s.ao;
     j["fog"] = s.fog;
+    j["volumetric"] = s.volumetric;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;
+    j["spot_lights"] = s.spot_lights;
+    j["light_shadows"] = Json{{"lights", s.shadow_lights}, {"faces", s.shadow_faces}, {"atlas", kAtlasSize}, {"face_size", kFaceSize}};
+    j["lights"] = Json{{"clusters", Json::array({kClusterX, kClusterY, kClusterZ})}, {"culled", s.lights_culled}, {"dropped", s.lights_dropped}, {"entries", s.cluster_entries}, {"max_per_cluster", s.max_cluster_lights}};
     j["has_camera"] = s.has_camera;
     j["has_sun"] = s.has_sun;
     if (s.camera) j["camera"] = s.camera;

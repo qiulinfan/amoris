@@ -61,12 +61,15 @@ fields = [
 
 [[component]]
 name = "Light"
-doc = "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point."
+doc = "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights)."
 fields = [
-    { name = "kind", type = "i32", default = 0, doc = "0 directional, 1 point." },
+    { name = "kind", type = "i32", default = 0, doc = "0 directional, 1 point, 2 spot." },
     { name = "color", type = "color", default = [1.0, 1.0, 1.0, 1.0], doc = "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused." },
     { name = "intensity", type = "f32", default = 1.0, doc = "Multiplier applied to color." },
-    { name = "range", type = "f32", default = 10.0, doc = "Point light range in meters." },
+    { name = "range", type = "f32", default = 10.0, doc = "Point and spot light range in meters: the light fades to nothing there." },
+    { name = "inner_angle", type = "f32", default = 20.0, doc = "Spot: the half-angle of the cone in degrees inside which the light is full." },
+    { name = "outer_angle", type = "f32", default = 30.0, doc = "Spot: the half-angle in degrees where it has faded out (at most 89.5)." },
+    { name = "shadows", type = "bool", default = false, doc = "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'." },
 ]
 
 [[component]]
@@ -80,6 +83,10 @@ fields = [
     { name = "start", type = "f32", default = 0.0, doc = "Distance from the camera before any fog." },
     { name = "max_opacity", type = "f32", default = 1.0, doc = "The most the fog hides, 0..1 (under 1, a far mountain still shows through)." },
     { name = "enabled", type = "bool", default = true, doc = "false turns the fog off without removing it." },
+    { name = "volumetric", type = "bool", default = false, doc = "Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint." },
+    { name = "anisotropy", type = "f32", default = 0.6, doc = "Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist)." },
+    { name = "steps", type = "i32", default = 32, doc = "Volumetric: samples along each ray, 4..128." },
+    { name = "distance", type = "f32", default = 60.0, doc = "Volumetric: how far along each ray the fog is marched; the sky counts as that far." },
 ]
 
 [[component]]
@@ -113,6 +120,7 @@ fields = [
     { name = "cutoff", type = "f32", default = 0.0, doc = "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none." },
     { name = "normal_map", type = "string", default = "", doc = "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none." },
     { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
+    { name = "cast_shadows", type = "bool", default = true, doc = "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass." },
 ]
 
 [[component]]

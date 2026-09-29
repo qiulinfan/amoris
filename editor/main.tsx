@@ -34,7 +34,7 @@ const schema = command<{ components: SchemaComponent[] }>("world.schema").compon
 const selection = signal<number[]>([]);   // ordered; the last one is the primary selection
 const playing = signal(false);
 const paused = signal(true);
-const overlays = signal(false);   // colliders and joints drawn as lines in the scene pane
+const overlays = signal(false);   // colliders, joints and lights drawn as lines in the scene pane
 const snap = signal(false);       // gizmo drags land on the grid: snapStep units, 15 degrees, quarter scales
 const localAxes = signal(false);  // gizmo handles on the entity's own axes instead of the world's
 const snapStep = signal(0.5);     // the grid a snapped move lands on, cycled by the toolbar
@@ -922,7 +922,7 @@ onInput((events) => {
 // ------------------------------------------------------------------------------------ views
 function toggleOverlays(): void {
     const on = !overlays();
-    render.debug({ colliders: on, joints: on });
+    render.debug({ colliders: on, joints: on, lights: on });
     overlays.set(on);
 }
 

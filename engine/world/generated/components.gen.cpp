@@ -359,6 +359,9 @@ void to_json(Json& j, const Light& v) {
     vec_to_json(j["color"], v.color);
     j["intensity"] = v.intensity;
     j["range"] = v.range;
+    j["inner_angle"] = v.inner_angle;
+    j["outer_angle"] = v.outer_angle;
+    j["shadows"] = v.shadows;
 }
 
 void from_json(const Json& j, Light& v) {
@@ -366,6 +369,9 @@ void from_json(const Json& j, Light& v) {
     if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
     scalar_from_json(j, "intensity", v.intensity);
     scalar_from_json(j, "range", v.range);
+    scalar_from_json(j, "inner_angle", v.inner_angle);
+    scalar_from_json(j, "outer_angle", v.outer_angle);
+    scalar_from_json(j, "shadows", v.shadows);
 }
 
 void hash_component(StateHasherRef& h, const Light& v) {
@@ -376,6 +382,9 @@ void hash_component(StateHasherRef& h, const Light& v) {
     h.f32(v.color.a);
     h.f32(v.intensity);
     h.f32(v.range);
+    h.f32(v.inner_angle);
+    h.f32(v.outer_angle);
+    h.u8(v.shadows ? 1 : 0);
 }
 
 std::size_t numeric_span(Light& v, std::string_view path, float** out) {
@@ -387,6 +396,8 @@ std::size_t numeric_span(Light& v, std::string_view path, float** out) {
     if (path == "color.a") { *out = &v.color.a; return 1; }
     if (path == "intensity") { *out = &v.intensity; return 1; }
     if (path == "range") { *out = &v.range; return 1; }
+    if (path == "inner_angle") { *out = &v.inner_angle; return 1; }
+    if (path == "outer_angle") { *out = &v.outer_angle; return 1; }
     return 0;
 }
 
@@ -399,6 +410,10 @@ void to_json(Json& j, const Fog& v) {
     j["start"] = v.start;
     j["max_opacity"] = v.max_opacity;
     j["enabled"] = v.enabled;
+    j["volumetric"] = v.volumetric;
+    j["anisotropy"] = v.anisotropy;
+    j["steps"] = v.steps;
+    j["distance"] = v.distance;
 }
 
 void from_json(const Json& j, Fog& v) {
@@ -409,6 +424,10 @@ void from_json(const Json& j, Fog& v) {
     scalar_from_json(j, "start", v.start);
     scalar_from_json(j, "max_opacity", v.max_opacity);
     scalar_from_json(j, "enabled", v.enabled);
+    scalar_from_json(j, "volumetric", v.volumetric);
+    scalar_from_json(j, "anisotropy", v.anisotropy);
+    scalar_from_json(j, "steps", v.steps);
+    scalar_from_json(j, "distance", v.distance);
 }
 
 void hash_component(StateHasherRef& h, const Fog& v) {
@@ -422,6 +441,10 @@ void hash_component(StateHasherRef& h, const Fog& v) {
     h.f32(v.start);
     h.f32(v.max_opacity);
     h.u8(v.enabled ? 1 : 0);
+    h.u8(v.volumetric ? 1 : 0);
+    h.f32(v.anisotropy);
+    h.i64(static_cast<std::int64_t>(v.steps));
+    h.f32(v.distance);
 }
 
 std::size_t numeric_span(Fog& v, std::string_view path, float** out) {
@@ -436,6 +459,8 @@ std::size_t numeric_span(Fog& v, std::string_view path, float** out) {
     if (path == "falloff") { *out = &v.falloff; return 1; }
     if (path == "start") { *out = &v.start; return 1; }
     if (path == "max_opacity") { *out = &v.max_opacity; return 1; }
+    if (path == "anisotropy") { *out = &v.anisotropy; return 1; }
+    if (path == "distance") { *out = &v.distance; return 1; }
     return 0;
 }
 
@@ -528,6 +553,7 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["cutoff"] = v.cutoff;
     j["normal_map"] = v.normal_map;
     j["visible"] = v.visible;
+    j["cast_shadows"] = v.cast_shadows;
 }
 
 void from_json(const Json& j, MeshRenderer& v) {
@@ -541,6 +567,7 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "cutoff", v.cutoff);
     scalar_from_json(j, "normal_map", v.normal_map);
     scalar_from_json(j, "visible", v.visible);
+    scalar_from_json(j, "cast_shadows", v.cast_shadows);
 }
 
 void hash_component(StateHasherRef& h, const MeshRenderer& v) {
@@ -560,6 +587,7 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.cutoff);
     h.str(v.normal_map);
     h.u8(v.visible ? 1 : 0);
+    h.u8(v.cast_shadows ? 1 : 0);
 }
 
 std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
@@ -1752,13 +1780,16 @@ constexpr std::array<FieldInfo, 6> kCameraFields = {{
     FieldInfo{"far", "f32", "Far clip distance."},
     FieldInfo{"active", "bool", "Whether this camera renders."},
 }};
-constexpr std::array<FieldInfo, 4> kLightFields = {{
-    FieldInfo{"kind", "i32", "0 directional, 1 point."},
+constexpr std::array<FieldInfo, 7> kLightFields = {{
+    FieldInfo{"kind", "i32", "0 directional, 1 point, 2 spot."},
     FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused."},
     FieldInfo{"intensity", "f32", "Multiplier applied to color."},
-    FieldInfo{"range", "f32", "Point light range in meters."},
+    FieldInfo{"range", "f32", "Point and spot light range in meters: the light fades to nothing there."},
+    FieldInfo{"inner_angle", "f32", "Spot: the half-angle of the cone in degrees inside which the light is full."},
+    FieldInfo{"outer_angle", "f32", "Spot: the half-angle in degrees where it has faded out (at most 89.5)."},
+    FieldInfo{"shadows", "bool", "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'."},
 }};
-constexpr std::array<FieldInfo, 7> kFogFields = {{
+constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"color", "color", "The fog's color as a color picker shows it (sRGB); the alpha is unused."},
     FieldInfo{"density", "f32", "How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units)."},
     FieldInfo{"height", "f32", "The height (world Y) where the fog has its density."},
@@ -1766,6 +1797,10 @@ constexpr std::array<FieldInfo, 7> kFogFields = {{
     FieldInfo{"start", "f32", "Distance from the camera before any fog."},
     FieldInfo{"max_opacity", "f32", "The most the fog hides, 0..1 (under 1, a far mountain still shows through)."},
     FieldInfo{"enabled", "bool", "false turns the fog off without removing it."},
+    FieldInfo{"volumetric", "bool", "Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint."},
+    FieldInfo{"anisotropy", "f32", "Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist)."},
+    FieldInfo{"steps", "i32", "Volumetric: samples along each ray, 4..128."},
+    FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far."},
 }};
 constexpr std::array<FieldInfo, 11> kSkyFields = {{
     FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 0 off."},
@@ -1780,7 +1815,7 @@ constexpr std::array<FieldInfo, 11> kSkyFields = {{
     FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness)."},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
 }};
-constexpr std::array<FieldInfo, 10> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 11> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent."},
@@ -1791,6 +1826,7 @@ constexpr std::array<FieldInfo, 10> kMeshRendererFields = {{
     FieldInfo{"cutoff", "f32", "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none."},
     FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
+    FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass."},
 }};
 constexpr std::array<FieldInfo, 11> kSpriteFields = {{
     FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color."},
@@ -2027,7 +2063,7 @@ constexpr std::array<ComponentInfo, 28> kComponents = {{
     ComponentInfo{"Health", "Hit points. Gameplay decides what zero means; the engine only stores and reports it.", true, kHealthFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
-    ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.", true, kLightFields},
+    ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
     ComponentInfo{"Fog", "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.", true, kFogFields},
     ComponentInfo{"Sky", "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.", true, kSkyFields},
     ComponentInfo{"MeshRenderer", "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured.", true, kMeshRendererFields},

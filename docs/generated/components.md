@@ -63,14 +63,17 @@ The renderer uses the first active camera. Perspective by default; orthographic 
 
 ## Light
 
-A light source. kind 0 = directional (shines along -Z of the entity), 1 = point.
+A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `kind` | i32 | 0 | 0 directional, 1 point. |
+| `kind` | i32 | 0 | 0 directional, 1 point, 2 spot. |
 | `color` | color | [1.0, 1.0, 1.0, 1.0] | Color as a color picker shows it (sRGB), decoded to linear light; alpha unused. |
 | `intensity` | f32 | 1.0 | Multiplier applied to color. |
-| `range` | f32 | 10.0 | Point light range in meters. |
+| `range` | f32 | 10.0 | Point and spot light range in meters: the light fades to nothing there. |
+| `inner_angle` | f32 | 20.0 | Spot: the half-angle of the cone in degrees inside which the light is full. |
+| `outer_angle` | f32 | 30.0 | Spot: the half-angle in degrees where it has faded out (at most 89.5). |
+| `shadows` | bool | false | Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'. |
 
 ## Fog
 
@@ -85,6 +88,10 @@ Air that thickens with distance and thins with height (docs/design/rendering.md,
 | `start` | f32 | 0.0 | Distance from the camera before any fog. |
 | `max_opacity` | f32 | 1.0 | The most the fog hides, 0..1 (under 1, a far mountain still shows through). |
 | `enabled` | bool | true | false turns the fog off without removing it. |
+| `volumetric` | bool | false | Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint. |
+| `anisotropy` | f32 | 0.6 | Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist). |
+| `steps` | i32 | 32 | Volumetric: samples along each ray, 4..128. |
+| `distance` | f32 | 60.0 | Volumetric: how far along each ray the fog is marched; the sky counts as that far. |
 
 ## Sky
 
@@ -120,6 +127,7 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `cutoff` | f32 | 0.0 | Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none. |
 | `normal_map` | string | "" | Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. |
 | `visible` | bool | true | Whether the mesh is drawn. |
+| `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |
 
 ## Sprite
 

@@ -299,7 +299,7 @@ export const render = {
         return command("render.ids", { path });
     },
     /** Engine overlays drawn as lines: colliders (green dynamic, gray static, blue kinematic, yellow triggers), joints, bounds, world axes. */
-    debug(flags: { colliders?: boolean; joints?: boolean; bounds?: boolean; axes?: boolean; all?: boolean } = {}): { colliders: boolean; joints: boolean; bounds: boolean; axes: boolean; lines: number } {
+    debug(flags: { colliders?: boolean; joints?: boolean; bounds?: boolean; axes?: boolean; nav?: boolean; lights?: boolean; all?: boolean } = {}): { colliders: boolean; joints: boolean; bounds: boolean; axes: boolean; nav: boolean; lights: boolean; lines: number } {
         return command("render.debug", flags);
     },
     /** What the camera sees, largest first: coverage (fraction of the frame), pixel bounds, normalized center. */
