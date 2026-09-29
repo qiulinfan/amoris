@@ -70,6 +70,17 @@ T opt(const Json& p, const char* key, T fallback) {
     }
 }
 
+// A bus's settings with the fields `p` gives over `s` (audio.bus, [audio.buses]); duck_by "" or null stops ducking.
+audio::BusSettings bus_settings(audio::BusSettings s, const Json& p) {
+    s.volume = static_cast<float>(opt<double>(p, "volume", s.volume));
+    s.muted = opt<bool>(p, "muted", s.muted);
+    s.lowpass = static_cast<float>(opt<double>(p, "lowpass", s.lowpass));
+    if (p.contains("duck_by")) s.duck_by = p["duck_by"].is_string() ? p["duck_by"].get<std::string>() : std::string();
+    s.duck_amount = static_cast<float>(opt<double>(p, "duck_amount", s.duck_amount));
+    s.duck_seconds = static_cast<float>(opt<double>(p, "duck_seconds", s.duck_seconds));
+    return s;
+}
+
 // A color for the grade's tint: {r, g, b}, [r, g, b] or "#rrggbb" (also "#rgb").
 bool read_tint(const Json& v, rhi::Color& out) {
     if (v.is_object()) {
@@ -166,6 +177,165 @@ bool Session::finished() const {
     if (journal_ && journal_->replaying && journal_->cursor >= journal_->frames.size()) return true;
     if (options_.frames >= 0 && frames_ >= static_cast<std::uint64_t>(options_.frames)) return true;
     return false;
+}
+
+// The project's settings that can change while it runs: the audio room and buses (and the
+// editor's audio.json), gestures and the input map (and input.json), sprite clips, render and
+// physics settings. At start, and again when project.reload finds project.toml changed.
+void Session::apply_project_settings() {
+    // [audio.reverb] room = 0.5, damping, mix: the project's room.
+    if (project_.contains("audio") && project_["audio"].is_object() && project_["audio"].contains("reverb") && project_["audio"]["reverb"].is_object()) {
+        const Json& rj = project_["audio"]["reverb"];
+        audio::ReverbSettings r = audio_->reverb();
+        r.room = static_cast<float>(opt<double>(rj, "room", r.room));
+        r.damping = static_cast<float>(opt<double>(rj, "damping", r.damping));
+        r.mix = static_cast<float>(opt<double>(rj, "mix", r.mix));
+        audio_->set_reverb(r);
+    }
+    // [audio.buses] music = { volume = 0.6, duck_by = "dialogue" }: the project's buses.
+    if (project_.contains("audio") && project_["audio"].is_object() && project_["audio"].contains("buses") && project_["audio"]["buses"].is_object()) {
+        for (const auto& [name, bj] : project_["audio"]["buses"].items()) {
+            if (bj.is_object()) audio_->set_bus(name, bus_settings(audio_->bus(name), bj));
+        }
+    }
+    // audio.json beside project.toml, written by the editor's Audio tab: {"buses": {...}} over those.
+    if (const std::filesystem::path mixer = options_.project_dir / "audio.json"; std::filesystem::exists(mixer)) {
+        auto text = fs::read_text(mixer);
+        Json j = text ? Json::parse(*text, nullptr, false) : Json();
+        if (!text || j.is_discarded() || !j.is_object() || !j.contains("buses") || !j["buses"].is_object()) log::warn("runtime", "audio.json is not an object with \"buses\"; keeping the project.toml buses");
+        else for (const auto& [name, bj] : j["buses"].items()) if (bj.is_object()) audio_->set_bus(name, bus_settings(audio_->bus(name), bj));
+    }
+    if (project_.contains("input") && project_["input"].is_object()) gestures_.configure(project_["input"]);
+    if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
+        if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
+        else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
+    }
+    // input.json beside project.toml, written by the editor's Input tab, replaces that map
+    // (docs/design/input.md, Map): {"actions": {...}} in the same shape.
+    if (const std::filesystem::path override = options_.project_dir / "input.json"; std::filesystem::exists(override)) {
+        auto text = fs::read_text(override);
+        Json j = text ? Json::parse(*text, nullptr, false) : Json();
+        if (!text || j.is_discarded() || !j.is_object() || !j.contains("actions") || !j["actions"].is_object()) log::warn("runtime", "input.json is not an object with \"actions\"; keeping the project.toml map");
+        else if (auto r = input_map_.configure(j["actions"]); !r) log::warn("runtime", "input.json: {}", r.error().to_string());
+        else log::info("runtime", "input map: {} actions from input.json", input_map_.size());
+    }
+    if (project_.contains("sprite_clips") && project_["sprite_clips"].is_object()) {
+        for (const auto& [name, j] : project_["sprite_clips"].items()) {
+            if (auto clip = world::World::SpriteClip::from_json(j)) world_->define_clip(name, std::move(*clip));
+            else log::warn("runtime", "project sprite clip '{}': {}", name, clip.error().to_string());
+        }
+    }
+    if (project_.contains("render") && project_["render"].is_object()) {
+        renderer::ShadowSettings s = renderer_->shadows();
+        const Json& r = project_["render"];
+        if (r.contains("shadows") && r["shadows"].is_boolean()) s.enabled = r["shadows"].get<bool>();
+        if (r.contains("msaa") && r["msaa"].is_number()) renderer_->set_msaa(r["msaa"].get<int>());
+        if (r.contains("shadow_strength") && r["shadow_strength"].is_number()) s.strength = std::clamp(r["shadow_strength"].get<float>(), 0.0f, 1.0f);
+        if (r.contains("shadow_cascades") && r["shadow_cascades"].is_number()) s.cascades = r["shadow_cascades"].get<int>();
+        if (r.contains("shadow_distance") && r["shadow_distance"].is_number()) s.distance = r["shadow_distance"].get<float>();
+        renderer_->set_shadows(s);
+        renderer::BloomSettings b = renderer_->bloom();
+        if (r.contains("bloom") && r["bloom"].is_boolean()) b.enabled = r["bloom"].get<bool>();
+        if (r.contains("bloom_threshold") && r["bloom_threshold"].is_number()) b.threshold = r["bloom_threshold"].get<float>();
+        if (r.contains("bloom_strength") && r["bloom_strength"].is_number()) b.strength = r["bloom_strength"].get<float>();
+        if (r.contains("bloom_radius") && r["bloom_radius"].is_number()) b.radius = r["bloom_radius"].get<float>();
+        renderer_->set_bloom(b);
+        // [render] grade = true, or a [render.grade] table with the settings (on unless it says enabled = false).
+        if (r.contains("grade")) {
+            renderer::GradeSettings g = renderer_->grade();
+            const Json& gj = r["grade"];
+            if (gj.is_boolean()) {
+                g.enabled = gj.get<bool>();
+            } else if (gj.is_object()) {
+                g.enabled = opt<bool>(gj, "enabled", true);
+                read_grade(g, gj);
+            }
+            renderer_->set_grade(g);
+        }
+        // [render] ssr = true, or [render.ssr] max_distance, max_roughness, steps, thickness, intensity.
+        if (r.contains("ssr") && (r["ssr"].is_object() || r["ssr"].is_boolean())) {
+            renderer::SsrSettings s = renderer_->ssr();
+            if (r["ssr"].is_boolean()) {
+                s.enabled = r["ssr"].get<bool>();
+            } else {
+                s.enabled = opt<bool>(r["ssr"], "enabled", true);
+                s.max_distance = opt<float>(r["ssr"], "max_distance", s.max_distance);
+                s.max_roughness = opt<float>(r["ssr"], "max_roughness", s.max_roughness);
+                s.steps = opt<int>(r["ssr"], "steps", s.steps);
+                s.thickness = opt<float>(r["ssr"], "thickness", s.thickness);
+                s.intensity = opt<float>(r["ssr"], "intensity", s.intensity);
+            }
+            renderer_->set_ssr(s);
+        }
+        // [render.dof] focus, aperture, max_blur (on unless enabled = false); [render.motion_blur] strength, samples.
+        if (r.contains("dof") && (r["dof"].is_object() || r["dof"].is_boolean())) {
+            renderer::DofSettings d = renderer_->dof();
+            if (r["dof"].is_boolean()) {
+                d.enabled = r["dof"].get<bool>();
+            } else {
+                d.enabled = opt<bool>(r["dof"], "enabled", true);
+                d.focus = opt<float>(r["dof"], "focus", d.focus);
+                d.aperture = opt<float>(r["dof"], "aperture", d.aperture);
+                d.max_blur = opt<float>(r["dof"], "max_blur", d.max_blur);
+            }
+            renderer_->set_dof(d);
+        }
+        if (r.contains("motion_blur") && (r["motion_blur"].is_object() || r["motion_blur"].is_boolean())) {
+            renderer::MotionBlurSettings m = renderer_->motion_blur();
+            if (r["motion_blur"].is_boolean()) {
+                m.enabled = r["motion_blur"].get<bool>();
+            } else {
+                m.enabled = opt<bool>(r["motion_blur"], "enabled", true);
+                m.strength = opt<float>(r["motion_blur"], "strength", m.strength);
+                m.samples = opt<int>(r["motion_blur"], "samples", m.samples);
+            }
+            renderer_->set_motion_blur(m);
+        }
+        // [render] oit = true
+        if (r.contains("oit") && r["oit"].is_boolean()) renderer_->set_oit(r["oit"].get<bool>());
+        // [render] taa = true, or [render.taa] enabled, feedback.
+        if (r.contains("taa") && (r["taa"].is_object() || r["taa"].is_boolean())) {
+            renderer::TaaSettings t = renderer_->taa();
+            if (r["taa"].is_boolean()) {
+                t.enabled = r["taa"].get<bool>();
+            } else {
+                t.enabled = opt<bool>(r["taa"], "enabled", true);
+                t.feedback = opt<float>(r["taa"], "feedback", t.feedback);
+            }
+            renderer_->set_taa(t);
+        }
+        // [render.ao] enabled = true, radius, intensity, samples (a table: on unless it says enabled = false).
+        if (r.contains("ao") && (r["ao"].is_object() || r["ao"].is_boolean())) {
+            renderer::AoSettings a = renderer_->ao();
+            if (r["ao"].is_boolean()) {
+                a.enabled = r["ao"].get<bool>();
+            } else {
+                a.enabled = opt<bool>(r["ao"], "enabled", true);
+                a.radius = opt<float>(r["ao"], "radius", a.radius);
+                a.intensity = opt<float>(r["ao"], "intensity", a.intensity);
+                a.samples = opt<int>(r["ao"], "samples", a.samples);
+            }
+            renderer_->set_ao(a);
+        }
+        // [render.tonemap] operator = "agx", exposure, auto_exposure, compensation, min_ev, max_ev, speed.
+        if (r.contains("tonemap") && r["tonemap"].is_object()) {
+            renderer::TonemapSettings t = renderer_->tonemap();
+            std::string why;
+            if (read_tonemap(t, r["tonemap"], why)) renderer_->set_tonemap(t);
+            else log::warn("runtime", "project [render.tonemap]: {}", why);
+        }
+    }
+    if (project_.contains("physics") && project_["physics"].is_object()) {
+        const Json& ph = project_["physics"];
+        if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
+            physics_->settings().gravity = {ph["gravity"][0].get<float>(), ph["gravity"][1].get<float>(), ph["gravity"][2].get<float>()};
+        }
+        // Layer names, bit 0 first: documentation for agents and scripts (physics.layers).
+        physics_layers_.clear();
+        if (ph.contains("layers") && ph["layers"].is_array()) {
+            for (const Json& n : ph["layers"]) if (n.is_string() && physics_layers_.size() < 32) physics_layers_.push_back(n.get<std::string>());
+        }
+    }
 }
 
 Status Session::start() {
@@ -338,146 +508,7 @@ Status Session::start() {
     }
     POCKET_TRY(audio, audio::Audio::create(ac));
     audio_ = std::move(audio);
-    // [audio.reverb] room = 0.5, damping, mix: the project's room.
-    if (project_.contains("audio") && project_["audio"].is_object() && project_["audio"].contains("reverb") && project_["audio"]["reverb"].is_object()) {
-        const Json& rj = project_["audio"]["reverb"];
-        audio::ReverbSettings r = audio_->reverb();
-        r.room = static_cast<float>(opt<double>(rj, "room", r.room));
-        r.damping = static_cast<float>(opt<double>(rj, "damping", r.damping));
-        r.mix = static_cast<float>(opt<double>(rj, "mix", r.mix));
-        audio_->set_reverb(r);
-    }
-    if (project_.contains("input") && project_["input"].is_object()) gestures_.configure(project_["input"]);
-    if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
-        if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
-        else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
-    }
-    // input.json beside project.toml, written by the editor's Input tab, replaces that map
-    // (docs/design/input.md, Map): {"actions": {...}} in the same shape.
-    if (const std::filesystem::path override = options_.project_dir / "input.json"; std::filesystem::exists(override)) {
-        auto text = fs::read_text(override);
-        Json j = text ? Json::parse(*text, nullptr, false) : Json();
-        if (!text || j.is_discarded() || !j.is_object() || !j.contains("actions") || !j["actions"].is_object()) log::warn("runtime", "input.json is not an object with \"actions\"; keeping the project.toml map");
-        else if (auto r = input_map_.configure(j["actions"]); !r) log::warn("runtime", "input.json: {}", r.error().to_string());
-        else log::info("runtime", "input map: {} actions from input.json", input_map_.size());
-    }
-    if (project_.contains("sprite_clips") && project_["sprite_clips"].is_object()) {
-        for (const auto& [name, j] : project_["sprite_clips"].items()) {
-            if (auto clip = world::World::SpriteClip::from_json(j)) world_->define_clip(name, std::move(*clip));
-            else log::warn("runtime", "project sprite clip '{}': {}", name, clip.error().to_string());
-        }
-    }
-    if (project_.contains("render") && project_["render"].is_object()) {
-        renderer::ShadowSettings s = renderer_->shadows();
-        const Json& r = project_["render"];
-        if (r.contains("shadows") && r["shadows"].is_boolean()) s.enabled = r["shadows"].get<bool>();
-        if (r.contains("msaa") && r["msaa"].is_number()) renderer_->set_msaa(r["msaa"].get<int>());
-        if (r.contains("shadow_strength") && r["shadow_strength"].is_number()) s.strength = std::clamp(r["shadow_strength"].get<float>(), 0.0f, 1.0f);
-        if (r.contains("shadow_cascades") && r["shadow_cascades"].is_number()) s.cascades = r["shadow_cascades"].get<int>();
-        if (r.contains("shadow_distance") && r["shadow_distance"].is_number()) s.distance = r["shadow_distance"].get<float>();
-        renderer_->set_shadows(s);
-        renderer::BloomSettings b = renderer_->bloom();
-        if (r.contains("bloom") && r["bloom"].is_boolean()) b.enabled = r["bloom"].get<bool>();
-        if (r.contains("bloom_threshold") && r["bloom_threshold"].is_number()) b.threshold = r["bloom_threshold"].get<float>();
-        if (r.contains("bloom_strength") && r["bloom_strength"].is_number()) b.strength = r["bloom_strength"].get<float>();
-        if (r.contains("bloom_radius") && r["bloom_radius"].is_number()) b.radius = r["bloom_radius"].get<float>();
-        renderer_->set_bloom(b);
-        // [render] grade = true, or a [render.grade] table with the settings (on unless it says enabled = false).
-        if (r.contains("grade")) {
-            renderer::GradeSettings g = renderer_->grade();
-            const Json& gj = r["grade"];
-            if (gj.is_boolean()) {
-                g.enabled = gj.get<bool>();
-            } else if (gj.is_object()) {
-                g.enabled = opt<bool>(gj, "enabled", true);
-                read_grade(g, gj);
-            }
-            renderer_->set_grade(g);
-        }
-        // [render] ssr = true, or [render.ssr] max_distance, max_roughness, steps, thickness, intensity.
-        if (r.contains("ssr") && (r["ssr"].is_object() || r["ssr"].is_boolean())) {
-            renderer::SsrSettings s = renderer_->ssr();
-            if (r["ssr"].is_boolean()) {
-                s.enabled = r["ssr"].get<bool>();
-            } else {
-                s.enabled = opt<bool>(r["ssr"], "enabled", true);
-                s.max_distance = opt<float>(r["ssr"], "max_distance", s.max_distance);
-                s.max_roughness = opt<float>(r["ssr"], "max_roughness", s.max_roughness);
-                s.steps = opt<int>(r["ssr"], "steps", s.steps);
-                s.thickness = opt<float>(r["ssr"], "thickness", s.thickness);
-                s.intensity = opt<float>(r["ssr"], "intensity", s.intensity);
-            }
-            renderer_->set_ssr(s);
-        }
-        // [render.dof] focus, aperture, max_blur (on unless enabled = false); [render.motion_blur] strength, samples.
-        if (r.contains("dof") && (r["dof"].is_object() || r["dof"].is_boolean())) {
-            renderer::DofSettings d = renderer_->dof();
-            if (r["dof"].is_boolean()) {
-                d.enabled = r["dof"].get<bool>();
-            } else {
-                d.enabled = opt<bool>(r["dof"], "enabled", true);
-                d.focus = opt<float>(r["dof"], "focus", d.focus);
-                d.aperture = opt<float>(r["dof"], "aperture", d.aperture);
-                d.max_blur = opt<float>(r["dof"], "max_blur", d.max_blur);
-            }
-            renderer_->set_dof(d);
-        }
-        if (r.contains("motion_blur") && (r["motion_blur"].is_object() || r["motion_blur"].is_boolean())) {
-            renderer::MotionBlurSettings m = renderer_->motion_blur();
-            if (r["motion_blur"].is_boolean()) {
-                m.enabled = r["motion_blur"].get<bool>();
-            } else {
-                m.enabled = opt<bool>(r["motion_blur"], "enabled", true);
-                m.strength = opt<float>(r["motion_blur"], "strength", m.strength);
-                m.samples = opt<int>(r["motion_blur"], "samples", m.samples);
-            }
-            renderer_->set_motion_blur(m);
-        }
-        // [render] oit = true
-        if (r.contains("oit") && r["oit"].is_boolean()) renderer_->set_oit(r["oit"].get<bool>());
-        // [render] taa = true, or [render.taa] enabled, feedback.
-        if (r.contains("taa") && (r["taa"].is_object() || r["taa"].is_boolean())) {
-            renderer::TaaSettings t = renderer_->taa();
-            if (r["taa"].is_boolean()) {
-                t.enabled = r["taa"].get<bool>();
-            } else {
-                t.enabled = opt<bool>(r["taa"], "enabled", true);
-                t.feedback = opt<float>(r["taa"], "feedback", t.feedback);
-            }
-            renderer_->set_taa(t);
-        }
-        // [render.ao] enabled = true, radius, intensity, samples (a table: on unless it says enabled = false).
-        if (r.contains("ao") && (r["ao"].is_object() || r["ao"].is_boolean())) {
-            renderer::AoSettings a = renderer_->ao();
-            if (r["ao"].is_boolean()) {
-                a.enabled = r["ao"].get<bool>();
-            } else {
-                a.enabled = opt<bool>(r["ao"], "enabled", true);
-                a.radius = opt<float>(r["ao"], "radius", a.radius);
-                a.intensity = opt<float>(r["ao"], "intensity", a.intensity);
-                a.samples = opt<int>(r["ao"], "samples", a.samples);
-            }
-            renderer_->set_ao(a);
-        }
-        // [render.tonemap] operator = "agx", exposure, auto_exposure, compensation, min_ev, max_ev, speed.
-        if (r.contains("tonemap") && r["tonemap"].is_object()) {
-            renderer::TonemapSettings t = renderer_->tonemap();
-            std::string why;
-            if (read_tonemap(t, r["tonemap"], why)) renderer_->set_tonemap(t);
-            else log::warn("runtime", "project [render.tonemap]: {}", why);
-        }
-    }
-    if (project_.contains("physics") && project_["physics"].is_object()) {
-        const Json& ph = project_["physics"];
-        if (ph.contains("gravity") && ph["gravity"].is_array() && ph["gravity"].size() == 3) {
-            physics_->settings().gravity = {ph["gravity"][0].get<float>(), ph["gravity"][1].get<float>(), ph["gravity"][2].get<float>()};
-        }
-        // Layer names, bit 0 first: documentation for agents and scripts (physics.layers).
-        physics_layers_.clear();
-        if (ph.contains("layers") && ph["layers"].is_array()) {
-            for (const Json& n : ph["layers"]) if (n.is_string() && physics_layers_.size() < 32) physics_layers_.push_back(n.get<std::string>());
-        }
-    }
+    apply_project_settings();
     rng_.reseed(options_.seed);
     clock_.tick_seconds = 1.0 / options_.tick_rate;
 
@@ -618,6 +649,7 @@ void Session::run_tick() {
     in_tick_ = false;
     sw = Stopwatch{};
     physics_->step(*world_, clock_.tick_seconds);
+    physics_->move_characters(*world_, clock_.tick_seconds);   // after the bodies: platforms have moved (docs/design/physics.md, Characters)
     if (!physics_->contacts().empty()) {
         Json contacts = Json::array();
         for (const auto& c : physics_->contacts()) {
@@ -785,6 +817,7 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
         }
     }
     release_expired_holds();
+    advance_rumble();
     for (auto& e : events) input_map_.apply(e);
     for (auto& e : events) input_events.push_back(platform::event_to_json(e));
     if (ui_) {
@@ -809,7 +842,8 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
                 case platform::EventType::MouseWheel: target = ui_->hit_test(platform_->input().mouse_x, platform_->input().mouse_y); break;
                 case platform::EventType::KeyDown:
                 case platform::EventType::KeyUp:
-                case platform::EventType::Text: target = ui_->focused(); break;
+                case platform::EventType::Text:
+                case platform::EventType::PadButton: target = ui_->focused(); break;   // a pad drives a focused interface
                 default: break;
             }
             if (target) input_events[i]["ui"] = target;
@@ -824,6 +858,11 @@ void Session::recognize_gestures(const std::vector<platform::Event>& events, Jso
     std::vector<std::uint64_t> on_ui(events.size(), 0);
     for (std::size_t i = 0; i < events.size() && i < input_events.size(); ++i) {
         if (input_events[i].is_object() && input_events[i].contains("ui") && input_events[i]["ui"].is_number()) on_ui[i] = input_events[i]["ui"].get<std::uint64_t>();
+    }
+    {
+        float w = 0, h = 0, scale = 1;
+        ui_size(w, h, scale);
+        gestures_.set_view(w, h);
     }
     std::vector<Json> found = gestures_.feed(events, on_ui, clock_.tick, clock_.tick_seconds);
     if (time_passes) for (Json& g : gestures_.tick(clock_.tick, clock_.tick_seconds)) found.push_back(std::move(g));
@@ -2357,6 +2396,27 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown assets command '{}'", op);
 }
 
+bool Session::advance_rumble() {
+    bool any = false;
+    for (auto it = rumble_.begin(); it != rumble_.end();) {
+        RumblePattern& r = it->second;
+        if (clock_.tick < r.next_tick) { ++it; continue; }
+        if (r.next >= r.steps.size()) {
+            if (--r.repeat <= 0) { it = rumble_.erase(it); continue; }
+            r.next = 0;
+        }
+        const RumbleStep& step = r.steps[r.next];
+        const bool rumbled = platform_ && platform_->rumble(it->first, step.low, step.high, step.ms);
+        any = any || rumbled;
+        // Seen by agents and tests whether or not a motor answered (headless runs have none).
+        world_->events().emit(clock_.tick, "input.rumble", 0, Json{{"pad", it->first}, {"low", step.low}, {"high", step.high}, {"ms", step.ms}, {"step", r.next}, {"steps", r.steps.size()}, {"rumbled", rumbled}}, 0, "input");
+        r.next_tick = clock_.tick + std::max<std::int64_t>(1, static_cast<std::int64_t>(std::ceil(step.ms / 1000.0 / clock_.tick_seconds - 1e-9)));
+        ++r.next;
+        ++it;
+    }
+    return any;
+}
+
 void Session::release_expired_holds() {
     if (held_keys_.empty()) return;
     std::vector<platform::Event> ups;
@@ -2499,16 +2559,51 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         j["platform"] = platform_->describe();
         j["pads"] = platform_->input().pads;
         j["fingers"] = platform_->input().fingers + static_cast<int>(touch_last_.size());   // real fingers and synthetic ones
-        j["gestures"] = Json{{"enabled", gestures_.settings().enabled}, {"slop", gestures_.settings().slop}, {"tap_seconds", gestures_.settings().tap_seconds}, {"hold_seconds", gestures_.settings().hold_seconds}, {"swipe_points", gestures_.settings().swipe_points}, {"swipe_seconds", gestures_.settings().swipe_seconds}};
+        j["gestures"] = Json{{"enabled", gestures_.settings().enabled}, {"slop", gestures_.settings().slop}, {"tap_seconds", gestures_.settings().tap_seconds}, {"hold_seconds", gestures_.settings().hold_seconds}, {"swipe_points", gestures_.settings().swipe_points}, {"swipe_seconds", gestures_.settings().swipe_seconds}, {"edge", gestures_.settings().edge}};
+        j["rumble"] = Json::object();
+        for (const auto& [pad, r] : rumble_) j["rumble"][std::to_string(pad)] = Json{{"step", r.next}, {"steps", r.steps.size()}, {"repeat", r.repeat}};
         j["held"] = Json::object();
         for (auto& [k, until] : held_keys_) j["held"][k] = until;
         j["actions"] = input_map_.snapshot();
         return j;
     }
     if (op == "rumble") {
-        // Shake a gamepad: false without one (headless runs, no pad, a pad without motors).
-        const bool rumbled = platform_ && platform_->rumble(std::clamp(opt<int>(p, "pad", 0), 0, 15), opt<float>(p, "low", 1.0f), opt<float>(p, "high", 1.0f), std::clamp(opt<int>(p, "ms", 200), 0, 10000));
-        return Json{{"rumbled", rumbled}};
+        // Shake a gamepad: one step of motor strengths for `ms`, or a `pattern` of steps played
+        // one after another on the tick clock (`repeat` times), replacing what the pad was playing;
+        // `stop` silences it. `rumbled` is false without a pad that can (headless runs); the steps
+        // still play as `input.rumble` world events.
+        const int pad = std::clamp(opt<int>(p, "pad", 0), 0, 15);
+        if (opt<bool>(p, "stop", false)) {
+            const bool playing = rumble_.erase(pad) > 0;
+            if (platform_) platform_->rumble(pad, 0, 0, 0);
+            return Json{{"stopped", playing}};
+        }
+        RumblePattern r;
+        auto read_step = [&](const Json& s) {
+            RumbleStep step;
+            step.low = std::clamp(opt<float>(s, "low", 1.0f), 0.0f, 1.0f);
+            step.high = std::clamp(opt<float>(s, "high", 1.0f), 0.0f, 1.0f);
+            step.ms = std::clamp(opt<int>(s, "ms", 200), 0, 10000);
+            return step;
+        };
+        if (p.contains("pattern")) {
+            if (!p["pattern"].is_array() || p["pattern"].empty() || p["pattern"].size() > 64) return fail("bad_args", "pattern is an array of 1 to 64 steps {{low, high, ms}}");
+            for (const Json& s : p["pattern"]) {
+                if (!s.is_object()) return fail("bad_args", "a pattern step is {{low, high, ms}}");
+                r.steps.push_back(read_step(s));
+            }
+            r.repeat = std::clamp(opt<int>(p, "repeat", 1), 1, 100);
+        } else {
+            r.steps.push_back(read_step(p));
+        }
+        int total = 0;
+        for (const RumbleStep& s : r.steps) total += s.ms;
+        const std::size_t steps = r.steps.size();
+        const int repeat = r.repeat;
+        r.next_tick = clock_.tick;
+        rumble_[pad] = std::move(r);
+        const bool rumbled = advance_rumble();
+        return Json{{"rumbled", rumbled}, {"pad", pad}, {"steps", steps}, {"seconds", total * repeat / 1000.0}};
     }
     if (op == "pad") {
         // A gamepad button or axis for tests and agents, by pad index, through the same path as a
@@ -2539,6 +2634,7 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         if (phase != "down" && phase != "move" && phase != "up") return fail("bad_args", "phase is down, move or up");
         const int finger = std::clamp(opt<int>(p, "finger", 0), 0, 9);
         const float x = opt<float>(p, "x", 0.0f), y = opt<float>(p, "y", 0.0f);
+        const float pressure = std::clamp(opt<float>(p, "pressure", phase == "up" ? 0.0f : 1.0f), 0.0f, 1.0f);
         const auto last = touch_last_.find(finger);
         if (phase != "down" && last == touch_last_.end()) return fail("bad_args", "finger {} is not down", finger);
         std::vector<platform::Event> evs;
@@ -2550,6 +2646,7 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         t.dx = last == touch_last_.end() ? 0.0f : x - last->second.first;
         t.dy = last == touch_last_.end() ? 0.0f : y - last->second.second;
         t.pressed = phase != "up";
+        t.value = pressure;
         evs.push_back(t);
         if (finger == 0) {
             platform::Event m;
@@ -2632,7 +2729,24 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         j["loop"] = v.loop;
         j["entity"] = v.entity;
         j["tag"] = v.tag;
+        j["bus"] = v.bus;
         j["loops_done"] = v.loops_done;
+        return j;
+    };
+    auto bus_json = [](const audio::BusInfo& b) {
+        // Settings as they were written (0.1, not the float's 0.10000000149).
+        const auto round = [](float v) { return std::round(static_cast<double>(v) * 10000.0) / 10000.0; };
+        Json j;
+        j["name"] = b.name;
+        j["volume"] = round(b.settings.volume);
+        j["muted"] = b.settings.muted;
+        j["lowpass"] = round(b.settings.lowpass);
+        j["duck_by"] = b.settings.duck_by;
+        j["duck_amount"] = round(b.settings.duck_amount);
+        j["duck_seconds"] = round(b.settings.duck_seconds);
+        j["duck"] = round(b.duck);
+        j["ducked"] = b.ducked;
+        j["voices"] = b.voices;
         return j;
     };
     if (op == "play") {
@@ -2646,6 +2760,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         o.reverb = static_cast<float>(opt<double>(p, "reverb", 1.0));
         o.loop = opt<bool>(p, "loop", false);
         o.tag = opt<std::string>(p, "tag", "");
+        o.bus = opt<std::string>(p, "bus", "main");
         if (p.contains("entity") && !p["entity"].is_null()) o.entity = resolve_entity(p["entity"]);
         // A spatial one-shot follows its entity: placed now and every tick until it ends.
         const bool spatial = opt<bool>(p, "spatial", false);
@@ -2664,6 +2779,7 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
         if (p.contains("voice") && p["voice"].is_number()) n = a.stop(p["voice"].get<std::uint32_t>());
         else if (p.contains("clip") && p["clip"].is_string()) n = a.stop_clip(p["clip"].get<std::string>());
         else if (p.contains("tag") && p["tag"].is_string()) n = a.stop_tag(p["tag"].get<std::string>());
+        else if (p.contains("bus") && p["bus"].is_string()) n = a.stop_bus(p["bus"].get<std::string>());
         else n = a.stop_all();
         return Json{{"stopped", n}};
     }
@@ -2678,6 +2794,19 @@ Result<Json> Session::audio_command(std::string_view op, const Json& p) {
     }
     if (op == "clips") return a.clips();
     if (op == "stats") return a.describe();
+    if (op == "bus") {
+        // A group of voices set as one: volume, mute, a low-pass over its mix, ducking under another bus.
+        const std::string name = opt<std::string>(p, "name", "");
+        if (name.empty()) return fail("bad_args", "audio.bus needs a bus name");
+        a.set_bus(name, bus_settings(a.bus(name), p));
+        for (const audio::BusInfo& b : a.buses()) if (b.name == name) return bus_json(b);
+        return fail("internal", "bus '{}' was not made", name);
+    }
+    if (op == "buses") {
+        Json arr = Json::array();
+        for (const audio::BusInfo& b : a.buses()) arr.push_back(bus_json(b));
+        return arr;
+    }
     if (op == "master") {
         if (p.contains("volume") && p["volume"].is_number()) a.set_master_volume(p["volume"].get<float>());
         if (p.contains("muted") && p["muted"].is_boolean()) a.set_muted(p["muted"].get<bool>());
@@ -2781,6 +2910,7 @@ void Session::tick_audio(double dt) {
             o.pitch = src.pitch;
             o.lowpass = src.lowpass;
             o.reverb = src.reverb;
+            o.bus = src.bus;
             o.loop = src.loop;
             o.entity = e.id();
             auto id = audio_->play(src.clip, o);
@@ -2811,6 +2941,10 @@ void Session::tick_audio(double dt) {
     }
     for (auto& [voice, sp] : spatial_voices_) place_voice(voice, sp.entity, sp.volume, sp.near, sp.range, sp.occlusion, sp.lowpass, nullptr, sp.pitch, sp.doppler, dt);
     for (const audio::VoiceEvent& ev : audio_->tick(dt)) {
+        if (ev.type == "audio.ducked") {
+            w.events().emit(clock_.tick, ev.type, 0, Json{{"bus", ev.bus}, {"ducked", ev.ducked}, {"by", audio_->bus(ev.bus).duck_by}}, 0, "audio");
+            continue;
+        }
         if (ev.type == "audio.finished") voice_prev_pos_.erase(ev.voice.id);
         w.events().emit(clock_.tick, ev.type, ev.voice.entity, Json{{"clip", ev.voice.clip}, {"voice", ev.voice.id}, {"loops", ev.voice.loops_done}}, 0, "audio");
         if (ev.type == "audio.finished") spatial_voices_.erase(ev.voice.id);
@@ -2932,6 +3066,20 @@ Result<Json> Session::ui_command(std::string_view op, const Json& p) {
 
 Result<Json> Session::script_command(std::string_view op, const Json& p) {
     if (op == "contexts") return Json(bundle_names_);
+    if (op == "diagnostics") {
+        // The project's type errors: set by `pocket run/editor --watch` after each rebundle (the
+        // runtime does not type-check), read by the editor's Script tab and by agents. Each set is
+        // also logged, so the Console shows it.
+        if (p.contains("diagnostics")) {
+            if (!p["diagnostics"].is_array()) return fail("bad_args", "diagnostics is an array of {{file, line, column, severity, message}}");
+            script_diagnostics_ = p["diagnostics"];
+            if (script_diagnostics_.empty()) log::info("types", "no type errors");
+            for (const Json& d : script_diagnostics_) {
+                log::warn("types", "{}:{}:{}: {}", opt<std::string>(d, "file", "?"), opt<int>(d, "line", 0), opt<int>(d, "column", 0), opt<std::string>(d, "message", ""));
+            }
+        }
+        return Json{{"diagnostics", script_diagnostics_}, {"count", script_diagnostics_.size()}};
+    }
     if (op == "start") {
         std::string name = opt<std::string>(p, "name", "project");
         if (std::find(bundle_names_.begin(), bundle_names_.end(), name) == bundle_names_.end()) return fail("bad_args", "unknown script context '{}'", name);
@@ -2992,8 +3140,19 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         // again; one the editor holds dormant stays dormant. `pocket run --watch` calls this.
         bool scene = opt<bool>(p, "scene", true);
         bool scripts = opt<bool>(p, "scripts", true);
+        const bool settings = opt<bool>(p, "settings", scripts);
         bool was_active = context_active("project");
         Json j;
+        if (settings && std::filesystem::exists(options_.project_config)) {
+            // project.toml as the tool last bundled it: an edited input map, bus or render
+            // setting takes effect without a restart.
+            auto text = fs::read_text(options_.project_config);
+            Json fresh = text ? Json::parse(*text, nullptr, false) : Json();
+            if (!text || fresh.is_discarded() || !fresh.is_object()) return fail("bad_project_config", "{} is not valid JSON", options_.project_config.string());
+            project_ = std::move(fresh);
+            apply_project_settings();
+        }
+        j["settings"] = settings;
         if (scripts) {
             dispatch("unload", "project", "project");
             errors_.clear();
@@ -3958,7 +4117,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

@@ -785,6 +785,7 @@ struct Physics::Impl {
     std::set<std::pair<EntityId, EntityId>> joined;    // pairs a joint with collide_connected = false keeps apart, this step
     std::map<EntityId, float> sleep_timers;             // persists across steps (bodies are regathered)
     std::map<EntityId, int> limit_states;               // hinge limit state per joint, for joint.limit events
+    std::map<EntityId, std::set<EntityId>> character_triggers;  // the triggers each character overlapped after its last move
     std::map<std::pair<EntityId, EntityId>, std::uint64_t> pair_cause;  // begin event seq per pair
     StepStats stats;
     assets::AssetStore* assets = nullptr;
@@ -1015,7 +1016,7 @@ bool sphere_cast_body(Vec3 o, Vec3 dir, float r, const Body& b, float reach, flo
 }
 
 // Whether two bodies' shapes overlap, and the normal from `b` into `a` when they do.
-bool overlap_pair(const Body& a, const Body& b, Vec3& normal, Vec3* point = nullptr) {
+bool overlap_pair(const Body& a, const Body& b, Vec3& normal, Vec3* point = nullptr, float* depth = nullptr) {
     Manifold m;
     bool hit = false;
     if (a.shape == 3 && b.shape == 3) hit = false;
@@ -1033,6 +1034,7 @@ bool overlap_pair(const Body& a, const Body& b, Vec3& normal, Vec3* point = null
     if (hit) {
         normal = -m.normal;   // the manifold's normal runs from a to b
         if (point) *point = m.points.empty() ? a.position : m.points.front();
+        if (depth) *depth = m.depths.empty() ? 0.0f : *std::max_element(m.depths.begin(), m.depths.end());
     }
     return hit;
 }
@@ -2161,6 +2163,340 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
     return out;
 }
 
+// Characters (docs/design/physics.md, Characters): upright capsules moved by their velocity after
+// the rigid bodies. A character on the ground walks with its capsule lifted by `step`, so an edge
+// lower than that passes under it, and then finds the ground again under the lifted capsule's round
+// foot, up or down by as much: kerbs and stairs are climbed and descended, slopes followed. Walkable
+// ground is no steeper than max_slope where the foot touches it, or, on an edge, under the centre.
+// Walls and steeper ground stop the part of a move that runs into them; a character in the air moves
+// with its whole capsule, lands on walkable ground and slides down the rest. It rides the kinematic
+// body it stands on and gives dynamic bodies it walks into its speed.
+void Physics::move_characters(world::World& w, double dt_d) {
+    Impl& im = *impl_;
+    const float dt = static_cast<float>(dt_d);
+    constexpr float kSkin = 0.01f;
+    // The colliders as they stand after the rigid bodies' step (triggers apart: they stop nothing).
+    std::vector<Body> solids, triggers;
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+        Body b;
+        b.id = e.id();
+        b.kind = rb.kind;
+        b.shape = col.shape;
+        b.layer = col.layer;
+        b.position = t.position + t.rotation.rotate(col.offset);
+        b.rotation = t.rotation;
+        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+        if (b.shape == 3) {
+            b.mesh = im.mesh_for(b.id, col, t, e.try_get<world::MeshRenderer>());
+            if (!b.mesh) return;
+        }
+        b.inv_mass = (rb.kind == 0 && rb.mass > 0) ? 1.0f / rb.mass : 0.0f;
+        if (const world::Velocity* v = e.try_get<world::Velocity>()) {
+            b.velocity = v->linear;
+            b.angular = v->angular;
+        }
+        update_aabb(b);
+        b.trigger = col.is_trigger;
+        (col.is_trigger ? triggers : solids).push_back(b);
+    });
+    std::sort(solids.begin(), solids.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
+    std::sort(triggers.begin(), triggers.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
+    std::vector<std::pair<EntityId, world::Character>> movers;
+    w.ecs().each([&](flecs::entity e, const world::Character& c) { if (e.has<world::Transform>()) movers.emplace_back(e.id(), c); });
+    std::sort(movers.begin(), movers.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+    std::map<EntityId, Vec3> pushes;   // speed given to dynamic bodies, applied after every character moved
+    im.stats.characters = static_cast<std::uint32_t>(movers.size());
+    for (auto& [id, c] : movers) {
+        flecs::entity e = w.entity(id);
+        world::Transform tr = e.get<world::Transform>();
+        const float r = std::max(c.radius, 0.01f);
+        const float half_h = std::max(c.height * 0.5f, r);
+        const float seg = half_h - r;                                  // half the straight part
+        const float lift = std::clamp(c.step, 0.0f, 2.0f * seg);       // how far the walking capsule's foot is raised
+        const float cos_max = std::cos(std::clamp(c.max_slope, 0.0f, 89.0f) * 3.14159265f / 180.0f);
+        auto usable = [&](const Body& b) { return b.id != id && (b.layer & c.mask); };
+        // The capsule at `center`, lifted by `raise` at its foot (its top stays).
+        auto capsule = [&](Vec3 center, float raise) {
+            Body cap;
+            cap.shape = 2;
+            cap.half = Vec3{r, std::max(0.0f, seg - raise * 0.5f), r};
+            cap.position = center + Vec3{0, raise * 0.5f, 0};
+            update_aabb(cap);
+            return cap;
+        };
+        // The nearest collider `shape` meets moving by `delta`: the fraction of the move reached, the
+        // normal out of it, the touching point, its index.
+        struct Hit { float f = 1; Vec3 n, point; int index = -1; };
+        auto sweep = [&](const Body& shape, Vec3 delta, EntityId skip = 0) {
+            Hit h;
+            if (length(delta) < 1e-7f) return h;
+            Body reach = shape;
+            reach.aabb_min = vmin3(shape.aabb_min, shape.aabb_min + delta) - Vec3{kSkin, kSkin, kSkin};
+            reach.aabb_max = vmax3(shape.aabb_max, shape.aabb_max + delta) + Vec3{kSkin, kSkin, kSkin};
+            for (std::size_t i = 0; i < solids.size(); ++i) {
+                const Body& b = solids[i];
+                if (!usable(b) || b.id == skip || !aabb_overlap(reach, b)) continue;
+                float f = 1;
+                Vec3 n, pt;
+                if (!stepped_sweep(shape, delta, Vec3{}, b, Vec3{}, h.f, f, n, pt)) continue;
+                if (h.index < 0 || f < h.f) { h.f = f; h.n = normalize(n); h.point = pt; h.index = static_cast<int>(i); }
+            }
+            return h;
+        };
+        // A sphere of radius r cast straight down from `from` by `dist`, exactly: the distance, normal, index.
+        auto foot_cast = [&](Vec3 from, float dist, float& t, Vec3& n) {
+            int best = -1;
+            t = dist;
+            Body probe;
+            probe.shape = 1;
+            probe.half = Vec3{r, r, r};
+            probe.position = from;
+            update_aabb(probe);
+            probe.aabb_min.y -= dist;
+            for (std::size_t i = 0; i < solids.size(); ++i) {
+                const Body& b = solids[i];
+                if (!usable(b) || !aabb_overlap(probe, b)) continue;
+                float tt = 0;
+                Vec3 nn;
+                if (!sphere_cast_body(from, Vec3{0, -1, 0}, r, b, t, tt, nn)) continue;
+                if (nn.y < 0.2f) continue;   // grazing a side on the way down holds nothing up
+                if (best < 0 || tt < t) { t = tt; n = nn; best = static_cast<int>(i); }
+            }
+            return best;
+        };
+        // What is straight under `from` within `dist`: nothing, or a surface and its normal.
+        auto under_centre = [&](Vec3 from, float dist, Vec3& n) {
+            auto hit = raycast(w, from, Vec3{0, -1, 0}, dist, [&](EntityId other, const world::RigidBody&, const world::Collider& col) { return other != id && !col.is_trigger && (col.layer & c.mask); });
+            if (!hit) return false;
+            n = hit->normal;
+            return true;
+        };
+        auto advance = [&](Vec3& at, Vec3 delta, float fraction) {
+            const float len = length(delta);
+            if (len < 1e-9f) return;
+            at += delta * (std::max(0.0f, fraction * len - kSkin) / len);
+        };
+        const bool was_grounded = c.grounded;
+        const EntityId stood_on = c.ground;
+        Vec3 pos = tr.position;
+        Vec3 v = c.velocity;
+        c.on_wall = false;
+        c.on_ceiling = false;
+        c.stepped = false;
+        c.wall_normal = Vec3{};
+        // 1. Carried by the kinematic body it stood on (a lift, a turning platform).
+        if (was_grounded && stood_on) {
+            for (const Body& b : solids) {
+                if (b.id != stood_on || b.kind != 2) continue;
+                Vec3 carry = b.velocity * dt;
+                const float spin = length(b.angular);
+                if (spin > 1e-6f) {
+                    const Quat q = Quat::from_axis_angle(b.angular * (1.0f / spin), spin * dt);
+                    carry += (q.rotate(pos - b.position) + b.position) - pos;
+                }
+                const Hit h = sweep(capsule(pos, 0), carry, stood_on);
+                if (h.index >= 0) advance(pos, carry, h.f);
+                else pos += carry;
+                break;
+            }
+        }
+        // 2. Out of anything it overlaps (it was placed inside, or a body moved into it). Touching
+        //    counts too: the moves below must start apart, or a wall it rests on stops them at once.
+        for (int pass = 0; pass < 4; ++pass) {
+            bool moved = false;
+            for (const Body& b : solids) {
+                const Body at = capsule(pos, 0);
+                if (!usable(b) || !aabb_overlap(at, b)) continue;
+                Vec3 n;
+                float depth = 0;
+                if (!overlap_pair(at, b, n, nullptr, &depth)) continue;
+                pos += normalize(n) * (std::max(depth, 0.0f) + kSkin * 0.5f);
+                moved = true;
+            }
+            if (!moved) break;
+        }
+        // 3. Gravity, except for a character standing on the ground (a jump sets y above 0).
+        const bool walking = was_grounded && v.y <= 0;
+        if (walking) v.y = 0;
+        else v.y = std::max(v.y + c.gravity * dt, -std::fabs(c.max_fall));
+        const Vec3 horizontal_velocity{v.x, 0, v.z};
+        auto wall_hit = [&](const Hit& h) {
+            c.on_wall = true;
+            c.wall_normal = h.n;
+            const Body& b = solids[static_cast<std::size_t>(h.index)];
+            const Vec3 nh = normalize(Vec3{h.n.x, 0, h.n.z});
+            if (length(nh) < 1e-4f) return;
+            if (b.inv_mass > 0 && c.push > 0) {
+                // A dynamic body is given the character's speed into it, scaled by push.
+                const float into = -dot(horizontal_velocity, nh);
+                if (into > 0) {
+                    Vec3& give = pushes[b.id];
+                    const Vec3 want = nh * (-into * c.push);
+                    if (dot(want, want) > dot(give, give)) give = want;
+                }
+            }
+            const float vn = dot(Vec3{v.x, 0, v.z}, nh);
+            if (vn < 0) { v.x -= nh.x * vn; v.z -= nh.z * vn; }
+        };
+        // 4. Across: slid along walls, up walkable slopes; a walking capsule's foot is lifted by `lift`.
+        const float raise = walking ? lift : 0.0f;
+        const Vec3 start_across = pos;
+        Vec3 rest{v.x * dt, 0, v.z * dt};
+        for (int it = 0; it < 4 && length(rest) > 1e-6f; ++it) {
+            const Hit h = sweep(capsule(pos, raise), rest);
+            if (h.index < 0) { pos += rest; break; }
+            const Vec3 was = pos;
+            advance(pos, rest, h.f);
+            const Vec3 remaining = rest - (pos - was);   // all of the move not made yet, the skin's share too
+            if (h.n.y >= cos_max) {
+                // A walkable slope: up it, keeping the distance across the ground.
+                const Vec3 along = remaining - h.n * dot(remaining, h.n);
+                const float want = length(Vec3{remaining.x, 0, remaining.z}), got = length(Vec3{along.x, 0, along.z});
+                rest = got > 1e-6f ? along * (want / got) : Vec3{};
+                continue;
+            }
+            wall_hit(h);
+            const Vec3 nh = normalize(Vec3{h.n.x, 0, h.n.z});
+            rest = length(nh) > 1e-4f ? remaining - nh * dot(remaining, nh) : Vec3{};
+        }
+        bool grounded = false;
+        EntityId ground = 0;
+        Vec3 ground_normal{0, 1, 0};
+        float landing_speed = 0;
+        // Ground under the foot: the round foot's sphere cast down from `from` by `dist`; walkable
+        // where it touches or, on an edge, straight under the centre. Places the capsule on it.
+        int steep = -1;     // the last settle found ground within reach, but too steep to stand on
+        Vec3 steep_normal;
+        auto settle = [&](Vec3 from, float dist) {
+            float t = 0;
+            Vec3 n;
+            steep = -1;
+            const int index = foot_cast(from, dist, t, n);
+            if (index < 0) return false;
+            Vec3 under = n;
+            if (n.y < cos_max) {
+                // Touching too steeply: against a steep face when the touch is on a face (the surface
+                // there faces the way the touch pushes); otherwise on an edge, resting on it when the
+                // ground under the centre is walkable, over a drop when nothing is there.
+                const Vec3 centre = from - Vec3{0, t, 0};
+                auto face = raycast(w, centre, -n, r + 0.05f, [&](EntityId other, const world::RigidBody&, const world::Collider& col) { return other != id && !col.is_trigger && (col.layer & c.mask); });
+                const bool on_face = face && dot(face->normal, n) > 0.98f;
+                if (!on_face && !under_centre(from, dist + r + kSkin, under)) return false;
+                if (on_face || under.y < cos_max) {
+                    steep = index;
+                    steep_normal = n;
+                    return false;
+                }
+            }
+            const float foot_centre = from.y - std::max(0.0f, t - kSkin);
+            pos.y = foot_centre - r + half_h;
+            grounded = true;
+            ground = solids[static_cast<std::size_t>(index)].id;
+            ground_normal = n.y >= cos_max ? n : under;
+            return true;
+        };
+        const float foot_y = pos.y - half_h + r;   // the foot sphere's centre
+        if (walking) {
+            // 5a. Walking: the ground from the lifted foot down to `step` below the foot as it was.
+            //     Ground too steep to stand on within that reach is a wall: the move across is taken
+            //     back (the lifted foot passed over the foot of a steep slope). No ground at all is
+            //     an edge walked off: it falls from here next tick.
+            const float before = pos.y;
+            if (settle(Vec3{pos.x, foot_y + raise, pos.z}, raise + lift + kSkin)) {
+                if (pos.y > before + 0.02f) c.stepped = true;
+            } else if (steep >= 0) {
+                pos = start_across;
+                Hit h;
+                h.n = steep_normal;
+                h.index = steep;
+                wall_hit(h);
+                grounded = was_grounded;
+                ground = stood_on;
+                ground_normal = c.ground_normal;
+            } else {
+                pos.y = before;
+            }
+        } else {
+            // 5b. In the air: up or down with the whole capsule; landing on walkable ground, a head
+            //     against a ceiling, sliding down steeper ground.
+            Vec3 vertical{0, v.y * dt, 0};
+            const float fall_speed = -v.y;
+            for (int it = 0; it < 3 && length(vertical) > 1e-7f; ++it) {
+                const Hit h = sweep(capsule(pos, 0), vertical);
+                if (h.index < 0) { pos += vertical; break; }
+                const Vec3 was = pos;
+                advance(pos, vertical, h.f);
+                if (vertical.y > 0 && h.n.y < -0.1f) {
+                    c.on_ceiling = true;
+                    if (v.y > 0) v.y = 0;
+                    break;
+                }
+                if (vertical.y < 0) {
+                    const float fy = pos.y - half_h + r;
+                    if (settle(Vec3{pos.x, fy + kSkin, pos.z}, 3 * kSkin)) { landing_speed = fall_speed; break; }
+                }
+                const Vec3 remaining = vertical - (pos - was);
+                vertical = remaining - h.n * dot(remaining, h.n);   // down the steep side
+                if (h.n.y < cos_max) wall_hit(h);
+            }
+            if (!grounded && v.y <= 0) {
+                const float fy = pos.y - half_h + r;
+                if (settle(Vec3{pos.x, fy + kSkin, pos.z}, 3 * kSkin)) landing_speed = fall_speed;
+            }
+        }
+        if (grounded && v.y < 0) v.y = 0;
+        if (grounded && !was_grounded) {
+            im.stats.landings++;
+            w.events().emit(w.tick_index(), "character.landed", id, Json{{"path", w.path(id)}, {"speed", std::max(0.0f, landing_speed)}, {"ground", ground}});
+        }
+        if (grounded) im.stats.characters_grounded++;
+        if (c.stepped) im.stats.stepped++;
+        c.velocity = v;
+        c.grounded = grounded;
+        c.ground = ground;
+        c.ground_normal = ground_normal;
+        tr.position = pos;
+        e.set<world::Transform>(tr);
+        e.set<world::Character>(c);
+        // The triggers it is in now, against those it was in: trigger.enter and trigger.exit, as a
+        // rigid body's would be (a kinematic body is not paired with static triggers by the step).
+        std::set<EntityId> inside;
+        const Body at = capsule(pos, 0);
+        for (const Body& b : triggers) {
+            if (b.id == id || !(b.layer & c.mask) || !aabb_overlap(at, b)) continue;
+            Vec3 n;
+            if (overlap_pair(at, b, n)) inside.insert(b.id);
+        }
+        std::set<EntityId>& was_inside = im.character_triggers[id];
+        for (EntityId trig : inside) {
+            if (was_inside.contains(trig)) continue;
+            w.events().emit(w.tick_index(), "trigger.enter", id, Json{{"a", w.path(id)}, {"b", w.path(trig)}, {"character", true}});
+        }
+        for (EntityId trig : was_inside) {
+            if (inside.contains(trig) || !w.ecs().is_alive(trig)) continue;
+            w.events().emit(w.tick_index(), "trigger.exit", id, Json{{"a", w.path(id)}, {"b", w.path(trig)}, {"character", true}});
+        }
+        was_inside = std::move(inside);
+    }
+    for (auto it = im.character_triggers.begin(); it != im.character_triggers.end();) {
+        if (w.ecs().is_alive(it->first) && w.entity(it->first).has<world::Character>()) ++it;
+        else it = im.character_triggers.erase(it);
+    }
+    for (const auto& [body, give] : pushes) {
+        flecs::entity e = w.entity(body);
+        world::Velocity v = e.has<world::Velocity>() ? e.get<world::Velocity>() : world::Velocity{};
+        const Vec3 dir = normalize(give);
+        const float along = dot(v.linear, dir), target = length(give);
+        if (along < target) v.linear += dir * (target - along);
+        e.set<world::Velocity>(v);
+        if (e.has<world::RigidBody>()) {
+            world::RigidBody rb = e.get<world::RigidBody>();
+            if (rb.sleeping) { rb.sleeping = false; e.set<world::RigidBody>(rb); }
+        }
+        im.stats.pushed++;
+    }
+}
+
 Json Physics::describe() const {
     const StepStats& s = impl_->stats;
     Json j;
@@ -2178,6 +2514,7 @@ Json Physics::describe() const {
     j["ccd_dynamic"] = s.ccd_dynamic;
     j["ignored"] = s.ignored;
     j["exceptions"] = impl_->ignored.size();
+    j["characters"] = Json{{"count", s.characters}, {"grounded", s.characters_grounded}, {"landings", s.landings}, {"stepped", s.stepped}, {"pushed", s.pushed}};
     j["gravity"] = Json{{"x", impl_->settings.gravity.x}, {"y", impl_->settings.gravity.y}, {"z", impl_->settings.gravity.z}};
     return j;
 }

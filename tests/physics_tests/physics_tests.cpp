@@ -800,3 +800,226 @@ TEST_CASE("groups, exceptions and joints keep chosen pairs apart", "[physics][gr
     REQUIRE(y(sunk) == Catch::Approx(2.4f).margin(0.05f));  // hanging on its rod, inside the post
 }
 
+
+namespace {
+
+EntityId character(World& w, const char* name, Vec3 pos, Json extra = Json::object()) {
+    Json c = Json::object();
+    for (auto& [k, v] : extra.items()) c[k] = v;
+    return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"Character", c}}).value();
+}
+
+EntityId solid(World& w, const char* name, Vec3 pos, Vec3 half, Quat rot = Quat{}, int kind = 1) {
+    return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}, {"rotation", {{"x", rot.x}, {"y", rot.y}, {"z", rot.z}, {"w", rot.w}}}}}, {"RigidBody", {{"kind", kind}}}, {"Collider", {{"shape", 0}, {"size", {{"x", half.x}, {"y", half.y}, {"z", half.z}}}}}}).value();
+}
+
+void walk(physics::Physics& p, World& w, EntityId who, Vec3 velocity, int ticks, int* airborne = nullptr) {
+    for (int i = 0; i < ticks; ++i) {
+        Character c = *w.try_get<Character>(who);
+        c.velocity.x = velocity.x;
+        c.velocity.z = velocity.z;
+        if (velocity.y != 0) c.velocity.y = velocity.y;
+        w.ecs().entity(who).set(c);
+        w.set_tick_index(w.tick_index());
+        p.step(w, 1.0 / 60.0);
+        p.move_characters(w, 1.0 / 60.0);
+        w.tick(1.0 / 60.0);
+        if (airborne && !w.try_get<Character>(who)->grounded) ++*airborne;
+    }
+}
+
+}  // namespace
+
+TEST_CASE("a character lands, walks, slides along walls and jumps", "[physics][character]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    const EntityId hero = character(w, "Hero", {0, 3, 0});
+    walk(p, w, hero, {}, 90);
+    const Character* c = w.try_get<Character>(hero);
+    REQUIRE(c->grounded);
+    REQUIRE(c->velocity.y == 0.0f);
+    REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(0.9).margin(0.02));   // centred, half its height above the floor
+    REQUIRE(w.events().histogram()["character.landed"] == 1);
+    REQUIRE(p.stats().characters == 1);
+    // Standing still stays put: no creep, no sinking.
+    walk(p, w, hero, {}, 120);
+    REQUIRE(w.try_get<Transform>(hero)->position.x == Catch::Approx(0).margin(1e-4));
+    REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(0.9).margin(0.02));
+    // Into a wall along x: stopped at the wall; along it diagonally: slides on in z.
+    solid(w, "Wall", {3, 1, 0}, {0.5f, 1, 5});
+    walk(p, w, hero, {4, 0, 0}, 60);
+    const Transform* t = w.try_get<Transform>(hero);
+    REQUIRE(t->position.x == Catch::Approx(2.5 - 0.3).margin(0.03));
+    REQUIRE(w.try_get<Character>(hero)->on_wall);
+    REQUIRE(w.try_get<Character>(hero)->wall_normal.x == Catch::Approx(-1).margin(0.01));
+    REQUIRE(w.try_get<Character>(hero)->velocity.x == Catch::Approx(0).margin(1e-4));   // the part into the wall is gone
+    walk(p, w, hero, {4, 0, 4}, 30);
+    t = w.try_get<Transform>(hero);
+    REQUIRE(t->position.x == Catch::Approx(2.2).margin(0.03));
+    REQUIRE(t->position.z == Catch::Approx(2.0).margin(0.05));   // half a second at 4 along the wall
+    // A jump leaves the ground and comes back down onto it.
+    Character jump = *w.try_get<Character>(hero);
+    jump.velocity = {0, 6, 0};
+    w.ecs().entity(hero).set(jump);
+    int airborne = 0;
+    walk(p, w, hero, {}, 60, &airborne);
+    REQUIRE(airborne > 30);   // 6 up against 20 down: 0.6 s in the air
+    REQUIRE(w.try_get<Character>(hero)->grounded);
+    REQUIRE(w.events().histogram()["character.landed"] == 2);
+}
+
+TEST_CASE("a character walks up steps and slopes it can climb and not up those it cannot", "[physics][character]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // A kerb 0.25 high (under the 0.3 step) and a ledge 0.6 high across the path in z = 0..
+    solid(w, "Kerb", {2, 0.125f, 0}, {0.5f, 0.125f, 1});
+    solid(w, "Ledge", {2, 0.3f, 4}, {0.5f, 0.3f, 1});
+    const EntityId up = character(w, "Up", {0, 0.9f, 0});
+    const EntityId stuck = character(w, "Stuck", {0, 0.9f, 4});
+    walk(p, w, up, {2, 0, 0}, 1);
+    walk(p, w, stuck, {2, 0, 0}, 1);
+    for (int i = 0; i < 60; ++i) {
+        walk(p, w, up, {2, 0, 0}, 1);
+        walk(p, w, stuck, {2, 0, 0}, 0);
+        Character s = *w.try_get<Character>(stuck);
+        s.velocity.x = 2;
+        w.ecs().entity(stuck).set(s);
+    }
+    INFO("up at " << w.try_get<Transform>(up)->position.x << ", " << w.try_get<Transform>(up)->position.y);
+    REQUIRE(w.try_get<Transform>(up)->position.y == Catch::Approx(0.25 + 0.9).margin(0.03));   // on the kerb
+    REQUIRE(w.try_get<Transform>(up)->position.x > 1.8f);
+    REQUIRE(p.stats().characters == 2);
+    REQUIRE(w.try_get<Transform>(stuck)->position.x < 1.5f - 0.3f + 0.05f);   // at the ledge's face
+    REQUIRE(w.try_get<Transform>(stuck)->position.y == Catch::Approx(0.9).margin(0.03));
+
+    // Ramps: 30 degrees is walked up, 60 degrees is a wall.
+    World r;
+    physics::Physics rp;
+    ground(r);
+    const float a30 = 30.0f * 3.14159265f / 180.0f, a60 = 60.0f * 3.14159265f / 180.0f;
+    solid(r, "Ramp30", {4, 0, 0}, {3, 0.1f, 1}, Quat::from_axis_angle({0, 0, 1}, a30));
+    solid(r, "Ramp60", {4, 0, 5}, {3, 0.1f, 1}, Quat::from_axis_angle({0, 0, 1}, a60));
+    const EntityId climber = character(r, "Climber", {0, 0.9f, 0});
+    const EntityId blocked = character(r, "Blocked", {0, 0.9f, 5});
+    for (int i = 0; i < 100; ++i) {
+        for (EntityId who : {climber, blocked}) {
+            Character c = *r.try_get<Character>(who);
+            c.velocity.x = 3;
+            r.ecs().entity(who).set(c);
+        }
+        r.set_tick_index(r.tick_index());
+        rp.step(r, 1.0 / 60.0);
+        rp.move_characters(r, 1.0 / 60.0);
+        r.tick(1.0 / 60.0);
+    }
+    const Transform* tc = r.try_get<Transform>(climber);
+    INFO("climber at " << tc->position.x << ", " << tc->position.y);
+    REQUIRE(tc->position.x == Catch::Approx(5.0).margin(0.05));   // 3 across for 100 ticks: the slope keeps the pace
+    REQUIRE(tc->position.y > 0.9f + (tc->position.x - 4.0f - 0.3f) * std::tan(a30));   // up on the ramp
+    REQUIRE(r.try_get<Character>(climber)->grounded);
+    REQUIRE(r.try_get<Character>(climber)->ground_normal.y == Catch::Approx(std::cos(a30)).margin(0.02));
+    const Transform* tb = r.try_get<Transform>(blocked);
+    INFO("blocked at " << tb->position.x << ", " << tb->position.y);
+    REQUIRE(tb->position.y == Catch::Approx(0.9).margin(0.02));   // at the steep ramp's foot (its surface meets the ground at x 3.88)
+    REQUIRE(tb->position.x < 3.7f);
+    REQUIRE(r.try_get<Character>(blocked)->on_wall);
+    // Walking back down the 30 degree ramp keeps to it: never off the ground.
+    int airborne = 0;
+    walk(rp, r, climber, {-3, 0, 0}, 60, &airborne);
+    REQUIRE(airborne == 0);
+    REQUIRE(r.try_get<Transform>(climber)->position.y == Catch::Approx(0.9).margin(0.05));
+}
+
+TEST_CASE("a character rides a moving platform and pushes a crate", "[physics][character]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    const EntityId lift = solid(w, "Lift", {0, 0.5f, 0}, {1, 0.1f, 1}, Quat{}, 2);
+    const EntityId rider = character(w, "Rider", {0, 1.6f, 0});
+    walk(p, w, rider, {}, 20);   // lands on the lift standing still
+    REQUIRE(w.try_get<Character>(rider)->grounded);
+    Velocity lv;
+    lv.linear = {1, 0.5f, 0};
+    w.ecs().entity(lift).set(lv);
+    walk(p, w, rider, {}, 60);
+    const Transform* lt = w.try_get<Transform>(lift);
+    const Transform* rt = w.try_get<Transform>(rider);
+    INFO("lift " << lt->position.x << "," << lt->position.y << " rider " << rt->position.x << "," << rt->position.y);
+    REQUIRE(w.try_get<Character>(rider)->grounded);
+    REQUIRE(w.try_get<Character>(rider)->ground == lift);
+    REQUIRE(rt->position.x == Catch::Approx(lt->position.x).margin(0.05));   // carried along x
+    REQUIRE(rt->position.y == Catch::Approx(lt->position.y + 0.1 + 0.9).margin(0.05));   // and up with it
+
+    // A crate in the way is pushed along at the walking speed.
+    World c;
+    physics::Physics cp;
+    ground(c);
+    const EntityId crate = body(c, "Crate", 0, {2, 0.5f, 0}, 0.5f, Json{{"friction", 0.2}});
+    const EntityId pusher = character(c, "Pusher", {0, 0.9f, 0});
+    walk(cp, c, pusher, {2, 0, 0}, 90);
+    INFO("crate at " << c.try_get<Transform>(crate)->position.x << ", pusher at " << c.try_get<Transform>(pusher)->position.x);
+    REQUIRE(c.try_get<Transform>(crate)->position.x > 3.0f);
+    REQUIRE(c.try_get<Transform>(pusher)->position.x > 1.5f);
+    // With push 0 the crate stays where it is.
+    Character still = *c.try_get<Character>(pusher);
+    still.push = 0;
+    c.ecs().entity(pusher).set(still);
+    Velocity stop;
+    c.ecs().entity(crate).set(stop);
+    walk(cp, c, pusher, {}, 60);
+    const float before = c.try_get<Transform>(crate)->position.x;
+    walk(cp, c, pusher, {2, 0, 0}, 60);
+    REQUIRE(c.try_get<Transform>(crate)->position.x == Catch::Approx(before).margin(0.05));
+}
+
+TEST_CASE("a character walks down stairs on the ground and falls off a ledge", "[physics][character]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    // Four stairs of 0.2 going down along x from a landing 0.8 high, and a 1.2 high block beside them.
+    solid(w, "Landing", {-1, 0.4f, 0}, {1, 0.4f, 1});
+    for (int i = 0; i < 3; ++i) {
+        const float top = 0.6f - 0.2f * static_cast<float>(i);   // 0.6, 0.4, 0.2, then the ground
+        solid(w, "Stair", {0.25f + 0.5f * static_cast<float>(i), top * 0.5f, 0}, {0.25f, top * 0.5f, 1});
+    }
+    solid(w, "Block", {-1, 0.6f, 4}, {1, 0.6f, 1});
+    const EntityId down = character(w, "Down", {-1.5f, 0.8f + 0.9f + 0.05f, 0});
+    const EntityId off = character(w, "Off", {-1.5f, 1.2f + 0.9f + 0.05f, 4});
+    walk(p, w, down, {}, 30);
+    REQUIRE(w.try_get<Character>(down)->grounded);
+    REQUIRE(w.try_get<Character>(off)->grounded);
+    const std::int64_t landings = w.events().histogram()["character.landed"].get<std::int64_t>();
+    int airborne = 0;
+    for (int i = 0; i < 120; ++i) {
+        Character o = *w.try_get<Character>(off);
+        o.velocity.x = 2;
+        w.ecs().entity(off).set(o);
+        walk(p, w, down, {2, 0, 0}, 1, &airborne);
+    }
+    INFO("down at " << w.try_get<Transform>(down)->position.x << ", " << w.try_get<Transform>(down)->position.y);
+    REQUIRE(airborne == 0);   // every stair followed without leaving the ground
+    REQUIRE(w.try_get<Transform>(down)->position.x == Catch::Approx(2.5).margin(0.02));   // four across at 2, past the last stair
+    REQUIRE(w.try_get<Transform>(down)->position.y == Catch::Approx(0.9).margin(0.02));
+    // Off the 1.2 block's edge: a fall of more than a step, and a landing below.
+    REQUIRE(w.try_get<Transform>(off)->position.y == Catch::Approx(0.9).margin(0.02));
+    REQUIRE(w.events().histogram()["character.landed"].get<std::int64_t>() == landings + 1);
+}
+
+TEST_CASE("a character walking through a trigger enters and leaves it", "[physics][character]") {
+    World w;
+    physics::Physics p;
+    ground(w);
+    w.spawn("Zone", 0, Json{{"Transform", {{"position", {{"x", 2}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"is_trigger", true}, {"size", {{"x", 0.5}, {"y", 1}, {"z", 1}}}}}}).value();
+    const EntityId hero = character(w, "Hero", {0, 0.9f, 0});
+    walk(p, w, hero, {3, 0, 0}, 40);   // two units along: in the middle of the zone
+    auto hist = w.events().histogram();
+    REQUIRE(hist["trigger.enter"] == 1);
+    REQUIRE_FALSE(hist.contains("trigger.exit"));
+    REQUIRE(w.try_get<Transform>(hero)->position.x == Catch::Approx(2.0).margin(0.02));   // triggers stop nothing
+    walk(p, w, hero, {3, 0, 0}, 40);   // and out the far side
+    hist = w.events().histogram();
+    REQUIRE(hist["trigger.enter"] == 1);
+    REQUIRE(hist["trigger.exit"] == 1);
+}

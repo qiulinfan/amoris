@@ -1466,6 +1466,94 @@ std::size_t numeric_span(Body2D& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Character& v) {
+    j = Json::object();
+    vec_to_json(j["velocity"], v.velocity);
+    j["gravity"] = v.gravity;
+    j["max_fall"] = v.max_fall;
+    j["radius"] = v.radius;
+    j["height"] = v.height;
+    j["step"] = v.step;
+    j["max_slope"] = v.max_slope;
+    j["push"] = v.push;
+    j["mask"] = v.mask;
+    j["grounded"] = v.grounded;
+    vec_to_json(j["ground_normal"], v.ground_normal);
+    j["ground"] = v.ground;
+    j["on_wall"] = v.on_wall;
+    vec_to_json(j["wall_normal"], v.wall_normal);
+    j["on_ceiling"] = v.on_ceiling;
+    j["stepped"] = v.stepped;
+}
+
+void from_json(const Json& j, Character& v) {
+    if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
+    scalar_from_json(j, "gravity", v.gravity);
+    scalar_from_json(j, "max_fall", v.max_fall);
+    scalar_from_json(j, "radius", v.radius);
+    scalar_from_json(j, "height", v.height);
+    scalar_from_json(j, "step", v.step);
+    scalar_from_json(j, "max_slope", v.max_slope);
+    scalar_from_json(j, "push", v.push);
+    scalar_from_json(j, "mask", v.mask);
+    scalar_from_json(j, "grounded", v.grounded);
+    if (j.is_object() && j.contains("ground_normal")) vec_from_json(j["ground_normal"], v.ground_normal);
+    scalar_from_json(j, "ground", v.ground);
+    scalar_from_json(j, "on_wall", v.on_wall);
+    if (j.is_object() && j.contains("wall_normal")) vec_from_json(j["wall_normal"], v.wall_normal);
+    scalar_from_json(j, "on_ceiling", v.on_ceiling);
+    scalar_from_json(j, "stepped", v.stepped);
+}
+
+void hash_component(StateHasherRef& h, const Character& v) {
+    h.f32(v.velocity.x);
+    h.f32(v.velocity.y);
+    h.f32(v.velocity.z);
+    h.f32(v.gravity);
+    h.f32(v.max_fall);
+    h.f32(v.radius);
+    h.f32(v.height);
+    h.f32(v.step);
+    h.f32(v.max_slope);
+    h.f32(v.push);
+    h.i64(static_cast<std::int64_t>(v.mask));
+    h.u8(v.grounded ? 1 : 0);
+    h.f32(v.ground_normal.x);
+    h.f32(v.ground_normal.y);
+    h.f32(v.ground_normal.z);
+    h.i64(static_cast<std::int64_t>(v.ground));
+    h.u8(v.on_wall ? 1 : 0);
+    h.f32(v.wall_normal.x);
+    h.f32(v.wall_normal.y);
+    h.f32(v.wall_normal.z);
+    h.u8(v.on_ceiling ? 1 : 0);
+    h.u8(v.stepped ? 1 : 0);
+}
+
+std::size_t numeric_span(Character& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "velocity") { *out = &v.velocity.x; return 3; }
+    if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
+    if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
+    if (path == "velocity.z") { *out = &v.velocity.z; return 1; }
+    if (path == "gravity") { *out = &v.gravity; return 1; }
+    if (path == "max_fall") { *out = &v.max_fall; return 1; }
+    if (path == "radius") { *out = &v.radius; return 1; }
+    if (path == "height") { *out = &v.height; return 1; }
+    if (path == "step") { *out = &v.step; return 1; }
+    if (path == "max_slope") { *out = &v.max_slope; return 1; }
+    if (path == "push") { *out = &v.push; return 1; }
+    if (path == "ground_normal") { *out = &v.ground_normal.x; return 3; }
+    if (path == "ground_normal.x") { *out = &v.ground_normal.x; return 1; }
+    if (path == "ground_normal.y") { *out = &v.ground_normal.y; return 1; }
+    if (path == "ground_normal.z") { *out = &v.ground_normal.z; return 1; }
+    if (path == "wall_normal") { *out = &v.wall_normal.x; return 3; }
+    if (path == "wall_normal.x") { *out = &v.wall_normal.x; return 1; }
+    if (path == "wall_normal.y") { *out = &v.wall_normal.y; return 1; }
+    if (path == "wall_normal.z") { *out = &v.wall_normal.z; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const TopDown2D& v) {
     j = Json::object();
     vec_to_json(j["velocity"], v.velocity);
@@ -1565,6 +1653,7 @@ void to_json(Json& j, const AudioSource& v) {
     j["pitch"] = v.pitch;
     j["lowpass"] = v.lowpass;
     j["reverb"] = v.reverb;
+    j["bus"] = v.bus;
     j["loop"] = v.loop;
     j["autoplay"] = v.autoplay;
     j["spatial"] = v.spatial;
@@ -1583,6 +1672,7 @@ void from_json(const Json& j, AudioSource& v) {
     scalar_from_json(j, "pitch", v.pitch);
     scalar_from_json(j, "lowpass", v.lowpass);
     scalar_from_json(j, "reverb", v.reverb);
+    scalar_from_json(j, "bus", v.bus);
     scalar_from_json(j, "loop", v.loop);
     scalar_from_json(j, "autoplay", v.autoplay);
     scalar_from_json(j, "spatial", v.spatial);
@@ -1601,6 +1691,7 @@ void hash_component(StateHasherRef& h, const AudioSource& v) {
     h.f32(v.pitch);
     h.f32(v.lowpass);
     h.f32(v.reverb);
+    h.str(v.bus);
     h.u8(v.loop ? 1 : 0);
     h.u8(v.autoplay ? 1 : 0);
     h.u8(v.spatial ? 1 : 0);
@@ -1864,7 +1955,7 @@ constexpr std::array<FieldInfo, 11> kSkyFields = {{
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
 }};
 constexpr std::array<FieldInfo, 11> kMeshRendererFields = {{
-    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
+    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent."},
     FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
@@ -2039,6 +2130,24 @@ constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
     FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed."},
 }};
+constexpr std::array<FieldInfo, 16> kCharacterFields = {{
+    FieldInfo{"velocity", "vec3", "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall."},
+    FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
+    FieldInfo{"max_fall", "f32", "Fastest downward speed."},
+    FieldInfo{"radius", "f32", "The capsule's radius."},
+    FieldInfo{"height", "f32", "The capsule's whole height, round ends included; the entity is at its centre, so a character standing on the ground at y 0 is at y = height / 2."},
+    FieldInfo{"step", "f32", "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it."},
+    FieldInfo{"max_slope", "f32", "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down."},
+    FieldInfo{"push", "f32", "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed)."},
+    FieldInfo{"mask", "u32", "Bits of the collision layers (Collider.layer) the character is stopped by; all by default."},
+    FieldInfo{"grounded", "bool", "Standing on a floor no steeper than max_slope (written by the engine)."},
+    FieldInfo{"ground_normal", "vec3", "The floor's normal where it stands (written by the engine)."},
+    FieldInfo{"ground", "entity", "The collider it stands on; 0 in the air (written by the engine)."},
+    FieldInfo{"on_wall", "bool", "Stopped by a wall or too-steep ground this tick (written by the engine)."},
+    FieldInfo{"wall_normal", "vec3", "That wall's normal (written by the engine)."},
+    FieldInfo{"on_ceiling", "bool", "Its head hit something this tick (written by the engine)."},
+    FieldInfo{"stepped", "bool", "Walked up an edge this tick (written by the engine)."},
+}};
 constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second along X and Y."},
     FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width)."},
@@ -2058,12 +2167,13 @@ constexpr std::array<FieldInfo, 8> kColliderFields = {{
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
 }};
-constexpr std::array<FieldInfo, 15> kAudioSourceFields = {{
+constexpr std::array<FieldInfo, 16> kAudioSourceFields = {{
     FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
     FieldInfo{"volume", "f32", "Linear gain, 0..4."},
     FieldInfo{"pitch", "f32", "Playback rate multiplier."},
     FieldInfo{"lowpass", "f32", "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice."},
     FieldInfo{"reverb", "f32", "How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room."},
+    FieldInfo{"bus", "string", "The bus the voice plays on (music, effects, dialogue: any name): a bus is set as one with audio.bus, its volume, a mute, a low-pass and ducking under another bus (docs/design/audio.md, Buses)."},
     FieldInfo{"loop", "bool", "Restart when the clip ends."},
     FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
     FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
@@ -2105,7 +2215,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 29> kComponents = {{
+constexpr std::array<ComponentInfo, 30> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -2128,6 +2238,7 @@ constexpr std::array<ComponentInfo, 29> kComponents = {{
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
+    ComponentInfo{"Character", "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.", true, kCharacterFields},
     ComponentInfo{"TopDown2D", "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).", true, kTopDown2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},

@@ -38,8 +38,9 @@ impl Report {
         let mut out = String::new();
         for d in &self.diagnostics {
             match (&d.file, d.line) {
-                (Some(f), Some(l)) => out.push_str(&format!("{}:{}:{}: {}: {}\n", f, l, d.column.unwrap_or(0), d.severity, d.message)),
-                _ => out.push_str(&format!("{}: {}\n", d.severity, d.message)),
+                // A message of several lines (a type error's elaboration) keeps its later lines indented.
+                (Some(f), Some(l)) => out.push_str(&format!("{}:{}:{}: {}: {}\n", f, l, d.column.unwrap_or(0), d.severity, d.message.replace('\n', "\n    "))),
+                _ => out.push_str(&format!("{}: {}\n", d.severity, d.message.replace('\n', "\n    "))),
             }
         }
         out.push_str(&format!("{}: {}\n", if self.ok { "ok" } else { "FAILED" }, self.summary));

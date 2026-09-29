@@ -1,0 +1,9 @@
+[watch] checkdemo running at http://127.0.0.1:54090; editing projects/checkdemo reloads it
+[watch] types: checkdemo: no type errors
+[info] types: no type errors
+[watch] reloaded 23 modules in 11 ms (started: true)
+[watch] types: checkdemo: 1 type error in 1 file
+[warn] types: scripts/main.ts:19:50: TS2561: Object literal may only specify known properties, but 'positon' does not exist in type 'DeepPartial<Transform>'. Did you mean to write 'position'?
+[watch] reloaded 23 modules in 10 ms (started: true)
+[watch] types: checkdemo: no type errors
+[info] types: no type errors

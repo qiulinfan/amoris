@@ -37,6 +37,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket run hello -- --headless --frames 120 --json --capture out.png
 ./.pocket/pocket test [--filter core] --json
 ./.pocket/pocket ts samples/hello      # bundle only
+./.pocket/pocket check [samples/hello] # TypeScript types against the SDK (TypeScript 7; docs/sdk.md, Types)
 ./.pocket/pocket gen [--check]         # regenerate code from engine/*/meta/*.toml
 ./.pocket/pocket run playground -- --headless --serve 4711 --paused --json   # agent-driven session; enemies path around pillars (docs/design/navigation.md)
 ./.pocket/pocket mcp                   # MCP server over stdio (see docs/mcp.md)
@@ -51,6 +52,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket run sprites -- --headless --frames 120 --json        # a 2D platformer: sprites, orthographic camera, tile map, Body2D (docs/design/sprites.md, docs/design/tilemaps.md)
 ./.pocket/pocket run audio -- --headless --frames 300 --json          # voices and audio events without a sound card (docs/design/audio.md)
 ./.pocket/pocket run swarm -- --headless --frames 120 --json          # 3000 entities per tick through typed arrays (tick.ms in state)
+./.pocket/pocket scenario walker                                      # a 3D character (Character: stairs, slopes, a lift, crates) walked by a bot (docs/design/physics.md, Characters)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)
 # time travel: run with --history 600, then recorder.at {tick} / recorder.diff {from, to} / recorder.track {entity, component, field}; events.why {seq} explains an event
 # see the invisible: render.debug {colliders: true, joints: true} then capture; debug.line/box/sphere mark your own points

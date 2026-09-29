@@ -108,6 +108,17 @@ include_dirs = ["include/harfbuzz"]
 libs = ["lib/libharfbuzz.a"]
 license = "MIT"
 
+# The TypeScript compiler (TypeScript 7, native) for `pocket check`: not linked, only run.
+[[dependencies]]
+name = "typescript"
+version = "7.0.2"
+kind = "prebuilt"
+url = "https://registry.npmjs.org/@typescript/typescript-darwin-arm64/-/typescript-darwin-arm64-7.0.2.tgz"
+sha256 = "902e2fe1cf0799198ef902c6b8c310a450fef629a6baba41d45641ef75c04ebd"
+strip_components = 1
+wasm = "skip"
+license = "Apache-2.0"
+
 [[dependencies]]
 name = "noto-sans-arabic"
 version = "2.010"

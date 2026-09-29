@@ -91,7 +91,7 @@ scenario("two crates stack and the player pushes the stack along", (g) => {
     g.check(() => {
         const a = world.get("CrateA", "Transform")!.position, b = world.get("CrateB", "Transform")!.position;
         expect(Math.abs(b.y - (a.y + 0.6)) < 0.02).toBe(true);           // the upper stands on the lower
-        expect(world.get("CrateB", "Body2D")!.riding).toBe(world.find("CrateA"));
+        expect(world.get("CrateB", "Body2D")!.riding).toBe(world.find("CrateA") ?? -1);
         expect(world.get("CrateB", "Body2D")!.grounded).toBe(true);
     }, "stacked");
     g.hold("move_x", 1.0, -1);                                            // walk left into the stack

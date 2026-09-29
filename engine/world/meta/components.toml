@@ -121,7 +121,7 @@ fields = [
 name = "MeshRenderer"
 doc = "Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured."
 fields = [
-    { name = "mesh", type = "string", default = "cube", doc = "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)." },
+    { name = "mesh", type = "string", default = "cube", doc = "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)." },
     { name = "node", type = "string", default = "", doc = "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole." },
     { name = "color", type = "color", default = [0.8, 0.8, 0.8, 1.0], doc = "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent." },
     { name = "texture", type = "string", default = "", doc = "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none." },
@@ -375,6 +375,28 @@ fields = [
 ]
 
 [[component]]
+name = "Character"
+doc = "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider."
+fields = [
+    { name = "velocity", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall." },
+    { name = "gravity", type = "f32", default = -20.0, doc = "Units per second squared along Y (negative is down)." },
+    { name = "max_fall", type = "f32", default = 50.0, doc = "Fastest downward speed." },
+    { name = "radius", type = "f32", default = 0.3, doc = "The capsule's radius." },
+    { name = "height", type = "f32", default = 1.8, doc = "The capsule's whole height, round ends included; the entity is at its centre, so a character standing on the ground at y 0 is at y = height / 2." },
+    { name = "step", type = "f32", default = 0.3, doc = "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it." },
+    { name = "max_slope", type = "f32", default = 45.0, doc = "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down." },
+    { name = "push", type = "f32", default = 1.0, doc = "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed)." },
+    { name = "mask", type = "u32", default = 4294967295, doc = "Bits of the collision layers (Collider.layer) the character is stopped by; all by default." },
+    { name = "grounded", type = "bool", default = false, doc = "Standing on a floor no steeper than max_slope (written by the engine)." },
+    { name = "ground_normal", type = "vec3", default = [0.0, 1.0, 0.0], doc = "The floor's normal where it stands (written by the engine)." },
+    { name = "ground", type = "entity", default = 0, doc = "The collider it stands on; 0 in the air (written by the engine)." },
+    { name = "on_wall", type = "bool", default = false, doc = "Stopped by a wall or too-steep ground this tick (written by the engine)." },
+    { name = "wall_normal", type = "vec3", default = [0.0, 0.0, 0.0], doc = "That wall's normal (written by the engine)." },
+    { name = "on_ceiling", type = "bool", default = false, doc = "Its head hit something this tick (written by the engine)." },
+    { name = "stepped", type = "bool", default = false, doc = "Walked up an edge this tick (written by the engine)." },
+]
+
+[[component]]
 name = "TopDown2D"
 doc = "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform)."
 fields = [
@@ -410,6 +432,7 @@ fields = [
     { name = "pitch", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
     { name = "lowpass", type = "f32", default = 1.0, doc = "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice." },
     { name = "reverb", type = "f32", default = 1.0, doc = "How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room." },
+    { name = "bus", type = "string", default = "main", doc = "The bus the voice plays on (music, effects, dialogue: any name): a bus is set as one with audio.bus, its volume, a mute, a low-pass and ducking under another bus (docs/design/audio.md, Buses)." },
     { name = "loop", type = "bool", default = false, doc = "Restart when the clip ends." },
     { name = "autoplay", type = "bool", default = false, doc = "Start playing as soon as the component exists." },
     { name = "spatial", type = "bool", default = false, doc = "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)." },

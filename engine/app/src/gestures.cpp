@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string>
 
 namespace pocket::app {
 
@@ -23,11 +24,13 @@ void Gestures::configure(const Json& input) {
     num("gesture_hold", settings_.hold_seconds);
     num("gesture_swipe", settings_.swipe_points);
     num("gesture_swipe_seconds", settings_.swipe_seconds);
+    num("gesture_edge", settings_.edge);
     settings_.slop = std::max(settings_.slop, 0.0f);
     settings_.tap_seconds = std::max(settings_.tap_seconds, 0.0);
     settings_.hold_seconds = std::max(settings_.hold_seconds, 0.0);
     settings_.swipe_points = std::max(settings_.swipe_points, 0.0f);
     settings_.swipe_seconds = std::max(settings_.swipe_seconds, 0.0);
+    settings_.edge = std::max(settings_.edge, 0.0f);
 }
 
 // The two fingers of a pinch: the first two by index. The centre, the distance and the angle
@@ -132,8 +135,17 @@ std::vector<Json> Gestures::feed(const std::vector<platform::Event>& events, con
                 j["y"] = f.y;
                 j["dx"] = dx;
                 j["dy"] = dy;
-                j["direction"] = std::fabs(dx) >= std::fabs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+                const std::string direction = std::fabs(dx) >= std::fabs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+                j["direction"] = direction;
                 j["seconds"] = seconds;
+                // From a side of the view inwards: the edge it came from (a drawer, a back gesture).
+                const float m = settings_.edge;
+                if (m > 0 && view_w_ > 0 && view_h_ > 0) {
+                    if (direction == "right" && f.x0 <= m) j["edge"] = "left";
+                    else if (direction == "left" && f.x0 >= view_w_ - m) j["edge"] = "right";
+                    else if (direction == "down" && f.y0 <= m) j["edge"] = "top";
+                    else if (direction == "up" && f.y0 >= view_h_ - m) j["edge"] = "bottom";
+                }
                 if (f.ui) j["ui"] = f.ui;
                 out.push_back(std::move(j));
             }

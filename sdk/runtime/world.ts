@@ -2,7 +2,7 @@
 //
 // Every call goes through one native command with JSON parameters; the same commands are served
 // over HTTP to external agents, so what a script can do, an agent can do, with the same words.
-import type { ComponentName, Components } from "./generated/components";
+import type { ComponentName, Components, Vec3 } from "./generated/components";
 
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
@@ -250,7 +250,7 @@ export const render = {
     },
     /** Multisampling of the color pass: 1 (off) or 4; project.toml [render] msaa = 4 sets the default. Ids keep one sample per pixel. */
     msaa(samples?: number): number {
-        return command("render.msaa", samples === undefined ? {} : { samples }).msaa;
+        return command<{ msaa: number }>("render.msaa", samples === undefined ? {} : { samples }).msaa;
     },
     /** Shadow map settings (on by default when a sun exists; project.toml [render] shadows = false turns it off). */
     shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {

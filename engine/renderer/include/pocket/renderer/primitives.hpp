@@ -22,8 +22,8 @@ struct MeshData {
     Vec3 aabb_max{0.5f, 0.5f, 0.5f};
 };
 
-enum class Primitive : int { Cube = 0, Sphere = 1, Plane = 2, Cylinder = 3, Quad = 4 };
-constexpr int kPrimitiveCount = 5;
+enum class Primitive : int { Cube = 0, Sphere = 1, Plane = 2, Cylinder = 3, Quad = 4, Capsule = 5 };
+constexpr int kPrimitiveCount = 6;
 
 const char* primitive_name(int kind);
 MeshData make_cube();
@@ -32,6 +32,8 @@ MeshData make_plane();
 MeshData make_cylinder(int segments = 32);
 // Unit square in the XY plane facing +Z, uv (0,0) at the top-left: what a sprite is drawn with.
 MeshData make_quad();
+// Radius 0.5 and 2 tall, round ends included, along Y: a character's shape (scale x and z by twice the radius, y by half the height).
+MeshData make_capsule(int segments = 32, int rings = 8);
 MeshData make_primitive(int kind);
 // Local-space bounds of a primitive kind (for Bounds without building the mesh).
 void primitive_bounds(int kind, Vec3& out_min, Vec3& out_max);

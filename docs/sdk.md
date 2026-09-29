@@ -82,6 +82,10 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 `scenario("walking right collects a coin", (g) => { g.holdWhile("move_x", 1); g.until(() => g.state("score") >= 1, { timeout: 1 }); g.check(() => expect(g.count("coin.collected")).toBe(1)); })` in `<project>/scenarios/*.ts`; `pocket scenario <project> --seeds 20` runs them (`docs/design/scenarios.md`).
 
+## Types
+
+The bundler strips types without reading them, so a misspelt field or a wrong callback would only show when the game runs. `pocket check samples/ui` (or `pocket check` for the whole workspace: the SDK, the editor, `tests/ts` and every sample) reads them with the TypeScript compiler, TypeScript 7's native one, which `pocket` fetches as the `typescript` dependency on first use (about 9 MB, `.pocket/deps/typescript-7.0.2/`). The options are the ones the engine runs under: strict, the SDK as `pocket`, JSX through `pocket/jsx-runtime`, ES2023 with the host's globals (`console`, `performance`, the `setTimeout` family on the simulation clock) and no DOM or Node. It answers each error with its file, line and column (`--json` for the structured report; the MCP tool `pocket_check`), and the workspace takes a few hundredths of a second. `pocket test` runs it as the `types` module, so the SDK and the samples stay free of type errors. Under `pocket run --watch` and `pocket editor --watch` every rebundle is checked too: the errors go to the runtime as `script.diagnostics` (the Console logs them, the editor's Script tab lists them under the text area, an agent reads them with the command).
+
 ## Tests
 
 `tests/ts/*.test.ts` run inside the engine with `pocket test`:

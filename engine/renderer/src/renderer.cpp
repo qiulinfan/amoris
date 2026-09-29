@@ -5051,6 +5051,7 @@ struct Renderer::Impl {
         if (name == "plane" || name == "2") return 2;
         if (name == "cylinder" || name == "3") return 3;
         if (name == "quad" || name == "4") return 4;
+        if (name == "capsule" || name == "5") return 5;
         return -1;
     }
 

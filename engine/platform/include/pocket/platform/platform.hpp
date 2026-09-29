@@ -42,7 +42,7 @@ struct Event {
     int mods = 0;            // modifier bits (kModShift | ...) for keys and mouse buttons
     int clicks = 1;          // MouseDown/Up: 2 for a double-click, 3 for a triple
     bool pressed = false;    // PadButton
-    float value = 0;         // PadAxis, -1..1
+    float value = 0;         // PadAxis, -1..1; a touch's pressure, 0..1
 };
 
 enum Mod : int { kModShift = 1, kModCtrl = 2, kModAlt = 4, kModMeta = 8 };

@@ -75,6 +75,11 @@ struct StepStats {
     std::uint32_t ccd_hits = 0;   // bodies stopped by a continuous-collision sweep this step
     std::uint32_t ccd_dynamic = 0; // of those, impacts with another dynamic body (both stopped)
     std::uint32_t ignored = 0;    // overlapping pairs kept apart by groups, exceptions or joints this step
+    std::uint32_t characters = 0;          // Character capsules moved (move_characters)
+    std::uint32_t characters_grounded = 0; // of those, standing on a floor
+    std::uint32_t landings = 0;            // characters that landed this step
+    std::uint32_t stepped = 0;             // characters that walked up an edge this step
+    std::uint32_t pushed = 0;              // dynamic bodies a character pushed this step
 };
 
 class Physics {
@@ -88,6 +93,10 @@ class Physics {
     void set_assets(assets::AssetStore* assets);
     // Advance all bodies by dt. Emits events into world.events(). Call before World::tick.
     void step(world::World& world, double dt);
+    // Move every Character (a kinematic capsule: walls, slopes, steps, platforms) by its velocity
+    // and gravity against the colliders as the step left them; call after step. Emits
+    // character.landed.
+    void move_characters(world::World& world, double dt);
     [[nodiscard]] const std::vector<Contact>& contacts() const;  // of the last step
     [[nodiscard]] const std::vector<JointInfo>& joints() const;  // solved in the last step
     [[nodiscard]] const StepStats& stats() const;

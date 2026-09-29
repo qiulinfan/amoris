@@ -40,7 +40,7 @@ Every command has a usage line and a summary in the engine itself: `help {comman
 
 | Tool | What it does |
 |---|---|
-| `pocket_doctor`, `pocket_build`, `pocket_test`, `pocket_gen` | The build tool with structured results (diagnostics with file, line, column; per-suite test results). |
+| `pocket_doctor`, `pocket_build`, `pocket_test`, `pocket_gen`, `pocket_check` | The build tool with structured results (diagnostics with file, line, column; per-suite test results; `pocket_check` the TypeScript type errors of a project or the workspace). |
 | `pocket_scenario` | Run a project's gameplay scenarios (`scenarios/*.ts`) at several seeds: pass counts, ticks to pass, each failure's step and reason (`docs/design/scenarios.md`). |
 | `pocket_bench` | Run a project's perception benchmarks (`benches/*.ts`): per question, whether the instruments answered correctly, the tokens it cost, and what frame-by-frame vision would have cost (`docs/design/scenarios.md`, Perception benchmarks). |
 | `pocket_run_headless` | Run a project for N frames and return the JSON report: exposed state, state hash, world summary, event histogram and tail, optional capture. |

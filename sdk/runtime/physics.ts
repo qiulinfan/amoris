@@ -59,9 +59,9 @@ export function dispatchContacts(contacts: Contact[]): void {
 }
 
 export const physics = {
-    /** Closest collider along a ray, or undefined. `mask` limits it to layers (bits, or names from project.toml). */
-    raycast(origin: Vec3 | [number, number, number], direction: Vec3 | [number, number, number], options: { max_distance?: number; include_triggers?: boolean; mask?: number | Array<string | number> } = {}): RayHit | undefined {
-        const r = command<RayHit | null>("physics.raycast", { origin, direction, ...options });
+    /** Closest collider along a ray, or undefined. `options` is the longest distance, or the settings: `mask` limits it to layers (bits, or names from project.toml). */
+    raycast(origin: Vec3 | [number, number, number], direction: Vec3 | [number, number, number], options: number | { max_distance?: number; include_triggers?: boolean; mask?: number | Array<string | number> } = {}): RayHit | undefined {
+        const r = command<RayHit | null>("physics.raycast", { origin, direction, ...(typeof options === "number" ? { max_distance: options } : options) });
         return r === null ? undefined : r;
     },
     /** A sphere of `radius` cast along a direction: the nearest collider it would touch (the distance its center can travel, the touching point, the normal), or undefined. Exact against boxes, capsules, spheres and mesh triangles. */

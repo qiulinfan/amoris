@@ -461,6 +461,50 @@ def night_lamp_check(env, answer):
     return True, f"night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered {answer}"
 
 
+def walker_sprint_solve(env, project_dir):
+    # A new action in project.toml, and the speed it picks in the script.
+    toml = os.path.join(project_dir, "project.toml")
+    with open(toml) as f:
+        text = f.read()
+    line = 'jump = ["Space", "pad:a"]\n'
+    if line not in text:
+        raise RuntimeError("the walker project.toml changed shape")
+    with open(toml, "w") as f:
+        f.write(text.replace(line, line + 'sprint = ["LShift", "pad:left_shoulder"]\n', 1))
+
+    def transform(t):
+        a = 'world.set(player, "Character", { velocity: { x: input.axis("move_x") * SPEED, y: vy, z: input.axis("move_z") * SPEED } });'
+        if a not in t:
+            raise RuntimeError("the walker script changed shape")
+        return t.replace(a, 'const speed = input.down("sprint") ? 9 : SPEED;\n    world.set(player, "Character", { velocity: { x: input.axis("move_x") * speed, y: vy, z: input.axis("move_z") * speed } });', 1)
+    edit_main(project_dir, transform)
+
+
+def walker_sprint_check(env, answer):
+    actions = env.command("input.describe", {})
+    if "sprint" not in actions or "LShift" not in (actions["sprint"].get("positive") or []):
+        return False, f"no sprint action on LShift: {sorted(actions)}"
+    st = lambda: env.command("state", {})["state"]  # noqa: E731
+    for _ in range(60):
+        if state_key(st(), "player.grounded"):
+            break
+        env.command("step", {"ticks": 1})
+
+    def walk(sprint):
+        x0 = state_key(st(), "player.x")
+        env.command("input.hold", {"action": "move_x", "ticks": 60})
+        if sprint:
+            env.command("input.hold", {"action": "sprint", "ticks": 60})
+        env.command("step", {"ticks": 60})
+        x1 = state_key(st(), "player.x")
+        env.command("step", {"ticks": 5})
+        return x1 - x0
+    plain = walk(False)
+    fast = walk(True)
+    ok = abs(plain - 5) < 0.35 and abs(fast - 9) < 0.35
+    return ok, f"a second of walking covers {plain:.2f}, with sprint held {fast:.2f} (5 and 9 wanted)"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -494,6 +538,8 @@ TASKS = [
      "task": "Give the jump a sound: write a short WAV file (mono 16-bit PCM, at least a tenth of a second, any tone) under assets/ in the project directory, and edit scripts/main.tsx so that it plays through the SDK's audio.play each time the player jumps from the ground, and at no other time."},
     {"name": "lamp_prefab", "project": "hello", "ticks": 0, "script": True, "solve": lamp_prefab_solve, "check": lamp_prefab_check,
      "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
+    {"name": "walker_sprint", "project": "walker", "ticks": 0, "script": True, "solve": walker_sprint_solve, "check": walker_sprint_check,
+     "task": "Give the walker a sprint: add an input action named sprint bound to the left Shift key (LShift) in project.toml, and edit scripts/main.ts so that while sprint is held the player walks at 9 units per second instead of 5 (and at 5 otherwise)."},
 ]
 
 

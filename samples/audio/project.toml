@@ -2,6 +2,10 @@ name = "audio"
 entry = "scripts/main.ts"
 scene = "scene.json"
 
+# The hum is ambience; it ducks to half while a beep plays on the effects bus.
+[audio.buses]
+ambience = { duck_by = "fx", duck_amount = 0.5, duck_seconds = 0.1 }
+
 [window]
 width = 800
 height = 450

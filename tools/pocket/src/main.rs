@@ -5,6 +5,7 @@
 //! dependencies into `.pocket/`, writes a Ninja build graph, runs it, and
 //! exposes the same operations with `--json` output for agents.
 
+mod check;
 mod commands;
 mod deps;
 mod gen;
@@ -112,6 +113,12 @@ enum Command {
         /// Substring filter on test module names.
         #[arg(long)]
         filter: Option<String>,
+    },
+    /// Type-check TypeScript against the SDK's types (TypeScript 7): a project, or the whole
+    /// workspace (the SDK, the editor, the TypeScript tests and every sample) without one.
+    Check {
+        /// Project directory (or a file in it); the workspace when left out.
+        project: Option<PathBuf>,
     },
     /// Transform and bundle a TypeScript project into one JavaScript file.
     Ts {
@@ -234,6 +241,7 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Scenario { target, config, file, seeds, frames, only } => commands::scenario(&ws, &config, &target, file.as_deref(), seeds, frames, only.as_deref()),
         Command::Bench { target, config, file, frames, only } => commands::bench(&ws, &config, &target, file.as_deref(), frames, only.as_deref()),
         Command::Ts { project, out } => commands::ts_bundle(&ws, &project, out.as_deref()),
+        Command::Check { project } => check::check(&ws, project.as_deref()),
         Command::Clean => commands::clean(&ws),
         Command::Graph => commands::graph(&ws),
         Command::Gen { check } => commands::gen(&ws, check),

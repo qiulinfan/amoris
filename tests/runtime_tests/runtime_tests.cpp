@@ -2843,6 +2843,7 @@ TEST_CASE("a finger presses interface buttons, drives mouse bindings and reaches
     REQUIRE(down["input"][0]["type"] == "touch_down");
     REQUIRE(down["input"][0]["finger"] == 0);
     REQUIRE(down["input"][0]["ui"] == 70);
+    REQUIRE(down["input"][0]["pressure"] == 1.0);
     REQUIRE(down["input"][1]["type"] == "mouse_down");
     Json up = s.command("input.touch", Json{{"x", 62}, {"y", 31}, {"phase", "up"}}).value();
     INFO(up.dump());
@@ -2850,9 +2851,14 @@ TEST_CASE("a finger presses interface buttons, drives mouse bindings and reaches
     for (const Json& e : up["events"]) if (e["type"] == "click" && e.value("name", "") == "tap") clicked = true;
     REQUIRE(clicked);
     // A second finger is not the mouse: no mouse events, its own index.
-    Json second = s.command("input.touch", Json{{"finger", 1}, {"x", 200}, {"y", 100}, {"phase", "down"}}).value();
+    Json second = s.command("input.touch", Json{{"finger", 1}, {"x", 200}, {"y", 100}, {"phase", "down"}, {"pressure", 0.25}}).value();
     REQUIRE(second["input"].size() == 1);
     REQUIRE(second["input"][0]["finger"] == 1);
+    REQUIRE(second["input"][0]["pressure"].get<double>() == Catch::Approx(0.25));
+    // The journal's form of a touch keeps its finger and pressure.
+    const platform::Event back = platform::event_from_json(second["input"][0]);
+    REQUIRE(back.pad == 1);
+    REQUIRE(back.value == Catch::Approx(0.25));
     REQUIRE(s.command("input.state", Json::object()).value()["fingers"] == 1);
     REQUIRE(s.command("input.touch", Json{{"finger", 1}, {"x", 200}, {"y", 100}, {"phase", "up"}}).has_value());
     REQUIRE(s.command("input.state", Json::object()).value()["fingers"] == 0);
@@ -3239,18 +3245,47 @@ TEST_CASE("an anchored element follows its entity's projection and hides when th
     REQUIRE(s.finish().has_value());
 }
 
-TEST_CASE("rumble answers false without a pad", "[runtime][input][rumble]") {
+TEST_CASE("rumble answers false without a pad and plays patterns on the tick clock", "[runtime][input][rumble]") {
     app::Options o;
     o.project_dir = root() / "samples" / "hello";
     o.bundle = root() / "build" / "ts" / "hello.js";
     o.project_config = o.bundle.string() + ".project.json";
     o.headless = true;
-    o.frames = 10;
+    o.frames = 100;
     o.log_level = "warn";
     app::Session s(o);
     REQUIRE(s.start().has_value());
     Json r = s.command("input.rumble", Json{{"pad", 0}, {"low", 1.0}, {"high", 0.5}, {"ms", 100}}).value();
     REQUIRE(r["rumbled"] == false);
+    // A pattern plays its steps on the tick clock, each an input.rumble event, and ends.
+    REQUIRE(s.frame().has_value());
+    const std::int64_t seq = s.command("events.last_seq", Json::object()).value().get<std::int64_t>();
+    r = s.command("input.rumble", Json{{"pad", 1}, {"pattern", Json::array({Json{{"low", 1}, {"high", 0}, {"ms", 50}}, Json{{"low", 0}, {"high", 0}, {"ms", 100}}, Json{{"low", 0}, {"high", 1}, {"ms", 50}}})}, {"repeat", 2}}).value();
+    INFO(r.dump());
+    REQUIRE(r["steps"] == 3);
+    REQUIRE(r["seconds"].get<double>() == Catch::Approx(0.4));
+    REQUIRE(s.command("input.state", Json::object()).value()["rumble"]["1"]["steps"] == 3);
+    auto rumbles = [&]() {
+        Json out = Json::array();
+        for (const Json& e : s.command("events.since", Json{{"seq", seq}, {"limit", 50}}).value()["events"]) if (e["type"] == "input.rumble") out.push_back(e);
+        return out;
+    };
+    REQUIRE(rumbles().size() == 1);   // the first step starts at once
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    Json played = rumbles();
+    INFO(played.dump());
+    REQUIRE(played.size() == 6);      // three steps twice, 0.4 s at 60 ticks a second
+    REQUIRE(played[1]["data"]["low"] == 0);
+    REQUIRE(played[2]["data"]["high"] == 1);
+    REQUIRE(played[3]["data"]["step"] == 0);
+    REQUIRE(played[1]["tick"].get<std::int64_t>() - played[0]["tick"].get<std::int64_t>() == 3);   // 50 ms is three ticks
+    REQUIRE(played[2]["tick"].get<std::int64_t>() - played[1]["tick"].get<std::int64_t>() == 6);
+    REQUIRE(s.command("input.state", Json::object()).value()["rumble"].empty());
+    // Stopping ends a pattern before its steps are through.
+    REQUIRE(s.command("input.rumble", Json{{"pad", 0}, {"pattern", Json::array({Json{{"ms", 1000}}, Json{{"ms", 1000}}})}}).value()["steps"] == 2);
+    REQUIRE(s.command("input.rumble", Json{{"pad", 0}, {"stop", true}}).value()["stopped"] == true);
+    REQUIRE(s.command("input.state", Json::object()).value()["rumble"].empty());
+    REQUIRE_FALSE(s.command("input.rumble", Json{{"pattern", Json::array()}}).has_value());
     REQUIRE(s.finish().has_value());
 }
 
@@ -3600,6 +3635,16 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(g[0]["direction"] == "right");
     REQUIRE(g[0]["dx"].get<double>() == Catch::Approx(100));
     REQUIRE(g[0]["seconds"].get<double>() == Catch::Approx(3.0 / 60.0).margin(0.001));
+    REQUIRE_FALSE(g[0].contains("edge"));
+    // From the right side of the view inwards: an edge swipe.
+    REQUIRE(touch(0, "down", 315, 90).empty());
+    REQUIRE(s.frame().has_value());
+    g = touch(0, "up", 250, 92);
+    INFO(g.dump());
+    REQUIRE(g.size() == 1);
+    REQUIRE(g[0]["direction"] == "left");
+    REQUIRE(g[0]["edge"] == "right");
+    REQUIRE(s.command("input.state", Json::object()).value()["gestures"]["edge"].get<double>() == Catch::Approx(24));
     // A pinch: two fingers; the second moving away doubles the spread; neither lifts as a tap.
     REQUIRE(touch(0, "down", 100, 100).empty());
     g = touch(1, "down", 200, 100);
@@ -3897,4 +3942,88 @@ TEST_CASE("assets.preview draws a model on its own without touching the scene's 
     // A path that is not a model is refused.
     REQUIRE_FALSE(s.command("assets.preview", Json{{"path", "assets/nothing.glb"}}).has_value());
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a pad opens the UI sample's menu, sets its volume and difficulty, and closes it", "[runtime][ui][pad]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "ui";
+    o.bundle = root() / "build" / "ts" / "ui.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 960;
+    o.height = 540;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    auto press = [&](const char* button) {
+        REQUIRE(s.command("input.pad", Json{{"pad", 0}, {"button", button}, {"pressed", true}}).has_value());
+        REQUIRE(s.command("input.pad", Json{{"pad", 0}, {"button", button}, {"pressed", false}}).has_value());
+        REQUIRE(s.frame().has_value());
+    };
+    auto state = [&]() { return s.command("state", Json::object()).value()["state"]; };
+    // Start opens the menu; its volume slider takes the focus as it appears.
+    press("start");
+    REQUIRE(state()["paused"] == true);
+    press("dpad_left");
+    press("dpad_left");
+    INFO(state().dump());
+    REQUIRE(state()["volume"].get<double>() == Catch::Approx(0.9));
+    for (const Json& b : s.command("audio.buses", Json::object()).value()) if (b["name"] == "main") REQUIRE(b["volume"].get<double>() == Catch::Approx(0.9));
+    // Down to the difficulty, Right steps it; down to the checkbox, A flips it.
+    press("dpad_down");
+    press("dpad_right");
+    REQUIRE(state()["difficulty"] == "hard");
+    press("dpad_down");
+    press("a");
+    REQUIRE(state()["show_bar"] == false);
+    // B leaves the menu and the game closes it.
+    press("b");
+    REQUIRE(state()["paused"] == false);
+    REQUIRE(s.command("ui.query", Json{{"name", "pause-menu"}}).value().empty());
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("project.reload reads project.toml's settings again: the input map, buses and render settings", "[runtime][reload][settings]") {
+    // The settings as the tool bundles them, in a copy the test edits the way `pocket ts` would rewrite it.
+    const std::filesystem::path config = root() / "build" / "test-out" / "reload-settings.project.json";
+    std::filesystem::create_directories(config.parent_path());
+    Json settings = Json::parse(std::ifstream(root() / "build" / "ts" / "hello.js.project.json"));
+    settings["input"] = Json{{"actions", Json{{"jump", Json::array({"Space"})}}}};
+    std::ofstream(config) << settings.dump(2);
+    app::Options o;
+    o.project_dir = root() / "samples" / "hello";
+    o.bundle = root() / "build" / "ts" / "hello.js";
+    o.project_config = config;
+    o.headless = true;
+    o.frames = 100;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("input.describe", Json::object()).value().contains("jump"));
+    REQUIRE_FALSE(s.command("input.describe", Json::object()).value().contains("dash"));
+    // An action added, a bus and a render setting changed in the file: a reload applies them.
+    settings["input"]["actions"]["dash"] = Json::array({"LShift"});
+    settings["audio"] = Json{{"buses", Json{{"music", Json{{"volume", 0.4}}}}}};
+    settings["render"] = Json{{"bloom", true}};
+    std::ofstream(config) << settings.dump(2);
+    Json r = s.command("project.reload", Json::object()).value();
+    REQUIRE(r["settings"] == true);
+    Json actions = s.command("input.describe", Json::object()).value();
+    INFO(actions.dump());
+    REQUIRE(actions.contains("dash"));
+    REQUIRE(actions.contains("jump"));
+    bool music = false;
+    for (const Json& b : s.command("audio.buses", Json::object()).value()) if (b["name"] == "music") { music = true; REQUIRE(b["volume"].get<double>() == Catch::Approx(0.4)); }
+    REQUIRE(music);
+    REQUIRE(s.command("render.bloom", Json::object()).value()["enabled"] == true);
+    // settings: false keeps what is running.
+    settings["input"]["actions"].erase("dash");
+    std::ofstream(config) << settings.dump(2);
+    REQUIRE(s.command("project.reload", Json{{"settings", false}}).value()["settings"] == false);
+    REQUIRE(s.command("input.describe", Json::object()).value().contains("dash"));
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(config);
 }

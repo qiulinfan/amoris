@@ -94,6 +94,15 @@ export function lastTick(): Tick {
     return currentTick;
 }
 
+declare global {
+    /** On the simulation clock (the timer module below): game time, reproducible, paused with the game. */
+    function setTimeout(fn: () => void, ms?: number): number;
+    function clearTimeout(id?: number): void;
+    function setInterval(fn: () => void, ms?: number): number;
+    function clearInterval(id?: number): void;
+    function queueMicrotask(fn: () => void): void;
+}
+
 // The setTimeout family, on the simulation clock: a script that says "after 500 ms" means 500 ms
 // of game time, which is what a game wants and what makes runs reproducible.
 type Global = { setTimeout?: unknown; clearTimeout?: unknown; setInterval?: unknown; clearInterval?: unknown; queueMicrotask?: unknown };
@@ -106,7 +115,8 @@ if (g.setTimeout === undefined) {
         handles.set(id, timer.after(ms / 1000, () => { handles.delete(id); fn(); }));
         return id;
     };
-    g.clearTimeout = (id: number): void => {
+    g.clearTimeout = (id?: number): void => {
+        if (id === undefined) return;
         handles.get(id)?.cancel();
         handles.delete(id);
     };

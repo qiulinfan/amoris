@@ -60,6 +60,7 @@ struct Voice {
     bool loop = false;
     std::uint64_t entity = 0;
     std::string tag;
+    std::string bus = "main";
     std::uint32_t loops_done = 0;
     bool render_done = false;
     std::shared_ptr<StreamState> stream;   // set for a streamed clip
@@ -149,6 +150,20 @@ struct Audio::Impl {
     std::uint32_t next_id = 1;
     float master = 1.0f;
     bool muted = false;
+    // Buses by name: settings, the ducking gain the tick moves, and the mixer's own state (the
+    // gain it last applied, ramped to the new one across a slice so a change never clicks).
+    struct Bus {
+        BusSettings settings;
+        float duck = 1.0f;
+        bool ducked = false;
+        float applied = -1.0f;
+        float lp_l = 0, lp_r = 0;
+        std::vector<float> dry, send;
+        bool used = false;
+    };
+    std::map<std::string, Bus> buses = {{"main", Bus{}}};
+    Bus& bus_of(const std::string& name) { return buses[name.empty() ? std::string("main") : name]; }
+    float bus_gain(const Bus& b) const { return b.settings.muted ? 0.0f : b.settings.volume * b.duck; }
     std::vector<float> mix;
     std::uint64_t frames_rendered = 0;
     std::uint64_t plays = 0;
@@ -302,6 +317,7 @@ struct Audio::Impl {
         i.loop = v.loop;
         i.entity = v.entity;
         i.tag = v.tag;
+        i.bus = v.bus;
         i.loops_done = v.loops_done;
         return i;
     }
@@ -369,11 +385,21 @@ struct Audio::Impl {
         const bool room = reverb_settings.room > 0;
         if (room && reverb.comb[0][0].buf.empty()) reverb.setup(config.sample_rate);
         send.assign(room ? static_cast<std::size_t>(frames) : 0, 0.0f);
+        for (auto& [name, b] : buses) b.used = false;
         for (Voice& v : voices) {
             if (v.render_done || !v.clip) continue;
             const Clip& c = *v.clip;
-            float l = v.volume * master * (v.pan <= 0 ? 1.0f : 1.0f - v.pan);
-            float r = v.volume * master * (v.pan >= 0 ? 1.0f : 1.0f + v.pan);
+            // Into the voice's bus; the bus's gain, low-pass and the master come after.
+            Bus& b = bus_of(v.bus);
+            if (!b.used) {
+                b.dry.assign(static_cast<std::size_t>(frames) * 2, 0.0f);
+                b.send.assign(room ? static_cast<std::size_t>(frames) : 0, 0.0f);
+                b.used = true;
+            }
+            std::vector<float>& out = b.dry;
+            std::vector<float>& to_room = b.send;
+            float l = v.volume * (v.pan <= 0 ? 1.0f : 1.0f - v.pan);
+            float r = v.volume * (v.pan >= 0 ? 1.0f : 1.0f + v.pan);
             double pos = v.render;
             double step = std::max(0.01f, v.pitch);
             if (v.stream) {
@@ -389,9 +415,9 @@ struct Audio::Impl {
                     const float t = static_cast<float>(pos - static_cast<double>(i0));
                     float sl = s.buf[r0] * (1 - t) + s.buf[r1] * t, sr = s.buf[r0 + 1] * (1 - t) + s.buf[r1 + 1] * t;
                     v.filter(sl, sr);
-                    mix[static_cast<std::size_t>(f) * 2] += sl * l;
-                    mix[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
-                    if (room && v.reverb > 0) send[static_cast<std::size_t>(f)] += (sl * l + sr * r) * 0.5f * v.reverb;
+                    out[static_cast<std::size_t>(f) * 2] += sl * l;
+                    out[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
+                    if (room && v.reverb > 0) to_room[static_cast<std::size_t>(f)] += (sl * l + sr * r) * 0.5f * v.reverb;
                     pos += step;
                 }
                 v.render = pos;
@@ -414,12 +440,34 @@ struct Audio::Impl {
                 float sl = c.samples[i0 * 2] * (1 - t) + c.samples[i1 * 2] * t;
                 float sr = c.samples[i0 * 2 + 1] * (1 - t) + c.samples[i1 * 2 + 1] * t;
                 v.filter(sl, sr);
-                mix[static_cast<std::size_t>(f) * 2] += sl * l;
-                mix[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
-                if (room && v.reverb > 0) send[static_cast<std::size_t>(f)] += (sl * l + sr * r) * 0.5f * v.reverb;
+                out[static_cast<std::size_t>(f) * 2] += sl * l;
+                out[static_cast<std::size_t>(f) * 2 + 1] += sr * r;
+                if (room && v.reverb > 0) to_room[static_cast<std::size_t>(f)] += (sl * l + sr * r) * 0.5f * v.reverb;
                 pos += step;
             }
             v.render = pos;
+        }
+        // Each bus into the mix and the room's send: its gain ramped from the last slice's, its
+        // low-pass over the dry mix (the send stays open, so a muffled bus still fills the room).
+        for (auto& [name, b] : buses) {
+            const float target = bus_gain(b);
+            const float from = b.applied < 0 ? target : b.applied;
+            b.applied = target;
+            if (!b.used) continue;
+            const float lp = b.settings.lowpass, a = std::max(lp * lp, 1e-4f);
+            for (int f = 0; f < frames; ++f) {
+                const float g = (from + (target - from) * static_cast<float>(f + 1) / static_cast<float>(frames)) * master;
+                float sl = b.dry[static_cast<std::size_t>(f) * 2], sr = b.dry[static_cast<std::size_t>(f) * 2 + 1];
+                if (lp < 1) {
+                    b.lp_l += a * (sl - b.lp_l);
+                    b.lp_r += a * (sr - b.lp_r);
+                    sl = b.lp_l;
+                    sr = b.lp_r;
+                }
+                mix[static_cast<std::size_t>(f) * 2] += sl * g;
+                mix[static_cast<std::size_t>(f) * 2 + 1] += sr * g;
+                if (room) send[static_cast<std::size_t>(f)] += b.send[static_cast<std::size_t>(f)] * g;
+            }
         }
         if (room) {
             // The tail: fed by the send, added at the mix level; kept running while it rings.
@@ -495,6 +543,8 @@ Result<std::uint32_t> Audio::play(const std::string& clip, const PlayOptions& op
     v.loop = options.loop;
     v.entity = options.entity;
     v.tag = options.tag;
+    v.bus = options.bus.empty() ? "main" : options.bus;
+    impl_->bus_of(v.bus);
     if (c->streamed) {
         POCKET_TRY(s, impl_->open_stream(*c));
         v.stream = s;
@@ -525,6 +575,41 @@ std::uint32_t Audio::stop_tag(const std::string& tag) {
     return static_cast<std::uint32_t>(before - vs.size());
 }
 
+std::uint32_t Audio::stop_bus(const std::string& bus) {
+    auto& vs = impl_->voices;
+    auto before = vs.size();
+    vs.erase(std::remove_if(vs.begin(), vs.end(), [&](const Voice& v) { return v.bus == bus; }), vs.end());
+    return static_cast<std::uint32_t>(before - vs.size());
+}
+
+void Audio::set_bus(const std::string& name, BusSettings s) {
+    s.volume = std::clamp(s.volume, 0.0f, 2.0f);
+    s.lowpass = std::clamp(s.lowpass, 0.0f, 1.0f);
+    s.duck_amount = std::clamp(s.duck_amount, 0.0f, 1.0f);
+    s.duck_seconds = std::clamp(s.duck_seconds, 0.0f, 10.0f);
+    if (s.duck_by == name) s.duck_by.clear();   // a bus does not duck under itself
+    impl_->bus_of(name).settings = std::move(s);
+}
+
+BusSettings Audio::bus(const std::string& name) const {
+    const auto it = impl_->buses.find(name);
+    return it == impl_->buses.end() ? BusSettings{} : it->second.settings;
+}
+
+std::vector<BusInfo> Audio::buses() const {
+    std::vector<BusInfo> out;
+    for (const auto& [name, b] : impl_->buses) {
+        BusInfo i;
+        i.name = name;
+        i.settings = b.settings;
+        i.duck = b.duck;
+        i.ducked = b.ducked;
+        for (const Voice& v : impl_->voices) i.voices += v.bus == name ? 1 : 0;
+        out.push_back(std::move(i));
+    }
+    return out;
+}
+
 std::uint32_t Audio::stop_all() {
     auto n = static_cast<std::uint32_t>(impl_->voices.size());
     impl_->voices.clear();
@@ -540,6 +625,11 @@ Status Audio::set(std::uint32_t voice, const Json& params) {
         if (params.contains("lowpass") && params["lowpass"].is_number()) v.lowpass = std::clamp(params["lowpass"].get<float>(), 0.0f, 1.0f);
         if (params.contains("reverb") && params["reverb"].is_number()) v.reverb = std::clamp(params["reverb"].get<float>(), 0.0f, 1.0f);
         if (params.contains("loop") && params["loop"].is_boolean()) v.loop = params["loop"].get<bool>();
+        if (params.contains("bus") && params["bus"].is_string()) {
+            v.bus = params["bus"].get<std::string>();
+            if (v.bus.empty()) v.bus = "main";
+            impl_->bus_of(v.bus);
+        }
         return {};
     }
     return fail("no_such_voice", "voice {} is not playing", voice);
@@ -570,6 +660,25 @@ std::vector<VoiceEvent> Audio::tick(double dt) {
         } else {
             ++it;
         }
+    }
+    // Ducking on the tick clock: a bus falls toward duck_amount while a voice plays on the bus it
+    // ducks under and comes back when none does, each way over duck_seconds.
+    for (auto& [name, b] : im.buses) {
+        const BusSettings& s = b.settings;
+        bool under = false;
+        if (!s.duck_by.empty()) for (const Voice& v : vs) under = under || v.bus == s.duck_by;
+        if (under != b.ducked) {
+            b.ducked = under;
+            VoiceEvent e;
+            e.type = "audio.ducked";
+            e.bus = name;
+            e.ducked = under;
+            events.push_back(std::move(e));
+        }
+        const float target = under ? s.duck_amount : 1.0f;
+        const float rate = s.duck_seconds > 0 ? (1.0f - s.duck_amount) / s.duck_seconds : 1e9f;
+        const float step = rate * static_cast<float>(dt);
+        b.duck = b.duck > target ? std::max(target, b.duck - step) : std::min(target, b.duck + step);
     }
     return events;
 }
@@ -647,6 +756,7 @@ Json Audio::describe() const {
     j["plays"] = im.plays;
     j["master_volume"] = im.master;
     j["muted"] = im.muted;
+    j["buses"] = im.buses.size();
     j["reverb"] = Json{{"room", im.reverb_settings.room}, {"damping", im.reverb_settings.damping}, {"mix", im.reverb_settings.mix}, {"ringing", im.reverb.ringing}};
     j["frames_rendered"] = im.frames_rendered;
     return j;

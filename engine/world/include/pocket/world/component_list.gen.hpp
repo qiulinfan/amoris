@@ -24,6 +24,7 @@
     X(RigidBody) \
     X(Joint) \
     X(Body2D) \
+    X(Character) \
     X(TopDown2D) \
     X(Collider) \
     X(AudioSource) \

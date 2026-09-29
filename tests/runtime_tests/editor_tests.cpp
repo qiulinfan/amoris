@@ -958,3 +958,89 @@ TEST_CASE("editor places a model with a light as its node tree, from the Place b
     std::filesystem::remove(lamp);
     std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");   // the layout file the tab click wrote
 }
+
+TEST_CASE("editor's Audio tab sets buses live and saves them to audio.json for the next run", "[editor][audio]") {
+    const std::filesystem::path saved = root() / "samples" / "audio" / "audio.json";
+    std::filesystem::remove(saved);
+    {
+        app::Session s(editor_options("audio"));
+        ok(s.start());
+        s.set_paused(true);
+        for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+        ok(s.command("ui.click", Json{{"id", find_named(s, "tab:audio")}}));
+        ok(s.idle_frame());
+        // The project's ambience bus is listed with its ducking; a click on its slider sets its volume.
+        Json row = ok(s.command("ui.query", Json{{"name", "bus:ambience:volume"}}));
+        REQUIRE(row.size() == 1);
+        const Json rect = row[0]["rect"];
+        const double x = rect["x"].get<double>() + 7 + (rect["w"].get<double>() - 14) * 0.25;   // a quarter of 0..2
+        ok(s.command("ui.click", Json{{"x", x}, {"y", rect["y"].get<double>() + rect["h"].get<double>() / 2}}));
+        ok(s.idle_frame());
+        auto bus = [&](const char* name) {
+            for (const Json& b : ok(s.command("audio.buses", Json::object()))) if (b["name"] == name) return b;
+            FAIL("no bus " << name);
+            return Json();
+        };
+        REQUIRE(bus("ambience")["volume"].get<double>() == Catch::Approx(0.5));
+        REQUIRE(bus("ambience")["duck_by"] == "fx");
+        ok(s.command("ui.click", Json{{"id", find_named(s, "bus:ambience:muted")}}));
+        ok(s.idle_frame());
+        REQUIRE(bus("ambience")["muted"] == true);
+        ok(s.command("ui.click", Json{{"id", find_named(s, "bus:ambience:muted")}}));
+        ok(s.command("ui.click", Json{{"id", find_named(s, "mixer:save")}}));
+        ok(s.idle_frame());
+        REQUIRE(std::filesystem::exists(saved));
+        Json file = Json::parse(ok(s.command("project.read", Json{{"path", "audio.json"}}))["text"].get<std::string>());
+        INFO(file.dump());
+        REQUIRE(file["buses"]["ambience"]["volume"].get<double>() == Catch::Approx(0.5));
+        REQUIRE(file["buses"]["ambience"]["muted"] == false);
+        REQUIRE(file["buses"]["ambience"]["duck_by"] == "fx");
+        ok(s.finish());
+    }
+    // The saved mixer applies over project.toml's buses in the next run.
+    {
+        app::Session s(editor_options("audio"));
+        ok(s.start());
+        bool found = false;
+        for (const Json& b : ok(s.command("audio.buses", Json::object()))) {
+            if (b["name"] != "ambience") continue;
+            found = true;
+            REQUIRE(b["volume"].get<double>() == Catch::Approx(0.5));
+            REQUIRE(b["duck_amount"].get<double>() == Catch::Approx(0.5));
+        }
+        REQUIRE(found);
+        ok(s.finish());
+    }
+    std::filesystem::remove(saved);
+    std::filesystem::remove_all(root() / "samples" / "audio" / ".pocket");
+}
+
+TEST_CASE("editor's Script tab lists the type errors a watched rebundle found", "[editor][script][types]") {
+    app::Session s(editor_options("physics"));
+    ok(s.start());
+    s.set_paused(true);
+    for (int i = 0; i < 2; ++i) ok(s.idle_frame());
+    // What `pocket editor --watch` sends after checking a rebundle.
+    REQUIRE(ok(s.command("script.diagnostics", Json::object()))["count"] == 0);
+    const Json found = Json::array({Json{{"file", "scripts/main.ts"}, {"line", 19}, {"column", 50}, {"severity", "error"}, {"message", "TS2561: 'positon' does not exist in type 'DeepPartial<Transform>'. Did you mean to write 'position'?"}}});
+    REQUIRE(ok(s.command("script.diagnostics", Json{{"diagnostics", found}}))["count"] == 1);
+    REQUIRE(ok(s.command("script.diagnostics", Json::object()))["diagnostics"] == found);
+    REQUIRE_FALSE(s.command("script.diagnostics", Json{{"diagnostics", "not a list"}}).has_value());
+    // The Console has it as a warning under "types".
+    bool logged = false;
+    for (const Json& l : ok(s.command("log.tail", Json{{"n", 20}}))) if (l.value("cat", "") == "types" && l.value("msg", "").find("scripts/main.ts:19:50") != std::string::npos) logged = true;
+    REQUIRE(logged);
+    // The Script tab lists it under the text area, with its place.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "tab:script")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "script:scripts/main.ts")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "script:errors"}})).size() == 1);
+    REQUIRE(ok(s.command("ui.query", Json{{"text", "scripts/main.ts:19:50  TS2561"}})).size() == 1);
+    // Cleared by the next clean check.
+    ok(s.command("script.diagnostics", Json{{"diagnostics", Json::array()}}));
+    for (int i = 0; i < 21; ++i) ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "script:errors"}})).empty());
+    ok(s.finish());
+    std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");
+}

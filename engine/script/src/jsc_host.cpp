@@ -234,14 +234,19 @@ class JscHost final : public ScriptHost {
         if (!fv || !JSValueIsObject(ctx_, fv)) return fail("script_function_missing", "global function '{}' is not defined", global_function);
         JSObjectRef fn = JSValueToObject(ctx_, fv, nullptr);
         if (!JSObjectIsFunction(ctx_, fn)) return fail("script_function_missing", "'{}' is not a function", global_function);
+        // The arguments live in a heap vector, where the collector's stack scan does not see them:
+        // each is protected until the call returns, or making a later one (a large object parsed
+        // from JSON) can collect an earlier one (the dispatch kind) out from under the call.
         std::vector<JSValueRef> argv;
+        auto keep = [&](JSValueRef v) { JSValueProtect(ctx_, v); argv.push_back(v); };
         if (args.is_array()) {
-            for (const auto& a : args) argv.push_back(json_to_value(ctx_, a));
+            for (const auto& a : args) keep(json_to_value(ctx_, a));
         } else if (!args.is_null()) {
-            argv.push_back(json_to_value(ctx_, args));
+            keep(json_to_value(ctx_, args));
         }
         JSValueRef exc = nullptr;
         JSValueRef r = JSObjectCallAsFunction(ctx_, fn, nullptr, argv.size(), argv.empty() ? nullptr : argv.data(), &exc);
+        for (JSValueRef v : argv) JSValueUnprotect(ctx_, v);
         if (exc) return fail(exception_to_error(ctx_, exc));
         return value_to_json(ctx_, r);
     }

@@ -129,7 +129,7 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mesh` | string | "cube" | cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
+| `mesh` | string | "cube" | cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). |
 | `node` | string | "" | Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole. |
 | `color` | color | [0.8, 0.8, 0.8, 1.0] | Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent. |
 | `texture` | string | "" | Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none. |
@@ -359,6 +359,29 @@ A 2D platformer body: an axis-aligned box in the XY plane that falls under gravi
 | `restitution` | f32 | 0.0 | Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution). |
 | `friction` | f32 | 0.0 | Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed. |
 
+## Character
+
+A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `velocity` | vec3 | [0.0, 0.0, 0.0] | Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall. |
+| `gravity` | f32 | -20.0 | Units per second squared along Y (negative is down). |
+| `max_fall` | f32 | 50.0 | Fastest downward speed. |
+| `radius` | f32 | 0.3 | The capsule's radius. |
+| `height` | f32 | 1.8 | The capsule's whole height, round ends included; the entity is at its centre, so a character standing on the ground at y 0 is at y = height / 2. |
+| `step` | f32 | 0.3 | The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it. |
+| `max_slope` | f32 | 45.0 | The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down. |
+| `push` | f32 | 1.0 | How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). |
+| `mask` | u32 | 4294967295 | Bits of the collision layers (Collider.layer) the character is stopped by; all by default. |
+| `grounded` | bool | false | Standing on a floor no steeper than max_slope (written by the engine). |
+| `ground_normal` | vec3 | [0.0, 1.0, 0.0] | The floor's normal where it stands (written by the engine). |
+| `ground` | entity | 0 | The collider it stands on; 0 in the air (written by the engine). |
+| `on_wall` | bool | false | Stopped by a wall or too-steep ground this tick (written by the engine). |
+| `wall_normal` | vec3 | [0.0, 0.0, 0.0] | That wall's normal (written by the engine). |
+| `on_ceiling` | bool | false | Its head hit something this tick (written by the engine). |
+| `stepped` | bool | false | Walked up an edge this tick (written by the engine). |
+
 ## TopDown2D
 
 A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
@@ -399,6 +422,7 @@ A sound attached to an entity: the engine starts it when autoplay is set (once, 
 | `pitch` | f32 | 1.0 | Playback rate multiplier. |
 | `lowpass` | f32 | 1.0 | How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice. |
 | `reverb` | f32 | 1.0 | How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room. |
+| `bus` | string | "main" | The bus the voice plays on (music, effects, dialogue: any name): a bus is set as one with audio.bus, its volume, a mute, a low-pass and ducking under another bus (docs/design/audio.md, Buses). |
 | `loop` | bool | false | Restart when the clip ends. |
 | `autoplay` | bool | false | Start playing as soon as the component exists. |
 | `spatial` | bool | false | Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is). |

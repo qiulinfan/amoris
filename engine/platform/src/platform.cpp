@@ -59,9 +59,13 @@ Event event_from_json(const Json& j) {
     e.clicks = j.contains("clicks") && j["clicks"].is_number() ? std::max(1, j["clicks"].get<int>()) : 1;
     e.width = static_cast<int>(num("width")); e.height = static_cast<int>(num("height"));
     e.text = j.contains("text") && j["text"].is_string() ? j["text"].get<std::string>() : "";
-    e.pad = j.contains("pad") && j["pad"].is_number() ? j["pad"].get<int>() : 0;
+    if (j.contains("pad") && j["pad"].is_number()) e.pad = j["pad"].get<int>();
     e.pressed = j.contains("pressed") && j["pressed"].is_boolean() && j["pressed"].get<bool>();
     e.value = num("value");
+    if (e.type == EventType::TouchDown || e.type == EventType::TouchUp || e.type == EventType::TouchMove) {
+        // A finger without a pressure (a journal from before it was kept) presses fully while down.
+        e.value = j.contains("pressure") && j["pressure"].is_number() ? j["pressure"].get<float>() : e.type == EventType::TouchUp ? 0.0f : 1.0f;
+    }
     if (j.contains("button") && j["button"].is_string()) e.key_name = j["button"].get<std::string>();
     if (j.contains("axis") && j["axis"].is_string()) e.key_name = j["axis"].get<std::string>();
     if (j.contains("name") && j["name"].is_string()) e.text = j["name"].get<std::string>();
@@ -156,7 +160,7 @@ Json event_to_json(const Event& e) {
         case EventType::TouchDown:
         case EventType::TouchUp:
         case EventType::TouchMove:
-            j["finger"] = e.pad; j["x"] = e.x; j["y"] = e.y; j["dx"] = e.dx; j["dy"] = e.dy;
+            j["finger"] = e.pad; j["x"] = e.x; j["y"] = e.y; j["dx"] = e.dx; j["dy"] = e.dy; j["pressure"] = e.value;
             break;
         case EventType::PadAxis:
             j["pad"] = e.pad; j["axis"] = e.key_name; j["value"] = e.value;
@@ -366,6 +370,7 @@ std::vector<Event> Platform::poll() {
                 ev.y = e.tfinger.y * static_cast<float>(h);
                 ev.dx = e.tfinger.dx * static_cast<float>(w);
                 ev.dy = e.tfinger.dy * static_cast<float>(h);
+                ev.value = std::clamp(e.tfinger.pressure, 0.0f, 1.0f);
                 ev.pressed = !up;
                 if (down) impl_->input.fingers++;
                 if (up) { impl_->input.fingers = std::max(0, impl_->input.fingers - 1); impl_->fingers[static_cast<std::size_t>(slot)] = 0; }

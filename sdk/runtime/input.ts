@@ -58,6 +58,13 @@ export const input = {
     rumble(pad = 0, low = 1, high = 1, ms = 200): boolean {
         return cmd<{ rumbled: boolean }>("input.rumble", { pad, low, high, ms }).rumbled;
     },
+    /** Play steps of motor strengths (0..1) and lengths one after another on the tick clock, `repeat` times, replacing what the pad was playing; a step with both motors at 0 is a pause. False without a pad that can. */
+    rumblePattern(pad: number, pattern: { low?: number; high?: number; ms: number }[], repeat = 1): boolean {
+        return cmd<{ rumbled: boolean }>("input.rumble", { pad, pattern, repeat }).rumbled;
+    },
+    stopRumble(pad = 0): void {
+        cmd("input.rumble", { pad, stop: true });
+    },
     /** Fresh snapshot straight from the engine (the tick snapshot is what gameplay should use). */
     actions(): Record<string, ActionState> {
         registry.actions = cmd<Record<string, ActionState>>("input.actions");

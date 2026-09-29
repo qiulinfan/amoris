@@ -84,6 +84,7 @@ struct Node {
     };
     std::optional<Keyframes> keyframes;
     bool disabled = false;
+    bool focusable = true;   // false: clickable but passed over by Tab, the arrow keys and a pad (an arrow inside a control)
     std::string text;
     std::string value;       // input
     std::string placeholder;
@@ -252,6 +253,7 @@ struct Document::Impl {
     YGConfigRef config = nullptr;
     float width = 0, height = 0, scale = 1;
     NodeId hovered = 0, focused = 0, pressed = 0;
+    NodeId autofocus = 0;   // an element made with `autofocus`: focused at the next input (a menu opening takes the pad)
     float press_x = 0, press_y = 0, last_x = 0, last_y = 0;
     bool dragging = false;
     std::uint64_t paints = 0;
@@ -663,6 +665,8 @@ struct Document::Impl {
             else if (k == "syntax") n.syntax = v.is_string() ? v.get<std::string>() : std::string();
             else if (k == "name") n.name = v.get<std::string>();
             else if (k == "disabled") n.disabled = v.get<bool>();
+            else if (k == "focusable") n.focusable = !v.is_boolean() || v.get<bool>();
+            else if (k == "autofocus") { if (v.is_boolean() && v.get<bool>()) autofocus = n.id; }
             else if (k == "on") {
                 n.listeners = 0;
                 if (v.is_array()) for (auto& e : v) n.listeners |= listener_bit(e.get<std::string>());
@@ -1195,6 +1199,67 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
             if (t) emit(t, "focus");
         }
     };
+    // What the keyboard and a pad can focus: shown, enabled inputs and elements that listen for
+    // clicks, in tree order, less those marked `focusable: false`.
+    auto focus_order = [&]() {
+        std::vector<NodeId> order;
+        std::function<void(NodeId)> collect = [&](NodeId id) {
+            const Node* node = im.get(id);
+            if (!node || !Impl::shown(*node)) return;
+            if (!node->disabled && node->focusable && node->rect.w > 0 && node->rect.h > 0 && (node->type == "input" || (node->listeners & kClick))) order.push_back(id);
+            for (NodeId c : node->children) collect(c);
+        };
+        collect(im.root_id);
+        return order;
+    };
+    // The focused element scrolled into its scrolling ancestor's view.
+    auto reveal = [&](NodeId id) {
+        const Node* node = im.get(id);
+        if (!node) return;
+        for (NodeId s = node->parent; s;) {
+            Node* sc = im.get(s);
+            if (!sc) break;
+            if (sc->scroll && sc->content_height > sc->rect.h) {
+                const float top = node->rect.y - sc->rect.y, bottom = top + node->rect.h;
+                if (top < 0) sc->scroll_y += top;
+                else if (bottom > sc->rect.h) sc->scroll_y += bottom - sc->rect.h;
+                sc->scroll_y = std::clamp(sc->scroll_y, 0.0f, sc->content_height - sc->rect.h);
+                break;
+            }
+            s = sc->parent;
+        }
+    };
+    // Spatial focus (arrow keys, a pad's d-pad): from the focused element to the nearest focusable
+    // one whose centre lies that way, a gap across the direction costing twice a step along it.
+    auto navigate = [&](int dx, int dy) {
+        const Node* from = im.get(im.focused);
+        if (!from) return false;
+        const float fx = from->rect.x + from->rect.w * 0.5f, fy = from->rect.y + from->rect.h * 0.5f;
+        NodeId best = 0;
+        float best_score = 1e30f;
+        for (NodeId id : focus_order()) {
+            if (id == im.focused) continue;
+            const Node* c = im.get(id);
+            const float cx = c->rect.x + c->rect.w * 0.5f, cy = c->rect.y + c->rect.h * 0.5f;
+            const float along = dx != 0 ? (cx - fx) * static_cast<float>(dx) : (cy - fy) * static_cast<float>(dy);
+            if (along <= 0.5f) continue;
+            const float gap = dx != 0 ? std::max({0.0f, c->rect.y - (from->rect.y + from->rect.h), from->rect.y - (c->rect.y + c->rect.h)})
+                                      : std::max({0.0f, c->rect.x - (from->rect.x + from->rect.w), from->rect.x - (c->rect.x + c->rect.w)});
+            const float off = dx != 0 ? std::fabs(cy - fy) : std::fabs(cx - fx);
+            const float score = along + gap * 2.0f + off * 0.25f;
+            if (score < best_score) { best_score = score; best = id; }
+        }
+        if (!best) return false;
+        set_focus_to(best);
+        reveal(best);
+        return true;
+    };
+    // An element made with `autofocus` since the last input takes the focus now.
+    if (im.autofocus) {
+        const Node* a = im.get(im.autofocus);
+        if (a && Impl::shown(*a) && !a->disabled) set_focus_to(im.autofocus);
+        im.autofocus = 0;
+    }
     for (const platform::Event& ev : events) {
         using platform::EventType;
         switch (ev.type) {
@@ -1371,25 +1436,27 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     // in tree order, wrapping at the ends; Shift+Tab walks back.
                     bool shift = false;
                     for (const Json& m : platform::mods_to_json(ev.mods)) if (m == "shift") shift = true;
-                    std::vector<NodeId> order;
-                    std::function<void(NodeId)> collect = [&](NodeId id) {
-                        const Node* node = im.get(id);
-                        if (!node || !Impl::shown(*node)) return;
-                        if (!node->disabled && node->rect.w > 0 && node->rect.h > 0 && (node->type == "input" || (node->listeners & kClick))) order.push_back(id);
-                        for (NodeId c : node->children) collect(c);
-                    };
-                    collect(im.root_id);
+                    const std::vector<NodeId> order = focus_order();
                     if (!order.empty()) {
                         std::size_t at = order.size();
                         for (std::size_t i = 0; i < order.size(); ++i) if (order[i] == im.focused) at = i;
                         NodeId next = at == order.size() ? (shift ? order.back() : order.front()) : order[(at + (shift ? order.size() - 1 : 1)) % order.size()];
                         set_focus_to(next);
+                        reveal(next);
                     }
                     consumed = true;
                 } else if (!consumed && n && n->type != "input" && !n->disabled && (n->listeners & kClick) && (ev.key_name == "Return" || ev.key_name == "Keypad Enter" || ev.key_name == "Space")) {
                     // A focused button pressed from the keyboard: a click at its center.
                     emit(im.focused, "click", with_mods(Json{{"x", n->rect.x + n->rect.w * 0.5f}, {"y", n->rect.y + n->rect.h * 0.5f}, {"keyboard", true}}, ev.mods));
                     consumed = true;
+                } else if (!consumed && n && n->type != "input" && (ev.key_name == "Up" || ev.key_name == "Down" || ((ev.key_name == "Left" || ev.key_name == "Right") && !(n->listeners & kKeyDown)))) {
+                    // The arrows walk the focus through the interface; Left and Right stay with an
+                    // element that takes keys itself (a slider, a choice).
+                    consumed = navigate(ev.key_name == "Left" ? -1 : ev.key_name == "Right" ? 1 : 0, ev.key_name == "Up" ? -1 : ev.key_name == "Down" ? 1 : 0);
+                } else if (!consumed && n && n->type != "input" && ev.key_name == "Escape") {
+                    // Escape leaves the focused control; the key then goes on as an unfocused one (to
+                    // the game, which closes its menu).
+                    set_focus_to(0);
                 }
                 NodeId t = im.listener_target(im.focused ? im.focused : im.hovered, kKeyDown);
                 if (t) emit(t, "keydown", with_mods(Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", consumed}}, ev.mods));
@@ -1397,6 +1464,25 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     // Unfocused keys go to the root listener if any.
                     NodeId rt = im.listener_target(im.root_id, kKeyDown);
                     if (rt) emit(rt, "keydown", with_mods(Json{{"key", ev.key_name}, {"repeat", ev.repeat}, {"consumed", false}}, ev.mods));
+                }
+                break;
+            }
+            case EventType::PadButton: {
+                // A pad drives the focused interface: the d-pad moves the focus (Left and Right go to
+                // an element that takes keys as the arrow keys), A presses the focused element as
+                // Return does, B leaves it. With nothing focused the pad is the game's.
+                Node* n = im.get(im.focused);
+                if (!ev.pressed || !n) break;
+                const std::string& b = ev.key_name;
+                if (b == "dpad_up" || b == "dpad_down") {
+                    navigate(0, b == "dpad_up" ? -1 : 1);
+                } else if (b == "dpad_left" || b == "dpad_right") {
+                    if (n->type != "input" && (n->listeners & kKeyDown)) emit(im.focused, "keydown", Json{{"key", b == "dpad_left" ? "Left" : "Right"}, {"repeat", false}, {"consumed", false}, {"pad", true}});
+                    else navigate(b == "dpad_left" ? -1 : 1, 0);
+                } else if (b == "a") {
+                    if (n->type != "input" && !n->disabled && (n->listeners & kClick)) emit(im.focused, "click", Json{{"x", n->rect.x + n->rect.w * 0.5f}, {"y", n->rect.y + n->rect.h * 0.5f}, {"keyboard", true}, {"pad", true}});
+                } else if (b == "b") {
+                    set_focus_to(0);
                 }
                 break;
             }

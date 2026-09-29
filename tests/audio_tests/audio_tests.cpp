@@ -157,8 +157,122 @@ TEST_CASE("AudioSource components start voices in a headless session", "[audio]"
     Json stats = s.command("audio.stats", Json::object()).value();
     REQUIRE(stats["device"] == "none");
     REQUIRE(stats["clips"].get<int>() >= 2);
+    // The project's buses: the hum is on ambience, which ducked under each beep on fx.
+    for (auto& v : voices) if (v["clip"] == "assets/hum.wav") REQUIRE(v["bus"] == "ambience");
+    Json buses = s.command("audio.buses", Json::object()).value();
+    INFO(buses.dump());
+    bool ambience = false;
+    for (auto& b : buses) if (b["name"] == "ambience") { ambience = true; REQUIRE(b["duck_by"] == "fx"); REQUIRE(b["duck_amount"].get<double>() == Catch::Approx(0.5)); }
+    REQUIRE(ambience);
+    REQUIRE(hist["audio.ducked"].get<int>() >= 2);   // down with the first beep, up after it
     REQUIRE(s.finish().has_value());
     REQUIRE(s.report()["audio"]["plays"].get<int>() >= 2);
+}
+
+TEST_CASE("a bus sets its voices as one: volume, mute, a low-pass, and ducking on the tick clock", "[audio][buses]") {
+    auto loudness = [](const std::vector<float>& mix) {
+        float peak = 0;
+        for (float x : mix) peak = std::max(peak, std::abs(x));
+        return peak;
+    };
+    auto roughness = [](const std::vector<float>& mix) {
+        float sum = 0;
+        for (std::size_t i = 2; i < mix.size(); i += 2) sum += std::abs(mix[i] - mix[i - 2]);
+        return sum;
+    };
+    auto plain = headless_audio(), music = headless_audio();
+    audio::PlayOptions o;
+    o.reverb = 0;
+    REQUIRE(plain->play("assets/beep.wav", o).has_value());
+    o.bus = "music";
+    REQUIRE(music->play("assets/beep.wav", o).has_value());
+    REQUIRE(music->voices()[0].bus == "music");
+    audio::BusSettings half;
+    half.volume = 0.5f;
+    music->set_bus("music", half);
+    std::vector<float> a = plain->render_frames(2400), b = music->render_frames(2400);
+    INFO("plain " << loudness(a) << ", music at half " << loudness(b));
+    REQUIRE(loudness(a) > 0.1f);
+    REQUIRE(loudness(b) == Catch::Approx(loudness(a) * 0.5f).epsilon(0.02));
+    // Muted: the change ramps across one slice, then silence while the voice plays on.
+    audio::BusSettings muted = half;
+    muted.muted = true;
+    music->set_bus("music", muted);
+    (void)plain->render_frames(480);
+    (void)music->render_frames(480);
+    a = plain->render_frames(2400);
+    b = music->render_frames(2400);
+    REQUIRE(loudness(a) > 0.1f);
+    REQUIRE(loudness(b) == 0.0f);
+    REQUIRE(music->voices().size() == 1);
+    // A low-pass over the bus muffles every voice on it.
+    audio::BusSettings muffled;
+    muffled.lowpass = 0.05f;
+    music->set_bus("music", muffled);
+    (void)plain->render_frames(480);
+    (void)music->render_frames(480);
+    a = plain->render_frames(2400);
+    b = music->render_frames(2400);
+    INFO("plain " << roughness(a) << ", muffled bus " << roughness(b));
+    REQUIRE(loudness(b) > 0.001f);
+    REQUIRE(roughness(b) < roughness(a) * 0.3f);
+    REQUIRE(music->stop_bus("music") == 1);
+
+    // Ducking: music under dialogue falls to a quarter over half a second while a line plays,
+    // and comes back the same way once it stops, with an event each way.
+    auto d = headless_audio();
+    audio::BusSettings under;
+    under.duck_by = "dialogue";
+    under.duck_amount = 0.25f;
+    under.duck_seconds = 0.5f;
+    d->set_bus("music", under);
+    audio::PlayOptions m;
+    m.bus = "music";
+    m.loop = true;
+    REQUIRE(d->play("assets/hum.wav", m).has_value());
+    auto bus = [&](const std::string& name) {
+        for (const audio::BusInfo& i : d->buses()) if (i.name == name) return i;
+        FAIL("no bus " << name);
+        return audio::BusInfo{};
+    };
+    std::vector<audio::VoiceEvent> events;
+    auto ticks = [&](int n) { for (int i = 0; i < n; ++i) for (auto& e : d->tick(1.0 / 60)) if (e.type == "audio.ducked") events.push_back(e); };
+    ticks(5);
+    REQUIRE(bus("music").duck == 1.0f);
+    REQUIRE(events.empty());
+    audio::PlayOptions line;
+    line.bus = "dialogue";
+    line.loop = true;
+    auto said = d->play("assets/beep.wav", line);
+    REQUIRE(said.has_value());
+    ticks(15);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0].type == "audio.ducked");
+    REQUIRE(events[0].bus == "music");
+    REQUIRE(events[0].ducked);
+    REQUIRE(bus("music").ducked);
+    REQUIRE(bus("music").duck == Catch::Approx(1.0 - 0.75 * 0.25 / 0.5).margin(0.01));   // a quarter second in: half way down
+    REQUIRE(bus("dialogue").voices == 1);
+    ticks(30);
+    REQUIRE(bus("music").duck == Catch::Approx(0.25));
+    // The ducked music is quieter in the mix than it was.
+    REQUIRE(d->stop(*said) == 1);
+    const float ducked_peak = loudness(d->render_frames(2400));
+    ticks(40);
+    REQUIRE(events.size() == 2);
+    REQUIRE_FALSE(events[1].ducked);
+    REQUIRE(bus("music").duck == 1.0f);
+    (void)d->render_frames(480);
+    const float open_peak = loudness(d->render_frames(2400));
+    INFO("ducked " << ducked_peak << ", back " << open_peak);
+    REQUIRE(ducked_peak < open_peak * 0.35f);
+    // A bus never ducks under itself; out-of-range settings are clamped.
+    audio::BusSettings odd;
+    odd.duck_by = "music";
+    odd.volume = 9.0f;
+    d->set_bus("music", odd);
+    REQUIRE(d->bus("music").duck_by.empty());
+    REQUIRE(d->bus("music").volume == 2.0f);
 }
 
 TEST_CASE("a streamed Ogg clip mixes like a decoded one, deterministically, and loops without a seam", "[audio][stream]") {

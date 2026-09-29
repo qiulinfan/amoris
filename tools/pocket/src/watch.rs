@@ -80,6 +80,32 @@ fn newest_asset(project: &Path) -> SystemTime {
     newest
 }
 
+/// Type-check the project and hand the errors to the runtime (the editor's Script tab and the
+/// Console show them; agents read `script.diagnostics`), with file names relative to the project.
+fn send_types(ws: &Workspace, url: &str, project: &Path) {
+    let rep = match crate::check::check(ws, Some(project)) {
+        Ok(rep) => rep,
+        Err(e) => {
+            eprintln!("[watch] types not checked: {e:#}");
+            return;
+        }
+    };
+    let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
+    let dir = std::fs::canonicalize(project).unwrap_or(project.to_path_buf());
+    let prefix = dir.strip_prefix(&root).map(|p| format!("{}/", p.display())).unwrap_or_else(|_| format!("{}/", dir.display()));
+    let diagnostics: Vec<Value> = rep.diagnostics.iter().map(|d| {
+        let mut v = serde_json::to_value(d).unwrap_or(Value::Null);
+        if let Some(f) = d.file.as_deref().and_then(|f| f.strip_prefix(prefix.as_str())) {
+            v["file"] = json!(f);
+        }
+        v
+    }).collect();
+    eprintln!("[watch] types: {}", rep.summary);
+    if let Err(e) = rpc(url, "script.diagnostics", json!({ "diagnostics": diagnostics })) {
+        eprintln!("[watch] type errors not delivered: {e:#}");
+    }
+}
+
 fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
     let resp = crate::mcp::http_post(url, "/rpc", &body)?;
@@ -136,6 +162,7 @@ pub fn watch(ws: &Workspace, config: &str, target: &str, args: &[String], editor
         std::thread::sleep(Duration::from_millis(100));
     }
     eprintln!("[watch] {target} running at {url}; editing {} reloads it", project.display());
+    send_types(ws, &url, &project);
     let sdk_dir = ws.root.join("sdk").join("runtime");
     let editor_dir = ws.root.join("editor");
     let mut last = newest_source(&project).max(newest_source(&sdk_dir)).max(if editor { newest_source(&editor_dir) } else { SystemTime::UNIX_EPOCH });
@@ -207,6 +234,7 @@ pub fn watch(ws: &Workspace, config: &str, target: &str, args: &[String], editor
                 eprintln!("[watch] bundle failed, keeping the previous scripts:\n{e:#}");
             }
         }
+        send_types(ws, &url, &project);
     };
     let mut rep = if exit_code == Some(0) { Report::success("watch", format!("{target} exited 0 after {reloads} reloads")) } else { Report::failure("watch", format!("{target} exited {}", exit_code.unwrap_or(-1))) };
     rep.data = json!({ "project": project, "reloads": reloads, "failures": failures, "exit_code": exit_code });

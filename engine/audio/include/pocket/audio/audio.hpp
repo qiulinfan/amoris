@@ -35,6 +35,25 @@ struct ReverbSettings {
     float mix = 0.3f;      // the tail's level against the dry voices, 0..1
 };
 
+// A bus: a group of voices mixed together and set as one (music, effects, dialogue), so a
+// settings menu's sliders and a pause menu's muffle are one call each.
+struct BusSettings {
+    float volume = 1.0f;         // 0..2
+    bool muted = false;
+    float lowpass = 1.0f;        // over the bus's whole mix, 0..1: 1 as it is, small values muffle it
+    std::string duck_by;         // another bus: while a voice plays on it, this one falls to duck_amount
+    float duck_amount = 0.3f;    // 0..1
+    float duck_seconds = 0.25f;  // how long the fall and the recovery take
+};
+
+struct BusInfo {
+    std::string name;
+    BusSettings settings;
+    float duck = 1.0f;     // the ducking gain right now, 1 when not ducked
+    bool ducked = false;   // whether the bus it ducks under is playing
+    int voices = 0;
+};
+
 struct PlayOptions {
     float volume = 1.0f;
     float pitch = 1.0f;   // playback rate multiplier
@@ -44,6 +63,7 @@ struct PlayOptions {
     float reverb = 1.0f;  // how much of the voice goes to the room's reverb, 0..1 (0 keeps interface clicks and music dry)
     std::uint64_t entity = 0;  // optional owner, reported in events
     std::string tag;      // optional label for stop/list
+    std::string bus = "main";
 };
 
 struct VoiceInfo {
@@ -57,13 +77,16 @@ struct VoiceInfo {
     bool loop = false;
     std::uint64_t entity = 0;
     std::string tag;
+    std::string bus;
     std::uint32_t loops_done = 0;
 };
 
 // Something that happened to a voice during tick(): reported so the session can log events.
 struct VoiceEvent {
-    std::string type;  // "audio.finished", "audio.looped"
+    std::string type;  // "audio.finished", "audio.looped"; "audio.ducked" when a bus starts or stops ducking (voice empty)
     VoiceInfo voice;
+    std::string bus;   // audio.ducked: the bus, `ducked` whether it is now
+    bool ducked = false;
 };
 
 class Audio {
@@ -81,7 +104,12 @@ class Audio {
     std::uint32_t stop_clip(const std::string& clip);
     std::uint32_t stop_tag(const std::string& tag);
     std::uint32_t stop_all();
-    Status set(std::uint32_t voice, const Json& params);  // volume, pitch, loop, pan, lowpass, reverb
+    std::uint32_t stop_bus(const std::string& bus);
+    Status set(std::uint32_t voice, const Json& params);  // volume, pitch, loop, pan, lowpass, reverb, bus
+    // A bus's settings (made on first use with the defaults); the change is heard at the next render.
+    void set_bus(const std::string& name, BusSettings settings);
+    [[nodiscard]] BusSettings bus(const std::string& name) const;
+    [[nodiscard]] std::vector<BusInfo> buses() const;
     // The room: a reverb every voice's send feeds (off at room 0). Takes effect at the next render.
     void set_reverb(ReverbSettings s);
     [[nodiscard]] ReverbSettings reverb() const;

@@ -12,6 +12,8 @@ export interface PlayOptions {
     reverb?: number;
     entity?: number;
     tag?: string;
+    /** The bus it plays on (`main` by default): music, effects, dialogue, any name; see `audio.bus`. */
+    bus?: string;
     /** Heard from where `entity` is: full within `near` of the camera, silent at `range`, panned to its side (docs/design/audio.md). */
     spatial?: boolean;
     near?: number;
@@ -33,7 +35,29 @@ export interface Voice {
     loop: boolean;
     entity: number;
     tag: string;
+    bus: string;
     loops_done: number;
+}
+
+export interface BusSettings {
+    /** 0..2. */
+    volume?: number;
+    muted?: boolean;
+    /** Over the bus's whole mix, 0..1: 1 as it is, small values muffle it (a pause menu). */
+    lowpass?: number;
+    /** Another bus: while a voice plays on it, this one falls to `duck_amount` (music under dialogue); "" for none. */
+    duck_by?: string;
+    duck_amount?: number;
+    /** How long the fall and the recovery take. */
+    duck_seconds?: number;
+}
+
+export interface Bus extends Required<BusSettings> {
+    name: string;
+    /** The ducking gain right now, 1 when not ducked. */
+    duck: number;
+    ducked: boolean;
+    voices: number;
 }
 
 function cmd<T>(name: string, params?: unknown): T {
@@ -46,13 +70,20 @@ export const audio = {
     play(clip: string, options: PlayOptions = {}): number {
         return cmd<{ voice: number }>("audio.play", { clip, ...options }).voice;
     },
-    /** Stop by voice id, by clip path, by tag, or everything. Returns how many voices stopped. */
-    stop(target?: number | { clip?: string; tag?: string }): number {
+    /** Stop by voice id, by clip path, by tag, by bus, or everything. Returns how many voices stopped. */
+    stop(target?: number | { clip?: string; tag?: string; bus?: string }): number {
         const params = target === undefined ? { all: true } : typeof target === "number" ? { voice: target } : target;
         return cmd<{ stopped: number }>("audio.stop", params).stopped;
     },
-    set(voice: number, params: { volume?: number; pitch?: number; pan?: number; loop?: boolean; lowpass?: number; reverb?: number }): void {
+    set(voice: number, params: { volume?: number; pitch?: number; pan?: number; loop?: boolean; lowpass?: number; reverb?: number; bus?: string }): void {
         cmd("audio.set", { voice, ...params });
+    },
+    /** A bus's settings, changed by the fields given (made on first use); project.toml [audio.buses] sets the defaults. */
+    bus(name: string, settings: BusSettings = {}): Bus {
+        return cmd<Bus>("audio.bus", { name, ...settings });
+    },
+    buses(): Bus[] {
+        return cmd<Bus[]>("audio.buses");
     },
     /**
      * The room every voice plays in: `room` is how long the tail rings (0 none, 0.5 a room, 0.9 a hall),

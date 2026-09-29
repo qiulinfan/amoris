@@ -190,7 +190,7 @@ export interface Sky {
 
 /** Draws a mesh: a built-in primitive or a glTF file from the project's assets, tinted by a color and optionally textured. */
 export interface MeshRenderer {
-    /** cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). */
+    /** cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials). */
     mesh: string;
     /** Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole. */
     node: string;
@@ -540,6 +540,42 @@ export interface Body2D {
     friction: number;
 }
 
+/** A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider. */
+export interface Character {
+    /** Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall. */
+    velocity: Vec3;
+    /** Units per second squared along Y (negative is down). */
+    gravity: number;
+    /** Fastest downward speed. */
+    max_fall: number;
+    /** The capsule's radius. */
+    radius: number;
+    /** The capsule's whole height, round ends included; the entity is at its centre, so a character standing on the ground at y 0 is at y = height / 2. */
+    height: number;
+    /** The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it. */
+    step: number;
+    /** The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down. */
+    max_slope: number;
+    /** How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). */
+    push: number;
+    /** Bits of the collision layers (Collider.layer) the character is stopped by; all by default. */
+    mask: number;
+    /** Standing on a floor no steeper than max_slope (written by the engine). */
+    grounded: boolean;
+    /** The floor's normal where it stands (written by the engine). */
+    ground_normal: Vec3;
+    /** The collider it stands on; 0 in the air (written by the engine). */
+    ground: number;
+    /** Stopped by a wall or too-steep ground this tick (written by the engine). */
+    on_wall: boolean;
+    /** That wall's normal (written by the engine). */
+    wall_normal: Vec3;
+    /** Its head hit something this tick (written by the engine). */
+    on_ceiling: boolean;
+    /** Walked up an edge this tick (written by the engine). */
+    stepped: boolean;
+}
+
 /** A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform). */
 export interface TopDown2D {
     /** Units per second along X and Y. */
@@ -590,6 +626,8 @@ export interface AudioSource {
     lowpass: number;
     /** How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room. */
     reverb: number;
+    /** The bus the voice plays on (music, effects, dialogue: any name): a bus is set as one with audio.bus, its volume, a mute, a low-pass and ducking under another bus (docs/design/audio.md, Buses). */
+    bus: string;
     /** Restart when the clip ends. */
     loop: boolean;
     /** Start playing as soon as the component exists. */
@@ -693,6 +731,7 @@ export interface Components {
     RigidBody: RigidBody;
     Joint: Joint;
     Body2D: Body2D;
+    Character: Character;
     TopDown2D: TopDown2D;
     Collider: Collider;
     AudioSource: AudioSource;
@@ -704,7 +743,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "ReflectionProbe", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "ReflectionProbe", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -730,9 +769,10 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
+    Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
-    AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
+    AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },

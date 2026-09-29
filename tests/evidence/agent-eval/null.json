@@ -1,8 +1,8 @@
 {
   "runner": "null",
   "passed": 0,
-  "total": 16,
-  "seconds": 21.2,
+  "total": 17,
+  "seconds": 24.2,
   "tasks": [
     {
       "name": "spawn_named",
@@ -17,7 +17,7 @@
       "name": "recolor",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "Ball's color is {'r': 0.8999999761581421, 'g': 0.5, 'b': 0.20000000298023224, 'a': 1.0}",
       "answer": null,
       "error": null
@@ -26,7 +26,7 @@
       "name": "tile_edit",
       "project": "sprites",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "cell (3, 2) on ground holds gid 0",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": false,
-      "seconds": 4.9,
+      "seconds": 5.5,
       "detail": "1 enemies remain",
       "answer": null,
       "error": null
@@ -44,7 +44,7 @@
       "name": "play_clip",
       "project": "assets",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "Arm plays 'wave' loop True playing True",
       "answer": null,
       "error": null
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": false,
-      "seconds": 1.7,
+      "seconds": 1.8,
       "detail": "no number answered (truth 5)",
       "answer": null,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": false,
-      "seconds": 7.7,
+      "seconds": 8.5,
       "detail": "answered None, the root cause is 'entity.spawned'",
       "answer": null,
       "error": null
@@ -80,7 +80,7 @@
       "name": "night_lamp",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "the Sun's intensity is 1.2000000476837158",
       "answer": null,
       "error": null
@@ -89,7 +89,7 @@
       "name": "expose_count",
       "project": "hello",
       "ok": false,
-      "seconds": 0.3,
+      "seconds": 0.5,
       "detail": "no state key 'answer' after the reload",
       "answer": null,
       "error": null
@@ -98,7 +98,7 @@
       "name": "ball_lower",
       "project": "hello",
       "ok": false,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "the ball starts its fall at y 2.9918",
       "answer": null,
       "error": null
@@ -116,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": false,
-      "seconds": 1.2,
+      "seconds": 1.3,
       "detail": "rose 2.21 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": false,
-      "seconds": 1.8,
+      "seconds": 1.9,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 5 after 3.2 s",
       "answer": null,
       "error": null
@@ -134,7 +134,7 @@
       "name": "jump_sound",
       "project": "sprites",
       "ok": false,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "no sound file under assets/",
       "answer": null,
       "error": null
@@ -144,7 +144,16 @@
       "project": "hello",
       "ok": false,
       "seconds": 0.4,
-      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-59711/prefabs/lamp.json",
+      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-17949/prefabs/lamp.json",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "walker_sprint",
+      "project": "walker",
+      "ok": false,
+      "seconds": 0.5,
+      "detail": "no sprint action on LShift: ['jump', 'move_x', 'move_z']",
       "answer": null,
       "error": null
     }

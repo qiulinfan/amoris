@@ -843,3 +843,87 @@ TEST_CASE("a keyframed animation runs its props through their keyframes, loops, 
     f.apply(Json::parse(R"([["set", 60, {"animation": null}]])"));
     REQUIRE_FALSE(d().contains("animation"));
 }
+
+TEST_CASE("the arrows and a pad walk the focus by place, A presses, B and Escape leave, autofocus takes it", "[ui][focus][pad]") {
+    Fixture f;
+    // A 2 by 2 grid of buttons, a slider-like box that takes keys under it, and an arrow inside the
+    // slider that is clickable but not focusable.
+    f.apply(Json::parse(R"([
+        ["create", 50, "box"], ["set", 50, {"position": "absolute", "left": 10, "top": 10, "width": 60, "height": 20, "name": "a", "on": ["click"]}], ["append", 1, 50],
+        ["create", 51, "box"], ["set", 51, {"position": "absolute", "left": 100, "top": 10, "width": 60, "height": 20, "name": "b", "on": ["click"]}], ["append", 1, 51],
+        ["create", 52, "box"], ["set", 52, {"position": "absolute", "left": 10, "top": 50, "width": 60, "height": 20, "name": "c", "on": ["click"]}], ["append", 1, 52],
+        ["create", 53, "box"], ["set", 53, {"position": "absolute", "left": 100, "top": 50, "width": 60, "height": 20, "name": "d", "on": ["click"]}], ["append", 1, 53],
+        ["create", 54, "box"], ["set", 54, {"position": "absolute", "left": 10, "top": 90, "width": 150, "height": 20, "name": "slider", "on": ["click", "keydown"]}], ["append", 1, 54],
+        ["create", 55, "box"], ["set", 55, {"position": "absolute", "left": 0, "top": 0, "width": 20, "height": 20, "name": "arrow", "focusable": false, "on": ["click"]}], ["append", 54, 55]
+    ])"));
+    f.layout();
+    bool text_wanted = false;
+    auto key = [&](const char* name) {
+        platform::Event e;
+        e.type = platform::EventType::KeyDown;
+        e.key_name = name;
+        return f.doc->handle_events({e}, text_wanted);
+    };
+    auto pad = [&](const char* button) {
+        platform::Event e;
+        e.type = platform::EventType::PadButton;
+        e.key_name = button;
+        e.pressed = true;
+        return f.doc->handle_events({e}, text_wanted);
+    };
+    // Nothing focused: the arrows and the pad are the game's.
+    REQUIRE(key("Down").size() == 0);
+    REQUIRE(pad("dpad_down").empty());
+    REQUIRE(f.doc->focused() == 0);
+    // An element made with autofocus takes the focus at the next input.
+    f.apply(Json::parse(R"([["set", 50, {"autofocus": true}]])"));
+    f.layout();
+    (void)f.doc->handle_events({}, text_wanted);
+    REQUIRE(f.doc->focused() == 50);
+    // Right, Down, Left, Up round the grid; nothing further right stays put.
+    key("Right");
+    REQUIRE(f.doc->focused() == 51);
+    key("Right");
+    REQUIRE(f.doc->focused() == 51);
+    key("Down");
+    REQUIRE(f.doc->focused() == 53);
+    key("Left");
+    REQUIRE(f.doc->focused() == 52);
+    key("Up");
+    REQUIRE(f.doc->focused() == 50);
+    // The pad's d-pad does the same; down twice reaches the slider row, passing the arrow inside it.
+    pad("dpad_down");
+    REQUIRE(f.doc->focused() == 52);
+    pad("dpad_down");
+    REQUIRE(f.doc->focused() == 54);
+    // On an element that takes keys, Left and Right are its own: a keydown, the focus stays.
+    auto events = pad("dpad_right");
+    REQUIRE(f.doc->focused() == 54);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "keydown");
+    REQUIRE(events[0]["key"] == "Right");
+    REQUIRE(events[0]["pad"] == true);
+    events = key("Left");
+    REQUIRE(f.doc->focused() == 54);
+    REQUIRE(events.back()["key"] == "Left");
+    // A presses the focused element as Return does.
+    pad("dpad_up");
+    REQUIRE(f.doc->focused() == 52);
+    events = pad("a");
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0]["type"] == "click");
+    REQUIRE(events[0]["name"] == "c");
+    REQUIRE(events[0]["pad"] == true);
+    // B leaves the interface; so does Escape on a focused control.
+    pad("b");
+    REQUIRE(f.doc->focused() == 0);
+    f.doc->set_focus(53);
+    key("Escape");
+    REQUIRE(f.doc->focused() == 0);
+    // Tab passes over the unfocusable arrow too.
+    f.doc->set_focus(53);
+    key("Tab");
+    REQUIRE(f.doc->focused() == 54);
+    key("Tab");
+    REQUIRE(f.doc->focused() == 50);
+}

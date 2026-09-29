@@ -11,6 +11,7 @@ const char* primitive_name(int kind) {
         case Primitive::Plane: return "plane";
         case Primitive::Cylinder: return "cylinder";
         case Primitive::Quad: return "quad";
+        case Primitive::Capsule: return "capsule";
     }
     return "cube";
 }
@@ -108,12 +109,45 @@ MeshData make_cylinder(int segments) {
     return m;
 }
 
+MeshData make_capsule(int segments, int rings) {
+    MeshData m;
+    // Rows from the top pole down: a hemisphere of `rings` rows around y 0.5, the same around
+    // y -0.5; the band between them is the straight side.
+    const float r = 0.5f;
+    for (int half = 0; half < 2; ++half) {
+        for (int k = 0; k <= rings; ++k) {
+            const float phi = (static_cast<float>(k) / static_cast<float>(rings) + static_cast<float>(half)) * 0.5f * kPi;   // 0 at the top, pi at the bottom
+            const float cy = half == 0 ? 0.5f : -0.5f;
+            const float v = static_cast<float>(half * (rings + 1) + k) / static_cast<float>(2 * rings + 1);
+            for (int s = 0; s <= segments; ++s) {
+                const float u = static_cast<float>(s) / static_cast<float>(segments);
+                const float theta = u * 2.0f * kPi;
+                const Vec3 n{std::sin(phi) * std::cos(theta), std::cos(phi), std::sin(phi) * std::sin(theta)};
+                m.vertices.push_back({Vec3{n.x * r, cy + n.y * r, n.z * r}, n, {u, v}});
+            }
+        }
+    }
+    const auto stride = static_cast<std::uint32_t>(segments + 1);
+    const int rows = 2 * (rings + 1);
+    for (int row = 0; row + 1 < rows; ++row) {
+        for (int s = 0; s < segments; ++s) {
+            const auto a = static_cast<std::uint32_t>(row) * stride + static_cast<std::uint32_t>(s);
+            const auto b = a + stride;
+            m.indices.insert(m.indices.end(), {a, a + 1, b, a + 1, b + 1, b});
+        }
+    }
+    m.aabb_min = {-0.5f, -1.0f, -0.5f};
+    m.aabb_max = {0.5f, 1.0f, 0.5f};
+    return m;
+}
+
 MeshData make_primitive(int kind) {
     switch (static_cast<Primitive>(kind)) {
         case Primitive::Sphere: return make_sphere();
         case Primitive::Plane: return make_plane();
         case Primitive::Cylinder: return make_cylinder();
         case Primitive::Quad: return make_quad();
+        case Primitive::Capsule: return make_capsule();
         case Primitive::Cube: break;
     }
     return make_cube();
@@ -126,6 +160,9 @@ void primitive_bounds(int kind, Vec3& out_min, Vec3& out_max) {
     } else if (static_cast<Primitive>(kind) == Primitive::Quad) {
         out_min = {-0.5f, -0.5f, 0};
         out_max = {0.5f, 0.5f, 0};
+    } else if (static_cast<Primitive>(kind) == Primitive::Capsule) {
+        out_min = {-0.5f, -1.0f, -0.5f};
+        out_max = {0.5f, 1.0f, 0.5f};
     } else {
         out_min = {-0.5f, -0.5f, -0.5f};
         out_max = {0.5f, 0.5f, 0.5f};

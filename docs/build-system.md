@@ -46,7 +46,7 @@ What UBT does well: explicit module graph, target types, platform abstraction, c
 
 ## 4. `pocket`: the design
 
-Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and TypeScript nodes, foreign CMake builds, prebuilt fetch), 4.5 (`--json`, `compile_commands.json`) and the commands `setup`, `doctor`, `build`, `run`, `test`, `ts`, `graph`, `clean` exist in `tools/pocket`. The executor is Ninja invoked as a subprocess; n2 embedding, codegen nodes, `check`, `fmt`, `mcp` and the other platforms are future tool milestones (4.10).
+Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and TypeScript nodes, foreign CMake builds, prebuilt fetch), 4.5 (`--json`, `compile_commands.json`) and the commands `setup`, `doctor`, `build`, `run`, `test`, `ts`, `graph`, `clean` exist in `tools/pocket`. The executor is Ninja invoked as a subprocess; n2 embedding, codegen nodes, `check`, `fmt`, `mcp` and the other platforms are future tool milestones (4.10). Since then `gen`, `mcp` and `check` have come (2026-09-29: `check` runs TypeScript 7's native compiler, the `tsgo` line below released as `tsc`, as a prebuilt dependency; `docs/sdk.md`, Types).
 
 `pocket` is a single static Rust binary. It is the only tool a fresh checkout needs. It is a generator, an executor, a toolchain manager, a package fetcher and an agent interface at once, but each part is a separate crate with a narrow job.
 

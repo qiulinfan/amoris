@@ -15,7 +15,7 @@ declare const __pocket: {
 
 export { world, render, command, transcript } from "./world";
 export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity, Packed, VisibleEntity } from "./world";
-export type { ComponentName, Components, Records, AnimationLayer, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
+export type { ComponentName, Components, Records, AnimationLayer, Vec2, Vec3, Vec4, Quat, Color, Transform } from "./generated/components";
 export { componentNames, componentDefaults, recordDefaults, derivedComponents } from "./generated/components";
 export { events } from "./events";
 export type { WorldEvent } from "./events";
@@ -50,12 +50,12 @@ export type { TimerHandle } from "./timer";
 export type { ActionState, Binding } from "./input";
 import { setActionSnapshot } from "./input";
 import type { ActionState as ActionStateT } from "./input";
-export type { PlayOptions, Voice } from "./audio";
+export type { PlayOptions, Voice, Bus, BusSettings } from "./audio";
 export type { RayHit, Contact, JointState } from "./physics";
 import { dispatchContacts } from "./physics";
 import { dispatchUiEvents, flushUi, unmountContext } from "./ui";
 import type { UiEvent } from "./ui";
-export { ui, signal, invalidate, mount, setProjectRoot, h, createElement, Fragment, theme, Button, Label, Panel, TextInput, Row, Column } from "./ui";
+export { ui, signal, invalidate, mount, setProjectRoot, h, createElement, Fragment, theme, Button, Label, Panel, TextInput, Row, Column, Slider, Checkbox, Choice } from "./ui";
 export type { UiEvent, UiOp, UiRect, UiNodeInfo, VNode, VProps, Component, Signal, StyleProps, BoxProps, TextProps, InputProps, Dim, Edge, ColorValue } from "./ui";
 import type { Contact as ContactT } from "./physics";
 
@@ -84,12 +84,15 @@ export interface Tick {
 
 export interface InputEvent {
     type: "quit" | "key_down" | "key_up" | "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "resize" | "text" | "pad_added" | "pad_removed" | "pad_button" | "pad_axis" | "touch_down" | "touch_up" | "touch_move" | "gesture";
-    /** Touch events: the finger's index (0 is the one that also acts as the mouse). */
+    /** Touch events: the finger's index (0 is the one that also acts as the mouse) and how hard it presses, 0..1 (1 where the screen cannot tell). */
     finger?: number;
+    pressure?: number;
     /** Gesture events (docs/design/input.md, Gestures): which one; a tap's `count` (2 for a double tap), a swipe's `direction`, `dx`, `dy` and `seconds`, a pinch's `phase`, `scale`, `rotation` (degrees) and `distance` with `x`, `y` at its centre. */
     gesture?: "tap" | "long_press" | "swipe" | "pinch";
     count?: number;
     direction?: "left" | "right" | "up" | "down";
+    /** A swipe that came in from a side of the view (a drawer, a back gesture): that side. */
+    edge?: "left" | "right" | "top" | "bottom";
     seconds?: number;
     phase?: "begin" | "move" | "end";
     scale?: number;
@@ -242,6 +245,13 @@ export function runtime(): RuntimeInfo {
 
 export function isKeyDown(key: string): boolean {
     return keysDown.has(key);
+}
+
+declare global {
+    /** Wall-clock milliseconds, for measuring what a script costs; gameplay must use tick time, never this. */
+    const performance: { now(): number };
+    /** Into the engine's log (`log.tail`), under the script's name. */
+    const console: { log(...args: unknown[]): void; info(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void; debug(...args: unknown[]): void };
 }
 
 // performance.now() for measuring script cost; gameplay must use tick time, never this.

@@ -4,7 +4,7 @@ How meshes and images get from a project's folder onto the screen, and how scrip
 
 ## Layout
 
-A project keeps its files under `<project>/assets/`. Paths in components are project-relative (`assets/crate.glb`); the store refuses anything that resolves outside the project directory. `MeshRenderer.mesh` names either a built-in primitive (`cube`, `sphere`, `plane`, `cylinder`) or a glTF file; `MeshRenderer.texture` names an image that multiplies the color (and overrides the asset's own base color texture); `metallic`, `roughness`, `emissive` and `normal_map` override the material's values (`docs/design/rendering.md`, Materials).
+A project keeps its files under `<project>/assets/`. Paths in components are project-relative (`assets/crate.glb`); the store refuses anything that resolves outside the project directory. `MeshRenderer.mesh` names either a built-in primitive (`cube`, `sphere`, `plane`, `cylinder`, `quad`, `capsule`: unit sized, the capsule 1 across and 2 tall) or a glTF file; `MeshRenderer.texture` names an image that multiplies the color (and overrides the asset's own base color texture); `metallic`, `roughness`, `emissive` and `normal_map` override the material's values (`docs/design/rendering.md`, Materials).
 
 ```
 samples/assets/

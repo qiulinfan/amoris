@@ -3,8 +3,8 @@
 // (hierarchy, inspector, console, transcript) is also reachable by `ui_snapshot`, and every
 // button is reachable by `ui_click`. Every edit is undoable (editor/history.ts) and the scene
 // pane has a translate gizmo (editor/gizmo.ts) that agents drag with `ui.drag`.
-import { Button, Label, Panel, Row, TextInput, command, mount, onFrame, onInput, render, setProjectRoot, signal, theme, tilemap, ui, world } from "pocket";
-import type { ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } from "pocket";
+import { Button, Checkbox, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, render, setProjectRoot, signal, theme, tilemap, ui, world } from "pocket";
+import type { Bus, ComponentName, Described, Scene, Transform, UiEvent, WorldEvent } from "pocket";
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
 import * as history from "./history";
@@ -20,8 +20,8 @@ interface SchemaField { name: string; type: string; doc: string }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 interface Layout { hierarchy: number; inspector: number; bottom: number }
 interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "blender" }
-type Tab = "console" | "events" | "transcript" | "assets" | "input" | "script";
-const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "script"];
+type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script";
+const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script"];
 interface ActionBindings { positive?: string[]; negative?: string[]; axis?: string[]; deadzone?: number }
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
@@ -54,6 +54,10 @@ const gizmo = signal<GizmoView | null>(null);
 const historyVersion = signal(0);
 const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
 const actions = signal<Record<string, ActionBindings>>({});   // the input map, shown and edited by the Input tab
+const buses = signal<Bus[]>([]);   // the Audio tab's buses, as audio.buses answers
+interface TypeError { file?: string; line?: number; column?: number; severity: string; message: string }
+const typeErrors = signal<TypeError[]>([]);   // the project's type errors, from `pocket editor --watch` (script.diagnostics)
+const master = signal<{ master_volume: number; muted: boolean }>({ master_volume: 1, muted: false });
 const newAction = signal("");    // the Input tab's new-action name and keys, until Add
 const newKeys = signal("");
 const capture = signal<{ name: string; part: "positive" | "negative" | "axis" } | null>(null);   // the Input tab's Press: the next key or pad button rebinds this part
@@ -164,8 +168,13 @@ function refreshBottom(): void {
     const t = tab();
     if (t === "console") logs.set(command<LogRow[]>("log.tail", { n: 40 }));
     else if (t === "events") recentEvents.set(command<WorldEvent[]>("events.recent", { n: 40 }));
-    else if (t === "assets" || t === "script") assetRows.set(command<AssetRow[]>("assets.list"));
+    else if (t === "assets" || t === "script") {
+        assetRows.set(command<AssetRow[]>("assets.list"));
+        const found = command<{ diagnostics: TypeError[] }>("script.diagnostics").diagnostics;
+        if (JSON.stringify(found) !== JSON.stringify(typeErrors())) typeErrors.set(found);
+    }
     else if (t === "input") actions.set(command<Record<string, ActionBindings>>("input.describe"));
+    else if (t === "audio") refreshMixer();
     else transcriptText.set(command<{ text: string }>("transcript", { max_lines: 30 }).text);
 }
 
@@ -588,6 +597,29 @@ function saveBindings(): void {
         notice.set(`Bindings saved to input.json (${Object.keys(actions()).length} actions); it replaces the project.toml map`);
     } catch (e) {
         notice.set(`Bindings not saved: ${String(e)}`);
+    }
+}
+
+// ------------------------------------------------------------------------------------ audio
+function refreshMixer(): void {
+    buses.set(command<Bus[]>("audio.buses"));
+    master.set(command<{ master_volume: number; muted: boolean }>("audio.master"));
+}
+
+/** A bus changed live: the running game hears it at once; Save keeps it. */
+function setBus(name: string, settings: Partial<Bus>): void {
+    command("audio.bus", { name, ...settings });
+    refreshMixer();
+}
+
+function saveMixer(): void {
+    const out: Record<string, Partial<Bus>> = {};
+    for (const b of buses()) out[b.name] = { volume: b.volume, muted: b.muted, lowpass: b.lowpass, duck_by: b.duck_by, duck_amount: b.duck_amount, duck_seconds: b.duck_seconds };
+    try {
+        command("project.write", { path: "audio.json", json: { buses: out } });
+        notice.set(`Mixer saved to audio.json (${buses().length} buses); it applies over the project.toml buses`);
+    } catch (e) {
+        notice.set(`Mixer not saved: ${String(e)}`);
     }
 }
 
@@ -1145,6 +1177,34 @@ function Bottom() {
                 <Label text="Keys are SDL names (Space, Left, A), pad:a, pad:leftx, mouse:x; commas between them. Saved to input.json in the project." muted size={12} wrap flex={1} />
             </Row>,
         ];
+    } else if (t === "audio") {
+        const pct = (v: number) => `${Math.round(v * 100)}%`;
+        const m = master();
+        body = [
+            <Row key="master" gap={8} name="bus:master">
+                <box width={90}><Label text="master" size={12} /></box>
+                <Slider value={m.master_volume} max={2} step={0.05} width={150} name="master:volume" onInput={(v) => { command("audio.master", { volume: v }); refreshMixer(); }} />
+                <box width={40}><Label text={pct(m.master_volume)} muted size={12} /></box>
+                <Checkbox checked={m.muted} label="mute" name="master:muted" onChange={(c) => { command("audio.master", { muted: c }); refreshMixer(); }} />
+                <Label text="The master is the player's (not saved); buses are the project's." muted size={12} />
+            </Row>,
+            ...buses().map((b) => (
+                <Row key={b.name} gap={8} name={`bus:${b.name}`}>
+                    <box width={90}><Label text={b.name} size={12} /></box>
+                    <Slider value={b.volume} max={2} step={0.05} width={150} name={`bus:${b.name}:volume`} onInput={(v) => setBus(b.name, { volume: v })} />
+                    <box width={40}><Label text={pct(b.volume)} muted size={12} /></box>
+                    <Checkbox checked={b.muted} label="mute" name={`bus:${b.name}:muted`} onChange={(c) => setBus(b.name, { muted: c })} />
+                    <Label text="low-pass" muted size={12} />
+                    <Slider value={b.lowpass} step={0.05} width={100} name={`bus:${b.name}:lowpass`} onInput={(v) => setBus(b.name, { lowpass: v })} />
+                    <Label text={`${b.voices} voice${b.voices === 1 ? "" : "s"}${b.duck_by ? ` · ducks under ${b.duck_by} to ${pct(b.duck_amount)} in ${b.duck_seconds} s${b.ducked ? `, now ${pct(b.duck)}` : ""}` : ""}`} muted size={12} />
+                </Row>
+            )),
+            <Row key="save" gap={8}>
+                <Button label="Refresh" small name="mixer:refresh" onClick={refreshMixer} />
+                <Button label="Save mixer" small name="mixer:save" onClick={saveMixer} />
+                <Label text="Changes are heard at once. A bus appears when a voice plays on it or project.toml [audio.buses] names it; Save writes audio.json beside project.toml." muted size={12} wrap flex={1} />
+            </Row>,
+        ];
     } else if (t === "assets") {
         const list = assetRows();
         const picked = assetPick();
@@ -1185,6 +1245,14 @@ function Bottom() {
                         <Label text="Cmd/Ctrl+Return saves. pocket editor --watch rebuilds and reloads the project after a save." muted size={12} wrap flex={1} />
                     </Row>
                     <TextInput multiline flex={1} name="script:text" value={scriptText()} syntax={path || undefined} disabled={!path} onInput={(v) => { scriptText.set(v); scriptDirty.set(true); }} onChange={(v) => { scriptText.set(v); saveScript(); }} />
+                    {typeErrors().length > 0 ? (
+                        <box direction="column" gap={1} name="script:errors">
+                            {typeErrors().slice(0, 6).map((d, i) => (
+                                <Label key={i} text={`${d.file ?? ""}${d.line !== undefined ? `:${d.line}:${d.column ?? 0}` : ""}  ${d.message.split("\n")[0]}`} size={12} color={d.file === path ? theme.danger : theme.muted} />
+                            ))}
+                            {typeErrors().length > 6 ? <Label text={`and ${typeErrors().length - 6} more (the Console lists them all)`} muted size={12} /> : null}
+                        </box>
+                    ) : null}
                 </box>
             </box>,
         ];
@@ -1199,6 +1267,7 @@ function Bottom() {
                 {tabButton("transcript", "Transcript")}
                 {tabButton("assets", "Assets")}
                 {tabButton("input", "Input")}
+                {tabButton("audio", "Audio")}
                 {tabButton("script", "Script")}
                 <box flex={1} />
                 <Label text={notice()} muted size={12} name="notice" />

@@ -101,6 +101,8 @@ class Session {
     // Wall-clock cost of each phase since start (the `perf` command and report.timings).
     [[nodiscard]] Json perf() const;
     void release_expired_holds();
+    void apply_project_settings();   // project.toml's live settings: audio, input, sprite clips, render, physics
+    bool advance_rumble();   // starts the steps of rumble patterns that are due; whether any motor answered
     void tick_audio(double dt);
     // A spatial voice's volume and pan from its entity's place against the camera (docs/design/audio.md, Where a sound is).
     // Place a spatial voice from its entity against the listener (volume by distance, pan by side);
@@ -161,6 +163,11 @@ class Session {
     Gestures gestures_;
     std::map<std::string, std::int64_t> held_keys_;  // synthetic holds: key name -> tick at which it releases
     std::map<int, std::pair<float, float>> touch_last_;  // synthetic fingers: index -> last position, for the deltas
+    Json script_diagnostics_ = Json::array();   // the project's type errors, as `pocket run/editor --watch` last found them
+    // Rumble patterns by pad: steps of motor strengths and lengths, played on the tick clock.
+    struct RumbleStep { float low = 0, high = 0; int ms = 0; };
+    struct RumblePattern { std::vector<RumbleStep> steps; std::size_t next = 0; std::int64_t next_tick = 0; int repeat = 1; };
+    std::map<int, RumblePattern> rumble_;
     std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
     bool in_tick_ = false;
     // Typed-array packing buffers shared with scripts (never freed while a script may hold them).

@@ -1,5 +1,5 @@
-// Sound: a looping hum from the scene (AudioSource with autoplay), a beep every second and a
-// click when the crate lands, all driven by the simulation tick so a headless run reports the
+// Sound: a looping hum from the scene (AudioSource with autoplay, on the ambience bus, which
+// project.toml ducks under the effects bus), a beep every second and a click when the crate lands, all driven by the simulation tick so a headless run reports the
 // same voices, positions and finish events as a window with a sound card.
 import { audio, events, expose, log, onStart, onTick, world } from "pocket";
 
@@ -16,14 +16,14 @@ onStart(() => {
 
 onTick((t) => {
     if (t.tick % 60 === 30) {
-        audio.play("assets/beep.wav", { volume: 0.5, pitch: 1 + (beeps % 3) * 0.25, tag: "beep" });
+        audio.play("assets/beep.wav", { volume: 0.5, pitch: 1 + (beeps % 3) * 0.25, tag: "beep", bus: "fx" });
         beeps++;
     }
     vy -= 9.8 * t.dt;
     y += vy * t.dt;
     if (y < 0.3) {
         y = 0.3;
-        if (vy < -1) audio.play("assets/click.wav", { volume: 0.8, entity: crate });
+        if (vy < -1) audio.play("assets/click.wav", { volume: 0.8, entity: crate, bus: "fx" });
         vy = -vy * 0.5;
     }
     world.set(crate, "Transform", { position: { y } });

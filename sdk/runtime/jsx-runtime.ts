@@ -25,6 +25,8 @@ declare global {
     namespace JSX {
         type Element = VNode;
         interface ElementChildrenAttribute { children: unknown }
+        /** Every element and component takes a `key`: the reconciler matches children by it across renders. */
+        interface IntrinsicAttributes { key?: string | number }
         interface IntrinsicElements {
             box: import("./ui").BoxProps;
             text: import("./ui").TextProps;

@@ -22,7 +22,7 @@ export type UiOp =
     | ["focus", number];
 
 export interface UiEvent {
-    type: "click" | "mousedown" | "mouseup" | "input" | "change" | "keydown" | "wheel" | "hover" | "focus" | "blur" | "drag" | "dragend";
+    type: "click" | "mousedown" | "mouseup" | "input" | "change" | "keydown" | "wheel" | "hover" | "focus" | "blur" | "drag" | "dragend" | "animationend";
     id: number;
     name?: string;
     x?: number;
@@ -39,6 +39,10 @@ export interface UiEvent {
     entered?: boolean;
     /** Modifier keys held during a click, mousedown or keydown: "shift", "ctrl", "alt", "meta". */
     mods?: string[];
+    /** A click made from the keyboard (Return or Space on the focused element) or a pad (A), at the element's centre. */
+    keyboard?: boolean;
+    /** A click or a key (Left, Right) that came from a pad's buttons. */
+    pad?: boolean;
 }
 
 export interface UiRect { x: number; y: number; w: number; h: number }
@@ -89,6 +93,11 @@ export const ui = {
     },
     key(key: string, mods?: string[]): UiEvent[] {
         return cmd<{ events: UiEvent[] }>("ui.key", { key, mods }).events;
+    },
+    /** Synthetic drag: press on an element (by id) or a point, move by dx, dy in `steps` moves, release. */
+    drag(target: number | { x: number; y: number }, dx: number, dy: number, steps = 4): UiEvent[] {
+        const params = typeof target === "number" ? { id: target, dx, dy, steps } : { ...target, dx, dy, steps };
+        return cmd<{ events: UiEvent[] }>("ui.drag", params).events;
     },
     stats(): { nodes: number; focused: number; hovered: number; paints: number } {
         return cmd("ui.stats");
@@ -223,6 +232,10 @@ export interface CommonProps extends StyleProps, EventProps {
     /** Name shown in snapshots and queries, so agents can find the element. */
     name?: string;
     disabled?: boolean;
+    /** Takes the focus when it appears (a menu opening puts the keyboard and a pad on its first control). */
+    autofocus?: boolean;
+    /** false: still clickable, but Tab, the arrow keys and a pad's d-pad pass it over (an arrow inside a control). */
+    focusable?: boolean;
 }
 
 export interface BoxProps extends CommonProps { children?: unknown }
@@ -571,7 +584,7 @@ export const theme = {
     fontSize: 13,
 };
 
-export function Button(props: { label: string; onClick?: (e: UiEvent) => void; primary?: boolean; danger?: boolean; disabled?: boolean; name?: string; width?: Dim; small?: boolean }): VNode {
+export function Button(props: { label: string; onClick?: (e: UiEvent) => void; primary?: boolean; danger?: boolean; disabled?: boolean; name?: string; width?: Dim; small?: boolean; autofocus?: boolean }): VNode {
     const bg = props.disabled ? "#2a2d34" : props.primary ? theme.accent : props.danger ? theme.danger : theme.panelAlt;
     return h("box", {
         name: props.name ?? props.label,
@@ -585,6 +598,7 @@ export function Button(props: { label: string; onClick?: (e: UiEvent) => void; p
         align: "center",
         width: props.width,
         disabled: props.disabled,
+        autofocus: props.autofocus,
     }, h("text", { color: props.disabled ? theme.muted : props.primary || props.danger ? theme.accentText : theme.text, fontSize: props.small ? 12 : theme.fontSize }, props.label));
 }
 
@@ -598,9 +612,10 @@ export function Panel(props: { title?: string; children?: unknown; flex?: number
         h("box", { flexGrow: 1, flexShrink: 1, padding: props.padding ?? 6, gap: props.gap ?? 4, overflow: props.scroll ? "scroll" : "hidden", direction: props.direction ?? "column" }, props.children));
 }
 
-export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean; wrap?: boolean; syntax?: string }): VNode {
+export function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; name?: string; disabled?: boolean; multiline?: boolean; wrap?: boolean; syntax?: string; autofocus?: boolean }): VNode {
     return h("input", {
         name: props.name,
+        autofocus: props.autofocus,
         value: props.value,
         placeholder: props.placeholder,
         width: props.width,
@@ -617,8 +632,78 @@ export function TextInput(props: { value: string; onChange?: (value: string) => 
     });
 }
 
-export function Row(props: { children?: unknown; gap?: number; align?: StyleProps["align"]; justify?: StyleProps["justify"]; padding?: Edge; flex?: number; wrap?: boolean; height?: Dim; name?: string }): VNode {
-    return h("box", { direction: "row", gap: props.gap ?? 6, align: props.align ?? "center", justify: props.justify, padding: props.padding, flex: props.flex, wrap: props.wrap, height: props.height, name: props.name }, props.children);
+export function Row(props: { children?: unknown; gap?: number; align?: StyleProps["align"]; justify?: StyleProps["justify"]; padding?: Edge; flex?: number; wrap?: boolean; height?: Dim; name?: string; background?: ColorValue }): VNode {
+    return h("box", { direction: "row", gap: props.gap ?? 6, align: props.align ?? "center", justify: props.justify, padding: props.padding, flex: props.flex, wrap: props.wrap, height: props.height, name: props.name, background: props.background }, props.children);
+}
+
+/**
+ * A number along a track (a volume, a sensitivity): a press or a drag puts it where the pointer
+ * is; with the focus (Tab), Left and Right step it and Home and End go to the ends. `onInput`
+ * follows the pointer; `onChange` is the value let go, and each key step.
+ */
+export function Slider(props: { value: number; min?: number; max?: number; step?: number; onInput?: (value: number) => void; onChange?: (value: number) => void; width?: Dim; name?: string; disabled?: boolean; autofocus?: boolean }): VNode {
+    const min = props.min ?? 0, max = props.max ?? 1, span = max - min;
+    const lo = Math.min(min, max), hi = Math.max(min, max);
+    const snap = (v: number): number => {
+        const s = props.step ?? 0;
+        const q = s > 0 ? min + Math.round((v - min) / s) * s : v;
+        return Math.min(hi, Math.max(lo, Number(q.toFixed(6))));
+    };
+    const t = span !== 0 ? Math.min(1, Math.max(0, (props.value - min) / span)) : 0;
+    const inset = 7;   // half the thumb: the track runs between its centre's two ends
+    const at = (e: UiEvent): number => {
+        const r = cmd<{ rect?: UiRect }>("ui.describe", { id: e.id }).rect;
+        if (!r || r.w <= inset * 2 || e.x === undefined) return props.value;
+        return snap(min + Math.min(1, Math.max(0, (e.x - r.x - inset) / (r.w - inset * 2))) * span);
+    };
+    const keyStep = props.step !== undefined && props.step > 0 ? props.step : Math.abs(span) / 20;
+    const handlers = props.disabled ? {} : {
+        onMouseDown: (e: UiEvent) => props.onInput?.(at(e)),
+        onDrag: (e: UiEvent) => props.onInput?.(at(e)),
+        onDragEnd: (e: UiEvent) => props.onChange?.(at(e)),
+        onClick: (e: UiEvent) => { if (!e.keyboard) props.onChange?.(at(e)); },
+        onKeyDown: (e: UiEvent) => {
+            const k = e.key;
+            const dir = span >= 0 ? 1 : -1;
+            const next = k === "Right" ? props.value + keyStep * dir : k === "Left" ? props.value - keyStep * dir : k === "Home" ? min : k === "End" ? max : undefined;
+            if (next === undefined) return;
+            const v = snap(next);
+            props.onInput?.(v);
+            props.onChange?.(v);
+        },
+    };
+    return h("box", { name: props.name, width: props.width ?? 160, height: 20, padding: [0, inset], justify: "center", opacity: props.disabled ? 0.5 : undefined, autofocus: props.autofocus, ...handlers },
+        h("box", { height: 20, justify: "center" },
+            h("box", { height: 4, radius: 2, background: theme.border },
+                h("box", { width: `${t * 100}%`, height: 4, radius: 2, background: theme.accent })),
+            h("box", { position: "absolute", left: `${t * 100}%`, top: 3, width: 14, height: 14, margin: { left: -inset }, radius: 7, background: theme.text, border: 2, borderColor: theme.accent })));
+}
+
+/** Yes or no, with its label: a click, or Space or Return with the focus, flips it. */
+export function Checkbox(props: { checked: boolean; label?: string; onChange?: (checked: boolean) => void; name?: string; disabled?: boolean; autofocus?: boolean }): VNode {
+    return h("box", { name: props.name ?? props.label, direction: "row", align: "center", gap: 6, disabled: props.disabled, autofocus: props.autofocus, onClick: props.disabled ? undefined : () => props.onChange?.(!props.checked) },
+        h("box", { width: 16, height: 16, radius: 3, border: 1, borderColor: props.checked ? theme.accent : theme.border, background: props.checked ? theme.accent : theme.panelAlt, justify: "center", align: "center" },
+            props.checked ? h("box", { width: 8, height: 8, radius: 2, background: theme.accentText }) : null),
+        props.label !== undefined ? h("text", { color: props.disabled ? theme.muted : theme.text, fontSize: theme.fontSize }, props.label) : null);
+}
+
+/**
+ * One of a few options, stepped through in place (a difficulty, a window mode): the arrows, a
+ * click on the value, or Left and Right with the focus move it, wrapping at the ends. A pad or a
+ * keyboard reaches every option without a list opening over the screen.
+ */
+export function Choice<T extends string>(props: { value: T; options: readonly T[]; labels?: Partial<Record<T, string>>; onChange?: (value: T) => void; name?: string; width?: Dim; disabled?: boolean; autofocus?: boolean }): VNode {
+    const n = props.options.length;
+    const i = Math.max(0, props.options.indexOf(props.value));
+    const pick = (by: number) => { if (n > 0 && !props.disabled) props.onChange?.(props.options[(i + by + n) % n]); };
+    const arrow = (label: string, by: number, part: string) => h("box", { name: props.name ? `${props.name}:${part}` : undefined, padding: [2, 8], radius: 4, background: theme.panelAlt, border: 1, borderColor: theme.border, focusable: false, onClick: props.disabled ? undefined : () => pick(by) },
+        h("text", { color: props.disabled ? theme.muted : theme.text, fontSize: 12 }, label));
+    return h("box", { name: props.name, direction: "row", align: "center", gap: 4, width: props.width, disabled: props.disabled, autofocus: props.autofocus,
+        onClick: props.disabled ? undefined : () => pick(1),
+        onKeyDown: props.disabled ? undefined : (e: UiEvent) => { if (e.key === "Left") pick(-1); else if (e.key === "Right") pick(1); } },
+        arrow("<", -1, "prev"),
+        h("text", { flex: 1, textAlign: "center", color: props.disabled ? theme.muted : theme.text, fontSize: theme.fontSize }, props.labels?.[props.value] ?? props.value),
+        arrow(">", 1, "next"));
 }
 
 export function Column(props: { children?: unknown; gap?: number; align?: StyleProps["align"]; padding?: Edge; flex?: number; width?: Dim; name?: string; scroll?: boolean }): VNode {

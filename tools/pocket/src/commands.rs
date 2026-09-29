@@ -782,6 +782,25 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             ts_results.push(json!({ "file": f, "ok": ok, "passed": passed, "failed": failed_n, "elapsed_ms": started.elapsed().as_millis(), "results": tests_json.get("results").cloned().unwrap_or(json!([])) }));
         }
     }
+    // Types: the workspace's TypeScript read against the SDK's (`pocket check`).
+    let mut types_result = json!(null);
+    if filter.map(|f| "types".contains(f) || f == "check").unwrap_or(true) {
+        let started = Instant::now();
+        match crate::check::check(ws, None) {
+            Ok(rep) => {
+                if !rep.ok {
+                    failed += 1;
+                    eprintln!("--- types failed ---\n{}", rep.human());
+                }
+                types_result = json!({ "module": "types", "ok": rep.ok, "summary": rep.summary, "errors": rep.data.get("errors").cloned().unwrap_or(json!(0)), "diagnostics": rep.diagnostics, "elapsed_ms": started.elapsed().as_millis() });
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("--- types could not run ---\n{e:#}");
+                types_result = json!({ "module": "types", "ok": false, "error": format!("{e:#}"), "elapsed_ms": started.elapsed().as_millis() });
+            }
+        }
+    }
     // Gameplay scenarios of every sample that has some, three seeds each.
     let mut scenario_results = vec![];
     if filter.map(|f| "scenarios".contains(f)).unwrap_or(true) {
@@ -851,9 +870,9 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
             python_result = json!({ "module": "python", "ok": ok, "exit_code": out.status.code(), "elapsed_ms": started.elapsed().as_millis(), "output_tail": tail(&text, 10) });
         }
     }
-    let total = tests.len() + ts_results.len() + if tool_result.is_null() { 0 } else { 1 } + if python_result.is_null() { 0 } else { 1 };
+    let total = tests.len() + ts_results.len() + if tool_result.is_null() { 0 } else { 1 } + if python_result.is_null() { 0 } else { 1 } + if types_result.is_null() { 0 } else { 1 };
     let mut rep = if failed == 0 { Report::success("test", format!("{total} test modules passed")) } else { Report::failure("test", format!("{failed} of {total} test modules failed")) };
-    rep.data = json!({ "config": config, "results": results, "scenarios": scenario_results, "ts": ts_results, "tool": tool_result, "python": python_result, "bundles": bundles });
+    rep.data = json!({ "config": config, "results": results, "scenarios": scenario_results, "ts": ts_results, "tool": tool_result, "python": python_result, "types": types_result, "bundles": bundles });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
 }

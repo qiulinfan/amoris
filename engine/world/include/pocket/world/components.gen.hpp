@@ -464,6 +464,31 @@ void from_json(const Json& j, Body2D& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Body2D& v, std::string_view path, float** out);
 
+/// A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.
+struct Character {
+    Vec3 velocity{0.0f, 0.0f, 0.0f};
+    float gravity = -20.0f;
+    float max_fall = 50.0f;
+    float radius = 0.3f;
+    float height = 1.8f;
+    float step = 0.3f;
+    float max_slope = 45.0f;
+    float push = 1.0f;
+    std::uint32_t mask = 4294967295;
+    bool grounded = false;
+    Vec3 ground_normal{0.0f, 1.0f, 0.0f};
+    std::uint64_t ground = 0;
+    bool on_wall = false;
+    Vec3 wall_normal{0.0f, 0.0f, 0.0f};
+    bool on_ceiling = false;
+    bool stepped = false;
+    constexpr bool operator==(const Character&) const = default;
+};
+void to_json(Json& j, const Character& v);
+void from_json(const Json& j, Character& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Character& v, std::string_view path, float** out);
+
 /// A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
 struct TopDown2D {
     Vec2 velocity{0.0f, 0.0f};
@@ -504,6 +529,7 @@ struct AudioSource {
     float pitch = 1.0f;
     float lowpass = 1.0f;
     float reverb = 1.0f;
+    std::string bus = "main";
     bool loop = false;
     bool autoplay = false;
     bool spatial = false;
@@ -617,6 +643,7 @@ void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
+void hash_component(struct StateHasherRef& h, const Character& v);
 void hash_component(struct StateHasherRef& h, const TopDown2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);

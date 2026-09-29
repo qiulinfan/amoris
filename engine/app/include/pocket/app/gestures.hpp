@@ -21,16 +21,19 @@ class Gestures {
         double hold_seconds = 0.5;    // down and still for this long: a long press
         float swipe_points = 40.0f;   // travelled this far and lifted within swipe_seconds: a swipe
         double swipe_seconds = 0.5;
+        float edge = 24.0f;           // a swipe that starts this close to a side of the view and moves away from it is an edge swipe
     };
 
     // From a project's [input] table: gestures = false, gesture_slop, gesture_tap, gesture_hold,
-    // gesture_swipe (points), gesture_swipe_seconds.
+    // gesture_swipe (points), gesture_swipe_seconds, gesture_edge (points, 0 for none).
     void configure(const Json& input);
     // A batch of events at `tick` (`on_ui[i]` is the interface element event i landed on, 0 for
     // none); the gestures they complete come back as input events.
     std::vector<Json> feed(const std::vector<platform::Event>& events, const std::vector<std::uint64_t>& on_ui, std::int64_t tick, double tick_seconds);
     // Time passing without events at `tick`: long presses.
     std::vector<Json> tick(std::int64_t tick, double tick_seconds);
+    // The view's size in points, for edge swipes.
+    void set_view(float width, float height) { view_w_ = width; view_h_ = height; }
     [[nodiscard]] const Settings& settings() const { return settings_; }
     [[nodiscard]] int fingers() const { return static_cast<int>(fingers_.size()); }
 
@@ -44,6 +47,7 @@ class Gestures {
         std::uint64_t ui = 0;  // the interface element it went down on
     };
     Settings settings_;
+    float view_w_ = 0, view_h_ = 0;
     std::map<int, Finger> fingers_;
     std::int64_t last_tap_tick_ = -1000000;
     float last_tap_x_ = 0, last_tap_y_ = 0;
