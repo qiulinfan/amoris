@@ -109,6 +109,18 @@ export const animation = {
         const params = typeof target === "object" && target !== null && "mesh" in target ? target : { entity: target };
         return command("animation.clips", params) as { mesh: string; clips: ClipInfo[]; skins: Array<{ name: string; joints: string[] }>; skinned: boolean; targets: string[] };
     },
+    /** Set a parameter of the entity's AnimationGraph (docs/design/animation.md, State machines): what its conditions and blend spaces read. */
+    param(entity: EntityRef, name: string, value: number | boolean): { state: string; params: Record<string, number> } {
+        return command("animation.param", { entity, name, value: typeof value === "boolean" ? (value ? 1 : 0) : value }) as { state: string; params: Record<string, number> };
+    },
+    /** Fire a trigger parameter of the entity's AnimationGraph: it holds until a transition that reads it is taken. */
+    trigger(entity: EntityRef, name: string): { state: string; params: Record<string, number> } {
+        return command("animation.trigger", { entity, name }) as { state: string; params: Record<string, number> };
+    },
+    /** The state the entity's AnimationGraph is in ("" without one). */
+    state(entity: EntityRef): string {
+        return world.get(entity, "AnimationGraph")?.state ?? "";
+    },
     /** Set morph target weights by target name (or index as a string) on the entity's Morph component, keeping the others (docs/design/animation.md, Morph targets). */
     morph(entity: EntityRef, weights: Record<string, number>): Components["Morph"] {
         const list: MorphWeight[] = [...(world.get(entity, "Morph")?.weights ?? [])];

@@ -1,14 +1,14 @@
 {
   "runner": "reference",
-  "passed": 20,
-  "total": 20,
-  "seconds": 38.5,
+  "passed": 22,
+  "total": 22,
+  "seconds": 51.6,
   "tasks": [
     {
       "name": "spawn_named",
       "project": "hello",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "a red cube at (2, 1, -3)",
       "answer": null,
       "error": null
@@ -17,7 +17,7 @@
       "name": "recolor",
       "project": "hello",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "Ball's color is {'r': 0.0, 'g': 1.0, 'b': 0.0, 'a': 1.0}",
       "answer": null,
       "error": null
@@ -26,7 +26,7 @@
       "name": "tile_edit",
       "project": "sprites",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "cell (3, 2) on ground holds gid 1",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": true,
-      "seconds": 5.7,
+      "seconds": 6.5,
       "detail": "0 enemies remain",
       "answer": null,
       "error": null
@@ -44,7 +44,7 @@
       "name": "play_clip",
       "project": "assets",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "Arm plays 'turn' loop True playing True",
       "answer": null,
       "error": null
@@ -53,7 +53,7 @@
       "name": "path_length",
       "project": "playground",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.6,
       "detail": "answered 22.882, the path is 22.882",
       "answer": 22.882455825805664,
       "error": null
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": true,
-      "seconds": 1.9,
+      "seconds": 2.2,
       "detail": "answered 5, there are 5",
       "answer": 5,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": true,
-      "seconds": 8.8,
+      "seconds": 10.5,
       "detail": "answered 'entity.spawned', the root cause is 'entity.spawned'",
       "answer": "entity.spawned",
       "error": null
@@ -80,7 +80,7 @@
       "name": "night_lamp",
       "project": "hello",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered 1",
       "answer": 1,
       "error": null
@@ -116,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.3,
+      "seconds": 1.5,
       "detail": "rose 3.79 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": true,
-      "seconds": 2.0,
+      "seconds": 2.2,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
       "answer": null,
       "error": null
@@ -134,7 +134,7 @@
       "name": "jump_sound",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.5,
+      "seconds": 1.6,
       "detail": "assets/jump.wav plays after a jump and again after the next",
       "answer": null,
       "error": null
@@ -152,7 +152,7 @@
       "name": "hill_raise",
       "project": "hills",
       "ok": true,
-      "seconds": 1.2,
+      "seconds": 1.4,
       "detail": "the ground at (20.0, -20.0) raised to 10.28, nothing moved 12 units away",
       "answer": 10.282926559448242,
       "error": null
@@ -161,7 +161,7 @@
       "name": "flowers",
       "project": "hills",
       "ok": true,
-      "seconds": 1.1,
+      "seconds": 1.3,
       "detail": "164 red flowers on the hills, none on ground steeper than 19.9 degrees",
       "answer": null,
       "error": null
@@ -170,7 +170,7 @@
       "name": "car_speed",
       "project": "drive",
       "ok": true,
-      "seconds": 9.6,
+      "seconds": 10.6,
       "detail": "top speed 35, power 14, driven to 28.61",
       "answer": 28.606060028076172,
       "error": null
@@ -179,9 +179,27 @@
       "name": "walker_sprint",
       "project": "walker",
       "ok": true,
-      "seconds": 1.2,
+      "seconds": 1.4,
       "detail": "a second of walking covers 5.00, with sprint held 9.00 (5 and 9 wanted)",
       "answer": null,
+      "error": null
+    },
+    {
+      "name": "raft",
+      "project": "hills",
+      "ok": true,
+      "seconds": 6.3,
+      "detail": "the raft floats at 3.29 on the surface at 3.23",
+      "answer": 3.2929203510284424,
+      "error": null
+    },
+    {
+      "name": "calm_lake",
+      "project": "hills",
+      "ok": true,
+      "seconds": 1.2,
+      "detail": "a still, clear lake at 3.70",
+      "answer": 3.700000047683716,
       "error": null
     }
   ]

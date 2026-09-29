@@ -8,6 +8,7 @@
     X(Health) \
     X(Lifetime) \
     X(Camera) \
+    X(CameraRig) \
     X(Light) \
     X(ReflectionProbe) \
     X(Decal) \
@@ -17,6 +18,8 @@
     X(Sprite) \
     X(SpriteAnimation) \
     X(TileMap) \
+    X(AnimationGraph) \
+    X(Timeline) \
     X(Animator) \
     X(IK) \
     X(LookAt) \

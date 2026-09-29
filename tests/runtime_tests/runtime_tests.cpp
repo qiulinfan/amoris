@@ -306,7 +306,7 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     REQUIRE(pose0["joints"][1]["position"]["y"].get<double>() == Catch::Approx(1.0).margin(0.01));
     REQUIRE(pose0["joints"][1]["axis_y"]["x"].get<double>() > 0.6);
     Json rs = s.command("render.stats", Json::object()).value();
-    REQUIRE(rs["skinned"].get<int>() == 6);  // the Arm, the Walker and the Pulse arm
+    REQUIRE(rs["skinned"].get<int>() == 7);  // the Arm, the Walker, the Pulse arm, the Reacher, the Gazer, the Turner and the Stepper
     // Half a second later the swing has reached +45 degrees: the axis points toward -X.
     for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
     Json pose1 = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
@@ -4318,5 +4318,316 @@ TEST_CASE("water.height answers the moving surface, and a crate dropped in the l
     REQUIRE(std::fabs(cy - here["height"].get<double>()) < 0.3);
     REQUIRE(s.command("physics.stats", Json::object()).value()["floating"].get<int>() >= 1);
     REQUIRE(s.command("events.histogram", Json::object()).value()["water.entered"].get<int>() >= 1);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("an AnimationGraph moves between states on its parameters, blends along one, fires triggers and reports what is wrong", "[runtime][animation][animgraph]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The arm's clips: nod (1.5 s), wave, walk and turn (1 s each).
+    const Json graph = Json{
+        {"states", Json::array({Json{{"name", "idle"}, {"clip", "nod"}},
+                                Json{{"name", "move"}, {"blend", "speed"}, {"clips", "wave 0, walk 2"}},
+                                Json{{"name", "hop"}, {"clip", "turn"}, {"loop", false}}})},
+        {"transitions", Json::array({Json{{"from", "idle"}, {"to", "move"}, {"when", "speed > 0.1"}, {"fade", 0.2}},
+                                     Json{{"from", "move"}, {"to", "idle"}, {"when", "speed <= 0.1"}, {"fade", 0.3}},
+                                     Json{{"from", "*"}, {"to", "hop"}, {"when", "jump and not tired"}, {"fade", 0.1}},
+                                     Json{{"from", "hop"}, {"to", "idle"}, {"after", 1.0}, {"fade", 0.2}}})},
+        {"params", Json::array({Json{{"name", "speed"}, {"value", 0}}, Json{{"name", "jump"}, {"trigger", true}}, Json{{"name", "tired"}, {"value", 0}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Actor"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -3}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"Animator", Json::object()}, {"AnimationGraph", graph}}}}).has_value());
+    auto get = [&](const char* component) { return s.command("world.get", Json{{"entity", "Actor"}, {"component", component}}).value(); };
+    auto frames = [&](int n) { for (int i = 0; i < n; ++i) REQUIRE(s.frame().has_value()); };
+    frames(2);
+    Json g = get("AnimationGraph"), a = get("Animator");
+    INFO(g.dump());
+    REQUIRE(g["state"] == "idle");
+    REQUIRE(g["error"] == "");
+    REQUIRE(a["clip"] == "nod");
+    // Moving: into the blend space, halfway between wave and walk at speed 1, the idle clip fading out.
+    Json r = s.command("animation.param", Json{{"entity", "Actor"}, {"name", "speed"}, {"value", 1.0}}).value();
+    REQUIRE(r["params"]["speed"] == 1.0);
+    frames(1);
+    g = get("AnimationGraph");
+    a = get("Animator");
+    INFO(a.dump());
+    REQUIRE(g["state"] == "move");
+    REQUIRE(a["clip"] == "wave");
+    REQUIRE(a["blend_clip"] == "walk");
+    REQUIRE(a["blend"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(a["from_clip"] == "nod");
+    REQUIRE(a["fade"].get<double>() == Catch::Approx(0.2));
+    const Json moving = s.command("animation.pose", Json{{"entity", "Actor"}}).value();
+    // At speed 2 the walk alone plays, in the phase the wave had reached.
+    const double phase = a["time"].get<double>();
+    REQUIRE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "speed"}, {"value", 2.0}}).has_value());
+    frames(1);
+    a = get("Animator");
+    REQUIRE(a["clip"] == "walk");
+    REQUIRE(a["blend_clip"] == "");
+    REQUIRE(a["time"].get<double>() == Catch::Approx(phase + 1.0 / 60).margin(0.02));
+    REQUIRE(s.command("animation.pose", Json{{"entity", "Actor"}}).value() != moving);
+    // A trigger from any state: the hop, the trigger spent, then back to idle when it has played
+    // through, and on into move since the speed is still 2.
+    REQUIRE(s.command("animation.trigger", Json{{"entity", "Actor"}, {"name", "jump"}}).has_value());
+    frames(1);
+    g = get("AnimationGraph");
+    REQUIRE(g["state"] == "hop");
+    REQUIRE(get("Animator")["clip"] == "turn");
+    REQUIRE(g["params"][1]["value"] == 0.0);
+    frames(70);
+    std::vector<std::string> path;
+    for (const Json& e : s.command("events.since", Json{{"since", 0}, {"type", "animation.state"}}).value()["events"]) {
+        if (e["data"]["path"] == "/Actor") path.push_back(e["data"]["from"].get<std::string>() + ">" + e["data"]["to"].get<std::string>());
+    }
+    std::string joined;
+    for (const auto& p : path) joined += p + " ";
+    INFO(joined);
+    REQUIRE(path == std::vector<std::string>{">idle", "idle>move", "move>hop", "hop>idle", "idle>move"});
+    // A flag blocks the trigger: jump and not tired.
+    REQUIRE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "tired"}, {"value", 1}}).has_value());
+    REQUIRE(s.command("animation.trigger", Json{{"entity", "Actor"}, {"name", "jump"}}).has_value());
+    frames(2);
+    REQUIRE(get("AnimationGraph")["state"] == "move");
+    // What is wrong is said: a parameter that is not there, a condition that ends too soon, a missing state.
+    REQUIRE_FALSE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "sped"}, {"value", 1}}).has_value());
+    Json broken = graph;
+    broken["transitions"][0]["when"] = "speed >";
+    REQUIRE(s.command("world.set", Json{{"entity", "Actor"}, {"component", "AnimationGraph"}, {"value", Json{{"transitions", broken["transitions"]}, {"state", "idle"}}}}).has_value());
+    frames(1);
+    INFO(get("AnimationGraph").dump());
+    REQUIRE(get("AnimationGraph")["error"].get<std::string>().find("ends too soon") != std::string::npos);
+    REQUIRE(get("AnimationGraph")["state"] == "idle");                  // the broken way out is never taken
+    broken["transitions"][0]["when"] = "speed > 0.1";
+    broken["transitions"][1]["to"] = "nowhere";
+    REQUIRE(s.command("world.set", Json{{"entity", "Actor"}, {"component", "AnimationGraph"}, {"value", Json{{"transitions", broken["transitions"]}}}}).has_value());
+    frames(1);
+    REQUIRE(get("AnimationGraph")["error"].get<std::string>().find("'nowhere'") != std::string::npos);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a timeline moves fields along its keys and easings, sets others at moments, fires its events, loops, seeks and says what it cannot do", "[runtime][timeline]") {
+    const std::filesystem::path dir = root() / "samples" / "hello" / "timelines";
+    std::filesystem::create_directories(dir);
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove_all(p); } } cleanup{dir};
+    std::ofstream(dir / "door.json") << R"({
+      "duration": 3,
+      "tracks": [
+        {"entity": "Door", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 2], [2, 2], [3, 0, "cubicOut"]]},
+        {"entity": "Door", "component": "Transform", "field": "rotation", "keys": [[0, [0, 0, 0]], [2, [0, 90, 0]]]},
+        {"entity": "Lamp", "component": "Light", "field": "intensity", "keys": [[0, 0], [2, 4, "quadIn"]]},
+        {"entity": "Lamp", "component": "Light", "field": "color", "keys": [[0, [1, 1, 1, 1]], [2, [1, 0.5, 0.25, 1]]]},
+        {"entity": "Door", "component": "MeshRenderer", "field": "cast_shadows", "keys": [[0, true], [1.5, false]]}
+      ],
+      "events": [[0.5, "door.creak", {"loud": 2}], [3, "door.shut"]]
+    })";
+    std::ofstream(dir / "broken.json") << R"({"tracks": [{"entity": "Door", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 2, "wobbly"]]}]})";
+    std::ofstream(dir / "stray.json") << R"({"tracks": [{"entity": "Nobody", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 1]]},
+        {"entity": "Door", "component": "Transform", "field": "colour", "keys": [[0, 0]]},
+        {"entity": "Door", "component": "Transform", "field": "position", "keys": [[0, [1, 2]]]}]})";
+    app::Session s(hello_options(10000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Door"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "cube"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 1}, {"intensity", 0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Director"}, {"components", Json{{"Transform", Json::object()}}}}).has_value());
+    auto ticks = [&](int n) { REQUIRE(s.command("step", Json{{"ticks", n}}).has_value()); };
+    auto door = [&]() { return s.command("world.get", Json{{"entity", "Door"}, {"component", "Transform"}}).value(); };
+    auto lamp = [&]() { return s.command("world.get", Json{{"entity", "Lamp"}, {"component", "Light"}}).value(); };
+    // Read and checked before it plays.
+    Json info = s.command("timeline.info", Json{{"path", "timelines/door.json"}}).value();
+    INFO(info.dump());
+    REQUIRE(info["duration"] == 3.0);
+    REQUIRE(info["tracks"].size() == 5);
+    REQUIRE(info["problems"].empty());
+    REQUIRE(info["tracks"][0]["target"] == "/Door");
+    // Half a second in: the door halfway up (linear), the lamp at a sixteenth of 4 (quadIn at a quarter), the creak once.
+    Json play = s.command("timeline.play", Json{{"entity", "Director"}, {"path", "timelines/door.json"}}).value();
+    REQUIRE(play["duration"] == 3.0);
+    const Json last = s.command("events.last_seq", Json::object()).value();
+    const std::uint64_t seq0 = last.is_object() ? last["seq"].get<std::uint64_t>() : last.get<std::uint64_t>();
+    ticks(30);
+    REQUIRE(s.command("world.get", Json{{"entity", "Director"}, {"component", "Timeline"}}).value()["time"].get<double>() == Catch::Approx(0.5).margin(1e-4));
+    REQUIRE(door()["position"]["y"].get<double>() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(lamp()["intensity"].get<double>() == Catch::Approx(0.25).margin(1e-3));
+    ticks(1);
+    auto count = [&](const char* type) {
+        int n = 0;
+        for (const Json& e : s.command("events.since", Json{{"seq", seq0}, {"type", type}}).value()["events"]) { (void)e; ++n; }
+        return n;
+    };
+    REQUIRE(count("door.creak") == 1);
+    const Json creak = s.command("events.since", Json{{"seq", seq0}, {"type", "door.creak"}}).value()["events"][0];
+    REQUIRE(creak["data"]["loud"] == 2);
+    REQUIRE(creak["data"]["timeline"] == "timelines/door.json");
+    // One second in: the door turned 45 degrees about y (degrees in the keys), the colour on its way.
+    ticks(29);
+    REQUIRE(door()["rotation"]["y"].get<double>() == Catch::Approx(std::sin(3.14159265 / 8)).margin(1e-3));
+    REQUIRE(lamp()["color"]["g"].get<double>() == Catch::Approx(0.75).margin(1e-2));
+    REQUIRE(s.command("world.get", Json{{"entity", "Door"}, {"component", "MeshRenderer"}}).value()["cast_shadows"] == true);
+    // Past 1.5 s the shadows step off.
+    ticks(40);
+    REQUIRE(s.command("world.get", Json{{"entity", "Door"}, {"component", "MeshRenderer"}}).value()["cast_shadows"] == false);
+    // At the end: down again (cubicOut), stopped, finished, the shut event and timeline.finished.
+    ticks(85);
+    Json t = s.command("world.get", Json{{"entity", "Director"}, {"component", "Timeline"}}).value();
+    REQUIRE(t["finished"] == true);
+    REQUIRE(t["playing"] == false);
+    REQUIRE(t["time"] == 3.0);
+    REQUIRE(door()["position"]["y"].get<double>() == Catch::Approx(0.0).margin(1e-4));
+    REQUIRE(count("door.shut") == 1);
+    REQUIRE(count("timeline.finished") == 1);
+    // Looping from 2.5 s: past the end into the next lap, the creak again at 0.5.
+    REQUIRE(s.command("timeline.play", Json{{"entity", "Director"}, {"time", 2.5}, {"loop", true}}).has_value());
+    ticks(31);
+    t = s.command("world.get", Json{{"entity", "Director"}, {"component", "Timeline"}}).value();
+    REQUIRE(t["playing"] == true);
+    REQUIRE(t["time"].get<double>() == Catch::Approx(0.0167).margin(0.01));
+    REQUIRE(count("door.shut") == 2);
+    ticks(30);
+    REQUIRE(count("door.creak") == 2);
+    // Backward and stopped.
+    REQUIRE(s.command("timeline.play", Json{{"entity", "Director"}, {"time", 1.0}, {"speed", -1}, {"loop", false}}).has_value());
+    ticks(30);
+    REQUIRE(door()["position"]["y"].get<double>() == Catch::Approx(1.0).margin(1e-3));
+    REQUIRE(s.command("timeline.stop", Json{{"entity", "Director"}}).has_value());
+    ticks(10);
+    REQUIRE(door()["position"]["y"].get<double>() == Catch::Approx(1.0).margin(1e-3));
+    // What is wrong is said: an easing that does not exist is refused; tracks that cannot apply are named.
+    auto broken = s.command("timeline.play", Json{{"entity", "Director"}, {"path", "timelines/broken.json"}});
+    REQUIRE_FALSE(broken.has_value());
+    REQUIRE(broken.error().message.find("wobbly") != std::string::npos);
+    Json stray = s.command("timeline.info", Json{{"path", "timelines/stray.json"}}).value();
+    INFO(stray.dump());
+    REQUIRE(stray["problems"].size() == 3);
+    REQUIRE(stray["tracks"][0]["problem"].get<std::string>().find("Nobody") != std::string::npos);
+    REQUIRE(stray["tracks"][1]["problem"].get<std::string>().find("colour") != std::string::npos);
+    REQUIRE(stray["tracks"][2]["problem"].get<std::string>().find("parts") != std::string::npos);
+    REQUIRE(s.command("timeline.play", Json{{"entity", "Director"}, {"path", "timelines/stray.json"}}).has_value());
+    ticks(2);
+    REQUIRE(s.command("world.get", Json{{"entity", "Director"}, {"component", "Timeline"}}).value()["error"].get<std::string>().find("Nobody") != std::string::npos);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a camera rig follows its target: orbit, easing, input turning, chase round a heading, in front of walls, a fixed offset, and a shake that fades", "[runtime][camerarig]") {
+    app::Session s(hello_options(10000));
+    REQUIRE(s.start().has_value());
+    auto xyz = [](double x, double y, double z) { return Json{{"x", x}, {"y", y}, {"z", z}}; };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Target"}, {"components", Json{{"Transform", Json::object()}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Eye"}, {"components", Json{{"Transform", Json::object()}, {"CameraRig", Json{{"target", "Target"}, {"mode", 1}, {"distance", 5}, {"height", 1}, {"pitch", -30}, {"yaw", 0}, {"follow", 0}, {"collide", false}}}}}}).has_value());
+    auto ticks = [&](int n) { REQUIRE(s.command("step", Json{{"ticks", n}}).has_value()); };
+    auto eye = [&]() { return s.command("world.get", Json{{"entity", "Eye"}, {"component", "Transform"}}).value(); };
+    auto rig = [&](Json v) { REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "CameraRig"}, {"value", v}}).has_value()); };
+    auto forward = [&](const Json& t) {
+        const Quat q{t["rotation"]["x"].get<float>(), t["rotation"]["y"].get<float>(), t["rotation"]["z"].get<float>(), t["rotation"]["w"].get<float>()};
+        return q.rotate(Vec3{0, 0, -1});
+    };
+    ticks(1);
+    // Orbit at pitch -30, distance 5, from +z: up 2.5 and back 4.33 from the pivot a unit over the target, looking at it.
+    Json t = eye();
+    REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(0).margin(1e-4));
+    REQUIRE(t["position"]["y"].get<double>() == Catch::Approx(3.5).margin(1e-4));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(4.330).margin(1e-3));
+    REQUIRE(forward(t).y == Catch::Approx(-0.5).margin(1e-4));
+    REQUIRE(forward(t).z == Catch::Approx(-0.866).margin(1e-3));
+    // Easing: the target jumps 10 along x; a tick closes 1 - e^(-1/30) of it at follow 0.5, three seconds nearly all.
+    rig(Json{{"follow", 0.5}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Target"}, {"component", "Transform"}, {"value", Json{{"position", xyz(10, 0, 0)}}}}).has_value());
+    ticks(1);
+    REQUIRE(eye()["position"]["x"].get<double>() == Catch::Approx(10 * (1 - std::exp(-1.0 / 30))).margin(1e-3));
+    ticks(179);
+    REQUIRE(eye()["position"]["x"].get<double>() == Catch::Approx(10 * (1 - std::exp(-6.0))).margin(0.02));
+    // Turning by input: an action held for half a second at 120 degrees a second turns the orbit 60.
+    REQUIRE(s.command("input.map", Json{{"actions", Json{{"look", Json{{"negative", Json::array({"Q"})}, {"positive", Json::array({"E"})}}}}}}).has_value());
+    rig(Json{{"orbit_x", "look"}, {"follow", 0}});
+    REQUIRE(s.command("input.hold", Json{{"action", "look"}, {"ticks", 30}}).has_value());
+    ticks(40);
+    const Json r = s.command("world.get", Json{{"entity", "Eye"}, {"component", "CameraRig"}}).value();
+    INFO(r.dump());
+    REQUIRE(r["yaw"].get<double>() == Catch::Approx(60).margin(2.5));
+    // Chase: behind a target turned to face -x (heading 90), so on its +x side.
+    rig(Json{{"mode", 0}, {"yaw", 0}, {"turn", 0}, {"orbit_x", ""}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Target"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", 0}, {"y", 0.7071068}, {"z", 0}, {"w", 0.7071068}}}}}}).has_value());
+    ticks(1);
+    t = eye();
+    REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(10 + 4.330).margin(1e-3));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(0).margin(1e-3));
+    REQUIRE(forward(t).x < -0.8f);
+    // Turning back, it swings round over its turn time rather than at once.
+    rig(Json{{"turn", 0.5}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Target"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    ticks(1);
+    const double heading = s.command("world.get", Json{{"entity", "Eye"}, {"component", "CameraRig"}}).value()["heading"].get<double>();
+    REQUIRE(heading == Catch::Approx(90 * std::exp(-1.0 / 30)).margin(0.05));
+    ticks(240);
+    REQUIRE(std::fabs(s.command("world.get", Json{{"entity", "Eye"}, {"component", "CameraRig"}}).value()["heading"].get<double>()) < 0.05);
+    // A wall between the pivot and where it would stand (orbit from +z): it comes in front of it.
+    rig(Json{{"mode", 1}, {"yaw", 0}, {"collide", true}});
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wall"}, {"components", Json{{"Transform", Json{{"position", xyz(10, 2, 2.5)}}}, {"RigidBody", Json{{"kind", 1}}}, {"Collider", Json{{"shape", 0}, {"size", xyz(3, 3, 0.2)}}}}}}).has_value());
+    ticks(1);
+    t = eye();
+    INFO(t.dump());
+    REQUIRE(t["position"]["z"].get<double>() < 2.3);
+    REQUIRE(t["position"]["z"].get<double>() > 1.9);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Wall"}}).has_value());
+    // A fixed offset in the world, looking back at the pivot.
+    rig(Json{{"mode", 2}, {"offset", xyz(0, 10, 8)}});
+    ticks(1);
+    t = eye();
+    REQUIRE(t["position"]["y"].get<double>() == Catch::Approx(11).margin(1e-4));
+    REQUIRE(t["position"]["z"].get<double>() == Catch::Approx(8).margin(1e-4));
+    const Vec3 still = forward(t);
+    // A shake: the view trembles, the trauma drains at shake_decay a second, and it is still again.
+    rig(Json{{"shake", 1.0}});
+    ticks(1);
+    const Vec3 shaken = forward(eye());
+    REQUIRE(length(shaken - still) > 1e-3f);
+    REQUIRE(s.command("world.get", Json{{"entity", "Eye"}, {"component", "CameraRig"}}).value()["shake"].get<double>() == Catch::Approx(1 - 1.5 / 60).margin(1e-4));
+    ticks(60);
+    REQUIRE(s.command("world.get", Json{{"entity", "Eye"}, {"component", "CameraRig"}}).value()["shake"] == 0.0);
+    REQUIRE(length(forward(eye()) - still) < 1e-5f);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("locale commands read the language files, switch the language and check the translations", "[runtime][locale]") {
+    const std::filesystem::path dir = root() / "samples" / "hello" / "locales";
+    std::filesystem::create_directories(dir);
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove_all(p); } } cleanup{dir};
+    std::ofstream(dir / "en.json") << R"({"menu": {"start": "Start", "hello": "Hello, {name}"}, "coins": "{n, plural, one {# coin} other {# coins}}"})";
+    std::ofstream(dir / "fr.json") << R"({"menu": {"start": "Commencer", "hello": "Bonjour"}, "extra": "en trop"})";
+    std::ofstream(dir / "bad.json") << R"({"menu": {"start": 3}})";
+    app::Session s(hello_options(1000));
+    REQUIRE(s.start().has_value());
+    Json get = s.command("locale.get", Json::object()).value();
+    REQUIRE(get["lang"] == "en");
+    REQUIRE(get["default"] == "en");
+    REQUIRE(get["languages"] == Json::array({"bad", "en", "fr"}));
+    // Nested groups flattened to dotted keys.
+    Json table = s.command("locale.table", Json{{"lang", "en"}}).value();
+    REQUIRE(table["keys"] == 3);
+    REQUIRE(table["strings"]["menu.hello"] == "Hello, {name}");
+    // The check: French lacks the plural, has an extra key, and dropped a placeholder; the bad file says why.
+    Json check = s.command("locale.check", Json::object()).value();
+    INFO(check.dump());
+    REQUIRE(check["complete"] == false);
+    REQUIRE(check["languages"]["fr"]["missing"] == Json::array({"coins"}));
+    REQUIRE(check["languages"]["fr"]["extra"] == Json::array({"extra"}));
+    REQUIRE(check["languages"]["fr"]["placeholders"] == Json::array({"menu.hello"}));
+    REQUIRE(check["languages"]["bad"]["error"].get<std::string>().find("'menu.start' is not a text") != std::string::npos);
+    // Switching: to a language with a file, the tick tells the scripts, locale.changed is emitted; not to one without.
+    REQUIRE(s.command("locale.set", Json{{"lang", "fr"}}).value()["lang"] == "fr");
+    REQUIRE(s.command("locale.get", Json::object()).value()["lang"] == "fr");
+    REQUIRE(s.command("events.histogram", Json::object()).value()["locale.changed"] == 1);
+    auto missing = s.command("locale.set", Json{{"lang", "de"}});
+    REQUIRE_FALSE(missing.has_value());
+    REQUIRE(missing.error().message.find("the project has: bad, en, fr") != std::string::npos);
+    REQUIRE_FALSE(s.command("locale.set", Json{{"lang", "../en"}}).has_value());
     REQUIRE(s.finish().has_value());
 }

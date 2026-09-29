@@ -115,9 +115,9 @@ TEST_CASE("glTF meshes and textures render; missing assets are marked", "[render
     for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
-    REQUIRE(stats["meshes"] == 12);  // the scene's entities with meshes: the Walker, Pulse, Reacher, Gazer and Turner arms included                 // ground, crate, pyramid, the skinned arm, the missing one, the plate, the orb
+    REQUIRE(stats["meshes"] == 13);  // the scene's entities with meshes: the Walker, Pulse, Reacher, Gazer, Turner and Stepper arms included                 // ground, crate, pyramid, the skinned arm, the missing one, the plate, the orb
     REQUIRE(stats["draw_calls"].get<int>() == 8);   // the arms are instances of one mesh  // crate has two submeshes (two nodes share one material -> still two draws); the arm is one skinned draw
-    REQUIRE(stats["skinned"] == 6);   // the Arm, the Walker, the Pulse arm, the Reacher, the Gazer and the Turner
+    REQUIRE(stats["skinned"] == 7);   // the Arm, the Walker, the Pulse arm, the Reacher, the Gazer, the Turner and the Stepper
     REQUIRE(stats["morphed"] == 1);   // the Pulse arm, its bulge weight already above zero
     REQUIRE(stats["assets"]["meshes"] == 4);
     REQUIRE(stats["assets"]["textures"] == 4);     // checker and the plate's three maps
@@ -1683,6 +1683,9 @@ TEST_CASE("the showcase sample has every part of the renderer on at once", "[ren
     REQUIRE(stats["ao"] == true);
     REQUIRE(stats["tonemap"] == "agx");
     REQUIRE(stats["decals"]["drawn"].get<int>() >= 3);     // puddles, the sigil, the arrow (those in view)
+    const Json dusk = s.command("world.get", Json{{"entity", "Dusk"}, {"component", "Timeline"}}).value();
+    REQUIRE(dusk["error"] == "");                          // the dusk timeline plays every track
+    REQUIRE(dusk["time"].get<double>() > 0.0);
     REQUIRE(stats["assets"].value("missing", Json::array()).empty());
     // The camera circles: its angle is exposed and moves.
     const double a0 = s.command("state", Json::object()).value()["state"]["camera.angle"].get<double>();

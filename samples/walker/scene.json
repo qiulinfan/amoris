@@ -777,6 +777,14 @@
     },
     "Camera": {
      "fov_degrees": 55
+    },
+    "CameraRig": {
+     "target": "Player",
+     "mode": 1,
+     "distance": 8.944,
+     "height": 0.5,
+     "pitch": -26.57,
+     "follow": 0.25
     }
    }
   }

@@ -1,29 +1,20 @@
 // A 3D character (the Character component, docs/design/physics.md, Characters) in a small yard:
 // stairs up to the west deck, a walkable ramp to the east deck, a rock too steep to climb, a lift
 // beside a tower, crates to push and a coin on each high place. WASD or the left stick walks,
-// Space or A jumps; the camera follows from behind.
+// Space or A jumps; its camera (a CameraRig in the scene) follows from behind.
 import { events, expose, input, onStart, onTick, world } from "pocket";
 
 const SPEED = 5;
 const JUMP = 7.5;
 let player = 0;
-let camera = 0;
 let lift = 0;
 let rising = true;
 let score = 0;
 let jumps = 0;
 let seen = 0;
 
-// A rotation that turns -Z to the given yaw (radians about Y) and pitch (about X, down negative).
-function lookRotation(yaw: number, pitch: number) {
-    const y = yaw / 2, p = pitch / 2;
-    const cy = Math.cos(y), sy = Math.sin(y), cp = Math.cos(p), sp = Math.sin(p);
-    return { x: cy * sp, y: sy * cp, z: -sy * sp, w: cy * cp };
-}
-
 onStart(() => {
     player = world.find("Player") ?? 0;
-    camera = world.find("Camera") ?? 0;
     lift = world.find("Lift") ?? 0;
     seen = events.lastSeq();
 });
@@ -59,15 +50,6 @@ onTick(({ dt }) => {
         }
     }
 
-    // The camera follows from behind and above, easing toward its spot.
-    if (camera) {
-        const p = world.get(player, "Transform")!.position;
-        const cam = world.get(camera, "Transform")!.position;
-        const k = Math.min(1, dt * 4);
-        const to = { x: p.x, y: p.y + 4.5, z: p.z + 8 };
-        const at = { x: cam.x + (to.x - cam.x) * k, y: cam.y + (to.y - cam.y) * k, z: cam.z + (to.z - cam.z) * k };
-        world.set(camera, "Transform", { position: at, rotation: lookRotation(0, -Math.atan2(at.y - p.y - 0.5, at.z - p.z)) });
-    }
 });
 
 expose("score", () => score);

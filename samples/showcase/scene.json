@@ -1971,6 +1971,15 @@
    }
   },
   {
+   "name": "Dusk",
+   "components": {
+    "Timeline": {
+     "path": "timelines/dusk.json",
+     "loop": true
+    }
+   }
+  },
+  {
    "name": "Camera",
    "components": {
     "Transform": {

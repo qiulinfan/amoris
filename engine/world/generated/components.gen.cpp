@@ -205,6 +205,97 @@ std::size_t numeric_span(AnimationLayer& v, std::string_view path, float** out) 
     return 0;
 }
 
+void to_json(Json& j, const AnimationState& v) {
+    j = Json::object();
+    j["name"] = v.name;
+    j["clip"] = v.clip;
+    j["blend"] = v.blend;
+    j["clips"] = v.clips;
+    j["speed"] = v.speed;
+    j["loop"] = v.loop;
+}
+
+void from_json(const Json& j, AnimationState& v) {
+    scalar_from_json(j, "name", v.name);
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "blend", v.blend);
+    scalar_from_json(j, "clips", v.clips);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "loop", v.loop);
+}
+
+void hash_record(StateHasherRef& h, const AnimationState& v) {
+    h.str(v.name);
+    h.str(v.clip);
+    h.str(v.blend);
+    h.str(v.clips);
+    h.f32(v.speed);
+    h.u8(v.loop ? 1 : 0);
+}
+
+std::size_t numeric_span(AnimationState& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "speed") { *out = &v.speed; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const AnimationTransition& v) {
+    j = Json::object();
+    j["from"] = v.from;
+    j["to"] = v.to;
+    j["when"] = v.when;
+    j["after"] = v.after;
+    j["fade"] = v.fade;
+}
+
+void from_json(const Json& j, AnimationTransition& v) {
+    scalar_from_json(j, "from", v.from);
+    scalar_from_json(j, "to", v.to);
+    scalar_from_json(j, "when", v.when);
+    scalar_from_json(j, "after", v.after);
+    scalar_from_json(j, "fade", v.fade);
+}
+
+void hash_record(StateHasherRef& h, const AnimationTransition& v) {
+    h.str(v.from);
+    h.str(v.to);
+    h.str(v.when);
+    h.f32(v.after);
+    h.f32(v.fade);
+}
+
+std::size_t numeric_span(AnimationTransition& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "after") { *out = &v.after; return 1; }
+    if (path == "fade") { *out = &v.fade; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const AnimationParam& v) {
+    j = Json::object();
+    j["name"] = v.name;
+    j["value"] = v.value;
+    j["trigger"] = v.trigger;
+}
+
+void from_json(const Json& j, AnimationParam& v) {
+    scalar_from_json(j, "name", v.name);
+    scalar_from_json(j, "value", v.value);
+    scalar_from_json(j, "trigger", v.trigger);
+}
+
+void hash_record(StateHasherRef& h, const AnimationParam& v) {
+    h.str(v.name);
+    h.f32(v.value);
+    h.u8(v.trigger ? 1 : 0);
+}
+
+std::size_t numeric_span(AnimationParam& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "value") { *out = &v.value; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Transform& v) {
     j = Json::object();
     vec_to_json(j["position"], v.position);
@@ -402,6 +493,93 @@ std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
     if (path == "ortho_size") { *out = &v.ortho_size; return 1; }
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "far") { *out = &v.far; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const CameraRig& v) {
+    j = Json::object();
+    j["target"] = v.target;
+    j["mode"] = v.mode;
+    j["distance"] = v.distance;
+    j["height"] = v.height;
+    j["pitch"] = v.pitch;
+    j["yaw"] = v.yaw;
+    vec_to_json(j["offset"], v.offset);
+    j["follow"] = v.follow;
+    j["turn"] = v.turn;
+    j["collide"] = v.collide;
+    j["orbit_x"] = v.orbit_x;
+    j["orbit_y"] = v.orbit_y;
+    j["orbit_speed"] = v.orbit_speed;
+    j["pitch_min"] = v.pitch_min;
+    j["pitch_max"] = v.pitch_max;
+    j["shake"] = v.shake;
+    j["shake_decay"] = v.shake_decay;
+    j["heading"] = v.heading;
+}
+
+void from_json(const Json& j, CameraRig& v) {
+    scalar_from_json(j, "target", v.target);
+    scalar_from_json(j, "mode", v.mode);
+    scalar_from_json(j, "distance", v.distance);
+    scalar_from_json(j, "height", v.height);
+    scalar_from_json(j, "pitch", v.pitch);
+    scalar_from_json(j, "yaw", v.yaw);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "follow", v.follow);
+    scalar_from_json(j, "turn", v.turn);
+    scalar_from_json(j, "collide", v.collide);
+    scalar_from_json(j, "orbit_x", v.orbit_x);
+    scalar_from_json(j, "orbit_y", v.orbit_y);
+    scalar_from_json(j, "orbit_speed", v.orbit_speed);
+    scalar_from_json(j, "pitch_min", v.pitch_min);
+    scalar_from_json(j, "pitch_max", v.pitch_max);
+    scalar_from_json(j, "shake", v.shake);
+    scalar_from_json(j, "shake_decay", v.shake_decay);
+    scalar_from_json(j, "heading", v.heading);
+}
+
+void hash_component(StateHasherRef& h, const CameraRig& v) {
+    h.str(v.target);
+    h.i64(static_cast<std::int64_t>(v.mode));
+    h.f32(v.distance);
+    h.f32(v.height);
+    h.f32(v.pitch);
+    h.f32(v.yaw);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
+    h.f32(v.follow);
+    h.f32(v.turn);
+    h.u8(v.collide ? 1 : 0);
+    h.str(v.orbit_x);
+    h.str(v.orbit_y);
+    h.f32(v.orbit_speed);
+    h.f32(v.pitch_min);
+    h.f32(v.pitch_max);
+    h.f32(v.shake);
+    h.f32(v.shake_decay);
+    h.f32(v.heading);
+}
+
+std::size_t numeric_span(CameraRig& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "distance") { *out = &v.distance; return 1; }
+    if (path == "height") { *out = &v.height; return 1; }
+    if (path == "pitch") { *out = &v.pitch; return 1; }
+    if (path == "yaw") { *out = &v.yaw; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
+    if (path == "follow") { *out = &v.follow; return 1; }
+    if (path == "turn") { *out = &v.turn; return 1; }
+    if (path == "orbit_speed") { *out = &v.orbit_speed; return 1; }
+    if (path == "pitch_min") { *out = &v.pitch_min; return 1; }
+    if (path == "pitch_max") { *out = &v.pitch_max; return 1; }
+    if (path == "shake") { *out = &v.shake; return 1; }
+    if (path == "shake_decay") { *out = &v.shake_decay; return 1; }
+    if (path == "heading") { *out = &v.heading; return 1; }
     return 0;
 }
 
@@ -909,6 +1087,111 @@ std::size_t numeric_span(TileMap& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const AnimationGraph& v) {
+    j = Json::object();
+    j["states"] = Json::array();
+    for (const auto& x : v.states) { Json e; to_json(e, x); j["states"].push_back(std::move(e)); }
+    j["transitions"] = Json::array();
+    for (const auto& x : v.transitions) { Json e; to_json(e, x); j["transitions"].push_back(std::move(e)); }
+    j["params"] = Json::array();
+    for (const auto& x : v.params) { Json e; to_json(e, x); j["params"].push_back(std::move(e)); }
+    j["state"] = v.state;
+    j["state_time"] = v.state_time;
+    j["error"] = v.error;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, AnimationGraph& v) {
+    if (j.is_object() && j.contains("states") && j["states"].is_array()) {
+        v.states.clear();
+        for (const Json& e : j["states"]) { AnimationState x; from_json(e, x); v.states.push_back(std::move(x)); }
+    }
+    if (j.is_object() && j.contains("transitions") && j["transitions"].is_array()) {
+        v.transitions.clear();
+        for (const Json& e : j["transitions"]) { AnimationTransition x; from_json(e, x); v.transitions.push_back(std::move(x)); }
+    }
+    if (j.is_object() && j.contains("params") && j["params"].is_array()) {
+        v.params.clear();
+        for (const Json& e : j["params"]) { AnimationParam x; from_json(e, x); v.params.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "state", v.state);
+    scalar_from_json(j, "state_time", v.state_time);
+    scalar_from_json(j, "error", v.error);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const AnimationGraph& v) {
+    h.i64(static_cast<std::int64_t>(v.states.size()));
+    for (const auto& x : v.states) hash_record(h, x);
+    h.i64(static_cast<std::int64_t>(v.transitions.size()));
+    for (const auto& x : v.transitions) hash_record(h, x);
+    h.i64(static_cast<std::int64_t>(v.params.size()));
+    for (const auto& x : v.params) hash_record(h, x);
+    h.str(v.state);
+    h.f32(v.state_time);
+    h.str(v.error);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(AnimationGraph& v, std::string_view path, float** out) {
+    (void)v;
+    if (path.starts_with("states.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.states.size()) return numeric_span(v.states[index], rest, out);
+    }
+    if (path.starts_with("transitions.")) {
+        std::string_view rest = path.substr(12);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.transitions.size()) return numeric_span(v.transitions[index], rest, out);
+    }
+    if (path.starts_with("params.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.params.size()) return numeric_span(v.params[index], rest, out);
+    }
+    if (path == "state_time") { *out = &v.state_time; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Timeline& v) {
+    j = Json::object();
+    j["path"] = v.path;
+    j["time"] = v.time;
+    j["playing"] = v.playing;
+    j["speed"] = v.speed;
+    j["loop"] = v.loop;
+    j["finished"] = v.finished;
+    j["error"] = v.error;
+}
+
+void from_json(const Json& j, Timeline& v) {
+    scalar_from_json(j, "path", v.path);
+    scalar_from_json(j, "time", v.time);
+    scalar_from_json(j, "playing", v.playing);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "loop", v.loop);
+    scalar_from_json(j, "finished", v.finished);
+    scalar_from_json(j, "error", v.error);
+}
+
+void hash_component(StateHasherRef& h, const Timeline& v) {
+    h.str(v.path);
+    h.f32(v.time);
+    h.u8(v.playing ? 1 : 0);
+    h.f32(v.speed);
+    h.u8(v.loop ? 1 : 0);
+    h.u8(v.finished ? 1 : 0);
+    h.str(v.error);
+}
+
+std::size_t numeric_span(Timeline& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "time") { *out = &v.time; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Animator& v) {
     j = Json::object();
     j["clip"] = v.clip;
@@ -917,6 +1200,8 @@ void to_json(Json& j, const Animator& v) {
     j["speed"] = v.speed;
     j["time"] = v.time;
     j["finished"] = v.finished;
+    j["blend_clip"] = v.blend_clip;
+    j["blend"] = v.blend;
     j["fade"] = v.fade;
     j["fade_time"] = v.fade_time;
     j["from_clip"] = v.from_clip;
@@ -937,6 +1222,8 @@ void from_json(const Json& j, Animator& v) {
     scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "time", v.time);
     scalar_from_json(j, "finished", v.finished);
+    scalar_from_json(j, "blend_clip", v.blend_clip);
+    scalar_from_json(j, "blend", v.blend);
     scalar_from_json(j, "fade", v.fade);
     scalar_from_json(j, "fade_time", v.fade_time);
     scalar_from_json(j, "from_clip", v.from_clip);
@@ -959,6 +1246,8 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.speed);
     h.f32(v.time);
     h.u8(v.finished ? 1 : 0);
+    h.str(v.blend_clip);
+    h.f32(v.blend);
     h.f32(v.fade);
     h.f32(v.fade_time);
     h.str(v.from_clip);
@@ -978,6 +1267,7 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
     (void)v;
     if (path == "speed") { *out = &v.speed; return 1; }
     if (path == "time") { *out = &v.time; return 1; }
+    if (path == "blend") { *out = &v.blend; return 1; }
     if (path == "fade") { *out = &v.fade; return 1; }
     if (path == "fade_time") { *out = &v.fade_time; return 1; }
     if (path == "from_time") { *out = &v.from_time; return 1; }
@@ -2353,6 +2643,26 @@ constexpr std::array<FieldInfo, 6> kCameraFields = {{
     FieldInfo{"far", "f32", "Far clip distance."},
     FieldInfo{"active", "bool", "Whether this camera renders."},
 }};
+constexpr std::array<FieldInfo, 18> kCameraRigFields = {{
+    FieldInfo{"target", "string", "The entity followed, by name or path; empty leaves the camera alone."},
+    FieldInfo{"mode", "i32", "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning."},
+    FieldInfo{"distance", "f32", "Chase and orbit: how far from the pivot."},
+    FieldInfo{"height", "f32", "The pivot, the point it looks at, this high above the target's origin."},
+    FieldInfo{"pitch", "f32", "Chase and orbit: degrees the view looks down (negative) or up at the pivot."},
+    FieldInfo{"yaw", "f32", "Orbit: degrees about +y the view is turned, 0 looking along -z (from +z of the target). Chase: added to the target's heading (180 looks at its face)."},
+    FieldInfo{"offset", "vec3", "Offset: where it stands relative to the pivot, in the world."},
+    FieldInfo{"follow", "f32", "Seconds it takes to close most (63%) of the way to where it should stand; 0 sticks to it."},
+    FieldInfo{"turn", "f32", "Chase: seconds to swing most of the way behind a target that turned."},
+    FieldInfo{"collide", "bool", "Come in front of static and kinematic colliders between the pivot and where it would stand (not the target's own)."},
+    FieldInfo{"orbit_x", "string", "Orbit: an input action whose value turns the yaw (a stick, the mouse, two keys)."},
+    FieldInfo{"orbit_y", "string", "Orbit: an input action whose value tilts the pitch."},
+    FieldInfo{"orbit_speed", "f32", "Degrees a second an action value of 1 turns."},
+    FieldInfo{"pitch_min", "f32", "The lowest pitch the orbit actions reach."},
+    FieldInfo{"pitch_max", "f32", "The highest pitch the orbit actions reach."},
+    FieldInfo{"shake", "f32", "Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it."},
+    FieldInfo{"shake_decay", "f32", "How much trauma goes a second."},
+    FieldInfo{"heading", "f32", "Chase: the eased heading it stands behind, in degrees (written by the engine)."},
+}};
 constexpr std::array<FieldInfo, 7> kLightFields = {{
     FieldInfo{"kind", "i32", "0 directional, 1 point, 2 spot."},
     FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused."},
@@ -2449,13 +2759,33 @@ constexpr std::array<FieldInfo, 6> kTileMapFields = {{
     FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this."},
     FieldInfo{"visible", "bool", "Whether the map is drawn."},
 }};
-constexpr std::array<FieldInfo, 16> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 7> kAnimationGraphFields = {{
+    FieldInfo{"states", "list:AnimationState", "The states; the first is where it starts."},
+    FieldInfo{"transitions", "list:AnimationTransition", "The ways between states, tried in order every tick."},
+    FieldInfo{"params", "list:AnimationParam", "The parameters conditions and blend spaces read."},
+    FieldInfo{"state", "string", "The state it is in (written by the engine); set it to jump to a state at once. Empty starts in the first."},
+    FieldInfo{"state_time", "f32", "Seconds in the state (written by the engine)."},
+    FieldInfo{"error", "string", "What is wrong with the graph, if anything: a state or parameter that does not exist, a condition that does not read (written by the engine); a broken transition is never taken."},
+    FieldInfo{"enabled", "bool", "false leaves the Animator to scripts."},
+}};
+constexpr std::array<FieldInfo, 7> kTimelineFields = {{
+    FieldInfo{"path", "string", "The project's timeline file (JSON: tracks, events, duration)."},
+    FieldInfo{"time", "f32", "Seconds into it; advanced by the engine, writable to seek."},
+    FieldInfo{"playing", "bool", "Whether its time advances (and its tracks apply)."},
+    FieldInfo{"speed", "f32", "Rate of play; negative plays it backward."},
+    FieldInfo{"loop", "bool", "Start again at the end, else stop there and emit timeline.finished."},
+    FieldInfo{"finished", "bool", "Set when one that does not loop reached its end (written by the engine)."},
+    FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine)."},
+}};
+constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)."},
     FieldInfo{"playing", "bool", "Whether time advances."},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished)."},
     FieldInfo{"speed", "f32", "Playback rate multiplier."},
     FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek."},
     FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
+    FieldInfo{"blend_clip", "string", "A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none."},
+    FieldInfo{"blend", "f32", "0..1: how much of blend_clip shows over clip."},
     FieldInfo{"fade", "f32", "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running."},
     FieldInfo{"fade_time", "f32", "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed."},
     FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none."},
@@ -2732,13 +3062,14 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 35> kComponents = {{
+constexpr std::array<ComponentInfo, 38> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
     ComponentInfo{"Health", "Hit points. Gameplay decides what zero means; the engine only stores and reports it.", true, kHealthFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
+    ComponentInfo{"CameraRig", "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).", true, kCameraRigFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
     ComponentInfo{"ReflectionProbe", "The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},
     ComponentInfo{"Decal", "An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.", true, kDecalFields},
@@ -2748,6 +3079,8 @@ constexpr std::array<ComponentInfo, 35> kComponents = {{
     ComponentInfo{"Sprite", "A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z.", true, kSpriteFields},
     ComponentInfo{"SpriteAnimation", "Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends.", true, kSpriteAnimationFields},
     ComponentInfo{"TileMap", "Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-left corner: tile (x, y) occupies world x from x*tile_size to (x+1)*tile_size and y from -(y+1)*tile_size to -y*tile_size, so rows go down as in Tiled. Every visible tile layer is one static mesh drawn unlit through the sprite path (docs/design/tilemaps.md); tilemap.* commands answer what is where, tilemap.set / tilemap.fill edit the map for every entity drawing it and tilemap.save writes it back.", true, kTileMapFields},
+    ComponentInfo{"AnimationGraph", "A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters.", true, kAnimationGraphFields},
+    ComponentInfo{"Timeline", "Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end.", true, kTimelineFields},
     ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
     ComponentInfo{"IK", "Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.", true, kIKFields},
     ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},

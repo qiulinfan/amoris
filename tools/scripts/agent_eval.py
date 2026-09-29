@@ -27,7 +27,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/timelines.md", "docs/design/cameras.md", "docs/design/localization.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
 
 
 def near(a, b, tol=0.01):
@@ -587,6 +587,66 @@ def car_speed_check(env, answer):
     return True, f"top speed 35, power 14, driven to {answer:.2f}"
 
 
+RAFT_AT = (-33, -22)
+
+
+def raft_solve(env):
+    level = env.command("water.height", {"x": RAFT_AT[0], "z": RAFT_AT[1]})["height"]
+    # 2 by 0.2 by 1 is 0.4 cubic units: in water of density 2 it floats while lighter than 0.8.
+    env.command("world.spawn", {"name": "Raft", "components": {
+        "Transform": {"position": {"x": RAFT_AT[0], "y": level + 1, "z": RAFT_AT[1]}, "scale": {"x": 2, "y": 0.2, "z": 1}},
+        "MeshRenderer": {"mesh": "cube", "color": {"r": 0.6, "g": 0.4, "b": 0.2, "a": 1}},
+        "RigidBody": {"kind": 0, "mass": 0.3}, "Collider": {"shape": 0, "size": {"x": 1, "y": 0.1, "z": 0.5}}}})
+    env.command("step", {"ticks": 180})
+    p = env.command("world.get", {"entity": "Raft", "component": "Transform"})["position"]
+    return env.command("water.height", {"x": p["x"], "z": p["z"]})["height"]
+
+
+def raft_check(env, answer):
+    rid = env.command("world.find", {"path": "Raft"})
+    if not isinstance(rid, int):
+        return False, "no entity named Raft"
+    rb = env.command("world.get", {"entity": rid, "component": "RigidBody"}) or {}
+    col = env.command("world.get", {"entity": rid, "component": "Collider"}) or {}
+    if rb.get("kind") != 0:
+        return False, f"the Raft's RigidBody is {rb}"
+    size = col.get("size", {})
+    if col.get("shape") != 0 or not (near(size.get("x", 0), 1, 0.05) and near(size.get("y", 0), 0.1, 0.02) and near(size.get("z", 0), 0.5, 0.05)):
+        return False, f"the Raft's collider is {col}"
+    env.command("step", {"ticks": 120})
+    p = env.command("world.get", {"entity": rid, "component": "Transform"})["position"]
+    s = env.command("water.height", {"x": p["x"], "z": p["z"]})
+    if s.get("path") != "/Lake":
+        return False, f"the raft drifted off the lake to ({p['x']:.1f}, {p['z']:.1f})"
+    if abs(p["y"] - s["height"]) > 0.3:
+        return False, f"the raft's centre is at {p['y']:.2f}, the surface at {s['height']:.2f}"
+    if not isinstance(answer, (int, float)) or abs(answer - s["height"]) > 0.25:
+        return False, f"answered {answer!r}, the surface is at {s['height']:.2f}"
+    return True, f"the raft floats at {p['y']:.2f} on the surface at {s['height']:.2f}"
+
+
+def calm_lake_solve(env):
+    env.command("world.set", {"entity": "Lake", "component": "Water", "value": {"wave_height": 0, "clarity": 8}})
+    env.command("world.set", {"entity": "Lake", "component": "Transform", "value": {"position": {"x": 0, "y": 3.7, "z": 0}}})
+    env.command("step", {"ticks": 1})
+    return env.command("water.height", {"x": 0, "z": 0})["height"]
+
+
+def calm_lake_check(env, answer):
+    wa = env.command("world.get", {"entity": "Lake", "component": "Water"}) or {}
+    if wa.get("wave_height", 1) > 0.001:
+        return False, f"the lake's waves are {wa.get('wave_height')} high"
+    if not near(wa.get("clarity", 0), 8, 0.05):
+        return False, f"clarity {wa.get('clarity')}"
+    t = env.command("world.get", {"entity": "Lake", "component": "Transform"})["position"]
+    if not near(t["y"], 3.7, 0.01) or not near(t["x"], 0, 0.01) or not near(t["z"], 0, 0.01):
+        return False, f"the lake stands at {t}"
+    h = env.command("water.height", {"x": 0, "z": 0})["height"]
+    if not isinstance(answer, (int, float)) or abs(answer - h) > 0.01:
+        return False, f"answered {answer!r}, the surface is at {h:.3f}"
+    return True, f"a still, clear lake at {h:.2f}"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -628,6 +688,10 @@ TASKS = [
      "task": "Make the car named Car faster: set its Vehicle's top_speed to 35 and power to 14, then drive it with the throttle action held for 300 ticks (5 seconds of game time) and answer with the car's speed at the end as the number \"answer\" (the game's script sets the car's throttle from the throttle action every tick)."},
     {"name": "walker_sprint", "project": "walker", "ticks": 0, "script": True, "solve": walker_sprint_solve, "check": walker_sprint_check,
      "task": "Give the walker a sprint: add an input action named sprint bound to the left Shift key (LShift) in project.toml, and edit scripts/main.ts so that while sprint is held the player walks at 9 units per second instead of 5 (and at 5 otherwise)."},
+    {"name": "raft", "project": "hills", "ticks": 2, "solve": raft_solve, "check": raft_check,
+     "task": "Float a raft on the lake: spawn an entity named Raft, a dynamic rigid body with a box collider 2 units long (x), 0.2 thick (y) and 1 wide (z), drawn as a brown box of that size, and drop it into the lake from a little above the water at x -33, z -22. It must float: run the game for 180 ticks and check that the raft's centre stays within 0.3 of the water's surface. Answer with the height of the water's surface under the raft after those ticks as the number \"answer\"."},
+    {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
+     "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
 ]
 
 

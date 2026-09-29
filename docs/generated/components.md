@@ -61,6 +61,31 @@ The renderer uses the first active camera. Perspective by default; orthographic 
 | `far` | f32 | 1000.0 | Far clip distance. |
 | `active` | bool | true | Whether this camera renders. |
 
+## CameraRig
+
+Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `target` | string | "" | The entity followed, by name or path; empty leaves the camera alone. |
+| `mode` | i32 | 0 | 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. |
+| `distance` | f32 | 6.0 | Chase and orbit: how far from the pivot. |
+| `height` | f32 | 1.0 | The pivot, the point it looks at, this high above the target's origin. |
+| `pitch` | f32 | -20.0 | Chase and orbit: degrees the view looks down (negative) or up at the pivot. |
+| `yaw` | f32 | 0.0 | Orbit: degrees about +y the view is turned, 0 looking along -z (from +z of the target). Chase: added to the target's heading (180 looks at its face). |
+| `offset` | vec3 | [0.0, 10.0, 8.0] | Offset: where it stands relative to the pivot, in the world. |
+| `follow` | f32 | 0.15 | Seconds it takes to close most (63%) of the way to where it should stand; 0 sticks to it. |
+| `turn` | f32 | 0.4 | Chase: seconds to swing most of the way behind a target that turned. |
+| `collide` | bool | true | Come in front of static and kinematic colliders between the pivot and where it would stand (not the target's own). |
+| `orbit_x` | string | "" | Orbit: an input action whose value turns the yaw (a stick, the mouse, two keys). |
+| `orbit_y` | string | "" | Orbit: an input action whose value tilts the pitch. |
+| `orbit_speed` | f32 | 120.0 | Degrees a second an action value of 1 turns. |
+| `pitch_min` | f32 | -80.0 | The lowest pitch the orbit actions reach. |
+| `pitch_max` | f32 | 30.0 | The highest pitch the orbit actions reach. |
+| `shake` | f32 | 0.0 | Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it. |
+| `shake_decay` | f32 | 1.5 | How much trauma goes a second. |
+| `heading` | f32 | 0.0 | Chase: the eased heading it stands behind, in degrees (written by the engine). |
+
 ## Light
 
 A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).
@@ -202,6 +227,34 @@ Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-
 | `order` | i32 | -10 | Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this. |
 | `visible` | bool | true | Whether the map is drawn. |
 
+## AnimationGraph
+
+A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `states` | list:AnimationState | [] | The states; the first is where it starts. |
+| `transitions` | list:AnimationTransition | [] | The ways between states, tried in order every tick. |
+| `params` | list:AnimationParam | [] | The parameters conditions and blend spaces read. |
+| `state` | string | "" | The state it is in (written by the engine); set it to jump to a state at once. Empty starts in the first. |
+| `state_time` | f32 | 0.0 | Seconds in the state (written by the engine). |
+| `error` | string | "" | What is wrong with the graph, if anything: a state or parameter that does not exist, a condition that does not read (written by the engine); a broken transition is never taken. |
+| `enabled` | bool | true | false leaves the Animator to scripts. |
+
+## Timeline
+
+Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `path` | string | "" | The project's timeline file (JSON: tracks, events, duration). |
+| `time` | f32 | 0.0 | Seconds into it; advanced by the engine, writable to seek. |
+| `playing` | bool | true | Whether its time advances (and its tracks apply). |
+| `speed` | f32 | 1.0 | Rate of play; negative plays it backward. |
+| `loop` | bool | false | Start again at the end, else stop there and emit timeline.finished. |
+| `finished` | bool | false | Set when one that does not loop reached its end (written by the engine). |
+| `error` | string | "" | What is wrong: the file, or the first track that cannot apply (written by the engine). |
+
 ## Animator
 
 Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.
@@ -214,6 +267,8 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `speed` | f32 | 1.0 | Playback rate multiplier. |
 | `time` | f32 | 0.0 | Seconds into the clip; advanced by the engine, writable to seek. |
 | `finished` | bool | false | Set when a non-looping clip reached its end; cleared by play. |
+| `blend_clip` | string | "" | A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none. |
+| `blend` | f32 | 0.0 | 0..1: how much of blend_clip shows over clip. |
 | `fade` | f32 | 0.0 | Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running. |
 | `fade_time` | f32 | 0.0 | Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed. |
 | `from_clip` | string | "" | The clip fading out (keeps playing at its own time until the fade ends); empty when none. |
@@ -638,4 +693,39 @@ One clip layered over an Animator's base clip (docs/design/animation.md): sample
 | `loop` | bool | true | Wrap at the end (else stop on the last frame and emit animation.finished with the layer index). |
 | `speed` | f32 | 1.0 | Playback rate multiplier. |
 | `time` | f32 | 0.0 | Seconds into the clip; advanced by the engine, writable to seek. |
+
+## AnimationState
+
+One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | "" | What transitions and AnimationGraph.state call it. |
+| `clip` | string | "" | The clip it plays (when blend is empty). |
+| `blend` | string | "" | A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). |
+| `clips` | string | "" | With blend: clips and the parameter's values where each plays alone, comma separated ("idle 0, walk 2, run 6"). |
+| `speed` | f32 | 1.0 | Playback rate in this state. |
+| `loop` | bool | true | Wrap at the clip's end (else hold its last frame). |
+
+## AnimationTransition
+
+A way out of a state in an AnimationGraph: taken, the first of those that hold in list order, when its condition holds and enough of the state has played.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `from` | string | "*" | The state it leaves; * any state (but not the one it goes to). |
+| `to` | string | "" | The state it goes to. |
+| `when` | string | "" | A condition on the parameters: comparisons (speed > 0.1, grounded == 1), and, or, not and parentheses; a bare name is true when it is not 0; empty is always true. A trigger it reads is reset when it is taken. |
+| `after` | f32 | 0.0 | How much of the state's clip must have played first, 0..1 (1: to its end, as a one-shot finishes). |
+| `fade` | f32 | 0.2 | Seconds of cross-fade into the new state. |
+
+## AnimationParam
+
+A value an AnimationGraph's conditions and blend spaces read, set by scripts (animation.param, animation.trigger).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | "" | What conditions call it. |
+| `value` | f32 | 0.0 | The value (a flag is 0 or 1). |
+| `trigger` | bool | false | A trigger: set to 1 by animation.trigger, back to 0 when a transition that reads it is taken. |
 

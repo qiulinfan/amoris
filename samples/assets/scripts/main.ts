@@ -1,7 +1,8 @@
 // Meshes and textures from the project's assets folder: a glTF crate with two baked nodes and a
 // checker texture, a pyramid from a .gltf with an embedded buffer, a skinned arm waving through
 // its glTF animation, a textured ground, and a deliberately missing asset (drawn as a magenta
-// cube, reported in render.stats).
+// cube, reported in render.stats), and an arm whose AnimationGraph the script drives: its speed
+// swells and falls (idle, then a blend from wave to walk) and every five seconds it hops.
 import { animation, command, expose, log, onStart, onTick, world } from "pocket";
 
 interface AssetFile { path: string; kind: string; bytes: number; loaded: boolean }
@@ -22,6 +23,12 @@ onStart(() => {
 let armClip = "wave";
 
 onTick((t) => {
+    // The Stepper's state machine reads two parameters: a speed that rises and falls, and a jump.
+    const stepper = world.find("Stepper");
+    if (stepper !== undefined) {
+        animation.param(stepper, "speed", Math.max(0, 1.2 * Math.sin(t.tick / 90) + 0.6));
+        if (t.tick > 0 && t.tick % 300 === 0) animation.trigger(stepper, "jump");
+    }
     yaw += t.dt * 0.6;
     if (crate) world.set(crate, "Transform", { rotation: { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } });
     // Every four seconds the arm cross-fades between its two clips over half a second.
@@ -67,3 +74,4 @@ expose("turner.yaw", () => {
 });
 expose("pulse.bulge", () => { const p = world.find("Pulse"); return p === undefined ? 0 : Number((animation.pose(p).weights?.[0]?.weight ?? 0).toFixed(3)); });
 expose("missing", () => (command<{ assets?: { missing?: string[] } }>("render.stats").assets?.missing ?? []).length);
+expose("stepper.state", () => animation.state(world.find("Stepper") ?? 0));

@@ -44,6 +44,9 @@ export type { SpriteClip, PlayClipOptions } from "./sprites";
 export { audio } from "./audio";
 export { terrain } from "./terrain";
 export { water } from "./water";
+export { timeline } from "./timeline";
+export { camera } from "./camera";
+export { i18n, t } from "./i18n";
 export { net } from "./net";
 export { input } from "./input";
 export { tween, ease } from "./tween";
@@ -52,10 +55,13 @@ export { timer, time, wait, nextTick, lastTick } from "./timer";
 export type { TimerHandle } from "./timer";
 export type { ActionState, Binding } from "./input";
 import { setActionSnapshot } from "./input";
+import { setTickLocale } from "./i18n";
 import type { ActionState as ActionStateT } from "./input";
 export type { PlayOptions, Voice, Bus, BusSettings } from "./audio";
 export type { TerrainInfo, Ground, SculptOptions } from "./terrain";
 export type { Surface } from "./water";
+export type { TimelineDoc, TimelineInfo, TimelineKey } from "./timeline";
+export type { RigOptions } from "./camera";
 export type { NetInfo } from "./net";
 export type { RayHit, Contact, JointState } from "./physics";
 import { dispatchContacts } from "./physics";
@@ -88,6 +94,10 @@ export interface Tick {
     actions?: Record<string, ActionStateT>;
     /** In a lockstep game, every player's action states, player 0 first (docs/design/networking.md). */
     players?: Array<Record<string, ActionStateT>>;
+    /** The game's language (docs/design/localization.md). */
+    locale?: string;
+    /** Changes when the language files may have changed. */
+    locale_rev?: number;
 }
 
 export interface InputEvent {
@@ -322,6 +332,7 @@ export function isActive(): boolean {
         }
         case "tick":
             setActionSnapshot((arg as Tick).actions, (arg as Tick).players);
+            setTickLocale((arg as Tick).locale, (arg as Tick).locale_rev);
             for (const h of selected(context)) for (const f of h.tick) f(arg as Tick);
             return undefined;
         case "frame":

@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <functional>
 #include <set>
 #include <unordered_map>
 #include <thread>
@@ -187,6 +188,25 @@ bool Session::finished() const {
 // editor's audio.json), gestures and the input map (and input.json), sprite clips, render and
 // physics settings. At start, and again when project.reload finds project.toml changed.
 void Session::apply_project_settings() {
+    // [locale] default = "en": the language the game starts in and falls back to.
+    {
+        std::string def;
+        if (project_.contains("locale") && project_["locale"].is_object()) def = project_["locale"].value("default", std::string());
+        if (def.empty()) {
+            def = "en";
+            std::error_code ec;
+            const auto dir = options_.project_dir / "locales";
+            if (!std::filesystem::exists(dir / "en.json", ec) && std::filesystem::is_directory(dir, ec)) {
+                std::vector<std::string> found;
+                for (const auto& f : std::filesystem::directory_iterator(dir, ec)) if (f.path().extension() == ".json") found.push_back(f.path().stem().string());
+                std::sort(found.begin(), found.end());
+                if (!found.empty()) def = found.front();
+            }
+        }
+        if (locale_.empty() || locale_ == locale_default_) locale_ = def;
+        locale_default_ = def;
+        ++locale_rev_;
+    }
     // [audio.reverb] room = 0.5, damping, mix: the project's room.
     if (project_.contains("audio") && project_["audio"].is_object() && project_["audio"].contains("reverb") && project_["audio"]["reverb"].is_object()) {
         const Json& rj = project_["audio"]["reverb"];
@@ -510,6 +530,7 @@ Status Session::start() {
     world_ = std::make_unique<world::World>();
     physics_ = std::make_unique<physics::Physics>();
     physics2d_ = std::make_unique<physics::Physics2D>();
+    timelines_ = std::make_unique<Timelines>(options_.project_dir);
     assets_ = std::make_unique<assets::AssetStore>(options_.project_dir);
     // [assets] blender = "/path/to/blender": where Blender is for the formats it imports.
     if (project_.contains("assets") && project_["assets"].is_object() && project_["assets"].contains("blender") && project_["assets"]["blender"].is_string()) assets_->set_blender(project_["assets"]["blender"].get<std::string>());
@@ -658,6 +679,8 @@ void Session::run_tick() {
     t["dt"] = clock_.tick_seconds;
     t["time"] = clock_.sim_seconds();
     if (input_map_.size() > 0) t["actions"] = input_map_.snapshot();
+    t["locale"] = locale_;
+    t["locale_rev"] = locale_rev_;
     if (net_) {
         Json players = Json::array({input_map_.snapshot()});
         for (const InputMap& m : player_maps_) players.push_back(m.snapshot());
@@ -672,6 +695,7 @@ void Session::run_tick() {
     in_tick_ = false;
     sw = Stopwatch{};
     update_terrains();
+    timelines_->step(*world_, static_cast<float>(clock_.tick_seconds));   // before physics: a moved platform is where the bodies meet it (docs/design/timelines.md)
     physics_->step(*world_, clock_.tick_seconds);
     physics_->move_characters(*world_, clock_.tick_seconds);   // after the bodies: platforms have moved (docs/design/physics.md, Characters)
     if (!physics_->contacts().empty()) {
@@ -690,6 +714,7 @@ void Session::run_tick() {
     }
     if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
     nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
+    update_camera_rigs(static_cast<float>(clock_.tick_seconds));   // after everything that moves what they follow
     perf_physics_.add(sw.ms());
     sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
@@ -994,6 +1019,225 @@ Result<Json> Session::net_command(std::string_view op, const Json& p) {
         return j;
     }
     return fail("unknown_command", "unknown net command '{}'", op);
+}
+
+// Localization (docs/design/localization.md): the project's words, one file per language in
+// locales/ (nested objects flattened to dotted keys); the language scripts' `t` reads.
+Result<Json> Session::locale_command(std::string_view op, const Json& p) {
+    const std::filesystem::path dir = options_.project_dir / "locales";
+    auto languages = [&]() {
+        std::vector<std::string> out;
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec))
+            for (const auto& f : std::filesystem::directory_iterator(dir, ec)) if (f.path().extension() == ".json") out.push_back(f.path().stem().string());
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    auto load = [&](const std::string& lang) -> Result<std::map<std::string, std::string>> {
+        const std::filesystem::path file = dir / (lang + ".json");
+        if (lang.empty() || lang.find('/') != std::string::npos || lang.find("..") != std::string::npos || !std::filesystem::exists(file)) {
+            std::string have;
+            for (const auto& l : languages()) have += (have.empty() ? "" : ", ") + l;
+            return fail("no_locale", "no locales/{}.json (the project has: {})", lang, have.empty() ? "none" : have);
+        }
+        POCKET_TRY(text, fs::read_text(file));
+        Json doc = Json::parse(text, nullptr, false);
+        if (doc.is_discarded() || !doc.is_object()) return fail("bad_locale", "locales/{}.json is not a JSON object of texts", lang);
+        std::map<std::string, std::string> out;
+        std::string bad;
+        std::function<void(const Json&, const std::string&)> walk = [&](const Json& j, const std::string& prefix) {
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                const std::string key = prefix.empty() ? it.key() : prefix + "." + it.key();
+                if (it->is_object()) walk(*it, key);
+                else if (it->is_string()) out[key] = it->get<std::string>();
+                else if (bad.empty()) bad = key;
+            }
+        };
+        walk(doc, "");
+        if (!bad.empty()) return fail("bad_locale", "locales/{}.json: '{}' is not a text (texts are strings, groups are objects)", lang, bad);
+        return out;
+    };
+    auto list = [](const std::vector<std::string>& v) { Json a = Json::array(); for (const auto& s : v) a.push_back(s); return a; };
+    if (op == "get") return Json{{"lang", locale_}, {"default", locale_default_}, {"languages", list(languages())}};
+    if (op == "set") {
+        if (!p.contains("lang")) return fail("bad_args", "locale.set needs a 'lang'");
+        const std::string lang = opt<std::string>(p, "lang", "");
+        POCKET_TRY(table, load(lang));
+        locale_ = lang;
+        world_->events().emit(world_->tick_index(), "locale.changed", 0, Json{{"lang", lang}});
+        return Json{{"lang", lang}, {"keys", table.size()}, {"languages", list(languages())}};
+    }
+    if (op == "table") {
+        const std::string lang = p.contains("lang") ? opt<std::string>(p, "lang", "") : locale_;
+        POCKET_TRY(table, load(lang));
+        Json strings = Json::object();
+        for (const auto& [k, v] : table) strings[k] = v;
+        return Json{{"lang", lang}, {"keys", table.size()}, {"strings", strings}};
+    }
+    if (op == "check") {
+        // Every language against the base: keys it lacks, keys only it has, and texts whose
+        // placeholders ({name}) differ from the base's.
+        const std::string base = p.contains("base") ? opt<std::string>(p, "base", "") : locale_default_;
+        POCKET_TRY(ref, load(base));
+        auto names = [](const std::string& text) {
+            std::set<std::string> out;
+            for (std::size_t i = text.find('{'); i != std::string::npos; i = text.find('{', i + 1)) {
+                std::size_t j = i + 1;
+                while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
+                if (j > i + 1 && j < text.size() && (text[j] == '}' || text[j] == ',')) out.insert(text.substr(i + 1, j - i - 1));
+            }
+            return out;
+        };
+        Json result = Json::object();
+        bool complete = true;
+        for (const std::string& lang : languages()) {
+            if (lang == base) continue;
+            auto table = load(lang);
+            if (!table) { result[lang] = Json{{"error", table.error().message}}; complete = false; continue; }
+            Json missing = Json::array(), extra = Json::array(), placeholders = Json::array();
+            for (const auto& [k, v] : ref) {
+                auto it = table->find(k);
+                if (it == table->end()) missing.push_back(k);
+                else if (names(it->second) != names(v)) placeholders.push_back(k);
+            }
+            for (const auto& [k, v] : *table) if (!ref.contains(k)) extra.push_back(k);
+            if (!missing.empty() || !placeholders.empty()) complete = false;
+            result[lang] = Json{{"keys", table->size()}, {"missing", missing}, {"extra", extra}, {"placeholders", placeholders}};
+        }
+        return Json{{"base", base}, {"keys", ref.size()}, {"languages", result}, {"complete", complete}};
+    }
+    return fail("unknown_command", "locale.{} is not a command (get, set, table, check)", op);
+}
+
+// Camera rigs (docs/design/cameras.md): each camera with a CameraRig is moved with its target after
+// the bodies, the characters and the agents moved: to where its mode puts it, eased there, in
+// front of walls between it and the pivot, looking at the pivot, shaken by its trauma.
+void Session::update_camera_rigs(float dt) {
+    std::vector<world::EntityId> ids;
+    world_->ecs().each([&](flecs::entity e, const world::CameraRig&, const world::Transform&) { ids.push_back(e.id()); });
+    std::sort(ids.begin(), ids.end());
+    for (auto it = rig_base_.begin(); it != rig_base_.end();) it = std::binary_search(ids.begin(), ids.end(), it->first) ? std::next(it) : rig_base_.erase(it);
+    if (ids.empty()) return;
+    constexpr float kDeg = std::numbers::pi_v<float> / 180.0f;
+    Json actions;
+    auto action = [&](const std::string& name) {
+        if (name.empty()) return 0.0f;
+        if (actions.is_null()) actions = input_map_.snapshot();
+        return actions.contains(name) ? actions[name].value("value", 0.0f) : 0.0f;
+    };
+    const auto time = static_cast<float>(world_->seconds());
+    for (world::EntityId id : ids) {
+        flecs::entity e = world_->ecs().entity(id);
+        world::CameraRig rig = e.get<world::CameraRig>();
+        world::Transform tr = e.get<world::Transform>();
+        const world::EntityId target = rig.target.empty() ? 0 : world_->find(rig.target);
+        if (!target || target == id) continue;
+        // Where the target is now: its Transform for a root (already moved this tick), else the
+        // world transform of the tick before.
+        Vec3 at;
+        Quat turned;
+        if (world_->parent(target) == 0) {
+            const auto* t = world_->try_get<world::Transform>(target);
+            if (!t) continue;
+            at = t->position;
+            turned = t->rotation;
+        } else {
+            const auto* t = world_->try_get<world::WorldTransform>(target);
+            if (!t) continue;
+            at = t->position;
+            turned = t->rotation;
+        }
+        const Vec3 pivot = at + Vec3{0, rig.height, 0};
+        const bool fresh = !rig_base_.contains(id);
+        auto ease = [&](float seconds) { return seconds > 0 ? 1.0f - std::exp(-dt / seconds) : 1.0f; };
+        Vec3 want;
+        if (rig.mode == 2) {
+            want = pivot + rig.offset;
+        } else {
+            float yaw = rig.yaw;
+            if (rig.mode == 0) {
+                const Vec3 f = turned.rotate(Vec3{0, 0, -1});
+                const float heading = std::atan2(-f.x, -f.z) / kDeg;
+                float gap = std::fmod(heading - rig.heading + 540.0f, 360.0f) - 180.0f;
+                rig.heading = fresh ? heading : rig.heading + gap * ease(rig.turn);
+                rig.heading = std::fmod(rig.heading + 540.0f, 360.0f) - 180.0f;
+                yaw = rig.heading + rig.yaw;
+            } else {
+                // Orbit: the actions turn it, the pitch within its limits.
+                rig.yaw += action(rig.orbit_x) * rig.orbit_speed * dt;
+                rig.yaw = std::fmod(rig.yaw + 540.0f, 360.0f) - 180.0f;
+                rig.pitch = std::clamp(rig.pitch + action(rig.orbit_y) * rig.orbit_speed * dt, std::min(rig.pitch_min, rig.pitch_max), std::max(rig.pitch_min, rig.pitch_max));
+                yaw = rig.yaw;
+            }
+            const float y = yaw * kDeg, p = rig.pitch * kDeg;
+            const Vec3 look{-std::sin(y) * std::cos(p), std::sin(p), -std::cos(y) * std::cos(p)};
+            want = pivot - look * std::max(rig.distance, 0.0f);
+        }
+        const Vec3 base = fresh ? want : rig_base_[id];
+        Vec3 pos = base + (want - base) * ease(rig.follow);
+        // In front of what stands between it and the pivot.
+        if (rig.collide) {
+            const Vec3 d = pos - pivot;
+            const float len = length(d);
+            if (len > 0.3f) {
+                auto hit = physics_->raycast(*world_, pivot, d * (1.0f / len), len, [&](world::EntityId other, const world::RigidBody& rb, const world::Collider& col) {
+                    return other != target && other != id && !col.is_trigger && rb.kind != 0 && world_->parent(other) != target;
+                });
+                if (hit) pos = pivot + d * (std::max(hit->distance - 0.2f, 0.2f) / len);
+            }
+        }
+        rig_base_[id] = pos;
+        // Looking at the pivot, trembling by the trauma's square.
+        const Vec3 to = pivot - pos;
+        float yaw = std::atan2(-to.x, -to.z), pitch = std::atan2(to.y, std::sqrt(to.x * to.x + to.z * to.z)), roll = 0;
+        const float s = std::clamp(rig.shake, 0.0f, 1.0f);
+        if (s > 0) {
+            const float k = s * s;
+            auto wave = [&](float a, float b, float c) { return 0.6f * std::sin(time * a + c) + 0.4f * std::sin(time * b + 2.0f * c); };
+            yaw += k * 4.0f * kDeg * wave(37.1f, 23.3f, 0.3f);
+            pitch += k * 4.0f * kDeg * wave(31.7f, 19.9f, 1.7f);
+            roll += k * 2.0f * kDeg * wave(29.3f, 41.1f, 2.9f);
+            pos += Vec3{wave(33.3f, 21.7f, 4.1f), wave(27.9f, 17.3f, 5.3f), wave(35.9f, 25.1f, 6.7f)} * (k * 0.15f);
+            rig.shake = std::max(0.0f, s - std::max(rig.shake_decay, 0.0f) * dt);
+        }
+        tr.position = pos;
+        tr.rotation = Quat::from_euler(Vec3{pitch, yaw, roll});
+        e.set<world::Transform>(tr);
+        e.set<world::CameraRig>(rig);
+    }
+}
+
+// Timelines (docs/design/timelines.md): play one on an entity, stop it, or read a file and what
+// in this world it would move.
+Result<Json> Session::timeline_command(std::string_view op, const Json& p) {
+    auto& w = *world_;
+    if (op == "info") {
+        if (!p.contains("path")) return fail("bad_args", "timeline.info needs a 'path'");
+        world::EntityId self = p.contains("entity") ? resolve_entity(p["entity"]) : 0;
+        return timelines_->info(w, opt<std::string>(p, "path", ""), self);
+    }
+    if (op != "play" && op != "stop") return fail("unknown_command", "timeline.{} is not a command (play, stop, info)", op);
+    if (!p.contains("entity")) return fail("bad_args", "timeline.{} needs an 'entity'", op);
+    const world::EntityId id = resolve_entity(p["entity"]);
+    if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+    world::Timeline t = w.try_get<world::Timeline>(id) ? *w.try_get<world::Timeline>(id) : world::Timeline{};
+    if (op == "stop") {
+        t.playing = false;
+    } else {
+        if (p.contains("path")) t.path = opt<std::string>(p, "path", "");
+        if (t.path.empty()) return fail("bad_args", "timeline.play needs a 'path' (the entity has no Timeline yet)");
+        POCKET_TRY(info, timelines_->info(w, t.path, id));
+        t.time = opt<float>(p, "time", 0.0f);
+        t.speed = opt<float>(p, "speed", t.speed);
+        t.loop = opt<bool>(p, "loop", t.loop);
+        t.playing = true;
+        t.finished = false;
+        t.error.clear();
+        w.ecs().entity(id).set<world::Timeline>(t);
+        return Json{{"entity", id}, {"path", t.path}, {"duration", info["duration"]}, {"problems", info["problems"]}};
+    }
+    w.ecs().entity(id).set<world::Timeline>(t);
+    return Json{{"entity", id}, {"time", t.time}};
 }
 
 // Water (docs/design/water.md): the surface anywhere, moved by the same waves the renderer draws
@@ -2116,6 +2360,33 @@ Result<Json> Session::animation_command(std::string_view op, const Json& p) {
         Json targets = Json::array();
         for (const auto& t : mesh->morph_targets) targets.push_back(t.name);
         return Json{{"mesh", mesh->path}, {"clips", clips}, {"skins", skins}, {"skinned", mesh->skinned()}, {"targets", targets}};
+    }
+    if (op == "param" || op == "trigger") {
+        // A parameter of the entity's AnimationGraph (docs/design/animation.md, State machines).
+        if (!p.contains("entity") || !p.contains("name")) return fail("bad_args", "animation.{} needs 'entity' and 'name'", op);
+        if (op == "param" && !p.contains("value")) return fail("bad_args", "animation.param needs a 'value'");
+        world::EntityId id = resolve_entity(p["entity"]);
+        if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
+        const auto* current = w.try_get<world::AnimationGraph>(id);
+        if (!current) return fail("no_graph", "{} has no AnimationGraph", w.path(id));
+        world::AnimationGraph g = *current;
+        const std::string name = opt<std::string>(p, "name", "");
+        auto it = std::find_if(g.params.begin(), g.params.end(), [&](const world::AnimationParam& a) { return a.name == name; });
+        if (it == g.params.end()) {
+            std::string names;
+            for (const auto& a : g.params) names += (names.empty() ? "" : ", ") + a.name;
+            return fail("no_param", "{} has no parameter '{}' (it has: {})", w.path(id), name, names.empty() ? "none" : names);
+        }
+        if (op == "trigger") {
+            it->value = 1;
+            it->trigger = true;
+        } else {
+            it->value = opt<float>(p, "value", 0.0f);
+        }
+        w.ecs().entity(id).set<world::AnimationGraph>(g);
+        Json params = Json::object();
+        for (const auto& a : g.params) params[a.name] = a.value;
+        return Json{{"entity", id}, {"state", g.state}, {"params", params}};
     }
     if (op == "play" || op == "stop" || op == "pose" || op == "layer") {
         if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
@@ -3594,6 +3865,7 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
             project_ = std::move(fresh);
             apply_project_settings();
         }
+        timelines_->forget();
         j["settings"] = settings;
         if (scripts) {
             dispatch("unload", "project", "project");
@@ -3635,6 +3907,7 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         std::string text = p.contains("text") && p["text"].is_string() ? p["text"].get<std::string>() : (p.contains("json") ? p["json"].dump(2) + "\n" : "");
         std::filesystem::create_directories(full.parent_path());
         POCKET_TRY_VOID(fs::write_text(full, text));
+        if (opt<std::string>(p, "path", "").starts_with("locales/")) ++locale_rev_;   // scripts read the language files again
         return Json{{"path", full.string()}, {"bytes", text.size()}};
     }
     if (op == "read") {
@@ -4446,6 +4719,8 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("tilemap.")) return tilemap_command(name.substr(8), p);
     if (name.starts_with("terrain.")) return terrain_command(name.substr(8), p);
     if (name.starts_with("water.")) return water_command(name.substr(6), p);
+    if (name.starts_with("timeline.")) return timeline_command(name.substr(9), p);
+    if (name.starts_with("locale.")) return locale_command(name.substr(7), p);
     if (name.starts_with("net.")) return net_command(name.substr(4), p);
     if (name == "scatter.copies") {
         // Where a Scatter's copies stand (docs/design/terrain.md, Scattering): their points, sizes and shades.
@@ -4593,7 +4868,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "timeline.play", "timeline.stop", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

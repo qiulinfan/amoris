@@ -2,7 +2,9 @@
 // cascaded shadows, volumetric fog the colonnade cuts into shafts, a reflecting pool (screen-space
 // reflections), lanterns (clustered point lights, the nearest casting shadows), a spot on the
 // crates in a pavilion whose polished floor a reflection probe keeps from mirroring the sky, AgX,
-// bloom, ambient occlusion and TAA. The camera circles slowly; the orb bobs over the pool.
+// bloom, ambient occlusion and TAA. The camera circles slowly; the orb bobs over the pool; a
+// timeline (timelines/dusk.json, on the Dusk entity) sinks and reddens the sun and brings up the
+// pavilion lamp over 24 seconds, then back.
 //
 // Open it in the editor (`pocket editor showcase`) or run it (`pocket run showcase`).
 import { expose, onStart, onTick, world } from "pocket";

@@ -60,6 +60,30 @@ fields = [
 ]
 
 [[component]]
+name = "CameraRig"
+doc = "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's)."
+fields = [
+    { name = "target", type = "string", default = "", doc = "The entity followed, by name or path; empty leaves the camera alone." },
+    { name = "mode", type = "i32", default = 0, doc = "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning." },
+    { name = "distance", type = "f32", default = 6.0, doc = "Chase and orbit: how far from the pivot." },
+    { name = "height", type = "f32", default = 1.0, doc = "The pivot, the point it looks at, this high above the target's origin." },
+    { name = "pitch", type = "f32", default = -20.0, doc = "Chase and orbit: degrees the view looks down (negative) or up at the pivot." },
+    { name = "yaw", type = "f32", default = 0.0, doc = "Orbit: degrees about +y the view is turned, 0 looking along -z (from +z of the target). Chase: added to the target's heading (180 looks at its face)." },
+    { name = "offset", type = "vec3", default = [0.0, 10.0, 8.0], doc = "Offset: where it stands relative to the pivot, in the world." },
+    { name = "follow", type = "f32", default = 0.15, doc = "Seconds it takes to close most (63%) of the way to where it should stand; 0 sticks to it." },
+    { name = "turn", type = "f32", default = 0.4, doc = "Chase: seconds to swing most of the way behind a target that turned." },
+    { name = "collide", type = "bool", default = true, doc = "Come in front of static and kinematic colliders between the pivot and where it would stand (not the target's own)." },
+    { name = "orbit_x", type = "string", default = "", doc = "Orbit: an input action whose value turns the yaw (a stick, the mouse, two keys)." },
+    { name = "orbit_y", type = "string", default = "", doc = "Orbit: an input action whose value tilts the pitch." },
+    { name = "orbit_speed", type = "f32", default = 120.0, doc = "Degrees a second an action value of 1 turns." },
+    { name = "pitch_min", type = "f32", default = -80.0, doc = "The lowest pitch the orbit actions reach." },
+    { name = "pitch_max", type = "f32", default = 30.0, doc = "The highest pitch the orbit actions reach." },
+    { name = "shake", type = "f32", default = 0.0, doc = "Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it." },
+    { name = "shake_decay", type = "f32", default = 1.5, doc = "How much trauma goes a second." },
+    { name = "heading", type = "f32", default = 0.0, doc = "Chase: the eased heading it stands behind, in degrees (written by the engine)." },
+]
+
+[[component]]
 name = "Light"
 doc = "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights)."
 fields = [
@@ -238,6 +262,64 @@ fields = [
     { name = "time", type = "f32", default = 0.0, doc = "Seconds into the clip; advanced by the engine, writable to seek." },
 ]
 
+[[record]]
+name = "AnimationState"
+doc = "One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter."
+fields = [
+    { name = "name", type = "string", default = "", doc = "What transitions and AnimationGraph.state call it." },
+    { name = "clip", type = "string", default = "", doc = "The clip it plays (when blend is empty)." },
+    { name = "blend", type = "string", default = "", doc = "A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed)." },
+    { name = "clips", type = "string", default = "", doc = "With blend: clips and the parameter's values where each plays alone, comma separated (\"idle 0, walk 2, run 6\")." },
+    { name = "speed", type = "f32", default = 1.0, doc = "Playback rate in this state." },
+    { name = "loop", type = "bool", default = true, doc = "Wrap at the clip's end (else hold its last frame)." },
+]
+
+[[record]]
+name = "AnimationTransition"
+doc = "A way out of a state in an AnimationGraph: taken, the first of those that hold in list order, when its condition holds and enough of the state has played."
+fields = [
+    { name = "from", type = "string", default = "*", doc = "The state it leaves; * any state (but not the one it goes to)." },
+    { name = "to", type = "string", default = "", doc = "The state it goes to." },
+    { name = "when", type = "string", default = "", doc = "A condition on the parameters: comparisons (speed > 0.1, grounded == 1), and, or, not and parentheses; a bare name is true when it is not 0; empty is always true. A trigger it reads is reset when it is taken." },
+    { name = "after", type = "f32", default = 0.0, doc = "How much of the state's clip must have played first, 0..1 (1: to its end, as a one-shot finishes)." },
+    { name = "fade", type = "f32", default = 0.2, doc = "Seconds of cross-fade into the new state." },
+]
+
+[[record]]
+name = "AnimationParam"
+doc = "A value an AnimationGraph's conditions and blend spaces read, set by scripts (animation.param, animation.trigger)."
+fields = [
+    { name = "name", type = "string", default = "", doc = "What conditions call it." },
+    { name = "value", type = "f32", default = 0.0, doc = "The value (a flag is 0 or 1)." },
+    { name = "trigger", type = "bool", default = false, doc = "A trigger: set to 1 by animation.trigger, back to 0 when a transition that reads it is taken." },
+]
+
+[[component]]
+name = "AnimationGraph"
+doc = "A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters."
+fields = [
+    { name = "states", type = "list:AnimationState", doc = "The states; the first is where it starts." },
+    { name = "transitions", type = "list:AnimationTransition", doc = "The ways between states, tried in order every tick." },
+    { name = "params", type = "list:AnimationParam", doc = "The parameters conditions and blend spaces read." },
+    { name = "state", type = "string", default = "", doc = "The state it is in (written by the engine); set it to jump to a state at once. Empty starts in the first." },
+    { name = "state_time", type = "f32", default = 0.0, doc = "Seconds in the state (written by the engine)." },
+    { name = "error", type = "string", default = "", doc = "What is wrong with the graph, if anything: a state or parameter that does not exist, a condition that does not read (written by the engine); a broken transition is never taken." },
+    { name = "enabled", type = "bool", default = true, doc = "false leaves the Animator to scripts." },
+]
+
+[[component]]
+name = "Timeline"
+doc = "Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end."
+fields = [
+    { name = "path", type = "string", default = "", doc = "The project's timeline file (JSON: tracks, events, duration)." },
+    { name = "time", type = "f32", default = 0.0, doc = "Seconds into it; advanced by the engine, writable to seek." },
+    { name = "playing", type = "bool", default = true, doc = "Whether its time advances (and its tracks apply)." },
+    { name = "speed", type = "f32", default = 1.0, doc = "Rate of play; negative plays it backward." },
+    { name = "loop", type = "bool", default = false, doc = "Start again at the end, else stop there and emit timeline.finished." },
+    { name = "finished", type = "bool", default = false, doc = "Set when one that does not loop reached its end (written by the engine)." },
+    { name = "error", type = "string", default = "", doc = "What is wrong: the file, or the first track that cannot apply (written by the engine)." },
+]
+
 [[component]]
 name = "Animator"
 doc = "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly."
@@ -248,6 +330,8 @@ fields = [
     { name = "speed", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
     { name = "time", type = "f32", default = 0.0, doc = "Seconds into the clip; advanced by the engine, writable to seek." },
     { name = "finished", type = "bool", default = false, doc = "Set when a non-looping clip reached its end; cleared by play." },
+    { name = "blend_clip", type = "string", default = "", doc = "A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none." },
+    { name = "blend", type = "f32", default = 0.0, doc = "0..1: how much of blend_clip shows over clip." },
     { name = "fade", type = "f32", default = 0.0, doc = "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running." },
     { name = "fade_time", type = "f32", default = 0.0, doc = "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed." },
     { name = "from_clip", type = "string", default = "", doc = "The clip fading out (keeps playing at its own time until the fade ends); empty when none." },

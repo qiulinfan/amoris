@@ -1,20 +1,11 @@
 // A car on raycast wheels (the Vehicle component, docs/design/physics.md, Vehicles) over rolling
 // grassland (a Terrain with scattered tufts): W and S or the triggers drive, A and D or the stick
-// steer, Space or A brakes. Four gates wait in order; the camera chases the car.
+// steer, Space or A brakes. Four gates wait in order; the camera (a CameraRig) chases the car.
 import { events, expose, input, onStart, onTick, terrain, world } from "pocket";
 
 let car = 0;
-let camera = 0;
 let gates = 0;
 let seen = 0;
-let yaw = 0;
-
-// A rotation that turns -Z to the given yaw (radians about Y) and pitch (about X, down negative).
-function lookRotation(y: number, pitch: number) {
-    const h = y / 2, p = pitch / 2;
-    const cy = Math.cos(h), sy = Math.sin(h), cp = Math.cos(p), sp = Math.sin(p);
-    return { x: cy * sp, y: sy * cp, z: -sy * sp, w: cy * cp };
-}
 
 function heading(): number {
     const q = world.get(car, "Transform")!.rotation;
@@ -25,9 +16,7 @@ function heading(): number {
 
 onStart(() => {
     car = world.find("Car") ?? 0;
-    camera = world.find("Camera") ?? 0;
     seen = events.lastSeq();
-    if (car) yaw = heading();
     // Each gate stands on the ground, facing the way from the one before it.
     let from = { x: 0, z: 0 };
     for (let i = 1; world.find(`Gate${i}`); i++) {
@@ -52,18 +41,6 @@ onTick(({ dt }) => {
             gates++;
             events.emit("gate.passed", { gate: gates }, { subject: car });
         }
-    }
-    // The camera behind the car along its heading, easing round with it.
-    if (camera) {
-        const p = world.get(car, "Transform")!.position;
-        const h = heading();
-        let turn = h - yaw;
-        while (turn > Math.PI) turn -= 2 * Math.PI;
-        while (turn < -Math.PI) turn += 2 * Math.PI;
-        yaw += turn * Math.min(1, dt * 3);
-        const back = 11, up = 4.5;
-        const at = { x: p.x + Math.sin(yaw) * back, y: p.y + up, z: p.z + Math.cos(yaw) * back };
-        world.set(camera, "Transform", { position: at, rotation: lookRotation(yaw, -Math.atan2(up - 1, back)) });
     }
 });
 

@@ -5,6 +5,7 @@
 #include <pocket/app/gestures.hpp>
 #include <pocket/app/input_map.hpp>
 #include <pocket/app/net.hpp>
+#include <pocket/app/timeline.hpp>
 #include <pocket/app/runtime.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/audio/audio.hpp>
@@ -109,6 +110,15 @@ class Session {
     // it is committed for the tick `delay` ahead; a tick runs once every player's input is in, each
     // player's through their own input map (player 0's is input_map_).
     std::unique_ptr<Net> net_;
+    std::unique_ptr<Timelines> timelines_;
+    Result<Json> timeline_command(std::string_view op, const Json& p);
+    void update_camera_rigs(float dt);
+    std::map<world::EntityId, Vec3> rig_base_;   // each camera rig's place before its shake (docs/design/cameras.md)
+    // Localization (docs/design/localization.md): the language scripts' `t` uses, the project's
+    // default, and a count the scripts see change when the language files may have.
+    std::string locale_, locale_default_;
+    std::int64_t locale_rev_ = 0;
+    Result<Json> locale_command(std::string_view op, const Json& p);
     Json net_queue_ = Json::array();
     std::int64_t net_committed_ = -1;
     std::vector<InputMap> player_maps_;

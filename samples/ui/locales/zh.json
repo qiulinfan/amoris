@@ -1,0 +1,35 @@
+{
+  "hud": {
+    "score": "得分 {score}",
+    "health": "生命 {health}",
+    "coins": "{count, plural, =0 {还没有金币} other {# 枚金币}}",
+    "hint": "用按钮转动箱子，或用 WASD 行走。",
+    "key": "按键 {key}"
+  },
+  "controls": {
+    "spin_left": "向左转",
+    "spin_right": "向右转",
+    "score_up": "得分 +10",
+    "hurt": "受伤",
+    "heal": "治疗",
+    "pause": "暂停",
+    "resume": "继续"
+  },
+  "menu": {
+    "title": "已暂停",
+    "name": "你的名字",
+    "name_placeholder": "名字",
+    "volume": "音量",
+    "difficulty": "难度",
+    "easy": "简单",
+    "normal": "普通",
+    "hard": "困难",
+    "show_bar": "显示生命条",
+    "language": "语言",
+    "resume": "继续"
+  },
+  "language": {
+    "en": "English",
+    "zh": "中文"
+  }
+}

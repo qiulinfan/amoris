@@ -68,6 +68,46 @@ export interface AnimationLayer {
     time: number;
 }
 
+/** One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter. */
+export interface AnimationState {
+    /** What transitions and AnimationGraph.state call it. */
+    name: string;
+    /** The clip it plays (when blend is empty). */
+    clip: string;
+    /** A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). */
+    blend: string;
+    /** With blend: clips and the parameter's values where each plays alone, comma separated ("idle 0, walk 2, run 6"). */
+    clips: string;
+    /** Playback rate in this state. */
+    speed: number;
+    /** Wrap at the clip's end (else hold its last frame). */
+    loop: boolean;
+}
+
+/** A way out of a state in an AnimationGraph: taken, the first of those that hold in list order, when its condition holds and enough of the state has played. */
+export interface AnimationTransition {
+    /** The state it leaves; * any state (but not the one it goes to). */
+    from: string;
+    /** The state it goes to. */
+    to: string;
+    /** A condition on the parameters: comparisons (speed > 0.1, grounded == 1), and, or, not and parentheses; a bare name is true when it is not 0; empty is always true. A trigger it reads is reset when it is taken. */
+    when: string;
+    /** How much of the state's clip must have played first, 0..1 (1: to its end, as a one-shot finishes). */
+    after: number;
+    /** Seconds of cross-fade into the new state. */
+    fade: number;
+}
+
+/** A value an AnimationGraph's conditions and blend spaces read, set by scripts (animation.param, animation.trigger). */
+export interface AnimationParam {
+    /** What conditions call it. */
+    name: string;
+    /** The value (a flag is 0 or 1). */
+    value: number;
+    /** A trigger: set to 1 by animation.trigger, back to 0 when a transition that reads it is taken. */
+    trigger: boolean;
+}
+
 /** Position, rotation and scale relative to the parent entity (or the world when there is no parent). */
 export interface Transform {
     /** Local position in meters. */
@@ -124,6 +164,46 @@ export interface Camera {
     far: number;
     /** Whether this camera renders. */
     active: boolean;
+}
+
+/** Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's). */
+export interface CameraRig {
+    /** The entity followed, by name or path; empty leaves the camera alone. */
+    target: string;
+    /** 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. */
+    mode: number;
+    /** Chase and orbit: how far from the pivot. */
+    distance: number;
+    /** The pivot, the point it looks at, this high above the target's origin. */
+    height: number;
+    /** Chase and orbit: degrees the view looks down (negative) or up at the pivot. */
+    pitch: number;
+    /** Orbit: degrees about +y the view is turned, 0 looking along -z (from +z of the target). Chase: added to the target's heading (180 looks at its face). */
+    yaw: number;
+    /** Offset: where it stands relative to the pivot, in the world. */
+    offset: Vec3;
+    /** Seconds it takes to close most (63%) of the way to where it should stand; 0 sticks to it. */
+    follow: number;
+    /** Chase: seconds to swing most of the way behind a target that turned. */
+    turn: number;
+    /** Come in front of static and kinematic colliders between the pivot and where it would stand (not the target's own). */
+    collide: boolean;
+    /** Orbit: an input action whose value turns the yaw (a stick, the mouse, two keys). */
+    orbit_x: string;
+    /** Orbit: an input action whose value tilts the pitch. */
+    orbit_y: string;
+    /** Degrees a second an action value of 1 turns. */
+    orbit_speed: number;
+    /** The lowest pitch the orbit actions reach. */
+    pitch_min: number;
+    /** The highest pitch the orbit actions reach. */
+    pitch_max: number;
+    /** Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it. */
+    shake: number;
+    /** How much trauma goes a second. */
+    shake_decay: number;
+    /** Chase: the eased heading it stands behind, in degrees (written by the engine). */
+    heading: number;
 }
 
 /** A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights). */
@@ -318,6 +398,42 @@ export interface TileMap {
     visible: boolean;
 }
 
+/** A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters. */
+export interface AnimationGraph {
+    /** The states; the first is where it starts. */
+    states: AnimationState[];
+    /** The ways between states, tried in order every tick. */
+    transitions: AnimationTransition[];
+    /** The parameters conditions and blend spaces read. */
+    params: AnimationParam[];
+    /** The state it is in (written by the engine); set it to jump to a state at once. Empty starts in the first. */
+    state: string;
+    /** Seconds in the state (written by the engine). */
+    state_time: number;
+    /** What is wrong with the graph, if anything: a state or parameter that does not exist, a condition that does not read (written by the engine); a broken transition is never taken. */
+    error: string;
+    /** false leaves the Animator to scripts. */
+    enabled: boolean;
+}
+
+/** Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end. */
+export interface Timeline {
+    /** The project's timeline file (JSON: tracks, events, duration). */
+    path: string;
+    /** Seconds into it; advanced by the engine, writable to seek. */
+    time: number;
+    /** Whether its time advances (and its tracks apply). */
+    playing: boolean;
+    /** Rate of play; negative plays it backward. */
+    speed: number;
+    /** Start again at the end, else stop there and emit timeline.finished. */
+    loop: boolean;
+    /** Set when one that does not loop reached its end (written by the engine). */
+    finished: boolean;
+    /** What is wrong: the file, or the first track that cannot apply (written by the engine). */
+    error: string;
+}
+
 /** Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly. */
 export interface Animator {
     /** Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose). */
@@ -332,6 +448,10 @@ export interface Animator {
     time: number;
     /** Set when a non-looping clip reached its end; cleared by play. */
     finished: boolean;
+    /** A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none. */
+    blend_clip: string;
+    /** 0..1: how much of blend_clip shows over clip. */
+    blend: number;
     /** Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running. */
     fade: number;
     /** Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed. */
@@ -889,6 +1009,7 @@ export interface Components {
     Health: Health;
     Lifetime: Lifetime;
     Camera: Camera;
+    CameraRig: CameraRig;
     Light: Light;
     ReflectionProbe: ReflectionProbe;
     Decal: Decal;
@@ -898,6 +1019,8 @@ export interface Components {
     Sprite: Sprite;
     SpriteAnimation: SpriteAnimation;
     TileMap: TileMap;
+    AnimationGraph: AnimationGraph;
+    Timeline: Timeline;
     Animator: Animator;
     IK: IK;
     LookAt: LookAt;
@@ -922,7 +1045,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -932,6 +1055,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Health: { current: 100, max: 100 },
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
+    CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, angle: 60, order: 0, enabled: true },
@@ -941,7 +1065,9 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
+    AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
+    Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blend_clip: "", blend: 0, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false },
@@ -969,6 +1095,9 @@ export interface Records {
     IKLimit: IKLimit;
     Wheel: Wheel;
     AnimationLayer: AnimationLayer;
+    AnimationState: AnimationState;
+    AnimationTransition: AnimationTransition;
+    AnimationParam: AnimationParam;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
@@ -976,6 +1105,9 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     IKLimit: { joint: "", min_bend: 0, max_bend: 180, side: { x: 0, y: 0, z: 0 } },
     Wheel: { offset: { x: 0, y: 0, z: 0 }, radius: 0.35, rest: 0.3, steer: false, drive: false, visual: "", contact: false, compression: 0, spin: 0 },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
+    AnimationState: { name: "", clip: "", blend: "", clips: "", speed: 1, loop: true },
+    AnimationTransition: { from: "*", to: "", when: "", after: 0, fade: 0.2 },
+    AnimationParam: { name: "", value: 0, trigger: false },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

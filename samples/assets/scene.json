@@ -219,6 +219,82 @@
       }
     },
     {
+      "name": "Stepper",
+      "components": {
+        "Transform": {
+          "position": {
+            "x": -4.2,
+            "y": 0,
+            "z": 1.4
+          }
+        },
+        "MeshRenderer": {
+          "mesh": "assets/arm.glb",
+          "color": {
+            "r": 0.55,
+            "g": 0.8,
+            "b": 1.0,
+            "a": 1
+          }
+        },
+        "Animator": {},
+        "AnimationGraph": {
+          "states": [
+            {
+              "name": "idle",
+              "clip": "nod"
+            },
+            {
+              "name": "move",
+              "blend": "speed",
+              "clips": "wave 0, walk 2"
+            },
+            {
+              "name": "hop",
+              "clip": "turn",
+              "loop": false
+            }
+          ],
+          "transitions": [
+            {
+              "from": "idle",
+              "to": "move",
+              "when": "speed > 0.1",
+              "fade": 0.25
+            },
+            {
+              "from": "move",
+              "to": "idle",
+              "when": "speed <= 0.1",
+              "fade": 0.4
+            },
+            {
+              "from": "*",
+              "to": "hop",
+              "when": "jump",
+              "fade": 0.1
+            },
+            {
+              "from": "hop",
+              "to": "idle",
+              "after": 1.0,
+              "fade": 0.3
+            }
+          ],
+          "params": [
+            {
+              "name": "speed",
+              "value": 0
+            },
+            {
+              "name": "jump",
+              "trigger": true
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "Missing",
       "components": {
         "Transform": {

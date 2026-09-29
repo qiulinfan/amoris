@@ -438,6 +438,15 @@
     "Camera": {
      "fov_degrees": 60,
      "far": 600
+    },
+    "CameraRig": {
+     "target": "Car",
+     "mode": 0,
+     "distance": 11.543,
+     "height": 1,
+     "pitch": -17.65,
+     "follow": 0,
+     "turn": 0.33
     }
    }
   },

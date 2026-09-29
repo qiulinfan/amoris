@@ -1,8 +1,12 @@
 #include <pocket/renderer/animation.hpp>
 
 #include <algorithm>
-#include <functional>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <format>
+#include <functional>
+#include <optional>
 
 namespace pocket::renderer {
 
@@ -117,10 +121,9 @@ namespace {
 
 Quat conj(Quat q) { return {-q.x, -q.y, -q.z, q.w}; }
 
-// Two clips sampled and blended per node (weight 0 = a, 1 = b); a node only one clip animates
-// blends between that clip and the rest pose.
-Locals blend_locals(const assets::Mesh& mesh, const assets::AnimationClip* a, float time_a, const assets::AnimationClip* b, float time_b, float weight) {
-    Locals la = sample_locals(mesh, a, time_a), lb = sample_locals(mesh, b, time_b);
+// Two sampled poses blended per node (weight 0 = a, 1 = b); a node only one of them animates
+// blends between it and the rest pose.
+Locals mix_locals(Locals la, const Locals& lb, float weight) {
     const float w = std::clamp(weight, 0.0f, 1.0f);
     for (std::size_t i = 0; i < la.tr.size(); ++i) {
         if (!la.animated[i] && !lb.animated[i]) continue;  // rest in both: the baked rest matrix
@@ -134,6 +137,279 @@ Locals blend_locals(const assets::Mesh& mesh, const assets::AnimationClip* a, fl
         la.weights_animated = true;
     }
     return la;
+}
+
+// Two clips sampled and blended per node (weight 0 = a, 1 = b).
+Locals blend_locals(const assets::Mesh& mesh, const assets::AnimationClip* a, float time_a, const assets::AnimationClip* b, float time_b, float weight) {
+    return mix_locals(sample_locals(mesh, a, time_a), sample_locals(mesh, b, time_b), weight);
+}
+
+// ---- State machines (docs/design/animation.md, State machines) ----------------------------
+
+// A transition's condition over the graph's parameters: comparisons, and/or/not (or && || !),
+// parentheses, numbers, true and false; a bare name is its value (true when not 0). Read by
+// recursive descent every time it is asked (conditions are a few words); `names` collects the
+// parameters it read, `error` what it could not read.
+class Condition {
+   public:
+    Condition(std::string_view text, const std::vector<world::AnimationParam>& params) : s_(text), params_(params) {}
+    double eval(std::vector<std::string>& names, std::string& error) {
+        names_ = &names;
+        const double v = or_expr();
+        skip();
+        if (error_.empty() && i_ < s_.size()) error_ = std::format("unexpected '{}'", s_.substr(i_, 12));
+        error = error_;
+        return error_.empty() ? v : 0.0;
+    }
+
+   private:
+    void skip() { while (i_ < s_.size() && std::isspace(static_cast<unsigned char>(s_[i_]))) ++i_; }
+    bool take(std::string_view tok) {
+        skip();
+        if (s_.substr(i_, tok.size()) != tok) return false;
+        // A word ends at a word's end: "or" is not the start of "order".
+        if (std::isalpha(static_cast<unsigned char>(tok.back())) && i_ + tok.size() < s_.size() && (std::isalnum(static_cast<unsigned char>(s_[i_ + tok.size()])) || s_[i_ + tok.size()] == '_')) return false;
+        i_ += tok.size();
+        return true;
+    }
+    double or_expr() {
+        double v = and_expr();
+        while (take("||") || take("or")) { const double r = and_expr(); v = (v != 0 || r != 0) ? 1 : 0; }
+        return v;
+    }
+    double and_expr() {
+        double v = not_expr();
+        while (take("&&") || take("and")) { const double r = not_expr(); v = (v != 0 && r != 0) ? 1 : 0; }
+        return v;
+    }
+    double not_expr() {
+        skip();
+        if (i_ + 1 < s_.size() && s_[i_] == '!' && s_[i_ + 1] != '=') { ++i_; return not_expr() == 0 ? 1 : 0; }
+        if (take("not")) return not_expr() == 0 ? 1 : 0;
+        return compare();
+    }
+    double compare() {
+        const double a = unary();
+        for (std::string_view op : {"<=", ">=", "==", "!=", "<", ">"}) {
+            if (!take(op)) continue;
+            const double b = unary();
+            if (op == "<=") return a <= b;
+            if (op == ">=") return a >= b;
+            if (op == "==") return a == b;
+            if (op == "!=") return a != b;
+            if (op == "<") return a < b;
+            return a > b;
+        }
+        return a;
+    }
+    double unary() {
+        if (take("-")) return -unary();
+        return primary();
+    }
+    double primary() {
+        skip();
+        if (take("(")) {
+            const double v = or_expr();
+            if (!take(")") && error_.empty()) error_ = "a '(' without its ')'";
+            return v;
+        }
+        if (i_ < s_.size() && (std::isdigit(static_cast<unsigned char>(s_[i_])) || s_[i_] == '.')) {
+            const std::string rest(s_.substr(i_));
+            char* end = nullptr;
+            const double v = std::strtod(rest.c_str(), &end);
+            i_ += static_cast<std::size_t>(end - rest.c_str());
+            return v;
+        }
+        const std::size_t start = i_;
+        while (i_ < s_.size() && (std::isalnum(static_cast<unsigned char>(s_[i_])) || s_[i_] == '_' || s_[i_] == '.')) ++i_;
+        const std::string name(s_.substr(start, i_ - start));
+        if (name.empty()) {
+            if (error_.empty()) error_ = i_ < s_.size() ? std::format("unexpected '{}'", s_.substr(i_, 12)) : std::string("it ends too soon");
+            return 0;
+        }
+        if (name == "true") return 1;
+        if (name == "false") return 0;
+        for (const world::AnimationParam& p : params_) {
+            if (p.name != name) continue;
+            names_->push_back(name);
+            return p.value;
+        }
+        if (error_.empty()) error_ = std::format("no parameter '{}'", name);
+        return 0;
+    }
+    std::string_view s_;
+    const std::vector<world::AnimationParam>& params_;
+    std::size_t i_ = 0;
+    std::vector<std::string>* names_ = nullptr;
+    std::string error_;
+};
+
+// A blend space's clips along its parameter ("idle 0, walk 2, run 6"), in order of value.
+std::vector<std::pair<std::string, float>> blend_points(const std::string& text, std::string& error) {
+    std::vector<std::pair<std::string, float>> out;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t comma = text.find(',', start);
+        if (comma == std::string::npos) comma = text.size();
+        std::string item = text.substr(start, comma - start);
+        start = comma + 1;
+        while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+        while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+        if (item.empty()) continue;
+        const std::size_t space = item.find_last_of(" \t");
+        char* end = nullptr;
+        const std::string number = space == std::string::npos ? std::string() : item.substr(space + 1);
+        const float at = std::strtof(number.c_str(), &end);
+        if (space == std::string::npos || end == number.c_str()) {
+            error = std::format("'{}' in the clips needs a clip and a value", item);
+            continue;
+        }
+        std::string clip = item.substr(0, space);
+        while (!clip.empty() && std::isspace(static_cast<unsigned char>(clip.back()))) clip.pop_back();
+        out.emplace_back(clip, at);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    return out;
+}
+
+// Every graph, before its Animator advances: into the first state when it has none (or an
+// unknown one), then the first transition that holds (its triggers reset), then the blend
+// space's two clips and their weight for the parameter's value.
+void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
+    struct Change { world::EntityId id; std::string from, to; };
+    std::vector<Change> changes;
+    world.ecs().each([&](flecs::entity e, world::AnimationGraph& g, world::Animator& a, const world::MeshRenderer& mr) {
+        if (!g.enabled || g.states.empty()) return;
+        auto m = assets.mesh(mr.mesh);
+        if (!m) return;
+        const assets::Mesh& mesh = **m;
+        std::string error;
+        auto note = [&](std::string why) { if (error.empty()) error = std::move(why); };
+        auto state_of = [&](std::string_view name) {
+            for (std::size_t i = 0; i < g.states.size(); ++i) if (g.states[i].name == name) return static_cast<int>(i);
+            return -1;
+        };
+        auto param = [&](std::string_view name) -> world::AnimationParam* {
+            for (world::AnimationParam& p : g.params) if (p.name == name) return &p;
+            return nullptr;
+        };
+        auto duration = [&](const std::string& clip) {
+            const assets::AnimationClip* c = clip.empty() ? nullptr : mesh.clip(clip);
+            return c ? c->duration : 0.0f;
+        };
+        // The clip a state plays now: its own, or the blend space's lower clip for the value.
+        auto blend_now = [&](const world::AnimationState& st, std::string& lower, std::string& upper, float& w) {
+            std::string perr;
+            const auto points = blend_points(st.clips, perr);
+            if (!perr.empty()) note(std::format("state '{}': {}", st.name, perr));
+            lower.clear(); upper.clear(); w = 0;
+            if (points.empty()) { note(std::format("state '{}' blends by '{}' but lists no clips", st.name, st.blend)); return; }
+            const world::AnimationParam* p = param(st.blend);
+            if (!p) note(std::format("state '{}' blends by '{}', which is not a parameter", st.name, st.blend));
+            const float v = p ? p->value : points.front().second;
+            std::size_t i = 0;
+            while (i + 1 < points.size() && v >= points[i + 1].second) ++i;
+            lower = points[i].first;
+            if (i + 1 < points.size() && v > points[i].second) {
+                upper = points[i + 1].first;
+                const float span = points[i + 1].second - points[i].second;
+                w = span > 0 ? std::clamp((v - points[i].second) / span, 0.0f, 1.0f) : 0.0f;
+            }
+        };
+        auto enter = [&](int index, float fade) {
+            const world::AnimationState& st = g.states[static_cast<std::size_t>(index)];
+            std::string clip = st.clip, upper;
+            float w = 0;
+            if (!st.blend.empty()) blend_now(st, clip, upper, w);
+            if (fade > 0 && !a.clip.empty() && a.clip != clip) {
+                a.from_clip = a.clip;
+                a.from_time = a.time;
+                a.fade = fade;
+                a.fade_time = 0;
+            } else {
+                a.from_clip.clear();
+                a.from_time = 0;
+                a.fade = 0;
+                a.fade_time = 0;
+            }
+            a.clip = clip;
+            a.time = 0;
+            a.speed = st.speed;
+            a.loop = st.loop;
+            a.playing = true;
+            a.finished = false;
+            a.blend_clip = w > 0 ? upper : std::string();
+            a.blend = w > 0 ? w : 0.0f;
+            changes.push_back({e.id(), g.state, st.name});
+            g.state = st.name;
+            g.state_time = 0;
+        };
+        // What is wrong anywhere in the graph, whichever state it is in.
+        for (const world::AnimationState& st : g.states) {
+            if (st.blend.empty() && !st.clip.empty() && !mesh.clip(st.clip)) note(std::format("state '{}' plays '{}', which the mesh has no clip of", st.name, st.clip));
+        }
+        std::vector<bool> usable(g.transitions.size(), false);
+        for (std::size_t k = 0; k < g.transitions.size(); ++k) {
+            const world::AnimationTransition& t = g.transitions[k];
+            if (state_of(t.to) < 0) { note(std::format("a transition goes to '{}', which is not a state", t.to)); continue; }
+            if (t.from != "*" && state_of(t.from) < 0) { note(std::format("a transition leaves '{}', which is not a state", t.from)); continue; }
+            std::vector<std::string> unused;
+            std::string cerr;
+            if (!t.when.empty()) Condition(t.when, g.params).eval(unused, cerr);
+            if (!cerr.empty()) { note(std::format("'{}': {}", t.when, cerr)); continue; }
+            usable[k] = true;
+        }
+        int cur = state_of(g.state);
+        if (cur < 0) {
+            if (!g.state.empty()) note(std::format("no state '{}'", g.state));
+            enter(0, 0.0f);
+            cur = 0;
+        }
+        // How much of the state's clip has played (one lap counts as all of a looping clip).
+        const world::AnimationState& now = g.states[static_cast<std::size_t>(cur)];
+        const float dur = duration(a.clip);
+        const float played = a.finished ? 1.0f : dur > 0 ? g.state_time * std::fabs(now.speed) / dur : 1.0f;
+        std::vector<std::string> names;
+        for (std::size_t k = 0; k < g.transitions.size(); ++k) {
+            const world::AnimationTransition& t = g.transitions[k];
+            if (!usable[k]) continue;
+            const int to = state_of(t.to);
+            if (t.from == "*" ? to == cur : t.from != now.name) continue;
+            if (played < t.after) continue;
+            names.clear();
+            std::string cerr;
+            const double holds = t.when.empty() ? 1.0 : Condition(t.when, g.params).eval(names, cerr);
+            if (holds == 0 || !cerr.empty()) continue;
+            for (const std::string& n : names) {
+                world::AnimationParam* p = param(n);
+                if (p && p->trigger) p->value = 0;
+            }
+            enter(to, std::max(t.fade, 0.0f));
+            cur = to;
+            break;
+        }
+        // A blend space follows its parameter every tick, the lower clip keeping its phase when it changes.
+        const world::AnimationState& st = g.states[static_cast<std::size_t>(cur)];
+        if (!st.blend.empty()) {
+            std::string lower, upper;
+            float w = 0;
+            blend_now(st, lower, upper, w);
+            if (!lower.empty() && lower != a.clip) {
+                const float before = duration(a.clip), after = duration(lower);
+                const float phase = before > 0 ? a.time / before : 0.0f;
+                a.clip = lower;
+                a.time = phase * after;
+            }
+            a.blend_clip = w > 0 ? upper : std::string();
+            a.blend = w;
+        } else if (!a.blend_clip.empty() || a.blend != 0) {
+            a.blend_clip.clear();
+            a.blend = 0;
+        }
+        g.state_time += dt;
+        g.error = error;
+    });
+    for (const Change& c : changes) world.events().emit(world.tick_index(), "animation.state", c.id, Json{{"path", world.path(c.id)}, {"from", c.from}, {"to", c.to}});
 }
 
 // The nodes a layer may move: the subtrees of the named nodes, or every node for an empty mask.
@@ -626,6 +902,7 @@ float Animation::yaw_of(Quat q) {
 }
 
 void Animation::step(world::World& world, assets::AssetStore& assets, float dt) {
+    step_graphs(world, assets, dt);
     std::map<world::EntityId, Pose> next;
     struct Finish { world::EntityId id; std::string clip; int layer = -1; };
     std::vector<Finish> finished;
@@ -641,10 +918,15 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         const assets::Mesh& mesh = **m;
         if (!mesh.skinned() && mesh.nodes.empty()) return;
         const assets::AnimationClip* clip = a.clip.empty() ? nullptr : mesh.clip(a.clip);
+        // A second clip mixed in (a blend space): kept in step with the first, the pair's cycle
+        // as long as the two blended, so a walk turning into a run speeds up smoothly.
+        const assets::AnimationClip* mix = a.blend_clip.empty() || a.blend <= 0 || !clip ? nullptr : mesh.clip(a.blend_clip);
+        float rate = 1.0f;
+        if (mix && clip->duration > 0 && mix->duration > 0) rate = clip->duration / (clip->duration + (mix->duration - clip->duration) * std::clamp(a.blend, 0.0f, 1.0f));
         const float old_time = a.time;
         bool wrapped = false;
         if (clip && a.playing && !a.finished) {
-            a.time += dt * a.speed;
+            a.time += dt * a.speed * rate;
             if (clip->duration > 0) {
                 if (a.loop) {
                     const float before = a.time;
@@ -709,7 +991,8 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
                 L.time = 0;
             }
         }
-        Locals locals = from ? blend_locals(mesh, from, a.from_time, clip, a.time, weight) : sample_locals(mesh, clip, a.time);
+        Locals locals = mix ? blend_locals(mesh, clip, a.time, mix, clip->duration > 0 ? a.time / clip->duration * mix->duration : a.time, a.blend) : sample_locals(mesh, clip, a.time);
+        if (from) locals = mix_locals(sample_locals(mesh, from, a.from_time), locals, weight);
         for (const world::AnimationLayer& L : a.layers) apply_layer(mesh, locals, L.clip.empty() ? nullptr : mesh.clip(L.clip), L);
         // Root motion: the root's translation stays at the clip's first frame in the pose, and its
         // change over this tick (across a loop's wrap too) goes to the entity, or to the script.

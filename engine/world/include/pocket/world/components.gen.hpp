@@ -82,6 +82,50 @@ void from_json(const Json& j, AnimationLayer& v);
 std::size_t numeric_span(AnimationLayer& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const AnimationLayer& v);
 
+/// One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter.
+struct AnimationState {
+    std::string name = "";
+    std::string clip = "";
+    std::string blend = "";
+    std::string clips = "";
+    float speed = 1.0f;
+    bool loop = true;
+    constexpr bool operator==(const AnimationState&) const = default;
+};
+void to_json(Json& j, const AnimationState& v);
+void from_json(const Json& j, AnimationState& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationState& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const AnimationState& v);
+
+/// A way out of a state in an AnimationGraph: taken, the first of those that hold in list order, when its condition holds and enough of the state has played.
+struct AnimationTransition {
+    std::string from = "*";
+    std::string to = "";
+    std::string when = "";
+    float after = 0.0f;
+    float fade = 0.2f;
+    constexpr bool operator==(const AnimationTransition&) const = default;
+};
+void to_json(Json& j, const AnimationTransition& v);
+void from_json(const Json& j, AnimationTransition& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationTransition& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const AnimationTransition& v);
+
+/// A value an AnimationGraph's conditions and blend spaces read, set by scripts (animation.param, animation.trigger).
+struct AnimationParam {
+    std::string name = "";
+    float value = 0.0f;
+    bool trigger = false;
+    constexpr bool operator==(const AnimationParam&) const = default;
+};
+void to_json(Json& j, const AnimationParam& v);
+void from_json(const Json& j, AnimationParam& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationParam& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const AnimationParam& v);
+
 /// Position, rotation and scale relative to the parent entity (or the world when there is no parent).
 struct Transform {
     Vec3 position{0.0f, 0.0f, 0.0f};
@@ -152,6 +196,33 @@ void to_json(Json& j, const Camera& v);
 void from_json(const Json& j, Camera& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Camera& v, std::string_view path, float** out);
+
+/// Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).
+struct CameraRig {
+    std::string target = "";
+    std::int32_t mode = 0;
+    float distance = 6.0f;
+    float height = 1.0f;
+    float pitch = -20.0f;
+    float yaw = 0.0f;
+    Vec3 offset{0.0f, 10.0f, 8.0f};
+    float follow = 0.15f;
+    float turn = 0.4f;
+    bool collide = true;
+    std::string orbit_x = "";
+    std::string orbit_y = "";
+    float orbit_speed = 120.0f;
+    float pitch_min = -80.0f;
+    float pitch_max = 30.0f;
+    float shake = 0.0f;
+    float shake_decay = 1.5f;
+    float heading = 0.0f;
+    constexpr bool operator==(const CameraRig&) const = default;
+};
+void to_json(Json& j, const CameraRig& v);
+void from_json(const Json& j, CameraRig& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(CameraRig& v, std::string_view path, float** out);
 
 /// A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).
 struct Light {
@@ -312,6 +383,38 @@ void from_json(const Json& j, TileMap& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(TileMap& v, std::string_view path, float** out);
 
+/// A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters.
+struct AnimationGraph {
+    std::vector<AnimationState> states = {};
+    std::vector<AnimationTransition> transitions = {};
+    std::vector<AnimationParam> params = {};
+    std::string state = "";
+    float state_time = 0.0f;
+    std::string error = "";
+    bool enabled = true;
+    constexpr bool operator==(const AnimationGraph&) const = default;
+};
+void to_json(Json& j, const AnimationGraph& v);
+void from_json(const Json& j, AnimationGraph& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationGraph& v, std::string_view path, float** out);
+
+/// Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end.
+struct Timeline {
+    std::string path = "";
+    float time = 0.0f;
+    bool playing = true;
+    float speed = 1.0f;
+    bool loop = false;
+    bool finished = false;
+    std::string error = "";
+    constexpr bool operator==(const Timeline&) const = default;
+};
+void to_json(Json& j, const Timeline& v);
+void from_json(const Json& j, Timeline& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Timeline& v, std::string_view path, float** out);
+
 /// Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.
 struct Animator {
     std::string clip = "";
@@ -320,6 +423,8 @@ struct Animator {
     float speed = 1.0f;
     float time = 0.0f;
     bool finished = false;
+    std::string blend_clip = "";
+    float blend = 0.0f;
     float fade = 0.0f;
     float fade_time = 0.0f;
     std::string from_clip = "";
@@ -757,6 +862,7 @@ void hash_component(struct StateHasherRef& h, const Velocity& v);
 void hash_component(struct StateHasherRef& h, const Health& v);
 void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
+void hash_component(struct StateHasherRef& h, const CameraRig& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const ReflectionProbe& v);
 void hash_component(struct StateHasherRef& h, const Decal& v);
@@ -766,6 +872,8 @@ void hash_component(struct StateHasherRef& h, const MeshRenderer& v);
 void hash_component(struct StateHasherRef& h, const Sprite& v);
 void hash_component(struct StateHasherRef& h, const SpriteAnimation& v);
 void hash_component(struct StateHasherRef& h, const TileMap& v);
+void hash_component(struct StateHasherRef& h, const AnimationGraph& v);
+void hash_component(struct StateHasherRef& h, const Timeline& v);
 void hash_component(struct StateHasherRef& h, const Animator& v);
 void hash_component(struct StateHasherRef& h, const IK& v);
 void hash_component(struct StateHasherRef& h, const LookAt& v);
