@@ -4231,6 +4231,93 @@ TEST_CASE("the hills' boulders are scattered copies that collide: counted by the
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("textured layers on a terrain: laid by their rules, painted and erased by name or index, saved as a layermap and read back", "[runtime][terrain][layers]") {
+    const std::filesystem::path saved = root() / "samples" / "hills" / "assets" / "test-layers.png";
+    std::filesystem::remove(saved);
+    app::Options o;
+    o.project_dir = root() / "samples" / "hills";
+    o.bundle = root() / "build" / "ts" / "hills.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    for (int i = 0; i < 5; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("pause", Json::object()).has_value());
+    Json info = s.command("terrain.info", Json::object()).value();
+    REQUIRE(info["layers"] == Json::array({"grass", "sand", "rock", "dirt"}));
+    auto share = [&](double x, double z, const char* name) {
+        double sum = 0, found = -1;
+        for (const Json& l : s.command("terrain.height", Json{{"x", x}, {"z", z}}).value()["layers"]) {
+            sum += l["share"].get<double>();
+            if (l["name"] == name) found = l["share"].get<double>();
+        }
+        REQUIRE(sum == Catch::Approx(1).margin(1e-3));   // the shares always add up
+        return found;
+    };
+    // The sample's rules: sand low by the water, rock on the steep slopes, grass elsewhere.
+    Json steep, low, mid;
+    for (double x = -44; x <= 44; x += 2) {
+        for (double z = -44; z <= 44; z += 2) {
+            const Json g = s.command("terrain.height", Json{{"x", x}, {"z", z}}).value();
+            const double slope = std::acos(std::clamp(g["normal"]["y"].get<double>(), -1.0, 1.0)) * 180.0 / 3.14159265;
+            const double h = g["height"].get<double>();
+            const Json at{{"x", x}, {"z", z}};
+            if (steep.is_null() && slope > 45) steep = at;
+            if (low.is_null() && h < 3.0 && slope < 15) low = at;
+            if (mid.is_null() && h > 5 && h < 8 && slope < 15 && share(x, z, "dirt") < 0.01 && std::abs(x) < 36 && std::abs(z) < 36) mid = at;
+        }
+    }
+    INFO("steep " << steep.dump() << " low " << low.dump() << " mid " << mid.dump());
+    REQUIRE_FALSE(steep.is_null());
+    REQUIRE_FALSE(low.is_null());
+    REQUIRE_FALSE(mid.is_null());
+    REQUIRE(share(steep["x"].get<double>(), steep["z"].get<double>(), "rock") > 0.9);
+    REQUIRE(share(low["x"].get<double>(), low["z"].get<double>(), "sand") > 0.9);
+    const double mx = mid["x"].get<double>(), mz = mid["z"].get<double>();
+    REQUIRE(share(mx, mz, "grass") > 0.9);
+    // Sand painted on the grass by name at full strength covers it; erased, the grass is back.
+    const double beyond = share(mx + 6.8, mz, "sand");
+    Json painted = s.command("terrain.paint", Json{{"x", mx}, {"z", mz}, {"layer", "sand"}, {"radius", 6}, {"amount", 1}}).value();
+    INFO(painted.dump());
+    REQUIRE(painted["layer"] == 1);
+    REQUIRE(painted["samples"].get<int>() > 20);
+    REQUIRE(share(mx, mz, "sand") == Catch::Approx(1).margin(0.05));
+    REQUIRE(share(mx, mz, "grass") < 0.05);
+    REQUIRE(share(mx + 6.8, mz, "sand") == Catch::Approx(beyond).margin(1e-3));   // past the radius, as it was
+    REQUIRE(s.command("terrain.paint", Json{{"x", mx}, {"z", mz}, {"layer", "sand"}, {"mode", "erase"}, {"radius", 6}, {"amount", 1}}).has_value());
+    REQUIRE(share(mx, mz, "grass") > 0.9);
+    // Rock by its index, half over.
+    REQUIRE(s.command("terrain.paint", Json{{"x", mx}, {"z", mz}, {"layer", 2}, {"radius", 6}, {"amount", 0.5}}).has_value());
+    const double half = share(mx, mz, "rock");
+    REQUIRE(half == Catch::Approx(0.5).margin(0.05));
+    // Layers it does not have are refused, naming the ones it has.
+    auto bad = s.command("terrain.paint", Json{{"x", mx}, {"z", mz}, {"layer", "lava"}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().code == "bad_args");
+    REQUIRE(bad.error().message.find("grass") != std::string::npos);
+    REQUIRE(s.command("terrain.paint", Json{{"x", mx}, {"z", mz}, {"layer", 4}}).error().code == "bad_args");
+    // The paint grid, saved as a layermap, cleared, and read back from the file.
+    const Json grid = s.command("terrain.paints", Json{{"layers", true}}).value();
+    REQUIRE(grid["paint"].size() == 129u * 129u * 4u);
+    REQUIRE(s.command("terrain.save", Json{{"path", "assets/test-layers.png"}, {"layers", true}}).has_value());
+    REQUIRE(std::filesystem::exists(saved));
+    REQUIRE(s.command("terrain.info", Json::object()).value()["layermap"] == "assets/test-layers.png");
+    REQUIRE(s.command("terrain.paints", Json{{"layers", true}, {"paint", Json::array()}}).has_value());
+    REQUIRE(share(mx, mz, "rock") < 0.01);
+    REQUIRE(s.command("terrain.reset", Json{{"layers", true}}).has_value());
+    REQUIRE(share(mx, mz, "rock") == Catch::Approx(half).margin(0.01));
+    std::filesystem::remove(saved);
+    // A terrain without layers has none to paint.
+    REQUIRE(s.command("world.set", Json{{"entity", "Hills"}, {"component", "Terrain"}, {"value", Json{{"layers", Json::array()}}}}).has_value());
+    REQUIRE(s.command("terrain.paint", Json{{"x", mx}, {"z", mz}, {"layer", 0}}).error().code == "no_layers");
+    REQUIRE_FALSE(s.command("terrain.height", Json{{"x", mx}, {"z", mz}}).value().contains("layers"));
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("paint on a terrain: laid on and erased by a brush, drawn, answered by terrain.height, saved as a paintmap and kept through a new shape", "[runtime][terrain][paint]") {
     const std::filesystem::path saved = root() / "samples" / "hills" / "assets" / "test-paint.png";
     std::filesystem::remove(saved);
@@ -4250,15 +4337,21 @@ TEST_CASE("paint on a terrain: laid on and erased by a brush, drawn, answered by
     const Json st = s.command("state", Json::object()).value()["state"];
     const double px = st["player.x"].get<double>() + 2.5, pz = st["player.z"].get<double>() - 1.5;
     auto ground = [&](double x, double z) { return s.command("terrain.height", Json{{"x", x}, {"z", z}}).value(); };
-    // The sample paints a dirt path from the player to the beacon at its start; the player stands on it.
+    // The sample paints a dirt path with its dirt layer from the player to the beacon at its start;
+    // the player stands on it.
+    auto dirt = [&](double x, double z) {
+        for (const Json& l : ground(x, z)["layers"]) if (l["name"] == "dirt") return l["share"].get<double>();
+        return -1.0;
+    };
     REQUIRE(st["on_path"] == true);
-    REQUIRE(ground(st["player.x"].get<double>(), st["player.z"].get<double>())["paint"]["r"].get<double>() == Catch::Approx(0.6).margin(0.02));
+    REQUIRE(dirt(st["player.x"].get<double>(), st["player.z"].get<double>()) > 0.5);
     // The sample's Scatters (max_paint 0.3) keep their bushes and stones off the path.
     for (const char* name : {"Bushes", "Stones"}) {
         const Json copies = s.command("scatter.copies", Json{{"entity", name}, {"limit", 20000}}).value()["copies"];
         REQUIRE(copies.size() > 100);
-        for (const Json& c : copies) REQUIRE(ground(c["x"].get<double>(), c["z"].get<double>())["paint"]["a"].get<double>() <= 0.31);
+        for (const Json& c : copies) REQUIRE(dirt(c["x"].get<double>(), c["z"].get<double>()) <= 0.31);
     }
+    REQUIRE(s.command("terrain.paints", Json{{"paint", Json::array()}, {"layers", true}}).has_value());
     // Cleared, the ground has no paint to answer.
     REQUIRE(s.command("terrain.paints", Json{{"paint", Json::array()}}).has_value());
     REQUIRE_FALSE(ground(px, pz).contains("paint"));
@@ -4500,6 +4593,83 @@ TEST_CASE("a player who left comes back into the running game: it replays what i
     REQUIRE(host.state["state"]["blue.x"].get<double>() < -2.0);
 }
 
+TEST_CASE("a burst comes from the emitter or from any point, faster or slower", "[runtime][particles][burst]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto emitter = [&](const char* name, Vec3 at, bool world_space) {
+        const Json fields{{"emitting", false}, {"world_space", world_space}, {"gravity", {{"x", 0}, {"y", 0}, {"z", 0}}}, {"speed", {{"x", 2}, {"y", 2}}}, {"lifetime", {{"x", 5}, {"y", 5}}}};
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", {{"x", at.x}, {"y", at.y}, {"z", at.z}}}}}, {"ParticleEmitter", fields}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    };
+    auto list = [&](const char* name) { return s.command("particles.list", Json{{"entity", name}, {"limit", 100}}).value()["particles"]; };
+    auto speed_of = [](const Json& p) { return std::hypot(p["velocity"]["x"].get<double>(), p["velocity"]["y"].get<double>(), p["velocity"]["z"].get<double>()); };
+    emitter("Spray", {0, 0, 0}, true);
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Spray"}, {"count", 3}}).value()["alive"] == 3);
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Spray"}, {"count", 5}, {"at", {10, 4, -2}}, {"speed", 0.5}}).value()["alive"] == 8);
+    const Json spray = list("Spray");
+    for (std::size_t i = 0; i < spray.size(); ++i) {
+        const Json& p = spray[i];
+        INFO(p.dump());
+        if (i < 3) {   // from the emitter at its speed
+            REQUIRE(p["position"]["x"].get<double>() == Catch::Approx(0.0));
+            REQUIRE(speed_of(p) == Catch::Approx(2.0));
+        } else {       // from the point at half of it
+            REQUIRE(p["position"]["x"].get<double>() == Catch::Approx(10.0));
+            REQUIRE(p["position"]["y"].get<double>() == Catch::Approx(4.0));
+            REQUIRE(p["position"]["z"].get<double>() == Catch::Approx(-2.0));
+            REQUIRE(speed_of(p) == Catch::Approx(1.0));
+        }
+    }
+    // A local emitter's particles live relative to it: the point is where they are in the world all the same.
+    emitter("Fountain", {3, 1, 0}, false);
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Fountain"}, {"count", 2}, {"at", Json{{"x", 3}, {"y", 6}, {"z", 1}}}}).has_value());
+    for (const Json& p : list("Fountain")) {
+        REQUIRE(p["position"]["x"].get<double>() == Catch::Approx(0.0));
+        REQUIRE(p["position"]["y"].get<double>() == Catch::Approx(5.0));
+        REQUIRE(p["position"]["z"].get<double>() == Catch::Approx(1.0));
+    }
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Spray"}, {"at", "here"}}).error().code == "bad_args");
+    REQUIRE(s.command("particles.burst", Json{{"entity", "Spray"}, {"speed", -1}}).error().code == "bad_args");
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("pictures written to a relative path land under the project, and never out of it", "[runtime][capture]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "hello";
+    o.bundle = root() / "build" / "ts" / "hello.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    const std::filesystem::path shot = o.project_dir / ".pocket" / "test-capture" / "shot.png";
+    std::filesystem::remove_all(shot.parent_path());
+    const Json cap = s.command("capture", Json{{"path", ".pocket/test-capture/shot.png"}, {"ids", ".pocket/test-capture/ids.png"}}).value();
+    REQUIRE(std::filesystem::exists(shot));   // its directory made
+    REQUIRE(std::filesystem::equivalent(std::filesystem::path(cap["path"].get<std::string>()), shot));
+    REQUIRE(std::filesystem::exists(o.project_dir / ".pocket" / "test-capture" / "ids.png"));
+    const Json views = s.command("render.views", Json{{"path", ".pocket/test-capture/views.png"}}).value();
+    REQUIRE(std::filesystem::exists(o.project_dir / ".pocket" / "test-capture" / "views.png"));
+    REQUIRE(std::filesystem::path(views["path"].get<std::string>()).is_absolute());
+    REQUIRE(s.command("capture", Json{{"path", "../escaped.png"}}).error().code == "forbidden");
+    REQUIRE_FALSE(std::filesystem::exists(o.project_dir.parent_path() / "escaped.png"));
+    std::filesystem::remove_all(shot.parent_path());
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("water.height answers the moving surface, and a crate dropped in the lake floats on it", "[runtime][water]") {
     app::Options o;
     o.project_dir = root() / "samples" / "hills";
@@ -4544,6 +4714,19 @@ TEST_CASE("water.height answers the moving surface, and a crate dropped in the l
     REQUIRE(std::fabs(cy - here["height"].get<double>()) < 0.3);
     REQUIRE(s.command("physics.stats", Json::object()).value()["floating"].get<int>() >= 1);
     REQUIRE(s.command("events.histogram", Json::object()).value()["water.entered"].get<int>() >= 1);
+    // It splashed where it came down: the lake's Splash emitter threw as many as its speed asks.
+    Json crate_in;
+    for (const Json& e : s.command("events.since", Json{{"type", "water.entered"}}).value()["events"])
+        if (e["data"]["path"] == "/Crate") crate_in = e["data"];
+    INFO(crate_in.dump());
+    REQUIRE(crate_in["point"]["x"].get<double>() == Catch::Approx(bx).margin(0.3));
+    REQUIRE(crate_in["point"]["y"].get<double>() == Catch::Approx(3.2).margin(0.25));
+    REQUIRE(crate_in["speed"].get<double>() > 4.0);   // from two units up
+    const auto splash = s.command("world.find", Json{{"path", "Splash"}}).value().get<world::EntityId>();
+    std::int64_t spawned = 0;
+    for (const Json& pl : s.command("particles.stats", Json::object()).value()["pools"])
+        if (pl["entity"].get<world::EntityId>() == splash) spawned = pl["spawned"].get<std::int64_t>();
+    REQUIRE(spawned >= std::lround(24 * crate_in["speed"].get<double>() / 8));
     REQUIRE(s.finish().has_value());
 }
 

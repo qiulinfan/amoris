@@ -157,16 +157,23 @@ void Particles::step(const world::World& world, float dt) {
     }
 }
 
-Status Particles::burst(const world::World& world, world::EntityId emitter, int count) {
+Status Particles::burst(const world::World& world, world::EntityId emitter, int count, const Vec3* at, float speed) {
     const auto* e = world.try_get<world::ParticleEmitter>(emitter);
     if (!e) return fail("no_emitter", "entity {} has no ParticleEmitter", emitter);
     const auto* t = world.try_get<world::WorldTransform>(emitter);
     world::WorldTransform wt;
     if (t) wt = *t;
     if (count <= 0) return fail("bad_args", "burst needs a positive count");
+    if (!(speed >= 0)) return fail("bad_args", "burst speed must be at least 0");
     EmitterPool& pool = pool_for(emitter, *e);
     pool.seen = true;
+    const std::size_t before = pool.alive.size();
     spawn(pool, *e, wt, count);
+    for (std::size_t k = before; k < pool.alive.size(); ++k) {
+        Particle& p = pool.alive[k];
+        p.velocity = p.velocity * speed;
+        if (at) p.position = e->world_space ? *at : *at - wt.position;   // a local emitter's particles live relative to it
+    }
     return {};
 }
 

@@ -62,9 +62,10 @@ const historyVersion = signal(0);
 const brush = signal<{ layer: string; gid: number } | null>(null);   // tile painting in the scene pane while a TileMap is selected
 type SculptMode = "raise" | "lower" | "flatten" | "smooth" | "paint" | "erase";
 type Rgb = { r: number; g: number; b: number };
-type SculptSettings = { mode: SculptMode; radius: number; strength: number; color: Rgb };
+// A paint brush lays a colour, or with `layer` one of the terrain's textured layers (docs/design/terrain.md, Layers).
+type SculptSettings = { mode: SculptMode; radius: number; strength: number; color: Rgb; layer: number | null };
 const sculpt = signal<SculptSettings | null>(null);   // terrain sculpting (or painting) in the scene pane while a Terrain is selected
-const sculptSettings = signal<SculptSettings>({ mode: "raise", radius: 4, strength: 0.5, color: { r: 0.45, g: 0.35, b: 0.24 } });
+const sculptSettings = signal<SculptSettings>({ mode: "raise", radius: 4, strength: 0.5, color: { r: 0.45, g: 0.35, b: 0.24 }, layer: null });
 // Colours a terrain brush offers (sRGB): a dirt path, sand, dark grass, stone, a burnt patch.
 const PAINTS: Array<[string, Rgb]> = [["dirt", { r: 0.45, g: 0.35, b: 0.24 }], ["sand", { r: 0.82, g: 0.74, b: 0.55 }], ["moss", { r: 0.2, g: 0.33, b: 0.15 }], ["stone", { r: 0.55, g: 0.55, b: 0.55 }], ["ash", { r: 0.12, g: 0.11, b: 0.1 }]];
 const actions = signal<Record<string, ActionBindings>>({});   // the input map, shown and edited by the Input tab
@@ -90,7 +91,7 @@ let mainRect = { x: 0, y: 0, w: 0, h: 0 };
 let frame = 0;
 let dragState: { ids: number[]; before: Map<number, Transform>; parents: Map<number, ParentFrame | undefined>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
 let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
-let sculptStroke: { entity: number; paint: boolean; before: number[]; pos: { x: number; y: number }; target?: number; touches: number } | null = null;
+let sculptStroke: { entity: number; paint: boolean; layers: boolean; before: number[]; pos: { x: number; y: number }; target?: number; touches: number } | null = null;
 
 /** JSON copy (structuredClone is not in the script host). */
 function clone<T>(v: T): T {
@@ -578,7 +579,8 @@ function sculptAt(x: number, y: number): void {
     if (!hit || hit.entity !== st.entity) return;
     if (b.mode === "flatten" && st.target === undefined) st.target = hit.point.y;
     try {
-        if (b.mode === "paint" || b.mode === "erase") terrain.paint(hit.point.x, hit.point.z, b.mode === "paint" ? b.color : null, { entity: st.entity, radius: b.radius, amount: Math.min(b.strength * 0.5, 1) });
+        if ((b.mode === "paint" || b.mode === "erase") && st.layers && b.layer !== null) terrain.paintLayer(hit.point.x, hit.point.z, b.layer, { entity: st.entity, mode: b.mode, radius: b.radius, amount: Math.min(b.strength * 0.5, 1) });
+        else if (b.mode === "paint" || b.mode === "erase") terrain.paint(hit.point.x, hit.point.z, b.mode === "paint" ? b.color : null, { entity: st.entity, radius: b.radius, amount: Math.min(b.strength * 0.5, 1) });
         else terrain.sculpt(hit.point.x, hit.point.z, { entity: st.entity, mode: b.mode, radius: b.radius, amount: b.mode === "raise" || b.mode === "lower" ? b.strength * 0.25 : b.strength * 0.5, target: st.target });
         st.touches++;
     } catch (err) {
@@ -593,7 +595,10 @@ function endSculpt(): void {
     if (!st || st.touches === 0) return;
     const before = st.before;
     const touches = `${st.touches} touch${st.touches === 1 ? "" : "es"}`;
-    if (st.paint) {
+    if (st.paint && st.layers) {
+        const after = terrain.layerPaints(st.entity).paint;
+        history.record({ label: `paint the terrain's layers (${touches})`, redo: () => { terrain.setLayerPaints(after, st.entity); }, undo: () => { terrain.setLayerPaints(before, st.entity); } });
+    } else if (st.paint) {
         const after = terrain.paints(st.entity).paint;
         history.record({ label: `paint the terrain (${touches})`, redo: () => { terrain.setPaints(after, st.entity); }, undo: () => { terrain.setPaints(before, st.entity); } });
     } else {
@@ -628,7 +633,14 @@ function TerrainBrush(props: { id: number }) {
             <Row wrap gap={4}>
                 {(["raise", "lower", "flatten", "smooth", "paint", "erase"] as const).map((m) => <Button key={m} label={m} small primary={set.mode === m} name={`sculpt:${m}`} onClick={() => pick({ mode: m })} />)}
             </Row>
-            {set.mode === "paint" ? (
+            {(set.mode === "paint" || set.mode === "erase") && (info.layers ?? []).length > 0 ? (
+                <Row wrap gap={4} align="center">
+                    <Label text="layer" muted size={12} />
+                    <Button label="colour" small primary={set.layer === null} name="paint-layer:colour" onClick={() => pick({ layer: null })} />
+                    {(info.layers ?? []).map((l, i) => <Button key={`${i}`} label={l || `layer ${i}`} small primary={set.layer === i} name={`paint-layer:${l || i}`} onClick={() => pick({ layer: i })} />)}
+                </Row>
+            ) : null}
+            {set.mode === "paint" && (set.layer === null || (info.layers ?? []).length === 0) ? (
                 <Row wrap gap={4} align="center">
                     <box width={18} height={18} radius={3} border={1} borderColor={theme.border} background={[set.color.r, set.color.g, set.color.b]} name="paint:swatch" />
                     {PAINTS.map(([label, c]) => <Button key={label} label={label} small primary={set.color.r === c.r && set.color.g === c.g && set.color.b === c.b} name={`paint:${label}`} onClick={() => pick({ color: c })} />)}
@@ -678,6 +690,24 @@ function TerrainBrush(props: { id: number }) {
                         const before = terrain.paints(props.id).paint;
                         terrain.setPaints([], props.id);
                         history.record({ label: "clear the terrain's paint", redo: () => { terrain.setPaints([], props.id); }, undo: () => { terrain.setPaints(before, props.id); } });
+                        historyVersion.update((v) => v + 1);
+                    }} />
+                </Row>
+            ) : null}
+            {(info.layers ?? []).length > 0 ? (
+                <Row gap={4}>
+                    <Button label="Save layers" small name="terrain:save-layers" onClick={() => {
+                        try {
+                            const r = terrain.save(`assets/${name}-layers.png`, { layers: true, entity: props.id });
+                            notice.set(`Layer paint saved to ${r.path}; the terrain reads its layermap from it now (Save the scene to keep that).`);
+                        } catch (err) {
+                            notice.set(`Save failed: ${String(err)}`);
+                        }
+                    }} />
+                    <Button label="Clear layer paint" small name="terrain:clear-layers" onClick={() => {
+                        const before = terrain.layerPaints(props.id).paint;
+                        terrain.setLayerPaints([], props.id);
+                        history.record({ label: "clear the terrain's layer paint", redo: () => { terrain.setLayerPaints([], props.id); }, undo: () => { terrain.setLayerPaints(before, props.id); } });
                         historyVersion.update((v) => v + 1);
                     }} />
                 </Row>
@@ -973,7 +1003,9 @@ function onViewportDown(e: UiEvent): void {
     const shaping = terrainSelected();
     if (sculpt() !== null && shaping !== 0) {
         const paint = sculpt()!.mode === "paint" || sculpt()!.mode === "erase";
-        sculptStroke = { entity: shaping, paint, before: paint ? terrain.paints(shaping).paint : terrain.heights(shaping).heights, pos: { x: e.x ?? 0, y: e.y ?? 0 }, touches: 0 };
+        const layers = paint && sculpt()!.layer !== null && (terrain.info(shaping).layers ?? []).length > 0;
+        const before = layers ? terrain.layerPaints(shaping).paint : paint ? terrain.paints(shaping).paint : terrain.heights(shaping).heights;
+        sculptStroke = { entity: shaping, paint, layers, before, pos: { x: e.x ?? 0, y: e.y ?? 0 }, touches: 0 };
         sculptAt(sculptStroke.pos.x, sculptStroke.pos.y);
         return;
     }

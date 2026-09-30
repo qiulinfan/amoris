@@ -1111,6 +1111,22 @@ TEST_CASE("editor sculpts a terrain in the scene pane and undoes the stroke", "[
     ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta", "shift"})}}));
     ok(s.idle_frame());
     REQUIRE(ok(s.command("terrain.paints", Json::object()))["paint"] == paint);
+    // With a textured layer chosen (the sample's terrain has four), the brush lays that layer; undo
+    // takes it away and leaves the sample's own dirt path.
+    const Json layers_before = ok(s.command("terrain.paints", Json{{"layers", true}}))["paint"];
+    ok(s.command("ui.click", Json{{"id", find_named(s, "paint-layer:rock")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "paint:sand"}})).empty());   // no colours while a layer is chosen
+    ok(s.command("ui.drag", Json{{"x", cx}, {"y", cy}, {"dx", 40}, {"dy", 0}, {"steps", 4}}));
+    ok(s.idle_frame());
+    const Json layered = ok(s.command("terrain.paints", Json{{"layers", true}}))["paint"];
+    double rock = 0;
+    for (std::size_t k = 2; k < layered.size(); k += 4) rock = std::max(rock, layered[k].get<double>());
+    REQUIRE(rock > 0.3);
+    REQUIRE(ok(s.command("ui.query", Json{{"name", "terrain:save-layers"}})).size() == 1);
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("terrain.paints", Json{{"layers", true}}))["paint"] == layers_before);
     ok(s.finish());
     std::filesystem::remove_all(root() / "samples" / "hills" / ".pocket");
 }

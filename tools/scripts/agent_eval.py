@@ -873,7 +873,7 @@ def run_external(cmd, env, task, timeout, project_dir):
     return answer, proc.returncode, proc.stderr[-2000:], metrics
 
 
-def run(runner="reference", tasks=None, timeout=300, log=print, project_root=None):
+def run(runner="reference", tasks=None, timeout=300, log=print, project_root=None, rows_to=None):
     chosen = [t for t in TASKS if not tasks or t["name"] in tasks]
     results = []
     started = time.time()
@@ -926,6 +926,10 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         if metrics:
             row["metrics"] = metrics
         results.append(row)
+        if rows_to:
+            # Each task's row as it is done, so a long run that is cut short keeps what it did.
+            with open(rows_to, "a") as f:
+                f.write(json.dumps(row) + "\n")
         spent = f"  {metrics.get('tool_calls', '?')} calls, {metrics.get('tokens', {}).get('total', '?')} tokens, ${metrics.get('cost_usd', 0):.4f}" if metrics else ""
         log(f"{'pass' if ok else 'FAIL'}  {t['name']:<14} {t['project']:<11} {seconds:5.1f} s  {detail}{spent}{('  [' + error + ']') if error else ''}")
     passed = sum(1 for r in results if r["ok"])
@@ -948,8 +952,9 @@ if __name__ == "__main__":
     ap.add_argument("--tasks", help="comma-separated task names (default: all)")
     ap.add_argument("--timeout", type=int, default=300, help="seconds an external runner may take per task")
     ap.add_argument("--json", action="store_true", help="print the report as JSON instead of lines")
+    ap.add_argument("--rows", help="append each task's result as a JSON line to this file as it finishes")
     a = ap.parse_args()
-    report = run(a.runner, a.tasks.split(",") if a.tasks else None, a.timeout, log=(lambda *_: None) if a.json else print)
+    report = run(a.runner, a.tasks.split(",") if a.tasks else None, a.timeout, log=(lambda *_: None) if a.json else print, rows_to=a.rows)
     if a.json:
         print(json.dumps(report, indent=2))
     sys.exit(0 if report["passed"] == report["total"] else 1)

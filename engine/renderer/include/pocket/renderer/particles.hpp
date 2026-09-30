@@ -46,8 +46,10 @@ class Particles {
    public:
     // Advance every emitter in the world by dt: spawn at rate (and bursts), integrate, retire.
     void step(const world::World& world, float dt);
-    // Emit count particles at once from an emitter, whether or not it is emitting.
-    Status burst(const world::World& world, world::EntityId emitter, int count);
+    // Emit count particles at once from an emitter, whether or not it is emitting: from the
+    // emitter's place, or from the world point `at` when given (a splash where something fell in),
+    // their speeds times `speed`.
+    Status burst(const world::World& world, world::EntityId emitter, int count, const Vec3* at = nullptr, float speed = 1.0f);
     void clear();
     [[nodiscard]] std::size_t alive() const;
     [[nodiscard]] Json stats() const;

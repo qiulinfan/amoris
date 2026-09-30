@@ -1147,6 +1147,14 @@ TEST_CASE("what is lighter than water floats at its level and what is heavier si
     REQUIRE(w.events().histogram()["water.left"].get<int>() == 1);
     run(p, w, 120);
     REQUIRE(w.events().histogram()["water.entered"].get<int>() == 5);
+    // The event tells where it met the surface and how fast: a fall of about five units.
+    const Json entry = w.events().since(0, 1000, "water.entered").back().data;
+    INFO(entry.dump());
+    REQUIRE(entry["path"] == "/Cork");
+    REQUIRE(entry["point"]["x"].get<float>() == Catch::Approx(-3.0).margin(0.01));
+    REQUIRE(entry["point"]["y"].get<float>() == Catch::Approx(0.0).margin(0.01));
+    REQUIRE(entry["speed"].get<float>() > 9.0f);
+    REQUIRE(entry["speed"].get<float>() < 11.0f);
     // Disabled, the water holds nothing up.
     REQUIRE(w.set(water, "Water", Json{{"enabled", false}}).has_value());
     run(p, w, 120);
@@ -1231,6 +1239,12 @@ TEST_CASE("a character walks down a beach into deep water, swims with its head o
     const Json hist = w.events().histogram();
     REQUIRE(hist["water.entered"] == 1);
     REQUIRE(hist["water.left"] == 1);
+    // It walked in at its walking speed, where the slope meets the surface.
+    const Json entry = w.events().since(0, 1000, "water.entered").back().data;
+    INFO(entry.dump());
+    REQUIRE(entry["character"] == true);
+    REQUIRE(entry["point"]["y"].get<float>() == Catch::Approx(0.0).margin(0.01));
+    REQUIRE(entry["speed"].get<float>() == Catch::Approx(4.0).margin(0.5));
 }
 
 TEST_CASE("scattered copies that collide stop characters, bodies, rays and sweeps; without collide they are only drawn", "[physics][scatter]") {

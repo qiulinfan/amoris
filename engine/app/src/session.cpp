@@ -702,8 +702,10 @@ void Session::run_tick() {
     sw = Stopwatch{};
     update_terrains();
     timelines_->step(*world_, static_cast<float>(clock_.tick_seconds));   // before physics: a moved platform is where the bodies meet it (docs/design/timelines.md)
+    const std::uint64_t before_physics = world_->events().last_seq();
     physics_->step(*world_, clock_.tick_seconds);
     physics_->move_characters(*world_, clock_.tick_seconds);   // after the bodies: platforms have moved (docs/design/physics.md, Characters)
+    splash_water(before_physics);
     if (!physics_->contacts().empty()) {
         Json contacts = Json::array();
         for (const auto& c : physics_->contacts()) {
@@ -844,6 +846,28 @@ Result<std::filesystem::path> inside_dir(const std::filesystem::path& project_di
 
 }  // namespace
 
+// Water splashes (docs/design/water.md, Splashes): each water.entered event after `since` bursts
+// its water's splash emitter where it met the surface, by how fast it came.
+void Session::splash_water(std::uint64_t since) {
+    // Slower than this is a body set down in the water or lapped by a wave, not a splash.
+    constexpr float kReference = 8.0f, kSlowest = 1.0f;
+    for (const world::Event& ev : world_->events().since(since, 256, "water.entered")) {
+        if (!ev.data.is_object() || !ev.data.contains("point") || !ev.data.contains("speed")) continue;
+        const world::EntityId water = world_->find(ev.data.value("water", std::string()));
+        const auto* wa = water ? world_->try_get<world::Water>(water) : nullptr;
+        if (!wa || wa->splash.empty() || wa->splash_count <= 0) continue;
+        const float speed = ev.data["speed"].get<float>();
+        if (!(speed >= kSlowest)) continue;
+        const world::EntityId emitter = world_->find(wa->splash);
+        if (!emitter || !world_->try_get<world::ParticleEmitter>(emitter)) continue;
+        const float k = std::min(speed / kReference, 2.0f);
+        const int count = std::max(1, static_cast<int>(static_cast<float>(wa->splash_count) * k + 0.5f));
+        const Json& pt = ev.data["point"];
+        const Vec3 at{pt.value("x", 0.0f), pt.value("y", 0.0f), pt.value("z", 0.0f)};
+        (void)particles_->burst(*world_, emitter, count, &at, std::clamp(k, 0.5f, 1.5f));
+    }
+}
+
 // Terrains (docs/design/terrain.md): heights from the entity's heightmap or its noise, made again
 // when those settings change (which drops sculpted edits), meshed again when only the look does.
 void Session::update_terrains() {
@@ -855,11 +879,13 @@ void Session::update_terrains() {
         seen.insert(id);
         TerrainState& st = terrains_[id];
         const std::string shape = std::format("{}|{}|{:.6g}|{}|{}|{:.6g}x{:.6g}|{:.6g}", tc.heightmap, tc.seed, tc.scale, tc.octaves, tc.resolution, tc.size.x, tc.size.y, tc.height);
-        const std::string look = std::format("{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g}|{:.4g}|{:.4g}", tc.grass.r, tc.grass.g, tc.grass.b, tc.rock.r, tc.rock.g, tc.rock.b, tc.snow.r, tc.snow.g, tc.snow.b, tc.rock_slope, tc.snow_line, tc.texture_tile);
+        std::string look = std::format("{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g}|{:.4g}|{:.4g}", tc.grass.r, tc.grass.g, tc.grass.b, tc.rock.r, tc.rock.g, tc.rock.b, tc.snow.r, tc.snow.g, tc.snow.b, tc.rock_slope, tc.snow_line, tc.texture_tile);
+        for (const world::TerrainLayer& ly : tc.layers)
+            look += std::format("|{}:{:.4g},{:.4g},{:.4g}:{:.4g}:{:.4g}..{:.4g}:{:.4g}..{:.4g}:{:.4g}", ly.texture, ly.color.r, ly.color.g, ly.color.b, ly.tile, ly.slope.x, ly.slope.y, ly.height.x, ly.height.y, ly.cover);
         bool remesh = false;
         if (st.shape_key != shape) {
             st.shape_key = shape;
-            std::vector<std::array<float, 4>> kept = std::move(st.grid.paint);
+            std::vector<std::array<float, 4>> kept = std::move(st.grid.paint), kept_layers = std::move(st.grid.layer_paint);
             const Vec2 size{std::max(tc.size.x, 0.01f), std::max(tc.size.y, 0.01f)};
             const int n = std::clamp(tc.resolution, 2, 1025);
             if (!tc.heightmap.empty()) {
@@ -880,6 +906,7 @@ void Session::update_terrains() {
                 st.error.clear();
             }
             if (kept.size() == st.grid.h.size()) st.grid.paint = std::move(kept);
+            if (kept_layers.size() == st.grid.h.size()) st.grid.layer_paint = std::move(kept_layers);
             st.edited = false;
             remesh = true;
         }
@@ -895,6 +922,25 @@ void Session::update_terrains() {
                 auto grid = bytes ? assets::terrain_paint_from_image(*bytes, tc.paintmap, st.grid.n) : Result<std::vector<std::array<float, 4>>>(std::unexpected(bytes.error()));
                 if (grid) {
                     st.grid.paint = std::move(*grid);
+                } else {
+                    const std::string msg = grid.error().to_string();
+                    if (st.error != msg) log::warn("terrain", "{}: {}", world_->path(id), msg);
+                    st.error = msg;
+                }
+            }
+            remesh = true;
+        }
+        // The layers' paint the same way, from the layermap.
+        const std::string layer = std::format("{}|{}", tc.layermap, st.grid.n);
+        if (st.layer_key != layer) {
+            st.layer_key = layer;
+            st.grid.layer_paint.clear();
+            if (!tc.layermap.empty()) {
+                auto full = inside_dir(options_.project_dir, tc.layermap);
+                auto bytes = full ? fs::read_text(*full) : Result<std::string>(std::unexpected(full.error()));
+                auto grid = bytes ? assets::terrain_layers_from_image(*bytes, tc.layermap, st.grid.n) : Result<std::vector<std::array<float, 4>>>(std::unexpected(bytes.error()));
+                if (grid) {
+                    st.grid.layer_paint = std::move(*grid);
                 } else {
                     const std::string msg = grid.error().to_string();
                     if (st.error != msg) log::warn("terrain", "{}: {}", world_->path(id), msg);
@@ -973,7 +1019,11 @@ void Session::update_scatters() {
                 if (land) {
                     const Vec3 l = land_inv.transform_point(Vec3{x, 0, z});
                     if (std::fabs(l.x) > land->grid.size_x * 0.5f || std::fabs(l.z) > land->grid.size_z * 0.5f) continue;
-                    if (sc.max_paint < 1.0f && land->grid.paint_at(l.x, l.z)[3] > sc.max_paint) continue;   // a painted path kept clear
+                    if (sc.max_paint < 1.0f) {
+                        // A painted path kept clear, painted in a colour or with a textured layer.
+                        const auto layers = land->grid.grid_at(land->grid.layer_paint, l.x, l.z);
+                        if (std::max(land->grid.paint_at(l.x, l.z)[3], layers[0] + layers[1] + layers[2] + layers[3]) > sc.max_paint) continue;
+                    }
                     point = land_m.transform_point(Vec3{l.x, land->grid.sample(l.x, l.z), l.z});
                     const Vec3 n = land->grid.normal(l.x, l.z);
                     normal = land_t ? normalize(land_t->rotation.rotate(Vec3{n.x / land_t->scale.x, n.y / std::max(std::fabs(land_t->scale.y), 1e-6f), n.z / land_t->scale.z})) : n;
@@ -1030,6 +1080,11 @@ void Session::remesh_terrain(world::EntityId id, TerrainState& st, const world::
     look.rock_slope = tc.rock_slope;
     look.snow_line = tc.snow_line;
     look.texture_tile = tc.texture_tile;
+    for (const world::TerrainLayer& ly : tc.layers) {
+        if (look.layers.size() == 4) break;
+        look.layers.push_back({ly.texture, lin(ly.color), ly.tile, ly.slope, ly.height, ly.cover});
+    }
+    st.shares = assets::terrain_layer_weights(st.grid, look);
     const std::string path = std::format("terrain:{}@{}", id, ++st.revision);
     assets::Mesh mesh = assets::terrain_mesh(st.grid, look, path);
     world_->set_mesh_bounds(path, mesh.aabb_min, mesh.aabb_max);
@@ -1324,6 +1379,12 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
     auto local = [&](float x, float z) { return inv.transform_point(Vec3{x, 0, z}); };
     auto vec = [](Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; };
     auto inside = [&](Vec3 l) { return std::fabs(l.x) <= st.grid.size_x * 0.5f && std::fabs(l.z) <= st.grid.size_z * 0.5f; };
+    // The textured layers' shares somewhere, each with its index and name (docs/design/terrain.md, Layers).
+    auto layer_shares = [&](const std::array<float, 4>& w) {
+        Json arr = Json::array();
+        for (std::size_t l = 0; l < std::min<std::size_t>(tc.layers.size(), 4); ++l) arr.push_back(Json{{"layer", l}, {"name", tc.layers[l].name}, {"share", w[l]}});
+        return arr;
+    };
     if (op == "info") {
         float lo = 1e30f, hi = -1e30f;
         for (float v : st.grid.h) { lo = std::min(lo, v); hi = std::max(hi, v); }
@@ -1339,6 +1400,13 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         for (const auto& q : st.grid.paint) painted += q[3] > 0.01f ? 1 : 0;
         j["painted"] = st.grid.h.empty() ? 0.0 : static_cast<double>(painted) / static_cast<double>(st.grid.h.size());
         if (!tc.paintmap.empty()) j["paintmap"] = tc.paintmap;
+        if (!tc.layers.empty()) {
+            Json names = Json::array();
+            for (std::size_t l = 0; l < std::min<std::size_t>(tc.layers.size(), 4); ++l) names.push_back(tc.layers[l].name);
+            j["layers"] = names;
+            if (tc.layers.size() > 4) j["layers_unused"] = tc.layers.size() - 4;
+        }
+        if (!tc.layermap.empty()) j["layermap"] = tc.layermap;
         j["revision"] = st.revision;
         j["lowest"] = st.grid.h.empty() ? 0.0f : lo;
         j["highest"] = st.grid.h.empty() ? 0.0f : hi;
@@ -1358,6 +1426,7 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
             const auto c = st.grid.paint_at(l.x, l.z);
             out["paint"] = Json{{"r", c[0]}, {"g", c[1]}, {"b", c[2]}, {"a", c[3]}};
         }
+        if (!st.shares.empty()) out["layers"] = layer_shares(st.grid.grid_at(st.shares, l.x, l.z));
         return out;
     }
     if (op == "paint") {
@@ -1369,8 +1438,22 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         if (!stroke && (!p.contains("x") || !p.contains("z"))) return fail("bad_args", "terrain.paint needs x and z, or points");
         const std::string mode = opt<std::string>(p, "mode", "paint");
         if (mode != "paint" && mode != "erase") return fail("bad_args", "mode is paint or erase");
+        // A textured layer (by index or name) instead of a colour: its share of the ground laid on.
+        int layer = -1;
+        if (p.contains("layer") && !p["layer"].is_null()) {
+            const std::size_t count = std::min<std::size_t>(tc.layers.size(), 4);
+            if (count == 0) return fail("no_layers", "{} has no textured layers (Terrain.layers)", world_->path(id));
+            if (p["layer"].is_number_integer()) layer = p["layer"].get<int>();
+            else if (p["layer"].is_string())
+                for (std::size_t l = 0; l < count; ++l) if (tc.layers[l].name == p["layer"].get<std::string>()) layer = static_cast<int>(l);
+            if (layer < 0 || static_cast<std::size_t>(layer) >= count) {
+                Json names = Json::array();
+                for (std::size_t l = 0; l < count; ++l) names.push_back(tc.layers[l].name);
+                return fail("bad_args", "no layer {} (the layers: {}, or 0 to {})", p["layer"].dump(), names.dump(), count - 1);
+            }
+        }
         std::array<float, 3> color{0, 0, 0};
-        if (mode == "paint") {
+        if (mode == "paint" && layer < 0) {
             if (!p.contains("color") || !p["color"].is_object()) return fail("bad_args", "terrain.paint needs a color {{r, g, b}} (sRGB, 0..1)");
             color = {std::clamp(p["color"].value("r", 0.0f), 0.0f, 1.0f), std::clamp(p["color"].value("g", 0.0f), 0.0f, 1.0f), std::clamp(p["color"].value("b", 0.0f), 0.0f, 1.0f)};
         }
@@ -1397,7 +1480,8 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         } else {
             dabs.push_back(local(opt<float>(p, "x", 0.0f), opt<float>(p, "z", 0.0f)));
         }
-        if (g.paint.size() != g.h.size()) g.paint.assign(g.h.size(), {0, 0, 0, 0});
+        if (layer < 0 && g.paint.size() != g.h.size()) g.paint.assign(g.h.size(), {0, 0, 0, 0});
+        if (layer >= 0 && g.layer_paint.size() != g.h.size()) g.layer_paint.assign(g.h.size(), {0, 0, 0, 0});
         std::vector<char> touched(g.h.size(), 0);
         for (const Vec3& c : dabs) {
             // Only the samples under the brush.
@@ -1412,6 +1496,20 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
                     if (d >= radius) continue;
                     const float s = amount * (0.5f + 0.5f * repro::cos(d / radius * std::numbers::pi_v<float>));
                     const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(g.n) + static_cast<std::size_t>(i);
+                    if (layer >= 0) {
+                        // The layer's share laid over the others' paint, or taken away.
+                        auto& q = g.layer_paint[k];
+                        const auto was = q;
+                        const auto li = static_cast<std::size_t>(layer);
+                        if (mode == "paint") {
+                            for (float& v : q) v *= 1 - s;
+                            q[li] += s;
+                        } else {
+                            q[li] *= 1 - s;
+                        }
+                        if (q != was) touched[k] = 1;
+                        continue;
+                    }
                     auto& q = g.paint[k];
                     const auto was = q;
                     if (mode == "paint") {
@@ -1432,30 +1530,36 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         if (changed > 0) {
             remesh_terrain(id, st, tc);
             const Vec3 at = m.transform_point(Vec3{c.x, 0, c.z});
-            world_->events().emit(clock_.tick, "terrain.painted", id, Json{{"mode", mode}, {"x", at.x}, {"z", at.z}, {"dabs", dabs.size()}, {"radius", radius * scale_xz}, {"samples", changed}, {"revision", st.revision}}, 0, "terrain");
+            Json data{{"mode", mode}, {"x", at.x}, {"z", at.z}, {"dabs", dabs.size()}, {"radius", radius * scale_xz}, {"samples", changed}, {"revision", st.revision}};
+            if (layer >= 0) data["layer"] = layer;
+            world_->events().emit(clock_.tick, "terrain.painted", id, std::move(data), 0, "terrain");
         }
+        if (layer >= 0) return Json{{"entity", id}, {"mode", mode}, {"layer", layer}, {"samples", changed}, {"revision", st.revision}, {"layers", layer_shares(g.grid_at(st.shares, c.x, c.z))}};
         const auto at = g.paint_at(c.x, c.z);
         return Json{{"entity", id}, {"mode", mode}, {"samples", changed}, {"revision", st.revision}, {"paint", Json{{"r", at[0]}, {"g", at[1]}, {"b", at[2]}, {"a", at[3]}}}};
     }
     if (op == "paints") {
         // The paint grid, four numbers a sample in the heights' order: read, or set whole (the
         // editor's undo; an agent's own painter); an empty array clears it.
+        // With layers: true, the textured layers' paint (a share for each of four layers a sample).
+        const bool layers = opt<bool>(p, "layers", false);
+        auto& grid = layers ? st.grid.layer_paint : st.grid.paint;
         if (p.contains("paint")) {
             const Json& ps = p["paint"];
             const std::size_t want = st.grid.h.size() * 4;
-            if (!ps.is_array() || (!ps.empty() && ps.size() != want)) return fail("bad_args", "paint is an array of {} numbers ({} by {} samples, r g b a each), or empty", want, st.grid.n, st.grid.n);
+            if (!ps.is_array() || (!ps.empty() && ps.size() != want)) return fail("bad_args", "paint is an array of {} numbers ({} by {} samples, {} each), or empty", want, st.grid.n, st.grid.n, layers ? "four layers' shares" : "r g b a");
             std::vector<std::array<float, 4>> next(ps.empty() ? 0 : st.grid.h.size());
             for (std::size_t k = 0; k < ps.size(); ++k) {
                 if (!ps[k].is_number()) return fail("bad_args", "paint[{}] is not a number", k);
                 next[k / 4][k % 4] = std::clamp(ps[k].get<float>(), 0.0f, 1.0f);
             }
-            st.grid.paint = std::move(next);
+            grid = std::move(next);
             remesh_terrain(id, st, tc);
-            world_->events().emit(clock_.tick, "terrain.painted", id, Json{{"mode", "set"}, {"samples", st.grid.paint.size()}, {"revision", st.revision}}, 0, "terrain");
+            world_->events().emit(clock_.tick, "terrain.painted", id, Json{{"mode", "set"}, {"layers", layers}, {"samples", grid.size()}, {"revision", st.revision}}, 0, "terrain");
             return Json{{"entity", id}, {"resolution", st.grid.n}, {"revision", st.revision}};
         }
         Json arr = Json::array();
-        for (const auto& q : st.grid.paint) for (float v : q) arr.push_back(std::round(static_cast<double>(v) * 10000.0) / 10000.0);
+        for (const auto& q : grid) for (float v : q) arr.push_back(std::round(static_cast<double>(v) * 10000.0) / 10000.0);
         return Json{{"entity", id}, {"resolution", st.grid.n}, {"paint", std::move(arr)}};
     }
     if (op == "sculpt") {
@@ -1503,12 +1607,13 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         // The heights as a 16-bit PNG in the project; the Terrain then reads its heightmap from it.
         const std::string rel = opt<std::string>(p, "path", "");
         if (rel.empty()) return fail("bad_args", "terrain.save needs a project-relative path such as assets/island.png");
-        const bool paint = opt<bool>(p, "paint", false);
+        const bool paint = opt<bool>(p, "paint", false), layers = opt<bool>(p, "layers", false);
+        if (paint && layers) return fail("bad_args", "save the paint or the layers, one at a time");
         POCKET_TRY(full, inside_dir(options_.project_dir, rel));
         std::filesystem::create_directories(full.parent_path());
-        POCKET_TRY_VOID(fs::write_text(full, paint ? assets::terrain_paint_png(st.grid) : assets::terrain_png16(st.grid)));
+        POCKET_TRY_VOID(fs::write_text(full, paint ? assets::terrain_paint_png(st.grid) : layers ? assets::terrain_layers_png(st.grid) : assets::terrain_png16(st.grid)));
         world::Terrain next = tc;
-        (paint ? next.paintmap : next.heightmap) = rel;
+        (paint ? next.paintmap : layers ? next.layermap : next.heightmap) = rel;
         world_->ecs().entity(id).set<world::Terrain>(next);
         assets_->invalidate(rel);
         update_terrains();
@@ -1539,6 +1644,8 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
         // paintmap's (none without one).
         if (opt<bool>(p, "paint", false)) {
             st.paint_key.clear();
+        } else if (opt<bool>(p, "layers", false)) {
+            st.layer_key.clear();
         } else {
             st.shape_key.clear();
         }
@@ -1817,6 +1924,19 @@ Result<std::filesystem::path> inside_dir(const std::filesystem::path& project_di
     std::filesystem::path full = std::filesystem::weakly_canonical(base / rel);
     auto [bi, fi] = std::mismatch(base.begin(), base.end(), full.begin(), full.end());
     if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", rel);
+    return full;
+}
+
+// Where a picture a command writes goes: a relative path under the project (not out of it), an
+// absolute one as given; its directory is made.
+Result<std::filesystem::path> output_path(const std::filesystem::path& project_dir, const std::string& path) {
+    std::filesystem::path full(path);
+    if (full.is_relative()) {
+        POCKET_TRY(inside, inside_dir(project_dir, path));
+        full = inside;
+    }
+    std::error_code ec;
+    if (full.has_parent_path()) std::filesystem::create_directories(full.parent_path(), ec);
     return full;
 }
 }  // namespace
@@ -2652,7 +2772,12 @@ Result<Json> Session::particles_command(std::string_view op, const Json& p) {
         world::EntityId id = resolve_entity(p["entity"]);
         if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
         int count = opt<int>(p, "count", 10);
-        POCKET_TRY_VOID(particles_->burst(*world_, id, count));
+        std::optional<Vec3> at;
+        if (p.contains("at")) {
+            if (!(p["at"].is_array() && p["at"].size() == 3) && !p["at"].is_object()) return fail("bad_args", "'at' must be a point [x, y, z] or {{x, y, z}}");
+            at = vec3_of(p["at"], {0, 0, 0});
+        }
+        POCKET_TRY_VOID(particles_->burst(*world_, id, count, at ? &*at : nullptr, opt<float>(p, "speed", 1.0f)));
         std::size_t alive = 0;
         if (auto it = particles_->pools().find(id); it != particles_->pools().end()) alive = it->second.alive.size();
         return Json{{"entity", id}, {"count", count}, {"alive", alive}};
@@ -2985,10 +3110,11 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         j["height"] = img.height;
         j["visible"] = Json(entities);
         j["count"] = spans.size() - (spans.contains(0) ? 1 : 0);
-        std::string path = op == "ids" ? opt<std::string>(p, "path", "") : "";
+        const std::string path = op == "ids" ? opt<std::string>(p, "path", "") : "";
         if (!path.empty()) {
-            POCKET_TRY_VOID(write_png(path, ids_to_image(img)));
-            j["path"] = path;
+            POCKET_TRY(out, output_path(options_.project_dir, path));
+            POCKET_TRY_VOID(write_png(out, ids_to_image(img)));
+            j["path"] = out.string();
         }
         return j;
     }
@@ -4151,7 +4277,7 @@ Status Session::finish() {
     stopped_ = true;
     dispatch("stop", Json::object());
     if (!options_.capture.empty()) {
-        auto r = command("capture", Json{{"path", options_.capture.string()}}, "runtime");
+        auto r = command("capture", Json{{"path", std::filesystem::absolute(options_.capture).string()}}, "runtime");   // a command line's path is from where it ran
         if (!r) record_error(r.error());
     }
     if (journal_) {
@@ -5052,8 +5178,9 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
                 std::memcpy(&sheet.rgba[((static_cast<std::size_t>(oy) + y) * sheet.width + ox) * 4], &shots[k].rgba[static_cast<std::size_t>(y) * shots[k].width * 4], static_cast<std::size_t>(std::min(w, shots[k].width)) * 4);
             }
         }
-        POCKET_TRY_VOID(write_png(path, sheet));
-        return Json{{"path", path}, {"views", list}, {"columns", cols}, {"rows", rows}, {"width", sheet.width}, {"height", sheet.height},
+        POCKET_TRY(out, output_path(options_.project_dir, path));
+        POCKET_TRY_VOID(write_png(out, sheet));
+        return Json{{"path", out.string()}, {"views", list}, {"columns", cols}, {"rows", rows}, {"width", sheet.width}, {"height", sheet.height},
                     {"center", Json{{"x", center.x}, {"y", center.y}, {"z", center.z}}}, {"radius", radius}, {"entity", focus ? Json(world_->path(focus)) : Json(nullptr)}};
     }
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
@@ -5181,8 +5308,9 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
             c["pixels"] = arr;
         }
         if (!path.empty()) {
-            POCKET_TRY_VOID(write_png(path, img));
-            c["path"] = path;
+            POCKET_TRY(out, output_path(options_.project_dir, path));
+            POCKET_TRY_VOID(write_png(out, img));
+            c["path"] = out.string();
         }
         std::string ids_path = opt<std::string>(p, "ids", "");
         if (!ids_path.empty()) {

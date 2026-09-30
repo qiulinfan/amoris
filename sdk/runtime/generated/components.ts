@@ -108,6 +108,24 @@ export interface AnimationParam {
     trigger: boolean;
 }
 
+/** One textured layer of a Terrain's ground (docs/design/terrain.md, Layers): an image tiled over the ground where the layer lies, which is where its slope and height rules put it and where it is painted. */
+export interface TerrainLayer {
+    /** What terrain.paint {layer} and terrain.height call it (grass, rock, sand). */
+    name: string;
+    /** A project-relative image tiled over the ground where the layer lies; empty is plain white under its colour. */
+    texture: string;
+    /** Multiplies the texture. */
+    color: Color;
+    /** Units per repeat of the texture. */
+    tile: number;
+    /** The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit). */
+    slope: Vec2;
+    /** The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit). */
+    height: Vec2;
+    /** How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything. */
+    cover: number;
+}
+
 /** Position, rotation and scale relative to the parent entity (or the world when there is no parent). */
 export interface Transform {
     /** Local position in meters. */
@@ -542,7 +560,7 @@ export interface LookAt {
 
 /** Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones. */
 export interface ParticleEmitter {
-    /** Project-relative image; empty draws soft solid quads. */
+    /** Project-relative image; empty draws soft round spots (streaks when stretched). */
     texture: string;
     /** Whether particles spawn continuously at rate. */
     emitting: boolean;
@@ -786,6 +804,10 @@ export interface Terrain {
     texture_tile: number;
     /** A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none. */
     paintmap: string;
+    /** Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture. */
+    layers: TerrainLayer[];
+    /** A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none. */
+    layermap: string;
 }
 
 /** The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer. */
@@ -832,6 +854,10 @@ export interface Water {
     density: number;
     /** How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. */
     drag: number;
+    /** Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none. */
+    splash: string;
+    /** Particles a splash throws for an entry at 8 units a second (a fall of about three units); half as fast throws half as many, and at most twice as many. */
+    splash_count: number;
     /** false stops it being drawn and buoying. */
     enabled: boolean;
 }
@@ -862,9 +888,9 @@ export interface Scatter {
     min_height: number;
     /** No copy on ground higher than this (world y): below the snow. */
     max_height: number;
-    /** No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1): 0.3 keeps a painted path clear of bushes; 1 places them on paint too. */
+    /** No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1, in a colour or with its textured layers): 0.3 keeps a painted path clear of bushes; 1 places them on paint too. */
     max_paint: number;
-    /** Above 0, every copy is a static collider: an upright capsule of this radius (in the entity's units, times the copy's size) standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. 0: the copies are only drawn. */
+    /** Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in the entity's own units, so the entity's Transform scale x multiplies it, and so does each copy's size: on an entity scaled 0.1 across, `collide` 1 is 0.1 in the world. 0: the copies are only drawn. */
     collide: number;
     /** The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width). */
     collide_height: number;
@@ -1119,9 +1145,9 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
-    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "" },
+    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
-    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, enabled: true },
+    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
@@ -1142,6 +1168,7 @@ export interface Records {
     AnimationState: AnimationState;
     AnimationTransition: AnimationTransition;
     AnimationParam: AnimationParam;
+    TerrainLayer: TerrainLayer;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
@@ -1152,6 +1179,7 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     AnimationState: { name: "", clip: "", blend: "", clips: "", speed: 1, loop: true },
     AnimationTransition: { from: "*", to: "", when: "", after: 0, fade: 0.2 },
     AnimationParam: { name: "", value: 0, trigger: false },
+    TerrainLayer: { name: "", texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, tile: 4, slope: { x: 0, y: 90 }, height: { x: 0, y: 1 }, cover: 1 },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

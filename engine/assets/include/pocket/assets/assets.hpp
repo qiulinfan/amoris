@@ -27,6 +27,22 @@ struct MeshVertex {
     Vec4 color{1, 1, 1, 1};   // linear; a file's vertex colors (glTF COLOR_0, OBJ's r g b after a vertex), white without
 };
 
+// A terrain's textured layers (docs/design/terrain.md, Layers), made with its mesh: how much of each
+// lies at every sample of the grid, and what each looks like. The renderer tiles each layer's image
+// over the ground and mixes them by the shares.
+struct TerrainLayers {
+    struct Layer {
+        std::string texture;   // project-relative image; empty for plain white
+        Vec3 color{1, 1, 1};   // linear, multiplies the image
+        float tile = 4;        // units per repeat
+    };
+    std::vector<Layer> layers;           // one to four
+    int n = 0;                           // samples along a side
+    Vec2 size{64, 64};                   // the ground's extent along x and z
+    float texture_tile = 4;              // units per repeat of the mesh's own uv
+    std::vector<std::uint8_t> weights;   // n * n * 4: each layer's share at a sample (0..255, together 255), in the heights' order
+};
+
 struct Material {
     Vec4 base_color{1, 1, 1, 1};  // linear RGBA
     std::string texture;       // project-relative image path, empty for none
@@ -46,6 +62,7 @@ struct Material {
     Vec2 uv_scale{1, 1};
     bool uv_transformed = false;
     std::string name;
+    std::shared_ptr<const TerrainLayers> terrain;   // a terrain drawn from textured layers; null otherwise
 };
 
 // One draw: an index range using one material.
@@ -360,6 +377,9 @@ struct Terrain {
     // Colour painted over the ground's own (terrain.paint): n * n of sRGB r, g, b and a weight 0..1,
     // in the order of h; empty where nothing was ever painted.
     std::vector<std::array<float, 4>> paint;
+    // The textured layers' paint (terrain.paint {layer}): n * n of how much of the ground each of the
+    // four layers covers there, together at most 1, in the order of h; empty where none was painted.
+    std::vector<std::array<float, 4>> layer_paint;
     [[nodiscard]] float cell_x() const { return size_x / static_cast<float>(std::max(n - 1, 1)); }
     [[nodiscard]] float cell_z() const { return size_z / static_cast<float>(std::max(n - 1, 1)); }
     [[nodiscard]] float at(int i, int j) const;
@@ -368,6 +388,8 @@ struct Terrain {
     [[nodiscard]] Vec3 normal(float x, float z) const;
     // The paint at local (x, z), bilinear between samples; weight 0 where unpainted.
     [[nodiscard]] std::array<float, 4> paint_at(float x, float z) const;
+    // Bilinear between samples of any n * n grid of four numbers (the paint, the layers' shares); zeros when it is not n * n.
+    [[nodiscard]] std::array<float, 4> grid_at(const std::vector<std::array<float, 4>>& grid, float x, float z) const;
 };
 
 // From a greyscale image (8 or 16 bits; the first channel), resampled to n by n: black is 0, white `height`.
@@ -377,10 +399,25 @@ Result<Terrain> terrain_from_image(const std::string& bytes, const std::string& 
 Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, Vec2 size, float height);
 // How a terrain is coloured: grass below, rock where steeper than rock_slope degrees, snow above
 // snow_line (a fraction of the height), blended across their borders; uv repeats every texture_tile units.
+// With layers, those colours give way to the layers' images, stacked in order: each lies by its
+// rules (slope and height windows, softened at their ends) over the ones before it by `cover`,
+// and the layers' paint over all of that.
 struct TerrainLook {
     Vec3 grass{0.30f, 0.45f, 0.22f}, rock{0.45f, 0.42f, 0.38f}, snow{0.92f, 0.93f, 0.95f};
     float snow_line = 0.85f, rock_slope = 35.0f, texture_tile = 4.0f;
+    struct Layer {
+        std::string texture;
+        Vec3 color{1, 1, 1};              // linear
+        float tile = 4;
+        Vec2 slope{0, 90};                // degrees
+        Vec2 height{0, 1};                // fractions of the terrain's height
+        float cover = 1;
+    };
+    std::vector<Layer> layers;            // up to four are used
 };
+// Every sample's share of each layer (together 1): the rules, then the layers' paint over them;
+// empty without layers.
+std::vector<std::array<float, 4>> terrain_layer_weights(const Terrain& t, const TerrainLook& look);
 // The terrain as a mesh (vertex colours from the look, one grey material) at `path`.
 Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& path);
 // A 16-bit greyscale PNG of the heights (0 is 0, 65535 is the terrain's height): what terrain_from_image reads back.
@@ -389,6 +426,11 @@ std::string terrain_png16(const Terrain& t);
 Result<std::vector<std::array<float, 4>>> terrain_paint_from_image(const std::string& bytes, const std::string& display_path, int n);
 // The paint as an 8-bit RGBA PNG, n by n: what terrain_paint_from_image reads back.
 std::string terrain_paint_png(const Terrain& t);
+// A layer map: an RGBA image, each channel how much of the ground one layer covers, resampled to n by
+// n; where the channels add up to more than 1 they are scaled to 1.
+Result<std::vector<std::array<float, 4>>> terrain_layers_from_image(const std::string& bytes, const std::string& display_path, int n);
+// The layers' paint as an 8-bit RGBA PNG, n by n: what terrain_layers_from_image reads back.
+std::string terrain_layers_png(const Terrain& t);
 
 class AssetStore {
    public:

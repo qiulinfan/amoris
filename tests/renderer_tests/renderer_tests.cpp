@@ -2267,3 +2267,66 @@ TEST_CASE("a decal's normal map bends the light on what it covers: tilted toward
     std::filesystem::remove(dir / "test-tilt-east.png");
     std::filesystem::remove(dir / "test-tilt-west.png");
 }
+
+TEST_CASE("a terrain drawn from textured layers: the first everywhere, a painted one over it, its image tiled, colour paint over both", "[renderer][terrain][terrainlayers]") {
+    // A 2 by 2 checker (written with the terrain paint's RGBA PNG writer), for a layer whose image shows.
+    const std::filesystem::path dir = root() / "samples" / "playground" / "assets";
+    {
+        assets::Terrain t;
+        t.n = 2;
+        t.h.assign(4, 0.0f);
+        t.paint = {{1, 1, 1, 1}, {0, 0, 0, 1}, {0, 0, 0, 1}, {1, 1, 1, 1}};
+        std::ofstream(dir / "test-checker.png", std::ios::binary) << assets::terrain_paint_png(t);
+    }
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 256;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(components)}}).has_value()); };
+    const Json down{{"x", -0.7071}, {"y", 0}, {"z", 0}, {"w", 0.7071}};
+    spawn("Sun", Json{{"Transform", Json{{"rotation", down}}}, {"Light", Json{{"kind", 0}, {"intensity", 2}}}});
+    Json layers = Json::array();
+    layers.push_back(Json{{"name", "red"}, {"color", Json{{"r", 1}, {"g", 0.1}, {"b", 0.1}, {"a", 1}}}});
+    layers.push_back(Json{{"name", "checker"}, {"texture", "assets/test-checker.png"}, {"tile", 2}, {"cover", 0}});
+    spawn("Ground", Json{{"Transform", Json::object()}, {"Terrain", Json{{"size", Json{{"x", 20}, {"y", 20}}}, {"height", 0.01}, {"resolution", 41}, {"layers", layers}}}, {"MeshRenderer", Json{{"roughness", 1.0}}}});
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 12}, {"z", 0}}}, {"rotation", down}}}, {"Camera", Json{{"fov_degrees", 60}}}});
+    auto pixel = [&](double x, double z) {
+        Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 0}, {"z", z}}}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+    };
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    // The first layer lies everywhere: red.
+    Json p = pixel(0, 0);
+    INFO("red layer " << p.dump());
+    REQUIRE(p[0].get<int>() > 120);
+    REQUIRE(p[1].get<int>() < p[0].get<int>() / 2);
+    REQUIRE(p[2].get<int>() < p[0].get<int>() / 2);
+    // Painted over it at full strength, the checker shows, a light and a dark square every unit.
+    REQUIRE(s.command("terrain.paint", Json{{"x", 0}, {"z", 0}, {"layer", "checker"}, {"radius", 10}, {"amount", 1}}).has_value());
+    REQUIRE(s.frame().has_value());
+    int lo = 999, hi = -1;
+    for (double x = -1.5; x <= 1.5; x += 0.25) {
+        p = pixel(x, 0.5);
+        const int lum = p[0].get<int>() + p[1].get<int>() + p[2].get<int>();
+        lo = std::min(lo, lum);
+        hi = std::max(hi, lum);
+        REQUIRE(std::abs(p[0].get<int>() - p[2].get<int>()) < 30);   // grey, not red
+    }
+    INFO("checker from " << lo << " to " << hi);
+    REQUIRE(hi - lo > 150);
+    // Far from the paint, still red.
+    p = pixel(8, 8);
+    REQUIRE(p[0].get<int>() > p[2].get<int>() + 60);
+    // A colour laid over both covers them.
+    REQUIRE(s.command("terrain.paint", Json{{"x", 0}, {"z", 0}, {"color", Json{{"r", 0.1}, {"g", 0.8}, {"b", 0.1}}}, {"radius", 3}, {"amount", 1}}).has_value());
+    REQUIRE(s.frame().has_value());
+    p = pixel(0, 0);
+    INFO("green over the checker " << p.dump());
+    REQUIRE(p[1].get<int>() > p[0].get<int>() + 60);
+    REQUIRE(p[1].get<int>() > p[2].get<int>() + 60);
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(dir / "test-checker.png");
+}

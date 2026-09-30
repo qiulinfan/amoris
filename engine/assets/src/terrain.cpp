@@ -47,12 +47,14 @@ float Terrain::sample(float x, float z) const {
     return h00 + (h11 - h01) * u + (h01 - h00) * v;
 }
 
-std::array<float, 4> Terrain::paint_at(float x, float z) const {
-    if (n < 2 || paint.size() != static_cast<std::size_t>(n) * static_cast<std::size_t>(n)) return {0, 0, 0, 0};
+std::array<float, 4> Terrain::paint_at(float x, float z) const { return grid_at(paint, x, z); }
+
+std::array<float, 4> Terrain::grid_at(const std::vector<std::array<float, 4>>& grid, float x, float z) const {
+    if (n < 2 || grid.size() != static_cast<std::size_t>(n) * static_cast<std::size_t>(n)) return {0, 0, 0, 0};
     int i = 0, j = 0;
     float u = 0, v = 0;
     locate(*this, x, z, i, j, u, v);
-    auto p = [&](int a, int b) { return paint[static_cast<std::size_t>(b) * static_cast<std::size_t>(n) + static_cast<std::size_t>(a)]; };
+    auto p = [&](int a, int b) { return grid[static_cast<std::size_t>(b) * static_cast<std::size_t>(n) + static_cast<std::size_t>(a)]; };
     std::array<float, 4> out{};
     for (int c = 0; c < 4; ++c) {
         const float top = p(i, j)[c] * (1 - u) + p(i + 1, j)[c] * u;
@@ -178,6 +180,70 @@ Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, 
     return t;
 }
 
+namespace {
+
+// The vertex normal at sample (i, j) from its neighbours (central differences, one-sided at the edges).
+Vec3 sample_normal(const Terrain& t, int i, int j) {
+    const int n = t.n;
+    const float dx = (t.at(i + 1, j) - t.at(i - 1, j)) / (t.cell_x() * static_cast<float>((i > 0 && i < n - 1) ? 2 : 1));
+    const float dz = (t.at(i, j + 1) - t.at(i, j - 1)) / (t.cell_z() * static_cast<float>((j > 0 && j < n - 1) ? 2 : 1));
+    return normalize(Vec3{-dx, 1, -dz});
+}
+
+float smooth_step(float a, float b, float x) {
+    const float k = std::clamp((x - a) / std::max(b - a, 1e-6f), 0.0f, 1.0f);
+    return k * k * (3 - 2 * k);
+}
+
+// 1 within lo..hi, falling to 0 across `soft` centred on each end that is a limit (lo above `least`, hi below `most`).
+float window(float v, float lo, float hi, float soft, float least, float most) {
+    float w = 1;
+    if (lo > least) w *= smooth_step(lo - soft * 0.5f, lo + soft * 0.5f, v);
+    if (hi < most) w *= 1.0f - smooth_step(hi - soft * 0.5f, hi + soft * 0.5f, v);
+    return w;
+}
+
+}  // namespace
+
+std::vector<std::array<float, 4>> terrain_layer_weights(const Terrain& t, const TerrainLook& look) {
+    const int count = static_cast<int>(std::min<std::size_t>(look.layers.size(), 4));
+    if (count == 0 || t.n < 1) return {};
+    const std::size_t total = static_cast<std::size_t>(t.n) * static_cast<std::size_t>(t.n);
+    const bool painted = t.layer_paint.size() == total;
+    std::vector<std::array<float, 4>> out(total);
+    for (int j = 0; j < t.n; ++j) {
+        for (int i = 0; i < t.n; ++i) {
+            const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(t.n) + static_cast<std::size_t>(i);
+            const float slope = std::acos(std::clamp(sample_normal(t, i, j).y, -1.0f, 1.0f)) * 180.0f / std::numbers::pi_v<float>;
+            const float high = t.height > 0 ? t.at(i, j) / t.height : 0.0f;
+            // The first layer everywhere, each next over those before it where its rules let it lie.
+            std::array<float, 4> w{1, 0, 0, 0};
+            for (int l = 1; l < count; ++l) {
+                const TerrainLook::Layer& ly = look.layers[static_cast<std::size_t>(l)];
+                const float r = std::clamp(ly.cover, 0.0f, 1.0f) * window(slope, ly.slope.x, ly.slope.y, 4.0f, 0.0f, 90.0f) * window(high, ly.height.x, ly.height.y, 0.03f, 0.0f, 1.0f);
+                for (float& c : w) c *= 1 - r;
+                w[static_cast<std::size_t>(l)] += r;
+            }
+            // The paint over the rules, as much as it covers.
+            if (painted) {
+                std::array<float, 4> p = t.layer_paint[k];
+                float sum = 0;
+                for (int l = 0; l < 4; ++l) {
+                    p[static_cast<std::size_t>(l)] = l < count ? std::clamp(p[static_cast<std::size_t>(l)], 0.0f, 1.0f) : 0.0f;
+                    sum += p[static_cast<std::size_t>(l)];
+                }
+                if (sum > 1) {
+                    for (float& c : p) c /= sum;
+                    sum = 1;
+                }
+                for (int l = 0; l < 4; ++l) w[static_cast<std::size_t>(l)] = w[static_cast<std::size_t>(l)] * (1 - sum) + p[static_cast<std::size_t>(l)];
+            }
+            out[k] = w;
+        }
+    }
+    return out;
+}
+
 Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& path) {
     Mesh m;
     m.path = path;
@@ -187,10 +253,8 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
     m.vertices.reserve(static_cast<std::size_t>(n) * static_cast<std::size_t>(n));
     const float cos_rock = std::cos(std::clamp(look.rock_slope, 0.0f, 89.0f) * std::numbers::pi_v<float> / 180.0f);
     const float tile = std::max(look.texture_tile, 1e-3f);
-    auto smooth = [](float a, float b, float x) {
-        const float k = std::clamp((x - a) / std::max(b - a, 1e-6f), 0.0f, 1.0f);
-        return k * k * (3 - 2 * k);
-    };
+    const bool layered = !look.layers.empty();
+    auto smooth = smooth_step;
     float lo = 1e30f, hi = -1e30f;
     for (int j = 0; j < n; ++j) {
         for (int i = 0; i < n; ++i) {
@@ -199,27 +263,36 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
             const float y = t.at(i, j);
             lo = std::min(lo, y);
             hi = std::max(hi, y);
-            // The vertex normal from its neighbours (central differences, one-sided at the edges).
-            const float dx = (t.at(i + 1, j) - t.at(i - 1, j)) / (t.cell_x() * static_cast<float>((i > 0 && i < n - 1) ? 2 : 1));
-            const float dz = (t.at(i, j + 1) - t.at(i, j - 1)) / (t.cell_z() * static_cast<float>((j > 0 && j < n - 1) ? 2 : 1));
-            const Vec3 nrm = normalize(Vec3{-dx, 1, -dz});
-            // Grass, then rock where it is steep, then snow high up (not on the steepest rock).
-            const float steep = 1.0f - smooth(cos_rock - 0.08f, cos_rock + 0.08f, nrm.y);
-            const float high = look.snow_line < 1.0f ? smooth(look.snow_line - 0.05f, look.snow_line + 0.05f, t.height > 0 ? y / t.height : 0.0f) : 0.0f;
-            Vec3 c = look.grass + (look.rock - look.grass) * steep;
-            c = c + (look.snow - c) * (high * (1.0f - steep * 0.7f));
-            // Paint over it by its weight (painted in sRGB, drawn in linear light like the rest).
+            const Vec3 nrm = sample_normal(t, i, j);
+            // Grass, then rock where it is steep, then snow high up (not on the steepest rock); white
+            // under textured layers, which bring their own.
+            Vec3 c{1, 1, 1};
+            if (!layered) {
+                const float steep = 1.0f - smooth(cos_rock - 0.08f, cos_rock + 0.08f, nrm.y);
+                const float high = look.snow_line < 1.0f ? smooth(look.snow_line - 0.05f, look.snow_line + 0.05f, t.height > 0 ? y / t.height : 0.0f) : 0.0f;
+                c = look.grass + (look.rock - look.grass) * steep;
+                c = c + (look.snow - c) * (high * (1.0f - steep * 0.7f));
+            }
+            // Paint over it by its weight (painted in sRGB, drawn in linear light like the rest). Over
+            // textured layers the colour goes with its weight in the alpha, and the renderer lays it
+            // over the layers' images.
+            float cover = layered ? 0.0f : 1.0f;
             if (!t.paint.empty()) {
                 const auto& p = t.paint[static_cast<std::size_t>(j) * static_cast<std::size_t>(n) + static_cast<std::size_t>(i)];
                 auto lin = [](float s) { s = std::clamp(s, 0.0f, 1.0f); return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f); };
                 const float w = std::clamp(p[3], 0.0f, 1.0f);
-                c = c + (Vec3{lin(p[0]), lin(p[1]), lin(p[2])} - c) * w;
+                if (layered) {
+                    c = Vec3{lin(p[0]), lin(p[1]), lin(p[2])};
+                    cover = w;
+                } else {
+                    c = c + (Vec3{lin(p[0]), lin(p[1]), lin(p[2])} - c) * w;
+                }
             }
             MeshVertex v;
             v.position = {x, y, z};
             v.normal = nrm;
             v.uv = {x / tile, z / tile};
-            v.color = {c.x, c.y, c.z, 1};
+            v.color = {c.x, c.y, c.z, cover};
             m.vertices.push_back(v);
         }
     }
@@ -237,6 +310,18 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
     Material mat;
     mat.name = "terrain";
     mat.roughness = 0.95f;
+    if (layered) {
+        auto tl = std::make_shared<TerrainLayers>();
+        for (std::size_t l = 0; l < std::min<std::size_t>(look.layers.size(), 4); ++l) tl->layers.push_back({look.layers[l].texture, look.layers[l].color, std::max(look.layers[l].tile, 1e-3f)});
+        tl->n = n;
+        tl->size = {t.size_x, t.size_z};
+        tl->texture_tile = tile;
+        const auto shares = terrain_layer_weights(t, look);
+        tl->weights.resize(shares.size() * 4);
+        for (std::size_t k = 0; k < shares.size(); ++k)
+            for (std::size_t c = 0; c < 4; ++c) tl->weights[k * 4 + c] = static_cast<std::uint8_t>(std::lround(std::clamp(shares[k][c], 0.0f, 1.0f) * 255.0f));
+        mat.terrain = std::move(tl);
+    }
     m.materials.push_back(mat);
     m.aabb_min = {-t.size_x * 0.5f, lo, -t.size_z * 0.5f};
     m.aabb_max = {t.size_x * 0.5f, hi, t.size_z * 0.5f};
@@ -340,14 +425,17 @@ Result<std::vector<std::array<float, 4>>> terrain_paint_from_image(const std::st
     return out;
 }
 
-std::string terrain_paint_png(const Terrain& t) {
+namespace {
+
+// n by n samples of four numbers 0..1 as an 8-bit RGBA PNG (zeros when the grid is not n * n).
+std::string rgba_png(int n, const std::vector<std::array<float, 4>>& grid) {
     std::string raw;
-    raw.reserve(static_cast<std::size_t>(t.n) * (static_cast<std::size_t>(t.n) * 4 + 1));
-    const bool painted = t.paint.size() == static_cast<std::size_t>(t.n) * static_cast<std::size_t>(t.n);
-    for (int j = 0; j < t.n; ++j) {
+    raw.reserve(static_cast<std::size_t>(n) * (static_cast<std::size_t>(n) * 4 + 1));
+    const bool painted = grid.size() == static_cast<std::size_t>(n) * static_cast<std::size_t>(n);
+    for (int j = 0; j < n; ++j) {
         raw.push_back(0);
-        for (int i = 0; i < t.n; ++i) {
-            const std::array<float, 4> p = painted ? t.paint[static_cast<std::size_t>(j) * static_cast<std::size_t>(t.n) + static_cast<std::size_t>(i)] : std::array<float, 4>{0, 0, 0, 0};
+        for (int i = 0; i < n; ++i) {
+            const std::array<float, 4> p = painted ? grid[static_cast<std::size_t>(j) * static_cast<std::size_t>(n) + static_cast<std::size_t>(i)] : std::array<float, 4>{0, 0, 0, 0};
             for (int c = 0; c < 4; ++c) raw.push_back(static_cast<char>(std::lround(std::clamp(p[c], 0.0f, 1.0f) * 255.0f)));
         }
     }
@@ -355,13 +443,52 @@ std::string terrain_paint_png(const Terrain& t) {
     unsigned char* z = stbi_zlib_compress(reinterpret_cast<unsigned char*>(raw.data()), static_cast<int>(raw.size()), &zlen, 8);
     std::string out("\x89PNG\r\n\x1a\n", 8);
     std::string ihdr;
-    put_u32(ihdr, static_cast<std::uint32_t>(t.n));
-    put_u32(ihdr, static_cast<std::uint32_t>(t.n));
+    put_u32(ihdr, static_cast<std::uint32_t>(n));
+    put_u32(ihdr, static_cast<std::uint32_t>(n));
     ihdr += std::string("\x08\x06\x00\x00\x00", 5);   // 8 bits, RGBA, deflate, no filter method, no interlace
     chunk(out, "IHDR", ihdr);
     chunk(out, "IDAT", std::string(reinterpret_cast<const char*>(z), static_cast<std::size_t>(zlen)));
     std::free(z);
     chunk(out, "IEND", "");
+    return out;
+}
+
+}  // namespace
+
+std::string terrain_paint_png(const Terrain& t) { return rgba_png(t.n, t.paint); }
+
+std::string terrain_layers_png(const Terrain& t) { return rgba_png(t.n, t.layer_paint); }
+
+Result<std::vector<std::array<float, 4>>> terrain_layers_from_image(const std::string& bytes, const std::string& display_path, int n) {
+    int w = 0, hgt = 0, channels = 0;
+    stbi_uc* px = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()), static_cast<int>(bytes.size()), &w, &hgt, &channels, 4);
+    if (!px) return fail("bad_image", "{}: {}", display_path, stbi_failure_reason());
+    if (w < 2 || hgt < 2) {
+        stbi_image_free(px);
+        return fail("bad_image", "{}: a layer map needs at least 2 by 2 pixels", display_path);
+    }
+    n = std::clamp(n, 2, 1025);
+    std::vector<std::array<float, 4>> out(static_cast<std::size_t>(n) * static_cast<std::size_t>(n));
+    auto g = [&](int x, int y, int c) { return static_cast<float>(px[(static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) * 4 + static_cast<std::size_t>(c)]) / 255.0f; };
+    for (int j = 0; j < n; ++j) {
+        const float py = static_cast<float>(j) / static_cast<float>(n - 1) * static_cast<float>(hgt - 1);
+        const int y0 = std::min(static_cast<int>(py), hgt - 2);
+        const float fy = py - static_cast<float>(y0);
+        for (int i = 0; i < n; ++i) {
+            const float pxf = static_cast<float>(i) / static_cast<float>(n - 1) * static_cast<float>(w - 1);
+            const int x0 = std::min(static_cast<int>(pxf), w - 2);
+            const float fx = pxf - static_cast<float>(x0);
+            std::array<float, 4> s{};
+            float sum = 0;
+            for (int c = 0; c < 4; ++c) {
+                s[static_cast<std::size_t>(c)] = (g(x0, y0, c) * (1 - fx) + g(x0 + 1, y0, c) * fx) * (1 - fy) + (g(x0, y0 + 1, c) * (1 - fx) + g(x0 + 1, y0 + 1, c) * fx) * fy;
+                sum += s[static_cast<std::size_t>(c)];
+            }
+            if (sum > 1) for (float& v : s) v /= sum;
+            out[static_cast<std::size_t>(j) * static_cast<std::size_t>(n) + static_cast<std::size_t>(i)] = s;
+        }
+    }
+    stbi_image_free(px);
     return out;
 }
 

@@ -20,9 +20,12 @@ export interface LiveParticle {
 }
 
 export const particles = {
-    /** Emit count particles at once from an entity with a ParticleEmitter (emitting or not). */
-    burst(entity: EntityRef, count = 10): { entity: number; count: number; alive: number } {
-        return command("particles.burst", { entity, count }) as { entity: number; count: number; alive: number };
+    /**
+     * Emit count particles at once from an entity with a ParticleEmitter (emitting or not): from the
+     * emitter, or from the world point `at`, their speeds times `speed` (default 1).
+     */
+    burst(entity: EntityRef, count = 10, options: { at?: Vec3; speed?: number } = {}): { entity: number; count: number; alive: number } {
+        return command("particles.burst", { entity, count, ...options }) as { entity: number; count: number; alive: number };
     },
     stats(): ParticleStats {
         return command("particles.stats", {}) as ParticleStats;

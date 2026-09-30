@@ -286,6 +286,7 @@ impl<'a> McpServer<'a> {
             o.remove("image");   // the tool's own option, not the command's
         }
         let v = self.rpc("capture", args)?;
+        let path = v.get("path").and_then(|p| p.as_str()).map(String::from).unwrap_or(path);   // a relative path lands under the project
         let text = serde_json::to_string_pretty(&v).unwrap_or_default();
         let mut content = vec![json!({ "type": "text", "text": text })];
         if want_image {

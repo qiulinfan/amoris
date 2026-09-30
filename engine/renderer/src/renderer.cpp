@@ -167,7 +167,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 336;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 368;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -226,6 +226,10 @@ constexpr std::uint32_t kMaxWater = 8;
 // Decals: the nearest in view, and their images (layers of one array, 0 the built-in spot).
 constexpr std::uint32_t kMaxDecals = 64;
 constexpr std::uint32_t kDecalSize = 256, kDecalLayers = 16, kDecalLevels = 9;
+// The built-in soft spot particles are drawn with when their emitter names no image.
+constexpr const char* kDotTexture = "pocket:dot";
+// Terrain layers (docs/design/terrain.md, Layers): each layer's image resampled into one array of this size.
+constexpr std::uint32_t kLayerSize = 512, kLayerLevels = 10;
 constexpr std::uint32_t kShadowMapSize = 2048;
 
 struct alignas(16) ObjectUniforms {
@@ -240,6 +244,8 @@ struct alignas(16) ObjectUniforms {
     float morph_weights[8];   // one per target, up to eight
     float prev_model[16];     // the model last frame (TAA's motion vectors); the model itself when new or TAA is off
     float sway[4];            // a swaying copy: how far its top leans (world units), sways a second, its mesh's local foot, 1 / its height; 0 reach for none
+    float terrain[4];         // a terrain drawn from textured layers: x the layers (0 for none), yz the splat map's texels per unit of uv
+    float layer_tile[4];      // each layer's repeats per unit of the mesh's uv
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -470,6 +476,8 @@ struct Object {
     morph_weights: array<vec4f, 2>,
     prev_model: mat4x4f,
     sway: vec4f,
+    terrain: vec4f,
+    layer_tile: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
@@ -498,6 +506,29 @@ fn morph_normal(object: Object, vid: u32, n: vec3f) -> vec3f {
 @group(2) @binding(2) var mr_tex: texture_2d<f32>;
 @group(2) @binding(3) var normal_tex: texture_2d<f32>;
 @group(2) @binding(4) var emissive_tex: texture_2d<f32>;
+@group(2) @binding(6) var splat_tex: texture_2d<f32>;
+@group(2) @binding(7) var layer_tex: texture_2d_array<f32>;
+// A terrain's ground from its textured layers (docs/design/terrain.md, Layers): each layer's image
+// tiled at its own scale, mixed by the layers' shares where the fragment is (the splat map's texels
+// sit on the grid's samples). Explicit gradients: it runs only for terrains.
+fn terrain_ground(object: Object, uv: vec2f, duv1: vec2f, duv2: vec2f) -> vec4f {
+    let w = textureSampleLevel(splat_tex, base_samp, uv * object.terrain.yz + vec2f(0.5), 0.0);
+    var c = vec3f(0.0);
+    let n = u32(object.terrain.x);
+    for (var i = 0u; i < n; i = i + 1u) {
+        let k = object.layer_tile[i];
+        if (w[i] > 0.002) {
+            c = c + w[i] * textureSampleGrad(layer_tex, base_samp, uv * k, i32(i), duv1 * k, duv2 * k).rgb;
+        }
+    }
+    return vec4f(c, 1.0);
+}
+// The terrain's base colour: its layers under the MeshRenderer's colour, and the painted colour laid
+// over them by its coverage (the vertex colour's alpha).
+fn terrain_base(object: Object, in: VsOut, duv1: vec2f, duv2: vec2f) -> vec4f {
+    let ground = terrain_ground(object, in.uv, duv1, duv2).rgb * object.color.rgb;
+    return vec4f(mix(ground, in.color.rgb, clamp(in.color.a / max(object.color.a, 1e-4), 0.0, 1.0)), object.color.a);
+}
 
 struct VsOut {
     @builtin(position) clip: vec4f,
@@ -691,10 +722,11 @@ fn shade(in: VsOut) -> vec4f {
     let dp2 = dpdy(in.world_pos);
     let duv1 = dpdx(in.uv);
     let duv2 = dpdy(in.uv);
-    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    var base = textureSample(base_tex, base_samp, in.uv) * in.color;
     let mr = textureSample(mr_tex, base_samp, in.uv);
     let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
     let em = textureSample(emissive_tex, base_samp, in.uv).rgb;
+    if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     // A cut-out: texels under the cutoff are not drawn (nor picked, the id goes with the color).
     if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
@@ -862,9 +894,10 @@ fn motion(in: VsOut) -> vec2f {
     let dp2 = dpdy(in.world_pos);
     let duv1 = dpdx(in.uv);
     let duv2 = dpdy(in.uv);
-    let base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    var base = textureSample(base_tex, base_samp, in.uv) * in.color;
     let mr = textureSample(mr_tex, base_samp, in.uv);
     let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
+    if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
     if (object.pbr.w > 0.5) { n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
@@ -2547,9 +2580,15 @@ struct Renderer::Impl {
     };
     GpuTexture white;
     GpuTexture flat_normal;   // (0.5, 0.5, 1): no bend
+    GpuTexture soft_spot;     // a soft round white spot: particles without an image of their own
     GpuTexture sky_source;    // the sky's panorama (half floats); 1x1 black without one
     std::map<std::string, GpuTexture> textures;
     std::map<std::string, WGPUBindGroup> material_groups;  // "base|mr|normal|emissive|filter" -> group 2
+    GpuTexture no_splat;                                   // a 1x1 stand-in for materials that are not terrains
+    GpuTexture no_layers;                                  // a 1x1, one-layer array, the same
+    std::map<std::string, GpuTexture> layer_arrays;        // a terrain's layer images (paths and colours) -> their array
+    struct TerrainGpu { GpuTexture splat; WGPUBindGroup group = nullptr; };
+    std::map<std::string, TerrainGpu> terrain_gpu;         // a terrain mesh's path -> its splat map and material group
     struct AssetMesh {
         GpuMesh gpu;
         std::vector<assets::Submesh> submeshes;
@@ -2611,6 +2650,13 @@ struct Renderer::Impl {
         textures.clear();
         for (auto& [key, bg] : material_groups) wgpuBindGroupRelease(bg);
         material_groups.clear();
+        for (auto& [key, tg] : terrain_gpu) {
+            if (tg.group) wgpuBindGroupRelease(tg.group);
+            release_texture(tg.splat);
+        }
+        terrain_gpu.clear();
+        for (auto& [key, t] : layer_arrays) release_texture(t);
+        layer_arrays.clear();
         failed.clear();
     }
 
@@ -5571,7 +5617,7 @@ struct Renderer::Impl {
         od.entries = oe;
         object_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &od);
 
-        WGPUBindGroupLayoutEntry me[5]{};
+        WGPUBindGroupLayoutEntry me[7]{};
         me[0].binding = 0;
         me[0].visibility = WGPUShaderStage_Fragment;
         me[0].texture.sampleType = WGPUTextureSampleType_Float;
@@ -5583,9 +5629,15 @@ struct Renderer::Impl {
             me[b] = me[0];
             me[b].binding = b;
         }
+        // A terrain's splat map and layer array (docs/design/terrain.md, Layers); stand-ins elsewhere.
+        me[5] = me[0];
+        me[5].binding = 6;
+        me[6] = me[0];
+        me[6].binding = 7;
+        me[6].texture.viewDimension = WGPUTextureViewDimension_2DArray;
         WGPUBindGroupLayoutDescriptor md{};
         md.label = rhi::str("pocket.material");
-        md.entryCount = 5;
+        md.entryCount = 7;
         md.entries = me;
         material_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &md);
 
@@ -5908,6 +5960,30 @@ struct Renderer::Impl {
         const std::uint8_t flat_px[4] = {128, 128, 255, 255};
         POCKET_TRY(fnrm, upload_texture("pocket.flat_normal", 1, 1, flat_px));
         flat_normal = fnrm;
+        std::vector<std::uint8_t> dot_px(64 * 64 * 4, 255);
+        for (int y = 0; y < 64; ++y) {
+            for (int x = 0; x < 64; ++x) {
+                const float dx = (static_cast<float>(x) + 0.5f) / 32.0f - 1.0f, dy = (static_cast<float>(y) + 0.5f) / 32.0f - 1.0f;
+                const float a = std::clamp((1.0f - std::sqrt(dx * dx + dy * dy)) / 0.6f, 0.0f, 1.0f);
+                dot_px[(static_cast<std::size_t>(y) * 64 + static_cast<std::size_t>(x)) * 4 + 3] = static_cast<std::uint8_t>(std::lround(255.0f * a * a * (3.0f - 2.0f * a)));
+            }
+        }
+        POCKET_TRY(dt, upload_texture("pocket.dot", 64, 64, dot_px.data()));
+        soft_spot = dt;
+        POCKET_TRY(ns, upload_texture("pocket.no_splat", 1, 1, white_px));
+        no_splat = ns;
+        POCKET_TRY(nl, create_layer_array("pocket.no_layers", 1, 1));
+        no_layers = nl;
+        {
+            WGPUTexelCopyTextureInfo dst{};
+            dst.texture = no_layers.texture;
+            dst.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferLayout lay{};
+            lay.bytesPerRow = 4;
+            lay.rowsPerImage = 1;
+            WGPUExtent3D ext{1, 1, 1};
+            wgpuQueueWriteTexture(device->queue(), &dst, white_px, 4, &lay, &ext);
+        }
 
         for (int k = 0; k < kPrimitiveCount; ++k) {
             MeshData data = make_primitive(k);
@@ -6000,7 +6076,13 @@ struct Renderer::Impl {
     WGPUBindGroup material_for(const std::string& base, const std::string& mr, const std::string& normal, const std::string& emissive, bool nearest) {
         std::string key = base + "|" + mr + "|" + normal + "|" + emissive + (nearest ? "|n" : "|l");
         if (auto it = material_groups.find(key); it != material_groups.end()) return it->second;
-        WGPUBindGroupEntry entries[5]{};
+        WGPUBindGroup bg = material_group(base, mr, normal, emissive, nearest, no_splat.view, no_layers.view);
+        material_groups[key] = bg;
+        return bg;
+    }
+
+    WGPUBindGroup material_group(const std::string& base, const std::string& mr, const std::string& normal, const std::string& emissive, bool nearest, WGPUTextureView splat, WGPUTextureView layers) {
+        WGPUBindGroupEntry entries[7]{};
         entries[0].binding = 0;
         entries[0].textureView = view_for(base, white, true);
         entries[1].binding = 1;
@@ -6011,14 +6093,158 @@ struct Renderer::Impl {
         entries[3].textureView = view_for(normal, flat_normal);
         entries[4].binding = 4;
         entries[4].textureView = view_for(emissive, white, true);
+        entries[5].binding = 6;
+        entries[5].textureView = splat;
+        entries[6].binding = 7;
+        entries[6].textureView = layers;
         WGPUBindGroupDescriptor bd{};
         bd.label = rhi::str("pocket.material");
         bd.layout = material_bgl;
-        bd.entryCount = 5;
+        bd.entryCount = 7;
         bd.entries = entries;
-        WGPUBindGroup bg = wgpuDeviceCreateBindGroup(device->device(), &bd);
-        material_groups[key] = bg;
-        return bg;
+        return wgpuDeviceCreateBindGroup(device->device(), &bd);
+    }
+
+    // A 2D array texture of kLayerSize-style layers with its sRGB view (colours).
+    Result<GpuTexture> create_layer_array(const char* label, std::uint32_t size, std::uint32_t levels, std::uint32_t layers = 1) {
+        GpuTexture t;
+        WGPUTextureDescriptor td{};
+        td.label = rhi::str(label);
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size = {size, size, layers};
+        td.format = WGPUTextureFormat_RGBA8UnormSrgb;
+        td.mipLevelCount = levels;
+        td.sampleCount = 1;
+        t.texture = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!t.texture) return fail("gpu_texture_failed", "cannot create texture {}", label);
+        WGPUTextureViewDescriptor vd{};
+        vd.format = td.format;
+        vd.dimension = WGPUTextureViewDimension_2DArray;
+        vd.mipLevelCount = levels;
+        vd.arrayLayerCount = layers;
+        vd.aspect = WGPUTextureAspect_All;
+        vd.usage = td.usage;
+        t.view = wgpuTextureCreateView(t.texture, &vd);
+        return t;
+    }
+
+    // A terrain's layer images, each resampled (wrapping round, so it still tiles) to kLayerSize
+    // square and tinted by its colour in linear light, with their mip chains, in one array.
+    WGPUTextureView layer_array(const assets::TerrainLayers& tl) {
+        std::string key;
+        for (const auto& l : tl.layers) key += std::format("{}|{:.4g},{:.4g},{:.4g};", l.texture, l.color.x, l.color.y, l.color.z);
+        if (auto it = layer_arrays.find(key); it != layer_arrays.end()) return it->second.view;
+        const auto count = static_cast<std::uint32_t>(std::clamp<std::size_t>(tl.layers.size(), 1, 4));
+        auto made = create_layer_array("pocket.terrain_layers", kLayerSize, kLayerLevels, count);
+        if (!made) {
+            report_missing("terrain layers", made.error().message);
+            return no_layers.view;
+        }
+        static const std::array<float, 256> to_linear = [] {
+            std::array<float, 256> t{};
+            for (int k = 0; k < 256; ++k) t[static_cast<std::size_t>(k)] = decode(static_cast<float>(k) / 255.0f);
+            return t;
+        }();
+        auto to_srgb = [](float v) {
+            v = std::clamp(v, 0.0f, 1.0f);
+            const float s = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+            return static_cast<std::uint8_t>(std::lround(s * 255.0f));
+        };
+        for (std::uint32_t layer = 0; layer < count; ++layer) {
+            const auto& l = tl.layers[layer];
+            std::uint32_t w = 1, h = 1;
+            std::vector<std::uint8_t> white_px{255, 255, 255, 255};
+            const std::uint8_t* src = white_px.data();
+            if (!l.texture.empty() && assets && !failed.contains(l.texture)) {
+                auto img = assets->image(l.texture);
+                if (img && (*img)->width > 0 && (*img)->height > 0) {
+                    w = (*img)->width;
+                    h = (*img)->height;
+                    src = (*img)->rgba.data();
+                } else {
+                    report_missing(l.texture, img ? "empty image" : img.error().message);
+                }
+            } else if (!l.texture.empty()) {
+                note_missing(l.texture);
+            }
+            // Level 0 in linear light: bilinear, wrapping at the edges, times the colour.
+            std::vector<float> lin(static_cast<std::size_t>(kLayerSize) * kLayerSize * 3);
+            const float tint[3] = {l.color.x, l.color.y, l.color.z};
+            for (std::uint32_t y = 0; y < kLayerSize; ++y) {
+                const float fy = (static_cast<float>(y) + 0.5f) * static_cast<float>(h) / kLayerSize - 0.5f;
+                const float fly = std::floor(fy);
+                const float ay = fy - fly;
+                const auto y0 = static_cast<std::uint32_t>((static_cast<std::int64_t>(fly) % h + h) % h), y1 = (y0 + 1) % h;
+                for (std::uint32_t x = 0; x < kLayerSize; ++x) {
+                    const float fx = (static_cast<float>(x) + 0.5f) * static_cast<float>(w) / kLayerSize - 0.5f;
+                    const float flx = std::floor(fx);
+                    const float ax = fx - flx;
+                    const auto x0 = static_cast<std::uint32_t>((static_cast<std::int64_t>(flx) % w + w) % w), x1 = (x0 + 1) % w;
+                    for (int c = 0; c < 3; ++c) {
+                        auto at = [&](std::uint32_t px, std::uint32_t py) { return to_linear[src[(static_cast<std::size_t>(py) * w + px) * 4 + static_cast<std::size_t>(c)]]; };
+                        const float v = (at(x0, y0) * (1 - ax) + at(x1, y0) * ax) * (1 - ay) + (at(x0, y1) * (1 - ax) + at(x1, y1) * ax) * ay;
+                        lin[(static_cast<std::size_t>(y) * kLayerSize + x) * 3 + static_cast<std::size_t>(c)] = v * tint[c];
+                    }
+                }
+            }
+            std::uint32_t size = kLayerSize;
+            for (std::uint32_t level = 0; level < kLayerLevels; ++level) {
+                std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size) * size * 4);
+                for (std::size_t k = 0; k < static_cast<std::size_t>(size) * size; ++k) {
+                    for (int c = 0; c < 3; ++c) bytes[k * 4 + static_cast<std::size_t>(c)] = to_srgb(lin[k * 3 + static_cast<std::size_t>(c)]);
+                    bytes[k * 4 + 3] = 255;
+                }
+                WGPUTexelCopyTextureInfo dst{};
+                dst.texture = made->texture;
+                dst.mipLevel = level;
+                dst.origin = {0, 0, layer};
+                dst.aspect = WGPUTextureAspect_All;
+                WGPUTexelCopyBufferLayout lay{};
+                lay.bytesPerRow = size * 4;
+                lay.rowsPerImage = size;
+                WGPUExtent3D ext{size, size, 1};
+                wgpuQueueWriteTexture(device->queue(), &dst, bytes.data(), bytes.size(), &lay, &ext);
+                if (size == 1) break;
+                const std::uint32_t half = size / 2;
+                std::vector<float> next(static_cast<std::size_t>(half) * half * 3);
+                for (std::uint32_t y = 0; y < half; ++y)
+                    for (std::uint32_t x = 0; x < half; ++x)
+                        for (int c = 0; c < 3; ++c) {
+                            float sum = 0;
+                            for (std::uint32_t q = 0; q < 4; ++q) sum += lin[((static_cast<std::size_t>(y) * 2 + (q >> 1)) * size + x * 2 + (q & 1)) * 3 + static_cast<std::size_t>(c)];
+                            next[(static_cast<std::size_t>(y) * half + x) * 3 + static_cast<std::size_t>(c)] = sum * 0.25f;
+                        }
+                lin.swap(next);
+                size = half;
+            }
+        }
+        layer_arrays[key] = *made;
+        return made->view;
+    }
+
+    // The material group of a terrain drawn from textured layers: its splat map (the layers' shares
+    // at the grid's samples) and its layers' array, made once per mesh (a new mesh at every change).
+    WGPUBindGroup terrain_group(const std::string& mesh_path, const assets::TerrainLayers& tl) {
+        if (auto it = terrain_gpu.find(mesh_path); it != terrain_gpu.end()) return it->second.group;
+        // Meshes the terrains have moved on from take their maps with them.
+        for (auto it = terrain_gpu.begin(); it != terrain_gpu.end();) {
+            if (assets && !assets->has_mesh(it->first)) {
+                if (it->second.group) wgpuBindGroupRelease(it->second.group);
+                release_texture(it->second.splat);
+                it = terrain_gpu.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        TerrainGpu tg;
+        const auto n = static_cast<std::uint32_t>(std::max(tl.n, 1));
+        if (tl.weights.size() == static_cast<std::size_t>(n) * n * 4) {
+            if (auto t = upload_texture("pocket.terrain_splat", n, n, tl.weights.data())) tg.splat = *t;
+        }
+        tg.group = material_group("", "", "", "", false, tg.splat.view ? tg.splat.view : no_splat.view, layer_array(tl));
+        terrain_gpu[mesh_path] = tg;
+        return tg.group;
     }
 
     // Logged once per path; listed in the stats of every frame that wanted it.
@@ -6036,6 +6262,7 @@ struct Renderer::Impl {
     WGPUTextureView view_for(const std::string& path, const GpuTexture& fallback, bool srgb = false) {
         auto pick = [srgb](const GpuTexture& t) { return srgb && t.srgb_view ? t.srgb_view : t.view; };
         if (path.empty()) return pick(fallback);
+        if (path == kDotTexture) return pick(soft_spot);
         if (auto it = textures.find(path); it != textures.end()) return pick(it->second);
         if (!assets) { report_missing(path, "no asset store"); return pick(fallback); }
         if (failed.contains(path)) { note_missing(path); return pick(fallback); }
@@ -6928,11 +7155,26 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ou.emissive[1] = decode(mr.emissive.g) + (mat ? mat->emissive.y : 0.0f);
             ou.emissive[2] = decode(mr.emissive.b) + (mat ? mat->emissive.z : 0.0f);
             ou.emissive[3] = mr.cutoff > 0 ? mr.cutoff : (mat ? mat->alpha_cutoff : 0.0f);
-            WGPUBindGroup group = im.material_for(tex, mr_map, normal_map, em_map, false);
+            WGPUBindGroup group = nullptr;
+            std::string material_key = tex + "|" + normal_map + "|" + mr_map;
+            for (int k = 0; k < 4; ++k) ou.terrain[k] = ou.layer_tile[k] = 0;
+            if (mat && mat->terrain && !mat->terrain->layers.empty() && mat->terrain->n > 1) {
+                // A terrain from textured layers (docs/design/terrain.md, Layers).
+                const assets::TerrainLayers& tl = *mat->terrain;
+                const float texels = static_cast<float>(tl.n - 1) / static_cast<float>(tl.n);
+                ou.terrain[0] = static_cast<float>(std::min<std::size_t>(tl.layers.size(), 4));
+                ou.terrain[1] = tl.texture_tile / std::max(tl.size.x, 1e-3f) * texels;
+                ou.terrain[2] = tl.texture_tile / std::max(tl.size.y, 1e-3f) * texels;
+                for (std::size_t k = 0; k < std::min<std::size_t>(tl.layers.size(), 4); ++k) ou.layer_tile[k] = tl.texture_tile / std::max(tl.layers[k].tile, 1e-3f);
+                group = im.terrain_group(mesh_key, tl);
+                material_key = "terrain|" + mesh_key;
+            } else {
+                group = im.material_for(tex, mr_map, normal_map, em_map, false);
+            }
             const bool blend = color.w < 0.999f || (mat && mat->blend);
             const Vec3 to_cam = t.position - im.camera.position;
             const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
-            draws.push_back({tex + "|" + normal_map + "|" + mr_map, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f});
+            draws.push_back({material_key, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f});
             if (const auto* b = e.try_get<world::Bounds>(); b && !skinned) {
                 draws.back().center = (b->min + b->max) * 0.5f;
                 draws.back().radius = length(b->max - b->min) * 0.5f;
@@ -7231,7 +7473,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             if (!e || pool.alive.empty()) continue;
             const auto* wt = world.try_get<world::WorldTransform>(id);
             const Vec3 origin = (!e->world_space && wt) ? wt->position : Vec3{0, 0, 0};
-            WGPUBindGroup material = im.texture_for(e->texture, false);
+            WGPUBindGroup material = im.texture_for(e->texture.empty() ? std::string(kDotTexture) : e->texture, false);
             for (const Particle& p : pool.alive) {
                 if (count + sprites.size() >= kMaxObjects) break;
                 const float k = std::clamp(p.age / p.life, 0.0f, 1.0f);

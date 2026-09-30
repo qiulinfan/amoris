@@ -870,3 +870,59 @@ TEST_CASE("PLY files, ASCII and binary in either byte order, with normals, uvs a
     REQUIRE(parse_ply_error(store, "assets/ply-test/short.ply").find("ends before") != std::string::npos);
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("terrain layers: shares from slope and height rules stacked in order, paint over them, a layer map that reads back", "[assets][terrain][layers]") {
+    // A flat strip, then a ramp rising two units a cell (63 degrees) to the terrain's full height.
+    assets::Terrain t;
+    t.n = 9;
+    t.size_x = t.size_z = 8;
+    t.height = 8;
+    t.h.resize(81);
+    for (int j = 0; j < 9; ++j)
+        for (int i = 0; i < 9; ++i) t.h[static_cast<std::size_t>(j * 9 + i)] = i < 4 ? 0.0f : static_cast<float>(i - 4) * 2.0f;
+    assets::TerrainLook look;
+    look.layers.push_back({"grass.png", {1, 1, 1}, 4, {0, 90}, {0, 1}, 1});
+    look.layers.push_back({"rock.png", {1, 1, 1}, 4, {30, 90}, {0, 1}, 1});
+    look.layers.push_back({"snow.png", {1, 1, 1}, 4, {0, 90}, {0.8, 1}, 1});
+    look.layers.push_back({"road.png", {1, 1, 1}, 4, {0, 90}, {0, 1}, 0});   // only where painted
+    auto shares = assets::terrain_layer_weights(t, look);
+    REQUIRE(shares.size() == 81u);
+    auto at = [&](int i, int j) { return shares[static_cast<std::size_t>(j * 9 + i)]; };
+    for (const auto& w : shares) REQUIRE(w[0] + w[1] + w[2] + w[3] == Catch::Approx(1).margin(1e-5));
+    REQUIRE(at(1, 4)[0] == Catch::Approx(1));        // flat and low: the first layer
+    REQUIRE(at(5, 4)[1] == Catch::Approx(1));        // steep: rock
+    REQUIRE(at(8, 4)[2] == Catch::Approx(1));        // at the top: snow, over the rock
+    for (const auto& w : shares) REQUIRE(w[3] == 0);   // cover 0 and unpainted: no road
+    // Paint: half road on the flat, a full coat of it on the ramp.
+    t.layer_paint.assign(81, {0, 0, 0, 0});
+    t.layer_paint[4 * 9 + 1] = {0, 0, 0, 0.5f};
+    t.layer_paint[4 * 9 + 5] = {0, 0, 0, 1};
+    shares = assets::terrain_layer_weights(t, look);
+    REQUIRE(at(1, 4)[0] == Catch::Approx(0.5));
+    REQUIRE(at(1, 4)[3] == Catch::Approx(0.5));
+    REQUIRE(at(5, 4)[3] == Catch::Approx(1));
+    REQUIRE(at(5, 4)[1] == Catch::Approx(0));
+    // More paint than ground is scaled back to it.
+    t.layer_paint[4 * 9 + 2] = {1, 1, 0, 0};
+    shares = assets::terrain_layer_weights(t, look);
+    REQUIRE(at(2, 4)[0] == Catch::Approx(0.5));
+    REQUIRE(at(2, 4)[1] == Catch::Approx(0.5));
+    // The layer map writes and reads back within an 8-bit step.
+    const std::string png = assets::terrain_layers_png(t);
+    auto back = assets::terrain_layers_from_image(png, "layers.png", 9);
+    REQUIRE(back.has_value());
+    REQUIRE(back->size() == 81u);
+    for (std::size_t k = 0; k < 81; ++k)
+        for (std::size_t c = 0; c < 4; ++c) REQUIRE((*back)[k][c] == Catch::Approx(std::min(t.layer_paint[k][c], 1.0f) / std::max(1.0f, t.layer_paint[k][0] + t.layer_paint[k][1] + t.layer_paint[k][2] + t.layer_paint[k][3])).margin(0.003));
+    // The mesh made with layers is white where unpainted, and its material carries the shares.
+    const assets::Mesh mesh = assets::terrain_mesh(t, look, "terrain:test");
+    REQUIRE(mesh.materials.size() == 1u);
+    REQUIRE(mesh.materials[0].terrain != nullptr);
+    REQUIRE(mesh.materials[0].terrain->layers.size() == 4u);
+    REQUIRE(mesh.materials[0].terrain->weights.size() == 81u * 4u);
+    REQUIRE(mesh.materials[0].terrain->weights[(4 * 9 + 5) * 4 + 3] == 255);
+    REQUIRE(mesh.vertices[0].color.w == 0.0f);   // no colour laid over the layers there
+    // Without layers, no shares and no terrain material.
+    REQUIRE(assets::terrain_layer_weights(t, assets::TerrainLook{}).empty());
+    REQUIRE(assets::terrain_mesh(t, assets::TerrainLook{}, "terrain:plain").materials[0].terrain == nullptr);
+}

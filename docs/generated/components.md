@@ -329,7 +329,7 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `texture` | string | "" | Project-relative image; empty draws soft solid quads. |
+| `texture` | string | "" | Project-relative image; empty draws soft round spots (streaks when stretched). |
 | `emitting` | bool | true | Whether particles spawn continuously at rate. |
 | `rate` | f32 | 20.0 | Particles per second while emitting. |
 | `max` | i32 | 256 | Most particles alive at once from this emitter (older ones are not replaced; spawning waits). |
@@ -481,6 +481,8 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `snow_line` | f32 | 0.85 | The fraction of `height` above which ground is snow; 1 or more for none. |
 | `texture_tile` | f32 | 4.0 | Units per repeat of the MeshRenderer's texture over the ground. |
 | `paintmap` | string | "" | A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none. |
+| `layers` | list:TerrainLayer | [] | Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture. |
+| `layermap` | string | "" | A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none. |
 
 ## Wind
 
@@ -514,6 +516,8 @@ A body of water (docs/design/water.md): a surface size.x by size.y (x by z) cent
 | `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. |
 | `density` | f32 | 2.0 | The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). |
 | `drag` | f32 | 1.0 | How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. |
+| `splash` | string | "" | Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none. |
+| `splash_count` | i32 | 24 | Particles a splash throws for an entry at 8 units a second (a fall of about three units); half as fast throws half as many, and at most twice as many. |
 | `enabled` | bool | true | false stops it being drawn and buoying. |
 
 ## Scatter
@@ -534,8 +538,8 @@ Many copies of the entity's MeshRenderer strewn over the ground below it (docs/d
 | `max_slope` | f32 | 35.0 | Degrees: no copy where the ground is steeper. |
 | `min_height` | f32 | -1000.0 | No copy on ground lower than this (world y): above the water line. |
 | `max_height` | f32 | 1000.0 | No copy on ground higher than this (world y): below the snow. |
-| `max_paint` | f32 | 1.0 | No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1): 0.3 keeps a painted path clear of bushes; 1 places them on paint too. |
-| `collide` | f32 | 0.0 | Above 0, every copy is a static collider: an upright capsule of this radius (in the entity's units, times the copy's size) standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. 0: the copies are only drawn. |
+| `max_paint` | f32 | 1.0 | No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1, in a colour or with its textured layers): 0.3 keeps a painted path clear of bushes; 1 places them on paint too. |
+| `collide` | f32 | 0.0 | Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in the entity's own units, so the entity's Transform scale x multiplies it, and so does each copy's size: on an entity scaled 0.1 across, `collide` 1 is 0.1 in the world. 0: the copies are only drawn. |
 | `collide_height` | f32 | 2.0 | The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width). |
 | `sway` | f32 | 0.0 | How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still. |
 | `sway_speed` | f32 | 0.5 | Sways a second, on the simulation clock (a paused game is still). |
@@ -754,4 +758,18 @@ A value an AnimationGraph's conditions and blend spaces read, set by scripts (an
 | `name` | string | "" | What conditions call it. |
 | `value` | f32 | 0.0 | The value (a flag is 0 or 1). |
 | `trigger` | bool | false | A trigger: set to 1 by animation.trigger, back to 0 when a transition that reads it is taken. |
+
+## TerrainLayer
+
+One textured layer of a Terrain's ground (docs/design/terrain.md, Layers): an image tiled over the ground where the layer lies, which is where its slope and height rules put it and where it is painted.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | "" | What terrain.paint {layer} and terrain.height call it (grass, rock, sand). |
+| `texture` | string | "" | A project-relative image tiled over the ground where the layer lies; empty is plain white under its colour. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Multiplies the texture. |
+| `tile` | f32 | 4.0 | Units per repeat of the texture. |
+| `slope` | vec2 | [0.0, 90.0] | The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit). |
+| `height` | vec2 | [0.0, 1.0] | The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit). |
+| `cover` | f32 | 1.0 | How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything. |
 

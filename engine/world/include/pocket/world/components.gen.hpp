@@ -126,6 +126,23 @@ void from_json(const Json& j, AnimationParam& v);
 std::size_t numeric_span(AnimationParam& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const AnimationParam& v);
 
+/// One textured layer of a Terrain's ground (docs/design/terrain.md, Layers): an image tiled over the ground where the layer lies, which is where its slope and height rules put it and where it is painted.
+struct TerrainLayer {
+    std::string name = "";
+    std::string texture = "";
+    Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    float tile = 4.0f;
+    Vec2 slope{0.0f, 90.0f};
+    Vec2 height{0.0f, 1.0f};
+    float cover = 1.0f;
+    constexpr bool operator==(const TerrainLayer&) const = default;
+};
+void to_json(Json& j, const TerrainLayer& v);
+void from_json(const Json& j, TerrainLayer& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(TerrainLayer& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const TerrainLayer& v);
+
 /// Position, rotation and scale relative to the parent entity (or the world when there is no parent).
 struct Transform {
     Vec3 position{0.0f, 0.0f, 0.0f};
@@ -655,6 +672,8 @@ struct Terrain {
     float snow_line = 0.85f;
     float texture_tile = 4.0f;
     std::string paintmap = "";
+    std::vector<TerrainLayer> layers = {};
+    std::string layermap = "";
     constexpr bool operator==(const Terrain&) const = default;
 };
 void to_json(Json& j, const Terrain& v);
@@ -692,6 +711,8 @@ struct Water {
     Vec2 flow{0.0f, 0.0f};
     float density = 2.0f;
     float drag = 1.0f;
+    std::string splash = "";
+    std::int32_t splash_count = 24;
     bool enabled = true;
     constexpr bool operator==(const Water&) const = default;
 };

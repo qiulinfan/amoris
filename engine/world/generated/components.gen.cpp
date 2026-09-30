@@ -296,6 +296,60 @@ std::size_t numeric_span(AnimationParam& v, std::string_view path, float** out) 
     return 0;
 }
 
+void to_json(Json& j, const TerrainLayer& v) {
+    j = Json::object();
+    j["name"] = v.name;
+    j["texture"] = v.texture;
+    vec_to_json(j["color"], v.color);
+    j["tile"] = v.tile;
+    vec_to_json(j["slope"], v.slope);
+    vec_to_json(j["height"], v.height);
+    j["cover"] = v.cover;
+}
+
+void from_json(const Json& j, TerrainLayer& v) {
+    scalar_from_json(j, "name", v.name);
+    scalar_from_json(j, "texture", v.texture);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    scalar_from_json(j, "tile", v.tile);
+    if (j.is_object() && j.contains("slope")) vec_from_json(j["slope"], v.slope);
+    if (j.is_object() && j.contains("height")) vec_from_json(j["height"], v.height);
+    scalar_from_json(j, "cover", v.cover);
+}
+
+void hash_record(StateHasherRef& h, const TerrainLayer& v) {
+    h.str(v.name);
+    h.str(v.texture);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.tile);
+    h.f32(v.slope.x);
+    h.f32(v.slope.y);
+    h.f32(v.height.x);
+    h.f32(v.height.y);
+    h.f32(v.cover);
+}
+
+std::size_t numeric_span(TerrainLayer& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "tile") { *out = &v.tile; return 1; }
+    if (path == "slope") { *out = &v.slope.x; return 2; }
+    if (path == "slope.x") { *out = &v.slope.x; return 1; }
+    if (path == "slope.y") { *out = &v.slope.y; return 1; }
+    if (path == "height") { *out = &v.height.x; return 2; }
+    if (path == "height.x") { *out = &v.height.x; return 1; }
+    if (path == "height.y") { *out = &v.height.y; return 1; }
+    if (path == "cover") { *out = &v.cover; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Transform& v) {
     j = Json::object();
     vec_to_json(j["position"], v.position);
@@ -2002,6 +2056,9 @@ void to_json(Json& j, const Terrain& v) {
     j["snow_line"] = v.snow_line;
     j["texture_tile"] = v.texture_tile;
     j["paintmap"] = v.paintmap;
+    j["layers"] = Json::array();
+    for (const auto& x : v.layers) { Json e; to_json(e, x); j["layers"].push_back(std::move(e)); }
+    j["layermap"] = v.layermap;
 }
 
 void from_json(const Json& j, Terrain& v) {
@@ -2019,6 +2076,11 @@ void from_json(const Json& j, Terrain& v) {
     scalar_from_json(j, "snow_line", v.snow_line);
     scalar_from_json(j, "texture_tile", v.texture_tile);
     scalar_from_json(j, "paintmap", v.paintmap);
+    if (j.is_object() && j.contains("layers") && j["layers"].is_array()) {
+        v.layers.clear();
+        for (const Json& e : j["layers"]) { TerrainLayer x; from_json(e, x); v.layers.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "layermap", v.layermap);
 }
 
 void hash_component(StateHasherRef& h, const Terrain& v) {
@@ -2046,6 +2108,9 @@ void hash_component(StateHasherRef& h, const Terrain& v) {
     h.f32(v.snow_line);
     h.f32(v.texture_tile);
     h.str(v.paintmap);
+    h.i64(static_cast<std::int64_t>(v.layers.size()));
+    for (const auto& x : v.layers) hash_record(h, x);
+    h.str(v.layermap);
 }
 
 std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
@@ -2073,6 +2138,11 @@ std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
     if (path == "rock_slope") { *out = &v.rock_slope; return 1; }
     if (path == "snow_line") { *out = &v.snow_line; return 1; }
     if (path == "texture_tile") { *out = &v.texture_tile; return 1; }
+    if (path.starts_with("layers.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.layers.size()) return numeric_span(v.layers[index], rest, out);
+    }
     return 0;
 }
 
@@ -2126,6 +2196,8 @@ void to_json(Json& j, const Water& v) {
     vec_to_json(j["flow"], v.flow);
     j["density"] = v.density;
     j["drag"] = v.drag;
+    j["splash"] = v.splash;
+    j["splash_count"] = v.splash_count;
     j["enabled"] = v.enabled;
 }
 
@@ -2144,6 +2216,8 @@ void from_json(const Json& j, Water& v) {
     if (j.is_object() && j.contains("flow")) vec_from_json(j["flow"], v.flow);
     scalar_from_json(j, "density", v.density);
     scalar_from_json(j, "drag", v.drag);
+    scalar_from_json(j, "splash", v.splash);
+    scalar_from_json(j, "splash_count", v.splash_count);
     scalar_from_json(j, "enabled", v.enabled);
 }
 
@@ -2167,6 +2241,8 @@ void hash_component(StateHasherRef& h, const Water& v) {
     h.f32(v.flow.y);
     h.f32(v.density);
     h.f32(v.drag);
+    h.str(v.splash);
+    h.i64(static_cast<std::int64_t>(v.splash_count));
     h.u8(v.enabled ? 1 : 0);
 }
 
@@ -2919,7 +2995,7 @@ constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick)."},
 }};
 constexpr std::array<FieldInfo, 24> kParticleEmitterFields = {{
-    FieldInfo{"texture", "string", "Project-relative image; empty draws soft solid quads."},
+    FieldInfo{"texture", "string", "Project-relative image; empty draws soft round spots (streaks when stretched)."},
     FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate."},
     FieldInfo{"rate", "f32", "Particles per second while emitting."},
     FieldInfo{"max", "i32", "Most particles alive at once from this emitter (older ones are not replaced; spawning waits)."},
@@ -3026,7 +3102,7 @@ constexpr std::array<FieldInfo, 19> kCharacterFields = {{
     FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine)."},
     FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 14> kTerrainFields = {{
+constexpr std::array<FieldInfo, 16> kTerrainFields = {{
     FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity."},
     FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity."},
     FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across."},
@@ -3041,6 +3117,8 @@ constexpr std::array<FieldInfo, 14> kTerrainFields = {{
     FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none."},
     FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground."},
     FieldInfo{"paintmap", "string", "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none."},
+    FieldInfo{"layers", "list:TerrainLayer", "Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture."},
+    FieldInfo{"layermap", "string", "A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none."},
 }};
 constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"direction", "f32", "Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction."},
@@ -3049,7 +3127,7 @@ constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind."},
     FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any)."},
 }};
-constexpr std::array<FieldInfo, 15> kWaterFields = {{
+constexpr std::array<FieldInfo, 17> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity."},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed."},
     FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back)."},
@@ -3064,6 +3142,8 @@ constexpr std::array<FieldInfo, 15> kWaterFields = {{
     FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples."},
     FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default)."},
     FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more."},
+    FieldInfo{"splash", "string", "Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none."},
+    FieldInfo{"splash_count", "i32", "Particles a splash throws for an entry at 8 units a second (a fall of about three units); half as fast throws half as many, and at most twice as many."},
     FieldInfo{"enabled", "bool", "false stops it being drawn and buoying."},
 }};
 constexpr std::array<FieldInfo, 20> kScatterFields = {{
@@ -3079,8 +3159,8 @@ constexpr std::array<FieldInfo, 20> kScatterFields = {{
     FieldInfo{"max_slope", "f32", "Degrees: no copy where the ground is steeper."},
     FieldInfo{"min_height", "f32", "No copy on ground lower than this (world y): above the water line."},
     FieldInfo{"max_height", "f32", "No copy on ground higher than this (world y): below the snow."},
-    FieldInfo{"max_paint", "f32", "No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1): 0.3 keeps a painted path clear of bushes; 1 places them on paint too."},
-    FieldInfo{"collide", "f32", "Above 0, every copy is a static collider: an upright capsule of this radius (in the entity's units, times the copy's size) standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. 0: the copies are only drawn."},
+    FieldInfo{"max_paint", "f32", "No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1, in a colour or with its textured layers): 0.3 keeps a painted path clear of bushes; 1 places them on paint too."},
+    FieldInfo{"collide", "f32", "Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in the entity's own units, so the entity's Transform scale x multiplies it, and so does each copy's size: on an entity scaled 0.1 across, `collide` 1 is 0.1 in the world. 0: the copies are only drawn."},
     FieldInfo{"collide_height", "f32", "The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width)."},
     FieldInfo{"sway", "f32", "How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still."},
     FieldInfo{"sway_speed", "f32", "Sways a second, on the simulation clock (a paused game is still)."},

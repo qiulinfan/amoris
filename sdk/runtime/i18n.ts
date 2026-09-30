@@ -5,7 +5,7 @@
 import { command } from "./world";
 import { invalidate } from "./ui";
 
-type Vars = Record<string, string | number | boolean>;
+type Vars = Record<string, string | number | boolean | Date>;
 
 interface I18nState {
     lang: string;
@@ -53,6 +53,58 @@ export function setTickLocale(lang: string | undefined, rev: number | undefined)
     if (changed) invalidate();
 }
 
+type IntlLike = {
+    NumberFormat?: new (l: string, o?: Record<string, unknown>) => { format(n: number): string };
+    DateTimeFormat?: new (l: string, o?: Record<string, unknown>) => { format(d: Date): string };
+};
+const intlApi = (): IntlLike | undefined => (globalThis as unknown as { Intl?: IntlLike }).Intl;
+
+/** How a number is written: `digits` after the point (as many as it has, up to three, when not given), a percentage (0.25 is 25%), grouping off. */
+export interface NumberOptions {
+    digits?: number;
+    percent?: boolean;
+    grouping?: boolean;
+}
+
+// A number as the language writes it, its decimal mark and grouping (1,234.5 / 1.234,5 /
+// 1 234,5) from the platform's Intl when it knows the language, else English's.
+function formatNumber(lang: string, n: number, o: NumberOptions = {}): string {
+    const opts: Record<string, unknown> = { useGrouping: o.grouping !== false };
+    if (o.percent) opts.style = "percent";
+    if (o.digits !== undefined) {
+        opts.minimumFractionDigits = o.digits;
+        opts.maximumFractionDigits = o.digits;
+    } else {
+        opts.maximumFractionDigits = o.percent ? 0 : 3;
+    }
+    const intl = intlApi();
+    if (intl?.NumberFormat && lang) {
+        try { return new intl.NumberFormat(lang, opts).format(n); } catch { /* a language it does not know: as below */ }
+    }
+    const v = o.percent ? n * 100 : n;
+    const digits = o.digits ?? (o.percent ? 0 : Math.min(3, (String(Math.abs(v)).split(".")[1] ?? "").length));
+    const [whole, frac] = Math.abs(v).toFixed(digits).split(".");
+    const grouped = o.grouping === false ? whole : whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return `${v < 0 ? "-" : ""}${grouped}${frac ? `.${frac}` : ""}${o.percent ? "%" : ""}`;
+}
+
+/** How a date or time is written: a short, medium or long date, the time of day, or both. */
+export type DateStyle = "short" | "medium" | "long" | "time" | "datetime";
+
+function formatDate(lang: string, when: number | Date, style: DateStyle = "medium"): string {
+    const d = when instanceof Date ? when : new Date(when);
+    const intl = intlApi();
+    if (intl?.DateTimeFormat && lang) {
+        const opts: Record<string, unknown> =
+            style === "time" ? { timeStyle: "short" } : style === "datetime" ? { dateStyle: "medium", timeStyle: "short" } : { dateStyle: style };
+        try { return new intl.DateTimeFormat(lang, opts).format(d); } catch { /* as below */ }
+    }
+    const pad = (x: number) => String(x).padStart(2, "0");
+    const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return style === "time" ? time : style === "datetime" ? `${date} ${time}` : date;
+}
+
 function plural(lang: string, n: number): string {
     const intl = (globalThis as unknown as { Intl?: { PluralRules?: new (l: string) => { select(n: number): string } } }).Intl;
     if (intl?.PluralRules) {
@@ -61,7 +113,8 @@ function plural(lang: string, n: number): string {
     return n === 1 ? "one" : "other";
 }
 
-// {name}, {n, plural, =0 {none} one {# coin} other {# coins}} and {g, select, a {..} other {..}}.
+// {name}, {n, plural, =0 {none} one {# coin} other {# coins}}, {g, select, a {..} other {..}},
+// {n, number[, integer|percent]}, {d, date[, short|medium|long]} and {d, time}.
 function format(text: string, vars: Vars, lang: string): string {
     let out = "";
     let i = 0;
@@ -84,6 +137,16 @@ function format(text: string, vars: Vars, lang: string): string {
         const rest = body.slice(comma + 1);
         const comma2 = rest.indexOf(",");
         const kind = (comma2 < 0 ? rest : rest.slice(0, comma2)).trim();
+        if (kind === "number" || kind === "date" || kind === "time") {
+            const style = comma2 < 0 ? "" : rest.slice(comma2 + 1).trim();
+            if (value === undefined) { out += `{${body}}`; continue; }
+            if (kind === "number") out += formatNumber(lang, Number(value), style === "integer" ? { digits: 0 } : style === "percent" ? { percent: true } : {});
+            else {
+                const when = value instanceof Date ? value : Number(value);
+                out += formatDate(lang, when, kind === "time" ? "time" : style === "short" || style === "long" ? style : "medium");
+            }
+            continue;
+        }
         const options = new Map<string, string>();
         const opts = comma2 < 0 ? "" : rest.slice(comma2 + 1);
         for (let k = 0; k < opts.length;) {
@@ -104,7 +167,7 @@ function format(text: string, vars: Vars, lang: string): string {
         if (kind === "plural") {
             const n = Number(value ?? 0);
             chosen = options.get(`=${n}`) ?? options.get(plural(lang, n)) ?? options.get("other");
-            if (chosen !== undefined) chosen = format(chosen, vars, lang).replace(/#/g, String(n));
+            if (chosen !== undefined) chosen = format(chosen, vars, lang).replace(/#/g, formatNumber(lang, n));
         } else if (kind === "select") {
             chosen = options.get(String(value)) ?? options.get("other");
             if (chosen !== undefined) chosen = format(chosen, vars, lang);
@@ -158,5 +221,13 @@ export const i18n = {
     /** Fill a text's placeholders without a table (for text made in code). */
     format(text: string, vars: Vars = {}): string {
         return format(text, vars, current());
+    },
+    /** A number as the current language (or `lang`) writes it: 1,234.5 in English, 1.234,5 in German. */
+    number(n: number, options: NumberOptions = {}, lang: string = current()): string {
+        return formatNumber(lang, n, options);
+    },
+    /** A date (a Date, or milliseconds since 1970) as the current language (or `lang`) writes it. */
+    date(when: number | Date, style: DateStyle = "medium", lang: string = current()): string {
+        return formatDate(lang, when, style);
     },
 };

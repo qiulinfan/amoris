@@ -20,6 +20,11 @@ namespace {
 
 using world::EntityId;
 
+// What water.entered tells beyond the names: where the surface was met and how fast.
+Json entry_json(Vec3 point, float speed) {
+    return Json{{"point", Json{{"x", point.x}, {"y", point.y}, {"z", point.z}}}, {"speed", speed}};
+}
+
 struct MeshShape;
 
 struct Body {
@@ -1293,6 +1298,7 @@ void Physics::step(world::World& w, double dt_d) {
         });
         std::sort(pools.begin(), pools.end(), [](const Pool& x, const Pool& y) { return x.id < y.id; });
         std::set<std::pair<EntityId, EntityId>> wet;
+        std::map<std::pair<EntityId, EntityId>, Json> entries;   // where and how fast each body met a water it was not in
         const float g = length(s.gravity);
         const Vec3 up = g > 0 ? s.gravity * (-1.0f / g) : Vec3{0, 1, 0};
         const auto time = static_cast<float>(w.seconds());
@@ -1327,6 +1333,7 @@ void Physics::step(world::World& w, double dt_d) {
                 for (auto& c : cells) c.second = volume / static_cast<float>(std::max<std::size_t>(cells.size(), 1));
             }
             if (cells.empty()) continue;
+            const Vec3 v_in = b.velocity;
             for (const Pool& p : pools) {
                 const world::Water& wa = p.water;
                 const float top = p.center.y + std::max(wa.wave_height, 0.0f), bottom = p.center.y - std::max(wa.depth, 0.0f);
@@ -1375,11 +1382,17 @@ void Physics::step(world::World& w, double dt_d) {
                 b.velocity += lift_v + drag_v * keep;
                 b.angular += lift_w + drag_w * keep;
                 wet.insert({b.id, p.id});
+                if (!im.wet.contains({b.id, p.id}))
+                    entries[{b.id, p.id}] = entry_json(Vec3{b.position.x, world::water_at(wa, p.center.y, b.position.x, b.position.z, time).position.y, b.position.z}, length(v_in));
                 im.stats.floating++;
             }
         }
         for (const auto& pair : wet)
-            if (!im.wet.contains(pair)) w.events().emit(w.tick_index(), "water.entered", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.path(pair.second)}});
+            if (!im.wet.contains(pair)) {
+                Json data{{"path", w.path(pair.first)}, {"water", w.path(pair.second)}};
+                if (auto it = entries.find(pair); it != entries.end()) data.update(it->second);
+                w.events().emit(w.tick_index(), "water.entered", pair.first, std::move(data));
+            }
         for (const auto& pair : im.wet)
             if (!wet.contains(pair) && w.alive(pair.first)) w.events().emit(w.tick_index(), "water.left", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.alive(pair.second) ? w.path(pair.second) : std::string()}});
         im.wet = std::move(wet);
@@ -2497,6 +2510,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
     std::sort(pools.begin(), pools.end(), [](const auto& x, const auto& y) { return std::get<0>(x) < std::get<0>(y); });
     const auto water_time = static_cast<float>(w.seconds());
     std::set<std::pair<EntityId, EntityId>> wet;
+    std::map<std::pair<EntityId, EntityId>, Json> entries;   // where and how fast each character met a water it was not in
     std::sort(movers.begin(), movers.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
     std::map<EntityId, Vec3> pushes;   // speed given to dynamic bodies, applied after every character moved
     im.stats.characters = static_cast<std::uint32_t>(movers.size());
@@ -2641,7 +2655,10 @@ void Physics::move_characters(world::World& w, double dt_d) {
         const bool swimming = pool && (chest > 0.2f * c.height || (c.swimming && chest > 0.1f * c.height));
         c.swimming = swimming;
         c.submerged = pool ? std::clamp((surface - (pos.y - half_h)) / (2.0f * half_h), 0.0f, 1.0f) : 0.0f;
-        if (c.submerged > 0) wet.insert({id, pool});
+        if (c.submerged > 0) {
+            wet.insert({id, pool});
+            if (!im.character_wet.contains({id, pool})) entries[{id, pool}] = entry_json(Vec3{pos.x, surface, pos.z}, length(v));
+        }
         const bool walking = was_grounded && v.y <= 0 && !swimming;
         if (swimming) {
             constexpr float kFloatSpring = 30.0f, kFloatDamping = 9.0f;   // per second squared, per second
@@ -2811,7 +2828,11 @@ void Physics::move_characters(world::World& w, double dt_d) {
         was_inside = std::move(inside);
     }
     for (const auto& pair : wet)
-        if (!im.character_wet.contains(pair)) w.events().emit(w.tick_index(), "water.entered", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.path(pair.second)}, {"character", true}});
+        if (!im.character_wet.contains(pair)) {
+            Json data{{"path", w.path(pair.first)}, {"water", w.path(pair.second)}, {"character", true}};
+            if (auto it = entries.find(pair); it != entries.end()) data.update(it->second);
+            w.events().emit(w.tick_index(), "water.entered", pair.first, std::move(data));
+        }
     for (const auto& pair : im.character_wet)
         if (!wet.contains(pair) && w.alive(pair.first)) w.events().emit(w.tick_index(), "water.left", pair.first, Json{{"path", w.path(pair.first)}, {"water", w.alive(pair.second) ? w.path(pair.second) : std::string()}, {"character", true}});
     im.character_wet = std::move(wet);

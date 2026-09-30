@@ -129,7 +129,8 @@ class Session {
     // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
     // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.
     struct TerrainState {
-        std::string shape_key, look_key, paint_key, error;
+        std::string shape_key, look_key, paint_key, layer_key, error;
+        std::vector<std::array<float, 4>> shares;   // each textured layer's share at every sample (docs/design/terrain.md, Layers)
         assets::Terrain grid;
         std::uint64_t revision = 0;
         std::string mesh;
@@ -137,6 +138,8 @@ class Session {
     };
     std::map<world::EntityId, TerrainState> terrains_;
     void update_terrains();
+    // Water splashes (docs/design/water.md): each water.entered event after `since` bursts its water's splash emitter.
+    void splash_water(std::uint64_t since);
     // Scatters (docs/design/terrain.md, Scattering): copies placed again when their settings, place or ground change.
     std::map<world::EntityId, std::string> scatter_keys_;
     void update_scatters();

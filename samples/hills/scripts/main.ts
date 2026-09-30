@@ -1,7 +1,8 @@
-// Rolling hills from noise (the Terrain component, docs/design/terrain.md) around a lake: the
-// player starts on the shore, trees grow where the ground is gentle grass above the water, and a
-// beacon marks the highest point, and a dirt path painted on the ground (terrain.paintPath) winds from
-// the shore up to it. WASD or the left stick walks, Space or A jumps; the camera (a CameraRig) follows.
+// Rolling hills from noise (the Terrain component, docs/design/terrain.md) around a lake, drawn from
+// textured layers (grass, sand by the water, rock on the slopes): the player starts on the shore,
+// trees grow where the ground is gentle grass above the water, a beacon marks the highest point, and
+// a dirt path painted with the terrain's dirt layer (terrain.paintLayerPath) winds from the shore up
+// to it. WASD or the left stick walks, Space or A jumps; the camera (a CameraRig) follows.
 import { events, expose, input, onStart, onTick, random, repro, terrain, world } from "pocket";
 
 const SPEED = 6;
@@ -10,7 +11,6 @@ const WATER = 3.2;
 let player = 0;
 let trees = 0;
 let peak = { x: 0, y: 0, z: 0 };
-const DIRT = { r: 0.6, g: 0.47, b: 0.32 };
 
 onStart(() => {
     player = world.find("Player") ?? 0;
@@ -55,7 +55,7 @@ onStart(() => {
         const t = k / 24, bend = repro.sin(t * repro.PI * 3) * 3 * repro.sin(t * repro.PI);
         points.push({ x: start.x + dx * t - (dz / len) * bend, z: start.z + dz * t + (dx / len) * bend });
     }
-    terrain.paintPath(points, DIRT, { radius: 1.6, amount: 0.6 });
+    terrain.paintLayerPath(points, "dirt", { radius: 1.6, amount: 0.8 });
 });
 
 onTick(({ dt }) => {
@@ -76,7 +76,7 @@ expose("player.z", () => Number(world.get(player, "Transform")!.position.z.toFix
 expose("player.grounded", () => world.get(player, "Character")!.grounded);
 expose("on_path", () => {
     const p = world.get(player, "Transform")!.position;
-    return (terrain.height(p.x, p.z).paint?.a ?? 0) > 0.3;
+    return (terrain.height(p.x, p.z).layers?.find((l) => l.name === "dirt")?.share ?? 0) > 0.3;
 });
 expose("ground.y", () => {
     const p = world.get(player, "Transform")!.position;

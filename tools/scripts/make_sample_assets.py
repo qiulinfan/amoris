@@ -12,6 +12,7 @@ Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samp
        python3 tools/scripts/make_sample_assets.py --sounds [dir]   WAV clips for samples/audio/assets
        python3 tools/scripts/make_sample_assets.py --sprites [dir]  PNG sprites for samples/sprites/assets
        python3 tools/scripts/make_sample_assets.py --decals [dir]   decal images and a puddle's normal map for samples/showcase/assets
+       python3 tools/scripts/make_sample_assets.py --ground [dir]   tiling ground textures (grass, rock, sand, dirt) for samples/hills/assets
 """
 import base64
 import json
@@ -716,6 +717,94 @@ def ripples(size=256):
     return png(size, size, px)
 
 
+def tiling_noise(size, period, seed):
+    """Value noise that repeats every `size` pixels: a `period` by `period` lattice of random values
+    (wrapping round), smoothly interpolated; 0..1."""
+    mask = (1 << 64) - 1
+    def mixed(i):   # splitmix64 of the lattice point and the seed
+        z = (i * 0x9E3779B97F4A7C15 + seed * 0xBF58476D1CE4E5B9 + period) & mask
+        z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & mask
+        z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & mask
+        return ((z ^ (z >> 31)) >> 11) / float(1 << 53)
+    rnd = [mixed(i) for i in range(period * period)]
+    out = [0.0] * (size * size)
+    for y in range(size):
+        fy = y * period / size
+        y0 = int(fy)
+        ty = fy - y0
+        ty = ty * ty * (3 - 2 * ty)
+        r0, r1 = (y0 % period) * period, ((y0 + 1) % period) * period
+        for x in range(size):
+            fx = x * period / size
+            x0 = int(fx)
+            tx = fx - x0
+            tx = tx * tx * (3 - 2 * tx)
+            a, b = x0 % period, (x0 + 1) % period
+            top = rnd[r0 + a] + (rnd[r0 + b] - rnd[r0 + a]) * tx
+            bottom = rnd[r1 + a] + (rnd[r1 + b] - rnd[r1 + a]) * tx
+            out[y * size + x] = top + (bottom - top) * ty
+    return out
+
+
+def tiling_fbm(size, seed, periods=(4, 8, 16, 32, 64)):
+    """Octaves of tiling noise, each twice as fine and half as strong; 0..1."""
+    total = [0.0] * (size * size)
+    amp, norm = 1.0, 0.0
+    for k, p in enumerate(periods):
+        n = tiling_noise(size, p, seed + 101 * k)
+        for i in range(size * size):
+            total[i] += n[i] * amp
+        norm += amp
+        amp *= 0.5
+    return [t / norm for t in total]
+
+
+def ground(kind, size=256):
+    """A seamless ground texture (it repeats across its edges), from noise: grass, rock, sand or dirt."""
+    base = tiling_fbm(size, {"grass": 3, "rock": 7, "sand": 11, "dirt": 13}[kind])
+    fine = tiling_fbm(size, {"grass": 5, "rock": 9, "sand": 17, "dirt": 19}[kind], periods=(32, 64, 128))
+    px = bytearray(size * size * 4)
+    def mix(a, b, t):
+        return [a[c] + (b[c] - a[c]) * t for c in range(3)]
+    for i in range(size * size):
+        x, y = i % size, i // size
+        b, f = base[i], fine[i]
+        if kind == "grass":
+            c = mix((58, 92, 36), (104, 146, 58), min(1.0, max(0.0, (b - 0.3) * 2.2)))
+            c = mix(c, (138, 150, 70), max(0.0, f - 0.62) * 2.5)   # dry tips
+            c = [v * (0.82 + 0.36 * f) for v in c]
+        elif kind == "rock":
+            ridge = 1.0 - abs(2.0 * tiling_fbm_cache["rock"][i] - 1.0)
+            c = mix((92, 86, 78), (150, 144, 134), min(1.0, max(0.0, (b - 0.25) * 2.0)))
+            c = [v * (0.85 + 0.3 * f) for v in c]
+            if ridge > 0.955:
+                c = [v * 0.68 for v in c]   # cracks
+        elif kind == "sand":
+            ripple = 0.5 + 0.5 * math.sin(2 * math.pi * (y * 6 / size + 0.35 * b))
+            c = mix((196, 176, 128), (226, 208, 160), min(1.0, max(0.0, b * 0.8 + ripple * 0.3)))
+            c = [v * (0.9 + 0.2 * f) for v in c]
+        else:
+            c = mix((92, 68, 46), (132, 100, 68), min(1.0, max(0.0, (b - 0.3) * 2.0)))
+            if f > 0.7:
+                c = mix(c, (150, 140, 128), (f - 0.7) * 3)   # pebbles
+            c = [v * (0.85 + 0.3 * f) for v in c]
+        px[i * 4:i * 4 + 4] = [max(0, min(255, int(round(v)))) for v in c] + [255]
+    return png(size, size, px)
+
+
+tiling_fbm_cache = {}
+
+
+def make_ground(out):
+    os.makedirs(out, exist_ok=True)
+    tiling_fbm_cache["rock"] = tiling_fbm(256, 23, periods=(8, 16, 32))
+    for kind in ("grass", "rock", "sand", "dirt"):
+        data = ground(kind)
+        with open(os.path.join(out, kind + ".png"), "wb") as f:
+            f.write(data)
+        print(kind + ".png", len(data), "bytes")
+
+
 def make_decals(out):
     os.makedirs(out, exist_ok=True)
     for name, data in (("sigil.png", sigil()), ("arrow.png", arrow()), ("ripples.png", ripples())):
@@ -734,6 +823,9 @@ def make_physics(out):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--physics":
         make_physics(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "physics", "assets"))
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--ground":
+        make_ground(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "hills", "assets", "ground"))
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--decals":
         make_decals(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "showcase", "assets"))

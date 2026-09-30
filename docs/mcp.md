@@ -61,7 +61,7 @@ Every command has a usage line and a summary in the engine itself: `help {comman
 2. `world_tree { depth: 2 }` shows the scene loaded from `scene.json`.
 3. `step { ticks: 120 }` runs two simulated seconds; the exposed state says how many enemies exist and the player's health.
 4. `events_since { seq: 0, type: "player." }` explains what hit the player; each `player.hit` carries the `cause` of the enemy's spawn event.
-5. `capture { path: "out.png", ids: "ids.png" }` writes the picture and the id buffer and lists the visible entities with pixel counts.
+5. `capture { path: "out.png", ids: "ids.png" }` writes the picture and the id buffer and lists the visible entities with pixel counts. A relative path is under the project (never out of it; the answer's `path` says where), an absolute one where it says; `render.views` and `render.ids` write the same way.
 6. `runtime_stop` returns the report with the deterministic state hash, which `pocket_run_headless` with the same seed and frame count reproduces.
 
 Everything the session did is also reachable without MCP: the runtime's `--serve` port speaks JSON-RPC 2.0 on `POST /rpc` and serves `GET /tree`, `/state`, `/summary`, `/events?since=N`, `/schema`, `/commands`.

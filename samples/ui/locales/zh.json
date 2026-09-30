@@ -1,6 +1,6 @@
 {
   "hud": {
-    "score": "得分 {score}",
+    "score": "得分 {score, number}",
     "health": "生命 {health}",
     "coins": "{count, plural, =0 {还没有金币} other {# 枚金币}}",
     "hint": "用按钮转动箱子，或用 WASD 行走。",
