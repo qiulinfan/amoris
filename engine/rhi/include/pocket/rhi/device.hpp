@@ -73,6 +73,12 @@ class Device {
     [[nodiscard]] bool had_error() const;
     [[nodiscard]] std::uint64_t presented_frames() const;
     [[nodiscard]] bool has_surface() const;
+    // Whether the device writes timestamps at the start and end of passes (the timestamp-query
+    // feature), and nanoseconds per resolved timestamp unit.
+    [[nodiscard]] bool timestamps() const;
+    [[nodiscard]] float timestamp_period() const;
+    // Frames submitted so far (end_frame calls): work recorded before the last one is on the GPU.
+    [[nodiscard]] std::uint64_t submitted_frames() const;
     [[nodiscard]] Json describe() const;
 
     // Helpers shared by renderers.

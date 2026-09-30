@@ -45,7 +45,7 @@ A glTF file draws as one thing by default: its nodes are baked into the file's s
 
 A `MeshRenderer.mesh` or `world.instantiate {mesh}` can name any of these, and the store reads it into the same mesh a glTF file becomes:
 
-- **glTF** (`.glb`, `.gltf`): read directly (above), with `KHR_lights_punctual` lights, cameras and `KHR_materials_emissive_strength` kept.
+- **glTF** (`.glb`, `.gltf`): read directly (above), with `KHR_lights_punctual` lights, cameras, `KHR_materials_emissive_strength`, and glass and lacquer (`KHR_materials_transmission`, `_ior`, `_volume`, `_clearcoat`: `docs/design/rendering.md`, Glass) kept.
 - **Wavefront OBJ** (`.obj` with its `mtllib` files): read directly. Every `o` object is a node (`parts` in `assets.describe`), one submesh per object and material; `Kd`, `d`/`Tr` (under 1 draws translucent), `Ke`, `Pr`/`Pm` (or `Ns` as a roughness), `map_Kd`, `map_Ke` and `map_Bump` (as a tangent-space normal map, the way Blender writes it) make the material, texture paths resolved next to the `.mtl`; v runs up in OBJ and is flipped; faces with more than three corners are fanned; normals the file leaves out are smoothed per position, weighted by face area; a face pointing past the vertices is refused with its line number.
 - **STL** (binary or ASCII): read directly, one node, flat normals, a gray material.
 - **PLY** (ASCII, or binary in either byte order), as Blender, MeshLab and 3D scanners write it: read directly, one node. The `vertex` element's `x y z`, its normals (`nx ny nz`) and texture coordinates (`s t`, `u v` or `texture_u texture_v`, v flipped as in OBJ) when present, and its colours (`red green blue` and `alpha`, bytes 0..255 or floats 0..1, sRGB, made linear) as vertex colours; the `face` element's `vertex_indices` lists fanned into triangles; any other element or property is skipped. Normals the file leaves out are smoothed per vertex, weighted by face area. The material is gray, white when the vertices are coloured. A file of points without faces is refused (a point cloud is not a mesh), as is a face pointing past the vertices or a body shorter than its header says.
@@ -68,7 +68,7 @@ A `MeshRenderer.mesh` or `world.instantiate {mesh}` can name any of these, and t
 
 ## Not yet
 
-KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not), `KHR_lights_punctual` and `KHR_materials_emissive_strength`: materials variants, draco; and audio or font assets through the same store.
+KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are applied, to every map of the material; its rotation is not), `KHR_lights_punctual`, `KHR_materials_emissive_strength` and the glass and clear coat factors (their textures are not read): sheen, specular, iridescence, materials variants, draco; and audio or font assets through the same store.
 
 ## Tile maps
 

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 using namespace pocket;
 
@@ -925,4 +926,99 @@ TEST_CASE("terrain layers: shares from slope and height rules stacked in order, 
     // Without layers, no shares and no terrain material.
     REQUIRE(assets::terrain_layer_weights(t, assets::TerrainLook{}).empty());
     REQUIRE(assets::terrain_mesh(t, assets::TerrainLook{}, "terrain:plain").materials[0].terrain == nullptr);
+}
+
+TEST_CASE("glass and lacquer from glTF: KHR_materials_transmission, _ior, _volume and _clearcoat are read", "[assets][gltf][glass]") {
+    // Two quads' materials as Blender writes them for Transmission and Coat, beside the sample's assets.
+    const std::filesystem::path file = project() / "assets" / "glass-test.gltf";
+    struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
+    {
+        std::ofstream out(file);
+        out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":[{"name":"glass","mesh":0},{"name":"paint","mesh":1}],
+            "extensionsUsed":["KHR_materials_transmission","KHR_materials_ior","KHR_materials_volume","KHR_materials_clearcoat"],
+            "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]},{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":1}]}],
+            "materials":[{"name":"bottle","pbrMetallicRoughness":{"roughnessFactor":0.05,"metallicFactor":0},"extensions":{"KHR_materials_transmission":{"transmissionFactor":1.0},"KHR_materials_ior":{"ior":1.45},"KHR_materials_volume":{"thicknessFactor":0.2,"attenuationDistance":0.5,"attenuationColor":[0.4,0.9,0.5]}}},
+                         {"name":"car","pbrMetallicRoughness":{"baseColorFactor":[0.6,0.02,0.02,1],"roughnessFactor":0.5,"metallicFactor":0.3},"extensions":{"KHR_materials_clearcoat":{"clearcoatFactor":1.0,"clearcoatRoughnessFactor":0.04}}}],
+            "buffers":[{"byteLength":140,"uri":"data:application/octet-stream;base64,)" << "AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAPwAAAD8AAAAAAAAAvwAAAD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAEAAgAAAAIAAwA=" << R"("}],
+            "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":48},{"buffer":0,"byteOffset":48,"byteLength":48},{"buffer":0,"byteOffset":96,"byteLength":32},{"buffer":0,"byteOffset":128,"byteLength":12}],
+            "accessors":[{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3","min":[-0.5,-0.5,0],"max":[0.5,0.5,0]},{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":4,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":6,"type":"SCALAR"}]})";
+    }
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/glass-test.gltf");
+    if (!m) INFO(m.error().to_string());
+    REQUIRE(m.has_value());
+    const assets::Mesh& mesh = **m;
+    REQUIRE(mesh.materials.size() == 2);
+    const assets::Material& glass = mesh.materials[0];
+    REQUIRE(glass.transmission == Catch::Approx(1.0));
+    REQUIRE(glass.ior == Catch::Approx(1.45));
+    REQUIRE(glass.thickness == Catch::Approx(0.2));
+    REQUIRE(glass.attenuation_distance == Catch::Approx(0.5));
+    REQUIRE(glass.attenuation_color.y == Catch::Approx(0.9));
+    REQUIRE(glass.clearcoat == 0);
+    const assets::Material& car = mesh.materials[1];
+    REQUIRE(car.transmission == 0);
+    REQUIRE(car.ior == Catch::Approx(1.5));   // the default
+    REQUIRE(car.clearcoat == Catch::Approx(1.0));
+    REQUIRE(car.clearcoat_roughness == Catch::Approx(0.04));
+    const Json d = mesh.describe();
+    REQUIRE(d["materials"][0]["transmission"] == 1.0);
+    REQUIRE(d["materials"][0]["attenuation"]["distance"] == 0.5);
+    REQUIRE(d["materials"][1]["clearcoat"] == 1.0);
+    REQUIRE_FALSE(d["materials"][1].contains("transmission"));
+}
+
+TEST_CASE("levels of detail: a mesh simplified to a share of its triangles, part by part, on the same vertices", "[assets][lod]") {
+    // A grid of 32 by 32 quads bent into a dome, in two parts (two materials) side by side.
+    assets::Mesh m;
+    const int n = 33;
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            assets::MeshVertex v;
+            const float x = static_cast<float>(i) / 32.0f - 0.5f, z = static_cast<float>(j) / 32.0f - 0.5f;
+            v.position = {x, 0.5f - (x * x + z * z), z};
+            v.normal = normalize(Vec3{2 * x, 1, 2 * z});
+            v.uv = {x + 0.5f, z + 0.5f};
+            m.vertices.push_back(v);
+        }
+    for (int part = 0; part < 2; ++part) {
+        assets::Submesh sm;
+        sm.first_index = static_cast<std::uint32_t>(m.indices.size());
+        sm.material = static_cast<std::uint32_t>(part);
+        for (int j = 0; j < 32; ++j)
+            for (int i = part * 16; i < part * 16 + 16; ++i) {
+                const auto a = static_cast<std::uint32_t>(j * n + i), b = a + 1, c = a + static_cast<std::uint32_t>(n), d = c + 1;
+                m.indices.insert(m.indices.end(), {a, c, b, b, c, d});
+            }
+        sm.index_count = static_cast<std::uint32_t>(m.indices.size()) - sm.first_index;
+        m.submeshes.push_back(sm);
+    }
+    REQUIRE(m.indices.size() == 32u * 32u * 6u);
+    const assets::MeshLod half = assets::simplify(m, 0.5f);
+    const assets::MeshLod tenth = assets::simplify(m, 0.1f);
+    INFO("half " << half.triangles << " tenth " << tenth.triangles << " errors " << half.error << ", " << tenth.error);
+    REQUIRE(half.submeshes.size() == 2u);
+    REQUIRE(half.triangles <= 1024u + 8u);
+    REQUIRE(half.triangles >= 900u);
+    REQUIRE(tenth.triangles < half.triangles);
+    REQUIRE(tenth.triangles <= 2048u / 10u + 16u);
+    REQUIRE(tenth.error >= half.error);
+    // Each part keeps its range, one after the other, and every index is a vertex of the mesh.
+    REQUIRE(half.submeshes[0].first_index == 0u);
+    REQUIRE(half.submeshes[1].first_index == half.submeshes[0].index_count);
+    REQUIRE(half.submeshes[1].material == 1u);
+    for (std::uint32_t k : tenth.indices) REQUIRE(k < m.vertices.size());
+    // Where the parts meet, the edge stays: every vertex on the line x = 0 that the full mesh uses
+    // is used by both parts' simplified triangles alike.
+    auto used = [&](const assets::Submesh& sm, const std::vector<std::uint32_t>& idx) {
+        std::set<std::uint32_t> s;
+        for (std::uint32_t k = 0; k < sm.index_count; ++k) {
+            const std::uint32_t v = idx[sm.first_index + k];
+            if (v % static_cast<std::uint32_t>(n) == 16u) s.insert(v);
+        }
+        return s;
+    };
+    REQUIRE(used(tenth.submeshes[0], tenth.indices) == used(tenth.submeshes[1], tenth.indices));
+    // A ratio of 1 keeps them all.
+    REQUIRE(assets::simplify(m, 1.0f).indices == m.indices);
 }

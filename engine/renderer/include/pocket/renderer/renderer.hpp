@@ -122,6 +122,18 @@ struct RenderStats {
     std::uint32_t skinned = 0;        // of which skinned (posed) submesh instances
     std::uint32_t morphed = 0;        // of which drawn with morph target weights
     std::uint32_t translucent = 0;    // of which alpha blended (a color alpha under 1, or a glTF BLEND material), drawn after the opaque meshes far to near
+    std::uint32_t glass = 0;          // of which transmitting, drawn in a pass after the solid meshes over a copy of them
+    std::uint32_t lod_simplified = 0; // draws (a scattered copy each) at a simpler level of detail
+    std::uint32_t lod_culled = 0;     // draws left out for covering less of the view than their cull_screen
+    std::uint64_t triangles = 0;      // triangles of the meshes drawn (each copy and level counted), before the view's culling
+    std::uint32_t out_of_view = 0;    // draws whose bounds are outside the camera's view: not drawn by its passes (shadows may still)
+    // GPU time (render.stats.gpu): each pass's milliseconds from its timestamps, read back a frame or
+    // two after it was drawn (gpu_age frames ago); empty where the device has no timestamps.
+    std::vector<std::pair<std::string, double>> gpu_passes;
+    double gpu_ms = 0;
+    std::uint64_t gpu_age = 0;
+    std::uint64_t gpu_frames = 0;   // frames whose timings have come back so far
+    bool gpu_timing = false;
     std::uint32_t moving_parts = 0;   // submeshes placed by an animated node (moving parts)
     std::uint32_t tile_layers = 0;    // tile map layers drawn (each one static mesh per tileset)
     std::uint32_t image_layers = 0;   // image layers drawn (a picture placed in map pixels, repeated across the map when asked)

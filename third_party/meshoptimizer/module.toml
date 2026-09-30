@@ -1,0 +1,6 @@
+name = "meshoptimizer"
+kind = "static_library"
+description = "meshoptimizer 1.3 (Arseny Kapoulkine): mesh simplification for levels of detail, and the rest of the library. MIT."
+sources = ["src/*.cpp"]
+public_include = ["src"]
+third_party = true

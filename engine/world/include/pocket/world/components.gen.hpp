@@ -19,6 +19,19 @@ struct Color4 {
 };
 
 // Records: the values held by list fields of components.
+/// One level of detail of a MeshRenderer (docs/design/rendering.md, Levels of detail): a simpler mesh drawn when the entity is small on screen.
+struct MeshLod {
+    float screen = 0.25f;
+    float ratio = 0.5f;
+    std::string mesh = "";
+    constexpr bool operator==(const MeshLod&) const = default;
+};
+void to_json(Json& j, const MeshLod& v);
+void from_json(const Json& j, MeshLod& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(MeshLod& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const MeshLod& v);
+
 /// One morph target weight set by script (docs/design/animation.md, Morph targets): the target by name or index, and the weight that replaces the clip's for it.
 struct MorphWeight {
     std::string target = "";
@@ -345,8 +358,15 @@ struct MeshRenderer {
     Color4 emissive{0.0f, 0.0f, 0.0f, 1.0f};
     float cutoff = 0.0f;
     std::string normal_map = "";
+    float transmission = -1.0f;
+    float ior = -1.0f;
+    float thickness = -1.0f;
+    float clearcoat = -1.0f;
+    float clearcoat_roughness = -1.0f;
     bool visible = true;
     bool cast_shadows = true;
+    std::vector<MeshLod> lods = {};
+    float cull_screen = 0.0f;
     constexpr bool operator==(const MeshRenderer&) const = default;
 };
 void to_json(Json& j, const MeshRenderer& v);

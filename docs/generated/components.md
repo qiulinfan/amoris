@@ -184,8 +184,15 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `emissive` | color | [0.0, 0.0, 0.0, 1.0] | Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow. |
 | `cutoff` | f32 | 0.0 | Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none. |
 | `normal_map` | string | "" | Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. |
+| `transmission` | f32 | -1.0 | How much light passes through, 0 to 1 (docs/design/rendering.md, Glass): glass, water in a bottle, a window; what is behind shows through, bent by `ior` and tinted by the color. Negative keeps the asset material's (KHR_materials_transmission; 0 for primitives). |
+| `ior` | f32 | -1.0 | Index of refraction of what the light passes through: 1.5 glass, 1.33 water; how far what is behind is bent. Negative keeps the asset material's (1.5). |
+| `thickness` | f32 | -1.0 | How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0). |
+| `clearcoat` | f32 | -1.0 | A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0). |
+| `clearcoat_roughness` | f32 | -1.0 | The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03). |
 | `visible` | bool | true | Whether the mesh is drawn. |
 | `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |
+| `lods` | list:MeshLod | [] | Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own. |
+| `cull_screen` | f32 | 0.0 | Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small. |
 
 ## Sprite
 
@@ -672,6 +679,16 @@ Morph target weights set by script, over the ones the clip plays (docs/design/an
 # Records
 
 The values held by list fields. An element takes these defaults for the fields a patch leaves out.
+
+## MeshLod
+
+One level of detail of a MeshRenderer (docs/design/rendering.md, Levels of detail): a simpler mesh drawn when the entity is small on screen.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `screen` | f32 | 0.25 | Drawn at this level when the entity's bounds cover less than this fraction of the view's height (0.25: a quarter of it). |
+| `ratio` | f32 | 0.5 | The share of the mesh's triangles this level keeps when it simplifies the entity's own mesh, 0.01 to 1. |
+| `mesh` | string | "" | A mesh to draw at this level instead (a project path, or a primitive); empty simplifies the entity's own mesh. |
 
 ## MorphWeight
 

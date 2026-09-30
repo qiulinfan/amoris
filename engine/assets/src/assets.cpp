@@ -53,6 +53,16 @@ Json Mesh::describe() const {
         if (m.blend) mj["blend"] = true;
         if (m.alpha_cutoff > 0) mj["cutoff"] = m.alpha_cutoff;
         if (m.uv_transformed) mj["uv_transform"] = Json{{"offset", Json::array({m.uv_offset.x, m.uv_offset.y})}, {"scale", Json::array({m.uv_scale.x, m.uv_scale.y})}};
+        if (m.transmission > 0) {
+            mj["transmission"] = m.transmission;
+            mj["ior"] = m.ior;
+            if (m.thickness > 0) mj["thickness"] = m.thickness;
+            if (m.attenuation_distance > 0) mj["attenuation"] = Json{{"color", Json::array({m.attenuation_color.x, m.attenuation_color.y, m.attenuation_color.z})}, {"distance", m.attenuation_distance}};
+        }
+        if (m.clearcoat > 0) {
+            mj["clearcoat"] = m.clearcoat;
+            mj["clearcoat_roughness"] = m.clearcoat_roughness;
+        }
         mats.push_back(mj);
     }
     j["materials"] = mats;
@@ -1122,6 +1132,24 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         if (m.contains("extensions") && m["extensions"].is_object() && m["extensions"].contains("KHR_materials_emissive_strength")) {
             const float k = m["extensions"]["KHR_materials_emissive_strength"].value("emissiveStrength", 1.0f);
             mat.emissive = mat.emissive * k;
+        }
+        // Glass and lacquer: transmission, its index of refraction and volume, and a clear coat
+        // (what Blender's Principled BSDF writes for Transmission, IOR and Coat).
+        if (m.contains("extensions") && m["extensions"].is_object()) {
+            const Json& ext = m["extensions"];
+            auto obj = [&](const char* name) { return ext.contains(name) && ext[name].is_object() ? &ext[name] : nullptr; };
+            if (const Json* t = obj("KHR_materials_transmission")) mat.transmission = std::clamp(t->value("transmissionFactor", 0.0f), 0.0f, 1.0f);
+            if (const Json* t = obj("KHR_materials_ior")) mat.ior = std::max(t->value("ior", 1.5f), 1.0f);
+            if (const Json* t = obj("KHR_materials_volume")) {
+                mat.thickness = std::max(t->value("thicknessFactor", 0.0f), 0.0f);
+                mat.attenuation_distance = std::max(t->value("attenuationDistance", 0.0f), 0.0f);
+                if (t->contains("attenuationColor") && (*t)["attenuationColor"].is_array() && (*t)["attenuationColor"].size() == 3)
+                    mat.attenuation_color = {(*t)["attenuationColor"][0].get<float>(), (*t)["attenuationColor"][1].get<float>(), (*t)["attenuationColor"][2].get<float>()};
+            }
+            if (const Json* t = obj("KHR_materials_clearcoat")) {
+                mat.clearcoat = std::clamp(t->value("clearcoatFactor", 0.0f), 0.0f, 1.0f);
+                mat.clearcoat_roughness = std::clamp(t->value("clearcoatRoughnessFactor", 0.0f), 0.0f, 1.0f);
+            }
         }
         mesh.materials.push_back(mat);
     }

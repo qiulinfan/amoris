@@ -6,6 +6,16 @@ export interface Vec4 { x: number; y: number; z: number; w: number }
 export interface Quat { x: number; y: number; z: number; w: number }
 export interface Color { r: number; g: number; b: number; a: number }
 
+/** One level of detail of a MeshRenderer (docs/design/rendering.md, Levels of detail): a simpler mesh drawn when the entity is small on screen. */
+export interface MeshLod {
+    /** Drawn at this level when the entity's bounds cover less than this fraction of the view's height (0.25: a quarter of it). */
+    screen: number;
+    /** The share of the mesh's triangles this level keeps when it simplifies the entity's own mesh, 0.01 to 1. */
+    ratio: number;
+    /** A mesh to draw at this level instead (a project path, or a primitive); empty simplifies the entity's own mesh. */
+    mesh: string;
+}
+
 /** One morph target weight set by script (docs/design/animation.md, Morph targets): the target by name or index, and the weight that replaces the clip's for it. */
 export interface MorphWeight {
     /** Target name from the asset (animation.clips lists them), or its index as a string. */
@@ -360,10 +370,24 @@ export interface MeshRenderer {
     cutoff: number;
     /** Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none. */
     normal_map: string;
+    /** How much light passes through, 0 to 1 (docs/design/rendering.md, Glass): glass, water in a bottle, a window; what is behind shows through, bent by `ior` and tinted by the color. Negative keeps the asset material's (KHR_materials_transmission; 0 for primitives). */
+    transmission: number;
+    /** Index of refraction of what the light passes through: 1.5 glass, 1.33 water; how far what is behind is bent. Negative keeps the asset material's (1.5). */
+    ior: number;
+    /** How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0). */
+    thickness: number;
+    /** A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0). */
+    clearcoat: number;
+    /** The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03). */
+    clearcoat_roughness: number;
     /** Whether the mesh is drawn. */
     visible: boolean;
     /** Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. */
     cast_shadows: boolean;
+    /** Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own. */
+    lods: MeshLod[];
+    /** Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small. */
+    cull_screen: number;
 }
 
 /** A 2D image: a textured unit square in the entity's XY plane, sized in world units, unlit, alpha blended, drawn after meshes in layer order. Use with an orthographic camera looking down -Z. */
@@ -1130,7 +1154,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 32, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
-    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", visible: true, cast_shadows: true },
+    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
@@ -1161,6 +1185,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
 
 /** Records: the values inside list fields, with their defaults. */
 export interface Records {
+    MeshLod: MeshLod;
     MorphWeight: MorphWeight;
     IKLimit: IKLimit;
     Wheel: Wheel;
@@ -1172,6 +1197,7 @@ export interface Records {
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
+    MeshLod: { screen: 0.25, ratio: 0.5, mesh: "" },
     MorphWeight: { target: "", weight: 0 },
     IKLimit: { joint: "", min_bend: 0, max_bend: 180, side: { x: 0, y: 0, z: 0 } },
     Wheel: { offset: { x: 0, y: 0, z: 0 }, radius: 0.35, rest: 0.3, steer: false, drive: false, visual: "", contact: false, compression: 0, spin: 0 },

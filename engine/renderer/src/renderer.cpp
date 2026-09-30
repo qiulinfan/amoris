@@ -167,7 +167,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 368;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 400;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -246,6 +246,8 @@ struct alignas(16) ObjectUniforms {
     float sway[4];            // a swaying copy: how far its top leans (world units), sways a second, its mesh's local foot, 1 / its height; 0 reach for none
     float terrain[4];         // a terrain drawn from textured layers: x the layers (0 for none), yz the splat map's texels per unit of uv
     float layer_tile[4];      // each layer's repeats per unit of the mesh's uv
+    float optics[4];          // glass and lacquer: transmission, index of refraction, clear coat, its roughness
+    float volume[4];          // what the glass absorbs per unit (linear RGB), and its thickness in world units
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -478,6 +480,8 @@ struct Object {
     sway: vec4f,
     terrain: vec4f,
     layer_tile: vec4f,
+    optics: vec4f,
+    volume: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
@@ -673,6 +677,61 @@ fn perturb_normal(n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, ma
 // GGX / Schlick / Smith specular plus Lambert diffuse for one light direction; the diffuse term
 // is not divided by pi (and the specular scaled to match) so brightness stays comparable to a plain
 // Lambert surface under a light of intensity one.
+// The scene as drawn before the glass (docs/design/rendering.md, Glass): what transmitting
+// surfaces show through them. A black texel where no glass is drawn.
+@group(0) @binding(17) var glass_scene: texture_2d<f32>;
+
+// A clear coat (glTF KHR_materials_clearcoat): a dielectric specular layer on the geometric normal
+// over the surface. Its reflection of a light (rgb), and what it leaves the layer below (w).
+fn coat(object: Object, gn: vec3f, v: vec3f, l: vec3f) -> vec4f {
+    let h = normalize(l + v);
+    let ndl = max(dot(gn, l), 0.0);
+    let ndv = max(dot(gn, v), 1e-4);
+    let ndh = max(dot(gn, h), 0.0);
+    let r = clamp(object.optics.w, 0.03, 1.0);
+    let a2 = r * r * r * r;
+    let denom = ndh * ndh * (a2 - 1.0) + 1.0;
+    let d = a2 / max(denom * denom, 1e-6);
+    let k = (r + 1.0) * (r + 1.0) / 8.0;
+    let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+    let f = (0.04 + 0.96 * pow(1.0 - max(dot(v, h), 0.0), 5.0)) * object.optics.z;
+    return vec4f(vec3f(d * g * f / max(4.0 * ndv, 1e-4)), 1.0 - f);
+}
+// The surface's response to a light, with its clear coat when it has one.
+fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32) -> vec3f {
+    let base = brdf(n, v, l, albedo, metallic, roughness);
+    if (object.optics.z <= 0.0) { return base; }
+    let c = coat(object, gn, v, l);
+    return base * c.w + c.rgb;
+}
+// What glass lets through (glTF KHR_materials_transmission, _ior, _volume): the scene behind it
+// where the refracted ray leaves its far side (a thin pane, thickness 0, bends nothing), blurred
+// by its roughness, absorbed over its thickness, tinted by its colour and less what its surface
+// reflects.
+fn transmitted(object: Object, p: vec3f, n: vec3f, v: vec3f, albedo: vec3f, roughness: f32) -> vec3f {
+    let ior = max(object.optics.y, 1.0);
+    let depth = max(object.volume.w, 0.0);
+    let exit = p + refract(-v, n, 1.0 / ior) * depth;
+    let clip = frame.view_proj * vec4f(exit, 1.0);
+    let ndc = clip.xy / max(clip.w, 1e-4);
+    let size = vec2f(textureDimensions(glass_scene));
+    let uv = (frame.viewport.xy + (vec2f(ndc.x, -ndc.y) * 0.5 + 0.5) * frame.viewport.zw) / size;
+    var behind = textureSampleLevel(glass_scene, ao_samp, uv, 0.0).rgb;
+    let spread = roughness * roughness * 0.15;
+    if (spread > 0.0005) {
+        // Frosted: taps on a disc (a golden-angle spiral) as wide as the roughness asks.
+        for (var i = 1; i < 12; i = i + 1) {
+            let a = f32(i) * 2.39996;
+            let r = sqrt(f32(i) / 11.0) * spread;
+            behind = behind + textureSampleLevel(glass_scene, ao_samp, uv + vec2f(cos(a), sin(a)) * r * vec2f(size.y / size.x, 1.0), 0.0).rgb;
+        }
+        behind = behind / 12.0;
+    }
+    let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
+    let fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+    return behind * albedo * exp(-object.volume.xyz * depth) * ((1.0 - fres) * object.optics.x);
+}
+
 fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32) -> vec3f {
     let h = normalize(l + v);
     let ndl = max(dot(n, l), 0.0);
@@ -738,8 +797,10 @@ fn shade(in: VsOut) -> vec4f {
     n = paint.normal;
     let metallic = paint.metallic;
     let roughness = paint.roughness;
-    let albedo = paint.albedo;
-    let f0 = mix(vec3f(0.04), albedo, metallic);
+    // Glass passes light instead of scattering it: its diffuse part gives way to what it transmits.
+    let albedo = paint.albedo * (1.0 - clamp(object.optics.x, 0.0, 1.0));
+    let gn = normalize(in.normal);
+    let f0 = mix(vec3f(0.04), paint.albedo, metallic);
     var color = frame.ambient.rgb * mix(albedo, f0, metallic);
     // Inside a reflection probe's box, what the probe saw takes the place of the sky's light: its
     // reflection, and its diffuse light from all around (a room lit by its lamps and walls, not the sky).
@@ -755,6 +816,12 @@ fn shade(in: VsOut) -> vec4f {
     } else if (probe.w > 0.0) {
         let ndv = max(dot(n, v), 1e-4);
         color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv), probe.w);
+    }
+    // A clear coat reflects the sky over the rest, by its own Fresnel on the geometric normal.
+    if (object.optics.z > 0.0 && frame.env.x > 0.5) {
+        let fc = (0.04 + 0.96 * pow(1.0 - max(dot(gn, v), 0.0), 5.0)) * object.optics.z;
+        let cspec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, gn)), clamp(object.optics.w, 0.03, 1.0) * frame.env.w).rgb * frame.env.z;
+        color = color * (1.0 - fc) + cspec * fc;
     }
     // Ambient occlusion darkens only this light from all around, not the lights'.
     if (frame.ao.x > 0.5) {
@@ -792,7 +859,7 @@ fn shade(in: VsOut) -> vec4f {
             shadow = mix(1.0 - frame.shadow.z, 1.0, lit);
         }
     }
-    color += frame.sun_color.rgb * brdf(n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l);
+    color += frame.sun_color.rgb * surface_light(object, gn, n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l);
     // Point and spot lights: the ones the pixel's cluster lists.
     if (frame.clusters.w > 0u) {
         let at = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
@@ -829,9 +896,10 @@ fn shade(in: VsOut) -> vec4f {
                 }
                 lit = face_lit(face, in.world_pos, normalize(in.normal), pl, li.cone.z * dist);
             }
-            color += li.color_kind.rgb * brdf(n, v, pl, albedo, metallic, roughness) * (att * att * cone * lit);
+            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness) * (att * att * cone * lit);
         }
     }
+    if (object.optics.x > 0.0) { color += transmitted(object, in.world_pos, n, v, paint.albedo, roughness); }
     color += object.emissive.rgb * em + paint.glow;
     return vec4f(color, base.a);
 }
@@ -1188,15 +1256,15 @@ fn face_visible(face: i32, p: vec3f) -> f32 {
     if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
     return textureSampleCompareLevel(shadow_atlas, shadow_samp, f.rect.xy + vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * f.rect.z, ndc.z);
 }
-// The point and spot lights reaching a point of the fog, each scattered toward the eye.
-fn local_scatter(p: vec3f, dir: vec3f, g: f32) -> vec3f {
+// The point and spot lights reaching a point of the fog, each scattered toward the eye. Every point
+// of a pixel's march lies on its view ray, so the cluster column (cxy) is the pixel's; only the
+// depth slice changes along it.
+fn local_scatter(p: vec3f, dir: vec3f, g: f32, cxy: vec2u) -> vec3f {
     if (frame.clusters.w == 0u) { return vec3f(0.0); }
-    let clip = frame.view_proj * vec4f(p, 1.0);
-    if (clip.w <= 0.0) { return vec3f(0.0); }
-    let at = vec2f(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
-    let cx = min(u32(clamp(at.x, 0.0, 1.0) * f32(frame.clusters.x)), frame.clusters.x - 1u);
-    let cy = min(u32(clamp(at.y, 0.0, 1.0) * f32(frame.clusters.y)), frame.clusters.y - 1u);
+    let cx = cxy.x;
+    let cy = cxy.y;
     let depth = dot(p - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+    if (depth <= 0.0) { return vec3f(0.0); }
     let slice = (log(max(depth, frame.cluster_z.x)) - frame.cluster_z.w) * frame.cluster_z.z;
     let cz = min(u32(max(slice, 0.0)), frame.clusters.z - 1u);
     let cluster = (cz * frame.clusters.y + cy) * frame.clusters.x + cx;
@@ -1261,13 +1329,14 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32) -> vec3f {
     if (frame.env.x > 0.5) { ambient = ambient + sh_irradiance(vec3f(0.0, 1.0, 0.0)) * frame.env.y; }
     var trans = 1.0;
     var gathered = vec3f(0.0);
+    let cxy = vec2u(min(u32(clamp(uv.x, 0.0, 1.0) * f32(frame.clusters.x)), max(frame.clusters.x, 1u) - 1u), min(u32(clamp(uv.y, 0.0, 1.0) * f32(frame.clusters.y)), max(frame.clusters.y, 1u) - 1u));
     for (var i = 0u; i < steps; i = i + 1u) {
         let t = (f32(i) + jitter) * dt;
         if (t < vol.march.z) { continue; }
         let p = start + dir * t;
         let sigma = vol.medium.x * exp(-vol.medium.z * (p.y - vol.medium.y));
         if (sigma <= 1e-6) { continue; }
-        let light = ambient + frame.sun_color.rgb * (sun_phase * sun_visible(p)) + local_scatter(p, dir, g);
+        let light = ambient + frame.sun_color.rgb * (sun_phase * sun_visible(p)) + local_scatter(p, dir, g, cxy);
         let step_t = exp(-sigma * dt);
         gathered = gathered + trans * light * (1.0 - step_t);
         trans = trans * step_t;
@@ -2466,7 +2535,12 @@ struct Renderer::Impl {
     WGPUTexture ao_white_tex = nullptr;
     WGPUTextureView ao_white_view = nullptr;
     WGPUTextureView scene_ao = nullptr;           // the AO view the scene group was made with
-    WGPUBindGroupEntry scene_entries[17]{};       // the scene group's entries, to make it again when the AO target or the atlas changes
+    WGPUBindGroupEntry scene_entries[18]{};       // the scene group's entries, to make it again when the AO target, the atlas or the glass copy changes
+    WGPUTextureView scene_glass = nullptr;        // the glass copy the scene group was made with
+    WGPUTexture glass_tex = nullptr, glass_stub = nullptr;   // the scene before the glass (frame-sized), and a black texel before there is one
+    WGPUTextureView glass_view = nullptr, glass_stub_view = nullptr;
+    std::uint32_t glass_w = 0, glass_h = 0;
+    bool glass_last = false;                      // glass was drawn last frame (the depth prepass stays on for it)
     WGPUBuffer probe_sh_buffer = nullptr;         // each probe's diffuse harmonics, 256 bytes a slot
     WGPUBuffer probe_cluster_buffer = nullptr;    // a capture's one cluster: every local light that reaches the probe
     // Reflection probes: their slots (one array layer each), the panoramas, the six views a capture
@@ -2584,6 +2658,26 @@ struct Renderer::Impl {
     GpuTexture sky_source;    // the sky's panorama (half floats); 1x1 black without one
     std::map<std::string, GpuTexture> textures;
     std::map<std::string, WGPUBindGroup> material_groups;  // "base|mr|normal|emissive|filter" -> group 2
+    // GPU timings (render.stats.gpu): every pass begun through begin_pass writes timestamps at its
+    // start and end into a query set, named by its label; at the frame's end they are resolved into
+    // one of eight read-back buffers, mapped once that frame was submitted and read when it maps
+    // (the GPU can be a dozen frames behind the CPU when nothing paces them, as headless).
+    static constexpr std::uint32_t kTimedPasses = 96;
+    WGPUQuerySet timer_set = nullptr;
+    WGPUBuffer timer_resolve = nullptr;
+    struct TimerRead {
+        WGPUBuffer buffer = nullptr;
+        std::vector<std::string> names;
+        std::uint64_t submitted = 0;   // the device's submitted frames when it was filled
+        int state = 0;                 // 0 free, 1 filled, 2 mapping, 3 mapped
+    };
+    std::array<TimerRead, 8> timer_reads{};
+    std::array<WGPUPassTimestampWrites, kTimedPasses> timer_writes{};
+    std::vector<std::string> timer_names;   // this frame's timed passes, in order
+    std::vector<std::pair<std::string, double>> timer_last;
+    double timer_last_ms = 0;
+    std::uint64_t timer_last_frame = 0;
+    std::uint64_t timer_reads_done = 0;   // frames whose timings came back
     GpuTexture no_splat;                                   // a 1x1 stand-in for materials that are not terrains
     GpuTexture no_layers;                                  // a 1x1, one-layer array, the same
     std::map<std::string, GpuTexture> layer_arrays;        // a terrain's layer images (paths and colours) -> their array
@@ -2599,6 +2693,14 @@ struct Renderer::Impl {
         std::uint32_t morph_base = 0, morph_targets = 0, morph_vertices = 0;  // the asset's deltas in the morph buffer
     };
     std::map<std::string, AssetMesh> asset_meshes;
+    // Levels of detail (docs/design/rendering.md): a mesh's vertices with fewer triangles, an index
+    // buffer of their own over the mesh's vertex buffer (not owned). Key "path|ratio" or "#kind|ratio".
+    struct LodMesh {
+        GpuMesh gpu;
+        std::vector<assets::Submesh> submeshes;
+        float error = 0;
+    };
+    std::map<std::string, LodMesh> lod_meshes;
     // Tile layers as static meshes: key "map|layer|tile_size" -> submeshes per tileset texture.
     struct TileLayerMesh {
         GpuMesh gpu;
@@ -2645,6 +2747,8 @@ struct Renderer::Impl {
             if (tm.anim.indices) wgpuBufferRelease(tm.anim.indices);
         }
         tile_meshes.clear();
+        for (auto& [key, lm] : lod_meshes) if (lm.gpu.indices && !key.starts_with("#")) wgpuBufferRelease(lm.gpu.indices);
+        for (auto it = lod_meshes.begin(); it != lod_meshes.end();) it = it->first.starts_with("#") ? std::next(it) : lod_meshes.erase(it);   // a primitive's stay with it
         asset_meshes.clear();
         for (auto& [path, t] : textures) release_texture(t);
         textures.clear();
@@ -2661,6 +2765,14 @@ struct Renderer::Impl {
     }
 
     ~Impl() {
+        // A timing read-back still mapping names its slot: let it come in (or fail) first.
+        for (int i = 0; i < 10000 && device && std::any_of(timer_reads.begin(), timer_reads.end(), [](const TimerRead& r) { return r.state == 2; }); ++i) device->poll(true);
+        for (auto& r : timer_reads) {
+            if (r.state == 3) wgpuBufferUnmap(r.buffer);
+            if (r.buffer) wgpuBufferRelease(r.buffer);
+        }
+        if (timer_resolve) wgpuBufferRelease(timer_resolve);
+        if (timer_set) wgpuQuerySetRelease(timer_set);
         release_assets();
         release_texture(white);
         release_texture(flat_normal);
@@ -3036,7 +3148,7 @@ struct Renderer::Impl {
             rp.label = rhi::str(label);
             rp.colorAttachmentCount = 1;
             rp.colorAttachments = &ca;
-            WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+            WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
             wgpuRenderPassEncoderSetPipeline(enc, pipe);
             wgpuRenderPassEncoderSetBindGroup(enc, 0, bg, 0, nullptr);
             wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -3322,7 +3434,7 @@ struct Renderer::Impl {
             device->write_buffer(meter_uniforms, 0, &mu, sizeof mu);
             WGPUComputePassDescriptor cpd{};
             cpd.label = rhi::str("pocket.meter");
-            WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(frame.encoder, &cpd);
+            WGPUComputePassEncoder cp = begin_compute(frame.encoder, cpd);
             wgpuComputePassEncoderSetPipeline(cp, meter_pipeline);
             wgpuComputePassEncoderSetBindGroup(cp, 0, meter_bg, 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
@@ -3382,7 +3494,7 @@ struct Renderer::Impl {
         rp.label = rhi::str("pocket.post");
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
-        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         if (applied.w != frame.width || applied.h != frame.height) {
             wgpuRenderPassEncoderSetScissorRect(enc, static_cast<std::uint32_t>(applied.x), static_cast<std::uint32_t>(applied.y), applied.w, applied.h);
         }
@@ -3679,7 +3791,7 @@ struct Renderer::Impl {
         device->write_buffer(env_params, 0, slots.data(), slots.size());
         WGPUComputePassDescriptor cpd{};
         cpd.label = rhi::str("pocket.sky");
-        WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(frame.encoder, &cpd);
+        WGPUComputePassEncoder cp = begin_compute(frame.encoder, cpd);
         wgpuComputePassEncoderSetPipeline(cp, fill_pipeline);
         wgpuComputePassEncoderSetBindGroup(cp, 0, fill_bg, 0, nullptr);
         wgpuComputePassEncoderDispatchWorkgroups(cp, (kEnvWidth + 7) / 8, (kEnvHeight + 7) / 8, 1);
@@ -4508,7 +4620,7 @@ struct Renderer::Impl {
                 stats.draw_calls++;
             }
         };
-        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         set_viewport(enc);
         if (water_under >= 0) {
             wgpuRenderPassEncoderSetPipeline(enc, water_under_pipeline[v]);
@@ -4528,7 +4640,7 @@ struct Renderer::Impl {
             WGPURenderPassDescriptor prp{};
             prp.label = rhi::str("pocket.water.depth");
             prp.depthStencilAttachment = &pds;
-            WGPURenderPassEncoder penc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &prp);
+            WGPURenderPassEncoder penc = begin_pass(frame.encoder, prp);
             set_viewport(penc);
             wgpuRenderPassEncoderSetPipeline(penc, water_depth_pipeline);
             draw_surfaces(penc);
@@ -4577,7 +4689,7 @@ struct Renderer::Impl {
         rp.label = rhi::str("pocket.ssr");
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
-        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         wgpuRenderPassEncoderSetPipeline(enc, ssr_pipeline);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, ssr_bg, 0, nullptr);
@@ -4719,7 +4831,7 @@ struct Renderer::Impl {
         rp.label = rhi::str(label);
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
-        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         wgpuRenderPassEncoderSetPipeline(enc, pipeline);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, fx_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -5007,7 +5119,7 @@ struct Renderer::Impl {
         rp.label = rhi::str("pocket.taa");
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
-        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         wgpuRenderPassEncoderSetPipeline(enc, taa_pipeline);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, taa_bg[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -5142,7 +5254,7 @@ struct Renderer::Impl {
         rp.label = rhi::str("pocket.volume");
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
-        WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         wgpuRenderPassEncoderSetPipeline(enc, volume_pipeline);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, volume_bg, 0, nullptr);
@@ -5221,8 +5333,12 @@ struct Renderer::Impl {
     // The scene group reads the AO result (or the white texel); made again when that changes.
     void make_scene_group(WGPUTextureView ao_view_now) {
         WGPUTextureView atlas_now = atlas_view ? atlas_view : atlas_stub_view;
-        if (scene_bg && scene_ao == ao_view_now && scene_atlas == atlas_now) return;
+        WGPUTextureView glass_now = glass_view ? glass_view : glass_stub_view;
+        if (scene_bg && scene_ao == ao_view_now && scene_atlas == atlas_now && scene_glass == glass_now) return;
         if (scene_bg) wgpuBindGroupRelease(scene_bg);
+        scene_entries[17].binding = 17;
+        scene_entries[17].textureView = glass_now;
+        scene_glass = glass_now;
         scene_entries[11].binding = 11;
         scene_entries[11].textureView = atlas_now;
         scene_atlas = atlas_now;
@@ -5233,10 +5349,24 @@ struct Renderer::Impl {
         WGPUBindGroupDescriptor sbd{};
         sbd.label = rhi::str("pocket.scene");
         sbd.layout = scene_bgl;
-        sbd.entryCount = 17;
+        sbd.entryCount = 18;
         sbd.entries = scene_entries;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
         scene_ao = ao_view_now;
+    }
+
+    // The frame-sized copy of the scene the glass shows through (made again with the frame's size).
+    Status ensure_glass_target(std::uint32_t w, std::uint32_t h) {
+        if (glass_tex && glass_w == w && glass_h == h) return {};
+        if (glass_view) wgpuTextureViewRelease(glass_view);
+        if (glass_tex) wgpuTextureRelease(glass_tex);
+        auto [t, v] = make_target("pocket.glass.scene", w, h, kHdrFormat, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        if (!t) return fail("gpu_texture_failed", "cannot create the glass copy {}x{}", w, h);
+        glass_tex = t;
+        glass_view = v;
+        glass_w = w;
+        glass_h = h;
+        return {};
     }
 
     // Ambient occlusion over the prepass depth: the raw pass into A, the blur into B.
@@ -5263,7 +5393,7 @@ struct Renderer::Impl {
             rp.label = rhi::str(i == 0 ? "pocket.ao" : "pocket.ao.blur");
             rp.colorAttachmentCount = 1;
             rp.colorAttachments = &ca;
-            WGPURenderPassEncoder enc = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+            WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
             wgpuRenderPassEncoderSetPipeline(enc, i == 0 ? ao_pipeline : ao_blur_pipeline);
             wgpuRenderPassEncoderSetBindGroup(enc, 0, ao_bg[i], 0, nullptr);
             wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -5528,7 +5658,7 @@ struct Renderer::Impl {
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[17]{};
+        WGPUBindGroupLayoutEntry se[18]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
@@ -5589,9 +5719,11 @@ struct Renderer::Impl {
         se[16].binding = 16;
         se[16].visibility = WGPUShaderStage_Fragment;
         se[16].sampler.type = WGPUSamplerBindingType_Filtering;
+        se[17] = se[3];
+        se[17].binding = 17;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 17;
+        scene_ld.entryCount = 18;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -5859,6 +5991,7 @@ struct Renderer::Impl {
         sbe[13].buffer = probe_sh_buffer;
         sbe[13].size = sizeof(float) * 4 * 16 * kMaxProbes;
         POCKET_TRY_VOID(create_decals());
+        POCKET_TRY_VOID(create_timer());
         sbe[14].binding = 14;
         sbe[14].buffer = decal_buffer;
         sbe[14].size = sizeof(GpuDecal) * kMaxDecals;
@@ -5901,6 +6034,14 @@ struct Renderer::Impl {
             if (!atlas_stub) return fail("gpu_texture_failed", "cannot create the shadow atlas stand-in");
             atlas_stub_view = wgpuTextureCreateView(atlas_stub, nullptr);
         }
+        {
+            auto [t, v] = make_target("pocket.glass.stub", 1, 1, kHdrFormat, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+            if (!t) return fail("gpu_texture_failed", "cannot create the glass copy's stand-in");
+            glass_stub = t;
+            glass_stub_view = v;
+        }
+        sbe[17].binding = 17;
+        sbe[17].textureView = glass_stub_view;
         face_slots = device->create_buffer("pocket.shadow.face_slots", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 256ull * kMaxFaces);
         {
             WGPUBindGroupEntry fse{};
@@ -6281,6 +6422,125 @@ struct Renderer::Impl {
     }
 
     WGPUBindGroup texture_for(const std::string& path, bool nearest = false) { return material_for(path, "", "", "", nearest); }
+
+    Status create_timer() {
+        if (!device->timestamps()) return {};
+        WGPUQuerySetDescriptor qd{};
+        qd.label = rhi::str("pocket.timer");
+        qd.type = WGPUQueryType_Timestamp;
+        qd.count = kTimedPasses * 2;
+        timer_set = wgpuDeviceCreateQuerySet(device->device(), &qd);
+        if (!timer_set) return {};   // timings are a convenience: without them the frame is the same
+        timer_resolve = device->create_buffer("pocket.timer.resolve", WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc, sizeof(std::uint64_t) * kTimedPasses * 2);
+        for (auto& r : timer_reads) r.buffer = device->create_buffer("pocket.timer.read", WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst, sizeof(std::uint64_t) * kTimedPasses * 2);
+        return {};
+    }
+    static std::string label_of(WGPUStringView v) {
+        if (!v.data) return "pass";
+        return v.length == WGPU_STRLEN ? std::string(v.data) : std::string(v.data, v.length);
+    }
+    // A pass begun with timestamps at its start and end (when there are slots left this frame).
+    WGPUPassTimestampWrites* timed(WGPUStringView label) {
+        if (!timer_set || timer_names.size() >= kTimedPasses) return nullptr;
+        const auto k = static_cast<std::uint32_t>(timer_names.size());
+        timer_writes[k] = WGPUPassTimestampWrites{nullptr, timer_set, 2 * k, 2 * k + 1};
+        std::string name = label_of(label);
+        if (name.starts_with("pocket.")) name = name.substr(7);
+        timer_names.push_back(std::move(name));
+        return &timer_writes[k];
+    }
+    WGPURenderPassEncoder begin_pass(WGPUCommandEncoder enc, WGPURenderPassDescriptor d) {
+        if (!d.timestampWrites) d.timestampWrites = timed(d.label);
+        return wgpuCommandEncoderBeginRenderPass(enc, &d);
+    }
+    WGPUComputePassEncoder begin_compute(WGPUCommandEncoder enc, WGPUComputePassDescriptor d) {
+        if (!d.timestampWrites) d.timestampWrites = timed(d.label);
+        return wgpuCommandEncoderBeginComputePass(enc, &d);
+    }
+    // At a frame's start: map what earlier frames resolved once they are on the GPU, read what has mapped.
+    void timer_begin_frame() {
+        timer_names.clear();
+        if (!timer_set) return;
+        for (auto& r : timer_reads) {
+            if (r.state == 1 && device->submitted_frames() > r.submitted) {
+                r.state = 2;
+                WGPUBufferMapCallbackInfo cb{};
+                cb.mode = WGPUCallbackMode_AllowSpontaneous;
+                cb.callback = [](WGPUMapAsyncStatus status, WGPUStringView, void* u1, void*) {
+                    auto* read = static_cast<TimerRead*>(u1);
+                    read->state = status == WGPUMapAsyncStatus_Success ? 3 : 0;
+                };
+                cb.userdata1 = &r;
+                wgpuBufferMapAsync(r.buffer, WGPUMapMode_Read, 0, sizeof(std::uint64_t) * r.names.size() * 2, cb);
+            } else if (r.state == 3) {
+                const auto* t = static_cast<const std::uint64_t*>(wgpuBufferGetConstMappedRange(r.buffer, 0, sizeof(std::uint64_t) * r.names.size() * 2));
+                if (t) {
+                    // A GPU overlaps passes (a tiler runs one's vertices under another's pixels), so a
+                    // pass's own start-to-end span also holds its wait for the ones before it. What
+                    // each adds is how much later it finishes than every pass before it did.
+                    const double ns = device->timestamp_period();
+                    timer_last.clear();
+                    std::uint64_t first = UINT64_MAX, done = 0;
+                    for (std::size_t k = 0; k < r.names.size(); ++k) {
+                        const std::uint64_t a = t[2 * k], b = t[2 * k + 1];
+                        if (b == 0 || b < a) continue;   // not written (a start the GPU left out reads 0)
+                        if (first == UINT64_MAX) { first = a > 0 ? a : b; done = first; }
+                        timer_last.emplace_back(r.names[k], b > done ? static_cast<double>(b - done) * ns / 1e6 : 0.0);
+                        done = std::max(done, b);
+                    }
+                    timer_last_ms = first != UINT64_MAX ? static_cast<double>(done - first) * ns / 1e6 : 0.0;
+                    timer_last_frame = r.submitted;
+                    ++timer_reads_done;
+                }
+                wgpuBufferUnmap(r.buffer);
+                r.state = 0;
+            }
+        }
+    }
+    // At a frame's end: this frame's timestamps into a free read-back buffer (skipped when none is free).
+    void timer_end_frame(WGPUCommandEncoder enc) {
+        if (!timer_set || timer_names.empty()) return;
+        for (auto& r : timer_reads) {
+            if (r.state != 0) continue;
+            const auto n = static_cast<std::uint32_t>(timer_names.size());
+            wgpuCommandEncoderResolveQuerySet(enc, timer_set, 0, n * 2, timer_resolve, 0);
+            wgpuCommandEncoderCopyBufferToBuffer(enc, timer_resolve, 0, r.buffer, 0, sizeof(std::uint64_t) * n * 2);
+            r.names = timer_names;
+            r.submitted = device->submitted_frames();
+            r.state = 1;
+            break;
+        }
+    }
+
+    // A level of detail of a primitive (kind) or an asset (path): the mesh simplified to `ratio` of
+    // its triangles, made once.
+    const LodMesh* lod_mesh(int kind, const std::string& path, float ratio) {
+        ratio = std::clamp(ratio, 0.01f, 1.0f);
+        const std::string key = kind >= 0 ? std::format("#{}|{:.3f}", kind, ratio) : std::format("{}|{:.3f}", path, ratio);
+        if (auto it = lod_meshes.find(key); it != lod_meshes.end()) return &it->second;
+        LodMesh lm;
+        assets::MeshLod lod;
+        if (kind >= 0) {
+            const MeshData data = make_primitive(kind);
+            if (data.vertices.empty()) return nullptr;
+            const std::vector<assets::Submesh> whole{assets::Submesh{0, static_cast<std::uint32_t>(data.indices.size())}};
+            lod = assets::simplify(&data.vertices[0].position.x, &data.vertices[0].normal.x, sizeof(Vertex), data.vertices.size(), data.indices, whole, ratio);
+            lm.gpu = meshes[static_cast<std::size_t>(kind)];
+        } else {
+            AssetMesh* am = asset_mesh(path);
+            if (!am || !assets) return nullptr;
+            auto m = assets->mesh(path);
+            if (!m) return nullptr;
+            lod = assets::simplify(**m, ratio);
+            lm.gpu = am->gpu;
+        }
+        if (lod.indices.empty()) return nullptr;
+        lm.gpu.indices = device->create_buffer("pocket.lod", WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, lod.indices.size() * sizeof(std::uint32_t), lod.indices.data());
+        lm.gpu.index_count = static_cast<std::uint32_t>(lod.indices.size());
+        lm.submeshes = std::move(lod.submeshes);
+        lm.error = lod.error;
+        return &(lod_meshes[key] = std::move(lm));
+    }
 
     // A glTF mesh by project path, uploaded on first use; null when unavailable.
     AssetMesh* asset_mesh(const std::string& path) {
@@ -6812,6 +7072,7 @@ Renderer::ImageView Renderer::image_view(const std::string& path) {
 
 Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug) {
     Impl& im = *impl_;
+    im.timer_begin_frame();
     // Fog and ambient occlusion read the depth of a prepass: the id pass at one sample with a depth
     // target of its own (with MSAA that pass is there anyway).
     world::Fog fog;
@@ -6821,7 +7082,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     });
     // Water reads the prepass's depth and adds its surfaces to it.
     im.gather_water(world);
-    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || !im.water_bodies.empty();
+    // Glass reads a copy of the scene drawn before it, which the split passes make room for: known
+    // from the MeshRenderers that ask for it, or from last frame's draws (an asset's glass).
+    bool glass_hint = im.glass_last;
+    if (!glass_hint) world.ecs().each([&](flecs::entity, const world::MeshRenderer& mr) { if (mr.visible && mr.transmission > 0) glass_hint = true; });
+    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || !im.water_bodies.empty() || glass_hint;
+    if (glass_hint) POCKET_TRY_VOID(im.ensure_glass_target(frame.width, frame.height));
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
     if (im.ao.enabled) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
@@ -7096,6 +7362,14 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // Gather one object per primitive entity and one per material of a glTF entity, sorted by
     // texture, mesh and submesh so equal runs become single instanced draws and the order is
     // deterministic.
+    // One level of detail a draw can take (docs/design/rendering.md, Levels of detail): below
+    // `screen` (the fraction of the view's height its bounds cover), this geometry.
+    struct LodLevel {
+        float screen;
+        const GpuMesh* gpu;
+        std::uint32_t first, count;
+        std::string mesh;
+    };
     struct Draw {
         std::string texture;
         std::string mesh;
@@ -7107,6 +7381,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         bool blend = false;   // translucent: after every opaque draw, far to near
         float depth = 0;      // along the camera's forward, for that order
         bool cutout = false;  // an alpha cutoff: its shadow keeps the holes
+        bool glass = false;   // transmits: drawn after the rest, over a copy of it (docs/design/rendering.md, Glass)
+        std::shared_ptr<const std::vector<LodLevel>> lods;   // simpler meshes for when it is small on screen, largest screen first
+        bool in_view = true;  // its bounds reach into the camera's view (the camera's passes draw only these)
+        float cull = 0;       // not drawn below this fraction of the view's height
         Vec3 center{0, 0, 0}; // the entity's bounding sphere in the world (radius < 0: unknown, always drawn)
         float radius = -1;
     };
@@ -7116,6 +7394,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     std::uint32_t skinned_instances = 0;
     std::uint32_t morphed_instances = 0;
     std::uint32_t translucent_instances = 0;
+    std::uint32_t glass_instances = 0;
     std::uint32_t moving_parts = 0;
     im.animation = animation;
     im.joint_count = 0;
@@ -7131,6 +7410,33 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         to_array(transpose(model.inverse_affine()), ou.normal);
         ou.id[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu);
         ou.id[1] = mr.cast_shadows ? 0u : 2u;
+        // Its levels of detail for one part (submesh `si`) of a primitive (kind) or an asset.
+        std::shared_ptr<const std::vector<LodLevel>> pending_lods;
+        auto levels_for = [&](int kind, std::size_t si) -> std::shared_ptr<const std::vector<LodLevel>> {
+            if (mr.lods.empty()) return nullptr;
+            auto out = std::make_shared<std::vector<LodLevel>>();
+            for (const world::MeshLod& l : mr.lods) {
+                LodLevel lv{l.screen, nullptr, 0, 0, ""};
+                if (!l.mesh.empty()) {
+                    // Another mesh: a primitive, or an asset whose parts match (the last stands in for any beyond it).
+                    if (const int other = Impl::primitive_index(l.mesh); other >= 0) {
+                        const GpuMesh& g = im.meshes[static_cast<std::size_t>(other)];
+                        lv = {l.screen, &g, 0, g.index_count, l.mesh};
+                    } else if (Impl::AssetMesh* am2 = im.asset_mesh(l.mesh); am2 && !am2->submeshes.empty()) {
+                        const assets::Submesh& sm = am2->submeshes[std::min(si, am2->submeshes.size() - 1)];
+                        lv = {l.screen, &am2->gpu, sm.first_index, sm.index_count, l.mesh};
+                    }
+                } else if (const Impl::LodMesh* lm = im.lod_mesh(kind, mesh_path, l.ratio)) {
+                    const std::string key = std::format("{}#lod{:.3f}", mesh_path, std::clamp(l.ratio, 0.01f, 1.0f));
+                    if (kind >= 0) lv = {l.screen, &lm->gpu, 0, lm->gpu.index_count, key};
+                    else if (si < lm->submeshes.size()) lv = {l.screen, &lm->gpu, lm->submeshes[si].first_index, lm->submeshes[si].index_count, key};
+                }
+                if (lv.gpu && lv.count > 0) out->push_back(std::move(lv));
+            }
+            std::stable_sort(out->begin(), out->end(), [](const LodLevel& a, const LodLevel& b) { return a.screen > b.screen; });
+            if (out->empty()) return nullptr;
+            return out;
+        };
         // Material inputs: the asset's material, overridden per entity by the MeshRenderer.
         auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, const assets::Material* mat, bool skinned = false) {
             if (count >= kMaxObjects) return;
@@ -7171,10 +7477,26 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             } else {
                 group = im.material_for(tex, mr_map, normal_map, em_map, false);
             }
-            const bool blend = color.w < 0.999f || (mat && mat->blend);
+            // Glass and lacquer: the MeshRenderer's values, or the material's (docs/design/rendering.md, Glass).
+            const float transmission = std::clamp(mr.transmission >= 0 ? mr.transmission : (mat ? mat->transmission : 0.0f), 0.0f, 1.0f);
+            ou.optics[0] = transmission;
+            ou.optics[1] = std::max(mr.ior >= 0 ? mr.ior : (mat ? mat->ior : 1.5f), 1.0f);
+            ou.optics[2] = std::clamp(mr.clearcoat >= 0 ? mr.clearcoat : (mat ? mat->clearcoat : 0.0f), 0.0f, 1.0f);
+            ou.optics[3] = std::clamp(mr.clearcoat_roughness >= 0 ? mr.clearcoat_roughness : (mat ? mat->clearcoat_roughness : 0.03f), 0.0f, 1.0f);
+            const float across = (std::fabs(t.scale.x) + std::fabs(t.scale.y) + std::fabs(t.scale.z)) / 3.0f;
+            ou.volume[3] = mr.thickness >= 0 ? mr.thickness : (mat ? mat->thickness * across : 0.0f);   // the asset's is in its own units
+            for (int k = 0; k < 3; ++k) {
+                const float left = mat ? (&mat->attenuation_color.x)[k] : 1.0f;
+                ou.volume[k] = mat && mat->attenuation_distance > 0 ? -std::log(std::clamp(left, 1e-4f, 1.0f)) / (mat->attenuation_distance * across) : 0.0f;
+            }
+            const bool glass = transmission > 0.001f;
+            const bool blend = !glass && (color.w < 0.999f || (mat && mat->blend));
             const Vec3 to_cam = t.position - im.camera.position;
             const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
-            draws.push_back({material_key, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f});
+            draws.push_back({material_key, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f, glass});
+            if (glass) ++glass_instances;
+            draws.back().lods = pending_lods;
+            draws.back().cull = mr.cull_screen;
             if (const auto* b = e.try_get<world::Bounds>(); b && !skinned) {
                 draws.back().center = (b->min + b->max) * 0.5f;
                 draws.back().radius = length(b->max - b->min) * 0.5f;
@@ -7188,6 +7510,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         int kind = Impl::primitive_index(mesh_path);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
+            pending_lods = levels_for(kind, 0);
             push(&gm, 0, gm.index_count, mr.texture, {decode(mr.color.r), decode(mr.color.g), decode(mr.color.b), mr.color.a}, mesh_path, nullptr);
             return;
         }
@@ -7260,6 +7583,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 to_array(transpose(placed.inverse_affine()), ou.normal);
                 if (part) ++moving_parts;
             }
+            pending_lods = skinned ? nullptr : levels_for(-1, si);   // a skinned mesh keeps its detail
             push(&am->gpu, sm.first_index, sm.index_count, mr.texture.empty() ? mat.texture : mr.texture, color, mesh_path, &mat, skinned);
             if (part || alone) {
                 to_array(model, ou.model);
@@ -7330,9 +7654,63 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             count = static_cast<std::uint32_t>(draws.size());
         }
     }
+    // Levels of detail: every draw with levels (a scattered copy on its own bounds) takes the one
+    // for how much of the view its bounds cover, r * P11 / w (w the view depth; 1 orthographic);
+    // below its cull_screen it goes, shadow and all.
+    {
+        const Mat4 vp = im.camera.proj * im.camera.view;
+        const float p11 = im.camera.proj.at(1, 1);
+        // The view's six planes (clip space: -w <= x, y <= w, 0 <= z <= w), for each draw's bounds.
+        auto row = [&](int r) { return Vec4{vp.at(0, r), vp.at(1, r), vp.at(2, r), vp.at(3, r)}; };
+        const Vec4 r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+        auto plus = [](Vec4 a, Vec4 b, float k) { return Vec4{a.x + b.x * k, a.y + b.y * k, a.z + b.z * k, a.w + b.w * k}; };
+        std::array<Vec4, 6> planes{plus(r3, r0, 1), plus(r3, r0, -1), plus(r3, r1, 1), plus(r3, r1, -1), r2, plus(r3, r2, -1)};
+        for (Vec4& pl : planes) {
+            const float n = 1.0f / std::max(length(Vec3{pl.x, pl.y, pl.z}), 1e-8f);
+            pl = Vec4{pl.x * n, pl.y * n, pl.z * n, pl.w * n};
+        }
+        auto in_view = [&](const Draw& d) {
+            if (d.radius < 0) return true;
+            for (const Vec4& pl : planes)
+                if (pl.x * d.center.x + pl.y * d.center.y + pl.z * d.center.z + pl.w < -d.radius) return false;
+            return true;
+        };
+        std::size_t kept = 0;
+        for (std::size_t i = 0; i < draws.size(); ++i) {
+            Draw& d = draws[i];
+            if ((d.lods || d.cull > 0) && d.radius > 0) {
+                const Vec4 c = vp * Vec4{d.center.x, d.center.y, d.center.z, 1};
+                const float screen = d.radius * std::fabs(p11) / std::max(c.w, 1e-4f);
+                if (screen < d.cull) {
+                    ++im.stats.lod_culled;
+                    continue;
+                }
+                if (d.lods) {
+                    const LodLevel* pick = nullptr;
+                    for (const LodLevel& lv : *d.lods) if (screen < lv.screen) pick = &lv;
+                    if (pick) {
+                        d.gpu = pick->gpu;
+                        d.first = pick->first;
+                        d.count = pick->count;
+                        d.mesh = pick->mesh;
+                        ++im.stats.lod_simplified;
+                    }
+                }
+            }
+            im.stats.triangles += d.count / 3;
+            d.in_view = in_view(d);
+            if (!d.in_view) ++im.stats.out_of_view;
+            if (kept != i) draws[kept] = std::move(d);
+            ++kept;
+        }
+        draws.resize(kept);
+    }
+    // The camera's passes draw what reaches into its view; the shadow and probe passes cull their own way.
+    const std::function<bool(std::size_t)> in_view_only = [&](std::size_t k) { return draws[k].in_view; };
     std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
         if (a.blend != b.blend) return !a.blend;            // opaque first
         if (a.blend) return a.depth > b.depth;              // translucent far to near
+        if (a.in_view != b.in_view) return a.in_view;       // what the camera sees together, so its runs stay whole
         if (a.skinned != b.skinned) return !a.skinned;
         if (a.texture != b.texture) return a.texture < b.texture;
         if (a.mesh != b.mesh) return a.mesh < b.mesh;
@@ -7547,6 +7925,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.tile_layers = tile_layers;
     im.stats.image_layers = image_layers;
     im.stats.translucent = translucent_instances;
+    im.glass_last = glass_instances > 0;
     im.stats.tile_rebuilds = im.tile_rebuilds;
     im.stats.tile_frames = im.tile_frames;
     im.stats.msaa = im.msaa_applied;
@@ -7650,12 +8029,26 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             srp.label = rhi::str("pocket.shadow");
             srp.colorAttachmentCount = 0;
             srp.depthStencilAttachment = &sds;
-            WGPURenderPassEncoder spass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &srp);
+            WGPURenderPassEncoder spass = im.begin_pass(frame.encoder, srp);
             wgpuRenderPassEncoderSetBindGroup(spass, 0, im.frame_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
             const std::uint32_t offset = 256u * static_cast<std::uint32_t>(c);
             wgpuRenderPassEncoderSetBindGroup(spass, 2, im.cascade_bg, 1, &offset);
-            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, nullptr, &im.stats.shadow_instances);
+            // Only the casters over this cascade's square (its light-space box across, with their
+            // own reach), and none that cast no shadow: a far cascade does not draw the grass at
+            // the camera's feet a fourth time.
+            Mat4 cvp;
+            std::memcpy(cvp.m, fu.cascade_vp[c], sizeof cvp.m);
+            const float half_extent = std::max(fu.cascade_texel[c] * static_cast<float>(kShadowMapSize) * 0.5f, 1e-4f);
+            const std::function<bool(std::size_t)> over_cascade = [&](std::size_t k) {
+                const Draw& d = draws[k];
+                if (d.object.id[1] & 2u) return false;
+                if (d.radius < 0) return true;
+                const Vec4 p = cvp * Vec4{d.center.x, d.center.y, d.center.z, 1};
+                const float reach = 1.0f + d.radius / half_extent;
+                return std::fabs(p.x) <= reach && std::fabs(p.y) <= reach;
+            };
+            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, &over_cascade, &im.stats.shadow_instances);
             wgpuRenderPassEncoderEnd(spass);
             wgpuRenderPassEncoderRelease(spass);
         }
@@ -7712,15 +8105,16 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             }
             pu.viewport[0] = 0; pu.viewport[1] = 0; pu.viewport[2] = kProbeFace; pu.viewport[3] = kProbeFace;
             im.device->write_buffer(im.probe_frame_buf[f], 0, &pu, sizeof pu);
-            WGPUBindGroupEntry pe[17];
+            WGPUBindGroupEntry pe[18];
             std::memcpy(pe, im.scene_entries, sizeof pe);
+            pe[17].textureView = im.glass_stub_view;   // glass in a probe's capture shows nothing through
             pe[0].buffer = im.probe_frame_buf[f];
             pe[9].buffer = im.probe_cluster_buffer;
             pe[9].size = sizeof(std::uint32_t) * (2ull * kClusters + kMaxLights);
             WGPUBindGroupDescriptor pd{};
             pd.label = rhi::str("pocket.probe.scene");
             pd.layout = im.scene_bgl;
-            pd.entryCount = 17;
+            pd.entryCount = 18;
             pd.entries = pe;
             WGPUBindGroup group = wgpuDeviceCreateBindGroup(im.device->device(), &pd);
             im.probe_groups.push_back(group);
@@ -7743,7 +8137,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             prp.colorAttachmentCount = 1;
             prp.colorAttachments = &pca;
             prp.depthStencilAttachment = &pds;
-            WGPURenderPassEncoder ppass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &prp);
+            WGPURenderPassEncoder ppass = im.begin_pass(frame.encoder, prp);
             if (im.stats.sky != 0) {
                 wgpuRenderPassEncoderSetPipeline(ppass, im.probe_sky_pipeline);
                 wgpuRenderPassEncoderSetBindGroup(ppass, 0, group, 0, nullptr);
@@ -7797,7 +8191,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         im.probe_groups.push_back(fill_group);
         WGPUComputePassDescriptor cpd{};
         cpd.label = rhi::str("pocket.probe");
-        WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(frame.encoder, &cpd);
+        WGPUComputePassEncoder cp = im.begin_compute(frame.encoder, cpd);
         wgpuComputePassEncoderSetPipeline(cp, im.probe_fill_pipeline);
         wgpuComputePassEncoderSetBindGroup(cp, 0, fill_group, 0, nullptr);
         wgpuComputePassEncoderDispatchWorkgroups(cp, (kProbeWidth + 7) / 8, (kProbeHeight + 7) / 8, 1);
@@ -7865,7 +8259,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         arp.label = rhi::str("pocket.shadow.local");
         arp.colorAttachmentCount = 0;
         arp.depthStencilAttachment = &ads;
-        WGPURenderPassEncoder apass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &arp);
+        WGPURenderPassEncoder apass = im.begin_pass(frame.encoder, arp);
         wgpuRenderPassEncoderSetBindGroup(apass, 0, im.frame_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(apass, 1, im.object_bg, 0, nullptr);
         for (std::size_t f = 0; f < im.faces.size(); ++f) {
@@ -7950,12 +8344,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         irp.colorAttachmentCount = 4;
         irp.colorAttachments = icas4;
         irp.depthStencilAttachment = &ids;
-        WGPURenderPassEncoder ipass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &irp);
+        WGPURenderPassEncoder ipass = im.begin_pass(frame.encoder, irp);
         set_viewport(ipass);
         if (!draws.empty()) {
             wgpuRenderPassEncoderSetBindGroup(ipass, 0, im.scene_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(ipass, 1, im.object_bg, 0, nullptr);
-            draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline);
+            draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline, nullptr, nullptr, nullptr, &in_view_only);
         }
         if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.stats.id_draws);
         wgpuRenderPassEncoderEnd(ipass);
@@ -7966,17 +8360,26 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // what is drawn after them (sprites, lines) waits for a pass after the composite. With MSAA
     // this first part keeps its samples, unresolved, for the composite to be laid over.
     const bool oit = im.oit && translucent_instances > 0;
+    // Glass (docs/design/rendering.md, Glass) waits for a pass of its own after the solid meshes,
+    // which reads a copy of what they drew; the translucent meshes come after it.
+    const bool glassy = split && glass_instances > 0;
     WGPURenderPassColorAttachment first[2] = {ca[0], ca[1]};
     if (oit && resolve) {
         first[0].resolveTarget = nullptr;
         first[0].storeOp = WGPUStoreOp_Store;
+    }
+    WGPURenderPassColorAttachment after_glass = first[0];   // the glass pass goes on as the scene pass would have
+    after_glass.loadOp = WGPULoadOp_Load;
+    if (glassy) {
+        first[0].storeOp = WGPUStoreOp_Store;              // the samples, for the glass pass to go on with
+        if (resolve) first[0].resolveTarget = im.hdr_view; // and the resolved colour, for the copy
     }
     WGPURenderPassDescriptor rp{};
     rp.label = rhi::str("pocket.scene");
     rp.colorAttachmentCount = split ? 1 : 2;
     rp.colorAttachments = first;
     rp.depthStencilAttachment = &ds;
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &rp);
+    WGPURenderPassEncoder pass = im.begin_pass(frame.encoder, rp);
     set_viewport(pass);
     if (im.stats.sky != 0) {
         wgpuRenderPassEncoderSetPipeline(pass, im.sky_pipeline);
@@ -7984,12 +8387,40 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         im.stats.draw_calls++;
     }
-    const std::function<bool(std::size_t)> opaque_only = [&](std::size_t k) { return !draws[k].blend; };
-    const std::function<bool(std::size_t)> translucent_only = [&](std::size_t k) { return draws[k].blend; };
+    const std::function<bool(std::size_t)> solid_only = [&](std::size_t k) { return draws[k].in_view && !(glassy && draws[k].glass) && !(draws[k].blend && (oit || glassy)); };
+    const std::function<bool(std::size_t)> translucent_only = [&](std::size_t k) { return draws[k].in_view && draws[k].blend; };
+    const std::function<bool(std::size_t)> glass_only = [&](std::size_t k) { return draws[k].in_view && draws[k].glass; };
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, nullptr, oit ? &opaque_only : nullptr);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, nullptr, (oit || glassy) ? &solid_only : &in_view_only);
+    }
+    if (glassy) {
+        // The scene so far copied for the glass to show through, then the glass over it, and the
+        // translucent meshes after (unless they have a pass of their own).
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        WGPUTexelCopyTextureInfo csrc{}, cdst{};
+        csrc.texture = im.hdr_tex;
+        csrc.aspect = WGPUTextureAspect_All;
+        cdst.texture = im.glass_tex;
+        cdst.aspect = WGPUTextureAspect_All;
+        const WGPUExtent3D cext{frame.width, frame.height, 1};
+        wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &csrc, &cdst, &cext);
+        WGPURenderPassDepthStencilAttachment gds = ds;
+        gds.depthLoadOp = WGPULoadOp_Load;
+        WGPURenderPassDescriptor grp = rp;
+        grp.label = rhi::str("pocket.glass");
+        grp.colorAttachmentCount = 1;
+        grp.colorAttachments = &after_glass;
+        grp.depthStencilAttachment = &gds;
+        pass = im.begin_pass(frame.encoder, grp);
+        set_viewport(pass);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, nullptr, nullptr, nullptr, &glass_only);
+        if (!oit && translucent_instances > 0) draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, nullptr, &translucent_only);
+        im.stats.glass = glass_instances;
     }
     if (oit) {
         wgpuRenderPassEncoderEnd(pass);
@@ -8015,7 +8446,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         orp.colorAttachmentCount = 2;
         orp.colorAttachments = oca;
         orp.depthStencilAttachment = &ods;
-        WGPURenderPassEncoder opass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &orp);
+        WGPURenderPassEncoder opass = im.begin_pass(frame.encoder, orp);
         set_viewport(opass);
         wgpuRenderPassEncoderSetBindGroup(opass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(opass, 1, im.object_bg, 0, nullptr);
@@ -8031,7 +8462,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         crp.label = rhi::str("pocket.oit.composite");
         crp.colorAttachmentCount = 1;
         crp.colorAttachments = &cca;
-        WGPURenderPassEncoder cpass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &crp);
+        WGPURenderPassEncoder cpass = im.begin_pass(frame.encoder, crp);
         wgpuRenderPassEncoderSetPipeline(cpass, resolve ? im.oit_ms_composite_pipeline : im.oit_composite_pipeline);
         wgpuRenderPassEncoderSetBindGroup(cpass, 0, im.oit_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(cpass, 3, 1, 0, 0);
@@ -8049,7 +8480,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         arp2.label = rhi::str("pocket.scene.after");
         arp2.colorAttachments = aca;
         arp2.depthStencilAttachment = &ads2;
-        pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &arp2);
+        pass = im.begin_pass(frame.encoder, arp2);
         set_viewport(pass);
     }
     // Water, after what is solid (and translucent); without MSAA before the sprites and lines,
@@ -8067,7 +8498,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wrp.label = rhi::str("pocket.scene.over_water");
         wrp.colorAttachments = wca;
         wrp.depthStencilAttachment = &wds;
-        pass = wgpuCommandEncoderBeginRenderPass(frame.encoder, &wrp);
+        pass = im.begin_pass(frame.encoder, wrp);
         set_viewport(pass);
     }
     if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.stats.draw_calls);
@@ -8118,6 +8549,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (im.stats.volumetric) POCKET_TRY_VOID(im.draw_volume(frame, fog));
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
     POCKET_TRY_VOID(im.draw_post(frame, clear, fog_on ? &fog : nullptr));
+    im.timer_end_frame(frame.encoder);
+    im.stats.gpu_timing = im.timer_set != nullptr;
+    im.stats.gpu_passes = im.timer_last;
+    im.stats.gpu_ms = im.timer_last_ms;
+    im.stats.gpu_age = im.timer_last_frame > 0 ? im.device->submitted_frames() - im.timer_last_frame : 0;
+    im.stats.gpu_frames = im.timer_reads_done;
     return {};
 }
 
@@ -8372,6 +8809,16 @@ Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
     Json j;
     j["draw_calls"] = s.draw_calls;
+    if (s.gpu_timing) {
+        // Each pass's GPU milliseconds (the same label twice is summed), the busiest first.
+        std::map<std::string, double> by;
+        for (const auto& [name, ms] : s.gpu_passes) by[name] += ms;
+        std::vector<std::pair<std::string, double>> sorted(by.begin(), by.end());
+        std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        Json passes = Json::array();
+        for (const auto& [name, ms] : sorted) passes.push_back(Json{{"pass", name}, {"ms", std::round(ms * 1000.0) / 1000.0}});
+        j["gpu"] = Json{{"ms", std::round(s.gpu_ms * 1000.0) / 1000.0}, {"passes", passes}, {"frames_ago", s.gpu_age}, {"frames_timed", s.gpu_frames}};
+    }
     j["shadow_draws"] = s.shadow_draws;
     j["shadow_instances"] = s.shadow_instances;
     j["shadows"] = s.shadows;
@@ -8380,6 +8827,10 @@ Json Renderer::describe() const {
     j["instances"] = s.instances;
     j["scattered"] = s.scattered;
     j["translucent"] = s.translucent;
+    j["glass"] = s.glass;
+    j["lod"] = Json{{"simplified", s.lod_simplified}, {"culled", s.lod_culled}};
+    j["out_of_view"] = s.out_of_view;
+    j["triangles"] = s.triangles;
     j["sprites"] = s.sprites;
     j["particles"] = s.particles;
     j["skinned"] = s.skinned;

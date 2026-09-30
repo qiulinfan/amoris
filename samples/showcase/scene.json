@@ -1974,6 +1974,79 @@
    }
   },
   {
+   "name": "GlassBall",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 7.9,
+      "y": 1.2,
+      "z": 0.3
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1.2,
+      "y": 1.2,
+      "z": 1.2
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.92,
+      "g": 0.97,
+      "b": 1.0,
+      "a": 1
+     },
+     "roughness": 0.04,
+     "transmission": 1.0,
+     "ior": 1.5,
+     "thickness": 1.2,
+     "clearcoat": 0
+    }
+   }
+  },
+  {
+   "name": "LacquerBall",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 8.3,
+      "y": 0.65,
+      "z": 2.0
+     },
+     "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+     },
+     "scale": {
+      "x": 1.1,
+      "y": 1.1,
+      "z": 1.1
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "sphere",
+     "color": {
+      "r": 0.55,
+      "g": 0.03,
+      "b": 0.05,
+      "a": 1
+     },
+     "metallic": 0.4,
+     "roughness": 0.45,
+     "clearcoat": 1.0,
+     "clearcoat_roughness": 0.04
+    }
+   }
+  },
+  {
    "name": "Dusk",
    "components": {
     "Timeline": {

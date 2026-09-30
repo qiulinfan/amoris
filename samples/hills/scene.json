@@ -279,7 +279,17 @@
       "b": 0.2,
       "a": 1
      },
-     "roughness": 0.9
+     "roughness": 0.9,
+     "lods": [
+      {
+       "screen": 0.05,
+       "ratio": 0.3
+      },
+      {
+       "screen": 0.02,
+       "ratio": 0.1
+      }
+     ]
     },
     "Scatter": {
      "count": 2500,
@@ -323,7 +333,17 @@
       "b": 0.47,
       "a": 1
      },
-     "roughness": 0.85
+     "roughness": 0.85,
+     "lods": [
+      {
+       "screen": 0.05,
+       "ratio": 0.3
+      },
+      {
+       "screen": 0.02,
+       "ratio": 0.1
+      }
+     ]
     },
     "Scatter": {
      "count": 400,
@@ -364,7 +384,17 @@
       "b": 0.43,
       "a": 1
      },
-     "roughness": 0.9
+     "roughness": 0.9,
+     "lods": [
+      {
+       "screen": 0.05,
+       "ratio": 0.3
+      },
+      {
+       "screen": 0.02,
+       "ratio": 0.1
+      }
+     ]
     },
     "Scatter": {
      "count": 160,

@@ -647,6 +647,72 @@ def calm_lake_check(env, answer):
     return True, f"a still, clear lake at {h:.2f}"
 
 
+def dirt_share(env, x, z):
+    for l in env.command("terrain.height", {"x": x, "z": z}).get("layers", []):
+        if l["name"] == "dirt":
+            return l["share"]
+    return None
+
+
+def dirt_patch_solve(env):
+    info = env.command("world.get", {"entity": "Hills", "component": "Terrain"})
+    layers = info["layers"]
+    layers[1]["height"] = {"x": 0, "y": 0.2}
+    env.command("world.set", {"entity": "Hills", "component": "Terrain", "value": {"layers": layers}})
+    env.command("terrain.paint", {"x": 10, "z": -10, "layer": "dirt", "radius": 4, "amount": 1})
+    return dirt_share(env, 10, -10)
+
+
+def dirt_patch_check(env, answer):
+    t = env.command("world.get", {"entity": "Hills", "component": "Terrain"}) or {}
+    layers = t.get("layers", [])
+    if [l.get("name") for l in layers] != ["grass", "sand", "rock", "dirt"]:
+        return False, f"the layers are {[l.get('name') for l in layers]}"
+    sand = layers[1]
+    if not near(sand["height"]["y"], 0.2, 0.005) or not near(sand["height"]["x"], 0, 0.005):
+        return False, f"sand lies at heights {sand['height']}"
+    if not near(layers[2]["slope"]["x"], 32, 0.01) or layers[3].get("cover", 1) != 0 or not layers[0]["texture"].endswith("grass.png"):
+        return False, f"the other layers changed: {layers}"
+    here = dirt_share(env, 10, -10)
+    if here is None or here < 0.9:
+        return False, f"the dirt's share at x 10, z -10 is {here}"
+    if not isinstance(answer, (int, float)) or abs(answer - here) > 0.01:
+        return False, f"answered {answer!r}, the dirt's share there is {here:.3f}"
+    for x, z in ((16, -10), (10, -16), (4, -10), (10, -4)):
+        far = dirt_share(env, x, z)
+        if far is None or far > 0.05:
+            return False, f"dirt at ({x}, {z}), six units out: {far}"
+    return True, f"sand below 0.2 of the height and a patch of dirt, {here:.2f} at its centre"
+
+
+def glass_window_solve(env):
+    env.command("world.spawn", {"name": "Window", "components": {"Transform": {"position": {"x": 0, "y": 1.5, "z": 3}, "scale": {"x": 2, "y": 1.5, "z": 0.05}},
+                "MeshRenderer": {"mesh": "cube", "transmission": 1, "ior": 1.52}}})
+    env.command("world.set", {"entity": "Ball", "component": "MeshRenderer", "value": {"clearcoat": 1, "clearcoat_roughness": 0.05}})
+    env.command("step", {"ticks": 1})
+    return env.command("render.stats", {})["glass"]
+
+
+def glass_window_check(env, answer):
+    w = env.command("world.find", {"path": "Window"})
+    if not isinstance(w, int):
+        return False, "no entity named Window"
+    mr = env.command("world.get", {"entity": w, "component": "MeshRenderer"}) or {}
+    if mr.get("mesh") != "cube" or mr.get("transmission", 0) < 0.99 or not near(mr.get("ior", 0), 1.52, 0.005):
+        return False, f"the Window draws {mr}"
+    t = env.command("world.get", {"entity": w, "component": "Transform"})
+    if not (near(t["position"]["x"], 0) and near(t["position"]["y"], 1.5) and near(t["position"]["z"], 3) and near(t["scale"]["x"], 2) and near(t["scale"]["y"], 1.5) and near(t["scale"]["z"], 0.05)):
+        return False, f"the Window stands at {t['position']} scaled {t['scale']}"
+    ball = env.command("world.get", {"entity": "Ball", "component": "MeshRenderer"}) or {}
+    if ball.get("clearcoat", 0) < 0.99 or not near(ball.get("clearcoat_roughness", -1), 0.05, 0.005):
+        return False, f"the Ball's coat is {ball.get('clearcoat')} at {ball.get('clearcoat_roughness')}"
+    env.command("step", {"ticks": 1})
+    glass = env.command("render.stats", {})["glass"]
+    if answer != glass or glass != 1:
+        return False, f"answered {answer!r}, the renderer drew {glass} glass"
+    return True, "a window of glass (ior 1.52) and a lacquered ball; one glass drawn"
+
+
 SAND = (0.85, 0.78, 0.55)
 ROAD_FAR = [(x, z) for x in range(-28, 29, 4) for z in (-6.5, 6.5)]
 
@@ -817,6 +883,10 @@ TASKS = [
      "task": "Plant a field of reeds that sway and block: spawn an entity named Reeds drawing thin boxes (a MeshRenderer with mesh \"cube\"; its Transform scale x 0.1, y 1.5, z 0.1) with a Scatter placing copies on the terrain named Hills over a 20 by 20 area centred on x 0, z 10, at least 100 of them standing, all the entity's own size (none bigger or smaller), whose tops sway 0.3 units in the wind, and each copy a collider 0.1 in radius. Answer with the number of reeds standing as the integer \"answer\"."},
     {"name": "stormy_dusk", "project": "hills", "ticks": 2, "solve": stormy_dusk_solve, "check": stormy_dusk_check,
      "task": "Make the hills a windy, cloudy sunset: the sky computed by the atmosphere with clouds covering 0.8 of it, the sun (the entity named Sun) standing 4 degrees above the horizon in the west (toward -x, so its light shines toward +x), and the wind (the entity named Breeze) blowing toward +x at 12 units a second. Then step one tick and answer with the red of the sun light as it reaches the ground, as the renderer reports it, as the number \"answer\"."},
+    {"name": "dirt_patch", "project": "hills", "ticks": 2, "solve": dirt_patch_solve, "check": dirt_patch_check,
+     "task": "The terrain named Hills is drawn from four textured layers (grass, sand, rock, dirt). Make its sand layer lie only below 0.2 of the terrain's height instead of where it lies now, leaving the other layers as they are, and paint its dirt layer at full strength in a patch of radius 4 around x 10, z -10. Answer with the dirt layer's share of the ground at x 10, z -10 as the number \"answer\"."},
+    {"name": "glass_window", "project": "hello", "ticks": 0, "solve": glass_window_solve, "check": glass_window_check,
+     "task": "Spawn an entity named Window: a cube scaled x 2, y 1.5, z 0.05 at x 0, y 1.5, z 3, drawn as clear glass that lets all the light through, with an index of refraction of 1.52. Give the entity named Ball a clear coat at full strength with a roughness of 0.05. Then step one tick and answer with the number of glass meshes the renderer drew in that frame as the integer \"answer\"."},
     {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
      "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
 ]

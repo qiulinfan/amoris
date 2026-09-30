@@ -1683,6 +1683,7 @@ TEST_CASE("the showcase sample has every part of the renderer on at once", "[ren
     REQUIRE(stats["ao"] == true);
     REQUIRE(stats["tonemap"] == "agx");
     REQUIRE(stats["decals"]["drawn"].get<int>() >= 3);     // puddles, the sigil, the arrow (those in view)
+    REQUIRE(stats["glass"] == 1);                          // the glass ball in the pavilion
     const Json dusk = s.command("world.get", Json{{"entity", "Dusk"}, {"component", "Timeline"}}).value();
     REQUIRE(dusk["error"] == "");                          // the dusk timeline plays every track
     REQUIRE(dusk["time"].get<double>() > 0.0);
@@ -2329,4 +2330,213 @@ TEST_CASE("a terrain drawn from textured layers: the first everywhere, a painted
     REQUIRE(p[1].get<int>() > p[2].get<int>() + 60);
     REQUIRE(s.finish().has_value());
     std::filesystem::remove(dir / "test-checker.png");
+}
+
+TEST_CASE("glass shows what is behind it, bent by its index of refraction and blurred by its roughness; a clear coat adds a sharp highlight", "[renderer][glass]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(components)}}).has_value()); };
+    auto xform = [](double x, double y, double z, double sx, double sy, double sz) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}, {"scale", Json{{"x", sx}, {"y", sy}, {"z", sz}}}}; };
+    auto rgb = [](double r, double g, double b) { return Json{{"r", r}, {"g", g}, {"b", b}, {"a", 1}}; };
+    spawn("Sun", Json{{"Transform", Json{{"rotation", Json{{"x", -0.42}, {"y", 0.3}, {"z", 0.15}, {"w", 0.84}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1.2}}}});
+    // A wall of red and blue bars, half a unit each, three units behind the glass.
+    for (int k = 0; k < 12; ++k) {
+        const std::string name = "Bar" + std::to_string(k);
+        spawn(name.c_str(), Json{{"Transform", xform(-2.75 + 0.5 * k, 1.5, -3, 0.5, 3, 0.2)}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", k % 2 == 0 ? rgb(0.9, 0.1, 0.1) : rgb(0.1, 0.2, 0.9)}}}});
+    }
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 5}}}}}, {"Camera", Json{{"fov_degrees", 45}}}});
+    auto pixel = [&](double x, double y, double z) {
+        Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", z}}}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+    };
+    auto redness = [](const Json& p) { return p[0].get<int>() - p[2].get<int>(); };
+    auto frame = [&]() { REQUIRE(s.frame().has_value()); REQUIRE(s.frame().has_value()); };
+    // A white pane in front of a red bar hides it; the same pane as clear glass shows it.
+    spawn("Pane", Json{{"Transform", xform(0.25, 1.5, 0, 1.2, 1.6, 0.04)}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", rgb(1, 1, 1)}, {"roughness", 0.1}}}});
+    frame();
+    const Json behind = pixel(0.25, 1.5, -3);   // the red bar at x 0.25, seen through the pane's middle
+    const Json white = pixel(0.25, 1.5, 0);
+    INFO("opaque pane " << white.dump());
+    REQUIRE(std::abs(redness(white)) < 40);
+    REQUIRE(s.command("world.set", Json{{"entity", "Pane"}, {"component", "MeshRenderer"}, {"value", Json{{"transmission", 1}}}}).has_value());
+    frame();
+    Json clear = pixel(0.25, 1.5, 0);
+    INFO("glass pane " << clear.dump() << " the bar " << behind.dump());
+    REQUIRE(redness(clear) > 100);
+    REQUIRE(s.command("render.stats", Json::object()).value()["glass"] == 1);
+    // Frosted, the bars behind blur together: the colours along a line across it vary much less.
+    auto spread = [&]() {
+        int lo = 999, hi = -999;
+        for (double x = -0.25; x <= 0.75; x += 0.0625) {
+            const int r = redness(pixel(x, 1.5, 0));
+            lo = std::min(lo, r);
+            hi = std::max(hi, r);
+        }
+        return hi - lo;
+    };
+    const int sharp = spread();
+    REQUIRE(s.command("world.set", Json{{"entity", "Pane"}, {"component", "MeshRenderer"}, {"value", Json{{"roughness", 0.8}}}}).has_value());
+    frame();
+    const int frosted = spread();
+    INFO("across the clear pane " << sharp << ", the frosted " << frosted);
+    REQUIRE(sharp > 250);
+    REQUIRE(frosted < sharp / 2);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Pane"}}).has_value());
+    // A thick ball of glass bends what is behind it: with ior 1 it shows the bars as they are, with
+    // 1.5 the view through it changes.
+    spawn("Ball", Json{{"Transform", xform(0, 1.5, 0, 1.6, 1.6, 1.6)}, {"MeshRenderer", Json{{"mesh", "sphere"}, {"color", rgb(1, 1, 1)}, {"roughness", 0.05}, {"transmission", 1}, {"ior", 1.0}, {"thickness", 1.6}}}});
+    frame();
+    std::vector<int> straight, bent;
+    for (double x = -0.5; x <= 0.5; x += 0.125) straight.push_back(redness(pixel(x, 1.5, 0.8)));
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"ior", 1.5}}}}).has_value());
+    frame();
+    for (double x = -0.5; x <= 0.5; x += 0.125) bent.push_back(redness(pixel(x, 1.5, 0.8)));
+    int changed = 0;
+    for (std::size_t k = 0; k < straight.size(); ++k) changed += std::abs(straight[k] - bent[k]) > 100 ? 1 : 0;
+    INFO("columns whose colour the bending changed: " << changed);
+    REQUIRE(changed >= 2);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Ball"}}).has_value());
+    // A clear coat over a rough red ball: the sun's highlight on it is far brighter than without.
+    auto brightest = [&]() {
+        Json points = Json::array();
+        for (double x = -0.45; x <= 0.45; x += 0.025)
+            for (double y = 1.05; y <= 1.95; y += 0.025) {
+                const Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", 0.5}}}}).value();
+                points.push_back(Json{{"x", at["x"]}, {"y", at["y"]}});
+            }
+        int best = 0;
+        for (const Json& p : s.command("capture", Json{{"pixels", points}}).value()["pixels"]) best = std::max(best, p[1].get<int>());   // green: the red ball's own colour has little
+        return best;
+    };
+    spawn("Lacquer", Json{{"Transform", xform(0, 1.5, 0, 1, 1, 1)}, {"MeshRenderer", Json{{"mesh", "sphere"}, {"color", rgb(0.7, 0.05, 0.05)}, {"roughness", 0.7}}}});
+    frame();
+    const int plain = brightest();
+    REQUIRE(s.command("world.set", Json{{"entity", "Lacquer"}, {"component", "MeshRenderer"}, {"value", Json{{"clearcoat", 1}, {"clearcoat_roughness", 0.2}}}}).has_value());
+    frame();
+    const int coated = brightest();
+    INFO("highlight without a coat " << plain << ", with " << coated);
+    REQUIRE(coated > plain + 60);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("levels of detail: a mesh small on screen draws simpler, smaller still not at all; scattered copies pick their own", "[renderer][lod]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(components)}}).has_value()); };
+    spawn("Sun", Json{{"Transform", Json{{"rotation", Json{{"x", -0.42}, {"y", 0.3}, {"z", 0.15}, {"w", 0.84}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1.5}}}});
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"Camera", Json{{"fov_degrees", 60}, {"far", 1000}}}});
+    // A sphere with two levels (a quarter of its triangles below 0.3 of the view, a twentieth below
+    // 0.08) and culled below 0.01.
+    Json lods = Json::array({Json{{"screen", 0.08}, {"ratio", 0.05}}, Json{{"screen", 0.3}, {"ratio", 0.25}}});   // any order
+    spawn("Ball", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", -2.5}}}}}, {"MeshRenderer", Json{{"mesh", "sphere"}, {"lods", lods}, {"cull_screen", 0.01}}}});
+    auto at = [&](double z) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", z}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+        REQUIRE(s.frame().has_value());
+        return s.command("render.stats", Json::object()).value();
+    };
+    // Its bounds' radius is 0.866 (half the unit box's diagonal), P11 is 1 / tan(30 degrees): it covers
+    // 0.866 * 1.732 / d of the view's height at distance d.
+    Json near = at(-2.5);
+    INFO(near.dump());
+    REQUIRE(near["lod"]["simplified"] == 0);
+    REQUIRE(near["meshes"] == 1);
+    Json mid = at(-8);   // 0.19: the first level
+    REQUIRE(mid["lod"]["simplified"] == 1);
+    const Json mid_pixels = s.command("capture", Json::object()).value()["center_pixel"];
+    Json far = at(-40);  // 0.037: the second
+    REQUIRE(far["lod"]["simplified"] == 1);
+    Json gone = at(-200);   // 0.0075: under cull_screen
+    REQUIRE(gone["lod"]["culled"] == 1);
+    REQUIRE(gone["lod"]["simplified"] == 0);
+    REQUIRE(s.command("capture", Json::object()).value()["center_pixel"] != mid_pixels);   // nothing drawn there now
+    // Up close but forced to its coarsest level (a screen of 100 is always met), the ball's outline
+    // is not the full sphere's.
+    at(-2.5);
+    REQUIRE(s.command("render.compare", Json{{"path", ".pocket/test-lod.png"}, {"update", true}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"lods", Json::array({Json{{"screen", 100}, {"ratio", 0.05}}})}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    const double coarse = s.command("render.compare", Json{{"path", ".pocket/test-lod.png"}}).value()["fraction"].get<double>();
+    INFO("changed by the coarse level " << coarse);
+    REQUIRE(coarse > 0.005);
+    std::filesystem::remove(root() / "samples" / "playground" / ".pocket" / "test-lod.png");
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Ball"}}).has_value());
+    // A field of copies from near to far: the far ones take the simpler level, the near ones not.
+    spawn("Floor", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -1.5}, {"z", -60}}}, {"scale", Json{{"x", 60}, {"y", 1}, {"z", 130}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}, {"RigidBody", Json{{"kind", 1}}}, {"Collider", Json{{"shape", 0}, {"size", Json{{"x", 30}, {"y", 0.5}, {"z", 65}}}}}});
+    spawn("Stones", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 5}, {"z", -60}}}}}, {"MeshRenderer", Json{{"mesh", "sphere"}, {"lods", Json::array({Json{{"screen", 0.1}, {"ratio", 0.1}}})}}},
+        {"Scatter", Json{{"count", 400}, {"area", Json{{"x", 20}, {"y", 110}}}, {"seed", 3}, {"spacing", 1}}}});
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
+    const Json field = s.command("render.stats", Json::object()).value();
+    INFO(field.dump());
+    const int scattered = field["scattered"].get<int>();
+    const int simplified = field["lod"]["simplified"].get<int>();
+    REQUIRE(scattered > 100);
+    REQUIRE(simplified > scattered / 3);
+    REQUIRE(simplified < scattered);
+    // And they cost fewer triangles than the same field at full detail.
+    REQUIRE(s.command("world.set", Json{{"entity", "Stones"}, {"component", "MeshRenderer"}, {"value", Json{{"lods", Json::array()}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const Json full = s.command("render.stats", Json::object()).value();
+    INFO("triangles with levels " << field["triangles"] << ", without " << full["triangles"]);
+    REQUIRE(field["triangles"].get<double>() < full["triangles"].get<double>() * 0.8);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("the frame's GPU time by pass, what the camera's passes leave out, and the casters each cascade draws", "[renderer][gpu][culling]") {
+    app::Options o = playground_options();
+    o.width = 320;
+    o.height = 180;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](const std::string& name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(components)}}).has_value()); };
+    auto at = [](double x, double y, double z) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}}; };
+    spawn("Sun", Json{{"Transform", Json{{"rotation", Json{{"x", -0.42}, {"y", 0.3}, {"z", 0.15}, {"w", 0.84}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1.5}}}});
+    spawn("Camera", Json{{"Transform", at(0, 1, 5)}, {"Camera", Json{{"fov_degrees", 60}, {"far", 500}}}});
+    spawn("Ahead", Json{{"Transform", at(0, 0.5, 0)}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
+    spawn("Behind", Json{{"Transform", at(0, 0.5, 12)}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
+    // A line of blocks running away from the camera, 150 units long: each cascade covers a stretch.
+    for (int i = 0; i < 30; ++i) spawn("Block" + std::to_string(i), Json{{"Transform", at(3, 0.5, -5.0 * i)}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
+    for (int i = 0; i < 12; ++i) REQUIRE(s.frame().has_value());
+    const Json st = s.command("render.stats", Json::object()).value();
+    INFO(st.dump());
+    // The block behind the camera is left out of the camera's passes (and so not picked or seen).
+    REQUIRE(st["out_of_view"].get<int>() >= 1);
+    const Json seen = s.command("render.visible", Json::object()).value();
+    bool behind_seen = false;
+    for (const Json& e : seen["visible"]) behind_seen = behind_seen || e.value("path", "") == "/Behind";
+    REQUIRE(seen["count"].get<int>() >= 1);
+    REQUIRE_FALSE(behind_seen);
+    // Each cascade draws the casters over its own square, not all 32 four times.
+    const int cascades = st["shadow_cascades"].get<int>();
+    REQUIRE(cascades == 4);
+    REQUIRE(st["shadow_instances"].get<int>() < cascades * 32);
+    REQUIRE(st["shadow_instances"].get<int>() >= 32);
+    // On a device with timestamps (Metal, Vulkan, D3D12, a browser that grants them), each pass's
+    // milliseconds, a few frames old.
+    if (st.contains("gpu")) {
+        const Json& gpu = st["gpu"];
+        REQUIRE(gpu["frames_timed"].get<int>() > 0);
+        REQUIRE(gpu["frames_ago"].get<int>() <= 6);
+        REQUIRE(gpu["ms"].get<double>() > 0);
+        // Which passes a frame's reading holds varies (a GPU may leave a pass's timestamps unwritten),
+        // but there are some, named as the passes are, none negative.
+        REQUIRE_FALSE(gpu["passes"].empty());
+        for (const Json& p : gpu["passes"]) {
+            REQUIRE(p["ms"].get<double>() >= 0);
+            const std::string name = p["pass"].get<std::string>();
+            REQUIRE((name == "scene" || name == "shadow" || name == "ids" || name == "post" || name.starts_with("scene")));
+        }
+    }
+    REQUIRE(s.finish().has_value());
 }

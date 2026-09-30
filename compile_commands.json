@@ -109,19 +109,151 @@
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
-    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/assets.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/assets.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/assets.cpp.o",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/allocator.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/allocator.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/allocator.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/allocator.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/allocator.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/clusterizer.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/clusterizer.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/clusterizer.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/clusterizer.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/clusterizer.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexanalyzer.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/indexanalyzer.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexanalyzer.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/indexanalyzer.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexanalyzer.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexcodec.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/indexcodec.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexcodec.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/indexcodec.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexcodec.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexgenerator.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/indexgenerator.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexgenerator.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/indexgenerator.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/indexgenerator.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/meshletcodec.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/meshletcodec.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/meshletcodec.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/meshletcodec.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/meshletcodec.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/meshletutils.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/meshletutils.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/meshletutils.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/meshletutils.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/meshletutils.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/opacitymap.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/opacitymap.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/opacitymap.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/opacitymap.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/opacitymap.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/overdrawoptimizer.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/overdrawoptimizer.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/overdrawoptimizer.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/overdrawoptimizer.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/overdrawoptimizer.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/partition.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/partition.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/partition.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/partition.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/partition.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/quantization.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/quantization.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/quantization.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/quantization.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/quantization.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/rasterizer.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/rasterizer.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/rasterizer.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/rasterizer.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/rasterizer.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/remesher.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/remesher.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/remesher.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/remesher.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/remesher.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/simplifier.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/simplifier.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/simplifier.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/simplifier.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/simplifier.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/spatialorder.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/spatialorder.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/spatialorder.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/spatialorder.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/spatialorder.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/stripifier.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/stripifier.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/stripifier.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/stripifier.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/stripifier.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/tangentspace.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/tangentspace.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/tangentspace.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/tangentspace.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/tangentspace.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vcacheoptimizer.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vcacheoptimizer.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vcacheoptimizer.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vcacheoptimizer.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vcacheoptimizer.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vertexcodec.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vertexcodec.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vertexcodec.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vertexcodec.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vertexcodec.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vertexfilter.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vertexfilter.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vertexfilter.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vertexfilter.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vertexfilter.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vfetchoptimizer.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vfetchoptimizer.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vfetchoptimizer.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src/vfetchoptimizer.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/meshoptimizer/src/vfetchoptimizer.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/assets.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/assets.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/assets.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/assets/src/assets.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/assets.cpp.o"
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
-    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/import.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/import.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/import.cpp.o",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/import.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/import.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/import.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/assets/src/import.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/import.cpp.o"
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
-    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/terrain.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/terrain.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/terrain.cpp.o",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/simplify.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/simplify.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/simplify.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/assets/src/simplify.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/simplify.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/terrain.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include -I/Users/qiulinfan/Desktop/aipocket/third_party/meshoptimizer/src  -c /Users/qiulinfan/Desktop/aipocket/engine/assets/src/terrain.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/terrain.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/assets/src/terrain.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_assets/src/terrain.cpp.o"
   },

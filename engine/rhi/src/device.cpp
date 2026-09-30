@@ -48,6 +48,9 @@ const char* backend_name(WGPUBackendType t) {
 
 struct Device::Impl {
     Config config;
+    bool timestamps = false;
+    float timestamp_period = 1;
+    std::uint64_t completed = 0;   // frames the GPU has finished (their submitted work done)
     WGPUInstance instance = nullptr;
     WGPUAdapter adapter = nullptr;
     WGPUDevice device = nullptr;
@@ -214,6 +217,13 @@ struct Device::Impl {
     }
 
     ~Impl() {
+#ifndef __EMSCRIPTEN__
+        // The work-done callbacks name this; let them all come in before it goes.
+        for (int i = 0; i < 10000 && device && completed < frame_index; ++i) {
+            wgpuDevicePoll(device, true, nullptr);
+            if (instance) wgpuInstanceProcessEvents(instance);
+        }
+#endif
         destroy_targets();
         if (blit_pipeline) wgpuRenderPipelineRelease(blit_pipeline);
         if (blit_bgl) wgpuBindGroupLayoutRelease(blit_bgl);
@@ -319,6 +329,13 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
         log::error("rhi", "gpu error ({}): {}", static_cast<int>(type), to_string(message));
     };
     dd.uncapturedErrorCallbackInfo.userdata1 = &im;
+    // Timestamps at the passes' ends, for the renderer's GPU timings, where the adapter has them.
+    const WGPUFeatureName timestamp_feature = WGPUFeatureName_TimestampQuery;
+    if (wgpuAdapterHasFeature(im.adapter, timestamp_feature)) {
+        dd.requiredFeatureCount = 1;
+        dd.requiredFeatures = &timestamp_feature;
+        im.timestamps = true;
+    }
     WGPURequestDeviceCallbackInfo dci{};
     dci.mode = WGPUCallbackMode_AllowSpontaneous;
     dci.callback = [](WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* u1, void*) {
@@ -333,6 +350,9 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     if (!dr.device) return fail("gpu_device_failed", "no device: {}", dr.msg);
     im.device = dr.device;
     im.queue = wgpuDeviceGetQueue(im.device);
+#ifndef __EMSCRIPTEN__
+    if (im.timestamps) im.timestamp_period = wgpuQueueGetTimestampPeriod(im.queue);   // the web's are nanoseconds already
+#endif
 
     if (im.surface) {
         WGPUSurfaceCapabilities caps{};
@@ -428,6 +448,17 @@ Status Device::end_frame(Frame& frame) {
     WGPUCommandBuffer cb = wgpuCommandEncoderFinish(frame.encoder, nullptr);
     wgpuQueueSubmit(im.queue, 1, &cb);
     wgpuCommandBufferRelease(cb);
+#ifndef __EMSCRIPTEN__
+    // At most three frames in flight: without a display to pace it (headless, or a hidden window)
+    // the CPU would run a hundred frames ahead of the GPU, holding their resources and making
+    // anything read back from the GPU that old. The browser paces its frames itself.
+    WGPUQueueWorkDoneCallbackInfo done{};
+    done.mode = WGPUCallbackMode_AllowSpontaneous;
+    done.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void* u1, void*) { ++static_cast<Impl*>(u1)->completed; };
+    done.userdata1 = &im;
+    wgpuQueueOnSubmittedWorkDone(im.queue, done);
+    while (im.frame_index + 1 > im.completed + 3) device_progress(im.instance, im.device, true);
+#endif
     wgpuCommandEncoderRelease(frame.encoder);
     frame.encoder = nullptr;
     if (present) {
@@ -505,6 +536,9 @@ Result<Image> Device::read_texture(WGPUTexture texture, std::uint32_t width, std
 
 WGPUDevice Device::device() const { return impl_->device; }
 WGPUQueue Device::queue() const { return impl_->queue; }
+bool Device::timestamps() const { return impl_->timestamps; }
+float Device::timestamp_period() const { return impl_->timestamp_period; }
+std::uint64_t Device::submitted_frames() const { return impl_->frame_index; }
 WGPUInstance Device::instance() const { return impl_->instance; }
 std::uint32_t Device::width() const { return impl_->width; }
 std::uint32_t Device::height() const { return impl_->height; }

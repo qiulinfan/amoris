@@ -54,6 +54,32 @@ void scalar_from_json(const Json& j, const char* key, T& v) {
 
 }  // namespace
 
+void to_json(Json& j, const MeshLod& v) {
+    j = Json::object();
+    j["screen"] = v.screen;
+    j["ratio"] = v.ratio;
+    j["mesh"] = v.mesh;
+}
+
+void from_json(const Json& j, MeshLod& v) {
+    scalar_from_json(j, "screen", v.screen);
+    scalar_from_json(j, "ratio", v.ratio);
+    scalar_from_json(j, "mesh", v.mesh);
+}
+
+void hash_record(StateHasherRef& h, const MeshLod& v) {
+    h.f32(v.screen);
+    h.f32(v.ratio);
+    h.str(v.mesh);
+}
+
+std::size_t numeric_span(MeshLod& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "screen") { *out = &v.screen; return 1; }
+    if (path == "ratio") { *out = &v.ratio; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const MorphWeight& v) {
     j = Json::object();
     j["target"] = v.target;
@@ -952,8 +978,16 @@ void to_json(Json& j, const MeshRenderer& v) {
     vec_to_json(j["emissive"], v.emissive);
     j["cutoff"] = v.cutoff;
     j["normal_map"] = v.normal_map;
+    j["transmission"] = v.transmission;
+    j["ior"] = v.ior;
+    j["thickness"] = v.thickness;
+    j["clearcoat"] = v.clearcoat;
+    j["clearcoat_roughness"] = v.clearcoat_roughness;
     j["visible"] = v.visible;
     j["cast_shadows"] = v.cast_shadows;
+    j["lods"] = Json::array();
+    for (const auto& x : v.lods) { Json e; to_json(e, x); j["lods"].push_back(std::move(e)); }
+    j["cull_screen"] = v.cull_screen;
 }
 
 void from_json(const Json& j, MeshRenderer& v) {
@@ -966,8 +1000,18 @@ void from_json(const Json& j, MeshRenderer& v) {
     if (j.is_object() && j.contains("emissive")) vec_from_json(j["emissive"], v.emissive);
     scalar_from_json(j, "cutoff", v.cutoff);
     scalar_from_json(j, "normal_map", v.normal_map);
+    scalar_from_json(j, "transmission", v.transmission);
+    scalar_from_json(j, "ior", v.ior);
+    scalar_from_json(j, "thickness", v.thickness);
+    scalar_from_json(j, "clearcoat", v.clearcoat);
+    scalar_from_json(j, "clearcoat_roughness", v.clearcoat_roughness);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "cast_shadows", v.cast_shadows);
+    if (j.is_object() && j.contains("lods") && j["lods"].is_array()) {
+        v.lods.clear();
+        for (const Json& e : j["lods"]) { MeshLod x; from_json(e, x); v.lods.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "cull_screen", v.cull_screen);
 }
 
 void hash_component(StateHasherRef& h, const MeshRenderer& v) {
@@ -986,8 +1030,16 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.emissive.a);
     h.f32(v.cutoff);
     h.str(v.normal_map);
+    h.f32(v.transmission);
+    h.f32(v.ior);
+    h.f32(v.thickness);
+    h.f32(v.clearcoat);
+    h.f32(v.clearcoat_roughness);
     h.u8(v.visible ? 1 : 0);
     h.u8(v.cast_shadows ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.lods.size()));
+    for (const auto& x : v.lods) hash_record(h, x);
+    h.f32(v.cull_screen);
 }
 
 std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
@@ -1005,6 +1057,17 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "emissive.b") { *out = &v.emissive.b; return 1; }
     if (path == "emissive.a") { *out = &v.emissive.a; return 1; }
     if (path == "cutoff") { *out = &v.cutoff; return 1; }
+    if (path == "transmission") { *out = &v.transmission; return 1; }
+    if (path == "ior") { *out = &v.ior; return 1; }
+    if (path == "thickness") { *out = &v.thickness; return 1; }
+    if (path == "clearcoat") { *out = &v.clearcoat; return 1; }
+    if (path == "clearcoat_roughness") { *out = &v.clearcoat_roughness; return 1; }
+    if (path.starts_with("lods.")) {
+        std::string_view rest = path.substr(5);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.lods.size()) return numeric_span(v.lods[index], rest, out);
+    }
+    if (path == "cull_screen") { *out = &v.cull_screen; return 1; }
     return 0;
 }
 
@@ -2885,7 +2948,7 @@ constexpr std::array<FieldInfo, 15> kSkyFields = {{
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units."},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
 }};
-constexpr std::array<FieldInfo, 11> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 18> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent."},
@@ -2895,8 +2958,15 @@ constexpr std::array<FieldInfo, 11> kMeshRendererFields = {{
     FieldInfo{"emissive", "color", "Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow."},
     FieldInfo{"cutoff", "f32", "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none."},
     FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none."},
+    FieldInfo{"transmission", "f32", "How much light passes through, 0 to 1 (docs/design/rendering.md, Glass): glass, water in a bottle, a window; what is behind shows through, bent by `ior` and tinted by the color. Negative keeps the asset material's (KHR_materials_transmission; 0 for primitives)."},
+    FieldInfo{"ior", "f32", "Index of refraction of what the light passes through: 1.5 glass, 1.33 water; how far what is behind is bent. Negative keeps the asset material's (1.5)."},
+    FieldInfo{"thickness", "f32", "How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0)."},
+    FieldInfo{"clearcoat", "f32", "A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0)."},
+    FieldInfo{"clearcoat_roughness", "f32", "The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03)."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
     FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass."},
+    FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own."},
+    FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small."},
 }};
 constexpr std::array<FieldInfo, 11> kSpriteFields = {{
     FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color."},

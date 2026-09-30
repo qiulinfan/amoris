@@ -62,6 +62,17 @@ struct Material {
     Vec2 uv_scale{1, 1};
     bool uv_transformed = false;
     std::string name;
+    // Glass and lacquer (glTF KHR_materials_transmission, _ior, _volume, _clearcoat): how much light
+    // passes through, bent by the index of refraction over the thickness and absorbed on the way
+    // (attenuation_color left after attenuation_distance; 0 distance absorbs nothing); a clear coat
+    // over the surface with its own roughness.
+    float transmission = 0;
+    float ior = 1.5f;
+    float thickness = 0;
+    Vec3 attenuation_color{1, 1, 1};
+    float attenuation_distance = 0;
+    float clearcoat = 0;
+    float clearcoat_roughness = 0.03f;
     std::shared_ptr<const TerrainLayers> terrain;   // a terrain drawn from textured layers; null otherwise
 };
 
@@ -354,6 +365,21 @@ Result<Mesh> parse_ply(const std::string& bytes, const std::string& display_path
 // Formats Blender reads and the engine converts through it (.blend, .fbx, .dae, .usd*, .abc, ...).
 bool blender_format(std::string_view extension);
 // Blender's executable: `configured`, else POCKET_BLENDER, the usual install places, PATH; "" for none.
+// A level of detail (docs/design/rendering.md, Levels of detail): the same vertices with fewer
+// triangles, each submesh's range simplified on its own (meshoptimizer), so every material keeps
+// its part and a skin or morph targets still fit the vertices.
+struct MeshLod {
+    std::vector<std::uint32_t> indices;
+    std::vector<Submesh> submeshes;   // the given ones, their ranges into `indices`
+    std::uint32_t triangles = 0;
+    float error = 0;                  // the largest deviation, as a fraction of the mesh's extent
+};
+// Vertices as float runs `stride` bytes apart: a position (three floats) at `positions`, a normal
+// and a uv (five floats) at `attributes`. `ratio` is the share of each part's triangles to keep
+// (0.01 to 1); parts already small keep what their shape needs.
+MeshLod simplify(const float* positions, const float* attributes, std::size_t stride, std::size_t vertex_count, const std::vector<std::uint32_t>& indices, const std::vector<Submesh>& submeshes, float ratio);
+MeshLod simplify(const Mesh& mesh, float ratio);
+
 std::string find_blender(const std::string& configured);
 struct Conversion {
     std::filesystem::path glb;
