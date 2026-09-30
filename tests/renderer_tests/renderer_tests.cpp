@@ -792,6 +792,88 @@ TEST_CASE("cascaded shadows keep a nearby shadow's edge sharp and still reach fa
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("soft shadows are sharp at their casters and soft far from them; contact shadows fill what the maps miss", "[renderer][softshadows]") {
+    app::Options o = playground_options();
+    o.width = 480;
+    o.height = 270;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // A post 4 high and 0.6 wide on a floor, the sun at 45 degrees toward -z (so the post's shadow
+    // runs 4 units that way), seen from straight above: the shadow's side edge near the post's foot
+    // is cast from 0.4 away, near the far end from nearly 5.
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", components}}).has_value()); };
+    spawn("Floor", Json{{"Transform", Json{{"scale", Json{{"x", 40}, {"y", 1}, {"z", 40}}}}}, {"MeshRenderer", Json{{"mesh", "plane"}, {"color", Json{{"r", 0.8}, {"g", 0.8}, {"b", 0.8}, {"a", 1}}}}}});
+    spawn("Post", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 2}, {"z", 0}}}, {"scale", Json{{"x", 0.6}, {"y", 4}, {"z", 0.6}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
+    spawn("Sun", Json{{"Transform", Json{{"rotation", Json{{"x", -0.3827}, {"y", 0}, {"z", 0}, {"w", 0.9239}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1.2}}}});
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 12}, {"z", -2}}}, {"rotation", Json{{"x", -0.7071}, {"y", 0}, {"z", 0}, {"w", 0.7071}}}}}, {"Camera", Json{{"fov_degrees", 50}}}});
+    // A row of floor points across the shadow's left edge (x -0.3), each one's brightness from one capture.
+    auto row = [&](float z) {
+        Json pts = Json::array();
+        for (int i = 0; i <= 50; ++i) {
+            Json pr = s.command("render.project", Json{{"point", Json{{"x", -0.8f + 0.02f * static_cast<float>(i)}, {"y", 0}, {"z", z}}}}).value();
+            pts.push_back(Json{{"x", pr["x"]}, {"y", pr["y"]}});
+        }
+        return pts;
+    };
+    REQUIRE(s.frame().has_value());   // render.project reads the camera the last frame drew with
+    const Json low_row = row(-0.7f), high_row = row(-3.4f);
+    // The widths of the two edges in samples, from 10 to 90 percent of the way from shadowed to lit.
+    auto edges = [&]() {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        Json all = low_row;
+        for (const Json& p : high_row) all.push_back(p);
+        Json cap = s.command("capture", Json{{"pixels", all}, {"path", (root() / "build" / "test-out" / "soft-shadows.png").string()}}).value();
+        auto width = [&](std::size_t from) {
+            std::vector<double> b;
+            for (std::size_t i = from; i < from + 51; ++i) b.push_back(cap["pixels"][i][1].get<double>());
+            const double lo = *std::min_element(b.begin(), b.end()), hi = *std::max_element(b.begin(), b.end());
+            REQUIRE(hi > lo + 60);   // an edge between shadow and light in the row
+            int w = 0;
+            for (double v : b) w += (v > lo + 0.1 * (hi - lo) && v < lo + 0.9 * (hi - lo)) ? 1 : 0;
+            return w;
+        };
+        return std::make_pair(width(0), width(51));
+    };
+    auto [near_hard, far_hard] = edges();
+    Json soft = s.command("render.shadows", Json{{"softness", 1.5}}).value();
+    REQUIRE(soft["softness"].get<double>() == Catch::Approx(1.5));
+    auto [near_soft, far_soft] = edges();
+    INFO("edge widths in 2 cm samples, near the foot / far out: sharp " << near_hard << " / " << far_hard << ", soft " << near_soft << " / " << far_soft);
+    REQUIRE(s.command("render.stats", Json::object()).value()["soft_shadows"] == true);
+    REQUIRE(std::abs(far_hard - near_hard) <= 2);   // the sharp filter: one width anywhere
+    REQUIRE(far_soft > far_hard + 3);               // under a sun of some size the far edge widens
+    REQUIRE(far_soft > near_soft + 3);              // and more than the edge by the post's foot
+    REQUIRE(s.command("render.shadows", Json{{"softness", 99}}).value()["softness"].get<double>() == Catch::Approx(5.0));
+    // Contact shadows, with the maps off: a small block on the floor darkens the floor on its far
+    // side from the sun, and open floor stays as it was.
+    REQUIRE(s.command("render.shadows", Json{{"softness", 0}, {"enabled", false}}).has_value());
+    spawn("Block", Json{{"Transform", Json{{"position", Json{{"x", 3}, {"y", 0.2}, {"z", 2}}}, {"scale", Json{{"x", 0.4}, {"y", 0.4}, {"z", 0.4}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
+    auto contact = [&]() {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        auto at = [&](Vec3 p) {
+            Json pr = s.command("render.project", Json{{"point", Json{{"x", p.x}, {"y", p.y}, {"z", p.z}}}}).value();
+            return Json{{"x", pr["x"]}, {"y", pr["y"]}};
+        };
+        // Just past the block on the side away from the sun (-z), and open floor beside it.
+        Json cap = s.command("capture", Json{{"pixels", Json::array({at({3, 0, 1.68f}), at({1.5f, 0, 1.68f})})}}).value();
+        return std::make_pair(cap["pixels"][0][1].get<int>(), cap["pixels"][1][1].get<int>());
+    };
+    auto [behind_off, open_off] = contact();
+    Json on = s.command("render.shadows", Json{{"contact", true}, {"contact_length", 0.6}}).value();
+    REQUIRE(on["contact"] == true);
+    auto [behind_on, open_on] = contact();
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("behind the block " << behind_off << " -> " << behind_on << ", open floor " << open_off << " -> " << open_on << " " << stats.dump());
+    REQUIRE(stats["contact_shadows"] == true);
+    REQUIRE(stats["depth_prepass"] == true);
+    REQUIRE(stats["ao"] == false);
+    REQUIRE(std::abs(behind_off - open_off) < 8);   // without them the maps' absence leaves it lit
+    REQUIRE(behind_on < behind_off - 30);            // with them the floor at the block's foot darkens
+    REQUIRE(std::abs(open_on - open_off) < 6);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("ambient occlusion darkens the ground where a crate sits and leaves open ground alone; ids still come from the prepass", "[renderer][ao]") {
     app::Options o = playground_options();
     o.width = 320;

@@ -69,7 +69,7 @@ constexpr CommandHelp kHelp[] = {
     {"render.views", "path, entity?, views?", "The scene, or an entity and what is under it, drawn from standard views at once into one sheet (a PNG at path, under the project when relative), without moving anything: views from front, back, right, left, top, bottom, perspective (the first six but bottom by default), each framing its bounds. What an agent looks at to check what it built from every side."},
     {"render.compare", "path, tolerance?, threshold?, diff?, update?", "Hold the last frame against a reference PNG (recorded on first use): match, differing fraction, where."},
     {"render.viewport", "x?, y?, w?, h?, width?, height?, reset?", "Draw the scene into a rectangle of the window (the editor's scene pane)."},
-    {"render.shadows", "enabled?, strength?, bias?, cascades?, distance?", "The sun's cascaded shadows: on or off, darkness, bias, cascades, reach."},
+    {"render.shadows", "enabled?, strength?, bias?, cascades?, distance?, softness?, contact?, contact_length?", "The sun's cascaded shadows: on or off, darkness, bias, cascades, reach; softness (the sun's radius in degrees, penumbrae widening with distance), contact shadows and their length."},
     {"render.msaa", "samples?", "Multisampling: 1 or 4."},
     {"render.bloom", "enabled?, threshold?, strength?, radius?", "The glow of light over white: on or off, threshold, strength, spread."},
     {"render.grade", "enabled?, exposure?, filmic?, temperature?, contrast?, saturation?, tint?, vignette?, lut?, lut_strength?", "The frame's look: exposure, warmth, contrast, saturation, tint, vignette, and a look-up table image (N slices of N by N side by side) applied to the finished colors."},

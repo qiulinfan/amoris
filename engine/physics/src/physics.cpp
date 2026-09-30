@@ -13,8 +13,35 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 
 namespace pocket::physics {
+
+world::Transform placed(flecs::entity e, const world::RigidBody& rb, const world::Transform& t) {
+    if (rb.kind != 1 || !e.parent().is_valid()) return t;
+    // The ancestors' Transforms from the root down, composed as World::tick does for
+    // WorldTransform (a parent without one is passed through), read now rather than from the last
+    // tick so a moved parent or a new instance is where it is this step.
+    std::vector<const world::Transform*> chain;
+    for (flecs::entity p = e.parent(); p.is_valid(); p = p.parent()) {
+        if (const auto* pt = p.try_get<world::Transform>()) chain.push_back(pt);
+    }
+    if (chain.empty()) return t;
+    world::Transform at = *chain.back();
+    for (std::size_t i = chain.size() - 1; i-- > 0;) {
+        const world::Transform& local = *chain[i];
+        const Vec3 scaled{local.position.x * at.scale.x, local.position.y * at.scale.y, local.position.z * at.scale.z};
+        at.position = at.position + at.rotation.rotate(scaled);
+        at.rotation = normalize(at.rotation * local.rotation);
+        at.scale = {at.scale.x * local.scale.x, at.scale.y * local.scale.y, at.scale.z * local.scale.z};
+    }
+    world::Transform out = t;
+    const Vec3 scaled{t.position.x * at.scale.x, t.position.y * at.scale.y, t.position.z * at.scale.z};
+    out.position = at.position + at.rotation.rotate(scaled);
+    out.rotation = normalize(at.rotation * t.rotation);
+    out.scale = {at.scale.x * t.scale.x, at.scale.y * t.scale.y, at.scale.z * t.scale.z};
+    return out;
+}
 
 namespace {
 
@@ -129,33 +156,54 @@ struct MeshShape {
         aabb_min = aabb_max = {0, 0, 0};
     }
 
-    void build(const assets::Mesh& mesh, Vec3 position, Quat rotation, Vec3 scale) {
+    // The file's triangles placed by the entity's transform; with `node` (>= 0) only that node's,
+    // in the node's own space, as MeshRenderer.node draws them.
+    void build(const assets::Mesh& mesh, Vec3 position, Quat rotation, Vec3 scale, int node = -1) {
         clear();
-        v.reserve(mesh.vertices.size());
-        for (const assets::MeshVertex& mv : mesh.vertices) {
-            v.push_back(position + rotation.rotate(Vec3{mv.position.x * scale.x, mv.position.y * scale.y, mv.position.z * scale.z}));
-        }
-        for (const assets::Submesh& sm : mesh.submeshes) {
-            if (sm.node < 0) continue;
-            // A moving part collides where its node rests (the collider is static; the clip is not).
-            const Mat4 place = mesh.rest_global(sm.node);
-            for (std::uint32_t i = sm.first_index; i < sm.first_index + sm.index_count && i < mesh.indices.size(); ++i) {
-                const std::uint32_t vi = mesh.indices[i];
-                if (vi >= v.size()) continue;
-                const Vec3 local = place.transform_point(mesh.vertices[vi].position);
-                v[vi] = position + rotation.rotate(Vec3{local.x * scale.x, local.y * scale.y, local.z * scale.z});
+        auto world = [&](Vec3 p) { return position + rotation.rotate(Vec3{p.x * scale.x, p.y * scale.y, p.z * scale.z}); };
+        auto add = [&](const std::array<std::uint32_t, 3>& t) {
+            Vec3 nn = cross(v[t[1]] - v[t[0]], v[t[2]] - v[t[0]]);
+            float len = length(nn);
+            if (len <= 1e-12f) return;  // degenerate
+            tri.push_back(t);
+            n.push_back(nn * (1.0f / len));
+        };
+        auto valid = [&](std::uint32_t i) { return i + 2 < mesh.indices.size() && mesh.indices[i] < mesh.vertices.size() && mesh.indices[i + 1] < mesh.vertices.size() && mesh.indices[i + 2] < mesh.vertices.size(); };
+        if (node >= 0) {
+            // One node's triangles in the node's own space, with only the vertices they use: the
+            // file's are baked into its rest pose, so they are taken back to the node (a moving
+            // part's are the node's already).
+            const Mat4 unbake = mesh.rest_global(node).inverse_affine();
+            std::unordered_map<std::uint64_t, std::uint32_t> kept;   // file vertex (and whether baked) -> index in v
+            auto keep = [&](std::uint32_t vi, bool baked) {
+                auto [it, fresh] = kept.try_emplace((static_cast<std::uint64_t>(vi) << 1) | (baked ? 1u : 0u), static_cast<std::uint32_t>(v.size()));
+                if (fresh) v.push_back(world(baked ? unbake.transform_point(mesh.vertices[vi].position) : mesh.vertices[vi].position));
+                return it->second;
+            };
+            for (const assets::Submesh& sm : mesh.submeshes) {
+                if (sm.origin != node || sm.skin >= 0) continue;
+                for (std::uint32_t i = sm.first_index; i + 2 < sm.first_index + sm.index_count; i += 3) {
+                    if (!valid(i)) continue;
+                    const bool baked = sm.node < 0;
+                    add({keep(mesh.indices[i], baked), keep(mesh.indices[i + 1], baked), keep(mesh.indices[i + 2], baked)});
+                }
             }
-        }
-        for (const assets::Submesh& sm : mesh.submeshes) {
-            if (sm.skin >= 0) continue;  // skinned geometry moves with its joints: no collision
-            for (std::uint32_t i = sm.first_index; i + 2 < sm.first_index + sm.index_count; i += 3) {
-                std::array<std::uint32_t, 3> t{mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]};
-                if (t[0] >= v.size() || t[1] >= v.size() || t[2] >= v.size()) continue;
-                Vec3 nn = cross(v[t[1]] - v[t[0]], v[t[2]] - v[t[0]]);
-                float len = length(nn);
-                if (len <= 1e-12f) continue;  // degenerate
-                tri.push_back(t);
-                n.push_back(nn * (1.0f / len));
+        } else {
+            v.reserve(mesh.vertices.size());
+            for (const assets::MeshVertex& mv : mesh.vertices) v.push_back(world(mv.position));
+            for (const assets::Submesh& sm : mesh.submeshes) {
+                if (sm.node < 0) continue;
+                // A moving part collides where its node rests (the collider is static; the clip is not).
+                const Mat4 place = mesh.rest_global(sm.node);
+                for (std::uint32_t i = sm.first_index; i < sm.first_index + sm.index_count && i < mesh.indices.size(); ++i) {
+                    const std::uint32_t vi = mesh.indices[i];
+                    if (vi < v.size()) v[vi] = world(place.transform_point(mesh.vertices[vi].position));
+                }
+            }
+            for (const assets::Submesh& sm : mesh.submeshes) {
+                if (sm.skin >= 0) continue;  // skinned geometry moves with its joints: no collision
+                for (std::uint32_t i = sm.first_index; i + 2 < sm.first_index + sm.index_count; i += 3)
+                    if (valid(i)) add({mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]});
             }
         }
         if (tri.empty()) return;
@@ -843,8 +891,10 @@ struct Physics::Impl {
         // A mesh the engine made for the entity (a terrain's) comes first.
         const std::string path = derived ? *derived : !col.mesh.empty() ? col.mesh : (mr ? mr->mesh : std::string());
         if (path.empty()) return nullptr;
+        // One node of the file: the Collider's, or the MeshRenderer's when the file is its.
+        const std::string node = !col.node.empty() ? col.node : (!derived && col.mesh.empty() && mr ? mr->node : std::string());
         const Vec3 pos = t.position + t.rotation.rotate(col.offset);
-        const std::string key = std::format("{}|{:.6g},{:.6g},{:.6g}|{:.6g},{:.6g},{:.6g},{:.6g}|{:.6g},{:.6g},{:.6g}", path, pos.x, pos.y, pos.z, t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w, t.scale.x, t.scale.y, t.scale.z);
+        const std::string key = std::format("{}#{}|{:.6g},{:.6g},{:.6g}|{:.6g},{:.6g},{:.6g},{:.6g}|{:.6g},{:.6g},{:.6g}", path, node, pos.x, pos.y, pos.z, t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w, t.scale.x, t.scale.y, t.scale.z);
         MeshShape& ms = mesh_shapes[id];
         if (ms.key != key) {
             ms.key = key;
@@ -852,8 +902,10 @@ struct Physics::Impl {
             auto m = assets->mesh(path);
             if (!m) {
                 if (warned.insert(path).second) log::warn("physics", "mesh collider {}: {}", path, m.error().to_string());
+            } else if (!node.empty() && (*m)->node_index(node) < 0) {
+                if (warned.insert(path + "#" + node).second) log::warn("physics", "mesh collider {}: no node {}", path, node);
             } else {
-                ms.build(**m, pos, t.rotation, t.scale);
+                ms.build(**m, pos, t.rotation, t.scale, node.empty() ? -1 : (*m)->node_index(node));
             }
         }
         return ms.tri.empty() ? nullptr : &ms;
@@ -862,7 +914,8 @@ struct Physics::Impl {
     void gather(world::World& w) {
         bodies.clear();
         std::set<EntityId> seen;
-        w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+        w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
+            const world::Transform t = placed(e, rb, authored);
             Body b;
             b.id = e.id();
             b.kind = rb.kind;
@@ -1158,6 +1211,9 @@ std::vector<std::pair<EntityId, EntityId>> Physics::ignored() const {
 Settings& Physics::settings() { return impl_->settings; }
 void Physics::set_assets(assets::AssetStore* assets) {
     impl_->assets = assets;
+    drop_mesh_cache();
+}
+void Physics::drop_mesh_cache() {
     impl_->mesh_shapes.clear();
     impl_->warned.clear();
 }
@@ -1178,6 +1234,7 @@ void Physics::step(world::World& w, double dt_d) {
         if (!b.mesh) continue;
         im.stats.meshes++;
         im.stats.triangles += static_cast<std::uint32_t>(b.mesh->tri.size());
+        im.stats.mesh_vertices += static_cast<std::uint32_t>(b.mesh->v.size());
     }
     if (im.bodies.empty()) {
         im.touching.clear();
@@ -2312,8 +2369,9 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
     RayHit best;
     best.distance = max_distance;
     bool found = false;
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
         if (!accept(e.id(), rb, col)) return;
+        const world::Transform t = placed(e, rb, authored);
         Body b;
         b.position = t.position + t.rotation.rotate(col.offset);
         b.rotation = t.rotation;
@@ -2387,8 +2445,9 @@ Result<RayHit> Physics::sweep(const world::World& w, Vec3 origin, Vec3 direction
     RayHit best;
     best.distance = max_distance;
     bool found = false;
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
         if (!accept(e.id(), rb, col)) return;
+        const world::Transform t = placed(e, rb, authored);
         Body b;
         b.position = t.position + t.rotation.rotate(col.offset);
         b.rotation = t.rotation;
@@ -2434,8 +2493,9 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
     probe.shape = 1;
     probe.position = center;
     probe.half = {radius, radius, radius};
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
         if (!accept(e.id(), rb, col)) return;
+        const world::Transform t = placed(e, rb, authored);
         Body b;
         b.position = t.position + t.rotation.rotate(col.offset);
         b.rotation = t.rotation;
@@ -2475,7 +2535,8 @@ void Physics::move_characters(world::World& w, double dt_d) {
     constexpr float kSkin = 0.01f;
     // The colliders as they stand after the rigid bodies' step (triggers apart: they stop nothing).
     std::vector<Body> solids, triggers;
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& t) {
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
+        const world::Transform t = placed(e, rb, authored);
         Body b;
         b.id = e.id();
         b.kind = rb.kind;
@@ -2868,6 +2929,7 @@ Json Physics::describe() const {
     j["broken"] = s.broken;
     j["meshes"] = s.meshes;
     j["triangles"] = s.triangles;
+    j["mesh_vertices"] = s.mesh_vertices;
     j["ccd_hits"] = s.ccd_hits;
     j["ccd_dynamic"] = s.ccd_dynamic;
     j["ignored"] = s.ignored;

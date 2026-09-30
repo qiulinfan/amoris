@@ -107,6 +107,7 @@ struct Node {
     std::vector<int> children;
     int light = -1;   // index into Mesh::lights (KHR_lights_punctual), -1 for none
     int camera = -1;  // index into Mesh::cameras, -1 for none
+    Json extras;      // the node's glTF extras (Blender's custom properties), null for none
 };
 
 // A light a file places on a node (KHR_lights_punctual): it shines along the node's -Z.

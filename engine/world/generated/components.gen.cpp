@@ -520,6 +520,30 @@ std::size_t numeric_span(Health& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Model& v) {
+    j = Json::object();
+    j["path"] = v.path;
+    j["hash"] = v.hash;
+    j["live"] = v.live;
+}
+
+void from_json(const Json& j, Model& v) {
+    scalar_from_json(j, "path", v.path);
+    scalar_from_json(j, "hash", v.hash);
+    scalar_from_json(j, "live", v.live);
+}
+
+void hash_component(StateHasherRef& h, const Model& v) {
+    h.str(v.path);
+    h.str(v.hash);
+    h.u8(v.live ? 1 : 0);
+}
+
+std::size_t numeric_span(Model& v, std::string_view path, float** out) {
+    (void)v;
+    return 0;
+}
+
 void to_json(Json& j, const Lifetime& v) {
     j = Json::object();
     j["seconds"] = v.seconds;
@@ -2560,6 +2584,7 @@ void to_json(Json& j, const Collider& v) {
     vec_to_json(j["offset"], v.offset);
     j["is_trigger"] = v.is_trigger;
     j["mesh"] = v.mesh;
+    j["node"] = v.node;
     j["layer"] = v.layer;
     j["mask"] = v.mask;
     j["group"] = v.group;
@@ -2571,6 +2596,7 @@ void from_json(const Json& j, Collider& v) {
     if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
     scalar_from_json(j, "is_trigger", v.is_trigger);
     scalar_from_json(j, "mesh", v.mesh);
+    scalar_from_json(j, "node", v.node);
     scalar_from_json(j, "layer", v.layer);
     scalar_from_json(j, "mask", v.mask);
     scalar_from_json(j, "group", v.group);
@@ -2586,6 +2612,7 @@ void hash_component(StateHasherRef& h, const Collider& v) {
     h.f32(v.offset.z);
     h.u8(v.is_trigger ? 1 : 0);
     h.str(v.mesh);
+    h.str(v.node);
     h.i64(static_cast<std::int64_t>(v.layer));
     h.i64(static_cast<std::int64_t>(v.mask));
     h.i64(static_cast<std::int64_t>(v.group));
@@ -2858,6 +2885,11 @@ constexpr std::array<FieldInfo, 2> kVelocityFields = {{
 constexpr std::array<FieldInfo, 2> kHealthFields = {{
     FieldInfo{"current", "f32", "Current hit points."},
     FieldInfo{"max", "f32", "Maximum hit points."},
+}};
+constexpr std::array<FieldInfo, 3> kModelFields = {{
+    FieldInfo{"path", "string", "The model file, relative to the project."},
+    FieldInfo{"hash", "string", "The file's content hash when the children were made from it."},
+    FieldInfo{"live", "bool", "Made again when the file changes; false keeps the children as they are."},
 }};
 constexpr std::array<FieldInfo, 1> kLifetimeFields = {{
     FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero."},
@@ -3263,12 +3295,13 @@ constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
     FieldInfo{"tile_x", "i32", "The map cell under the center, -1 outside the map (written by the engine)."},
     FieldInfo{"tile_y", "i32", "The map cell under the center, -1 outside the map (written by the engine)."},
 }};
-constexpr std::array<FieldInfo, 8> kColliderFields = {{
+constexpr std::array<FieldInfo, 9> kColliderFields = {{
     FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)."},
     FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules."},
     FieldInfo{"offset", "vec3", "Local offset of the shape center."},
     FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response."},
     FieldInfo{"mesh", "string", "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh."},
+    FieldInfo{"node", "string", "For shape 3: only the triangles of this node of the file (its name, or its index as text), in the node's own space as MeshRenderer.node draws it; empty takes the whole file (the MeshRenderer's node when the mesh is the MeshRenderer's)."},
     FieldInfo{"layer", "u32", "Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them."},
     FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
     FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
@@ -3321,11 +3354,12 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
 }};
 
-constexpr std::array<ComponentInfo, 39> kComponents = {{
+constexpr std::array<ComponentInfo, 40> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
     ComponentInfo{"Health", "Hit points. Gameplay decides what zero means; the engine only stores and reports it.", true, kHealthFields},
+    ComponentInfo{"Model", "An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).", true, kModelFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"CameraRig", "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).", true, kCameraRigFields},
@@ -3345,7 +3379,7 @@ constexpr std::array<ComponentInfo, 39> kComponents = {{
     ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},
     ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.", true, kParticleEmitterFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
-    ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).", true, kRigidBodyFields},
+    ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. A dynamic or kinematic body's Transform is its place in the world (the solver writes it back), so those should be roots; a static body under a parent (a node of an instantiated level) stands where its parents put it.", true, kRigidBodyFields},
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Character", "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.", true, kCharacterFields},

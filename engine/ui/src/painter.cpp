@@ -1,4 +1,5 @@
 #include <pocket/ui/painter.hpp>
+#include <pocket/ui/bidi.hpp>
 
 #include <pocket/core/log.hpp>
 
@@ -423,7 +424,11 @@ void Painter::line(float x0, float y0, float x1, float y1, Color color, float th
     }
 }
 
-float Painter::text(float x, float y, std::string_view text, float size_points, Color color) {
+float Painter::text(float x, float y, std::string_view text, float size_points, Color color, TextDirection dir) {
+    return this->text(x, y, text, size_points, [color](std::size_t) { return color; }, dir);
+}
+
+float Painter::text(float x, float y, std::string_view text, float size_points, const std::function<Color(std::size_t)>& color_at, TextDirection dir) {
     Impl& im = *impl_;
     float px = size_points * im.scale;
     TextMetrics m = im.font->metrics(px);
@@ -432,12 +437,15 @@ float Painter::text(float x, float y, std::string_view text, float size_points, 
     // Snap the pen to whole pixels so glyph bitmaps are not resampled.
     pen = std::round(pen);
     baseline = std::round(baseline);
-    auto run = im.font->shape(text, px);
+    auto run = im.font->shape(text, px, dir);
+    float width_px = 0;
     for (const ShapedGlyph& sg : run) {
+        width_px += sg.advance;
         const Glyph& g = sg.glyph;
         if (!g.empty) {
             float gx = pen + sg.x + g.bearing_x;
             float gy = baseline - g.bearing_y + sg.y;
+            const Color color = color_at(sg.byte_offset);
             Vertex v{};
             v.r = color.r; v.g = color.g; v.b = color.b; v.a = color.a;
             v.mode = 1.0f;
@@ -449,22 +457,23 @@ float Painter::text(float x, float y, std::string_view text, float size_points, 
             im.quad(a, b, c, d);
         }
     }
-    float width_px = run.empty() ? 0.0f : run.back().x + run.back().glyph.advance;
     return width_px / im.scale;
 }
 
-float Painter::text_aligned(const Rect& box, std::string_view text, float size_points, Color color, TextAlign align, bool vcenter) {
-    float w = measure(text, size_points);
+float Painter::text_aligned(const Rect& box, std::string_view text, float size_points, Color color, TextAlign align, bool vcenter, TextDirection dir) {
+    float w = measure(text, size_points, dir);
     float lh = line_height(size_points);
     float x = box.x;
+    if (align == TextAlign::Start) align = rtl_line(text, dir) ? TextAlign::Right : TextAlign::Left;
+    else if (align == TextAlign::End) align = rtl_line(text, dir) ? TextAlign::Left : TextAlign::Right;
     if (align == TextAlign::Center) x = box.x + (box.w - w) * 0.5f;
     else if (align == TextAlign::Right) x = box.x + box.w - w;
     float y = vcenter ? box.y + (box.h - lh) * 0.5f : box.y;
-    return this->text(x, y, text, size_points, color);
+    return this->text(x, y, text, size_points, color, dir);
 }
 
-float Painter::measure(std::string_view text, float size_points) {
-    return impl_->font->measure(text, size_points * impl_->scale) / impl_->scale;
+float Painter::measure(std::string_view text, float size_points, TextDirection dir) {
+    return impl_->font->measure(text, size_points * impl_->scale, dir) / impl_->scale;
 }
 
 float Painter::line_height(float size_points) {

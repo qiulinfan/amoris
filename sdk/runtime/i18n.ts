@@ -190,6 +190,11 @@ export function t(key: string, vars: Vars = {}): string {
     return format(text, vars, lang);
 }
 
+// Languages written right to left, by their primary subtag, and the right-to-left scripts, by
+// their script subtag (which decides when a tag names one: "az-Arab" is right to left, "ku-Latn" not).
+const RTL_LANGUAGES = new Set(["ar", "fa", "he", "iw", "ur", "ps", "sd", "ug", "yi", "ji", "dv", "ckb", "syr", "arc", "nqo", "ks", "azb", "lrc", "mzn", "glk", "bal", "sdh"]);
+const RTL_SCRIPTS = new Set(["arab", "hebr", "syrc", "thaa", "nkoo", "adlm", "rohg", "mand", "samr", "yezi"]);
+
 export const i18n = {
     /** Switch to a language (locales/<lang>.json must exist); the interface draws again. */
     use(lang: string): void {
@@ -200,6 +205,13 @@ export const i18n = {
     /** The current language. */
     language(): string {
         return current();
+    },
+    /** Which way a language (the current one by default) is written: "rtl" for Arabic, Persian, Hebrew, Urdu and the other right-to-left scripts, else "ltr"; for an interface's `dir`. */
+    direction(lang: string = current()): "ltr" | "rtl" {
+        const tags = lang.toLowerCase().split(/[-_]/);
+        const script = tags.slice(1).find((t) => /^[a-z]{4}$/.test(t));
+        if (script !== undefined) return RTL_SCRIPTS.has(script) ? "rtl" : "ltr";
+        return RTL_LANGUAGES.has(tags[0]) ? "rtl" : "ltr";
     },
     /** The languages the project has a file for, and the default. */
     languages(): { languages: string[]; default: string } {

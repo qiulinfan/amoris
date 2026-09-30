@@ -203,6 +203,8 @@ struct alignas(16) FrameUniforms {
     float cloud_drift[4];        // how far they have drifted (x, z)
     float waters[8][4];          // up to four water bodies for caustics: (centre x, level, centre z, half x), (half z, depth, caustics)
     float water_info[4];         // how many, the time
+    float cascade_depth[4];      // the world distance each cascade's depth range spans (0..1 in its map)
+    float shadow_soft[4];        // soft shadows: tan of the sun's radius (0: off), contact shadows on, the blocker search's reach
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
@@ -308,6 +310,8 @@ struct Frame {
     cloud_drift: vec4f,
     waters: array<vec4f, 8>,
     water_info: vec4f,
+    cascade_depth: vec4f,
+    shadow_soft: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
@@ -765,13 +769,43 @@ fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
     let suv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
     let bias = frame.shadow.y * (1.0 + 2.0 * (1.0 - ndl));
-    var lit = 0.0;
-    for (var j = -1; j <= 1; j = j + 1) {
-        for (var i = -1; i <= 1; i = i + 1) {
-            lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, suv + vec2f(f32(i), f32(j)) * frame.shadow.x, c, ndc.z - bias);
+    let receiver = ndc.z - bias;
+    if (frame.shadow_soft.x <= 0.0) {
+        var lit = 0.0;
+        for (var j = -1; j <= 1; j = j + 1) {
+            for (var i = -1; i <= 1; i = i + 1) {
+                lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, suv + vec2f(f32(i), f32(j)) * frame.shadow.x, c, receiver);
+            }
         }
+        return lit / 9.0;
     }
-    return lit / 9.0;
+    // A sun of some size (docs/design/rendering.md, Soft shadows): the mean depth of what stands in
+    // front of the point, looked for over the widest penumbra the sun's size allows, then a filter
+    // as wide as the penumbra at that distance, so a shadow is sharp where it touches its caster
+    // and soft far from it. Both on a spiral turned by the point, which TAA smooths.
+    let texel = frame.cascade_texel[c];
+    let dims = vec2i(textureDimensions(shadow_map));
+    let search = clamp(frame.shadow_soft.x * frame.shadow_soft.z / texel, 1.0, 24.0);
+    let spin = fract(sin(dot(world_pos, vec3f(12.9898, 78.233, 37.719))) * 43758.547) * 6.2831853;
+    var blockers = 0.0;
+    var sum = 0.0;
+    for (var i = 0; i < 16; i = i + 1) {
+        let a = f32(i) * 2.39996 + spin;
+        let at = suv + vec2f(cos(a), sin(a)) * (sqrt((f32(i) + 0.5) / 16.0) * search * frame.shadow.x);
+        let q = clamp(vec2i(at * vec2f(dims)), vec2i(0), dims - vec2i(1));
+        let d = textureLoad(shadow_map, q, c, 0);
+        if (d < receiver) { blockers = blockers + 1.0; sum = sum + d; }
+    }
+    if (blockers < 0.5) { return 1.0; }
+    let gap = (receiver - sum / blockers) * frame.cascade_depth[c];
+    let radius = clamp(gap * frame.shadow_soft.x / texel, 1.0, 24.0);
+    var lit = 0.0;
+    for (var i = 0; i < 16; i = i + 1) {
+        let a = f32(i) * 2.39996 + spin;
+        let at = suv + vec2f(cos(a), sin(a)) * (sqrt((f32(i) + 0.5) / 16.0) * radius * frame.shadow.x);
+        lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, at, c, receiver);
+    }
+    return lit / 16.0;
 }
 
 fn shade(in: VsOut) -> vec4f {
@@ -858,6 +892,11 @@ fn shade(in: VsOut) -> vec4f {
             }
             shadow = mix(1.0 - frame.shadow.z, 1.0, lit);
         }
+    }
+    if (frame.shadow_soft.y > 0.5) {
+        // Contact shadows (the ambient occlusion pass's second channel) where the maps miss them.
+        let contact = textureSampleLevel(ao_tex, ao_samp, in.clip.xy * frame.ao.yz, 0.0).g;
+        shadow = min(shadow, mix(1.0 - frame.shadow.z, 1.0, contact));
     }
     color += frame.sun_color.rgb * surface_light(object, gn, n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l);
     // Point and spot lights: the ones the pixel's cluster lists.
@@ -2005,10 +2044,13 @@ const PI = 3.14159265;
 
 // Ambient occlusion from the depth prepass, at half resolution: for each point, its position and
 // normal from depth, then samples in a hemisphere around the normal (a spiral turned per pixel);
-// a sample the depth buffer has something in front of, within the radius, occludes. Then a blur
-// that keeps to one surface (neighbors at another depth count less).
+// a sample the depth buffer has something in front of, within the radius, occludes. Beside it in
+// the green channel, contact shadows: a short march from the point toward the sun, shadowed where
+// the depth buffer has something in front of a step by less than the march's length (a thin
+// caster, not a wall far behind). Then a blur that keeps to one surface (neighbors at another
+// depth count less).
 constexpr const char* kAoWgsl = R"WGSL(
-struct Ao { view_proj: mat4x4f, inv_view_proj: mat4x4f, camera: vec4f, fwd: vec4f, params: vec4f, size: vec4f };
+struct Ao { view_proj: mat4x4f, inv_view_proj: mat4x4f, camera: vec4f, fwd: vec4f, params: vec4f, size: vec4f, sun: vec4f, contact: vec4f };
 @group(0) @binding(0) var<uniform> ao: Ao;
 @group(0) @binding(1) var depth: texture_depth_2d;
 @group(0) @binding(2) var src: texture_2d<f32>;
@@ -2045,7 +2087,7 @@ fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
     let t = normalize(cross(n, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.9)));
     let b = cross(n, t);
     let noise = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))));
-    let count = u32(ao.params.z);
+    let count = select(0u, u32(ao.params.z), ao.contact.y > 0.5);
     let radius = ao.params.x;
     let here = view_depth(p);
     var occluded = 0.0;
@@ -2067,13 +2109,37 @@ fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
             occluded = occluded + smoothstep(0.0, 1.0, radius / max(abs(here - behind), 1e-4));
         }
     }
-    return vec4f(clamp(1.0 - ao.params.y * occluded / f32(count), 0.0, 1.0));
+    let ambient = clamp(1.0 - ao.params.y * occluded / f32(max(count, 1u)), 0.0, 1.0);
+    // Contact shadows: steps toward the sun from just off the surface.
+    var contact = 1.0;
+    let to_sun = ao.sun.xyz;
+    if (ao.sun.w > 0.5 && dot(n, to_sun) > 0.0) {
+        let len = ao.contact.x;
+        let steps = 12;
+        let start = p + n * (0.02 * len);
+        for (var i = 0; i < steps; i = i + 1) {
+            let s = start + to_sun * (len * (f32(i) + 0.5 + noise * 0.5) / f32(steps));
+            let clip = ao.view_proj * vec4f(s, 1.0);
+            if (clip.w <= 0.0) { break; }
+            let sn = clip.xy / clip.w;
+            if (abs(sn.x) > 1.0 || abs(sn.y) > 1.0) { break; }
+            let spx = vec2f((sn.x * 0.5 + 0.5) * ao.size.x, (0.5 - sn.y * 0.5) * ao.size.y);
+            let bd = depth_at(vec2i(spx));
+            if (bd >= 1.0) { continue; }
+            let gap = view_depth(s) - view_depth(world_at(spx, bd));
+            if (gap > 0.02 * len && gap < len) {
+                contact = smoothstep(0.7, 1.0, (f32(i) + 0.5) / f32(steps));   // dark, fading out at the march's end
+                break;
+            }
+        }
+    }
+    return vec4f(ambient, contact, 0.0, 1.0);
 }
 @fragment fn fs_ao_blur(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let c = vec2i(pos.xy);
     let dims = vec2i(textureDimensions(src));
     let center = view_depth(world_at(vec2f(c * 2) + 0.5, depth_at(c * 2)));
-    var sum = 0.0;
+    var sum = vec2f(0.0);
     var weight = 0.0;
     for (var y = -2; y <= 2; y = y + 1) {
         for (var x = -2; x <= 2; x = x + 1) {
@@ -2081,11 +2147,11 @@ fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
             let qd = depth_at(q * 2);
             let vd = select(view_depth(world_at(vec2f(q * 2) + 0.5, qd)), 1e9, qd >= 1.0);
             let w = 1.0 / (1.0 + abs(vd - center) * 8.0 / max(ao.params.x, 1e-3));
-            sum = sum + textureLoad(src, q, 0).r * w;
+            sum = sum + textureLoad(src, q, 0).rg * w;
             weight = weight + w;
         }
     }
-    return vec4f(sum / max(weight, 1e-4));
+    return vec4f(sum / max(weight, 1e-4), 0.0, 1.0);
 }
 )WGSL";
 
@@ -2541,6 +2607,8 @@ struct Renderer::Impl {
     WGPUTextureView glass_view = nullptr, glass_stub_view = nullptr;
     std::uint32_t glass_w = 0, glass_h = 0;
     bool glass_last = false;                      // glass was drawn last frame (the depth prepass stays on for it)
+    Vec3 sun_toward{0, 1, 0};                     // toward this frame's sun (contact shadows march along it)
+    bool contact_now = false;                     // contact shadows this frame: asked for, and a sun to cast them
     WGPUBuffer probe_sh_buffer = nullptr;         // each probe's diffuse harmonics, 256 bytes a slot
     WGPUBuffer probe_cluster_buffer = nullptr;    // a capture's one cluster: every local light that reaches the probe
     // Reflection probes: their slots (one array layer each), the panoramas, the six views a capture
@@ -3818,6 +3886,8 @@ struct Renderer::Impl {
         float fwd[4];
         float params[4];   // radius, intensity, samples
         float size[4];     // the full frame's width and height
+        float sun[4];      // toward the sun, contact shadows on
+        float contact[4];  // the contact march's length, ambient occlusion on
     };
 
     void release_ao_targets() {
@@ -3880,7 +3950,7 @@ struct Renderer::Impl {
         ao_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
         auto make = [&](const char* label, const char* entry) -> WGPURenderPipeline {
             WGPUColorTargetState ct{};
-            ct.format = WGPUTextureFormat_R8Unorm;
+            ct.format = WGPUTextureFormat_RG8Unorm;
             ct.writeMask = WGPUColorWriteMask_All;
             WGPUFragmentState fs{};
             fs.module = ao_shader;
@@ -3904,18 +3974,18 @@ struct Renderer::Impl {
         ao_blur_pipeline = make("pocket.ao.blur", "fs_ao_blur");
         if (!ao_pipeline || !ao_blur_pipeline) return fail("gpu_pipeline_failed", "ambient occlusion pipelines could not be created");
         ao_uniforms = device->create_buffer("pocket.ao", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(AoUniforms));
-        auto [wt, wv] = make_target("pocket.ao.white", 1, 1, WGPUTextureFormat_R8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        auto [wt, wv] = make_target("pocket.ao.white", 1, 1, WGPUTextureFormat_RG8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
         ao_white_tex = wt;
         ao_white_view = wv;
-        const std::uint8_t one = 255;
+        const std::uint8_t one[2] = {255, 255};
         WGPUTexelCopyTextureInfo dst{};
         dst.texture = ao_white_tex;
         dst.aspect = WGPUTextureAspect_All;
         WGPUTexelCopyBufferLayout layout{};
-        layout.bytesPerRow = 1;
+        layout.bytesPerRow = 2;
         layout.rowsPerImage = 1;
         WGPUExtent3D ext{1, 1, 1};
-        wgpuQueueWriteTexture(device->queue(), &dst, &one, 1, &layout, &ext);
+        wgpuQueueWriteTexture(device->queue(), &dst, one, 2, &layout, &ext);
         auto [dt, dv] = make_target("pocket.depth.none", 1, 1, kPrepassDepth, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment);
         no_depth_tex = dt;
         no_depth_view = dv;
@@ -5303,7 +5373,7 @@ struct Renderer::Impl {
         if (ao_tex[0] && ao_w == aw && ao_h == ah) return {};
         release_ao_targets();
         for (int i = 0; i < 2; ++i) {
-            auto [t, v] = make_target(i == 0 ? "pocket.ao.a" : "pocket.ao.b", aw, ah, WGPUTextureFormat_R8Unorm, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+            auto [t, v] = make_target(i == 0 ? "pocket.ao.a" : "pocket.ao.b", aw, ah, WGPUTextureFormat_RG8Unorm, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
             if (!t) return fail("gpu_texture_failed", "cannot create the AO target {}x{}", aw, ah);
             ao_tex[i] = t;
             ao_view[i] = v;
@@ -5381,6 +5451,10 @@ struct Renderer::Impl {
         u.params[2] = static_cast<float>(ao.samples);
         u.size[0] = static_cast<float>(frame.width);
         u.size[1] = static_cast<float>(frame.height);
+        u.sun[0] = sun_toward.x; u.sun[1] = sun_toward.y; u.sun[2] = sun_toward.z;
+        u.sun[3] = contact_now ? 1.0f : 0.0f;
+        u.contact[0] = shadows.contact_length;
+        u.contact[1] = ao.enabled ? 1.0f : 0.0f;
         device->write_buffer(ao_uniforms, 0, &u, sizeof u);
         for (int i = 0; i < 2; ++i) {
             WGPURenderPassColorAttachment ca{};
@@ -5400,7 +5474,7 @@ struct Renderer::Impl {
             wgpuRenderPassEncoderEnd(enc);
             wgpuRenderPassEncoderRelease(enc);
         }
-        stats.ao = true;
+        stats.ao = ao.enabled;
     }
 
     void release_scene_pipelines() {
@@ -7086,12 +7160,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // from the MeshRenderers that ask for it, or from last frame's draws (an asset's glass).
     bool glass_hint = im.glass_last;
     if (!glass_hint) world.ecs().each([&](flecs::entity, const world::MeshRenderer& mr) { if (mr.visible && mr.transmission > 0) glass_hint = true; });
-    const bool prepass = im.msaa > 1 || im.ao.enabled || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || !im.water_bodies.empty() || glass_hint;
+    const bool ao_pass = im.ao.enabled || im.shadows.contact;   // the half-size pass also holds contact shadows
+    const bool prepass = im.msaa > 1 || ao_pass || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || !im.water_bodies.empty() || glass_hint;
     if (glass_hint) POCKET_TRY_VOID(im.ensure_glass_target(frame.width, frame.height));
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
-    if (im.ao.enabled) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
-    im.make_scene_group(im.ao.enabled ? im.ao_view[1] : im.ao_white_view);
+    if (ao_pass) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
+    im.make_scene_group(ao_pass ? im.ao_view[1] : im.ao_white_view);
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
     POCKET_TRY_VOID(im.ensure_hdr_target(frame.width, frame.height));
     POCKET_TRY_VOID(im.ensure_msaa_targets(frame.width, frame.height, im.msaa_applied));
@@ -7179,6 +7254,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             have_sun = true;
             Vec3 dir = t.rotation.rotate({0, 0, -1});
             fu.sun_dir[0] = dir.x; fu.sun_dir[1] = dir.y; fu.sun_dir[2] = dir.z;
+            im.sun_toward = normalize(Vec3{-dir.x, -dir.y, -dir.z});
             fu.sun_color[0] = decode(l.color.r) * l.intensity;
             fu.sun_color[1] = decode(l.color.g) * l.intensity;
             fu.sun_color[2] = decode(l.color.b) * l.intensity;
@@ -7284,6 +7360,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             std::memcpy(slots + 256 * c, fu.cascade_vp[c], sizeof(float) * 16);
             fu.cascade_far[c] = splits[cc + 1];
             fu.cascade_texel[c] = 2.0f * r / static_cast<float>(kShadowMapSize);
+            fu.cascade_depth[c] = back + r + 1.0f - 0.05f;
         }
         if (shadows_on) im.device->write_buffer(im.cascade_buffer, 0, slots, sizeof slots);
         fu.camera_fwd[0] = fwd.x; fu.camera_fwd[1] = fwd.y; fu.camera_fwd[2] = fwd.z; fu.camera_fwd[3] = static_cast<float>(count);
@@ -7294,7 +7371,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         fu.shadow[1] = im.shadows.bias;
         fu.shadow[2] = im.shadows.strength;
         fu.shadow[3] = shadows_on ? 1.0f : 0.0f;
+        fu.shadow_soft[0] = std::tan(radians(im.shadows.softness));
+        fu.shadow_soft[2] = 8.0f;   // blockers up to this far in front of a point soften its shadow
     }
+    im.contact_now = im.shadows.contact && have_sun;
+    fu.shadow_soft[1] = im.contact_now ? 1.0f : 0.0f;
+    im.stats.soft_shadows = shadows_on && im.shadows.softness > 0;
+    im.stats.contact_shadows = im.contact_now;
     im.stats.shadows = shadows_on;
     // The sky: the first enabled Sky; its environment is rebuilt when anything it is made of changed.
     world::Sky sky;
@@ -8093,6 +8176,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             pu.clusters[3] = probe_lights;
             pu.probe_info[2] = 1;   // a capture: no local lights' shadows, the sun's by the cascade holding the point
             pu.ao[0] = 0;
+            pu.shadow_soft[1] = 0;   // the camera's contact shadows are not the capture's
             pu.taa[0] = 0;
             if (!slot.captured) {
                 // Its own light, dark so far, for what is in its box (reflections only from the captured).
@@ -8354,7 +8438,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.stats.id_draws);
         wgpuRenderPassEncoderEnd(ipass);
         wgpuRenderPassEncoderRelease(ipass);
-        if (im.ao.enabled) im.draw_ao(frame);
+        if (ao_pass) im.draw_ao(frame);
     }
     // Order-independent transparency: the translucent meshes leave this pass for their own, and
     // what is drawn after them (sprites, lines) waits for a pass after the composite. With MSAA
@@ -8362,7 +8446,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     const bool oit = im.oit && translucent_instances > 0;
     // Glass (docs/design/rendering.md, Glass) waits for a pass of its own after the solid meshes,
     // which reads a copy of what they drew; the translucent meshes come after it.
-    const bool glassy = split && glass_instances > 0;
+    // (A frame that meets an asset's glass first has no copy to read yet: it draws it as solid.)
+    const bool glassy = split && glass_instances > 0 && im.glass_tex && im.glass_w == frame.width && im.glass_h == frame.height;
     WGPURenderPassColorAttachment first[2] = {ca[0], ca[1]};
     if (oit && resolve) {
         first[0].resolveTarget = nullptr;
@@ -8664,6 +8749,8 @@ int Renderer::msaa() const { return impl_->msaa; }
 void Renderer::set_shadows(ShadowSettings s) {
     s.cascades = std::clamp(s.cascades, 1, static_cast<int>(kCascades));
     s.distance = std::max(s.distance, 1.0f);
+    s.softness = std::clamp(s.softness, 0.0f, 5.0f);
+    s.contact_length = std::clamp(s.contact_length, 0.02f, 4.0f);
     impl_->shadows = s;
 }
 void Renderer::set_bloom(BloomSettings s) {
@@ -8850,6 +8937,8 @@ Json Renderer::describe() const {
     j["env_updates"] = s.env_updates;
     j["depth_prepass"] = s.depth_prepass;
     j["ao"] = s.ao;
+    j["soft_shadows"] = s.soft_shadows;
+    j["contact_shadows"] = s.contact_shadows;
     j["fog"] = s.fog;
     j["volumetric"] = s.volumetric;
     j["taa"] = s.taa;

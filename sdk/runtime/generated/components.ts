@@ -172,6 +172,16 @@ export interface Health {
     max: number;
 }
 
+/** An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models). */
+export interface Model {
+    /** The model file, relative to the project. */
+    path: string;
+    /** The file's content hash when the children were made from it. */
+    hash: string;
+    /** Made again when the file changes; false keeps the children as they are. */
+    live: boolean;
+}
+
 /** Seconds remaining before the entity is destroyed by the lifetime system. */
 export interface Lifetime {
     /** Remaining seconds; the entity is destroyed when it reaches zero. */
@@ -642,7 +652,7 @@ export interface Bounds {
     max: Vec3;
 }
 
-/** Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots). */
+/** Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. A dynamic or kinematic body's Transform is its place in the world (the solver writes it back), so those should be roots; a static body under a parent (a node of an instantiated level) stands where its parents put it. */
 export interface RigidBody {
     /** 0 dynamic, 1 static, 2 kinematic. */
     kind: number;
@@ -992,6 +1002,8 @@ export interface Collider {
     is_trigger: boolean;
     /** For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh. */
     mesh: string;
+    /** For shape 3: only the triangles of this node of the file (its name, or its index as text), in the node's own space as MeshRenderer.node draws it; empty takes the whole file (the MeshRenderer's node when the mesh is the MeshRenderer's). */
+    node: string;
     /** Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them. */
     layer: number;
     /** Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes. */
@@ -1099,6 +1111,7 @@ export interface Components {
     WorldTransform: WorldTransform;
     Velocity: Velocity;
     Health: Health;
+    Model: Model;
     Lifetime: Lifetime;
     Camera: Camera;
     CameraRig: CameraRig;
@@ -1138,7 +1151,7 @@ export interface Components {
 
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
@@ -1146,6 +1159,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     WorldTransform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
     Velocity: { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } },
     Health: { current: 100, max: 100 },
+    Model: { path: "", hash: "", live: true },
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
@@ -1175,7 +1189,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
-    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", layer: 1, mask: 4294967295, group: 0 },
+    Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", node: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },

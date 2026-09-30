@@ -202,6 +202,18 @@ void from_json(const Json& j, Health& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Health& v, std::string_view path, float** out);
 
+/// An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).
+struct Model {
+    std::string path = "";
+    std::string hash = "";
+    bool live = true;
+    constexpr bool operator==(const Model&) const = default;
+};
+void to_json(Json& j, const Model& v);
+void from_json(const Json& j, Model& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Model& v, std::string_view path, float** out);
+
 /// Seconds remaining before the entity is destroyed by the lifetime system.
 struct Lifetime {
     float seconds = 1.0f;
@@ -570,7 +582,7 @@ void from_json(const Json& j, Bounds& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Bounds& v, std::string_view path, float** out);
 
-/// Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).
+/// Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. A dynamic or kinematic body's Transform is its place in the world (the solver writes it back), so those should be roots; a static body under a parent (a node of an instantiated level) stands where its parents put it.
 struct RigidBody {
     std::int32_t kind = 0;
     float mass = 1.0f;
@@ -816,6 +828,7 @@ struct Collider {
     Vec3 offset{0.0f, 0.0f, 0.0f};
     bool is_trigger = false;
     std::string mesh = "";
+    std::string node = "";
     std::uint32_t layer = 1;
     std::uint32_t mask = 4294967295;
     std::int32_t group = 0;
@@ -929,6 +942,7 @@ void hash_component(struct StateHasherRef& h, const Transform& v);
 void hash_component(struct StateHasherRef& h, const WorldTransform& v);
 void hash_component(struct StateHasherRef& h, const Velocity& v);
 void hash_component(struct StateHasherRef& h, const Health& v);
+void hash_component(struct StateHasherRef& h, const Model& v);
 void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const CameraRig& v);

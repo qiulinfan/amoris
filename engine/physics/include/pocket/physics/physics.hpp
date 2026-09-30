@@ -72,6 +72,7 @@ struct StepStats {
     std::uint32_t ends = 0;
     std::uint32_t meshes = 0;     // mesh colliders with triangles this step
     std::uint32_t triangles = 0;  // their triangles, summed
+    std::uint32_t mesh_vertices = 0;   // the vertices they keep, summed
     std::uint32_t ccd_hits = 0;   // bodies stopped by a continuous-collision sweep this step
     std::uint32_t ccd_dynamic = 0; // of those, impacts with another dynamic body (both stopped)
     std::uint32_t ignored = 0;    // overlapping pairs kept apart by groups, exceptions or joints this step
@@ -84,6 +85,12 @@ struct StepStats {
     std::uint32_t scattered = 0;           // scattered copies standing as colliders (Scatter.collide)
 };
 
+// Where a body is: its Transform, or for a static body under a parent (a level's part, a node of
+// an instantiated model) its place in the world, composed from its ancestors' Transforms as they
+// are now. Dynamic and kinematic bodies move their own Transform (the solver writes it back), which
+// is read as their place in the world, so they should be roots.
+[[nodiscard]] world::Transform placed(flecs::entity e, const world::RigidBody& rb, const world::Transform& t);
+
 class Physics {
    public:
     explicit Physics(Settings settings = {});
@@ -93,6 +100,8 @@ class Physics {
 
     // Where mesh colliders (Collider.shape 3) read their triangles from; without it they are skipped.
     void set_assets(assets::AssetStore* assets);
+    // Forget the mesh colliders' triangles, read again on the next step (a model changed on disk).
+    void drop_mesh_cache();
     // Advance all bodies by dt. Emits events into world.events(). Call before World::tick.
     void step(world::World& world, double dt);
     // Move every Character (a kinematic capsule: walls, slopes, steps, platforms) by its velocity

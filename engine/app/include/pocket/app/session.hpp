@@ -82,6 +82,12 @@ class Session {
     void bind_natives();
     world::EntityId resolve_entity(const Json& v) const;
     Result<Json> world_command(std::string_view op, const Json& p, std::string_view source);
+    // A model file's nodes as entity descriptions (docs/design/assets.md, Live models).
+    Result<Json> model_children(const std::string& mesh_path, std::vector<std::string>& warnings);
+    // A project file's content hash, as Model.hash keeps it ("" when it cannot be read).
+    [[nodiscard]] std::string file_hash(const std::string& path) const;
+    // Live Model instances whose file changed, made again in place; what was made again.
+    Json relink_models();
     Result<Json> world_lint(const Json& p);
     Result<Json> events_command(std::string_view op, const Json& p, std::string_view source);
     Result<Json> recorder_command(std::string_view op, const Json& p);

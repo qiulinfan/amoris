@@ -24,6 +24,13 @@ struct ShadowSettings {
     float bias = 0.0008f;     // depth bias in shadow-map units, scaled by slope in the shader (lookups also move out along the surface's normal by a texel)
     int cascades = 4;         // shadow maps along the view, each covering a farther slice at a coarser scale (1..4)
     float distance = 80.0f;   // how far from the camera shadows reach (clamped to the scene and the camera's far plane)
+    // The sun's shadows soften with distance from what casts them, as under a sun this many degrees
+    // across in radius (0: the sharp 3x3 filter; docs/design/rendering.md, Soft shadows).
+    float softness = 0.0f;
+    // Contact shadows: a short march toward the sun through the depth buffer, for the small gaps
+    // and thin casters the shadow maps are too coarse to see (a foot on the ground, a cup on a table).
+    bool contact = false;
+    float contact_length = 0.3f;   // how far the march goes, in world units
 };
 
 // Bloom: bright parts of the frame blurred and added back, so lights and emissive surfaces glow.
@@ -146,6 +153,8 @@ struct RenderStats {
     int sky = 0;                      // the Sky drawn (0 none, 1 procedural, 2 image)
     bool depth_prepass = false;       // whether the ids and depth were drawn in a pass of their own first (MSAA, AO or fog)
     bool ao = false;                  // whether ambient occlusion was computed this frame
+    bool soft_shadows = false;        // whether the sun's shadows softened with distance (ShadowSettings::softness)
+    bool contact_shadows = false;     // whether contact shadows were marched this frame
     bool fog = false;                 // whether fog was applied this frame
     bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
     bool taa = false;                 // whether the frame was resolved against its history (temporal anti-aliasing)

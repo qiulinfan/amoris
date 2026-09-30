@@ -77,6 +77,19 @@ Json Mesh::describe() const {
         parts.push_back(name.empty() ? std::to_string(sm.origin) : name);
     }
     j["parts"] = parts;
+    // Nodes' custom properties (glTF extras, as Blender writes an object's), under the names
+    // world.instantiate gives the nodes' entities: the node's name when no other node has it, else
+    // the name and the node's index (node<index> for an unnamed one).
+    std::map<std::string, int> name_count;
+    for (const Node& n : nodes) name_count[n.name]++;
+    Json properties = Json::object();
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const Node& n = nodes[i];
+        if (!n.extras.is_object()) continue;
+        const std::string key = n.name.empty() ? "node" + std::to_string(i) : name_count[n.name] == 1 ? n.name : n.name + "_" + std::to_string(i);
+        properties[key] = n.extras;
+    }
+    if (!properties.empty()) j["properties"] = properties;
     j["moving_parts"] = moving_parts();
     j["skinned"] = skinned();
     j["vertex_colors"] = vertex_colors;
@@ -1183,6 +1196,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             if (ci >= 0 && ci < static_cast<int>(nodes.size())) out.children.push_back(ci);
         }
         if (n.contains("extensions") && n["extensions"].is_object() && n["extensions"].contains("KHR_lights_punctual")) out.light = n["extensions"]["KHR_lights_punctual"].value("light", -1);
+        if (n.contains("extras") && n["extras"].is_object() && !n["extras"].empty()) out.extras = n["extras"];
         if (n.contains("camera") && n["camera"].is_number_integer()) out.camera = n["camera"].get<int>();
         mesh.nodes.push_back(std::move(out));
     }

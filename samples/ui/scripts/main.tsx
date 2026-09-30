@@ -1,6 +1,8 @@
 // A heads-up display and a pause menu built with Pocket UI. The interface is data: agents read
 // it with `ui.snapshot` and press its buttons with `ui.click`, exactly like a player would. Its
-// words come from locales/en.json and locales/zh.json by key (`t`); the menu switches language.
+// words come from locales/en.json, locales/zh.json and locales/ar.json by key (`t`); the menu switches
+// language, and in Arabic the whole interface turns around (`dir` from `i18n.direction()`: rows from
+// the right, the HUD at the right edge, text right to left).
 import { Button, Checkbox, Choice, Label, Panel, Row, Slider, TextInput, audio, expose, i18n, log, mount, onInput, onTick, signal, t, world } from "pocket";
 
 const score = signal(0);
@@ -19,7 +21,7 @@ let crate = 0;
 
 function Hud() {
     return (
-        <box position="absolute" left={12} top={12} gap={6} name="hud">
+        <box position="absolute" start={12} top={12} gap={6} name="hud">
             <Row gap={12}>
                 <Label text={`${playerName()}`} size={16} />
                 <Label text={t("hud.score", { score: score() })} name="score" size={16} />
@@ -59,7 +61,7 @@ function PauseMenu() {
                 <TextInput value={playerName()} onInput={(v) => playerName.set(v)} placeholder={t("menu.name_placeholder")} name="name-input" />
                 <Row gap={10}>
                     <Label text={t("menu.volume")} muted />
-                    <Slider value={volume()} step={0.05} width={180} name="volume" autofocus onInput={(v) => { volume.set(v); audio.bus("main", { volume: v }); }} />
+                    <Slider value={volume()} step={0.05} width={150} name="volume" autofocus onInput={(v) => { volume.set(v); audio.bus("main", { volume: v }); }} />
                     <Label text={`${Math.round(volume() * 100)}%`} muted size={12} />
                 </Row>
                 <Row gap={10}>
@@ -80,13 +82,13 @@ function PauseMenu() {
 }
 
 mount(() => (
-    <>
+    <box position="absolute" left={0} top={0} width="100%" height="100%" dir={i18n.direction()} pointerEvents="none" name="screen">
         <Hud />
-        <box position="absolute" left={12} bottom={12}>
+        <box position="absolute" start={12} bottom={12}>
             <Controls />
         </box>
         <PauseMenu />
-    </>
+    </box>
 ));
 
 expose("score", () => score());

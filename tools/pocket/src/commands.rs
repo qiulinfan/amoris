@@ -185,7 +185,17 @@ pub fn run(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Resul
 
 /// The UI font installed by `pocket setup` (the `file` dependency named noto-sans-cjk), if present.
 pub fn ui_font(ws: &Workspace) -> Option<PathBuf> {
-    let dep = ws.file.dependencies.iter().find(|d| d.name == "noto-sans-cjk")?;
+    dep_file(ws, "noto-sans-cjk")
+}
+
+/// The fonts the UI falls back to for what the main font lacks: the bundled Noto Sans Arabic
+/// (Arabic script; right-to-left text needs a face that has it).
+pub fn ui_fallback_fonts(ws: &Workspace) -> Vec<PathBuf> {
+    dep_file(ws, "noto-sans-arabic").into_iter().collect()
+}
+
+fn dep_file(ws: &Workspace, name: &str) -> Option<PathBuf> {
+    let dep = ws.file.dependencies.iter().find(|d| d.name == name)?;
     let file_name = dep.url.rsplit('/').next()?;
     let path = deps::prefix(ws, dep).join(file_name);
     if path.is_file() { Some(path) } else { None }
@@ -439,6 +449,10 @@ pub fn bundle_project(ws: &Workspace, project: &Path, out: Option<&Path>) -> Res
         map.insert("dir".into(), serde_json::Value::String(std::fs::canonicalize(project).unwrap_or(project.to_path_buf()).to_string_lossy().into_owned()));
         if let Some(font) = ui_font(ws) {
             map.insert("font".into(), serde_json::Value::String(font.to_string_lossy().into_owned()));
+        }
+        if !map.contains_key("font_fallbacks") {
+            let fallbacks: Vec<serde_json::Value> = ui_fallback_fonts(ws).iter().map(|p| serde_json::Value::String(p.to_string_lossy().into_owned())).collect();
+            map.insert("font_fallbacks".into(), serde_json::Value::Array(fallbacks));
         }
     }
     let settings_path = PathBuf::from(format!("{}.project.json", out.display()));

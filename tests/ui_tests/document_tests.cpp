@@ -964,3 +964,158 @@ TEST_CASE("a prop taken away beside one set applies in that order: flex after fl
     f.layout();
     REQUIRE(f.doc->rect_of(41).h == 200);
 }
+
+TEST_CASE("right-to-left inputs: the caret on the glyphs, arrows the way they point, clicks where the letters are", "[ui][rtl]") {
+    Fixture f;
+    REQUIRE(f.font->add_fallback((root() / ".pocket" / "deps" / "noto-sans-arabic-2.010" / "NotoSansArabic-Regular.ttf").string()).has_value());
+    auto painter = ui::Painter::create(*f.device, *f.font);
+    REQUIRE(painter.has_value());
+    const std::string salam = "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85";   // سلام, four letters of two bytes
+    Json ops = Json::parse(R"([
+        ["create", 70, "input"], ["set", 70, {"position": "absolute", "left": 10, "top": 10, "width": 200, "height": 24, "name": "rtl"}], ["append", 1, 70],
+        ["create", 71, "input"], ["set", 71, {"position": "absolute", "left": 10, "top": 50, "width": 200, "height": 24, "name": "mixed"}], ["append", 1, 71],
+        ["create", 72, "input"], ["set", 72, {"position": "absolute", "left": 10, "top": 90, "width": 200, "height": 24, "name": "latin", "dir": "rtl", "value": "Player"}], ["append", 1, 72]
+    ])");
+    ops[1][2]["value"] = salam;
+    ops[4][2]["value"] = "ab " + salam;
+    f.apply(ops);
+    f.layout();
+    auto paint = [&]() {
+        auto frame = f.device->begin_frame();
+        REQUIRE(frame.has_value());
+        WGPURenderPassEncoder pass = f.device->begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        (*painter)->begin(320, 200, 1.0f);
+        f.doc->paint(**painter);
+        REQUIRE((*painter)->flush(*frame).has_value());
+        REQUIRE(f.device->end_frame(*frame).has_value());
+    };
+    auto key = [](const char* name) {
+        platform::Event e;
+        e.type = platform::EventType::KeyDown;
+        e.key_name = name;
+        return e;
+    };
+    auto caret = [&](ui::NodeId id) { return f.doc->describe(id)["caret"].get<int>(); };
+    bool text_wanted = false;
+    // An Arabic value stands at the input's right (textAlign start); its start is the right end,
+    // its end the left end of the word.
+    f.doc->set_focus(70);
+    f.doc->handle_events({key("Home")}, text_wanted);
+    paint();
+    const float start_x = f.doc->caret_rect().x;
+    REQUIRE(start_x > 190);
+    f.doc->handle_events({key("End")}, text_wanted);
+    paint();
+    const float end_x = f.doc->caret_rect().x;
+    REQUIRE(end_x < start_x - 10);
+    REQUIRE(end_x > 100);
+    // Left goes on through the word (forward in the text), Right back.
+    f.doc->handle_events({key("Home"), key("Left")}, text_wanted);
+    REQUIRE(caret(70) == 2);
+    paint();
+    REQUIRE(f.doc->caret_rect().x < start_x);
+    f.doc->handle_events({key("Right")}, text_wanted);
+    REQUIRE(caret(70) == 0);
+    // A click left of the word is its end, at the right edge its start.
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 20, 22), mouse(platform::EventType::MouseUp, 20, 22)}, text_wanted);
+    REQUIRE(caret(70) == 8);
+    f.doc->handle_events({mouse(platform::EventType::MouseDown, 208, 22), mouse(platform::EventType::MouseUp, 208, 22)}, text_wanted);
+    REQUIRE(caret(70) == 0);
+    // A left-to-right line with an Arabic word at its end: the end is the far right, and Left from
+    // there steps over the word's first letter (the rightmost), then on through the word.
+    f.doc->set_focus(71);
+    f.doc->handle_events({key("End"), key("Left")}, text_wanted);
+    REQUIRE(caret(71) == 5);
+    paint();
+    const float after_seen = f.doc->caret_rect().x;
+    f.doc->handle_events({key("Left")}, text_wanted);
+    paint();
+    REQUIRE(f.doc->caret_rect().x < after_seen);
+    f.doc->handle_events({key("End"), key("Right")}, text_wanted);
+    REQUIRE(caret(71) == 11);
+    // Home and the arrows through plain text still go one character at a time.
+    f.doc->handle_events({key("Home"), key("Right"), key("Right")}, text_wanted);
+    REQUIRE(caret(71) == 2);
+    // An English word in a right-to-left field (dir rtl): the start at the field's right, the end
+    // left of the word; Left walks across it letter by letter to the end and stops there.
+    f.doc->set_focus(72);
+    f.doc->handle_events({key("Home")}, text_wanted);
+    paint();
+    const float home_x = f.doc->caret_rect().x;
+    REQUIRE(home_x > 190);
+    std::vector<int> walk;
+    float last_x = home_x;
+    for (int i = 0; i < 7; ++i) {
+        f.doc->handle_events({key("Left")}, text_wanted);
+        paint();
+        walk.push_back(caret(72));
+        if (i < 6) REQUIRE(f.doc->caret_rect().x < last_x);   // every press a step left
+        last_x = f.doc->caret_rect().x;
+    }
+    REQUIRE(walk == std::vector<int>{5, 4, 3, 2, 1, 6, 6});
+    f.doc->handle_events({key("Right")}, text_wanted);
+    REQUIRE(caret(72) == 1);
+}
+
+TEST_CASE("a wrapped paragraph keeps one direction on every line, and dir lays rows out from the right", "[ui][rtl]") {
+    Fixture f;
+    REQUIRE(f.font->add_fallback((root() / ".pocket" / "deps" / "noto-sans-arabic-2.010" / "NotoSansArabic-Regular.ttf").string()).has_value());
+    auto painter = ui::Painter::create(*f.device, *f.font);
+    REQUIRE(painter.has_value());
+    const std::string salam = "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85";
+    // The same Arabic paragraph twice, 150 wide, wrapped: the Arabic word, a Latin word too long
+    // to share its line, and a last line of one short Latin word.
+    // The first finds its direction from its first letter; the second is told dir ltr.
+    Json ops = Json::parse(R"([
+        ["create", 80, "text"], ["set", 80, {"position": "absolute", "left": 10, "top": 5, "width": 150, "textWrap": true}], ["append", 1, 80],
+        ["create", 81, "text"], ["set", 81, {"position": "absolute", "left": 10, "top": 100, "width": 150, "textWrap": true, "dir": "ltr"}], ["append", 1, 81],
+        ["create", 82, "box"], ["set", 82, {"position": "absolute", "left": 200, "top": 10, "width": 100, "height": 20, "flexDirection": "row", "dir": "rtl"}], ["append", 1, 82],
+        ["create", 83, "box"], ["set", 83, {"width": 30, "height": 20}], ["append", 82, 83],
+        ["create", 84, "box"], ["set", 84, {"width": 30, "height": 20}], ["append", 82, 84]
+    ])");
+    const std::string text = salam + " abcdefghijklmnopqrstuvwxyz ok";
+    f.apply(ops);
+    f.apply(Json::array({Json::array({"set", 80, {{"text", text}}}), Json::array({"set", 81, {{"text", text}}})}));
+    f.layout();
+    // pointerEvents none: the pointer goes through a full-window layer to nothing, but its children take it.
+    f.apply(Json::parse(R"([
+        ["create", 90, "box"], ["set", 90, {"position": "absolute", "left": 0, "top": 0, "width": "100%", "height": "100%", "pointerEvents": "none"}], ["append", 1, 90],
+        ["create", 91, "box"], ["set", 91, {"position": "absolute", "left": 10, "top": 170, "width": 20, "height": 20}], ["append", 90, 91]
+    ])"));
+    f.layout();
+    REQUIRE(f.doc->hit_test(200, 180) == 0);
+    REQUIRE(f.doc->hit_test(15, 175) == 91);
+    // dir rtl: the row's first child on the right, and describe says which way a node goes.
+    REQUIRE(f.doc->describe(84)["dir"] == "rtl");
+    REQUIRE_FALSE(f.doc->describe(80).contains("dir"));
+    REQUIRE(f.doc->describe(83)["rect"]["x"].get<float>() > f.doc->describe(84)["rect"]["x"].get<float>());
+    REQUIRE(f.doc->describe(83)["rect"]["x"].get<float>() == Catch::Approx(270));
+    auto frame = f.device->begin_frame();
+    REQUIRE(frame.has_value());
+    WGPURenderPassEncoder pass = f.device->begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+    (*painter)->begin(320, 200, 1.0f);
+    f.doc->paint(**painter);
+    REQUIRE((*painter)->flush(*frame).has_value());
+    REQUIRE(f.device->end_frame(*frame).has_value());
+    auto img = f.device->capture();
+    REQUIRE(img.has_value());
+    // The leftmost lit pixel of a node's last line.
+    auto leftmost = [&](ui::NodeId id) {
+        const Json r = f.doc->describe(id)["rect"];
+        const float lh = (*painter)->line_height(13);
+        REQUIRE(r["h"].get<float>() > lh * 1.5f);   // wrapped
+        const int y0 = static_cast<int>(r["y"].get<float>() + r["h"].get<float>() - lh + 2), y1 = static_cast<int>(r["y"].get<float>() + r["h"].get<float>() - 2);
+        for (int x = 0; x < 320; ++x)
+            for (int y = y0; y < y1; ++y)
+                if (img->rgba[(static_cast<std::size_t>(y) * img->width + static_cast<std::size_t>(x)) * 4] > 100) return x;
+        return 320;
+    };
+    const int auto_left = leftmost(80), ltr_left = leftmost(81);
+    INFO("last line starts at " << auto_left << " (the paragraph's direction) and " << ltr_left << " (dir ltr)");
+    REQUIRE(ltr_left < 14);
+    REQUIRE(auto_left > ltr_left + 10);   // right-aligned with its paragraph, not left as its first word would have it
+}

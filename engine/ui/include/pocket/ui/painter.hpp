@@ -9,6 +9,7 @@
 #include <pocket/rhi/device.hpp>
 #include <pocket/ui/font.hpp>
 
+#include <functional>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -31,7 +32,9 @@ struct Rect {
     }
 };
 
-enum class TextAlign { Left, Center, Right };
+// Start is the line's own side: the left, or the right for a right-to-left line; End the other
+// (docs/design/pocket-ui.md, Right-to-left text).
+enum class TextAlign { Left, Center, Right, Start, End };
 
 class Painter {
    public:
@@ -52,11 +55,13 @@ class Painter {
     // `ph` pixels, split `left`, `top`, `right` and `bottom` pixels from its edges; the corners
     // keep their pixel size (one point each), the edges stretch along, the middle fills the rest.
     void image_sliced(const Rect& r, WGPUTextureView view, float u0, float v0, float u1, float v1, float pw, float ph, float left, float top, float right, float bottom, Color tint, bool nearest = false);
-    // Draw one line of text with its baseline placed so the text box starts at (x, y).
-    // Returns the advance width in points.
-    float text(float x, float y, std::string_view text, float size_points, Color color);
-    float text_aligned(const Rect& box, std::string_view text, float size_points, Color color, TextAlign align, bool vcenter = true);
-    [[nodiscard]] float measure(std::string_view text, float size_points);
+    // Draw one line of text (of a paragraph going `dir`) with its baseline placed so the text box
+    // starts at (x, y). Returns the advance width in points.
+    float text(float x, float y, std::string_view text, float size_points, Color color, TextDirection dir = TextDirection::Auto);
+    // The same, each glyph in the colour of the byte it starts at (coloured code).
+    float text(float x, float y, std::string_view text, float size_points, const std::function<Color(std::size_t)>& color_at, TextDirection dir = TextDirection::Auto);
+    float text_aligned(const Rect& box, std::string_view text, float size_points, Color color, TextAlign align, bool vcenter = true, TextDirection dir = TextDirection::Auto);
+    [[nodiscard]] float measure(std::string_view text, float size_points, TextDirection dir = TextDirection::Auto);
     [[nodiscard]] float line_height(float size_points);
     void push_clip(const Rect& r);
     void pop_clip();

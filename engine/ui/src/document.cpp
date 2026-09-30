@@ -57,7 +57,9 @@ struct Node {
     float opacity = 1;
     Color color{0.9f, 0.9f, 0.9f, 1};
     float font_size = 13;
-    TextAlign text_align = TextAlign::Left;
+    TextAlign text_align = TextAlign::Start;
+    TextDirection dir = TextDirection::Auto;   // `dir`: its text's paragraphs, and its rows laid out right to left
+    bool pass_through = false;                 // pointerEvents none: the pointer goes through it (not its children)
     bool text_wrap = false;
     bool clip = false;       // overflow hidden or scroll
     bool scroll = false;     // overflow scroll
@@ -100,8 +102,10 @@ struct Node {
     Rect rect;
     float scroll_y = 0;
     float content_height = 0;
-    // Cached wrapped lines for text nodes
+    // Cached wrapped lines for text nodes, and whether each one's paragraph reads right to left
+    // by its first strong letter (used when no `dir` is set)
     std::vector<std::string> lines;
+    std::vector<bool> line_rtl;
     float measured_width = -1;
 };
 
@@ -305,11 +309,16 @@ struct Document::Impl {
             self->rows_of(*n, text, n->text_wrap ? max_w : 1e9f, rows);
             for (const Row& row : rows) lines.push_back(text.substr(row.start, row.end - row.start));
         }
-        else self->wrap(text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines);
+        std::vector<bool> line_rtl;
+        if (!(n->type == "input" && n->multiline)) self->wrap(text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines, &line_rtl);
         float widest = 0;
-        for (const auto& l : lines) widest = std::max(widest, self->font.measure(l, px) / self->scale);
+        for (std::size_t li = 0; li < lines.size(); ++li) {
+            const TextDirection d = li < line_rtl.size() ? self->line_dir(*n, line_rtl[li]) : TextDirection::Auto;   // as it is drawn
+            widest = std::max(widest, self->font.measure(lines[li], px, d) / self->scale);
+        }
         if (lines.empty()) lines.push_back("");
         n->lines = lines;
+        n->line_rtl = line_rtl;
         n->measured_width = max_w;
         YGSize size;
         size.width = wm == YGMeasureModeExactly ? w : std::min(std::ceil(widest) + (n->type == "input" ? 2.0f : 0.0f), max_w);
@@ -389,36 +398,67 @@ struct Document::Impl {
         if (!row.hard && row.end > row.start && text[row.end - 1] == ' ') return row.end - 1;
         return row.end;
     }
-    // The byte offset on a row nearest an x position (pixels from the row's start).
-    std::size_t offset_in_row(const Node& n, const std::string& text, const Row& row, float local_px) const {
-        const float px = n.font_size * scale;
-        const std::size_t last = row_last(text, row);
-        std::size_t best = last, prev = row.start;
-        float prev_w = 0;
-        for (std::size_t i = row.start; i <= last; i = utf8_next(text, i)) {
-            const float w = font.measure(text.substr(row.start, i - row.start), px);
-            if (w >= local_px) { best = (i > row.start && w - local_px > local_px - prev_w) ? prev : i; break; }
-            prev = i;
-            prev_w = w;
-            if (i >= last) break;
-        }
-        return best;
+    // A row of an input laid out (docs/design/pocket-ui.md, Right-to-left text): in its
+    // paragraph's direction (the element's `dir`, or the paragraph's first strong letter), in
+    // points, with `origin` where its left end stands from the inner box's text start (inner.x + 1),
+    // aligned by textAlign (start: the paragraph's side) in `inner_w`; a row too wide keeps its
+    // start in view.
+    struct RowLayout {
+        LineLayout lay;
+        float origin = 0;
+        TextDirection dir = TextDirection::Ltr;
+        [[nodiscard]] bool rtl() const { return dir == TextDirection::Rtl; }
+    };
+    RowLayout row_layout(const Node& n, const std::string& text, std::size_t start, std::size_t end, float inner_w) const {
+        RowLayout r;
+        std::size_t ps = start == 0 ? std::string::npos : text.rfind('\n', start - 1);
+        ps = ps == std::string::npos ? 0 : ps + 1;
+        const std::size_t pe = std::min(text.find('\n', start), text.size());
+        r.dir = line_dir(n, rtl_line(std::string_view(text).substr(ps, pe - ps)));
+        // Code reads left to right whatever its comments and strings are in, unless told otherwise.
+        if (!n.syntax.empty() && dir_of(n) == TextDirection::Auto) r.dir = TextDirection::Ltr;
+        r.lay = font.layout(std::string_view(text).substr(start, end - start), n.font_size * scale, r.dir);
+        for (LineLayout::Cluster& c : r.lay.clusters) { c.x0 /= scale; c.x1 /= scale; }
+        r.lay.width /= scale;
+        TextAlign a = n.text_align;
+        if (a == TextAlign::Start) a = r.rtl() ? TextAlign::Right : TextAlign::Left;
+        else if (a == TextAlign::End) a = r.rtl() ? TextAlign::Left : TextAlign::Right;
+        const float room = inner_w - 2;
+        if (r.lay.width > room) r.origin = r.rtl() ? room - r.lay.width : 0;
+        else r.origin = a == TextAlign::Left ? 0 : a == TextAlign::Right ? room - r.lay.width : (room - r.lay.width) * 0.5f;
+        return r;
+    }
+    // The byte offset on a row whose caret is nearest an x position (points from the text start).
+    std::size_t offset_in_row(const Node& n, const std::string& text, const Row& row, float x, float inner_w) const {
+        const RowLayout rl = row_layout(n, text, row.start, row.end, inner_w);
+        return std::clamp(row.start + rl.lay.offset_at(x - rl.origin), row.start, row_last(text, row));
+    }
+    // Where a caret at a byte offset of a row stands (points from the text start).
+    float caret_in_row(const Node& n, const std::string& text, const Row& row, std::size_t at, float inner_w) const {
+        const RowLayout rl = row_layout(n, text, row.start, row.end, inner_w);
+        return rl.origin + rl.lay.caret_x(at - row.start);
     }
     float inner_width(const Node& n) const {
         return n.rect.w - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - YGNodeLayoutGetPadding(n.yoga, YGEdgeRight) - 2 * n.border_width;
     }
 
-    void wrap(const std::string& text, float size_points, float max_width, std::vector<std::string>& lines) const {
+    // A text's lines: its paragraphs (split at newlines) broken to fit max_width, with, in `rtl`,
+    // whether each line's paragraph reads right to left by its first strong letter: every line of
+    // a wrapped paragraph takes the paragraph's direction (UAX #9 P2, P3).
+    void wrap(const std::string& text, float size_points, float max_width, std::vector<std::string>& lines, std::vector<bool>* rtl = nullptr) const {
         float px = size_points * scale;
         lines.clear();
+        if (rtl) rtl->clear();
         std::string current;
         float current_w = 0;
         std::size_t i = 0;
-        auto flush = [&]() { lines.push_back(current); current.clear(); current_w = 0; };
+        auto paragraph_rtl = [&](std::size_t from) { const std::size_t nl = text.find('\n', from); return rtl_line(std::string_view(text).substr(from, nl == std::string::npos ? std::string::npos : nl - from)); };
+        bool para_rtl = paragraph_rtl(0);
+        auto flush = [&]() { lines.push_back(current); if (rtl) rtl->push_back(para_rtl); current.clear(); current_w = 0; };
         while (i < text.size()) {
             std::size_t start = i;
             std::uint32_t cp = decode_utf8(text, i);
-            if (cp == '\n') { flush(); continue; }
+            if (cp == '\n') { flush(); para_rtl = paragraph_rtl(i); continue; }
             std::string piece;
             // Latin words stay together; CJK breaks per character.
             if (cp < 0x2E80 && cp != ' ') {
@@ -445,6 +485,20 @@ struct Document::Impl {
             current_w += pw;
         }
         lines.push_back(current);
+        if (rtl) rtl->push_back(para_rtl);
+    }
+
+    // The direction an element's text goes: its own `dir`, or the nearest ancestor's (Auto: each
+    // paragraph's own).
+    TextDirection dir_of(const Node& n) const {
+        for (const Node* at = &n; at; at = at->parent ? get(at->parent) : nullptr)
+            if (at->dir != TextDirection::Auto) return at->dir;
+        return TextDirection::Auto;
+    }
+    // A paragraph's direction in an element: the element's, or the paragraph's own.
+    TextDirection line_dir(const Node& n, bool paragraph_rtl) const {
+        const TextDirection d = dir_of(n);
+        return d != TextDirection::Auto ? d : paragraph_rtl ? TextDirection::Rtl : TextDirection::Ltr;
     }
 
     static float eased(const Node::Anim& a) {
@@ -612,15 +666,17 @@ struct Document::Impl {
                 if (k == "flex") { YGNodeStyleSetFlexGrow(y, 0); YGNodeStyleSetFlexShrink(y, 0); YGNodeStyleSetFlexBasisAuto(y); continue; }
                 if (k == "name") { n.name.clear(); continue; }
                 if (k == "placeholder") { n.placeholder.clear(); continue; }
-                if (k == "textAlign") { n.text_align = TextAlign::Left; continue; }
+                if (k == "textAlign") { n.text_align = TextAlign::Start; continue; }
+                if (k == "dir") { n.dir = TextDirection::Auto; YGNodeStyleSetDirection(y, YGDirectionInherit); remeasure(n); continue; }
+                if (k == "pointerEvents") { n.pass_through = false; continue; }
                 if (k == "textWrap" || k == "wrapText") { n.text_wrap = false; if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); continue; }
                 if (k == "radius" || k == "borderRadius") { n.radius = 0; continue; }
                 if (k == "opacity") { n.opacity = 1; continue; }
                 if (k == "disabled") { n.disabled = false; continue; }
                 if (k == "fontSize") { n.font_size = Node{}.font_size; if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); continue; }
                 if (k == "scrollTop" || k == "autofocus") continue;
-                if (k == "left" || k == "top" || k == "right" || k == "bottom") {
-                    YGNodeStyleSetPosition(y, k == "left" ? YGEdgeLeft : k == "top" ? YGEdgeTop : k == "right" ? YGEdgeRight : YGEdgeBottom, YGUndefined);
+                if (k == "left" || k == "top" || k == "right" || k == "bottom" || k == "start" || k == "end") {
+                    YGNodeStyleSetPosition(y, k == "left" ? YGEdgeLeft : k == "top" ? YGEdgeTop : k == "right" ? YGEdgeRight : k == "bottom" ? YGEdgeBottom : k == "start" ? YGEdgeStart : YGEdgeEnd, YGUndefined);
                     continue;
                 }
                 if (auto it = kUnset.find(k); it != kUnset.end()) {
@@ -661,6 +717,12 @@ struct Document::Impl {
             else if (k == "left") { if (v.is_number()) YGNodeStyleSetPosition(y, YGEdgeLeft, v.get<float>()); else if (v.is_string()) YGNodeStyleSetPositionPercent(y, YGEdgeLeft, std::stof(v.get<std::string>())); }
             else if (k == "top") { if (v.is_number()) YGNodeStyleSetPosition(y, YGEdgeTop, v.get<float>()); else if (v.is_string()) YGNodeStyleSetPositionPercent(y, YGEdgeTop, std::stof(v.get<std::string>())); }
             else if (k == "right") { if (v.is_number()) YGNodeStyleSetPosition(y, YGEdgeRight, v.get<float>()); }
+            // The line's start and end sides: left and right, or right and left under dir rtl.
+            else if (k == "start" || k == "end") {
+                const YGEdge edge = k == "start" ? YGEdgeStart : YGEdgeEnd;
+                if (v.is_number()) YGNodeStyleSetPosition(y, edge, v.get<float>());
+                else if (v.is_string()) YGNodeStyleSetPositionPercent(y, edge, std::stof(v.get<std::string>()));
+            }
             else if (k == "bottom") { if (v.is_number()) YGNodeStyleSetPosition(y, YGEdgeBottom, v.get<float>()); }
             else if (k == "overflow") {
                 std::string s = v.get<std::string>();
@@ -692,7 +754,16 @@ struct Document::Impl {
             else if (k == "opacity") n.opacity = v.get<float>();
             else if (k == "color") n.color = parse_color(v, n.color);
             else if (k == "fontSize") { n.font_size = v.get<float>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
-            else if (k == "textAlign") { std::string s = v.get<std::string>(); n.text_align = s == "center" ? TextAlign::Center : s == "right" ? TextAlign::Right : TextAlign::Left; }
+            else if (k == "textAlign") { std::string s = v.get<std::string>(); n.text_align = s == "center" ? TextAlign::Center : s == "right" ? TextAlign::Right : s == "left" ? TextAlign::Left : s == "end" ? TextAlign::End : TextAlign::Start; }
+            else if (k == "dir") {
+                // The text's direction, and rows laid out from the right (Yoga's RTL: a row's first
+                // child on the right, start and end edges swapped); the children inherit it.
+                const std::string s = v.is_string() ? v.get<std::string>() : "auto";
+                n.dir = s == "rtl" ? TextDirection::Rtl : s == "ltr" ? TextDirection::Ltr : TextDirection::Auto;
+                YGNodeStyleSetDirection(y, n.dir == TextDirection::Rtl ? YGDirectionRTL : n.dir == TextDirection::Ltr ? YGDirectionLTR : YGDirectionInherit);
+                remeasure(n);
+            }
+            else if (k == "pointerEvents") n.pass_through = v.is_string() && v.get<std::string>() == "none";
             else if (k == "textWrap" || k == "wrapText") { n.text_wrap = v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "text") { n.text = v.is_string() ? v.get<std::string>() : v.dump(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
             else if (k == "value") {
@@ -808,38 +879,31 @@ struct Document::Impl {
                     const float ty = inner.y + 2 + lh * static_cast<float>(i) - n.scroll_y;
                     if (ty + lh < inner.y || ty > inner.y + inner.h) continue;
                     const Row& row = rows[i];
-                    const std::string line = shown.substr(row.start, row.end - row.start);
+                    const std::string_view line = std::string_view(shown).substr(row.start, row.end - row.start);
+                    const RowLayout rl = row_layout(n, shown, row.start, row.end, inner.w);
+                    const float x = inner.x + 1 + rl.origin;
                     if (selected && sel_a <= row.end && sel_b > row.start) {
-                        // The selected part of this row, with a little past the end when the selection takes the newline.
-                        const std::size_t a = std::max(sel_a, row.start), b = std::min(sel_b, row.end);
-                        const float x0 = inner.x + 1 + p.measure(line.substr(0, a - row.start), n.font_size);
-                        const float x1 = inner.x + 1 + p.measure(line.substr(0, b - row.start), n.font_size) + (sel_b > row.end && row.hard ? 4.0f : 0.0f);
-                        p.rect({x0, ty, std::max(x1 - x0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
+                        // The selected characters of this row (apart where directions mix), with a
+                        // little past the row's end when the selection takes the newline.
+                        const Color sc = n.color.with_alpha(0.25f * op);
+                        for (const auto& [s0, s1] : rl.lay.spans(std::max(sel_a, row.start) - row.start, std::min(sel_b, row.end) - row.start))
+                            p.rect({x + s0, ty, std::max(s1 - s0, 1.0f), lh}, sc);
+                        if (sel_b > row.end && row.hard) p.rect({rl.rtl() ? x - 4 : x + rl.lay.width, ty, 4, lh}, sc);
                     }
                     if (lang.empty()) {
-                        p.text(inner.x + 1, ty, line, n.font_size, c);
+                        p.text(x, ty, line, n.font_size, c, rl.dir);
                         continue;
                     }
-                    // The row in pieces: plain text in the input's color, each run in its kind's,
-                    // each piece placed where the text before it on the row ends.
-                    auto piece = [&](std::size_t a, std::size_t b, Color col) {
-                        if (b <= a) return;
-                        const float x = inner.x + 1 + p.measure(std::string_view(line).substr(0, a - row.start), n.font_size);
-                        p.text(x, ty, std::string_view(line).substr(a - row.start, b - a), n.font_size, col);
-                    };
-                    auto it = std::lower_bound(n.runs.begin(), n.runs.end(), row.start, [](const SyntaxRun& run, std::size_t at) { return run.end <= at; });
-                    std::size_t at = row.start;
-                    for (; it != n.runs.end() && it->start < row.end; ++it) {
-                        const std::size_t a = std::max(it->start, row.start), b = std::min(it->end, row.end);
-                        piece(at, a, c);
-                        piece(a, b, syntax_color(it->kind).with_alpha(op));
-                        at = b;
-                    }
-                    piece(at, row.end, c);
+                    // Each glyph in the colour of the run it starts in (the input's own outside them).
+                    p.text(x, ty, line, n.font_size, [&](std::size_t off) {
+                        const std::size_t at = row.start + off;
+                        auto it = std::lower_bound(n.runs.begin(), n.runs.end(), at, [](const SyntaxRun& run, std::size_t a) { return run.end <= a; });
+                        return it != n.runs.end() && it->start <= at ? syntax_color(it->kind).with_alpha(op) : c;
+                    }, rl.dir);
                 }
                 if (focused == n.id) {
                     const Row& row = rows[std::min(caret_row, rows.size() - 1)];
-                    const float cx = inner.x + 1 + (placeholder ? 0.0f : p.measure(n.value.substr(row.start, caret - row.start), n.font_size));
+                    const float cx = inner.x + 1 + caret_in_row(n, shown, row, placeholder ? row.start : caret, inner.w);
                     const float cy = inner.y + 2 + lh * static_cast<float>(caret_row) - n.scroll_y;
                     p.rect({cx, cy + 1, 1, lh - 2}, n.color.with_alpha(op));
                     caret_rect = {cx, cy + 1, 1, lh - 2};
@@ -849,28 +913,28 @@ struct Document::Impl {
                 const std::string& shown = placeholder ? n.placeholder : n.value;
                 Color c = placeholder ? n.color.with_alpha(0.45f * op) : n.color.with_alpha(op);
                 float ty = inner.y + (inner.h - lh) * 0.5f;
+                const RowLayout rl = row_layout(n, shown, 0, shown.size(), inner.w);
+                const float x = inner.x + 1 + rl.origin;
                 std::size_t sel_a = 0, sel_b = 0;
                 if (!placeholder && selection_of(n, sel_a, sel_b)) {
-                    const float x0 = inner.x + 1 + p.measure(n.value.substr(0, sel_a), n.font_size);
-                    const float x1 = inner.x + 1 + p.measure(n.value.substr(0, sel_b), n.font_size);
-                    p.rect({x0, ty, std::max(x1 - x0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
+                    for (const auto& [s0, s1] : rl.lay.spans(sel_a, sel_b)) p.rect({x + s0, ty, std::max(s1 - s0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
                 }
-                p.text(inner.x + 1, ty, shown, n.font_size, c);
+                p.text(x, ty, shown, n.font_size, c, rl.dir);
                 if (focused == n.id) {
-                    float cx = inner.x + 1 + p.measure(n.value.substr(0, static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size())))), n.font_size);
+                    float cx = x + rl.lay.caret_x(placeholder ? 0 : static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size()))));
                     p.rect({cx, ty + 1, 1, lh - 2}, n.color.with_alpha(op));
                     caret_rect = {cx, ty + 1, 1, lh - 2};
                 }
             } else {
-                if (n.lines.empty() || (n.text_wrap && std::fabs(n.measured_width - inner.w) > 0.5f)) {
-                    wrap(n.text, n.font_size, n.text_wrap ? inner.w : 1e9f, n.lines);
+                if (n.lines.empty() || n.line_rtl.size() != n.lines.size() || (n.text_wrap && std::fabs(n.measured_width - inner.w) > 0.5f)) {
+                    wrap(n.text, n.font_size, n.text_wrap ? inner.w : 1e9f, n.lines, &n.line_rtl);
                     n.measured_width = inner.w;
                 }
                 float total = lh * static_cast<float>(n.lines.size());
                 float ty = inner.y + std::max(0.0f, (inner.h - total) * 0.5f);
-                for (const auto& line : n.lines) {
+                for (std::size_t li = 0; li < n.lines.size(); ++li) {
                     Rect lr{inner.x, ty, inner.w, lh};
-                    p.text_aligned(lr, line, n.font_size, n.color.with_alpha(op), n.text_align, true);
+                    p.text_aligned(lr, n.lines[li], n.font_size, n.color.with_alpha(op), n.text_align, true, line_dir(n, n.line_rtl[li]));
                     ty += lh;
                 }
             }
@@ -910,7 +974,14 @@ struct Document::Impl {
             NodeId h = hit(*c, x, y, n.clip ? visible : clip);
             if (h) return h;
         }
-        return inside ? n.id : 0;
+        return inside && !n.pass_through ? n.id : 0;
+    }
+
+    // Text in an element whose direction changed is measured again (a direction can shape a line a
+    // little differently); its descendants inherit it.
+    void remeasure(Node& n) {
+        if (n.yoga && YGNodeHasMeasureFunc(n.yoga)) { n.lines.clear(); YGNodeMarkDirty(n.yoga); }
+        for (NodeId c : n.children) if (Node* cn = get(c)) remeasure(*cn);
     }
 
     // Nearest ancestor (including self) with the listener bit.
@@ -1213,15 +1284,15 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
     };
     // The byte offset in an input nearest a point: in a text area, on the row under it.
     auto caret_at = [&](const Node& n, float x, float y) -> std::size_t {
-        const float local = (x - n.rect.x - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - n.border_width - 1) * im.scale;
-        if (!n.multiline) return im.offset_in_row(n, n.value, Impl::Row{0, n.value.size(), true}, local);
+        const float local = x - n.rect.x - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - n.border_width - 1;
+        if (!n.multiline) return im.offset_in_row(n, n.value, Impl::Row{0, n.value.size(), true}, local, im.inner_width(n));
         const float lh = im.font.metrics(n.font_size * im.scale).line_height / im.scale;
         const float top = n.rect.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width + 2;
         std::vector<Impl::Row> rows;
         im.rows_of(n, n.value, im.inner_width(n), rows);
         const int line = static_cast<int>(std::floor((y - top + n.scroll_y) / std::max(lh, 1.0f)));
         const std::size_t ri = static_cast<std::size_t>(std::clamp(line, 0, static_cast<int>(rows.size()) - 1));
-        return im.offset_in_row(n, n.value, rows[ri], local);
+        return im.offset_in_row(n, n.value, rows[ri], local, im.inner_width(n));
     };
     auto set_focus_to = [&](NodeId id) {
         if (im.focused == id) return;
@@ -1410,8 +1481,40 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                     if (moving) {
                         // Shift extends the selection from where the caret was; without it a selection collapses.
                         if (shift && n->anchor < 0) n->anchor = static_cast<int>(caret);
-                        if (ev.key_name == "Left") caret = !shift && has_sel ? sel_a : utf8_prev(v, caret);
-                        else if (ev.key_name == "Right") caret = !shift && has_sel ? sel_b : utf8_next(v, caret);
+                        if (ev.key_name == "Left" || ev.key_name == "Right") {
+                            // Left and Right go the way the arrow points (docs/design/pocket-ui.md,
+                            // Right-to-left text): to the nearest caret position that way on the
+                            // row (back through left-to-right text, forward through right-to-left
+                            // text); past the row's last one, to its logical end on that side, then
+                            // on to the next row. A selection collapses to the side the arrow points.
+                            const bool right = ev.key_name == "Right";
+                            std::vector<Impl::Row> rows;
+                            if (n->multiline) im.rows_of(*n, v, im.inner_width(*n), rows);
+                            else rows.push_back({0, v.size(), true});
+                            const Impl::Row& row = rows[Impl::row_of(rows, caret)];
+                            const Impl::RowLayout rl = im.row_layout(*n, v, row.start, row.end, im.inner_width(*n));
+                            const std::size_t last = Impl::row_last(v, row);
+                            auto x_of = [&](std::size_t at) { return rl.lay.caret_x(std::clamp(at, row.start, row.end) - row.start); };
+                            const bool forward = right != rl.rtl();   // the arrow's way, in the text's order
+                            if (!shift && has_sel) {
+                                const bool one_row = sel_a >= row.start && sel_b <= row.end;
+                                const float xa = x_of(sel_a), xb = x_of(sel_b);
+                                caret = one_row && std::fabs(xa - xb) > 0.01f ? ((xa < xb) != right ? sel_a : sel_b) : (forward ? sel_b : sel_a);
+                            } else {
+                                const float from = x_of(caret);
+                                std::size_t best = std::string::npos;
+                                float best_d = 1e30f;
+                                for (std::size_t s : rl.lay.stops) {
+                                    if (row.start + s > last) continue;
+                                    const float d = right ? rl.lay.caret_x(s) - from : from - rl.lay.caret_x(s);
+                                    if (d > 0.01f && d < best_d) { best_d = d; best = row.start + s; }
+                                }
+                                const std::size_t edge = forward ? last : row.start;
+                                if (best != std::string::npos) caret = best;
+                                else if (caret != edge) caret = edge;
+                                else caret = forward ? utf8_next(v, caret) : utf8_prev(v, caret);
+                            }
+                        }
                         else if (!n->multiline && ev.key_name == "Home") caret = 0;
                         else if (!n->multiline && ev.key_name == "End") caret = v.size();
                         else {
@@ -1420,11 +1523,12 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
                             std::vector<Impl::Row> rows;
                             im.rows_of(*n, v, im.inner_width(*n), rows);
                             const std::size_t ri = Impl::row_of(rows, caret);
-                            const float x = im.font.measure(v.substr(rows[ri].start, caret - rows[ri].start), n->font_size * im.scale);
+                            const float iw = im.inner_width(*n);
+                            const float x = im.caret_in_row(*n, v, rows[ri], caret, iw);
                             if (ev.key_name == "Home") caret = rows[ri].start;
                             else if (ev.key_name == "End") caret = Impl::row_last(v, rows[ri]);
-                            else if (ev.key_name == "Up") caret = ri == 0 ? 0 : im.offset_in_row(*n, v, rows[ri - 1], x);
-                            else caret = ri + 1 >= rows.size() ? v.size() : im.offset_in_row(*n, v, rows[ri + 1], x);
+                            else if (ev.key_name == "Up") caret = ri == 0 ? 0 : im.offset_in_row(*n, v, rows[ri - 1], x, iw);
+                            else caret = ri + 1 >= rows.size() ? v.size() : im.offset_in_row(*n, v, rows[ri + 1], x, iw);
                         }
                         if (!shift) n->anchor = -1;
                         consumed = true;
@@ -1576,6 +1680,8 @@ Json Document::describe(NodeId id) const {
         }
         if (std::size_t a = 0, b = 0; Impl::selection_of(*n, a, b)) j["selection"] = Json::array({a, b});
     }
+    // The direction it lays out in, its own or inherited (absent: none set, each paragraph its own).
+    if (const TextDirection d = impl_->dir_of(*n); d != TextDirection::Auto) j["dir"] = d == TextDirection::Rtl ? "rtl" : "ltr";
     j["visible"] = Impl::shown(*n);
     if (n->anchor_entity) {
         j["anchor"] = n->anchor_entity;

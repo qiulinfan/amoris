@@ -1,4 +1,6 @@
 #include <pocket/app/session.hpp>
+#include <pocket/core/hash.hpp>
+#include <pocket/world/component_list.gen.hpp>
 
 #include "command_help.hpp"
 #include "journal.hpp"
@@ -263,6 +265,9 @@ void Session::apply_project_settings() {
         if (r.contains("shadow_strength") && r["shadow_strength"].is_number()) s.strength = std::clamp(r["shadow_strength"].get<float>(), 0.0f, 1.0f);
         if (r.contains("shadow_cascades") && r["shadow_cascades"].is_number()) s.cascades = r["shadow_cascades"].get<int>();
         if (r.contains("shadow_distance") && r["shadow_distance"].is_number()) s.distance = r["shadow_distance"].get<float>();
+        if (r.contains("shadow_softness") && r["shadow_softness"].is_number()) s.softness = r["shadow_softness"].get<float>();
+        if (r.contains("contact_shadows") && r["contact_shadows"].is_boolean()) s.contact = r["contact_shadows"].get<bool>();
+        if (r.contains("contact_shadow_length") && r["contact_shadow_length"].is_number()) s.contact_length = r["contact_shadow_length"].get<float>();
         renderer_->set_shadows(s);
         renderer::BloomSettings b = renderer_->bloom();
         if (r.contains("bloom") && r["bloom"].is_boolean()) b.enabled = r["bloom"].get<bool>();
@@ -500,6 +505,26 @@ Status Session::start() {
     if (!font.empty() && std::filesystem::exists(font)) {
         POCKET_TRY(loaded_font, ui::Font::load(*device_, font));
         font_ = std::move(loaded_font);
+        // Fonts for what the first lacks (docs/design/pocket-ui.md, Fallback fonts): the project config's
+        // `font_fallbacks`, which `pocket` fills with the bundled Noto Sans Arabic unless project.toml
+        // names its own (paths relative to the project).
+        if (project_.contains("font_fallbacks") && project_["font_fallbacks"].is_array()) {
+            for (const Json& fb : project_["font_fallbacks"]) {
+                if (!fb.is_string()) continue;
+                std::string fp = fb.get<std::string>();
+                if (std::filesystem::path(fp).is_relative()) {
+                    // A project's own (project.toml) is in the project; a packed game's next to its config.
+                    const std::filesystem::path in_project = options_.project_dir / fp;
+                    if (std::filesystem::exists(in_project)) fp = in_project.string();
+                    else if (!options_.project_config.empty()) fp = (options_.project_config.parent_path() / fp).string();
+                }
+                if (!std::filesystem::exists(fp)) {
+                    log::warn("runtime", "fallback font {} not found", fp);
+                    continue;
+                }
+                if (auto r = font_->add_fallback(fp); !r) log::warn("runtime", "fallback font {}: {}", fp, r.error().message);
+            }
+        }
         POCKET_TRY(painter, ui::Painter::create(*device_, *font_));
         painter_ = std::move(painter);
         ui_ = std::make_unique<ui::Document>(*font_);
@@ -3140,9 +3165,12 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         if (p.contains("bias") && p["bias"].is_number()) s.bias = std::max(0.0f, p["bias"].get<float>());
         if (p.contains("cascades") && p["cascades"].is_number()) s.cascades = p["cascades"].get<int>();
         if (p.contains("distance") && p["distance"].is_number()) s.distance = p["distance"].get<float>();
+        if (p.contains("softness") && p["softness"].is_number()) s.softness = p["softness"].get<float>();
+        if (p.contains("contact") && p["contact"].is_boolean()) s.contact = p["contact"].get<bool>();
+        if (p.contains("contact_length") && p["contact_length"].is_number()) s.contact_length = p["contact_length"].get<float>();
         renderer_->set_shadows(s);
         s = renderer_->shadows();
-        return Json{{"enabled", s.enabled}, {"strength", s.strength}, {"bias", s.bias}, {"cascades", s.cascades}, {"distance", s.distance}};
+        return Json{{"enabled", s.enabled}, {"strength", s.strength}, {"bias", s.bias}, {"cascades", s.cascades}, {"distance", s.distance}, {"softness", s.softness}, {"contact", s.contact}, {"contact_length", s.contact_length}};
     }
     if (op == "bloom") {
         renderer::BloomSettings b = renderer_->bloom();
@@ -3279,10 +3307,15 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         if (path.empty()) assets_->invalidate_all();
         else assets_->invalidate(path);
         renderer_->drop_asset_cache();
+        if (physics_) physics_->drop_mesh_cache();
         // Terrains are made again: their heightmaps may have changed, and their meshes were forgotten.
         for (auto& [id, st] : terrains_) { st.shape_key.clear(); st.look_key.clear(); }
         update_terrains();
-        return Json{{"ok", true}, {"version", assets_->version()}};
+        // Live model instances whose file changed are made again in place.
+        Json relinked = relink_models();
+        Json j{{"ok", true}, {"version", assets_->version()}};
+        if (!relinked.empty()) j["relinked"] = relinked;
+        return j;
     }
     if (op == "preview") {
         // A model on its own, framed from three quarters above under a sky and a sun, drawn off
@@ -3377,6 +3410,8 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         if (path.empty()) return fail("bad_args", "import needs a project-relative path");
         POCKET_TRY(j, assets_->import(path, opt<bool>(p, "force", false)));
         renderer_->drop_asset_cache();
+        if (physics_) physics_->drop_mesh_cache();
+        if (Json relinked = relink_models(); !relinked.empty()) j["relinked"] = relinked;
         j["blender_found"] = !assets_->blender().empty();
         return j;
     }
@@ -4398,6 +4433,163 @@ Result<Json> Session::world_lint(const Json& p) {
     return j;
 }
 
+// A model file's node tree as entity descriptions, the children of the root world.instantiate
+// {mesh} makes (docs/design/assets.md, Live models): one per node with the node's
+// own transform and, when it carries geometry, a MeshRenderer drawing that node alone.
+Result<Json> Session::model_children(const std::string& mesh_path, std::vector<std::string>& warnings) {
+    if (!assets_) return fail("no_assets", "no asset store");
+    POCKET_TRY(mesh, assets_->mesh(mesh_path));
+    if (mesh->skinned()) return fail("unsupported", "{} is skinned: its joints place it, so it stays one drawable", mesh_path);
+    const std::size_t count = mesh->nodes.size();
+    std::vector<int> uses(count, 0);
+    std::map<std::string, int> name_count;
+    for (const assets::Node& n : mesh->nodes) name_count[n.name]++;
+    for (const assets::Submesh& sm : mesh->submeshes) if (sm.origin >= 0 && static_cast<std::size_t>(sm.origin) < count) uses[static_cast<std::size_t>(sm.origin)]++;
+    // A node authored as a matrix has default TRS fields: take the matrix apart.
+    auto decompose = [](const Mat4& m, Vec3& t, Quat& r, Vec3& s) {
+        t = {m.at(3, 0), m.at(3, 1), m.at(3, 2)};
+        Vec3 c0{m.at(0, 0), m.at(0, 1), m.at(0, 2)}, c1{m.at(1, 0), m.at(1, 1), m.at(1, 2)}, c2{m.at(2, 0), m.at(2, 1), m.at(2, 2)};
+        s = {length(c0), length(c1), length(c2)};
+        if (s.x > 0) c0 = c0 * (1.0f / s.x);
+        if (s.y > 0) c1 = c1 * (1.0f / s.y);
+        if (s.z > 0) c2 = c2 * (1.0f / s.z);
+        const float tr = c0.x + c1.y + c2.z;
+        if (tr > 0) {
+            const float k = std::sqrt(tr + 1.0f) * 2.0f;
+            r = {(c1.z - c2.y) / k, (c2.x - c0.z) / k, (c0.y - c1.x) / k, 0.25f * k};
+        } else if (c0.x > c1.y && c0.x > c2.z) {
+            const float k = std::sqrt(1.0f + c0.x - c1.y - c2.z) * 2.0f;
+            r = {0.25f * k, (c1.x + c0.y) / k, (c2.x + c0.z) / k, (c1.z - c2.y) / k};
+        } else if (c1.y > c2.z) {
+            const float k = std::sqrt(1.0f + c1.y - c0.x - c2.z) * 2.0f;
+            r = {(c1.x + c0.y) / k, 0.25f * k, (c2.y + c1.z) / k, (c2.x - c0.z) / k};
+        } else {
+            const float k = std::sqrt(1.0f + c2.z - c0.x - c1.y) * 2.0f;
+            r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
+        }
+    };
+    static const std::set<std::string> known_components = {
+#define POCKET_COMPONENT_NAME(C) #C,
+        POCKET_COMPONENT_LIST(POCKET_COMPONENT_NAME)
+#undef POCKET_COMPONENT_NAME
+    };
+    std::function<Json(int)> entity_of = [&](int ni) -> Json {
+        const assets::Node& n = mesh->nodes[static_cast<std::size_t>(ni)];
+        const bool named = !n.name.empty() && name_count[n.name] == 1;
+        Json e;
+        e["name"] = named ? n.name : (n.name.empty() ? "node" + std::to_string(ni) : n.name + "_" + std::to_string(ni));
+        Vec3 t = n.translation, s = n.scale;
+        Quat r = n.rotation;
+        const bool trs_default = t.x == 0 && t.y == 0 && t.z == 0 && s.x == 1 && s.y == 1 && s.z == 1 && r.x == 0 && r.y == 0 && r.z == 0 && r.w == 1;
+        if (trs_default) decompose(n.rest, t, r, s);
+        e["components"]["Transform"] = Json{{"position", {{"x", t.x}, {"y", t.y}, {"z", t.z}}}, {"rotation", {{"x", r.x}, {"y", r.y}, {"z", r.z}, {"w", r.w}}}, {"scale", {{"x", s.x}, {"y", s.y}, {"z", s.z}}}};
+        if (uses[static_cast<std::size_t>(ni)] > 0) e["components"]["MeshRenderer"] = Json{{"mesh", mesh_path}, {"node", named ? n.name : std::to_string(ni)}};
+        // The file's lights and cameras come along: a light keeps its color (encoded for the
+        // component's sRGB) and intensity (point and spot lights scaled to the engine's falloff);
+        // a camera arrives inactive, so it does not take the view from the scene's own.
+        if (n.light >= 0 && static_cast<std::size_t>(n.light) < mesh->lights.size()) {
+            const assets::LightDef& l = mesh->lights[static_cast<std::size_t>(n.light)];
+            auto enc = [](float c) { c = std::clamp(c, 0.0f, 1.0f); return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
+            const float m = std::max({l.color.x, l.color.y, l.color.z, 1e-6f});
+            Json light{{"kind", l.type == 0 ? 0 : l.type == 2 ? 2 : 1}, {"color", {{"r", enc(l.color.x / m)}, {"g", enc(l.color.y / m)}, {"b", enc(l.color.z / m)}, {"a", 1.0}}}};
+            if (l.type == 2) {
+                light["inner_angle"] = l.inner_cone * 180.0f / 3.14159265f;
+                light["outer_angle"] = l.outer_cone * 180.0f / 3.14159265f;
+            }
+            if (l.type == 0) {
+                light["intensity"] = l.intensity * m;
+            } else {
+                const float k = l.intensity * m / 20.0f;
+                light["intensity"] = k;
+                light["range"] = l.range > 0 ? l.range : std::max(5.0f, 2.0f * std::sqrt(l.intensity * m));
+            }
+            e["components"]["Light"] = light;
+        }
+        if (n.camera >= 0 && static_cast<std::size_t>(n.camera) < mesh->cameras.size()) {
+            const assets::CameraDef& c = mesh->cameras[static_cast<std::size_t>(n.camera)];
+            e["components"]["Camera"] = Json{{"active", false}, {"orthographic", c.orthographic}, {"fov_degrees", c.yfov * 180.0f / 3.14159265f}, {"ortho_size", c.ymag}, {"near", c.znear}, {"far", c.zfar}};
+        }
+        // Components from the node's custom properties (docs/design/assets.md, Components from
+        // Blender): "pocket" holds several, "pocket.<Component>" one, each an object or its
+        // JSON text; they are merged (as a JSON merge patch) over what the node brings, its light and
+        // camera too (a mesh collider with no file of its own collides with the node's
+        // triangles, the MeshRenderer's).
+        if (n.extras.is_object()) {
+            for (const auto& [key, value] : n.extras.items()) {
+                if (key != "pocket" && !key.starts_with("pocket.")) continue;
+                Json obj = value;
+                if (obj.is_string()) obj = Json::parse(obj.get<std::string>(), nullptr, false);
+                if (!obj.is_object()) {
+                    warnings.push_back(std::format("{}: {} is not an object or the JSON text of one", n.name, key));
+                    continue;
+                }
+                const Json given = key == "pocket" ? obj : Json{{key.substr(7), obj}};
+                for (const auto& [component, fields] : given.items()) {
+                    if (!known_components.contains(component)) {
+                        warnings.push_back(std::format("{}: no component named {} (world.schema lists them)", n.name, component));
+                        continue;
+                    }
+                    if (!fields.is_object()) {
+                        warnings.push_back(std::format("{}: {} is not an object of fields", n.name, component));
+                        continue;
+                    }
+                    Json& into = e["components"][component];
+                    if (!into.is_object()) into = Json::object();
+                    into.merge_patch(fields);
+                }
+            }
+        }
+        Json kids = Json::array();
+        for (int c : n.children) if (c >= 0 && static_cast<std::size_t>(c) < count) kids.push_back(entity_of(c));
+        if (!kids.empty()) e["children"] = kids;
+        return e;
+    };
+    Json kids = Json::array();
+    for (std::size_t i = 0; i < count; ++i) if (mesh->nodes[i].parent < 0) kids.push_back(entity_of(static_cast<int>(i)));
+    return kids;
+}
+
+std::string Session::file_hash(const std::string& path) const {
+    auto full = inside_dir(options_.project_dir, path);
+    if (!full) return {};
+    auto bytes = fs::read_text(*full);
+    if (!bytes) return {};
+    return std::format("{:016x}", fnv1a(*bytes));
+}
+
+Json Session::relink_models() {
+    Json done = Json::array();
+    if (!world_ || !assets_) return done;
+    std::vector<std::pair<world::EntityId, world::Model>> models;
+    world_->ecs().each([&](flecs::entity e, const world::Model& m) { if (m.live && !m.path.empty()) models.emplace_back(e.id(), m); });
+    for (const auto& [id, m] : models) {
+        const std::string now = file_hash(m.path);
+        if (now.empty() || now == m.hash) continue;
+        std::vector<std::string> warnings;
+        auto kids = model_children(m.path, warnings);
+        if (!kids) {
+            log::warn("runtime", "model {}: {}", m.path, kids.error().to_string());
+            continue;
+        }
+        // The children made from the file go, and the file's nodes come again under the same root.
+        for (world::EntityId c : world_->children(id)) (void)world_->destroy(c);
+        auto made = world_->instantiate(Json{{"format", "pocket-scene"}, {"version", 1}, {"entities", *kids}}, id);
+        if (!made) {
+            log::warn("runtime", "model {}: {}", m.path, made.error().to_string());
+            continue;
+        }
+        world::Model next = m;
+        next.hash = now;
+        world_->ecs().entity(id).set<world::Model>(next);
+        world_->update_transforms();
+        Json info{{"entity", id}, {"path", m.path}, {"children", made->size()}};
+        if (!warnings.empty()) info["warnings"] = warnings;
+        world_->events().emit(world_->tick_index(), "model.relinked", id, info, 0, "assets");
+        done.push_back(std::move(info));
+    }
+    return done;
+}
+
 Result<Json> Session::world_command(std::string_view op, const Json& p, std::string_view source) {
     if (op == "lint") return world_lint(p);
     auto& w = *world_;
@@ -4587,87 +4779,18 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             fragment = it->second;
         }
         std::string mesh_path = opt<std::string>(p, "mesh", "");
+        std::vector<std::string> warnings;   // what a model's custom properties asked for that could not be
         if (!mesh_path.empty()) {
             // A glTF file's node tree as entities under one root: one per node with the node's own
             // transform and, when it carries geometry, a MeshRenderer drawing that node alone.
-            if (!assets_) return fail("no_assets", "no asset store");
-            POCKET_TRY(mesh, assets_->mesh(mesh_path));
-            if (mesh->skinned()) return fail("unsupported", "{} is skinned: its joints place it, so it stays one drawable", mesh_path);
-            const std::size_t count = mesh->nodes.size();
-            std::vector<int> uses(count, 0);
-            std::map<std::string, int> name_count;
-            for (const assets::Node& n : mesh->nodes) name_count[n.name]++;
-            for (const assets::Submesh& sm : mesh->submeshes) if (sm.origin >= 0 && static_cast<std::size_t>(sm.origin) < count) uses[static_cast<std::size_t>(sm.origin)]++;
-            // A node authored as a matrix has default TRS fields: take the matrix apart.
-            auto decompose = [](const Mat4& m, Vec3& t, Quat& r, Vec3& s) {
-                t = {m.at(3, 0), m.at(3, 1), m.at(3, 2)};
-                Vec3 c0{m.at(0, 0), m.at(0, 1), m.at(0, 2)}, c1{m.at(1, 0), m.at(1, 1), m.at(1, 2)}, c2{m.at(2, 0), m.at(2, 1), m.at(2, 2)};
-                s = {length(c0), length(c1), length(c2)};
-                if (s.x > 0) c0 = c0 * (1.0f / s.x);
-                if (s.y > 0) c1 = c1 * (1.0f / s.y);
-                if (s.z > 0) c2 = c2 * (1.0f / s.z);
-                const float tr = c0.x + c1.y + c2.z;
-                if (tr > 0) {
-                    const float k = std::sqrt(tr + 1.0f) * 2.0f;
-                    r = {(c1.z - c2.y) / k, (c2.x - c0.z) / k, (c0.y - c1.x) / k, 0.25f * k};
-                } else if (c0.x > c1.y && c0.x > c2.z) {
-                    const float k = std::sqrt(1.0f + c0.x - c1.y - c2.z) * 2.0f;
-                    r = {0.25f * k, (c1.x + c0.y) / k, (c2.x + c0.z) / k, (c1.z - c2.y) / k};
-                } else if (c1.y > c2.z) {
-                    const float k = std::sqrt(1.0f + c1.y - c0.x - c2.z) * 2.0f;
-                    r = {(c1.x + c0.y) / k, 0.25f * k, (c2.y + c1.z) / k, (c2.x - c0.z) / k};
-                } else {
-                    const float k = std::sqrt(1.0f + c2.z - c0.x - c1.y) * 2.0f;
-                    r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
-                }
-            };
-            std::function<Json(int)> entity_of = [&](int ni) -> Json {
-                const assets::Node& n = mesh->nodes[static_cast<std::size_t>(ni)];
-                const bool named = !n.name.empty() && name_count[n.name] == 1;
-                Json e;
-                e["name"] = named ? n.name : (n.name.empty() ? "node" + std::to_string(ni) : n.name + "_" + std::to_string(ni));
-                Vec3 t = n.translation, s = n.scale;
-                Quat r = n.rotation;
-                const bool trs_default = t.x == 0 && t.y == 0 && t.z == 0 && s.x == 1 && s.y == 1 && s.z == 1 && r.x == 0 && r.y == 0 && r.z == 0 && r.w == 1;
-                if (trs_default) decompose(n.rest, t, r, s);
-                e["components"]["Transform"] = Json{{"position", {{"x", t.x}, {"y", t.y}, {"z", t.z}}}, {"rotation", {{"x", r.x}, {"y", r.y}, {"z", r.z}, {"w", r.w}}}, {"scale", {{"x", s.x}, {"y", s.y}, {"z", s.z}}}};
-                if (uses[static_cast<std::size_t>(ni)] > 0) e["components"]["MeshRenderer"] = Json{{"mesh", mesh_path}, {"node", named ? n.name : std::to_string(ni)}};
-                // The file's lights and cameras come along: a light keeps its color (encoded for the
-                // component's sRGB) and intensity (point and spot lights scaled to the engine's falloff);
-                // a camera arrives inactive, so it does not take the view from the scene's own.
-                if (n.light >= 0 && static_cast<std::size_t>(n.light) < mesh->lights.size()) {
-                    const assets::LightDef& l = mesh->lights[static_cast<std::size_t>(n.light)];
-                    auto enc = [](float c) { c = std::clamp(c, 0.0f, 1.0f); return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; };
-                    const float m = std::max({l.color.x, l.color.y, l.color.z, 1e-6f});
-                    Json light{{"kind", l.type == 0 ? 0 : l.type == 2 ? 2 : 1}, {"color", {{"r", enc(l.color.x / m)}, {"g", enc(l.color.y / m)}, {"b", enc(l.color.z / m)}, {"a", 1.0}}}};
-                    if (l.type == 2) {
-                        light["inner_angle"] = l.inner_cone * 180.0f / 3.14159265f;
-                        light["outer_angle"] = l.outer_cone * 180.0f / 3.14159265f;
-                    }
-                    if (l.type == 0) {
-                        light["intensity"] = l.intensity * m;
-                    } else {
-                        const float k = l.intensity * m / 20.0f;
-                        light["intensity"] = k;
-                        light["range"] = l.range > 0 ? l.range : std::max(5.0f, 2.0f * std::sqrt(l.intensity * m));
-                    }
-                    e["components"]["Light"] = light;
-                }
-                if (n.camera >= 0 && static_cast<std::size_t>(n.camera) < mesh->cameras.size()) {
-                    const assets::CameraDef& c = mesh->cameras[static_cast<std::size_t>(n.camera)];
-                    e["components"]["Camera"] = Json{{"active", false}, {"orthographic", c.orthographic}, {"fov_degrees", c.yfov * 180.0f / 3.14159265f}, {"ortho_size", c.ymag}, {"near", c.znear}, {"far", c.zfar}};
-                }
-                Json kids = Json::array();
-                for (int c : n.children) if (c >= 0 && static_cast<std::size_t>(c) < count) kids.push_back(entity_of(c));
-                if (!kids.empty()) e["children"] = kids;
-                return e;
-            };
+            // The file's nodes under one root that remembers the file (Model), so a changed file
+            // can make them again in place (docs/design/assets.md, Live models).
+            POCKET_TRY(kids, model_children(mesh_path, warnings));
             Json root;
             root["name"] = std::filesystem::path(mesh_path).stem().string();
             const Vec3 at = vec3_of(p.value("position", Json(nullptr)), Vec3{0, 0, 0});
             root["components"]["Transform"] = Json{{"position", {{"x", at.x}, {"y", at.y}, {"z", at.z}}}};
-            Json kids = Json::array();
-            for (std::size_t i = 0; i < count; ++i) if (mesh->nodes[i].parent < 0) kids.push_back(entity_of(static_cast<int>(i)));
+            root["components"]["Model"] = Json{{"path", mesh_path}, {"hash", file_hash(mesh_path)}};
             root["children"] = kids;
             fragment = Json{{"format", "pocket-scene"}, {"version", 1}, {"entities", Json::array({root})}};
         }
@@ -4684,6 +4807,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         j["roots"] = roots;
         if (!prefab.empty()) j["prefab"] = prefab;
         if (!mesh_path.empty()) j["mesh"] = mesh_path;
+        if (!warnings.empty()) j["warnings"] = warnings;
         return j;
     }
     if (op == "pack") {
@@ -4829,9 +4953,11 @@ void Session::build_debug_draw() {
     debug_draw_.clear();
     const world::World& w = *world_;
     if (debug_flags_.colliders) {
-        w.ecs().each([&](flecs::entity e, const world::Collider& c, const world::Transform& t) {
+        w.ecs().each([&](flecs::entity e, const world::Collider& c, const world::Transform& authored) {
             rhi::Color color{0.6f, 0.6f, 0.6f, 1};  // static
+            world::Transform t = authored;   // where physics puts it
             if (const auto* rb = e.try_get<world::RigidBody>()) {
+                t = physics::placed(e, *rb, authored);
                 if (rb->kind == 0) color = rb->sleeping ? rhi::Color{0.15f, 0.5f, 0.15f, 1} : rhi::Color{0.2f, 1.0f, 0.2f, 1};
                 else if (rb->kind == 2) color = {0.3f, 0.6f, 1.0f, 1};
             }

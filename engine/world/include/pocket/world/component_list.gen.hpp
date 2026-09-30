@@ -6,6 +6,7 @@
     X(WorldTransform) \
     X(Velocity) \
     X(Health) \
+    X(Model) \
     X(Lifetime) \
     X(Camera) \
     X(CameraRig) \

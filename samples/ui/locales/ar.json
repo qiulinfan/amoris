@@ -1,0 +1,36 @@
+{
+  "hud": {
+    "score": "النقاط {score, number}",
+    "health": "الصحة {health}",
+    "coins": "{count, plural, =0 {لا عملات بعد} one {عملة واحدة} two {عملتان} few {# عملات} many {# عملة} other {# عملة}}",
+    "hint": "دوّر الصندوق بالأزرار أو امشِ بمفاتيح WASD.",
+    "key": "المفتاح {key}"
+  },
+  "controls": {
+    "spin_left": "دوران لليسار",
+    "spin_right": "دوران لليمين",
+    "score_up": "النقاط +10",
+    "hurt": "إصابة",
+    "heal": "علاج",
+    "pause": "إيقاف مؤقت",
+    "resume": "متابعة"
+  },
+  "menu": {
+    "title": "متوقف مؤقتًا",
+    "name": "اسمك",
+    "name_placeholder": "الاسم",
+    "volume": "مستوى الصوت",
+    "difficulty": "الصعوبة",
+    "easy": "سهل",
+    "normal": "عادي",
+    "hard": "صعب",
+    "show_bar": "إظهار شريط الصحة",
+    "language": "اللغة",
+    "resume": "متابعة"
+  },
+  "language": {
+    "en": "English",
+    "zh": "中文",
+    "ar": "العربية"
+  }
+}

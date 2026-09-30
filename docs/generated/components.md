@@ -40,6 +40,16 @@ Hit points. Gameplay decides what zero means; the engine only stores and reports
 | `current` | f32 | 100.0 | Current hit points. |
 | `max` | f32 | 100.0 | Maximum hit points. |
 
+## Model
+
+An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `path` | string | "" | The model file, relative to the project. |
+| `hash` | string | "" | The file's content hash when the children were made from it. |
+| `live` | bool | true | Made again when the file changes; false keeps the children as they are. |
+
 ## Lifetime
 
 Seconds remaining before the entity is destroyed by the lifetime system.
@@ -372,7 +382,7 @@ Axis-aligned bounding box in world space, computed by the engine from the mesh a
 
 ## RigidBody
 
-Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. Uses the entity's Transform as world space (physics entities should be roots).
+Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. A dynamic or kinematic body's Transform is its place in the world (the solver writes it back), so those should be roots; a static body under a parent (a node of an instantiated level) stands where its parents put it.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -600,6 +610,7 @@ Collision shape centered on the entity (plus offset). Box half extents come from
 | `offset` | vec3 | [0.0, 0.0, 0.0] | Local offset of the shape center. |
 | `is_trigger` | bool | false | Overlap events only, no collision response. |
 | `mesh` | string | "" | For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh. |
+| `node` | string | "" | For shape 3: only the triangles of this node of the file (its name, or its index as text), in the node's own space as MeshRenderer.node draws it; empty takes the whole file (the MeshRenderer's node when the mesh is the MeshRenderer's). |
 | `layer` | u32 | 1 | Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them. |
 | `mask` | u32 | 4294967295 | Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes. |
 | `group` | i32 | 0 | Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions). |

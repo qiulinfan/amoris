@@ -67,7 +67,12 @@ fn newest_asset(project: &Path) -> SystemTime {
                 continue;
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-            if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "ogg" | "glb" | "gltf" | "bin") {
+            // Pictures, maps, sounds and models, the ones Blender converts too (.blend saved from Blender
+            // reaches the running game: docs/design/assets.md, Live models).
+            if matches!(
+                ext.as_str(),
+                "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "ogg" | "mp3" | "glb" | "gltf" | "bin" | "obj" | "stl" | "ply" | "blend" | "fbx" | "dae" | "usd" | "usda" | "usdc" | "usdz" | "abc" | "3ds" | "x3d" | "wrl"
+            ) {
                 if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
                     if m > *newest {
                         *newest = m;

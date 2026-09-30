@@ -108,15 +108,24 @@ pub fn pack(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make
     total += std::fs::metadata(dist.join("project.js"))?.len();
     let config_path = PathBuf::from(format!("{}.project.json", bundle.out.display()));
     let mut settings: Value = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
+    let settings_fallbacks = settings.get("font_fallbacks").cloned().unwrap_or(Value::Null);
     if let Value::Object(map) = &mut settings {
         map.remove("dir");
         map.remove("font");
+        map.remove("font_fallbacks");
         if let Some(font) = ui_font(ws) {
             let file_name = font.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "font.otf".into());
             std::fs::create_dir_all(dist.join("fonts"))?;
             std::fs::copy(&font, dist.join("fonts").join(&file_name))?;
             total += std::fs::metadata(dist.join("fonts").join(&file_name))?.len();
             map.insert("font".into(), Value::String(format!("fonts/{file_name}")));
+            let mut packed_fallbacks = vec![];
+            for (fb, name) in fallback_paths(&project, &settings_fallbacks, &file_name)? {
+                std::fs::copy(&fb, dist.join("fonts").join(&name))?;
+                total += std::fs::metadata(dist.join("fonts").join(&name))?.len();
+                packed_fallbacks.push(Value::String(format!("fonts/{name}")));
+            }
+            map.insert("font_fallbacks".into(), Value::Array(packed_fallbacks));
         }
         map.insert("packed".into(), Value::String(chrono_free_timestamp()));
     }
@@ -139,6 +148,27 @@ pub fn pack(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make
     rep.data = data;
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
+}
+
+/// The fallback font files a project config names, each with the name it is packed under in
+/// fonts/. `pocket` writes the bundled ones as absolute paths; a project.toml's own are relative to
+/// the project, as the runtime reads them. A name already taken (by the main font or another
+/// fallback) gets a numbered prefix.
+fn fallback_paths(project: &Path, v: &Value, main_font: &str) -> Result<Vec<(PathBuf, String)>> {
+    let mut taken = std::collections::HashSet::from([main_font.to_string()]);
+    let mut out = vec![];
+    for (i, entry) in v.as_array().into_iter().flatten().filter_map(|x| x.as_str()).enumerate() {
+        let path = PathBuf::from(entry);
+        let path = if path.is_relative() { project.join(path) } else { path };
+        if !path.is_file() {
+            bail!("font_fallbacks: {} does not exist", path.display());
+        }
+        let base = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "fallback.ttf".into());
+        let name = if taken.contains(&base) { format!("fallback-{i}-{base}") } else { base };
+        taken.insert(name.clone());
+        out.push((path, name));
+    }
+    Ok(out)
 }
 
 /// `[web]` in project.toml: what the browser pack does to the font.
@@ -254,9 +284,11 @@ fn stage_project(ws: &Workspace, project: &Path, staging: &Path, config: &str, w
     }
     let config_path = PathBuf::from(format!("{}.project.json", bundle.out.display()));
     let mut settings: Value = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
+    let settings_fallbacks = settings.get("font_fallbacks").cloned().unwrap_or(Value::Null);
     if let Value::Object(map) = &mut settings {
         map.remove("dir");
         map.remove("font");
+        map.remove("font_fallbacks");
         if let Some(font) = ui_font(ws) {
             let file_name = font.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "font.otf".into());
             std::fs::create_dir_all(staging.join("fonts"))?;
@@ -280,6 +312,26 @@ fn stage_project(ws: &Workspace, project: &Path, staging: &Path, config: &str, w
             }
             total += std::fs::metadata(&dst)?.len();
             map.insert("font".into(), Value::String(format!("fonts/{file_name}")));
+            // The fallback fonts beside it, cut to the same characters.
+            let mut packed_fallbacks = vec![];
+            for (fb, name) in fallback_paths(project, &settings_fallbacks, &file_name)? {
+                let dst = staging.join("fonts").join(&name);
+                match web {
+                    Some(w) if w.subset_font => {
+                        let mut dirs = vec![project];
+                        if editor {
+                            dirs.push(&editor_dir);
+                        }
+                        subset_font(&fb, &font_text(&dirs, &w.font_text), &dst)?;
+                    }
+                    _ => {
+                        std::fs::copy(&fb, &dst)?;
+                    }
+                }
+                total += std::fs::metadata(&dst)?.len();
+                packed_fallbacks.push(Value::String(format!("fonts/{name}")));
+            }
+            map.insert("font_fallbacks".into(), Value::Array(packed_fallbacks));
         }
         map.insert("packed".into(), Value::String(chrono_free_timestamp()));
         map.insert("config".into(), Value::String(config.to_string()));

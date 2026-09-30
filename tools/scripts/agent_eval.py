@@ -27,7 +27,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/cameras.md", "docs/design/localization.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/design/assets.md", "docs/design/pocket-ui.md", "docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/cameras.md", "docs/design/localization.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
 
 
 def near(a, b, tol=0.01):
@@ -713,6 +713,136 @@ def glass_window_check(env, answer):
     return True, "a window of glass (ior 1.52) and a lacquered ball; one glass drawn"
 
 
+PERSIAN = {
+    "hud": {"score": "امتیاز {score, number}", "health": "سلامت {health}", "coins": "{count, plural, =0 {هنوز سکه‌ای نیست} one {# سکه} other {# سکه}}",
+            "hint": "جعبه را با دکمه‌ها بچرخانید یا با WASD راه بروید.", "key": "کلید {key}"},
+    "controls": {"spin_left": "چرخش به چپ", "spin_right": "چرخش به راست", "score_up": "امتیاز +10", "hurt": "آسیب", "heal": "درمان", "pause": "مکث", "resume": "ادامه"},
+    "menu": {"title": "متوقف شد", "name": "نام شما", "name_placeholder": "نام", "volume": "صدا", "difficulty": "سختی", "easy": "آسان", "normal": "معمولی",
+             "hard": "سخت", "show_bar": "نمایش نوار سلامت", "language": "زبان", "resume": "ادامه"},
+    "language": {"en": "English", "zh": "中文", "ar": "العربية", "fa": "فارسی"},
+}
+
+
+def persian_locale_solve(env, project_dir):
+    locales = os.path.join(project_dir, "locales")
+    with open(os.path.join(locales, "fa.json"), "w") as f:
+        json.dump(PERSIAN, f, ensure_ascii=False, indent=2)
+    for lang in ("en", "zh", "ar"):
+        path = os.path.join(locales, lang + ".json")
+        with open(path) as f:
+            doc = json.load(f)
+        doc["language"]["fa"] = "فارسی"
+        with open(path, "w") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
+
+
+def persian_locale_check(env, answer):
+    check = env.command("locale.check", {})
+    fa = check.get("languages", {}).get("fa")
+    if fa is None:
+        return False, f"no Persian file: {sorted(check.get('languages', {}))}"
+    if not check.get("complete"):
+        return False, f"not complete: {json.dumps(check, ensure_ascii=False)[:300]}"
+    env.command("locale.set", {"lang": "fa"})
+    env.command("step", {"ticks": 2})
+    texts = [n for n in env.command("ui.query", {"name": "score"}) if n.get("text")]
+    if not texts:
+        return False, "no score text in the interface"
+    score = texts[0]["text"]
+    if not any("\u0600" <= ch <= "\u06ff" for ch in score) or not any(ch.isdigit() for ch in score):
+        return False, f"the score reads {score!r} in Persian"
+    table = env.command("locale.table", {"lang": "fa"})["strings"]
+    if not all(any("\u0600" <= ch <= "\u06ff" for ch in table[k]) for k in ("controls.pause", "menu.title", "hud.health")):
+        return False, "the Persian texts are not in Persian"
+    # Persian, not the Arabic file copied: letters only Persian has, and texts of its own.
+    if not any(ch in "\u067e\u0686\u0698\u06a9\u06af\u06cc" for text in table.values() for ch in text):
+        return False, "the Persian file has none of the letters Persian writes (پ چ ژ ک گ ی)"
+    arabic = env.command("locale.table", {"lang": "ar"})["strings"]
+    same = [k for k in table if k in arabic and table[k] == arabic[k] and not k.startswith("language.")]
+    if len(same) > len(table) // 2:
+        return False, f"{len(same)} of {len(table)} Persian texts are the Arabic ones"
+    for lang in ("en", "zh", "ar", "fa"):
+        name = env.command("locale.table", {"lang": lang})["strings"].get("language.fa", "")
+        if not any("\u0600" <= ch <= "\u06ff" for ch in name):
+            return False, f"{lang}.json names Persian {name!r}"
+    return True, f"Persian complete, named in every language; the score reads {score}"
+
+
+BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
+
+
+def blender_level_solve(env, project_dir):
+    script = os.path.join(project_dir, "make_level.py")
+    with open(script, "w") as f:
+        f.write("""import bpy, sys
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_plane_add(size=10, location=(0, 0, 1))
+floor = bpy.context.active_object
+floor.name = 'Floor'
+floor['pocket'] = '{"RigidBody": {"kind": 1}, "Collider": {"shape": 3}}'
+bpy.ops.mesh.primitive_cube_add(size=1, location=(3, 0, 2.5))
+pillar = bpy.context.active_object
+pillar.name = 'Pillar'
+pillar.scale = (1, 1, 3)
+pillar['pocket.RigidBody'] = '{"kind": 1}'
+pillar['pocket.Collider'] = '{"shape": 0, "size": {"x": 0.5, "y": 1.5, "z": 0.5}}'
+pillar['pocket.Health'] = '{"max": 50, "current": 50}'
+bpy.ops.wm.save_as_mainfile(filepath=sys.argv[-1])
+""")
+    subprocess.run([BLENDER, "-b", "--factory-startup", "--python", script, "--", os.path.join(project_dir, "assets", "level.blend")], capture_output=True, check=True, timeout=300)
+    os.remove(script)
+    return drop_on_level(env)
+
+
+def drop_on_level(env):
+    env.command("world.instantiate", {"mesh": "assets/level.blend", "position": {"x": 60, "y": 0, "z": 0}, "name": "Level"})
+    env.command("world.spawn", {"name": "Probe", "components": {"Transform": {"position": {"x": 58, "y": 8, "z": 1}}, "MeshRenderer": {"mesh": "sphere"},
+                "RigidBody": {"kind": 0, "mass": 1}, "Collider": {"shape": 1, "size": {"x": 0.5, "y": 0.5, "z": 0.5}}}})
+    env.command("step", {"ticks": 180})
+    return env.command("world.get", {"entity": "Probe", "component": "Transform"})["position"]["y"]
+
+
+def blender_level_check(env, answer):
+    d = env.command("assets.describe", {"path": "assets/level.blend"})
+    props = d.get("properties") or {}
+    if not {"Floor", "Pillar"} <= set(props):
+        return False, f"assets/level.blend has custom properties on {sorted(props)}"
+    # A fresh level where the check puts it: the components from the properties, a ball on the floor.
+    for name in ("Level", "Probe"):
+        found = env.command("world.find", {"path": name})
+        if isinstance(found, int):
+            env.command("world.destroy", {"entity": found})
+    inst = env.command("world.instantiate", {"mesh": "assets/level.blend", "position": {"x": -60, "y": 0, "z": 0}, "name": "Checked"})
+    root = inst["roots"][0]
+    kids = {env.command("world.describe", {"entity": c})["name"]: c for c in env.command("world.children", {"entity": root})}
+    if "Floor" not in kids or "Pillar" not in kids:
+        return False, f"the level's objects are {sorted(kids)}"
+    rb = env.command("world.get", {"entity": kids["Floor"], "component": "RigidBody"}) or {}
+    col = env.command("world.get", {"entity": kids["Floor"], "component": "Collider"}) or {}
+    if rb.get("kind") != 1 or col.get("shape") != 3:
+        return False, f"the Floor is RigidBody {rb} Collider {col}"
+    hp = env.command("world.get", {"entity": kids["Pillar"], "component": "Health"}) or {}
+    prb = env.command("world.get", {"entity": kids["Pillar"], "component": "RigidBody"}) or {}
+    pcol = env.command("world.get", {"entity": kids["Pillar"], "component": "Collider"}) or {}
+    size = pcol.get("size", {})
+    if not near(hp.get("max", 0), 50) or not near(hp.get("current", 0), 50) or prb.get("kind") != 1 or pcol.get("shape") != 0 \
+            or not all(near(size.get(k, 0), v) for k, v in (("x", 0.5), ("y", 1.5), ("z", 0.5))):
+        return False, f"the Pillar has Health {hp}, RigidBody {prb} and Collider {pcol}"
+    # One ball near the middle and one near a corner, 10 across: both rest on the floor.
+    balls = {"CheckBall": (-62, 1), "CornerBall": (-64.5, -4.5)}
+    for name, (x, z) in balls.items():
+        env.command("world.spawn", {"name": name, "components": {"Transform": {"position": {"x": x, "y": 8, "z": z}}, "MeshRenderer": {"mesh": "sphere"},
+                    "RigidBody": {"kind": 0, "mass": 1}, "Collider": {"shape": 1, "size": {"x": 0.5, "y": 0.5, "z": 0.5}}}})
+    env.command("step", {"ticks": 180})
+    for name, (x, z) in balls.items():
+        y = env.command("world.get", {"entity": name, "component": "Transform"})["position"]["y"]
+        if not near(y, 1.5, 0.05):
+            return False, f"a ball dropped on the Floor at x {x}, z {z} rests at {y:.3f}, not 1.5"
+    if not isinstance(answer, (int, float)) or not near(answer, 1.5, 0.05):
+        return False, f"answered {answer!r}, a ball rests at 1.5 on the floor"
+    return True, f"a level from Blender: a static floor it collides with at 1.5, a pillar with 50 health"
+
+
 SAND = (0.85, 0.78, 0.55)
 ROAD_FAR = [(x, z) for x in range(-28, 29, 4) for z in (-6.5, 6.5)]
 
@@ -887,6 +1017,10 @@ TASKS = [
      "task": "The terrain named Hills is drawn from four textured layers (grass, sand, rock, dirt). Make its sand layer lie only below 0.2 of the terrain's height instead of where it lies now, leaving the other layers as they are, and paint its dirt layer at full strength in a patch of radius 4 around x 10, z -10. Answer with the dirt layer's share of the ground at x 10, z -10 as the number \"answer\"."},
     {"name": "glass_window", "project": "hello", "ticks": 0, "solve": glass_window_solve, "check": glass_window_check,
      "task": "Spawn an entity named Window: a cube scaled x 2, y 1.5, z 0.05 at x 0, y 1.5, z 3, drawn as clear glass that lets all the light through, with an index of refraction of 1.52. Give the entity named Ball a clear coat at full strength with a roughness of 0.05. Then step one tick and answer with the number of glass meshes the renderer drew in that frame as the integer \"answer\"."},
+    {"name": "persian_locale", "project": "ui", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "edits": "the files in locales/", "solve": persian_locale_solve, "check": persian_locale_check,
+     "task": "The interface speaks English, Chinese and Arabic (locales/en.json, zh.json, ar.json). Add Persian: write locales/fa.json with every text the English file has, translated into Persian (keep the placeholders and plural forms working), and give the language choice its name by adding language.fa (\"فارسی\") to every language file. Answer with anything; the check switches to Persian and reads the interface."},
+    {"name": "blender_level", "project": "assets", "ticks": 0, "script": True, "edits": "assets/level.blend (made by Blender)", "solve": blender_level_solve, "check": blender_level_check,
+     "task": "Make a small level in Blender, which is installed at /Applications/Blender.app/Contents/MacOS/Blender (run it headless with a Python script, -b --factory-startup --python). Save it as assets/level.blend in the project with: a plane named Floor, 10 across, lying flat 1 unit above the ground (Blender z 1), that the engine will make a static body colliding with its own triangles; and a box named Pillar, 1 by 1 by 3 standing on it at Blender x 3, y 0, that becomes a static body with a box collider 0.5 by 1.5 by 0.5 in half extents and has 50 health (the Health component, max and current 50). Give them those engine components through Blender custom properties so that world.instantiate of the file brings them. Then instantiate it at x 60 and drop a dynamic sphere of radius 0.5 (mass 1) from 8 up onto the floor at x 58, z 1; answer with the height it comes to rest at after 180 ticks as the number \"answer\"."},
     {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
      "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
 ]
@@ -925,7 +1059,7 @@ def run_external(cmd, env, task, timeout, project_dir):
     """One external runner: the task as JSON on stdin, the last JSON line of its output as the answer."""
     payload = {"task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": DOCS,
                "notes": "POST {\"id\": 1, \"method\": \"<command>\", \"params\": {...}} to rpc_url + \"/rpc\"; the runtime is paused; `commands` lists every method."
-                        + (f" This task edits files: change {task.get('entry', 'scripts/main.ts')} under project_dir; the harness bundles the project again and reloads the project (a fresh world from the scene, the script started again) when you are done." if task.get("script") else "")}
+                        + (f" This task edits files: change {task.get('edits', task.get('entry', 'scripts/main.ts'))} under project_dir; the harness bundles the project again and reloads the project (a fresh world from the scene, the script started again) when you are done." if task.get("script") else "")}
     proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})
     answer = None
     metrics = {}

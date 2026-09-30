@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -97,7 +98,19 @@ def main():
                     k, v = raw.split("=", 1)
                     env[k.strip().removeprefix("export ").strip()] = v.strip().strip('"').strip("'")
     started = time.time()
-    proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=a.max_time + 60)
+    # The agent in a process group of its own, so what it leaves running (a runtime it started in
+    # the background) ends with it instead of outliving the task.
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=a.max_time + 60)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, err = proc.communicate()
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
     seconds = round(time.time() - started, 1)
     if scratch:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -108,7 +121,7 @@ def main():
     turns = 0
     final_text = ""
     errors = []
-    for line in proc.stdout.splitlines():
+    for line in out.splitlines():
         line = line.strip()
         if not line.startswith("{"):
             continue
@@ -147,7 +160,7 @@ def main():
                 continue
     report = {"answer": answer, "agent": os.path.basename(agent), "via": a.via, "model": a.model, "seconds": seconds, "turns": turns,
               "tool_calls": sum(tools.values()), "tools": tools, "tool_errors": len(errors), "tokens": usage, "cost_usd": round(cost, 6)}
-    sys.stderr.write(proc.stderr[-2000:])
+    sys.stderr.write(err[-2000:])
     if proc.returncode != 0:
         sys.stderr.write(f"\n{os.path.basename(agent)} exited {proc.returncode}\n")
     print(json.dumps(report))

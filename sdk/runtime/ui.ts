@@ -177,6 +177,12 @@ export interface StyleProps {
     top?: number | string;
     right?: number;
     bottom?: number;
+    /** "none": the pointer goes through the element to what is under it (its children still take it), for a full-window layer that only lays things out. */
+    pointerEvents?: "auto" | "none";
+    /** From the line's start side: the left, or the right under `dir: "rtl"` (a HUD that follows the language). */
+    start?: number | string;
+    /** From the line's end side: the right, or the left under `dir: "rtl"`. */
+    end?: number | string;
     overflow?: "visible" | "hidden" | "scroll";
     display?: "flex" | "none";
     background?: ColorValue;
@@ -196,7 +202,10 @@ export interface StyleProps {
     opacity?: number;
     color?: ColorValue;
     fontSize?: number;
-    textAlign?: "left" | "center" | "right";
+    /** "start" (the default) is the left of a left-to-right line and the right of a right-to-left one; "end" the other side. */
+    textAlign?: "start" | "end" | "left" | "center" | "right";
+    /** The text's direction and the element's own: "rtl" lays rows out from the right (the first child on the right, `start` and `end` swapped) and every paragraph right to left; "ltr" the reverse; "auto" (the default) takes the parent's, and a paragraph with none set goes the way its first letter reads. `i18n.direction()` gives the current language's. */
+    dir?: "ltr" | "rtl" | "auto";
     textWrap?: boolean;
     scrollTop?: number;
     /** Milliseconds per prop: later changes to opacity, left, top, width, height, background or color run from the present value to the new one, eased in and out (a panel sliding in, a fade). */
@@ -602,7 +611,7 @@ export function Button(props: { label: string; onClick?: (e: UiEvent) => void; p
     }, h("text", { color: props.disabled ? theme.muted : props.primary || props.danger ? theme.accentText : theme.text, fontSize: props.small ? 12 : theme.fontSize }, props.label));
 }
 
-export function Label(props: { text: string; muted?: boolean; size?: number; align?: "left" | "center" | "right"; wrap?: boolean; color?: ColorValue; flex?: number; name?: string; anchor?: number; anchorOffset?: [number, number]; anchorAlign?: [number, number] }): VNode {
+export function Label(props: { text: string; muted?: boolean; size?: number; align?: "start" | "left" | "center" | "right"; wrap?: boolean; color?: ColorValue; flex?: number; name?: string; anchor?: number; anchorOffset?: [number, number]; anchorAlign?: [number, number] }): VNode {
     return h("text", { color: props.color ?? (props.muted ? theme.muted : theme.text), fontSize: props.size ?? theme.fontSize, textAlign: props.align, textWrap: props.wrap, flex: props.flex, name: props.name, anchor: props.anchor, anchorOffset: props.anchorOffset, anchorAlign: props.anchorAlign }, props.text);
 }
 
@@ -672,7 +681,8 @@ export function Slider(props: { value: number; min?: number; max?: number; step?
             props.onChange?.(v);
         },
     };
-    return h("box", { name: props.name, width: props.width ?? 160, height: 20, padding: [0, inset], justify: "center", opacity: props.disabled ? 0.5 : undefined, autofocus: props.autofocus, ...handlers },
+    // Always left to right: its thumb, fill and pointer all measure from the left.
+    return h("box", { name: props.name, width: props.width ?? 160, height: 20, padding: [0, inset], justify: "center", dir: "ltr", opacity: props.disabled ? 0.5 : undefined, autofocus: props.autofocus, ...handlers },
         h("box", { height: 20, justify: "center" },
             h("box", { height: 4, radius: 2, background: theme.border },
                 h("box", { width: `${t * 100}%`, height: 4, radius: 2, background: theme.accent })),
@@ -700,7 +710,12 @@ export function Choice<T extends string>(props: { value: T; options: readonly T[
         h("text", { color: props.disabled ? theme.muted : theme.text, fontSize: 12 }, label));
     return h("box", { name: props.name, direction: "row", align: "center", gap: 4, width: props.width, disabled: props.disabled, autofocus: props.autofocus,
         onClick: props.disabled ? undefined : () => pick(1),
-        onKeyDown: props.disabled ? undefined : (e: UiEvent) => { if (e.key === "Left") pick(-1); else if (e.key === "Right") pick(1); } },
+        // The arrow keys go the way the arrows stand: under dir rtl the previous one is on the right.
+        onKeyDown: props.disabled ? undefined : (e: UiEvent) => {
+            if (e.key !== "Left" && e.key !== "Right") return;
+            const rtl = cmd<{ dir?: string }>("ui.describe", { id: e.id }).dir === "rtl";
+            pick((e.key === "Right") !== rtl ? 1 : -1);
+        } },
         arrow("<", -1, "prev"),
         h("text", { flex: 1, textAlign: "center", color: props.disabled ? theme.muted : theme.text, fontSize: theme.fontSize }, props.labels?.[props.value] ?? props.value),
         arrow(">", 1, "next"));

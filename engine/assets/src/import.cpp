@@ -534,7 +534,7 @@ else:
         print('POCKET_ERROR cannot import: ' + str(e))
         sys.exit(4)
 opts = dict(filepath=out, export_format='GLB', export_apply=True, export_yup=True, export_cameras=True, export_lights=True,
-            export_animations=True, export_skins=True, export_morph=True, export_import_convert_lighting_mode='COMPAT')
+            export_animations=True, export_skins=True, export_morph=True, export_extras=True, export_import_convert_lighting_mode='COMPAT')
 try:
     bpy.ops.export_scene.gltf(**opts)
 except TypeError:
@@ -559,7 +559,8 @@ Result<Conversion> convert_with_blender(const std::filesystem::path& source, con
     POCKET_TRY(bytes, fs::read_bytes(source));
     const std::string content(bytes.begin(), bytes.end());
     char stamp_text[64];
-    std::snprintf(stamp_text, sizeof stamp_text, "%zu:%016llx", content.size(), static_cast<unsigned long long>(fnv(content)));
+    // The content and the script that converts it: a new script converts again.
+    std::snprintf(stamp_text, sizeof stamp_text, "%zu:%016llx", content.size(), static_cast<unsigned long long>(fnv(content) ^ (fnv(kBlenderScript) * 31)));
     const std::filesystem::path stamp = out_glb.string() + ".stamp";
     std::error_code ec;
     const bool have = std::filesystem::is_regular_file(out_glb, ec);

@@ -1,8 +1,8 @@
 {
   "runner": "null",
   "passed": 0,
-  "total": 22,
-  "seconds": 36.7,
+  "total": 29,
+  "seconds": 50.2,
   "tasks": [
     {
       "name": "spawn_named",
@@ -17,7 +17,7 @@
       "name": "recolor",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.4,
       "detail": "Ball's color is {'r': 0.8999999761581421, 'g': 0.5, 'b': 0.20000000298023224, 'a': 1.0}",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": false,
-      "seconds": 6.5,
+      "seconds": 6.1,
       "detail": "1 enemies remain",
       "answer": null,
       "error": null
@@ -53,7 +53,7 @@
       "name": "path_length",
       "project": "playground",
       "ok": false,
-      "seconds": 0.6,
+      "seconds": 0.7,
       "detail": "no number answered (truth 22.882)",
       "answer": null,
       "error": null
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": false,
-      "seconds": 2.1,
+      "seconds": 2.2,
       "detail": "no number answered (truth 5)",
       "answer": null,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": false,
-      "seconds": 9.7,
+      "seconds": 8.8,
       "detail": "answered None, the root cause is 'entity.spawned'",
       "answer": null,
       "error": null
@@ -80,7 +80,7 @@
       "name": "night_lamp",
       "project": "hello",
       "ok": false,
-      "seconds": 0.4,
+      "seconds": 0.5,
       "detail": "the Sun's intensity is 1.2000000476837158",
       "answer": null,
       "error": null
@@ -89,7 +89,7 @@
       "name": "expose_count",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.6,
       "detail": "no state key 'answer' after the reload",
       "answer": null,
       "error": null
@@ -116,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": false,
-      "seconds": 1.6,
+      "seconds": 1.5,
       "detail": "rose 2.21 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -134,7 +134,7 @@
       "name": "jump_sound",
       "project": "sprites",
       "ok": false,
-      "seconds": 0.6,
+      "seconds": 0.7,
       "detail": "no sound file under assets/",
       "answer": null,
       "error": null
@@ -143,8 +143,8 @@
       "name": "lamp_prefab",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
-      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-67791/prefabs/lamp.json",
+      "seconds": 0.7,
+      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-50372/prefabs/lamp.json",
       "answer": null,
       "error": null
     },
@@ -152,7 +152,7 @@
       "name": "hill_raise",
       "project": "hills",
       "ok": false,
-      "seconds": 1.2,
+      "seconds": 2.4,
       "detail": "the ground at (20.0, -20.0) stands 3.40 high",
       "answer": null,
       "error": null
@@ -161,7 +161,7 @@
       "name": "flowers",
       "project": "hills",
       "ok": false,
-      "seconds": 1.2,
+      "seconds": 2.2,
       "detail": "no entity named Flowers",
       "answer": null,
       "error": null
@@ -170,7 +170,7 @@
       "name": "car_speed",
       "project": "drive",
       "ok": false,
-      "seconds": 3.7,
+      "seconds": 4.1,
       "detail": "top_speed 25.0, power 10.0",
       "answer": null,
       "error": null
@@ -179,7 +179,7 @@
       "name": "walker_sprint",
       "project": "walker",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.6,
       "detail": "no sprint action on LShift: ['jump', 'move_x', 'move_z']",
       "answer": null,
       "error": null
@@ -188,8 +188,71 @@
       "name": "raft",
       "project": "hills",
       "ok": false,
-      "seconds": 1.2,
+      "seconds": 2.1,
       "detail": "no entity named Raft",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sand_road",
+      "project": "hills",
+      "ok": false,
+      "seconds": 2.2,
+      "detail": "the ground at x -28, z -1 is covered 0.00",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "reed_field",
+      "project": "hills",
+      "ok": false,
+      "seconds": 2.0,
+      "detail": "no entity named Reeds",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "stormy_dusk",
+      "project": "hills",
+      "ok": false,
+      "seconds": 2.1,
+      "detail": "clouds 0.4000000059604645",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "dirt_patch",
+      "project": "hills",
+      "ok": false,
+      "seconds": 2.1,
+      "detail": "sand lies at heights {'x': 0.0, 'y': 0.3100000023841858}",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "glass_window",
+      "project": "hello",
+      "ok": false,
+      "seconds": 0.5,
+      "detail": "no entity named Window",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "persian_locale",
+      "project": "ui",
+      "ok": false,
+      "seconds": 0.6,
+      "detail": "no Persian file: ['ar', 'zh']",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "blender_level",
+      "project": "assets",
+      "ok": false,
+      "seconds": 0.6,
+      "detail": "assets/level.blend has custom properties on []",
       "answer": null,
       "error": null
     },
@@ -197,7 +260,7 @@
       "name": "calm_lake",
       "project": "hills",
       "ok": false,
-      "seconds": 1.1,
+      "seconds": 1.9,
       "detail": "the lake's waves are 0.2199999988079071 high",
       "answer": null,
       "error": null

@@ -260,8 +260,8 @@ export const render = {
     msaa(samples?: number): number {
         return command<{ msaa: number }>("render.msaa", samples === undefined ? {} : { samples }).msaa;
     },
-    /** Shadow map settings (on by default when a sun exists; project.toml [render] shadows = false turns it off). */
-    shadows(settings: { enabled?: boolean; strength?: number; bias?: number } = {}): { enabled: boolean; strength: number; bias: number } {
+    /** Shadow map settings (on by default when a sun exists; project.toml [render] shadows = false turns it off). `softness` is the sun's radius in degrees, its shadows sharp at their casters and softer farther off (0: sharp everywhere); `contact` marches `contact_length` units toward the sun through the depth buffer for the shadows too small for the maps. */
+    shadows(settings: { enabled?: boolean; strength?: number; bias?: number; cascades?: number; distance?: number; softness?: number; contact?: boolean; contact_length?: number } = {}): { enabled: boolean; strength: number; bias: number; cascades: number; distance: number; softness: number; contact: boolean; contact_length: number } {
         return command("render.shadows", settings);
     },
     /**

@@ -3677,6 +3677,178 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a Blender level: custom properties become components, a node's mesh collides in its place, glass and lacquer come along", "[runtime][import][blenderlevel]") {
+    const std::string blender = assets::find_blender("");
+    if (blender.empty()) SKIP("Blender is not installed");
+    const std::filesystem::path dir = root() / "samples" / "assets" / "assets" / "import-test";
+    const std::filesystem::path out = root() / "build" / "test-out";
+    std::filesystem::create_directories(dir);
+    std::filesystem::create_directories(out);
+    // A floor that is level geometry, a pillar with a box collider and health, a pane of glass, a
+    // lacquered ball, and an empty asking for a component there is none of, all set in Blender's
+    // custom properties (Object Properties > Custom Properties).
+    std::ofstream(out / "make-level.py") << R"PY(
+import bpy, sys
+argv = sys.argv[sys.argv.index('--') + 1:]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_plane_add(size=10, location=(0, 0, 1))
+floor = bpy.context.active_object
+floor.name = 'Floor'
+floor['pocket'] = '{"RigidBody": {"kind": 1}, "Collider": {"shape": 3}}'
+bpy.ops.mesh.primitive_cube_add(size=1, location=(3, 0, 2.5))
+pillar = bpy.context.active_object
+pillar.name = 'Pillar'
+pillar.scale = (1, 1, 3)
+pillar['pocket.RigidBody'] = '{"kind": 1}'
+pillar['pocket.Collider'] = '{"shape": 0, "size": {"x": 0.5, "y": 1.5, "z": 0.5}}'
+pillar['pocket.Health'] = '{"max": 50, "current": 50}'
+pillar['note'] = 'not ours'
+def principled(name):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    return m, m.node_tree.nodes['Principled BSDF']
+def set_input(b, names, value):
+    for n in names:
+        if n in b.inputs:
+            b.inputs[n].default_value = value
+            return
+bpy.ops.mesh.primitive_cube_add(size=1, location=(-2, -2, 2))
+pane = bpy.context.active_object
+pane.name = 'Pane'
+pane.scale = (1.5, 0.05, 1)
+glass, b = principled('Glass')
+set_input(b, ['Transmission Weight', 'Transmission'], 1.0)
+set_input(b, ['IOR'], 1.45)
+set_input(b, ['Roughness'], 0.05)
+pane.data.materials.append(glass)
+bpy.ops.mesh.primitive_uv_sphere_add(radius=0.5, location=(-2, 2, 1.5))
+ball = bpy.context.active_object
+ball.name = 'Lacquered'
+paint, b = principled('CarPaint')
+set_input(b, ['Base Color'], (0.6, 0.02, 0.02, 1))
+set_input(b, ['Coat Weight', 'Clearcoat'], 1.0)
+set_input(b, ['Coat Roughness', 'Clearcoat Roughness'], 0.05)
+ball.data.materials.append(paint)
+bpy.ops.object.empty_add(location=(0, 3, 1))
+marker = bpy.context.active_object
+marker.name = 'Marker'
+marker['pocket.Lamp'] = '{}'
+bpy.ops.wm.save_as_mainfile(filepath=argv[0])
+)PY";
+    const std::string cmd = "'" + blender + "' -b --factory-startup --python '" + (out / "make-level.py").string() + "' -- '" + (dir / "level.blend").string() + "' > '" + (out / "make-level.log").string() + "' 2>&1";
+    REQUIRE(std::system(cmd.c_str()) == 0);
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The file as the store sees it: the custom properties by object, the glass and the lacquer.
+    const Json d = s.command("assets.describe", Json{{"path", "assets/import-test/level.blend"}}).value();
+    INFO(d.dump());
+    REQUIRE(d["properties"]["Floor"]["pocket"].is_string());
+    REQUIRE(d["properties"]["Pillar"]["note"] == "not ours");
+    double transmission = 0, ior = 0, coat = 0;
+    for (const Json& m : d["materials"]) {
+        if (m["name"] == "Glass") { transmission = m.value("transmission", 0.0); ior = m.value("ior", 0.0); }
+        if (m["name"] == "CarPaint") coat = m.value("clearcoat", 0.0);
+    }
+    REQUIRE(transmission == Catch::Approx(1.0));
+    REQUIRE(ior == Catch::Approx(1.45).margin(0.01));
+    REQUIRE(coat == Catch::Approx(1.0));
+    // Instantiated far from the sample's own things: the components from the properties, and a
+    // warning for the one that names nothing.
+    Json inst = s.command("world.instantiate", Json{{"mesh", "assets/import-test/level.blend"}, {"position", Json{{"x", 60}, {"y", 0}, {"z", 0}}}}).value();
+    INFO(inst.dump());
+    REQUIRE(inst["warnings"].size() == 1);
+    REQUIRE(inst["warnings"][0].get<std::string>().find("Lamp") != std::string::npos);
+    const Json root_id = inst["roots"][0];
+    auto child = [&](const char* name) {
+        for (const Json& c : s.command("world.children", Json{{"entity", root_id}}).value())
+            if (s.command("world.describe", Json{{"entity", c}}).value().value("name", "") == name) return c;
+        return Json(nullptr);
+    };
+    const Json floor = child("Floor"), pillar = child("Pillar");
+    REQUIRE(!floor.is_null());
+    REQUIRE(!pillar.is_null());
+    REQUIRE(s.command("world.get", Json{{"entity", floor}, {"component", "RigidBody"}}).value()["kind"] == 1);
+    REQUIRE(s.command("world.get", Json{{"entity", floor}, {"component", "Collider"}}).value()["shape"] == 3);
+    REQUIRE(s.command("world.get", Json{{"entity", floor}, {"component", "MeshRenderer"}}).value()["node"] == "Floor");
+    REQUIRE(s.command("world.get", Json{{"entity", pillar}, {"component", "Health"}}).value()["max"].get<double>() == Catch::Approx(50));
+    REQUIRE(s.command("world.get", Json{{"entity", pillar}, {"component", "Collider"}}).value()["size"]["y"].get<double>() == Catch::Approx(1.5));
+    // Balls dropped at the level's place: one lands on the floor's own triangles (a unit up, where
+    // the file puts it, the model at x 60), one on the pillar's box (4 up).
+    auto ball = [&](const char* name, double x, double z) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 8}, {"z", z}}}}}, {"MeshRenderer", Json{{"mesh", "sphere"}}}, {"RigidBody", Json{{"kind", 0}, {"mass", 1}}}, {"Collider", Json{{"shape", 1}, {"size", Json{{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}}}).has_value());
+    };
+    ball("OnFloor", 58, 1);    // Blender's y is the engine's -z
+    ball("OnPillar", 63, 0);
+    for (int i = 0; i < 180; ++i) REQUIRE(s.frame().has_value());
+    // The floor's collider keeps its own plane (two triangles, four corners), not the whole file.
+    const Json stats = s.command("physics.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["meshes"] == 1);
+    REQUIRE(stats["triangles"] == 2);
+    REQUIRE(stats["mesh_vertices"] == 4);
+    // Live models: the root remembers its file. A second copy is told not to follow it; then the
+    // level is changed in Blender (the pillar moved to the other side, a crate with 20 health
+    // added) and the store reloaded: the live copy is made again in place, the frozen one is not.
+    const Json model = s.command("world.get", Json{{"entity", root_id}, {"component", "Model"}}).value();
+    REQUIRE(model["path"] == "assets/import-test/level.blend");
+    REQUIRE(model["live"] == true);
+    REQUIRE(model["hash"].get<std::string>().size() == 16);
+    const Json frozen = s.command("world.instantiate", Json{{"mesh", "assets/import-test/level.blend"}, {"position", Json{{"x", -60}, {"y", 0}, {"z", 0}}}, {"name", "Frozen"}, {"components", Json{{"Model", Json{{"live", false}}}}}}).value()["roots"][0];
+    REQUIRE(s.command("assets.reload", Json::object()).value().contains("relinked") == false);   // nothing changed yet
+    std::ofstream(out / "change-level.py") << R"PY(
+import bpy, sys
+argv = sys.argv[sys.argv.index('--') + 1:]
+bpy.ops.wm.open_mainfile(filepath=argv[0])
+bpy.data.objects['Pillar'].location = (-3, 0, 2.5)
+bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -3, 1.5))
+crate = bpy.context.active_object
+crate.name = 'Crate'
+crate['pocket.Health'] = '{"max": 20, "current": 20}'
+bpy.ops.wm.save_as_mainfile(filepath=argv[0])
+)PY";
+    const std::string change = "'" + blender + "' -b --factory-startup --python '" + (out / "change-level.py").string() + "' -- '" + (dir / "level.blend").string() + "' > '" + (out / "change-level.log").string() + "' 2>&1";
+    REQUIRE(std::system(change.c_str()) == 0);
+    const std::uint64_t seq = s.command("events.last_seq", Json::object()).value().get<std::uint64_t>();
+    const Json reloaded = s.command("assets.reload", Json::object()).value();
+    INFO(reloaded.dump());
+    REQUIRE(reloaded["relinked"].size() == 1);
+    REQUIRE(reloaded["relinked"][0]["entity"] == root_id);
+    REQUIRE(s.command("world.get", Json{{"entity", root_id}, {"component", "Model"}}).value()["hash"] != model["hash"]);
+    const Json crate = child("Crate");
+    REQUIRE(!crate.is_null());
+    REQUIRE(s.command("world.get", Json{{"entity", crate}, {"component", "Health"}}).value()["max"].get<double>() == Catch::Approx(20));
+    REQUIRE(s.command("world.get", Json{{"entity", child("Pillar")}, {"component", "Transform"}}).value()["position"]["x"].get<double>() == Catch::Approx(-3).margin(1e-3));
+    bool relinked_event = false;
+    for (const Json& e : s.command("events.since", Json{{"seq", seq}}).value()["events"]) relinked_event = relinked_event || e["type"] == "model.relinked";
+    REQUIRE(relinked_event);
+    bool frozen_crate = false;
+    for (const Json& c : s.command("world.children", Json{{"entity", frozen}}).value())
+        frozen_crate = frozen_crate || s.command("world.describe", Json{{"entity", c}}).value().value("name", "") == "Crate";
+    REQUIRE_FALSE(frozen_crate);
+    const double on_floor = s.command("world.get", Json{{"entity", "OnFloor"}, {"component", "Transform"}}).value()["position"]["y"].get<double>();
+    const double on_pillar = s.command("world.get", Json{{"entity", "OnPillar"}, {"component", "Transform"}}).value()["position"]["y"].get<double>();
+    INFO("on the floor at " << on_floor << ", on the pillar at " << on_pillar);
+    REQUIRE(on_floor == Catch::Approx(1.5).margin(0.05));
+    REQUIRE(on_pillar == Catch::Approx(4.5).margin(0.05));
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove(dir / "level.blend");
+    std::filesystem::remove(dir / "level.blend1");   // Blender's backup of the file it saved over
+    std::filesystem::remove_all(root() / "samples" / "assets" / ".imported" / "assets" / "import-test" / "level.blend.glb");
+    std::filesystem::remove(root() / "samples" / "assets" / ".imported" / "assets" / "import-test" / "level.blend.glb.stamp");
+    std::filesystem::remove(root() / "samples" / "assets" / ".imported" / "assets" / "import-test" / "level.blend.glb.log");
+    std::error_code ec;
+    std::filesystem::remove(dir, ec);   // only when nothing else is in it
+}
+
 TEST_CASE("Blender files, FBX and OBJ come in as scenes: converted once, instantiated with their lights and cameras", "[runtime][import]") {
     const std::string blender = assets::find_blender("");
     if (blender.empty()) SKIP("Blender is not installed");
