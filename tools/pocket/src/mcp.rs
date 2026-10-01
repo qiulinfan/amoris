@@ -118,7 +118,7 @@ fn tools_list() -> Value {
             "components": { "type": "array", "items": { "type": "string" } },
             "search": { "type": "string" }
         }), &[])),
-        tool("step", "Advance the paused simulation by N ticks and return the state summary (tick, exposed state, hashes). `until` stops at the first tick after which something holds: {event: \"coin.\"} (an event type or prefix), {state: \"score\", at_least: 3}, or {entity, component, field: \"position.y\", below: 0}, compared with equals, above, below, at_least, at_most or changes; the answer's `until` says whether it was met, at which tick and what was seen.", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 }, "until": { "type": "object", "description": "a condition that ends the step early" } }), &[])),
+        tool("step", "Advance the paused simulation by N ticks and return the state summary (tick, exposed state, hashes). `until` stops at the first tick after which something holds: {event: \"coin.\"} (an event type or prefix), {state: \"score\", at_least: 3}, or {entity, component, field: \"position.y\", below: 0}, compared with equals, above, below, at_least, at_most or changes; the answer's `until` says whether it was met, at which tick and what was seen. `watch` follows values through the step (\"score\", \"Player:Transform.position.y\") and answers first, last, min, max with their ticks and how often each changed, instead of stepping a tick at a time; `keys` keeps only those exposed values in the answer.", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 }, "until": { "type": "object", "description": "a condition that ends the step early" }, "watch": { "type": "array", "items": {}, "description": "values to follow: an exposed name, \"Entity:Component.field\", or {entity, component, field}" }, "every": { "type": "integer", "description": "also keep each watched value every n ticks" }, "keys": { "type": "array", "items": { "type": "string" }, "description": "only these exposed values in the answer" } }), &[])),
         tool("events_since", "Causal event log entries after a sequence number, oldest first.", obj_schema(json!({
             "seq": { "type": "integer", "default": 0 },
             "limit": { "type": "integer", "default": 200 },
@@ -153,10 +153,22 @@ fn tools_list() -> Value {
 
 impl<'a> McpServer<'a> {
     fn text_result(value: Value, is_error: bool) -> Value {
-        let text = match &value {
+        // Compact JSON (pretty printing nearly doubled what a model reads), cut at a bound with a
+        // note on asking for less, as the pi tools do.
+        const LIMIT: usize = 24000;
+        let mut text = match &value {
             Value::String(s) => s.clone(),
-            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+            other => serde_json::to_string(other).unwrap_or_default(),
         };
+        if text.len() > LIMIT {
+            let mut cut = LIMIT;
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let rest = text.len() - cut;
+            text.truncate(cut);
+            text.push_str(&format!("\n[cut: {rest} more bytes; ask for less: commands {{family | search, text: true}}, help {{command}}, world.schema {{component}}, world.tree {{depth}}, world.query {{limit}}, one entity, or a batch's calls one at a time]"));
+        }
         json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
     }
 
@@ -309,7 +321,7 @@ impl<'a> McpServer<'a> {
         }
         let v = self.rpc("capture", args)?;
         let path = v.get("path").and_then(|p| p.as_str()).map(String::from).unwrap_or(path);   // a relative path lands under the project
-        let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+        let text = serde_json::to_string(&v).unwrap_or_default();
         let mut content = vec![json!({ "type": "text", "text": text })];
         if want_image {
             let bytes = std::fs::read(&path).with_context(|| format!("reading {path}"))?;
@@ -393,7 +405,7 @@ impl<'a> McpServer<'a> {
                 let mut v = self.rpc("assets.preview", a)?;
                 let png = v.get("png").and_then(|p| p.as_str()).unwrap_or_default().to_string();
                 if let Some(o) = v.as_object_mut() { o.remove("png"); }
-                let mut content = vec![json!({ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() })];
+                let mut content = vec![json!({ "type": "text", "text": serde_json::to_string(&v).unwrap_or_default() })];
                 if !png.is_empty() { content.push(json!({ "type": "image", "data": png, "mimeType": "image/png" })); }
                 Ok(json!({ "content": content, "isError": false }))
             }
@@ -406,7 +418,7 @@ impl<'a> McpServer<'a> {
                 let v = self.rpc("render.views", a)?;
                 let bytes = std::fs::read(&path).with_context(|| format!("reading {path}"))?;
                 Ok(json!({ "content": [
-                    { "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() },
+                    { "type": "text", "text": serde_json::to_string(&v).unwrap_or_default() },
                     { "type": "image", "data": base64(&bytes), "mimeType": "image/png" }
                 ], "isError": false }))
             }

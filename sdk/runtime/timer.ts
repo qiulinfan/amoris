@@ -44,7 +44,9 @@ function update(t: Tick): void {
     for (const p of pending.slice()) {
         if (p.done) continue;
         p.remaining -= t.dt;
-        while (!p.done && p.remaining <= 0) {
+        // A hair of slack, so a whole number of ticks is exact: 3 s at 60 ticks a second fires on
+        // the 180th tick, not the 181st when the sum of 180 sixtieths rounds a little short.
+        while (!p.done && p.remaining <= 1e-9) {
             if (p.interval > 0) {
                 p.remaining += p.interval;
                 if (--p.left <= 0) p.done = true;

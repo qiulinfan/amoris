@@ -46,14 +46,16 @@ Sixteen tasks change the world through commands (`night_lamp` then answers from 
 ## Runners
 
 ```bash
-python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 29/29
-python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor, 0/29
+python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 32/32
+python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor
 python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,recolor --json
 ```
 
 `reference` is the harness checking itself: every solution is one or two commands, which is the point. `null` sets the floor. Any other value is a shell command run once per task with the task as JSON on stdin (`task`, `project`, `rpc_url`, `docs`, `notes`); it may print a JSON object with an `answer` as its last line, and `POCKET_RPC_URL` is in its environment. A runner that wraps a model gives it the docs listed and the RPC; what it does in between is its own business. `--json` prints the report (`runner`, `passed`, `total`, per task `ok`, `seconds`, `detail`, `answer`, `error`), and the exit code is 0 only for a full pass.
 
 `tests/evidence/agent-eval/reference.json` and `null.json` are the two built-in runners' reports; coding agents with a model are below.
+
+**Out of the repository.** For any runner but the two built-in ones, every task runs on a copy of its sample in a directory of its own under the system's temporary directory, with a copy of the documentation set and an index of it (`docs/INDEX.md` there: a line a file, its title, what it covers and its size); the copy's `AGENTS.md` points at those docs, and `docs` in the task lists them. The harness itself holds every check, and the checks are the answers: an agent that found it could replay a check instead of reading the engine's docs. Until 2026-10-01 the script tasks' copies were made under the repository's `build/`, and the traces of that day's run show two agents doing exactly that: on `coin_respawn` the agent searched the repository for the word, found the check in `agent_eval.py` and followed it step by step, and on `walker_sprint` it read the reference solution. Those two passes, and the times and costs of the script tasks in the runs before that date, measured the harness as much as the engine. The agent can still reach the repository by an absolute path (the tool it runs is there), so `pi_agent.py` reports any call that touches the harness or the evidence under `peeked`, and the harness prints it beside the task's result.
 
 ## Coding agents
 

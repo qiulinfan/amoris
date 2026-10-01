@@ -100,6 +100,7 @@ struct DrawRange {
     Rect clip;  // in pixels
     WGPUTextureView view = nullptr;  // an image's texture; null draws from the font atlas
     bool nearest = false;            // the image sampled by the nearest texel (pixel art)
+    Font* font = nullptr;            // text in another font than the painter's: its atlas, found at flush
 };
 
 }  // namespace
@@ -284,23 +285,24 @@ struct Painter::Impl {
         return {c.x * scale, c.y * scale, c.w * scale, c.h * scale};
     }
 
-    void new_range_if_needed(WGPUTextureView view, bool nearest) {
+    void new_range_if_needed(WGPUTextureView view, bool nearest, Font* other_font = nullptr) {
         Rect clip = clip_px();
         if (!ranges.empty()) {
             DrawRange& last = ranges.back();
-            if (last.view == view && last.nearest == nearest && last.clip.x == clip.x && last.clip.y == clip.y && last.clip.w == clip.w && last.clip.h == clip.h) return;
+            if (last.view == view && last.nearest == nearest && last.font == other_font && last.clip.x == clip.x && last.clip.y == clip.y && last.clip.w == clip.w && last.clip.h == clip.h) return;
             if (last.index_count == 0) {
                 last.clip = clip;
                 last.view = view;
                 last.nearest = nearest;
+                last.font = other_font;
                 return;
             }
         }
-        ranges.push_back({static_cast<std::uint32_t>(indices.size()), 0, clip, view, nearest});
+        ranges.push_back({static_cast<std::uint32_t>(indices.size()), 0, clip, view, nearest, other_font});
     }
 
-    void quad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, WGPUTextureView view = nullptr, bool nearest = false) {
-        new_range_if_needed(view, nearest);
+    void quad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, WGPUTextureView view = nullptr, bool nearest = false, Font* other_font = nullptr) {
+        new_range_if_needed(view, nearest, other_font);
         auto base = static_cast<std::uint32_t>(vertices.size());
         vertices.insert(vertices.end(), {a, b, c, d});
         indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
@@ -424,20 +426,22 @@ void Painter::line(float x0, float y0, float x1, float y1, Color color, float th
     }
 }
 
-float Painter::text(float x, float y, std::string_view text, float size_points, Color color, TextDirection dir) {
-    return this->text(x, y, text, size_points, [color](std::size_t) { return color; }, dir);
+float Painter::text(float x, float y, std::string_view text, float size_points, Color color, TextDirection dir, Font* font) {
+    return this->text(x, y, text, size_points, [color](std::size_t) { return color; }, dir, font);
 }
 
-float Painter::text(float x, float y, std::string_view text, float size_points, const std::function<Color(std::size_t)>& color_at, TextDirection dir) {
+float Painter::text(float x, float y, std::string_view text, float size_points, const std::function<Color(std::size_t)>& color_at, TextDirection dir, Font* font) {
     Impl& im = *impl_;
+    Font& f = font ? *font : *im.font;
+    Font* other = &f == im.font ? nullptr : &f;
     float px = size_points * im.scale;
-    TextMetrics m = im.font->metrics(px);
+    TextMetrics m = f.metrics(px);
     float baseline = y * im.scale + m.ascent;
     float pen = x * im.scale;
     // Snap the pen to whole pixels so glyph bitmaps are not resampled.
     pen = std::round(pen);
     baseline = std::round(baseline);
-    auto run = im.font->shape(text, px, dir);
+    auto run = f.shape(text, px, dir);
     float width_px = 0;
     for (const ShapedGlyph& sg : run) {
         width_px += sg.advance;
@@ -446,6 +450,7 @@ float Painter::text(float x, float y, std::string_view text, float size_points, 
             float gx = pen + sg.x + g.bearing_x;
             float gy = baseline - g.bearing_y + sg.y;
             const Color color = color_at(sg.byte_offset);
+            if (color.a <= 0) continue;   // hidden (a typewriter's letters to come)
             Vertex v{};
             v.r = color.r; v.g = color.g; v.b = color.b; v.a = color.a;
             v.mode = 1.0f;
@@ -454,30 +459,30 @@ float Painter::text(float x, float y, std::string_view text, float size_points, 
             b.x = gx + g.width; b.y = gy; b.u = g.u1; b.v = g.v0;
             c.x = gx + g.width; c.y = gy + g.height; c.u = g.u1; c.v = g.v1;
             d.x = gx; d.y = gy + g.height; d.u = g.u0; d.v = g.v1;
-            im.quad(a, b, c, d);
+            im.quad(a, b, c, d, nullptr, false, other);
         }
     }
     return width_px / im.scale;
 }
 
-float Painter::text_aligned(const Rect& box, std::string_view text, float size_points, Color color, TextAlign align, bool vcenter, TextDirection dir) {
-    float w = measure(text, size_points, dir);
-    float lh = line_height(size_points);
+float Painter::text_aligned(const Rect& box, std::string_view text, float size_points, Color color, TextAlign align, bool vcenter, TextDirection dir, Font* font) {
+    float w = measure(text, size_points, dir, font);
+    float lh = line_height(size_points, font);
     float x = box.x;
     if (align == TextAlign::Start) align = rtl_line(text, dir) ? TextAlign::Right : TextAlign::Left;
     else if (align == TextAlign::End) align = rtl_line(text, dir) ? TextAlign::Left : TextAlign::Right;
     if (align == TextAlign::Center) x = box.x + (box.w - w) * 0.5f;
     else if (align == TextAlign::Right) x = box.x + box.w - w;
     float y = vcenter ? box.y + (box.h - lh) * 0.5f : box.y;
-    return this->text(x, y, text, size_points, color, dir);
+    return this->text(x, y, text, size_points, color, dir, font);
 }
 
-float Painter::measure(std::string_view text, float size_points, TextDirection dir) {
-    return impl_->font->measure(text, size_points * impl_->scale, dir) / impl_->scale;
+float Painter::measure(std::string_view text, float size_points, TextDirection dir, Font* font) {
+    return (font ? *font : *impl_->font).measure(text, size_points * impl_->scale, dir) / impl_->scale;
 }
 
-float Painter::line_height(float size_points) {
-    return impl_->font->metrics(size_points * impl_->scale).line_height / impl_->scale;
+float Painter::line_height(float size_points, Font* font) {
+    return (font ? *font : *impl_->font).metrics(size_points * impl_->scale).line_height / impl_->scale;
 }
 
 void Painter::push_clip(const Rect& r) {
@@ -499,6 +504,10 @@ Status Painter::flush(rhi::Frame& frame) {
     if (im.indices.empty()) return {};
     WGPUTextureView atlas = im.font->atlas_view();
     im.ensure_bind_group(atlas);
+    // Other fonts' atlases, uploaded now that every glyph of the frame is in them.
+    std::map<Font*, WGPUTextureView> other_atlases;
+    for (const DrawRange& r : im.ranges)
+        if (r.font && !other_atlases.contains(r.font)) other_atlases[r.font] = r.font->atlas_view();
     Globals g{};
     g.viewport[0] = static_cast<float>(frame.width);
     g.viewport[1] = static_cast<float>(frame.height);
@@ -540,7 +549,7 @@ Status Painter::flush(rhi::Frame& frame) {
         auto ex = static_cast<std::uint32_t>(std::min(static_cast<float>(frame.width), std::ceil(r.clip.x + r.clip.w)));
         auto ey = static_cast<std::uint32_t>(std::min(static_cast<float>(frame.height), std::ceil(r.clip.y + r.clip.h)));
         if (ex <= sx || ey <= sy) continue;
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, r.view ? im.group_for(r.view, r.nearest) : im.bind_group, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, r.view ? im.group_for(r.view, r.nearest) : r.font ? im.group_for(other_atlases[r.font], false) : im.bind_group, 0, nullptr);
         wgpuRenderPassEncoderSetScissorRect(pass, sx, sy, ex - sx, ey - sy);
         wgpuRenderPassEncoderDrawIndexed(pass, r.index_count, 1, r.first_index, 0, 0);
         im.draws++;

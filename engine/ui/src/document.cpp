@@ -57,6 +57,22 @@ struct Node {
     float opacity = 1;
     Color color{0.9f, 0.9f, 0.9f, 1};
     float font_size = 13;
+    // Text beyond the plain (docs/design/pocket-ui.md, Fonts and rich text): a font of the
+    // project's by name (null: the interface's own), a bolder stroke, a shadow, an outline, the
+    // text written with markup ([color=#f44]..[/color], [b]..[/b]) as spans over its plain
+    // letters, and a typewriter's count of the letters shown (-1: all).
+    Font* face = nullptr;
+    std::string font_name;
+    bool bold = false;
+    Color shadow_color{0, 0, 0, 0};
+    float shadow_offset[2] = {0, 0};
+    Color outline_color{0, 0, 0, 0};
+    float outline_width = 0;
+    bool markup = false;
+    std::string source_text;   // the text as given (with its markup)
+    struct Span { std::size_t start = 0, end = 0; Color color{}; bool colored = false, bold = false; };
+    std::vector<Span> spans;
+    int reveal = -1;
     TextAlign text_align = TextAlign::Start;
     TextDirection dir = TextDirection::Auto;   // `dir`: its text's paragraphs, and its rows laid out right to left
     bool pass_through = false;                 // pointerEvents none: the pointer goes through it (not its children)
@@ -232,6 +248,78 @@ void word_bounds(const std::string& v, std::size_t at, std::size_t& a, std::size
 
 struct Document::Impl {
     Font& font;
+    std::map<std::string, Font*, std::less<>> fonts;   // the project's fonts by name (`font` style)
+    Font& font_of(const Node& n) const { return n.face ? *n.face : font; }
+    // A text's letters from what it was given: as is, or with markup taken out and kept as spans:
+    // [color=#f44]..[/color] (or [c=..]), [b]..[/b], nested; "[[" is a "[". An unknown tag stays
+    // as written, so a stray bracket in prose shows.
+    static void take_text(Node& n) {
+        n.spans.clear();
+        if (!n.markup) {
+            n.text = n.source_text;
+        } else {
+            const std::string& s = n.source_text;
+            std::string out;
+            struct Open { std::string tag; std::size_t at; Color color; };
+            std::vector<Open> open;
+            std::size_t i = 0;
+            while (i < s.size()) {
+                if (s[i] == '[' && i + 1 < s.size() && s[i + 1] == '[') { out += '['; i += 2; continue; }
+                if (s[i] == '[') {
+                    const std::size_t close = s.find(']', i);
+                    if (close != std::string::npos) {
+                        const std::string tag = s.substr(i + 1, close - i - 1);
+                        if (tag == "b" || tag.starts_with("color=") || tag.starts_with("c=")) {
+                            Color c{};
+                            if (tag != "b") c = parse_color(Json(tag.substr(tag.find('=') + 1)), n.color);
+                            open.push_back({tag == "b" ? "b" : "color", out.size(), c});
+                            i = close + 1;
+                            continue;
+                        }
+                        if (tag == "/b" || tag == "/color" || tag == "/c") {
+                            const std::string want = tag == "/b" ? "b" : "color";
+                            for (std::size_t k = open.size(); k-- > 0;) {
+                                if (open[k].tag != want) continue;
+                                Node::Span sp;
+                                sp.start = open[k].at;
+                                sp.end = out.size();
+                                sp.bold = want == "b";
+                                sp.colored = want == "color";
+                                sp.color = open[k].color;
+                                // Inside another span: take on what the outer one gives.
+                                for (std::size_t m = 0; m < k; ++m) {
+                                    if (open[m].tag == "b") sp.bold = true;
+                                    else if (!sp.colored) { sp.colored = true; sp.color = open[m].color; }
+                                }
+                                if (sp.end > sp.start) n.spans.push_back(sp);
+                                open.erase(open.begin() + static_cast<std::ptrdiff_t>(k));
+                                break;
+                            }
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                }
+                out += s[i++];
+            }
+            for (const Open& o : open) {
+                // Left open: to the end.
+                Node::Span sp;
+                sp.start = o.at;
+                sp.end = out.size();
+                sp.bold = o.tag == "b";
+                sp.colored = o.tag == "color";
+                sp.color = o.color;
+                if (sp.end > sp.start) n.spans.push_back(sp);
+            }
+            // The narrowest span over a letter decides (an inner one has taken on what the outer
+            // ones give), so the narrowest come first.
+            std::stable_sort(n.spans.begin(), n.spans.end(), [](const Node::Span& a, const Node::Span& b) { return a.end - a.start < b.end - b.start; });
+            n.text = std::move(out);
+        }
+        n.lines.clear();
+        if (n.yoga && YGNodeHasMeasureFunc(n.yoga)) YGNodeMarkDirty(n.yoga);
+    }
     std::function<Document::ImageSource(const std::string&)> image_source;
     std::function<bool(std::uint64_t, float&, float&)> anchor_source;
     Rect caret_rect{};   // the focused input's caret at the last paint
@@ -300,7 +388,7 @@ struct Document::Impl {
         (void)hm;
         const std::string& text = n->type == "input" ? (n->value.empty() ? n->placeholder : n->value) : n->text;
         float px = n->font_size * self->scale;
-        TextMetrics m = self->font.metrics(px);
+        TextMetrics m = self->font_of(*n).metrics(px);
         float line_h = m.line_height / self->scale;
         float max_w = wm == YGMeasureModeUndefined ? 1e9f : w;
         std::vector<std::string> lines;
@@ -310,11 +398,11 @@ struct Document::Impl {
             for (const Row& row : rows) lines.push_back(text.substr(row.start, row.end - row.start));
         }
         std::vector<bool> line_rtl;
-        if (!(n->type == "input" && n->multiline)) self->wrap(text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines, &line_rtl);
+        if (!(n->type == "input" && n->multiline)) self->wrap(*n, text, n->font_size, n->text_wrap && n->type == "text" ? max_w : 1e9f, lines, &line_rtl);
         float widest = 0;
         for (std::size_t li = 0; li < lines.size(); ++li) {
             const TextDirection d = li < line_rtl.size() ? self->line_dir(*n, line_rtl[li]) : TextDirection::Auto;   // as it is drawn
-            widest = std::max(widest, self->font.measure(lines[li], px, d) / self->scale);
+            widest = std::max(widest, self->font_of(*n).measure(lines[li], px, d) / self->scale);
         }
         if (lines.empty()) lines.push_back("");
         n->lines = lines;
@@ -360,7 +448,7 @@ struct Document::Impl {
                 if (cp < 0x2E80 && cp != ' ') {
                     while (pe < end) { std::size_t k2 = pe; const std::uint32_t c2 = decode_utf8(text, k2); if (c2 == ' ' || c2 >= 0x2E80) break; pe = k2; }
                 }
-                const float pw = font.measure(text.substr(ps, pe - ps), px);
+                const float pw = font_of(n).measure(text.substr(ps, pe - ps), px);
                 if (row_w + pw > max_w && row_start < ps && cp != ' ') { rows.push_back({row_start, ps, false}); row_start = ps; row_w = 0; }
                 if (pw > max_w && row_start == ps) {
                     // A word wider than the area: broken by characters.
@@ -368,7 +456,7 @@ struct Document::Impl {
                     float cw = 0;
                     for (std::size_t j = ps; j < pe;) {
                         const std::size_t jn = utf8_next(text, j);
-                        const float w1 = font.measure(text.substr(j, jn - j), px);
+                        const float w1 = font_of(n).measure(text.substr(j, jn - j), px);
                         if (cw + w1 > max_w && c < j) { rows.push_back({c, j, false}); c = j; cw = 0; }
                         cw += w1;
                         j = jn;
@@ -417,7 +505,7 @@ struct Document::Impl {
         r.dir = line_dir(n, rtl_line(std::string_view(text).substr(ps, pe - ps)));
         // Code reads left to right whatever its comments and strings are in, unless told otherwise.
         if (!n.syntax.empty() && dir_of(n) == TextDirection::Auto) r.dir = TextDirection::Ltr;
-        r.lay = font.layout(std::string_view(text).substr(start, end - start), n.font_size * scale, r.dir);
+        r.lay = font_of(n).layout(std::string_view(text).substr(start, end - start), n.font_size * scale, r.dir);
         for (LineLayout::Cluster& c : r.lay.clusters) { c.x0 /= scale; c.x1 /= scale; }
         r.lay.width /= scale;
         TextAlign a = n.text_align;
@@ -445,7 +533,7 @@ struct Document::Impl {
     // A text's lines: its paragraphs (split at newlines) broken to fit max_width, with, in `rtl`,
     // whether each line's paragraph reads right to left by its first strong letter: every line of
     // a wrapped paragraph takes the paragraph's direction (UAX #9 P2, P3).
-    void wrap(const std::string& text, float size_points, float max_width, std::vector<std::string>& lines, std::vector<bool>* rtl = nullptr) const {
+    void wrap(const Node& n, const std::string& text, float size_points, float max_width, std::vector<std::string>& lines, std::vector<bool>* rtl = nullptr) const {
         float px = size_points * scale;
         lines.clear();
         if (rtl) rtl->clear();
@@ -474,7 +562,7 @@ struct Document::Impl {
             } else {
                 piece = text.substr(start, i - start);
             }
-            float pw = font.measure(piece, px) / scale;
+            float pw = font_of(n).measure(piece, px) / scale;
             if (current_w + pw > max_width && !current.empty()) {
                 // Drop a trailing space at the wrap point.
                 if (!current.empty() && current.back() == ' ') current.pop_back();
@@ -674,6 +762,12 @@ struct Document::Impl {
                 if (k == "opacity") { n.opacity = 1; continue; }
                 if (k == "disabled") { n.disabled = false; continue; }
                 if (k == "fontSize") { n.font_size = Node{}.font_size; if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); continue; }
+                if (k == "font" || k == "fontFamily") { n.face = nullptr; n.font_name.clear(); n.lines.clear(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); continue; }
+                if (k == "fontWeight") { n.bold = false; continue; }
+                if (k == "textShadow") { n.shadow_color = Color{0, 0, 0, 0}; continue; }
+                if (k == "textOutline") { n.outline_width = 0; continue; }
+                if (k == "reveal") { n.reveal = -1; continue; }
+                if (k == "markup") { n.markup = false; take_text(n); continue; }
                 if (k == "scrollTop" || k == "autofocus") continue;
                 if (k == "left" || k == "top" || k == "right" || k == "bottom" || k == "start" || k == "end") {
                     YGNodeStyleSetPosition(y, k == "left" ? YGEdgeLeft : k == "top" ? YGEdgeTop : k == "right" ? YGEdgeRight : k == "bottom" ? YGEdgeBottom : k == "start" ? YGEdgeStart : YGEdgeEnd, YGUndefined);
@@ -765,7 +859,46 @@ struct Document::Impl {
             }
             else if (k == "pointerEvents") n.pass_through = v.is_string() && v.get<std::string>() == "none";
             else if (k == "textWrap" || k == "wrapText") { n.text_wrap = v.get<bool>(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
-            else if (k == "text") { n.text = v.is_string() ? v.get<std::string>() : v.dump(); if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y); }
+            else if (k == "text") { n.source_text = v.is_string() ? v.get<std::string>() : v.dump(); take_text(n); }
+            else if (k == "markup") { n.markup = v.is_boolean() && v.get<bool>(); take_text(n); }
+            else if (k == "font" || k == "fontFamily") {
+                // A font of the project's (`[ui.fonts]` in project.toml) by name; an unknown one is the
+                // interface's own.
+                n.font_name = v.is_string() ? v.get<std::string>() : std::string();
+                auto it = fonts.find(n.font_name);
+                n.face = it == fonts.end() ? nullptr : it->second;
+                n.lines.clear();
+                if (YGNodeHasMeasureFunc(y)) YGNodeMarkDirty(y);
+            }
+            else if (k == "fontWeight") n.bold = (v.is_string() && v.get<std::string>() == "bold") || (v.is_number() && v.get<float>() >= 600);
+            else if (k == "textShadow") {
+                // {x, y, color}, or "x y #color".
+                n.shadow_color = Color{0, 0, 0, 0};
+                if (v.is_object()) {
+                    n.shadow_offset[0] = v.value("x", 1.0f);
+                    n.shadow_offset[1] = v.value("y", 1.0f);
+                    n.shadow_color = parse_color(v.contains("color") ? v["color"] : Json("#000000c0"), Color{0, 0, 0, 0.75f});
+                } else if (v.is_string()) {
+                    std::istringstream in(v.get<std::string>());
+                    std::string c;
+                    in >> n.shadow_offset[0] >> n.shadow_offset[1] >> c;
+                    n.shadow_color = parse_color(Json(c.empty() ? "#000000c0" : c), Color{0, 0, 0, 0.75f});
+                }
+            }
+            else if (k == "textOutline") {
+                // {width, color}, or "width #color".
+                n.outline_width = 0;
+                if (v.is_object()) {
+                    n.outline_width = v.value("width", 1.0f);
+                    n.outline_color = parse_color(v.contains("color") ? v["color"] : Json("#000000"), Color{0, 0, 0, 1});
+                } else if (v.is_string()) {
+                    std::istringstream in(v.get<std::string>());
+                    std::string c;
+                    in >> n.outline_width >> c;
+                    n.outline_color = parse_color(Json(c.empty() ? "#000000" : c), Color{0, 0, 0, 1});
+                }
+            }
+            else if (k == "reveal") n.reveal = v.is_number() ? std::max(0, v.get<int>()) : -1;
             else if (k == "value") {
                 // The same value again (a re-render echoing what was typed) keeps the caret where it is.
                 std::string nv = v.is_string() ? v.get<std::string>() : v.dump();
@@ -846,7 +979,7 @@ struct Document::Impl {
         if (n.type == "text" || n.type == "input") {
             Rect inner{r.x + YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) + n.border_width, r.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width, r.w - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - YGNodeLayoutGetPadding(n.yoga, YGEdgeRight) - 2 * n.border_width, r.h - YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) - YGNodeLayoutGetPadding(n.yoga, YGEdgeBottom) - 2 * n.border_width};
             p.push_clip(inner);
-            float lh = p.line_height(n.font_size);
+            float lh = p.line_height(n.font_size, n.face);
             if (n.type == "input" && n.multiline) {
                 // Rows from the top (the lines, wrapped when textWrap is set), scrolled by scroll_y
                 // (the wheel); a caret that moved is brought into view; the caret on its row.
@@ -891,7 +1024,7 @@ struct Document::Impl {
                         if (sel_b > row.end && row.hard) p.rect({rl.rtl() ? x - 4 : x + rl.lay.width, ty, 4, lh}, sc);
                     }
                     if (lang.empty()) {
-                        p.text(x, ty, line, n.font_size, c, rl.dir);
+                        p.text(x, ty, line, n.font_size, c, rl.dir, n.face);
                         continue;
                     }
                     // Each glyph in the colour of the run it starts in (the input's own outside them).
@@ -899,7 +1032,7 @@ struct Document::Impl {
                         const std::size_t at = row.start + off;
                         auto it = std::lower_bound(n.runs.begin(), n.runs.end(), at, [](const SyntaxRun& run, std::size_t a) { return run.end <= a; });
                         return it != n.runs.end() && it->start <= at ? syntax_color(it->kind).with_alpha(op) : c;
-                    }, rl.dir);
+                    }, rl.dir, n.face);
                 }
                 if (focused == n.id) {
                     const Row& row = rows[std::min(caret_row, rows.size() - 1)];
@@ -919,7 +1052,7 @@ struct Document::Impl {
                 if (!placeholder && selection_of(n, sel_a, sel_b)) {
                     for (const auto& [s0, s1] : rl.lay.spans(sel_a, sel_b)) p.rect({x + s0, ty, std::max(s1 - s0, 1.0f), lh}, n.color.with_alpha(0.25f * op));
                 }
-                p.text(x, ty, shown, n.font_size, c, rl.dir);
+                p.text(x, ty, shown, n.font_size, c, rl.dir, n.face);
                 if (focused == n.id) {
                     float cx = x + rl.lay.caret_x(placeholder ? 0 : static_cast<std::size_t>(std::clamp(n.caret, 0, static_cast<int>(n.value.size()))));
                     p.rect({cx, ty + 1, 1, lh - 2}, n.color.with_alpha(op));
@@ -927,14 +1060,63 @@ struct Document::Impl {
                 }
             } else {
                 if (n.lines.empty() || n.line_rtl.size() != n.lines.size() || (n.text_wrap && std::fabs(n.measured_width - inner.w) > 0.5f)) {
-                    wrap(n.text, n.font_size, n.text_wrap ? inner.w : 1e9f, n.lines, &n.line_rtl);
+                    wrap(n, n.text, n.font_size, n.text_wrap ? inner.w : 1e9f, n.lines, &n.line_rtl);
                     n.measured_width = inner.w;
                 }
                 float total = lh * static_cast<float>(n.lines.size());
                 float ty = inner.y + std::max(0.0f, (inner.h - total) * 0.5f);
+                const bool plain = !n.bold && n.shadow_color.a <= 0 && (n.outline_color.a <= 0 || n.outline_width <= 0) && n.spans.empty() && n.reveal < 0;
+                // Where each line starts in the text (lines are its pieces in order, a space at a
+                // wrap dropped), for spans and the typewriter, which count in the whole text.
+                std::size_t from = 0;
+                std::size_t limit = std::string::npos;
+                if (n.reveal >= 0) {
+                    limit = 0;
+                    for (int shown_letters = 0; limit < n.text.size() && shown_letters < n.reveal; ++shown_letters) limit = utf8_next(n.text, limit);
+                }
                 for (std::size_t li = 0; li < n.lines.size(); ++li) {
                     Rect lr{inner.x, ty, inner.w, lh};
-                    p.text_aligned(lr, n.lines[li], n.font_size, n.color.with_alpha(op), n.text_align, true, line_dir(n, n.line_rtl[li]));
+                    const TextDirection ld = line_dir(n, n.line_rtl[li]);
+                    if (plain) {
+                        p.text_aligned(lr, n.lines[li], n.font_size, n.color.with_alpha(op), n.text_align, true, ld, n.face);
+                        ty += lh;
+                        continue;
+                    }
+                    const std::string& line = n.lines[li];
+                    const std::size_t at = line.empty() ? from : std::min(n.text.find(line, from), n.text.size());
+                    from = at + line.size();
+                    // The line's place, as text_aligned would put it.
+                    const float w = p.measure(line, n.font_size, ld, n.face);
+                    TextAlign a = n.text_align;
+                    if (a == TextAlign::Start) a = rtl_line(line, ld) ? TextAlign::Right : TextAlign::Left;
+                    else if (a == TextAlign::End) a = rtl_line(line, ld) ? TextAlign::Left : TextAlign::Right;
+                    const float x = a == TextAlign::Center ? lr.x + (lr.w - w) * 0.5f : a == TextAlign::Right ? lr.x + lr.w - w : lr.x;
+                    auto span_at = [&](std::size_t off) -> const Node::Span* {
+                        for (const Node::Span& s : n.spans) if (off >= s.start && off < s.end) return &s;
+                        return nullptr;
+                    };
+                    auto hidden = [&](std::size_t off) { return limit != std::string::npos && at + off >= limit; };
+                    auto in = [&](Color c) { return [&, c](std::size_t off) { return hidden(off) ? Color{0, 0, 0, 0} : c; }; };
+                    // Shadow, then outline, then the letters (twice, a hair apart, where bold).
+                    if (n.shadow_color.a > 0) p.text(x + n.shadow_offset[0], ty + n.shadow_offset[1], line, n.font_size, in(n.shadow_color.with_alpha(op)), ld, n.face);
+                    if (n.outline_color.a > 0 && n.outline_width > 0) {
+                        const float o = n.outline_width;
+                        const float dirs[8][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-0.7f, -0.7f}, {0.7f, -0.7f}, {-0.7f, 0.7f}, {0.7f, 0.7f}};
+                        for (const auto& d : dirs) p.text(x + d[0] * o, ty + d[1] * o, line, n.font_size, in(n.outline_color.with_alpha(op)), ld, n.face);
+                    }
+                    auto letter = [&](std::size_t off) {
+                        if (hidden(off)) return Color{0, 0, 0, 0};
+                        const Node::Span* s = span_at(at + off);
+                        return (s && s->colored ? s->color : n.color).with_alpha(op);
+                    };
+                    p.text(x, ty, line, n.font_size, letter, ld, n.face);
+                    const float embolden = std::max(0.5f, n.font_size / 28.0f);
+                    if (n.bold || std::any_of(n.spans.begin(), n.spans.end(), [](const Node::Span& s) { return s.bold; })) {
+                        p.text(x + embolden, ty, line, n.font_size, [&](std::size_t off) {
+                            const Node::Span* s = span_at(at + off);
+                            return n.bold || (s && s->bold) ? letter(off) : Color{0, 0, 0, 0};
+                        }, ld, n.face);
+                    }
                     ty += lh;
                 }
             }
@@ -1144,11 +1326,33 @@ Status Document::remove(NodeId id) {
 Status Document::set_text(NodeId id, std::string_view text) {
     Node* n = impl_->get(id);
     if (!n) return fail("ui_no_such_node", "node {} does not exist", id);
-    if (n->type == "input") n->value = std::string(text);
-    else n->text = std::string(text);
+    if (n->type == "input") {
+        n->value = std::string(text);
+    } else {
+        n->source_text = std::string(text);
+        Impl::take_text(*n);
+    }
     n->lines.clear();
     if (YGNodeHasMeasureFunc(n->yoga)) YGNodeMarkDirty(n->yoga);
     return {};
+}
+
+void Document::add_font(const std::string& name, Font& font) {
+    impl_->fonts[name] = &font;
+    // Elements that named it before it came take it now.
+    for (auto& [id, n] : impl_->nodes) {
+        if (n.font_name == name && n.face != &font) {
+            n.face = &font;
+            n.lines.clear();
+            if (n.yoga && YGNodeHasMeasureFunc(n.yoga)) YGNodeMarkDirty(n.yoga);
+        }
+    }
+}
+
+std::vector<std::string> Document::font_names() const {
+    std::vector<std::string> names;
+    for (const auto& [name, f] : impl_->fonts) names.push_back(name);
+    return names;
 }
 
 Status Document::apply(const Json& ops) {
@@ -1286,7 +1490,7 @@ std::vector<Json> Document::handle_events(const std::vector<platform::Event>& ev
     auto caret_at = [&](const Node& n, float x, float y) -> std::size_t {
         const float local = x - n.rect.x - YGNodeLayoutGetPadding(n.yoga, YGEdgeLeft) - n.border_width - 1;
         if (!n.multiline) return im.offset_in_row(n, n.value, Impl::Row{0, n.value.size(), true}, local, im.inner_width(n));
-        const float lh = im.font.metrics(n.font_size * im.scale).line_height / im.scale;
+        const float lh = im.font_of(n).metrics(n.font_size * im.scale).line_height / im.scale;
         const float top = n.rect.y + YGNodeLayoutGetPadding(n.yoga, YGEdgeTop) + n.border_width + 2;
         std::vector<Impl::Row> rows;
         im.rows_of(n, n.value, im.inner_width(n), rows);

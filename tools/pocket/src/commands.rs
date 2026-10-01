@@ -365,23 +365,30 @@ fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()>
     let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
     let tool = root.join(".pocket").join("pocket");
     let docs = root.join("docs");
+    // How the tool names this project: by its name where the tool finds it by name (samples/,
+    // projects/), else by its path, so every command below works wherever the project was made.
+    let title = name;
+    let here = std::fs::canonicalize(project).unwrap_or(project.to_path_buf());
+    let by_name = find_project(ws, name).and_then(|p| std::fs::canonicalize(p).ok()).is_some_and(|p| p == here);
+    let name = if by_name { name.to_string() } else { here.display().to_string() };
+    let name = name.as_str();
     let guide = format!(
-        r#"# {name}
+        r#"# {title}
 
-A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's own guide is `{engine}`, and its documentation is under `{docs}` (`mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part).
+A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's documentation is under `{docs}`: `mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part (input, physics, sprites, combat, ...). The engine's sources are not needed to make a game.
 
 ## The loop
 
 1. Start the game paused with its control server: `{tool} run {name} -- --serve 4711 --paused` (or the MCP tool `runtime_start`).
 2. Read it first: `{tool} rpc project.brief` gives the files, the scene, the components in use, the input actions, the exposed state and what looks wrong.
 3. Change the world with commands (`world.spawn`, `world.set`, `world.destroy`; `help {{"command": "world.set"}}` says how to call one), or edit the files below and apply them to the running game with `project.apply`, which bundles, type-checks, reloads and steps it in one call.
-4. Check what happened: `step {{"ticks": 600, "until": {{"event": "coin."}}}}`, `state`, `world.query`, `events.since`, `transcript`; `capture {{"path": "shot.png"}}` when it has to be seen. Several commands go in one call as `{{"calls": [{{"method", "params"}}, ...]}}`.
+4. Check what happened: `step {{"ticks": 600, "until": {{"event": "coin."}}}}`, `step {{"ticks": 90, "watch": ["Player:Transform.position.y"]}}` (a value's first, last, least and greatest through the step), `state`, `world.query`, `events.since`, `transcript`; `capture {{"path": "shot.png"}}` when it has to be seen. Several commands go in one call as `{{"calls": [{{"method", "params"}}, ...]}}`.
 
 ## The files
 
 - `project.toml`: the name, the window, the input actions (`[input.actions]`), render and physics settings.
 - `scene.json`: the entities the game starts with.
-- `scripts/`: the game's logic in TypeScript (`import ... from "pocket"`); `{tool} check {name}` reads its types.
+- `scripts/`: the game's logic in TypeScript (`import ... from "pocket"`; `{docs}/generated/sdk.md` lists every export on a line, and `help {{"sdk": "timer.after"}}` answers one); `{tool} check {name}` reads its types.
 - `components.toml`, when there is one: the game's own components, so its state lives on entities.
 - `prefabs/` and `assets/`: what the scripts instantiate and draw.
 - `scenarios/*.ts`, when there are some: plays of the game with checks, run with `{tool} scenario {name}`.
@@ -393,7 +400,6 @@ A game made with Pocket, an engine meant to be driven by agents as much as by pe
 - Use `random()` and the SDK's `repro` math in gameplay, so a seed plays the same game every time.
 - After a change, `{tool} check {name}` reports no type errors and the scenarios still pass.
 "#,
-        engine = root.join("AGENTS.md").display(),
         docs = docs.display(),
         tool = tool.display(),
     );

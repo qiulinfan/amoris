@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "sdk", "python"))
@@ -27,7 +28,10 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/design/assets.md", "docs/design/pocket-ui.md", "docs/sdk.md", "docs/mcp.md", "docs/design/world-model.md", "docs/design/rendering.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/physics.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/cameras.md", "docs/design/localization.md", "docs/design/networking.md", "docs/design/animation.md", "docs/generated/components.md"]
+DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/localization.md", "docs/design/networking.md"]
+# Where a run's copies live: outside the repository, so an agent finds the game and the docs there
+# and nothing of the harness (whose checks are the answers) beside them. Made by run().
+EVAL_DIR = None
 
 
 def near(a, b, tol=0.01):
@@ -1107,14 +1111,52 @@ def bundle(project_dir):
         raise RuntimeError(f"bundling {project_dir} failed: {(proc.stderr or proc.stdout).strip()[-400:]}")
 
 
+def eval_dir():
+    """The run's directory outside the repository, with a copy of the documentation set and an
+    index of it (one line a file: its title, what it covers, its size)."""
+    global EVAL_DIR
+    if EVAL_DIR:
+        return EVAL_DIR
+    EVAL_DIR = os.path.realpath(tempfile.mkdtemp(prefix="pocket-eval-"))
+    lines = ["# The documentation", "", "One line a file: what it covers and how big it is. Read the ones the task needs.", ""]
+    for d in DOCS:
+        src = os.path.join(ROOT, d)
+        dst = os.path.join(EVAL_DIR, d)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(src, dst)
+        with open(src) as f:
+            text = f.read()
+        title = next((l.lstrip("# ").strip() for l in text.splitlines() if l.startswith("#")), d)
+        first = next((l.strip() for l in text.splitlines()[1:] if l.strip() and not l.startswith(("#", "|", "-", "`", "<"))), "")
+        first = re.split(r"(?<=[.:])\s", first, maxsplit=1)[0][:200]
+        lines.append(f"- `{d}` ({len(text) // 1024 + 1} KB): {title}. {first}")
+    with open(os.path.join(EVAL_DIR, "docs", "INDEX.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return EVAL_DIR
+
+
+def doc_paths():
+    base = eval_dir()
+    return [os.path.join(base, "docs", "INDEX.md")] + [os.path.join(base, d) for d in DOCS]
+
+
 def scratch_copy(task):
-    """A copy of the task's sample under build/agent-eval, with its own bundle name."""
+    """A copy of the task's sample in the run's directory, with its own bundle name; its guide
+    (AGENTS.md) points at the copied documentation rather than the repository's."""
     name = f"bench-{task['name']}-{os.getpid()}"
-    dst = os.path.join(ROOT, "build", "agent-eval", name)
+    base = eval_dir()
+    dst = os.path.join(base, name)
     shutil.rmtree(dst, ignore_errors=True)
-    proc = subprocess.run([POCKET, "new", name, "--from", task["project"], "--dir", os.path.join("build", "agent-eval")], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT})
+    proc = subprocess.run([POCKET, "new", name, "--from", task["project"], "--dir", base], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT})
     if proc.returncode != 0:
         raise RuntimeError(f"copying {task['project']} failed: {(proc.stderr or proc.stdout).strip()[-400:]}")
+    guide = os.path.join(dst, "AGENTS.md")
+    if os.path.exists(guide):
+        with open(guide) as f:
+            text = f.read()
+        text = text.replace(os.path.join(ROOT, "docs"), os.path.join(base, "docs")).replace("`mcp.md` for the commands", "`INDEX.md` lists them, `mcp.md` for the commands")
+        with open(guide, "w") as f:
+            f.write(text)
     bundle(dst)
     return dst
 
@@ -1131,7 +1173,7 @@ def scratch_remove(project_dir):
 
 def run_external(cmd, env, task, timeout, project_dir):
     """One external runner: the task as JSON on stdin, the last JSON line of its output as the answer."""
-    payload = {"name": task["name"], "task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": DOCS,
+    payload = {"name": task["name"], "task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": doc_paths(),
                "notes": "POST {\"id\": 1, \"method\": \"<command>\", \"params\": {...}} to rpc_url + \"/rpc\"; the runtime is paused; `commands` lists every method."
                         + (f" This task edits files: change {task.get('edits', task.get('entry', 'scripts/main.ts'))} under project_dir; after an edit the command project.apply (pocket_apply in pi, project_apply over MCP) bundles and type-checks it, reloads the project (a fresh world from the scene, the script started again) and steps it, so you can see what it does; the harness bundles and reloads it once more when you are done." if task.get("script") else "")}
     proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})
@@ -1165,7 +1207,9 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         project_dir = None
         env = None
         try:
-            project_dir = scratch_copy(t) if t.get("script") else os.path.join(project_root or ROOT, "samples", t["project"])
+            # Every task on a copy outside the repository (the reference and null runners need none).
+            outside = runner not in ("reference", "null") or t.get("script")
+            project_dir = scratch_copy(t) if outside else os.path.join(project_root or ROOT, "samples", t["project"])
             # POCKET_EVAL_RUNTIME: a copy of the runtime to test (so a long run is not changed by a rebuild).
             env = PocketEnv(project_dir, root=project_root, runtime=os.environ.get("POCKET_EVAL_RUNTIME") or None)
             if t["ticks"]:
@@ -1197,7 +1241,7 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         finally:
             if env is not None:
                 env.close()
-            if t.get("script") and project_dir:
+            if project_dir and EVAL_DIR and project_dir.startswith(EVAL_DIR):
                 scratch_remove(project_dir)
         seconds = round(time.time() - t0, 1)
         row = {"name": t["name"], "project": t["project"], "ok": bool(ok), "seconds": seconds, "detail": detail, "answer": answer, "error": error}
@@ -1209,8 +1253,12 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
             with open(rows_to, "a") as f:
                 f.write(json.dumps(row) + "\n")
         spent = f"  {metrics.get('tool_calls', '?')} calls, {metrics.get('tokens', {}).get('total', '?')} tokens, ${metrics.get('cost_usd', 0):.4f}" if metrics else ""
+        if metrics.get("peeked"):
+            spent += f"  PEEKED at the harness: {metrics['peeked'][:3]}"
         log(f"{'pass' if ok else 'FAIL'}  {t['name']:<14} {t['project']:<11} {seconds:5.1f} s  {detail}{spent}{('  [' + error + ']') if error else ''}")
     passed = sum(1 for r in results if r["ok"])
+    if EVAL_DIR:
+        shutil.rmtree(EVAL_DIR, ignore_errors=True)
     log(f"{passed}/{len(results)} passed with runner {runner!r} in {time.time() - started:.1f} s")
     report = {"runner": runner, "passed": passed, "total": len(results), "seconds": round(time.time() - started, 1), "tasks": results}
     spent = [r["metrics"] for r in results if "metrics" in r]

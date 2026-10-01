@@ -39,6 +39,21 @@ export default function (pi: ExtensionAPI) {
         return body.map((r, i) => (r.error ? { method: calls[i].method, error: r.error.message } : { method: calls[i].method, result: r.result }));
     }
 
+    // A batch's answers as JSON that still parses when they are too long together: the answers
+    // that fit their share stay whole, each longer one becomes {method, cut, preview}.
+    function batchText(results: any[]): string {
+        const whole = JSON.stringify(results);
+        if (whole.length <= LIMIT) return whole;
+        const share = Math.floor(LIMIT / Math.max(results.length, 1));
+        const fitted = results.map((r) => {
+            const s = JSON.stringify(r);
+            if (s.length <= share) return r;
+            const body = JSON.stringify(r.result ?? r.error ?? null);
+            return { method: r.method, cut: body.length, preview: body.slice(0, Math.max(share - 160, 0)), note: "too long for a batch: send it alone, or ask for less (keys, limit, depth)" };
+        });
+        return JSON.stringify(fitted);
+    }
+
     function text(result: any): string {
         // Text results (world.tree, transcript, ui.snapshot, commands {text}) as text, the rest as
         // compact JSON.
@@ -54,10 +69,10 @@ export default function (pi: ExtensionAPI) {
         description:
             "Send one command to the running Pocket game engine and get its JSON result. Every engine feature is a command: " +
             "world.tree {depth} (the scene as text), world.query {with, name}, world.describe {entity}, world.spawn {name, components}, " +
-            "world.set {entity, component, value}, world.destroy {entity}, step {ticks, until?} (until stops early: {event: \"coin.\"} or {state: \"score\", at_least: 3}), state, events.since {seq}, events.why {seq}, " +
+            "world.set {entity, component, value}, world.destroy {entity}, step {ticks, until?, watch?} (until stops early: {event: \"coin.\"} or {state: \"score\", at_least: 3}; watch: [\"score\", \"Player:Transform.position.y\"] answers each value's first, last, min and max with their ticks, instead of stepping a tick at a time), state {keys?}, events.since {seq}, events.why {seq}, " +
             "transcript, render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
             "project.brief first: the project's files, scene, components, actions, state and problems as one text. " +
-            "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it. " +
+            "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one, help {sdk: \"timer.after\"} a script function's signature; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it. " +
             "Several commands at once: `calls: [{method, params}, ...]` runs them in order in one request and answers each (its result or its error).",
         parameters: Type.Object({
             method: Type.Optional(Type.String({ description: "command name, e.g. world.tree" })),
@@ -67,7 +82,7 @@ export default function (pi: ExtensionAPI) {
         async execute(_id, p: { method?: string; params?: Record<string, unknown>; calls?: Array<{ method: string; params?: Record<string, unknown> }> }) {
             if (p.calls && p.calls.length > 0) {
                 const results = await batch(p.calls);
-                return { content: [{ type: "text", text: text(results) }], details: undefined };
+                return { content: [{ type: "text", text: batchText(results) }], details: undefined };
             }
             if (!p.method) throw new Error("give a method (and params), or calls: [{method, params}, ...]");
             const result = await call(p.method, p.params ?? {});

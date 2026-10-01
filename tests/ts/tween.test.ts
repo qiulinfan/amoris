@@ -68,6 +68,24 @@ test("repeat, yoyo, delay and cancel", () => {
     expect(h.done).toBe(true);
 });
 
+test("a whole number of ticks is exact: three seconds fire on the 180th tick", () => {
+    let at = -1;
+    let seen = 0;
+    timer.after(3, () => (at = seen));
+    for (let i = 1; i <= 200; i++) {
+        seen = i;
+        tick(1 / 60);
+    }
+    expect(at).toBe(180);
+    const every: number[] = [];
+    timer.every(0.5, () => every.push(seen), 3);
+    for (let i = 1; i <= 120; i++) {
+        seen = i;
+        tick(1 / 60);
+    }
+    expect(every).toEqual([30, 60, 90]);
+});
+
 test("timers fire in simulation time", () => {
     let once = 0, every = 0;
     timer.after(0.1, () => once++);

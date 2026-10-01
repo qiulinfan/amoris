@@ -1073,10 +1073,14 @@ void World::tick(double dt) {
         if (a.frame >= n) a.frame = n - 1;
         if (a.playing && !a.finished) {
             const float fps = a.fps > 0 ? a.fps : c.fps;
-            const float period = fps > 0 ? 1.0f / fps : 0.0f;
+            // Each frame its own time when the clip says (a sheet from Aseprite), unless fps is forced.
+            auto period_of = [&](int frame) {
+                if (a.fps <= 0 && !c.durations.empty()) return c.durations[static_cast<std::size_t>(std::clamp(frame, 0, static_cast<int>(c.durations.size()) - 1))];
+                return fps > 0 ? 1.0f / fps : 0.0f;
+            };
             a.time += fdt * std::abs(a.speed);
             const bool backwards = a.speed < 0;
-            while (period > 0 && a.time >= period) {
+            for (float period = period_of(a.frame); period > 0 && a.time >= period; period = period_of(a.frame)) {
                 a.time -= period;
                 int next = a.frame + (backwards ? -1 : 1);
                 if (next >= n || next < 0) {
@@ -1219,7 +1223,14 @@ Json World::save() const {
 }
 
 Json World::SpriteClip::to_json() const {
-    return Json{{"texture", texture}, {"columns", columns}, {"rows", rows}, {"frames", frames}, {"fps", fps}, {"loop", loop}};
+    Json j{{"texture", texture}, {"columns", columns}, {"rows", rows}, {"frames", frames}, {"fps", fps}, {"loop", loop}};
+    if (!rects.empty()) {
+        Json r = Json::array();
+        for (const Vec4& v : rects) r.push_back(Json::array({v.x, v.y, v.z, v.w}));
+        j["rects"] = std::move(r);
+    }
+    if (!durations.empty()) j["durations"] = durations;
+    return j;
 }
 
 Result<World::SpriteClip> World::SpriteClip::from_json(const Json& j) {
@@ -1242,11 +1253,29 @@ Result<World::SpriteClip> World::SpriteClip::from_json(const Json& j) {
         int count = j.value("count", c.columns * c.rows - first);
         for (int i = 0; i < count; ++i) c.frames.push_back(first + i);
     }
-    const int cells = c.columns * c.rows;
+    if (j.contains("rects") && j["rects"].is_array()) {
+        // A packed sheet: each frame its own rectangle (u0, v0, u1, v1); frames index them.
+        for (const auto& r : j["rects"]) {
+            if (!r.is_array() || r.size() != 4) return fail("bad_clip", "a rect is [u0, v0, u1, v1]");
+            c.rects.push_back(Vec4{r[0].get<float>(), r[1].get<float>(), r[2].get<float>(), r[3].get<float>()});
+        }
+        if (!j.contains("frames")) {
+            c.frames.clear();
+            for (int i = 0; i < static_cast<int>(c.rects.size()); ++i) c.frames.push_back(i);
+        }
+    }
+    if (j.contains("durations") && j["durations"].is_array()) {
+        for (const auto& d : j["durations"]) c.durations.push_back(std::max(d.get<float>(), 1e-3f));
+    }
+    const int cells = c.rects.empty() ? c.columns * c.rows : static_cast<int>(c.rects.size());
     for (int f : c.frames) {
-        if (f < 0 || f >= cells) return fail("bad_clip", "frame {} is outside a {}x{} grid", f, c.columns, c.rows);
+        if (f < 0 || f >= cells) {
+            if (!c.rects.empty()) return fail("bad_clip", "frame {} is not one of the {} rects", f, cells);
+            return fail("bad_clip", "frame {} is outside a {}x{} grid", f, c.columns, c.rows);
+        }
     }
     if (c.frames.empty()) return fail("bad_clip", "a clip needs at least one frame");
+    if (!c.durations.empty() && c.durations.size() != c.frames.size()) return fail("bad_clip", "durations has {} entries for {} frames", c.durations.size(), c.frames.size());
     return c;
 }
 
@@ -1260,6 +1289,7 @@ const World::SpriteClip* World::clip(std::string_view name) const {
 const std::map<std::string, World::SpriteClip>& World::clips() const { return impl_->clips; }
 
 Vec4 World::cell_uv(const SpriteClip& clip, int cell) {
+    if (!clip.rects.empty()) return clip.rects[static_cast<std::size_t>(std::clamp(cell, 0, static_cast<int>(clip.rects.size()) - 1))];
     const int col = cell % clip.columns;
     const int row = cell / clip.columns;
     const float cw = 1.0f / static_cast<float>(clip.columns);

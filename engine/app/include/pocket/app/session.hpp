@@ -136,6 +136,11 @@ class Session {
     void net_pump();
     bool net_tick_ready();
     Result<Json> net_command(std::string_view op, const Json& p);
+    Result<Json> mesh_command(std::string_view op, const Json& p);
+    Result<Json> make_mesh(const std::string& name, const Json& spec);
+    Json saved_maps(bool edited) const;
+    Status restore_maps(const Json& maps);
+    std::map<std::string, Json> made_meshes_;   // mesh.create's requests by name, carried by saved scenes
     // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
     // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.
     struct TerrainState {
@@ -206,6 +211,8 @@ class Session {
     bool listener_prev_set_ = false;
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
+    struct NamedFont { std::string name, path; std::unique_ptr<ui::Font> font; };
+    std::vector<NamedFont> named_fonts_;   // [ui.fonts]: kept before ui_ so they outlive the document
     std::unique_ptr<ui::Painter> painter_;
     std::unique_ptr<ui::Document> ui_;
     std::filesystem::path font_path_;
@@ -226,7 +233,8 @@ class Session {
     struct Touch { world::EntityId box = 0, target = 0; double next = 0; };
     std::vector<Touch> touches_;
     void update_hits(std::uint64_t since_seq);
-    void update_attachments();   // Attach: entities held at a joint of an animated model
+    void update_attachments();
+    Result<std::vector<std::string>> load_sprite_sheet(const std::string& rel, const std::string& prefix);   // Aseprite JSON: a clip per tag   // Attach: entities held at a joint of an animated model
     bool apply_hit(world::EntityId box, world::EntityId target, std::uint64_t cause, std::vector<world::EntityId>& spent);
     bool cursor_locked_ = false, cursor_visible_ = true;   // what the game asked for (input.cursor, [input] cursor)
     void set_cursor(bool locked, bool visible);

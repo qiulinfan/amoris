@@ -1083,6 +1083,44 @@ TEST_CASE("a hitbox on a 3D trigger hurts a character that walks into it", "[run
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("an Aseprite sheet becomes a clip per tag, each frame its own rectangle and time", "[runtime][sprites][aseprite]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    const Json sheet = s.command("sprite.sheet", Json{{"path", "assets/player.aseprite.json"}}).value();
+    INFO(sheet.dump());
+    const Json& clips = sheet["clips"];
+    REQUIRE(clips.contains("player.idle"));
+    REQUIRE(clips["player.walk"]["frames"] == Json::array({0, 1, 2, 3, 2, 1}));   // ping-pong without repeating the ends
+    REQUIRE(clips["player.blink"]["frames"] == Json::array({2, 1, 2, 1}));        // reversed, played twice
+    REQUIRE(clips["player.blink"]["loop"] == false);
+    REQUIRE(clips["player.walk"]["texture"] == "assets/player.png");
+    REQUIRE(clips["player.walk"]["rects"][1] == Json::array({0.25, 0.0, 0.5, 1.0}));
+    REQUIRE(clips["player.walk"]["durations"][0].get<double>() == Catch::Approx(0.3));
+    // Played on a sprite: the first frame holds 0.3 s (18 ticks), the next 0.1 s (6 ticks).
+    REQUIRE(s.command("world.spawn", Json{{"name", "Dancer"}, {"components", Json{{"Transform", Json::object()}, {"Sprite", Json::object()}, {"SpriteAnimation", Json{{"clip", "player.walk"}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 17}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Dancer"}, {"component", "SpriteAnimation"}}).value()["frame"] == 0);
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Dancer"}, {"component", "SpriteAnimation"}}).value()["frame"] == 1);
+    const Json uv = s.command("world.get", Json{{"entity", "Dancer"}, {"component", "Sprite"}}).value()["uv"];
+    REQUIRE(uv["x"].get<double>() == Catch::Approx(0.25));
+    REQUIRE(uv["z"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(s.command("step", Json{{"ticks", 6}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Dancer"}, {"component", "SpriteAnimation"}}).value()["frame"] == 2);
+    REQUIRE_FALSE(s.command("sprite.sheet", Json{{"path", "../../etc/passwd"}}).has_value());
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("an additive sprite adds its light to what is behind instead of covering it", "[runtime][sprites][additive]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
@@ -3580,7 +3618,7 @@ TEST_CASE("a clip's cues are announced as it passes them, every loop, either way
     REQUIRE(first["until"]["ticks"].get<int>() >= 29);
     REQUIRE(first["until"]["ticks"].get<int>() <= 31);
     REQUIRE(s.command("step", Json{{"ticks", 125}}).has_value());   // two more loops (and a little: sixtieths add up short of 2.5)
-    const Json all = s.command("events.since", Json{{"seq", since}, {"type", "animation.cue"}}).value();
+    const Json all = s.command("events.since", Json{{"seq", since["seq"]}, {"type", "animation.cue"}}).value();
     REQUIRE(all["events"].size() == 3);
     for (const Json& e : all["events"]) REQUIRE(e["data"]["name"] == "mid");
     // Played backwards, the cue is passed going back.
@@ -3626,6 +3664,45 @@ TEST_CASE("an attached entity follows a joint of an animated model", "[runtime][
     REQUIRE(s.command("world.set", Json{{"entity", "Sword"}, {"component", "Attach"}, {"value", Json{{"joint", "elbow"}}}}).has_value());
     REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
     REQUIRE(s.command("world.get", Json{{"entity", "Sword"}, {"component", "Attach"}}).value()["found"] == false);   // no such joint
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a step watches values for one who would otherwise step a tick at a time", "[runtime][step][watch]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    // A jump: the player's height rises and falls back, its top and the tick of it in one answer.
+    REQUIRE(s.command("input.press", Json{{"action", "jump"}}).has_value());
+    Json a = s.command("step", Json{{"ticks", 90}, {"watch", Json::array({"Player:Transform.position.y", "score", Json{{"entity", "Player"}, {"component", "Body2D"}, {"field", "grounded"}}})}, {"every", 30}, {"keys", Json::array({"score", "nothing"})}}).value();
+    INFO(a.dump());
+    const Json& y = a["watch"]["Player:Transform.position.y"];
+    REQUIRE(y["max"].get<double>() > y["first"].get<double>() + 1.5);
+    REQUIRE(y["max_tick"].get<int>() > 30);
+    REQUIRE(y["max_tick"].get<int>() < a["tick"].get<int>() - 1);
+    REQUIRE(y["last"].get<double>() == Catch::Approx(y["first"].get<double>()).margin(0.05));
+    REQUIRE(y["changes"].get<int>() > 10);
+    REQUIRE(y["series"].size() == 3);
+    REQUIRE(a["watch"]["score"]["changes"] == 0);
+    const Json& grounded = a["watch"][Json{{"entity", "Player"}, {"component", "Body2D"}, {"field", "grounded"}}.dump()];
+    REQUIRE(grounded["changes"].get<int>() >= 2);   // left the ground and came back
+    REQUIRE_FALSE(grounded.contains("min"));
+    // keys: only the values asked for, and the names that are not exposed.
+    REQUIRE(a["state"].size() == 1);
+    REQUIRE(a["missing"] == Json::array({"nothing"}));
+    REQUIRE_FALSE(a.contains("world_hash"));
+    REQUIRE(s.command("state", Json{{"keys", Json::array({"player.x"})}}).value()["state"].contains("player.x"));
+    REQUIRE_FALSE(s.command("step", Json{{"watch", "Nobody:Transform.position.y"}}).has_value());
+    REQUIRE_FALSE(s.command("step", Json{{"watch", "Player:Nothing.x"}}).has_value());
     REQUIRE(s.finish().has_value());
 }
 
@@ -3728,7 +3805,7 @@ TEST_CASE("rumble answers false without a pad and plays patterns on the tick clo
     REQUIRE(r["rumbled"] == false);
     // A pattern plays its steps on the tick clock, each an input.rumble event, and ends.
     REQUIRE(s.frame().has_value());
-    const std::int64_t seq = s.command("events.last_seq", Json::object()).value().get<std::int64_t>();
+    const std::int64_t seq = s.command("events.last_seq", Json::object()).value()["seq"].get<std::int64_t>();
     r = s.command("input.rumble", Json{{"pad", 1}, {"pattern", Json::array({Json{{"low", 1}, {"high", 0}, {"ms", 50}}, Json{{"low", 0}, {"high", 0}, {"ms", 100}}, Json{{"low", 0}, {"high", 1}, {"ms", 50}}})}, {"repeat", 2}}).value();
     INFO(r.dump());
     REQUIRE(r["steps"] == 3);
@@ -4144,6 +4221,84 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a tile map made by code is filled, collided with, and saved with the scene", "[runtime][tilemap][made]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    Json scene;
+    {
+        app::Session s(o);
+        REQUIRE(s.start().has_value());
+        const Json made = s.command("tilemap.create", Json{{"name", "maps/dungeon.tmj"}, {"width", 12}, {"height", 6}, {"layers", Json::array({Json{{"name", "walls"}, {"solid", true}}, "floor"})}, {"tilesets", Json::array({Json{{"image", "assets/tiles.png"}}})}}).value();
+        INFO(made.dump());
+        REQUIRE(made["layers"] == Json::array({"walls", "floor"}));
+        REQUIRE(made["tilesets"][0]["tiles"] == 7);   // a 112 by 16 strip of 16-pixel tiles
+        // Drawn far from the sample's level, a wall along its bottom row, and a box dropped on it.
+        REQUIRE(s.command("world.spawn", Json{{"name", "Dungeon"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 100}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", "maps/dungeon.tmj"}}}}}}).has_value());
+        REQUIRE(s.command("tilemap.fill", Json{{"entity", "Dungeon"}, {"tile_x", 0}, {"tile_y", 5}, {"width", 12}, {"height", 1}, {"layer", "walls"}, {"id", 1}}).has_value());
+        REQUIRE(s.command("tilemap.solid", Json{{"entity", "Dungeon"}, {"tile_x", 3}, {"tile_y", 5}}).value()["solid"] == true);
+        REQUIRE(s.command("tilemap.solid", Json{{"entity", "Dungeon"}, {"tile_x", 3}, {"tile_y", 4}}).value()["solid"] == false);
+        REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 104}, {"y", -2}, {"z", 0}}}}}, {"Body2D", Json{{"size", Json{{"x", 0.4}, {"y", 0.4}}}, {"map", "Dungeon"}}}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 120}}).has_value());
+        const Json body = s.command("world.get", Json{{"entity", "Crate"}, {"component", "Body2D"}}).value();
+        REQUIRE(body["grounded"] == true);
+        REQUIRE(s.command("world.get", Json{{"entity", "Crate"}, {"component", "Transform"}}).value()["position"]["y"].get<double>() == Catch::Approx(-4.6).margin(0.05));
+        scene = s.command("world.save", Json::object()).value();
+        REQUIRE(scene["tilemaps"].contains("maps/dungeon.tmj"));
+        REQUIRE_FALSE(s.command("tilemap.create", Json{{"name", "maps/x.tmj"}, {"width", 0}, {"height", 3}}).has_value());
+        REQUIRE(s.finish().has_value());
+    }
+    // A session that never made it draws and collides with it from the saved scene.
+    app::Session t(o);
+    REQUIRE(t.start().has_value());
+    REQUIRE(t.command("world.load", Json{{"scene", scene}}).has_value());
+    REQUIRE(t.command("tilemap.solid", Json{{"entity", "Dungeon"}, {"tile_x", 11}, {"tile_y", 5}}).value()["solid"] == true);
+    REQUIRE(t.finish().has_value());
+}
+
+TEST_CASE("a mesh made from numbers is drawn, collided with, and saved with the scene", "[runtime][mesh][made]") {
+    app::Session s(hello_options(1000));
+    REQUIRE(s.start().has_value());
+    // A 4 by 4 floor, its triangles wound to face up, its normals made from them.
+    const Json floor{{"name", "floor"}, {"positions", Json::array({Json::array({-2, 0, -2}), Json::array({2, 0, -2}), Json::array({2, 0, 2}), Json::array({-2, 0, 2})})}, {"indices", Json::array({0, 2, 1, 0, 3, 2})}, {"uvs", Json::array({0, 0, 1, 0, 1, 1, 0, 1})}};
+    const Json made = s.command("mesh.create", floor).value();
+    INFO(made.dump());
+    REQUIRE(made["mesh"] == "mesh:floor");
+    REQUIRE(made["triangles"] == 2);
+    REQUIRE(made["bounds"]["max"][0].get<double>() == Catch::Approx(2));
+    // A static body on it as a mesh collider, high above the sample's own ground, and a ball dropped on it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Made"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 40}, {"y", 5}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "mesh:floor"}, {"color", Json{{"r", 1}, {"g", 0}, {"b", 0}, {"a", 1}}}}}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"shape", "mesh"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Drop"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 40}, {"y", 7}, {"z", 0}}}}}, {"RigidBody", Json::object()}, {"Collider", Json{{"shape", "sphere"}, {"size", Json{{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 180}}).has_value());
+    const double y = s.command("world.get", Json{{"entity", "Drop"}, {"component", "Transform"}}).value()["position"]["y"].get<double>();
+    REQUIRE(y == Catch::Approx(5.5).margin(0.1));
+    // Its bounds are the mesh's, known without drawing it.
+    const Json b = s.command("world.get", Json{{"entity", "Made"}, {"component", "Bounds"}}).value();
+    REQUIRE(b["max"]["x"].get<double>() == Catch::Approx(42).margin(0.01));
+    // Saved with the scene, and made again when the scene loads into a session that never had it.
+    const Json scene = s.command("world.save", Json::object()).value();
+    REQUIRE(scene["meshes"]["floor"]["indices"].size() == 6);
+    REQUIRE(s.command("mesh.list", Json::object()).value()["meshes"].size() == 1);
+    REQUIRE_FALSE(s.command("mesh.create", Json{{"name", "bad"}, {"positions", Json::array({0, 0, 0, 1, 0, 0, 0, 1, 0})}, {"indices", Json::array({0, 1, 5})}}).has_value());
+    REQUIRE_FALSE(s.command("mesh.create", Json{{"name", "no/slash"}, {"positions", Json::array({0, 0, 0, 1, 0, 0, 0, 1, 0})}}).has_value());
+    REQUIRE(s.finish().has_value());
+    app::Session t(hello_options(1000));
+    REQUIRE(t.start().has_value());
+    REQUIRE(t.command("world.load", Json{{"scene", scene}}).has_value());
+    REQUIRE(t.command("mesh.list", Json::object()).value()["meshes"][0]["mesh"] == "mesh:floor");
+    REQUIRE(t.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(t.command("world.get", Json{{"entity", "Made"}, {"component", "Bounds"}}).value()["max"]["x"].get<double>() == Catch::Approx(42).margin(0.01));
+    REQUIRE(t.command("mesh.remove", Json{{"name", "floor"}}).has_value());
+    REQUIRE(t.finish().has_value());
+}
+
 TEST_CASE("a Blender level: custom properties become components, a node's mesh collides in its place, glass and lacquer come along", "[runtime][import][blenderlevel]") {
     const std::string blender = assets::find_blender("");
     if (blender.empty()) SKIP("Blender is not installed");
@@ -4307,7 +4462,7 @@ bpy.ops.wm.save_as_mainfile(filepath=argv[0])
 )PY";
     const std::string change = "'" + blender + "' -b --factory-startup --python '" + (out / "change-level.py").string() + "' -- '" + (dir / "level.blend").string() + "' > '" + (out / "change-level.log").string() + "' 2>&1";
     REQUIRE(std::system(change.c_str()) == 0);
-    const std::uint64_t seq = s.command("events.last_seq", Json::object()).value().get<std::uint64_t>();
+    const std::uint64_t seq = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
     const Json reloaded = s.command("assets.reload", Json::object()).value();
     INFO(reloaded.dump());
     REQUIRE(reloaded["relinked"].size() == 1);
@@ -4461,6 +4616,15 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
         REQUIRE(h.has_value());
         REQUIRE_FALSE((*h)["summary"].get<std::string>().empty());
     }
+    // The SDK's exports, generated from its sources: one by name, those holding a text, the parts.
+    Json after = s.command("help", Json{{"sdk", "timer.after"}}).value();
+    REQUIRE(after["signature"] == "timer.after(seconds: number, fn: () => void): TimerHandle");
+    REQUIRE(after["file"] == "sdk/runtime/timer.ts");
+    REQUIRE_FALSE(after["doc"].get<std::string>().empty());
+    REQUIRE(s.command("help", Json{{"sdk", "RayHit"}}).value()["signature"].get<std::string>().starts_with("interface RayHit { entity: Entity;"));
+    REQUIRE(s.command("help", Json{{"sdk", "timer"}}).value()["exports"].size() >= 4);
+    REQUIRE(s.command("help", Json{{"sdk", ""}}).value()["parts"]["world"].size() > 10);
+    REQUIRE_FALSE(s.command("help", Json{{"sdk", "nothing.like.this"}}).has_value());
     Json set = s.command("help", Json{{"command", "world.set"}}).value();
     REQUIRE(set["usage"] == "world.set {entity, component, value, cause?, quiet?}");
     REQUIRE(set["params"] == Json::array({"entity", "component", "value", "cause", "quiet"}));
@@ -5536,7 +5700,7 @@ TEST_CASE("a timeline moves fields along its keys and easings, sets others at mo
     Json play = s.command("timeline.play", Json{{"entity", "Director"}, {"path", "timelines/door.json"}}).value();
     REQUIRE(play["duration"] == 3.0);
     const Json last = s.command("events.last_seq", Json::object()).value();
-    const std::uint64_t seq0 = last.is_object() ? last["seq"].get<std::uint64_t>() : last.get<std::uint64_t>();
+    const std::uint64_t seq0 = last["seq"].get<std::uint64_t>();
     ticks(30);
     REQUIRE(s.command("world.get", Json{{"entity", "Director"}, {"component", "Timeline"}}).value()["time"].get<double>() == Catch::Approx(0.5).margin(1e-4));
     REQUIRE(door()["position"]["y"].get<double>() == Catch::Approx(1.0).margin(1e-3));

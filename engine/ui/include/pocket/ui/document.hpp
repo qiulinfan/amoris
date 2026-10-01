@@ -51,6 +51,10 @@ class Document {
     // Where an entity is on the window, in points, for elements with `anchor` (false: behind the
     // camera or gone, and the element is hidden). Asked at every layout for every anchored element.
     void set_anchor_source(std::function<bool(std::uint64_t entity, float& x, float& y)> source);
+    // A font elements may name with the `font` style (docs/design/pocket-ui.md, Fonts and rich
+    // text); the document keeps a reference, so it must outlive the document.
+    void add_font(const std::string& name, Font& font);
+    [[nodiscard]] std::vector<std::string> font_names() const;
     // Apply a batch of operations: [["create", id, type], ["set", id, props], ["append", parent, id, index?],
     // ["remove", id], ["text", id, string], ["clear", id]]. Stops at the first invalid op.
     Status apply(const Json& ops);

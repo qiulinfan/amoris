@@ -487,6 +487,11 @@ class AssetStore {
     // A copy of a loaded map under a new name, edited apart from it (an entity's own map); it has
     // no file until saved to one, and reloading the assets keeps it. Refused for a name in use.
     Result<TileMap*> copy_tilemap(const std::string& path, const std::string& name);
+    // A map made at runtime (tilemap.create, or one a saved scene carries) under a name, replacing
+    // any map loaded under it; it has no file until saved to one.
+    TileMap* put_tilemap(TileMap map);
+    // The maps loaded or made so far.
+    [[nodiscard]] std::vector<const TileMap*> tilemaps() const;
     [[nodiscard]] bool has_mesh(const std::string& path) const;
     // A mesh made in memory (a terrain's) under a path no file has; the next mesh(path) answers it.
     void put_mesh(const std::string& path, Mesh mesh);

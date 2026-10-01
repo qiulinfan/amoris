@@ -1119,3 +1119,68 @@ TEST_CASE("a wrapped paragraph keeps one direction on every line, and dir lays r
     REQUIRE(ltr_left < 14);
     REQUIRE(auto_left > ltr_left + 10);   // right-aligned with its paragraph, not left as its first word would have it
 }
+
+TEST_CASE("text in a project's font, with markup, bold, shadow, outline and a typewriter", "[ui][richtext]") {
+    Fixture f(320, 200);
+    auto painter = ui::Painter::create(*f.device, *f.font);
+    REQUIRE(painter.has_value());
+    auto second = ui::Font::load(*f.device, (root() / ".pocket" / "deps" / "noto-sans-arabic-2.010" / "NotoSansArabic-Regular.ttf").string());
+    REQUIRE(second.has_value());
+    f.doc->add_font("second", **second);
+    REQUIRE(f.doc->font_names() == std::vector<std::string>{"second"});
+    // Paints one text element alone and counts the pixels a test likes.
+    auto paint = [&](const Json& props, const std::string& text, const std::function<bool(int, int, int)>& like) {
+        if (f.doc->exists(80)) REQUIRE(f.doc->remove(80).has_value());
+        Json p = props;
+        p["position"] = "absolute";
+        p["left"] = 10;
+        p["top"] = 10;
+        p["fontSize"] = 32;
+        f.apply(Json::array({Json::array({"create", 80, "text"}), Json::array({"set", 80, p}), Json::array({"text", 80, text}), Json::array({"append", 1, 80})}));
+        f.doc->layout(320, 200, 1.0f);
+        auto frame = f.device->begin_frame();
+        REQUIRE(frame.has_value());
+        WGPURenderPassEncoder pass = f.device->begin_main_pass(*frame, {0.0f, 0.0f, 0.0f, 1.0f});
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+        (*painter)->begin(320, 200, 1.0f);
+        f.doc->paint(**painter);
+        REQUIRE((*painter)->flush(*frame).has_value());
+        REQUIRE(f.device->end_frame(*frame).has_value());
+        auto img = f.device->capture();
+        REQUIRE(img.has_value());
+        int n = 0;
+        for (std::uint32_t y = 0; y < img->height; ++y)
+            for (std::uint32_t x = 0; x < img->width; ++x) {
+                const std::size_t i = (static_cast<std::size_t>(y) * img->width + x) * 4;
+                if (like(img->rgba[i], img->rgba[i + 1], img->rgba[i + 2])) ++n;
+            }
+        return n;
+    };
+    auto bright = [](int r, int g, int b) { return r > 128 && g > 128 && b > 128; };
+    auto red = [](int r, int g, int b) { return r > 128 && g < 60 && b < 60; };
+    auto green = [](int r, int g, int b) { return g > 128 && r < 60 && b < 60; };
+    auto blue = [](int r, int g, int b) { return b > 128 && r < 60 && g < 60; };
+    auto yellow = [](int r, int g, int b) { return r > 128 && g > 128 && b < 60; };
+    // A font of the project's by name: the same words take another width.
+    paint(Json{{"color", "#ffffff"}}, "Wide words", bright);
+    const float own = f.doc->rect_of(80).w;
+    const int plain = paint(Json{{"color", "#ffffff"}, {"font", "second"}}, "Wide words", bright);
+    REQUIRE(plain > 50);
+    REQUIRE(std::fabs(f.doc->rect_of(80).w - own) > 1.0f);
+    // Bold draws more of the letter.
+    REQUIRE(paint(Json{{"color", "#ffffff"}, {"font", "second"}, {"fontWeight", "bold"}}, "Wide words", bright) > plain * 1.15);
+    // Markup: colours by span, and the element's text is the letters alone.
+    const std::string marked = "[color=#ff0000]RED[/color] [c=#00ff00]GRN[/c]";
+    REQUIRE(paint(Json{{"color", "#ffffff"}, {"markup", true}}, marked, red) > 20);
+    REQUIRE(paint(Json{{"color", "#ffffff"}, {"markup", true}}, marked, green) > 20);
+    REQUIRE(f.doc->describe(80)["text"] == "RED GRN");
+    REQUIRE(paint(Json{{"color", "#ffffff"}}, marked, red) == 0);   // without markup the tags are text
+    // The typewriter: three letters shown, the rest not drawn.
+    REQUIRE(paint(Json{{"color", "#ffffff"}, {"markup", true}, {"reveal", 3}}, marked, green) == 0);
+    REQUIRE(paint(Json{{"color", "#ffffff"}, {"markup", true}, {"reveal", 3}}, marked, red) > 20);
+    // A shadow and an outline in their own colours.
+    REQUIRE(paint(Json{{"color", "#ff0000"}, {"textShadow", "3 3 #0000ff"}}, "Shade", blue) > 20);
+    REQUIRE(paint(Json{{"color", "#000000"}, {"textOutline", Json{{"width", 2}, {"color", "#ffff00"}}}}, "Edge", yellow) > 20);
+    REQUIRE(paint(Json{{"color", "#000000"}}, "Edge", yellow) == 0);
+}

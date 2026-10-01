@@ -1,6 +1,6 @@
 # Scripting
 
-Games are TypeScript (`entry` in `project.toml`, usually `scripts/main.ts`) compiled by `pocket` and run inside the engine. The SDK is `sdk/runtime/`; `import ... from "pocket"` gets all of it, `"pocket/test"` the test helpers. Everything below is also a runtime command an agent can call (`docs/mcp.md`), which is the point: a script and an agent see the same world through the same verbs.
+Games are TypeScript (`entry` in `project.toml`, usually `scripts/main.ts`) compiled by `pocket` and run inside the engine. The SDK is `sdk/runtime/`; `import ... from "pocket"` gets all of it, `"pocket/test"` the test helpers. `docs/generated/sdk.md` lists every export on one line (its signature and what it does, interfaces with their fields), generated from the sources; a running game answers the same for one name with `help {"sdk": "timer.after"}`. Everything below is also a runtime command an agent can call (`docs/mcp.md`), which is the point: a script and an agent see the same world through the same verbs.
 
 ## Lifecycle
 
@@ -46,7 +46,7 @@ time.scale(0.2, 1.5);   // slow motion for a second and a half of real time, the
 async function openAndClose() { open(); await wait(2); close(); }
 ```
 
-Tweens and timers advance with ticks, so they pause with the game, appear in transcripts and replay exactly. `tween.to` interpolates the numeric fields you name (rotations along the shortest arc) and leaves the rest alone; `repeat`, `yoyo`, `delay` and `cancel()` / `finish()` are there. `setTimeout` and `setInterval` exist and count simulation milliseconds.
+Tweens and timers advance with ticks, so they pause with the game, appear in transcripts and replay exactly. A timer counts the ticks after the one that set it and fires during the n-th, n being its seconds times the tick rate rounded up: 3 s at 60 ticks a second is the 180th. `tween.to` interpolates the numeric fields you name (rotations along the shortest arc) and leaves the rest alone; `repeat`, `yoyo`, `delay` and `cancel()` / `finish()` are there. `setTimeout` and `setInterval` exist and count simulation milliseconds.
 
 ## Saving
 

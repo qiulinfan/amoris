@@ -90,7 +90,25 @@ function spec(tile: TileSpec): Record<string, unknown> {
     return tile === null ? { clear: true } : typeof tile === "number" ? { id: tile } : tile;
 }
 
+export interface NewMap {
+    /** Tiles across and down. */
+    width: number;
+    height: number;
+    /** Pixels of a tile (16); a TileMap's tile_size sets its size in the world. */
+    tile_width?: number;
+    tile_height?: number;
+    orientation?: "orthogonal" | "isometric" | "staggered" | "hexagonal";
+    /** Tile layers, empty: names, or {name, solid} for a layer whose every tile is solid ("ground" by default). */
+    layers?: Array<string | { name: string; solid?: boolean; visible?: boolean }>;
+    /** Tilesets cut from images, numbered on from 1 (the first image's tiles are ids 1..n): `solid` lists local ids that are solid. */
+    tilesets?: Array<{ image: string; name?: string; tile_width?: number; tile_height?: number; spacing?: number; margin?: number; solid?: number[] }>;
+}
+
 export const tilemap = {
+    /** Make a map by code under `name` (a project path such as "maps/dungeon.tmj", where tilemap.save would write it), its layers empty, for a TileMap to draw and set/fill to paint; world.save and save slots carry it. */
+    create(name: string, map: NewMap): { map: string; width: number; height: number; layers: string[]; tilesets: Array<{ name: string; first_gid: number; tiles: number; columns: number }> } {
+        return command("tilemap.create", { name, ...map }) as { map: string; width: number; height: number; layers: string[]; tilesets: Array<{ name: string; first_gid: number; tiles: number; columns: number }> };
+    },
     /** The map's size, layers, tilesets, object layers, tile size and world bounds. */
     info(entity: EntityRef): Record<string, unknown> {
         return command("tilemap.info", { entity }) as Record<string, unknown>;

@@ -14,6 +14,7 @@ mod manifest;
 mod mcp;
 mod ninja;
 mod report;
+mod sdkdoc;
 mod toolchain;
 mod pack;
 mod ts;

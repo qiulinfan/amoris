@@ -315,6 +315,13 @@ void Session::apply_project_settings() {
             else log::warn("runtime", "project sprite clip '{}': {}", name, clip.error().to_string());
         }
     }
+    // [sprite_sheets] name = "assets/hero.json": an Aseprite sheet, a clip per tag named name.tag.
+    if (project_.contains("sprite_sheets") && project_["sprite_sheets"].is_object()) {
+        for (const auto& [name, path] : project_["sprite_sheets"].items()) {
+            if (!path.is_string()) continue;
+            if (auto r = load_sprite_sheet(path.get<std::string>(), name); !r) log::warn("runtime", "sprite sheet '{}': {}", name, r.error().to_string());
+        }
+    }
     if (project_.contains("render") && project_["render"].is_object()) {
         renderer::ShadowSettings s = renderer_->shadows();
         const Json& r = project_["render"];
@@ -556,36 +563,78 @@ Status Session::start() {
     // project config; POCKET_FONT overrides it. Without a font the ui.* commands report
     // ui_unavailable and everything else works.
     std::string font = project_.contains("font") && project_["font"].is_string() ? project_["font"].get<std::string>() : "";
-    if (const char* env = std::getenv("POCKET_FONT"); env && *env) font = env;
-    if (!options_.font.empty()) font = options_.font.string();
     // A relative font path is relative to the project config (packed games ship the font next to it).
     if (!font.empty() && std::filesystem::path(font).is_relative() && !options_.project_config.empty()) font = (options_.project_config.parent_path() / font).string();
+    // A project's own interface font (`[ui] font` in project.toml, a path in the project): the
+    // bundled one then stands behind it for what it lacks (Chinese, say, under a pixel font).
+    std::vector<std::string> fallbacks;
+    const Json ui_settings = project_.contains("ui") && project_["ui"].is_object() ? project_["ui"] : Json::object();
+    auto in_project = [this](std::string fp) {
+        if (std::filesystem::path(fp).is_relative()) {
+            // A project's own (project.toml) is in the project; a packed game's next to its config.
+            const std::filesystem::path here = options_.project_dir / fp;
+            if (std::filesystem::exists(here)) fp = here.string();
+            else if (!options_.project_config.empty()) fp = (options_.project_config.parent_path() / fp).string();
+        }
+        return fp;
+    };
+    if (ui_settings.contains("font") && ui_settings["font"].is_string()) {
+        const std::string own = in_project(ui_settings["font"].get<std::string>());
+        if (std::filesystem::exists(own)) {
+            if (!font.empty()) fallbacks.push_back(font);
+            font = own;
+        } else {
+            log::warn("runtime", "[ui] font {} not found; the bundled font is used", own);
+        }
+    }
+    if (const char* env = std::getenv("POCKET_FONT"); env && *env) font = env;
+    if (!options_.font.empty()) font = options_.font.string();
+    // Fonts for what the first lacks (docs/design/pocket-ui.md, Fallback fonts): the project config's
+    // `font_fallbacks`, which `pocket` fills with the bundled Noto Sans Arabic unless project.toml
+    // names its own (paths relative to the project).
+    if (project_.contains("font_fallbacks") && project_["font_fallbacks"].is_array()) {
+        for (const Json& fb : project_["font_fallbacks"]) {
+            if (!fb.is_string()) continue;
+            const std::string fp = in_project(fb.get<std::string>());
+            if (!std::filesystem::exists(fp)) {
+                log::warn("runtime", "fallback font {} not found", fp);
+                continue;
+            }
+            fallbacks.push_back(fp);
+        }
+    }
+    auto with_fallbacks = [&](ui::Font& f) {
+        for (const std::string& fp : fallbacks) {
+            if (auto r = f.add_fallback(fp); !r) log::warn("runtime", "fallback font {}: {}", fp, r.error().message);
+        }
+    };
     if (!font.empty() && std::filesystem::exists(font)) {
         POCKET_TRY(loaded_font, ui::Font::load(*device_, font));
         font_ = std::move(loaded_font);
-        // Fonts for what the first lacks (docs/design/pocket-ui.md, Fallback fonts): the project config's
-        // `font_fallbacks`, which `pocket` fills with the bundled Noto Sans Arabic unless project.toml
-        // names its own (paths relative to the project).
-        if (project_.contains("font_fallbacks") && project_["font_fallbacks"].is_array()) {
-            for (const Json& fb : project_["font_fallbacks"]) {
-                if (!fb.is_string()) continue;
-                std::string fp = fb.get<std::string>();
-                if (std::filesystem::path(fp).is_relative()) {
-                    // A project's own (project.toml) is in the project; a packed game's next to its config.
-                    const std::filesystem::path in_project = options_.project_dir / fp;
-                    if (std::filesystem::exists(in_project)) fp = in_project.string();
-                    else if (!options_.project_config.empty()) fp = (options_.project_config.parent_path() / fp).string();
-                }
-                if (!std::filesystem::exists(fp)) {
-                    log::warn("runtime", "fallback font {} not found", fp);
-                    continue;
-                }
-                if (auto r = font_->add_fallback(fp); !r) log::warn("runtime", "fallback font {}: {}", fp, r.error().message);
-            }
-        }
+        with_fallbacks(*font_);
         POCKET_TRY(painter, ui::Painter::create(*device_, *font_));
         painter_ = std::move(painter);
         ui_ = std::make_unique<ui::Document>(*font_);
+        // The project's named fonts (`[ui.fonts] title = "assets/fonts/Title.ttf"`), for the
+        // `font` style; each with the same fonts behind it.
+        if (ui_settings.contains("fonts") && ui_settings["fonts"].is_object()) {
+            for (const auto& [name, path] : ui_settings["fonts"].items()) {
+                if (!path.is_string()) continue;
+                const std::string fp = in_project(path.get<std::string>());
+                if (!std::filesystem::exists(fp)) {
+                    log::warn("runtime", "[ui.fonts] {}: {} not found", name, fp);
+                    continue;
+                }
+                auto loaded = ui::Font::load(*device_, fp);
+                if (!loaded) {
+                    log::warn("runtime", "[ui.fonts] {}: {}", name, loaded.error().message);
+                    continue;
+                }
+                with_fallbacks(**loaded);
+                ui_->add_font(name, **loaded);
+                named_fonts_.push_back({name, fp, std::move(*loaded)});
+            }
+        }
         if (platform_ && !platform_->headless()) {
             ui_->set_clipboard([this] { return platform_->clipboard_text(); }, [this](const std::string& text) { platform_->set_clipboard_text(text); });
         }
@@ -1209,6 +1258,167 @@ void Session::remesh_terrain(world::EntityId id, TerrainState& st, const world::
     if (!st.mesh.empty()) assets_->forget_mesh(st.mesh);
     st.mesh = path;
     world_->set_derived_mesh(id, path);
+}
+
+// Maps a saved scene or slot carries (docs/design/tilemaps.md, Maps made by code): those made or
+// copied at runtime, which have no file, and with `edited` also those changed since they were read.
+Json Session::saved_maps(bool edited) const {
+    Json maps = Json::object();
+    if (!assets_) return maps;
+    for (const assets::TileMap* m : assets_->tilemaps()) {
+        if (m->file && !(edited && m->revision > 0)) continue;
+        maps[m->path] = Json{{"file", m->file}, {"map", m->to_json()}};
+    }
+    return maps;
+}
+
+Status Session::restore_maps(const Json& maps) {
+    if (!assets_ || !maps.is_object()) return {};
+    for (const auto& [path, entry] : maps.items()) {
+        POCKET_TRY(map, assets::parse_tilemap(entry.value("map", Json::object()).dump(), path));
+        map.file = entry.value("file", false);
+        if (map.file) map.revision = std::max<std::uint64_t>(map.revision, 1);   // edited since it was read, as it was when saved
+        assets_->put_tilemap(std::move(map));
+    }
+    return {};
+}
+
+// Meshes made by code (docs/design/assets.md, Meshes made by code): vertices and triangles given as
+// numbers, kept by the asset store under "mesh:<name>" for a MeshRenderer and a mesh Collider to
+// name, their bounds known at once, and the request kept so a saved scene or slot carries them.
+Result<Json> Session::make_mesh(const std::string& name, const Json& spec) {
+    if (name.empty() || name.size() > 64 || !std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.'; }))
+        return fail("bad_args", "a mesh's name is 1 to 64 letters, digits, '_', '-' or '.' (it is drawn as \"mesh:<name>\")");
+    // Numbers from a flat list, or a list of [x, y, z] or {x, y, z}.
+    auto numbers = [](const Json& v, int per, const char* what, std::vector<float>& out) -> Status {
+        out.clear();
+        if (v.is_null()) return {};
+        if (!v.is_array()) return fail("bad_args", "{} is a list of numbers", what);
+        const char* keys[] = {"x", "y", "z", "w"};
+        for (const Json& e : v) {
+            if (e.is_number()) out.push_back(e.get<float>());
+            else if (e.is_array()) for (const Json& c : e) { if (!c.is_number()) return fail("bad_args", "{} holds numbers", what); out.push_back(c.get<float>()); }
+            else if (e.is_object()) {
+                if (per == 2 && e.contains("u")) { out.push_back(e.value("u", 0.0f)); out.push_back(e.value("v", 0.0f)); continue; }
+                if (e.contains("r")) { out.push_back(e.value("r", 1.0f)); out.push_back(e.value("g", 1.0f)); out.push_back(e.value("b", 1.0f)); if (per == 4) out.push_back(e.value("a", 1.0f)); continue; }
+                for (int k = 0; k < per; ++k) out.push_back(e.value(keys[k], k == 3 ? 1.0f : 0.0f));
+            } else return fail("bad_args", "{} holds numbers, [x, y, z] or {{x, y, z}}", what);
+        }
+        if (out.size() % static_cast<std::size_t>(per) != 0) return fail("bad_args", "{} has {} numbers, not a multiple of {}", what, out.size(), per);
+        for (float f : out) if (!std::isfinite(f)) return fail("bad_args", "{} holds a number that is not finite", what);
+        return {};
+    };
+    std::vector<float> pos, nrm, uv, col;
+    POCKET_TRY_VOID(numbers(spec.value("positions", Json()), 3, "positions", pos));
+    POCKET_TRY_VOID(numbers(spec.value("normals", Json()), 3, "normals", nrm));
+    POCKET_TRY_VOID(numbers(spec.value("uvs", Json()), 2, "uvs", uv));
+    const Json colors = spec.value("colors", Json());
+    // Colors: three or four numbers a vertex, sRGB like MeshRenderer.color.
+    const int per_color = colors.is_array() && !colors.empty() && ((colors[0].is_array() && colors[0].size() == 4) || (colors[0].is_object() && colors[0].contains("a"))) ? 4 : 3;
+    POCKET_TRY_VOID(numbers(colors, per_color, "colors", col));
+    const std::size_t n = pos.size() / 3;
+    if (n < 3) return fail("bad_args", "positions needs at least three vertices (x, y, z each)");
+    if (n > 1000000) return fail("bad_args", "a made mesh holds at most a million vertices");
+    if (!nrm.empty() && nrm.size() != pos.size()) return fail("bad_args", "normals has {} vertices for {} positions", nrm.size() / 3, n);
+    if (!uv.empty() && uv.size() / 2 != n) return fail("bad_args", "uvs has {} vertices for {} positions", uv.size() / 2, n);
+    if (!col.empty() && col.size() / static_cast<std::size_t>(per_color) != n) return fail("bad_args", "colors has {} vertices for {} positions", col.size() / static_cast<std::size_t>(per_color), n);
+    std::vector<std::uint32_t> idx;
+    if (spec.contains("indices") && !spec["indices"].is_null()) {
+        if (!spec["indices"].is_array()) return fail("bad_args", "indices is a list of vertex numbers, three a triangle");
+        for (const Json& e : spec["indices"]) {
+            const auto add = [&](const Json& v) -> Status {
+                if (!v.is_number_integer() || v.get<std::int64_t>() < 0 || static_cast<std::size_t>(v.get<std::int64_t>()) >= n) return fail("bad_args", "an index {} is not one of the {} vertices", v.dump(), n);
+                idx.push_back(v.get<std::uint32_t>());
+                return {};
+            };
+            if (e.is_array()) for (const Json& v : e) POCKET_TRY_VOID(add(v));
+            else POCKET_TRY_VOID(add(e));
+        }
+    } else {
+        for (std::uint32_t i = 0; i < n; ++i) idx.push_back(i);
+    }
+    if (idx.empty() || idx.size() % 3 != 0) return fail("bad_args", "indices has {} entries; triangles take three each", idx.size());
+    assets::Mesh mesh;
+    const std::string path = "mesh:" + name;
+    mesh.path = path;
+    mesh.importer = "code";
+    mesh.vertices.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        assets::MeshVertex& v = mesh.vertices[i];
+        v.position = Vec3{pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]};
+        if (!uv.empty()) v.uv = Vec2{uv[i * 2], uv[i * 2 + 1]};
+        if (!col.empty()) {
+            const std::size_t c = i * static_cast<std::size_t>(per_color);
+            v.color = Vec4{srgb_to_linear(col[c]), srgb_to_linear(col[c + 1]), srgb_to_linear(col[c + 2]), per_color == 4 ? col[c + 3] : 1.0f};
+        }
+    }
+    if (!nrm.empty()) {
+        for (std::size_t i = 0; i < n; ++i) mesh.vertices[i].normal = normalize(Vec3{nrm[i * 3], nrm[i * 3 + 1], nrm[i * 3 + 2]});
+    } else {
+        // Each vertex's normal from the triangles that share it, weighed by their area: shared
+        // vertices round a surface, separate ones keep its faces flat.
+        std::vector<Vec3> acc(n, Vec3{0, 0, 0});
+        for (std::size_t t = 0; t + 2 < idx.size(); t += 3) {
+            const Vec3 a = mesh.vertices[idx[t]].position, b = mesh.vertices[idx[t + 1]].position, c = mesh.vertices[idx[t + 2]].position;
+            const Vec3 f = cross(b - a, c - a);
+            for (int k = 0; k < 3; ++k) acc[idx[t + k]] = acc[idx[t + k]] + f;
+        }
+        for (std::size_t i = 0; i < n; ++i) mesh.vertices[i].normal = length(acc[i]) > 1e-12f ? normalize(acc[i]) : Vec3{0, 1, 0};
+    }
+    mesh.indices = std::move(idx);
+    mesh.vertex_colors = !col.empty();
+    assets::Material m;
+    m.name = name;
+    m.double_sided = spec.value("double_sided", false);
+    mesh.materials.push_back(m);
+    assets::Submesh sm;
+    sm.index_count = static_cast<std::uint32_t>(mesh.indices.size());
+    mesh.submeshes.push_back(sm);
+    mesh.aabb_min = mesh.aabb_max = mesh.vertices[0].position;
+    for (const assets::MeshVertex& v : mesh.vertices) {
+        mesh.aabb_min = Vec3{std::min(mesh.aabb_min.x, v.position.x), std::min(mesh.aabb_min.y, v.position.y), std::min(mesh.aabb_min.z, v.position.z)};
+        mesh.aabb_max = Vec3{std::max(mesh.aabb_max.x, v.position.x), std::max(mesh.aabb_max.y, v.position.y), std::max(mesh.aabb_max.z, v.position.z)};
+    }
+    if (!uv.empty()) assets::fill_tangents(mesh);
+    const bool again = made_meshes_.contains(name);
+    const Vec3 lo = mesh.aabb_min, hi = mesh.aabb_max;
+    Json info{{"mesh", path}, {"vertices", n}, {"triangles", mesh.indices.size() / 3}, {"bounds", Json{{"min", Json::array({lo.x, lo.y, lo.z})}, {"max", Json::array({hi.x, hi.y, hi.z})}}}};
+    world_->set_mesh_bounds(path, lo, hi);
+    assets_->put_mesh(path, std::move(mesh));
+    if (again) {
+        // The same name again: what was drawn and collided from the old one is let go.
+        if (renderer_) renderer_->drop_asset_cache();
+        if (physics_) physics_->drop_mesh_cache();
+    }
+    Json kept = Json::object();
+    for (const char* k : {"positions", "indices", "normals", "uvs", "colors", "double_sided"}) if (spec.contains(k) && !spec[k].is_null()) kept[k] = spec[k];
+    made_meshes_[name] = std::move(kept);
+    return info;
+}
+
+Result<Json> Session::mesh_command(std::string_view op, const Json& p) {
+    if (op == "create") {
+        POCKET_TRY(info, make_mesh(opt<std::string>(p, "name", ""), p));
+        world_->events().emit(clock_.tick, "mesh.created", 0, Json{{"mesh", info["mesh"]}, {"vertices", info["vertices"]}, {"triangles", info["triangles"]}}, 0, "engine");
+        return info;
+    }
+    if (op == "list") {
+        Json all = Json::array();
+        for (const auto& [name, spec] : made_meshes_) {
+            const std::size_t verts = spec.contains("positions") ? spec["positions"].size() : 0;
+            all.push_back(Json{{"mesh", "mesh:" + name}, {"entries", Json{{"positions", verts}, {"indices", spec.contains("indices") ? spec["indices"].size() : 0}}}});
+        }
+        return Json{{"meshes", all}};
+    }
+    if (op == "remove") {
+        const std::string name = opt<std::string>(p, "name", "");
+        if (!made_meshes_.erase(name)) return fail("no_such_mesh", "no made mesh named '{}' (mesh.list)", name);
+        assets_->forget_mesh("mesh:" + name);
+        if (renderer_) renderer_->drop_asset_cache();
+        if (physics_) physics_->drop_mesh_cache();
+        return Json{{"removed", "mesh:" + name}};
+    }
+    return fail("unknown_command", "mesh.{} is not a command (create, list, remove)", op);
 }
 
 Result<Json> Session::net_command(std::string_view op, const Json& p) {
@@ -2069,6 +2279,69 @@ Result<std::filesystem::path> output_path(const std::filesystem::path& project_d
 }
 }  // namespace
 
+Result<std::vector<std::string>> Session::load_sprite_sheet(const std::string& rel, const std::string& prefix) {
+    if (!inside_dir(options_.project_dir, rel)) return fail("forbidden", "{} is outside the project directory", rel);
+    const std::filesystem::path file = options_.project_dir / rel;
+    POCKET_TRY(text, fs::read_text(file));
+    const Json doc = Json::parse(text, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object() || !doc.contains("frames") || !doc.contains("meta")) return fail("bad_sheet", "{} is not a sprite sheet's JSON (frames and meta)", rel);
+    const Json& meta = doc["meta"];
+    const float sw = meta.contains("size") ? meta["size"].value("w", 0.0f) : 0.0f, sh = meta.contains("size") ? meta["size"].value("h", 0.0f) : 0.0f;
+    if (sw <= 0 || sh <= 0) return fail("bad_sheet", "{}: meta.size gives no size", rel);
+    // The frames in their order (an object's keys in the file's order, or an array).
+    std::vector<Vec4> rects;
+    std::vector<float> seconds;
+    auto take = [&](const Json& f) {
+        const Json& r = f.value("frame", Json::object());
+        const float x = r.value("x", 0.0f), y = r.value("y", 0.0f), fw = r.value("w", 0.0f), fh = r.value("h", 0.0f);
+        rects.push_back(Vec4{x / sw, y / sh, (x + fw) / sw, (y + fh) / sh});
+        seconds.push_back(std::max(f.value("duration", 100.0f), 1.0f) / 1000.0f);
+    };
+    if (doc["frames"].is_array()) for (const Json& f : doc["frames"]) take(f);
+    else if (doc["frames"].is_object()) for (const auto& [k, f] : doc["frames"].items()) take(f);
+    if (rects.empty()) return fail("bad_sheet", "{} has no frames", rel);
+    // The image beside the JSON, named by the sheet.
+    const std::string image = meta.value("image", "");
+    const std::string texture = image.empty() ? std::string() : (std::filesystem::path(rel).parent_path() / image).lexically_normal().generic_string();
+    std::vector<std::string> names;
+    auto define = [&](const std::string& name, std::vector<int> order, bool loop) {
+        world::World::SpriteClip c;
+        c.texture = texture;
+        c.rects = rects;
+        c.frames = std::move(order);
+        for (int f : c.frames) c.durations.push_back(seconds[static_cast<std::size_t>(f)]);
+        c.loop = loop;
+        world_->define_clip(name, std::move(c));
+        names.push_back(name);
+    };
+    const Json tags = meta.value("frameTags", Json::array());
+    const int last = static_cast<int>(rects.size()) - 1;
+    if (!tags.is_array() || tags.empty()) {
+        std::vector<int> all;
+        for (int i = 0; i <= last; ++i) all.push_back(i);
+        define(prefix, all, true);
+        return names;
+    }
+    for (const Json& t : tags) {
+        const int from = std::clamp(t.value("from", 0), 0, last), to = std::clamp(t.value("to", last), from, last);
+        const std::string dir = t.value("direction", "forward");
+        std::vector<int> run;
+        for (int i = from; i <= to; ++i) run.push_back(i);
+        if (dir == "reverse") std::reverse(run.begin(), run.end());
+        else if (dir == "pingpong" || dir == "pingpong_reverse") {
+            for (int i = to - 1; i > from; --i) run.push_back(i);   // back down without repeating the ends
+            if (dir == "pingpong_reverse") std::rotate(run.begin(), run.begin() + (to - from), run.end());
+        }
+        // "repeat" (Aseprite 1.3): a number of plays; absent or 0 loops for ever.
+        int repeat = 0;
+        if (t.contains("repeat")) repeat = t["repeat"].is_string() ? std::atoi(t["repeat"].get<std::string>().c_str()) : t["repeat"].get<int>();
+        std::vector<int> order;
+        for (int k = 0; k < std::max(repeat, 1); ++k) order.insert(order.end(), run.begin(), run.end());
+        define(prefix.empty() ? t.value("name", "clip") : prefix + "." + t.value("name", "clip"), order, repeat <= 0);
+    }
+    return names;
+}
+
 Result<Json> Session::sprite_command(std::string_view op, const Json& p) {
     // Sprite clips and playback (docs/design/sprites.md): the same calls for scripts and agents.
     auto& w = *world_;
@@ -2085,6 +2358,15 @@ Result<Json> Session::sprite_command(std::string_view op, const Json& p) {
         Json out = Json::object();
         for (const auto& [name, clip] : w.clips()) out[name] = clip.to_json();
         return out;
+    }
+    if (op == "sheet") {
+        // A sheet exported by Aseprite (JSON, hash or array frames): a clip per tag.
+        const std::string path = opt<std::string>(p, "path", "");
+        if (path.empty()) return fail("bad_args", "sheet needs the path of the JSON Aseprite exported (File > Export Sprite Sheet, with JSON data)");
+        POCKET_TRY(names, load_sprite_sheet(path, opt<std::string>(p, "prefix", std::filesystem::path(path).stem().stem().string())));
+        Json out = Json::object();
+        for (const std::string& n : names) out[n] = w.clip(n)->to_json();
+        return Json{{"clips", out}};
     }
     if (op == "play" || op == "stop") {
         if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
@@ -2339,7 +2621,71 @@ Result<Json> Session::env_command(std::string_view op, const Json& p) {
 Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
     // Tile maps (docs/design/tilemaps.md): what is where, in tiles and in world units.
     auto& w = *world_;
-    if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
+    if (op == "create") {
+        // A map made by code: its size in tiles, its tiles' size in pixels, its tile layers (empty)
+        // and tilesets, kept under `name` for a TileMap to draw and tilemap.set to fill; no file
+        // until tilemap.save gives it one (docs/design/tilemaps.md, Maps made by code).
+        if (!assets_) return fail("no_assets", "no asset store");
+        const std::string name = opt<std::string>(p, "name", "");
+        if (name.empty()) return fail("bad_args", "a map needs a name (a project-relative path such as maps/dungeon.tmj, where tilemap.save would write it)");
+        const int width = opt<int>(p, "width", 0), height = opt<int>(p, "height", 0);
+        if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || static_cast<long long>(width) * height > 4'000'000) return fail("bad_args", "width and height are tiles, 1 to 4096 each and at most four million together");
+        const int tw = opt<int>(p, "tile_width", 16), th = opt<int>(p, "tile_height", tw);
+        if (tw <= 0 || th <= 0) return fail("bad_args", "tile_width and tile_height are pixels");
+        const std::string orientation = opt<std::string>(p, "orientation", "orthogonal");
+        if (orientation != "orthogonal" && orientation != "isometric" && orientation != "staggered" && orientation != "hexagonal") return fail("bad_args", "orientation is orthogonal, isometric, staggered or hexagonal");
+        Json doc{{"type", "map"}, {"version", "1.10"}, {"orientation", orientation}, {"renderorder", "right-down"}, {"width", width}, {"height", height}, {"tilewidth", tw}, {"tileheight", th}, {"infinite", false}};
+        if (orientation == "staggered" || orientation == "hexagonal") {
+            doc["staggeraxis"] = opt<std::string>(p, "stagger_axis", "y");
+            doc["staggerindex"] = opt<std::string>(p, "stagger_index", "odd");
+            if (orientation == "hexagonal") doc["hexsidelength"] = opt<int>(p, "hex_side", th / 2);
+        }
+        Json layers = Json::array();
+        const Json names = p.contains("layers") && p["layers"].is_array() ? p["layers"] : Json::array({"ground"});
+        int lid = 1;
+        for (const Json& l : names) {
+            // A layer's name, or {name, solid?, visible?}.
+            Json layer{{"type", "tilelayer"}, {"id", lid++}, {"name", l.is_string() ? l.get<std::string>() : l.value("name", std::string("layer"))}, {"width", width}, {"height", height}, {"x", 0}, {"y", 0}, {"opacity", 1}, {"visible", l.is_object() ? l.value("visible", true) : true}, {"data", Json(std::vector<int>(static_cast<std::size_t>(width) * height, 0))}};
+            if (l.is_object() && l.value("solid", false)) layer["properties"] = Json::array({Json{{"name", "solid"}, {"type", "bool"}, {"value", true}}});
+            layers.push_back(layer);
+        }
+        doc["layers"] = layers;
+        doc["nextlayerid"] = lid;
+        Json tilesets = Json::array();
+        std::uint32_t gid = 1;
+        const std::filesystem::path map_dir = std::filesystem::path(name).parent_path();
+        for (const Json& t : p.value("tilesets", Json::array())) {
+            // {image, name?, tile_width?, tile_height?, spacing?, margin?, solid?: [local ids]}
+            const std::string image = t.value("image", std::string());
+            if (image.empty()) return fail("bad_args", "a tileset needs an image (project-relative)");
+            auto img = assets_->image(image);
+            if (!img) return fail("bad_image", "{}: {}", image, img.error().message);
+            const int stw = t.value("tile_width", tw), sth = t.value("tile_height", th), spacing = t.value("spacing", 0), margin = t.value("margin", 0);
+            const int iw = static_cast<int>((*img)->width), ih = static_cast<int>((*img)->height);
+            const int columns = (iw - 2 * margin + spacing) / (stw + spacing), rows = (ih - 2 * margin + spacing) / (sth + spacing);
+            if (columns <= 0 || rows <= 0) return fail("bad_args", "{} ({}x{}) does not hold a single {}x{} tile", image, iw, ih, stw, sth);
+            Json ts{{"firstgid", gid}, {"name", t.value("name", std::filesystem::path(image).stem().string())}, {"image", std::filesystem::path(image).lexically_relative(map_dir.empty() ? std::filesystem::path(".") : map_dir).generic_string()},
+                    {"imagewidth", iw}, {"imageheight", ih}, {"tilewidth", stw}, {"tileheight", sth}, {"columns", columns}, {"tilecount", columns * rows}, {"spacing", spacing}, {"margin", margin}};
+            if (t.contains("solid") && t["solid"].is_array()) {
+                Json tiles = Json::array();
+                for (const Json& sid : t["solid"]) if (sid.is_number_integer()) tiles.push_back(Json{{"id", sid}, {"properties", Json::array({Json{{"name", "solid"}, {"type", "bool"}, {"value", true}}})}});
+                ts["tiles"] = tiles;
+            }
+            tilesets.push_back(ts);
+            gid += static_cast<std::uint32_t>(columns * rows);
+        }
+        doc["tilesets"] = tilesets;
+        POCKET_TRY(map, assets::parse_tilemap(doc.dump(), name));
+        map.file = false;
+        const assets::TileMap* made = assets_->put_tilemap(std::move(map));
+        world_->events().emit(clock_.tick, "tilemap.created", 0, Json{{"path", name}, {"width", width}, {"height", height}}, 0, "tilemap");
+        Json sets = Json::array();
+        for (const assets::TileSet& s : made->tilesets) sets.push_back(Json{{"name", s.name}, {"first_gid", s.first_gid}, {"tiles", s.tile_count}, {"columns", s.columns}});
+        Json ls = Json::array();
+        for (const assets::TileLayer& l : made->layers) ls.push_back(l.name);
+        return Json{{"map", name}, {"width", width}, {"height", height}, {"layers", ls}, {"tilesets", sets}};
+    }
+    if (!p.contains("entity")) return fail("bad_args", "missing 'entity' (a TileMap's entity; tilemap.create makes a map)");
     world::EntityId id = resolve_entity(p["entity"]);
     if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
     const auto* tmc = w.try_get<world::TileMap>(id);
@@ -3752,6 +4098,8 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         save["env_t"] = clock_.tick - env_start_tick_;   // the episode's clock, so a load continues it (env.step's t and done)
         save["env_max_ticks"] = env_max_ticks_;
         save["scene"] = world_->save();
+        if (!made_meshes_.empty()) save["scene"]["meshes"] = made_meshes_;
+        if (Json maps = saved_maps(true); !maps.empty()) save["scene"]["tilemaps"] = maps;
         Json script = dispatch("save", nullptr);
         save["script"] = script.is_object() ? script : Json::object();
         if (p.contains("data")) save["data"] = p["data"];
@@ -3772,7 +4120,11 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
         POCKET_TRY(text, fs::read_text(path));
         Json save = Json::parse(text, nullptr, false);
         if (save.is_discarded() || !save.is_object() || save.value("format", "") != "pocket-save") return fail("bad_save", "{} is not a Pocket save", path.string());
-        POCKET_TRY_VOID(world_->load(save.value("scene", Json::object()), true));
+        const Json scene = save.value("scene", Json::object());
+        if (scene.contains("meshes") && scene["meshes"].is_object())
+            for (const auto& [mname, spec] : scene["meshes"].items()) POCKET_TRY_VOID(make_mesh(mname, spec));
+        if (scene.contains("tilemaps")) POCKET_TRY_VOID(restore_maps(scene["tilemaps"]));
+        POCKET_TRY_VOID(world_->load(scene, true));
         world_->update_transforms();
         dispatch("load", save.value("script", Json::object()));
         if (save.contains("env_t") && save["env_t"].is_number()) {
@@ -4422,6 +4774,11 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         j["bundle"] = options_.bundle.string();
         j["scene"] = project_.contains("scene") && project_["scene"].is_string() ? project_["scene"] : Json(nullptr);
         j["font"] = font_path_.string();
+        if (!named_fonts_.empty()) {
+            Json fonts = Json::object();
+            for (const NamedFont& f : named_fonts_) fonts[f.name] = f.path;
+            j["fonts"] = fonts;
+        }
         j["editor_bundle"] = options_.editor_bundle.string();
         j["contexts"] = bundle_names_;
         j["headless"] = options_.headless;
@@ -5245,7 +5602,13 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
             return w.save_subtree(id);
         }
-        return w.save();
+        // Meshes made by code go with the scene that draws them.
+        Json scene = w.save();
+        if (&w == world_.get()) {
+            if (!made_meshes_.empty()) scene["meshes"] = made_meshes_;
+            if (Json maps = saved_maps(false); !maps.empty()) scene["tilemaps"] = maps;
+        }
+        return scene;
     }
     if (op == "load") {
         // An inline scene object, or a scene file by project-relative path.
@@ -5260,6 +5623,9 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             scene = Json::parse(text, nullptr, false);
             if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON", path);
         }
+        if (scene.contains("meshes") && scene["meshes"].is_object())
+            for (const auto& [mname, spec] : scene["meshes"].items()) POCKET_TRY_VOID(make_mesh(mname, spec));
+        if (scene.contains("tilemaps")) POCKET_TRY_VOID(restore_maps(scene["tilemaps"]));
         POCKET_TRY_VOID(w.load(scene, opt<bool>(p, "clear", true)));
         if (!path.empty()) w.events().emit(clock_.tick, "scene.loaded", 0, Json{{"path", path}, {"entities", w.entity_count()}}, 0, std::string(source));
         return Json{{"entities", w.entity_count()}};
@@ -5427,7 +5793,7 @@ Result<Json> Session::events_command(std::string_view op, const Json& p, std::st
         return arr;
     }
     if (op == "histogram") return ev.histogram(opt<std::uint64_t>(p, "seq", 0));
-    if (op == "last_seq") return ev.last_seq();
+    if (op == "last_seq") return Json{{"seq", ev.last_seq()}};
     if (op == "why") {
         std::uint64_t seq = opt<std::uint64_t>(p, "seq", 0);
         if (seq == 0) return fail("bad_args", "events.why needs a seq");
@@ -5866,11 +6232,27 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("audio.")) return audio_command(name.substr(6), p);
     if (name.starts_with("input.")) return input_command(name.substr(6), p);
     if (name.starts_with("save.")) return save_command(name.substr(5), p);
+    if (name.starts_with("mesh.")) return mesh_command(name.substr(5), p);
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
     if (name == "perf") return perf();
     if (name == "state") {
+        if (p.contains("keys") && !p["keys"].is_null()) {
+            // Only the exposed values asked for (and where the run is), for one who watches a few.
+            if (!p["keys"].is_array()) return fail("bad_args", "keys is a list of exposed value names (state without it lists them)");
+            Json picked = Json::object();
+            Json missing = Json::array();
+            for (const Json& k : p["keys"]) {
+                const std::string key = k.is_string() ? k.get<std::string>() : k.dump();
+                if (last_state_.is_object() && last_state_.contains(key)) picked[key] = last_state_[key];
+                else missing.push_back(key);
+            }
+            Json j{{"tick", clock_.tick}, {"state", picked}, {"paused", paused_}, {"ok", errors_.empty()}};
+            if (!missing.empty()) j["missing"] = missing;
+            if (!errors_.empty()) j["errors"] = Json::array({errors_.back()});
+            return j;
+        }
         Json j;
         j["tick"] = clock_.tick;
         j["frames"] = frames_;
@@ -5904,6 +6286,82 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         // a component field compared with equals, above, below, at_least, at_most or changes.
         std::function<bool(Json&)> met;
         std::uint64_t seen = world_->events().last_seq();
+        // A value to read after every tick: an exposed one by name, or an entity's component field
+        // ("Player:Transform.position.y", or {entity, component, field}).
+        auto reader = [this](const Json& spec) -> Result<std::function<Result<Json>()>> {
+            std::string key, comp, field;
+            Json entity;
+            if (spec.is_string()) {
+                const std::string s = spec.get<std::string>();
+                const std::size_t colon = s.rfind(':');
+                if (colon == std::string::npos) {
+                    key = s;
+                } else {
+                    entity = s.substr(0, colon);
+                    const std::string rest = s.substr(colon + 1);
+                    const std::size_t dot = rest.find('.');
+                    comp = rest.substr(0, dot);
+                    field = dot == std::string::npos ? "" : rest.substr(dot + 1);
+                }
+            } else if (spec.is_object() && spec.contains("state")) {
+                key = spec["state"].is_string() ? spec["state"].get<std::string>() : "";
+                if (key.empty()) return fail("bad_args", "state names an exposed value (state lists them)");
+            } else if (spec.is_object() && spec.contains("entity") && spec.contains("component")) {
+                entity = spec["entity"];
+                comp = spec["component"].is_string() ? spec["component"].get<std::string>() : "";
+                field = spec.contains("field") && spec["field"].is_string() ? spec["field"].get<std::string>() : "";
+            } else {
+                return fail("bad_args", "a value to read is an exposed name (\"score\"), \"Entity:Component.field\", or {{state}} or {{entity, component, field}}");
+            }
+            if (!key.empty()) {
+                return std::function<Result<Json>()>([this, key]() -> Result<Json> { return last_state_.is_object() && last_state_.contains(key) ? last_state_[key] : Json(); });
+            }
+            const world::EntityId id = resolve_entity(entity);
+            if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", entity.dump());
+            if (!world_->known_component(comp)) return fail("unknown_component", "no component named '{}' (world.components lists them)", comp);
+            return std::function<Result<Json>()>([this, id, comp, field]() -> Result<Json> {
+                if (!world_->alive(id) || !world_->has(id, comp)) return Json();
+                POCKET_TRY(v, world_->get(id, comp));
+                Json at = v;
+                std::size_t start = 0;
+                while (!field.empty() && start <= field.size()) {
+                    const std::size_t dot = field.find('.', start);
+                    const std::string part = field.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+                    if (!at.is_object() || !at.contains(part)) return Json();
+                    at = at[part];
+                    if (dot == std::string::npos) break;
+                    start = dot + 1;
+                }
+                return at;
+            });
+        };
+        // `watch`: values followed through the step, each answered with its first and last value,
+        // its least and greatest (numbers) and the ticks they came at, and how often it changed;
+        // `every` adds the value at every that many ticks. One call instead of a loop of steps.
+        struct Watch {
+            std::string name;
+            std::function<Result<Json>()> read;
+            Json first, last, min, max, series = Json::array();
+            std::uint64_t min_tick = 0, max_tick = 0;
+            int changes = 0;
+        };
+        std::vector<Watch> watches;
+        const int every = opt<int>(p, "every", 0);
+        if (every < 0) return fail("bad_args", "every is a number of ticks between the values kept (0: none)");
+        if (p.contains("watch") && !p["watch"].is_null()) {
+            const Json list = p["watch"].is_array() ? p["watch"] : Json::array({p["watch"]});
+            if (list.size() > 32) return fail("bad_args", "watch at most 32 values at once");
+            for (const Json& spec : list) {
+                POCKET_TRY(read, reader(spec));
+                Watch w;
+                w.name = spec.is_string() ? spec.get<std::string>() : spec.dump();
+                w.read = std::move(read);
+                POCKET_TRY(v, w.read());
+                w.first = w.last = v;
+                if (v.is_number()) { w.min = w.max = v; w.min_tick = w.max_tick = clock_.tick > 0 ? clock_.tick - 1 : 0; }
+                watches.push_back(std::move(w));
+            }
+        }
         if (p.contains("until") && !p["until"].is_null()) {
             const Json& u = p["until"];
             if (!u.is_object()) return fail("bad_args", "until is {{event}} or {{state | entity, component, field}} with equals, above, below, at_least, at_most or changes");
@@ -5918,34 +6376,13 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
                     return true;
                 };
             } else {
-                std::function<Result<Json>()> read;
-                if (u.contains("state")) {
-                    const std::string key = u["state"].is_string() ? u["state"].get<std::string>() : "";
-                    if (key.empty()) return fail("bad_args", "until.state names an exposed value (state lists them)");
-                    read = [this, key]() -> Result<Json> { return last_state_.is_object() && last_state_.contains(key) ? last_state_[key] : Json(); };
-                } else if (u.contains("entity") && u.contains("component") && u.contains("field")) {
-                    const world::EntityId id = resolve_entity(u["entity"]);
-                    if (!world_->alive(id)) return fail("no_such_entity", "until.entity: no entity for {}", u["entity"].dump());
-                    const std::string comp = u["component"].is_string() ? u["component"].get<std::string>() : "";
-                    const std::string field = u["field"].is_string() ? u["field"].get<std::string>() : "";
-                    read = [this, id, comp, field]() -> Result<Json> {
-                        if (!world_->alive(id) || !world_->has(id, comp)) return Json();
-                        POCKET_TRY(v, world_->get(id, comp));
-                        Json at = v;
-                        std::size_t start = 0;
-                        while (start <= field.size()) {
-                            const std::size_t dot = field.find('.', start);
-                            const std::string part = field.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
-                            if (!at.is_object() || !at.contains(part)) return Json();
-                            at = at[part];
-                            if (dot == std::string::npos) break;
-                            start = dot + 1;
-                        }
-                        return at;
-                    };
-                } else {
+                if (!u.contains("state") && !(u.contains("entity") && u.contains("component") && u.contains("field"))) {
                     return fail("bad_args", "until needs event, state, or entity with component and field");
                 }
+                Json spec = u.contains("state") ? Json{{"state", u["state"]}} : Json{{"entity", u["entity"]}, {"component", u["component"]}, {"field", u["field"]}};
+                auto made = reader(spec);
+                if (!made) return fail(made.error().code, "until: {}", made.error().message);
+                std::function<Result<Json>()> read = std::move(*made);
                 const char* ops[] = {"equals", "above", "below", "at_least", "at_most", "changes"};
                 std::string op;
                 for (const char* o : ops) if (u.contains(o)) op = o;
@@ -5982,10 +6419,37 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
             if (!r) { paused_ = was_paused; stepping_ = false; return fail(r.error()); }
             paused_ = was_paused;
             ++ran;
+            for (Watch& w : watches) {
+                auto v = w.read();
+                if (!v) continue;
+                if (*v != w.last) ++w.changes;
+                w.last = *v;
+                if (v->is_number()) {
+                    const double x = v->get<double>();
+                    if (w.min.is_null() || x < w.min.get<double>()) { w.min = *v; w.min_tick = clock_.tick - 1; }
+                    if (w.max.is_null() || x > w.max.get<double>()) { w.max = *v; w.max_tick = clock_.tick - 1; }
+                }
+                if (every > 0 && ran % every == 0 && w.series.size() < 1000) w.series.push_back(Json::array({clock_.tick - 1, *v}));
+            }
             if (met && met(until_detail)) hit = true;
         }
         stepping_ = false;
-        POCKET_TRY(out, command("state", Json::object(), source));
+        POCKET_TRY(out, command("state", p.contains("keys") ? Json{{"keys", p["keys"]}} : Json::object(), source));
+        if (!watches.empty()) {
+            Json seen_values = Json::object();
+            for (const Watch& w : watches) {
+                Json o{{"first", w.first}, {"last", w.last}, {"changes", w.changes}};
+                if (!w.min.is_null()) {
+                    o["min"] = w.min;
+                    o["min_tick"] = w.min_tick;
+                    o["max"] = w.max;
+                    o["max_tick"] = w.max_tick;
+                }
+                if (every > 0) o["series"] = w.series;
+                seen_values[w.name] = o;
+            }
+            out["watch"] = seen_values;
+        }
         if (met) {
             // Whether it came, at which tick, and what was seen; a step that ran out says so.
             until_detail["met"] = hit;
@@ -6076,6 +6540,35 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     };
     if (name == "help") {
         // How to call a command, from the engine itself.
+        if (p.contains("sdk")) {
+            // The SDK's exports: one by name ("timer.after"), or every one whose name starts with
+            // or contains the text ("timer", "Hit"), as signature and first sentence.
+            const std::string q = p["sdk"].is_string() ? p["sdk"].get<std::string>() : "";
+            auto entry = [](const SdkHelp& s) { return Json{{"name", s.name}, {"signature", s.signature}, {"doc", s.doc}, {"file", s.file}}; };
+            for (const SdkHelp& s : sdk_helps()) if (s.name == q) return entry(s);
+            if (q.empty()) {
+                // The parts, each with its exports' names.
+                Json parts = Json::object();
+                for (const SdkHelp& s : sdk_helps()) {
+                    std::string part(s.file);
+                    part = part.substr(part.rfind('/') + 1);
+                    part = part.substr(0, part.find('.'));
+                    parts[part].push_back(std::string(s.name));
+                }
+                return Json{{"parts", parts}, {"note", "help {sdk: name} for one export's signature and documentation; a part's name lists its exports"}};
+            }
+            std::string lower = q;
+            for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            Json found = Json::array();
+            for (const SdkHelp& s : sdk_helps()) {
+                std::string n(s.name);
+                for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (n.find(lower) != std::string::npos) found.push_back(Json{{"signature", s.signature}, {"doc", s.doc}});
+                if (found.size() >= 60) break;
+            }
+            if (found.empty()) return fail("unknown_export", "nothing in the SDK is named like '{}' (help {{sdk: \"\"}} lists the exports by part, docs/generated/sdk.md has them all)", q);
+            return Json{{"exports", found}};
+        }
         const std::string which = opt<std::string>(p, "command", "");
         if (which.empty()) {
             Json all = Json::array();
@@ -6114,7 +6607,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

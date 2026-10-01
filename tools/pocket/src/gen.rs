@@ -600,14 +600,18 @@ pub struct GenOutput {
 }
 
 pub fn generate(ws: &Workspace, check_only: bool) -> Result<GenOutput> {
-    let (inputs, records, comps) = load_meta(ws)?;
+    let (mut inputs, records, comps) = load_meta(ws)?;
     let world_dir = ws.root.join("engine").join("world");
+    let sdk = crate::sdkdoc::entries(&ws.root)?;
+    inputs.extend(crate::sdkdoc::sources(&ws.root)?);
     let targets: Vec<(PathBuf, String)> = vec![
         (world_dir.join("include/pocket/world/components.gen.hpp"), gen_hpp(&records, &comps)?),
         (world_dir.join("include/pocket/world/component_list.gen.hpp"), gen_registry_hpp(&comps)),
         (world_dir.join("generated/components.gen.cpp"), gen_cpp(&records, &comps)?),
         (ws.root.join("sdk/runtime/generated/components.ts"), gen_ts(&records, &comps)?),
         (ws.root.join("docs/generated/components.md"), gen_md(&records, &comps)),
+        (ws.root.join("docs/generated/sdk.md"), crate::sdkdoc::markdown(&sdk)),
+        (ws.root.join("engine/app/generated/sdk_help.gen.cpp"), crate::sdkdoc::cpp(&sdk)),
     ];
     let mut outputs = vec![];
     let mut changed = vec![];

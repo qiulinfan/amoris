@@ -78,3 +78,21 @@ Text inputs lay a row out the same way and place the caret by its glyphs (`Font:
 ### Fallback fonts
 
 A character the font lacks is drawn by the first fallback font that has it: the line is cut into stretches by font (spaces and ASCII punctuation stay with the font of the text they sit in), each shaped with its own font's tables, and the glyphs share the atlas. `pocket` gives every project the bundled Noto Sans Arabic as a fallback behind Noto Sans CJK, so Chinese, Japanese, Korean, Latin and Arabic mix in one interface (`samples/ui` switches between English, Chinese and Arabic); `font_fallbacks` in `project.toml` (paths in the project) replaces that list, and a web pack cuts each fallback to the project's characters as it does the main font.
+
+### Fonts and rich text
+
+A project draws its interface in a font of its own with `[ui] font = "assets/fonts/Pixel.ttf"` in `project.toml` (a path in the project); the bundled Noto Sans CJK then stands behind it as the first fallback, so a pixel font without Chinese still shows Chinese, and the fallbacks follow. `[ui.fonts]` names more (`title = "assets/fonts/Title.otf"`), each with the same fonts behind it, and an element takes one with the `font` style (`fontFamily` is the same); a name not there falls back to the interface's font. Each font keeps its own glyph atlas, and the painter batches text by font as it batches images by texture. A packed game carries them with the project's files. `project.info` lists the named fonts under `fonts`. The fonts are read when the runtime starts, not on `project.reload`.
+
+On a text element:
+
+- `fontWeight: "bold"` (or 600 and up) draws the letters twice a hair apart (a twenty-eighth of the size, at least half a point), a bolder stroke from a face that has none; a real bold face is a font of its own in `[ui.fonts]`.
+- `textShadow` puts the letters again under them, offset and in a colour: `{x, y, color}` or `"2 2 #000000c0"`.
+- `textOutline` draws them eight times around, `width` points out: `{width, color}` or `"1.5 #000"`, for text over a busy scene.
+- `markup: true` reads `[color=#f44]...[/color]` (or `[c=...]`) and `[b]...[/b]` in the text, nested, as spans of colour and weight over its letters (an inner span takes on the outer ones'; `[[` is a `[`, and a tag it does not know stays as written). The element's text, as `ui.snapshot`, `ui.query` and `ui.describe` read it, is the letters without the tags, so an agent checks what a player reads.
+- `reveal: n` draws only the first n letters, a typewriter for dialogue: the lines are laid out for the whole text, so nothing moves as letters appear, and a script steps `reveal` with a timer or a tween (`null` shows all).
+
+```tsx
+<Label text="[b]Mira[/b]: the [color=#ffcc44]gold key[/color] opens the [c=#88ccff]north gate[/c]." markup reveal={shown()} font="dialogue" outline="1 #000" wrap />
+```
+
+`ui_tests` (`[richtext]`) paints each: the same words in a second font take another width, bold lights more pixels than plain, spans come out red and green and the element's text is their letters alone, three revealed letters leave the rest undrawn, a shadow and an outline appear in their own colours.

@@ -27,7 +27,7 @@ export const events = {
     },
     /** The newest event's seq (0 when none): where a script that counts events from its own start begins, since the log runs on across a reload or an env.reset. */
     lastSeq(): number {
-        return command<number>("events.last_seq");
+        return command<{ seq: number }>("events.last_seq").seq;
     },
     /** The event and the chain of its causes (the event first), with a one-line story. */
     why(seq: number, limit = 32): { chain: WorldEvent[]; story: string; root: number; complete: boolean } {

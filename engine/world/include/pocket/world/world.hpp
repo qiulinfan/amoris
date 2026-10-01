@@ -123,16 +123,18 @@ class World {
         std::string texture;          // sheet image; empty keeps the Sprite's own texture
         int columns = 1;
         int rows = 1;
-        std::vector<int> frames;      // cell indices in play order
+        std::vector<int> frames;      // cell indices in play order (indices into `rects` when it has any)
         float fps = 8.0f;
         bool loop = true;
+        std::vector<Vec4> rects;      // a packed sheet's frames (u0, v0, u1, v1), in place of the grid
+        std::vector<float> durations; // seconds each entry of `frames` shows, in place of 1 / fps
         [[nodiscard]] Json to_json() const;
         static Result<SpriteClip> from_json(const Json& j);
     };
     void define_clip(const std::string& name, SpriteClip clip);
     [[nodiscard]] const SpriteClip* clip(std::string_view name) const;
     [[nodiscard]] const std::map<std::string, SpriteClip>& clips() const;
-    // uv rectangle (u0, v0, u1, v1) of one cell of a clip's grid.
+    // uv rectangle (u0, v0, u1, v1) of one cell of a clip's grid, or of one of its packed rects.
     [[nodiscard]] static Vec4 cell_uv(const SpriteClip& clip, int cell);
 
     // Simulation -----------------------------------------------------------------------------

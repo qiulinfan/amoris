@@ -1718,6 +1718,28 @@ Result<TileMap*> AssetStore::copy_tilemap(const std::string& path, const std::st
     return raw;
 }
 
+TileMap* AssetStore::put_tilemap(TileMap map) {
+    if (auto it = tilemaps_.find(map.path); it != tilemaps_.end()) {
+        // Replacing a map something may have drawn: its layers count on from the old ones'
+        // revisions, so what was built from those is built again.
+        std::uint64_t top = it->second->revision;
+        for (const TileLayer& l : it->second->layers) top = std::max(top, l.revision);
+        for (TileLayer& l : map.layers) l.revision = std::max(l.revision, top + 1);
+        map.revision = std::max(map.revision, top + 1);
+    }
+    auto owned = std::make_unique<TileMap>(std::move(map));
+    TileMap* raw = owned.get();
+    tilemaps_[raw->path] = std::move(owned);
+    version_++;
+    return raw;
+}
+
+std::vector<const TileMap*> AssetStore::tilemaps() const {
+    std::vector<const TileMap*> all;
+    for (const auto& [path, m] : tilemaps_) all.push_back(m.get());
+    return all;
+}
+
 Result<const Image*> AssetStore::image(const std::string& path) {
     if (auto it = images_.find(path); it != images_.end()) return it->second.get();
     if (auto f = failures_.find("image:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);

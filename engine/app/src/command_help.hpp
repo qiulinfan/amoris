@@ -19,6 +19,16 @@ struct CommandHelp {
 };
 
 std::span<const CommandHelp> command_helps();
+
+// The SDK's exports, one line each (generated from sdk/runtime by `pocket gen`, tools/pocket/src/sdkdoc.rs):
+// what `help {sdk}` answers.
+struct SdkHelp {
+    std::string_view name;        // "timer.after", "onTick", "RayHit"
+    std::string_view signature;   // as written in the source
+    std::string_view doc;         // the first sentence of its doc comment
+    std::string_view file;
+};
+std::span<const SdkHelp> sdk_helps();
 const CommandHelp* command_help(std::string_view name);
 // The parameter names a signature mentions (alternatives and optional ones included).
 std::vector<std::string> command_param_names(std::string_view params);

@@ -202,6 +202,18 @@ export interface StyleProps {
     opacity?: number;
     color?: ColorValue;
     fontSize?: number;
+    /** A font of the project's by its name in `[ui.fonts]` (project.toml); without it, or for a name not there, the interface's font (`[ui] font`, else the bundled one). */
+    font?: string;
+    /** "bold" (or 600 and up) thickens the letters by drawing them twice a hair apart; a real bold face is a font of its own in `[ui.fonts]`. */
+    fontWeight?: "normal" | "bold" | number;
+    /** A shadow under the letters: {x, y, color} in points, or "2 2 #000000c0". */
+    textShadow?: { x?: number; y?: number; color?: ColorValue } | string | null;
+    /** An outline around the letters: {width, color}, or "1.5 #000". */
+    textOutline?: { width?: number; color?: ColorValue } | string | null;
+    /** The text holds markup: [color=#f44]red[/color] (or [c=...]), [b]bold[/b], nested; "[[" is a "[". What `ui.snapshot` and `ui.query` read is the text without it. */
+    markup?: boolean;
+    /** A typewriter: only the first this many letters are drawn (the lines are laid out for the whole text, so nothing moves as letters appear); null shows all. */
+    reveal?: number | null;
     /** "start" (the default) is the left of a left-to-right line and the right of a right-to-left one; "end" the other side. */
     textAlign?: "start" | "end" | "left" | "center" | "right";
     /** The text's direction and the element's own: "rtl" lays rows out from the right (the first child on the right, `start` and `end` swapped) and every paragraph right to left; "ltr" the reverse; "auto" (the default) takes the parent's, and a paragraph with none set goes the way its first letter reads. `i18n.direction()` gives the current language's. */
@@ -611,8 +623,8 @@ export function Button(props: { label: string; onClick?: (e: UiEvent) => void; p
     }, h("text", { color: props.disabled ? theme.muted : props.primary || props.danger ? theme.accentText : theme.text, fontSize: props.small ? 12 : theme.fontSize }, props.label));
 }
 
-export function Label(props: { text: string; muted?: boolean; size?: number; align?: "start" | "left" | "center" | "right"; wrap?: boolean; color?: ColorValue; flex?: number; name?: string; anchor?: number; anchorOffset?: [number, number]; anchorAlign?: [number, number] }): VNode {
-    return h("text", { color: props.color ?? (props.muted ? theme.muted : theme.text), fontSize: props.size ?? theme.fontSize, textAlign: props.align, textWrap: props.wrap, flex: props.flex, name: props.name, anchor: props.anchor, anchorOffset: props.anchorOffset, anchorAlign: props.anchorAlign }, props.text);
+export function Label(props: { text: string; muted?: boolean; size?: number; align?: "start" | "left" | "center" | "right"; wrap?: boolean; color?: ColorValue; flex?: number; name?: string; anchor?: number; anchorOffset?: [number, number]; anchorAlign?: [number, number]; font?: string; weight?: StyleProps["fontWeight"]; shadow?: StyleProps["textShadow"]; outline?: StyleProps["textOutline"]; markup?: boolean; reveal?: number | null }): VNode {
+    return h("text", { color: props.color ?? (props.muted ? theme.muted : theme.text), fontSize: props.size ?? theme.fontSize, textAlign: props.align, textWrap: props.wrap, flex: props.flex, name: props.name, anchor: props.anchor, anchorOffset: props.anchorOffset, anchorAlign: props.anchorAlign, font: props.font, fontWeight: props.weight, textShadow: props.shadow, textOutline: props.outline, markup: props.markup, reveal: props.reveal }, props.text);
 }
 
 export function Panel(props: { title?: string; children?: unknown; flex?: number; width?: Dim; height?: Dim; padding?: Edge; gap?: number; scroll?: boolean; name?: string; direction?: "row" | "column" }): VNode {

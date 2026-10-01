@@ -14,7 +14,10 @@ How the agent reaches the engine (--via):
     extension  pi's own tools from integrations/pi/pocket.ts (`pocket`, `pocket_look`)
 
 The agent starts in the project copy for a task that edits files and in an empty directory for the
-rest, never in the repository, so nothing it writes can land in the engine's sources.
+rest, never in the repository, so nothing it writes can land in the engine's sources. The harness
+puts the copies and the documentation outside the repository; a call that still reaches into the
+harness or the evidence (where the checks and earlier answers are) is reported under `peeked`, and
+such a run's pass says nothing about the engine.
 """
 import argparse
 import json
@@ -127,6 +130,8 @@ def main():
     usage = {"input": 0, "output": 0, "cache_read": 0, "total": 0}
     cost = 0.0
     tools = {}
+    peeked = []
+    harness = [os.path.join(ROOT, "tools"), os.path.join(ROOT, "tests"), "agent_eval"]
     turns = 0
     final_text = ""
     errors = []
@@ -147,6 +152,9 @@ def main():
             if name in ("write", "read") and path.startswith("xd://"):
                 name = path[5:] + ("" if name == "write" else " (docs)")
             tools[name] = tools.get(name, 0) + 1
+            args = json.dumps(e.get("args") or {})
+            if any(h in args for h in harness) and len(peeked) < 10:
+                peeked.append(f"{e.get('toolName', '?')}: {args[:160]}")
         elif kind == "tool_execution_end" and e.get("isError"):
             errors.append(e.get("toolName", "?"))
         elif kind == "message_end":
@@ -175,6 +183,8 @@ def main():
                 continue
     report = {"answer": answer, "agent": os.path.basename(agent), "via": a.via, "model": a.model, "seconds": seconds, "turns": turns,
               "tool_calls": sum(tools.values()), "tools": tools, "tool_errors": len(errors), "tokens": usage, "cost_usd": round(cost, 6)}
+    if peeked:
+        report["peeked"] = peeked
     sys.stderr.write(err[-2000:])
     if proc.returncode != 0:
         sys.stderr.write(f"\n{os.path.basename(agent)} exited {proc.returncode}\n")
