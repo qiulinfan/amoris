@@ -222,6 +222,11 @@ class Session {
     std::map<int, RumblePattern> rumble_;
     std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
     bool in_tick_ = false;
+    // Hitboxes (docs/design/combat.md): who stands in which, and when it hits again.
+    struct Touch { world::EntityId box = 0, target = 0; double next = 0; };
+    std::vector<Touch> touches_;
+    void update_hits(std::uint64_t since_seq);
+    bool apply_hit(world::EntityId box, world::EntityId target, std::uint64_t cause, std::vector<world::EntityId>& spent);
     bool cursor_locked_ = false, cursor_visible_ = true;   // what the game asked for (input.cursor, [input] cursor)
     void set_cursor(bool locked, bool visible);
     void seed_math_random();   // Math.random's own stream from the run seed

@@ -812,6 +812,7 @@ void Session::run_tick() {
         dispatch("contacts", contacts);
     }
     if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    update_hits(before_physics);   // the touches the 3D and 2D steps just reported
     nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
     update_camera_rigs(static_cast<float>(clock_.tick_seconds));   // after everything that moves what they follow
     perf_physics_.add(sw.ms());
@@ -3522,6 +3523,86 @@ bool Session::advance_rumble() {
         ++it;
     }
     return any;
+}
+
+// One hit of a hitbox on a Health: teams, invulnerability, damage, knockback, events. Answers whether it landed.
+bool Session::apply_hit(world::EntityId box, world::EntityId target, std::uint64_t cause, std::vector<world::EntityId>& spent) {
+    const auto* hb_now = world_->try_get<world::Hitbox>(box);
+    const auto* hp_now = world_->try_get<world::Health>(target);
+    if (!hb_now || !hp_now || !hb_now->enabled || box == target) return false;
+    world::Hitbox hb = *hb_now;
+    world::Health hp = *hp_now;
+    if (hb.team != 0 && hb.team == hp.team) return false;   // a team does not hurt its own
+    if (hp.guard > 0.0f || (hp.dead && hb.damage > 0.0f)) return false;
+    hp.current = hb.damage >= 0.0f ? std::max(0.0f, hp.current - hb.damage) : std::min(hp.max, hp.current - hb.damage);
+    hp.guard = std::max(hp.invulnerable, 0.0f);
+    const std::uint64_t seq = world_->events().emit(clock_.tick, "hit", target, Json{{"by", world_->path(box)}, {"to", world_->path(target)}, {"damage", hb.damage}, {"health", hp.current}}, cause, "engine");
+    if (hp.current <= 0.0f && !hp.dead) {
+        hp.dead = true;
+        world_->events().emit(clock_.tick, "health.depleted", target, Json{{"by", world_->path(box)}, {"path", world_->path(target)}}, seq, "engine");
+    } else if (hp.current > 0.0f) {
+        hp.dead = false;
+    }
+    world_->set_typed<world::Health>(target, hp);
+    hb.hits++;
+    world_->set_typed<world::Hitbox>(box, hb);
+    if (hb.knockback != 0.0f) {
+        // Away from the hitbox, along the ground for bodies that walk.
+        const auto* tb = world_->try_get<world::WorldTransform>(box);
+        const auto* tt = world_->try_get<world::WorldTransform>(target);
+        Vec3 away = tb && tt ? tt->position - tb->position : Vec3{0, 0, 0};
+        if (world_->try_get<world::Body2D>(target)) away.z = 0;
+        else away.y = 0;
+        const float len = length(away);
+        away = len > 1e-5f ? away * (hb.knockback / len) : Vec3{0, 0, 0};
+        if (const auto* v = world_->try_get<world::Velocity>(target)) { world::Velocity nv = *v; nv.linear = nv.linear + away; world_->set_typed<world::Velocity>(target, nv); }
+        if (const auto* c = world_->try_get<world::Character>(target)) { world::Character nc = *c; nc.velocity = nc.velocity + away; world_->set_typed<world::Character>(target, nc); }
+        if (const auto* b = world_->try_get<world::Body2D>(target)) { world::Body2D nb = *b; nb.velocity = {nb.velocity.x + away.x, nb.velocity.y + away.y}; world_->set_typed<world::Body2D>(target, nb); }
+    }
+    if (hb.destroy) spent.push_back(box);
+    return true;
+}
+
+void Session::update_hits(std::uint64_t since_seq) {
+    const double now = clock_.sim_seconds();
+    const float dt = static_cast<float>(clock_.tick_seconds);
+    std::vector<world::EntityId> spent;
+    // Invulnerability runs out.
+    std::vector<std::pair<world::EntityId, world::Health>> cooled;
+    world_->ecs().each([&](flecs::entity e, const world::Health& h) {
+        if (h.guard > 0.0f) { world::Health n = h; n.guard = std::max(0.0f, h.guard - dt); cooled.emplace_back(e.id(), n); }
+    });
+    for (auto& [id, h] : cooled) world_->set_typed<world::Health>(id, h);
+    // Touches begun and ended this tick, by 3D triggers and 2D areas, in the order they were reported.
+    for (const world::Event& ev : world_->events().since(since_seq, 100000)) {
+        const bool begin = ev.type == "trigger.enter" || ev.type == "area.entered";
+        const bool end = ev.type == "trigger.exit" || ev.type == "area.exited";
+        if (!begin && !end) continue;
+        world::EntityId a = 0, b = 0;
+        if (ev.type.starts_with("area.")) { a = ev.subject; b = world_->find(ev.data.value("area", "")); }
+        else { a = world_->find(ev.data.value("a", "")); b = world_->find(ev.data.value("b", "")); }
+        if (!a || !b) continue;
+        for (const auto& [box, target] : {std::pair{a, b}, std::pair{b, a}}) {
+            if (!world_->try_get<world::Hitbox>(box) || !world_->try_get<world::Health>(target)) continue;
+            if (end) {
+                std::erase_if(touches_, [&](const Touch& t) { return t.box == box && t.target == target; });
+                continue;
+            }
+            apply_hit(box, target, ev.seq, spent);
+            const float repeat = world_->try_get<world::Hitbox>(box)->repeat;
+            if (repeat > 0.0f) touches_.push_back(Touch{box, target, now + repeat});
+        }
+    }
+    // Hitboxes that hit again while their targets stay.
+    for (Touch& t : touches_) {
+        if (!world_->alive(t.box) || !world_->alive(t.target) || now + 1e-9 < t.next) continue;
+        const auto* hb = world_->try_get<world::Hitbox>(t.box);
+        if (!hb) continue;
+        apply_hit(t.box, t.target, 0, spent);
+        t.next = now + std::max(hb->repeat, static_cast<float>(clock_.tick_seconds));
+    }
+    std::erase_if(touches_, [&](const Touch& t) { return !world_->alive(t.box) || !world_->alive(t.target); });
+    for (world::EntityId id : spent) if (world_->alive(id)) (void)world_->destroy(id);
 }
 
 void Session::set_cursor(bool locked, bool visible) {

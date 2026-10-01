@@ -601,6 +601,55 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         stats_.bounces++;
         w.events().emit(w.tick_index(), "body2d.bounced", bn.id, Json{{"path", w.path(bn.id)}, {"speed", bn.speed}, {"side", bn.side}});
     }
+    update_areas(w);
+}
+
+void Physics2D::update_areas(world::World& w) {
+    // The bodies as they stand after the step: a box each (a top-down mover's is its radius square).
+    struct Box { world::EntityId id; float x0, y0, x1, y1; };
+    std::vector<Box> bodies;
+    w.ecs().each([&](flecs::entity e, const world::Body2D& b, const world::Transform& t) {
+        const float cx = t.position.x + b.offset.x, cy = t.position.y + b.offset.y;
+        bodies.push_back({e.id(), cx - b.size.x, cy - b.size.y, cx + b.size.x, cy + b.size.y});
+    });
+    w.ecs().each([&](flecs::entity e, const world::TopDown2D& m, const world::Transform& t) {
+        bodies.push_back({e.id(), t.position.x - m.radius, t.position.y - m.radius, t.position.x + m.radius, t.position.y + m.radius});
+    });
+    std::vector<std::pair<world::EntityId, std::vector<world::EntityId>>> now;
+    std::vector<std::pair<world::EntityId, int>> counts;
+    w.ecs().each([&](flecs::entity e, const world::Area2D& a) {
+        Vec3 at{0, 0, 0};
+        if (const auto* wt = e.try_get<world::WorldTransform>()) at = wt->position;
+        else if (const auto* t = e.try_get<world::Transform>()) at = t->position;
+        const float cx = at.x + a.offset.x, cy = at.y + a.offset.y;
+        std::vector<world::EntityId> in;
+        if (a.enabled) {
+            for (const Box& b : bodies) {
+                if (b.id == e.id()) continue;
+                if (b.x1 > cx - a.size.x && b.x0 < cx + a.size.x && b.y1 > cy - a.size.y && b.y0 < cy + a.size.y) in.push_back(b.id);
+            }
+        }
+        // Who came in and who left since the last step, in the order the world holds them.
+        const std::vector<world::EntityId>* before = nullptr;
+        for (const auto& [id, list] : areas_) if (id == e.id()) before = &list;
+        const std::string area_path = w.path(e.id());
+        if (before) {
+            for (world::EntityId b : *before) {
+                if (std::find(in.begin(), in.end(), b) == in.end()) w.events().emit(w.tick_index(), "area.exited", b, Json{{"area", area_path}, {"body", w.path(b)}});
+            }
+        }
+        for (world::EntityId b : in) {
+            if (!before || std::find(before->begin(), before->end(), b) == before->end()) w.events().emit(w.tick_index(), "area.entered", b, Json{{"area", area_path}, {"body", w.path(b)}});
+        }
+        if (a.inside != static_cast<std::int32_t>(in.size())) counts.emplace_back(e.id(), static_cast<int>(in.size()));
+        now.emplace_back(e.id(), std::move(in));
+    });
+    for (const auto& [id, n] : counts) {
+        world::Area2D a = *w.try_get<world::Area2D>(id);
+        a.inside = n;
+        w.set_typed<world::Area2D>(id, a);
+    }
+    areas_ = std::move(now);
 }
 
 Json Physics2D::describe() const {

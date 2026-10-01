@@ -964,6 +964,74 @@ def stormy_dusk_check(env, answer):
     return True, f"a cloudy sunset from the west, the sun light {light['r']:.2f}, {light['g']:.2f}, {light['b']:.2f}, a wind of 12 toward +x"
 
 
+def spike_trap_solve(env):
+    at = env.command("world.get", {"entity": "Player", "component": "Transform"})["position"]
+    env.command("world.set", {"entity": "Player", "component": "Health", "value": {"current": 60, "max": 60, "invulnerable": 0.5}})
+    env.command("world.spawn", {"name": "Spikes", "components": {"Transform": {"position": at}, "Area2D": {"size": {"x": 1, "y": 0.5}},
+                "Hitbox": {"damage": 15, "repeat": 0.5}}})
+    r = env.command("step", {"ticks": 1200, "until": {"event": "health.depleted"}})
+    return r["until"]["event"]["tick"]
+
+
+def spike_trap_check(env, answer):
+    spikes = env.command("world.find", {"path": "Spikes"})
+    if not isinstance(spikes, int):
+        return False, "no entity named Spikes"
+    area = env.command("world.get", {"entity": spikes, "component": "Area2D"})
+    box = env.command("world.get", {"entity": spikes, "component": "Hitbox"})
+    if not area or not (near(area["size"]["x"], 1) and near(area["size"]["y"], 0.5)):
+        return False, f"Spikes' Area2D is {area}"
+    if not box or not (near(box["damage"], 15) and near(box["repeat"], 0.5)):
+        return False, f"Spikes' Hitbox is {box}"
+    hp = env.command("world.get", {"entity": "Player", "component": "Health"})
+    if not hp or not near(hp["max"], 60) or not near(hp["invulnerable"], 0.5) or not hp["dead"]:
+        return False, f"the Player's Health is {hp}"
+    player = env.command("world.find", {"path": "Player"})
+    depleted = [e for e in env.command("events.since", {"seq": 0, "type": "health.depleted", "limit": 4000})["events"] if e.get("subject") == player]
+    if not depleted:
+        return False, "no health.depleted event for the Player"
+    hits = [e for e in env.command("events.since", {"seq": 0, "type": "hit", "limit": 4000})["events"] if e.get("subject") == player]
+    if len(hits) != 4:
+        return False, f"{len(hits)} hits on the Player, not the four that take 60 at 15 each"
+    if answer != depleted[0]["tick"]:
+        return False, f"answered {answer!r}, the health was depleted at tick {depleted[0]['tick']}"
+    return True, f"spikes took 60 in four hits; depleted at tick {answer}"
+
+
+def brute_enemies_solve(env):
+    rows = env.command("world.query", {"with": ["Enemy"]})["entities"]
+    for row in rows:
+        env.command("world.set", {"entity": row["id"], "component": "Enemy", "value": {"kind": "brute", "damage": 25}})
+    return len(rows)
+
+
+def brute_enemies_check(env, answer):
+    rows = env.command("world.query", {"with": ["Enemy"], "fields": ["Enemy"]})["entities"]
+    if not rows:
+        return False, "no enemies left to check"
+    wrong = [r["path"] for r in rows if r["Enemy"]["kind"] != 1 or not near(r["Enemy"]["damage"], 25)]
+    if wrong:
+        return False, f"not brutes doing 25: {wrong}"
+    if answer != len(rows):
+        return False, f"answered {answer!r}, {len(rows)} enemies"
+    return True, f"{len(rows)} enemies, all brutes doing 25"
+
+
+def wait_for_coin_solve(env):
+    env.command("input.hold", {"action": "move_x", "ticks": 600})
+    r = env.command("step", {"ticks": 600, "until": {"event": "coin.collected"}})
+    return r["until"]["event"]["tick"]
+
+
+def wait_for_coin_check(env, answer):
+    coins = env.command("events.since", {"seq": 0, "type": "coin.collected", "limit": 4000})["events"]
+    if not coins:
+        return False, "no coin was collected"
+    if answer != coins[0]["tick"]:
+        return False, f"answered {answer!r}, the first coin went at tick {coins[0]['tick']}"
+    return True, f"the first coin went at tick {answer}"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -1023,6 +1091,12 @@ TASKS = [
      "task": "Make a small level in Blender, which is installed at /Applications/Blender.app/Contents/MacOS/Blender (run it headless with a Python script, -b --factory-startup --python). Save it as assets/level.blend in the project with: a plane named Floor, 10 across, lying flat 1 unit above the ground (Blender z 1), that the engine will make a static body colliding with its own triangles; and a box named Pillar, 1 by 1 by 3 standing on it at Blender x 3, y 0, that becomes a static body with a box collider 0.5 by 1.5 by 0.5 in half extents and has 50 health (the Health component, max and current 50). Give them those engine components through Blender custom properties so that world.instantiate of the file brings them. Then instantiate it at x 60 and drop a dynamic sphere of radius 0.5 (mass 1) from 8 up onto the floor at x 58, z 1; answer with the height it comes to rest at after 180 ticks as the number \"answer\"."},
     {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
      "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
+    {"name": "spike_trap", "project": "sprites", "ticks": 30, "solve": spike_trap_solve, "check": spike_trap_check,
+     "task": "Put a spike trap under the player: give the entity named Player 60 health (current and max) with half a second of invulnerability after each hit, and spawn an entity named Spikes where the player stands that notices 2D bodies in a box of half extents 1 by 0.5 and hurts what is in it by 15, again every half second while it stays. Then run the game, leaving the player where it is, until its health is used up, and answer with the tick at which that was reported, as the integer \"answer\"."},
+    {"name": "brute_enemies", "project": "playground", "ticks": 600, "before": clear_enemies_before, "solve": brute_enemies_solve, "check": brute_enemies_check,
+     "task": "The playground declares a component of its own for its enemies. Make every enemy now in the world a brute that does 25 damage, without stepping the game, and answer with how many enemies there are, as the integer \"answer\"."},
+    {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
+     "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]
 
 
@@ -1057,7 +1131,7 @@ def scratch_remove(project_dir):
 
 def run_external(cmd, env, task, timeout, project_dir):
     """One external runner: the task as JSON on stdin, the last JSON line of its output as the answer."""
-    payload = {"task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": DOCS,
+    payload = {"name": task["name"], "task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": DOCS,
                "notes": "POST {\"id\": 1, \"method\": \"<command>\", \"params\": {...}} to rpc_url + \"/rpc\"; the runtime is paused; `commands` lists every method."
                         + (f" This task edits files: change {task.get('edits', task.get('entry', 'scripts/main.ts'))} under project_dir; after an edit the command project.apply (pocket_apply in pi, project_apply over MCP) bundles and type-checks it, reloads the project (a fresh world from the scene, the script started again) and steps it, so you can see what it does; the harness bundles and reloads it once more when you are done." if task.get("script") else "")}
     proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})

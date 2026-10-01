@@ -907,6 +907,153 @@ TEST_CASE("sprite clips from project.toml play through commands", "[runtime][spr
     REQUIRE(s.command("sprite.play", Json{{"entity", "Player"}, {"clip", "nope"}}).has_value() == false);
 }
 
+TEST_CASE("an Area2D notices 2D bodies coming in and going out", "[runtime][sprites][area2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());   // the player has landed
+    const Json at = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    // A zone around where the player stands, and one far away.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Checkpoint"}, {"components", Json{{"Transform", Json{{"position", at}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}}}}).has_value());
+    const Json far_place = Json{{"position", Json{{"x", 50}, {"y", 50}, {"z", 0}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Far"}, {"components", Json{{"Transform", far_place}, {"Area2D", Json::object()}}}}).has_value());
+    Json in = s.command("step", Json{{"ticks", 30}, {"until", Json{{"event", "area.entered"}}}}).value();
+    INFO(in.dump());
+    REQUIRE(in["until"]["met"] == true);
+    REQUIRE(in["until"]["event"]["data"]["area"] == "/Checkpoint");
+    REQUIRE(in["until"]["event"]["data"]["body"] == "/Player");
+    const int held = s.command("world.get", Json{{"entity", "Checkpoint"}, {"component", "Area2D"}}).value()["inside"].get<int>();
+    REQUIRE(held >= 1);   // the player, and whatever else stands within a unit of it
+    REQUIRE(s.command("world.get", Json{{"entity", "Far"}, {"component", "Area2D"}}).value()["inside"] == 0);
+    // Taken away: it leaves; switched off: nothing is inside and nothing comes in.
+    REQUIRE(s.command("world.set", Json{{"entity", "Player"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", at["x"].get<double>() + 4}}}}}}).has_value());
+    Json out = s.command("step", Json{{"ticks", 5}, {"until", Json{{"event", "area.exited"}}}}).value();
+    REQUIRE(out["until"]["met"] == true);
+    REQUIRE(out["until"]["event"]["data"]["body"] == "/Player");
+    REQUIRE(s.command("world.get", Json{{"entity", "Checkpoint"}, {"component", "Area2D"}}).value()["inside"] == held - 1);
+    REQUIRE(s.command("world.set", Json{{"entity", "Checkpoint"}, {"component", "Area2D"}, {"value", Json{{"enabled", false}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Checkpoint"}, {"component", "Area2D"}}).value()["inside"] == 0);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a hitbox hurts the Health that comes into it, pushes it away, waits out its guard and hits again while it stays", "[runtime][combat]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Player"}, {"component", "Health"}, {"value", Json{{"current", 30}, {"max", 30}, {"invulnerable", 0.25}, {"team", 1}}}}).has_value());
+    const Json at = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    // Spikes under the player: 10 a hit, a hit every 0.5 s while it stays, a push.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Spikes"}, {"components", Json{{"Transform", Json{{"position", at}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}, {"Hitbox", Json{{"damage", 10}, {"repeat", 0.5}, {"knockback", 3}}}}}}).has_value());
+    Json first = s.command("step", Json{{"ticks", 10}, {"until", Json{{"event", "hit"}}}}).value();
+    INFO(first.dump());
+    REQUIRE(first["until"]["met"] == true);
+    REQUIRE(first["until"]["event"]["data"]["by"] == "/Spikes");
+    REQUIRE(first["until"]["event"]["data"]["health"] == 20.0);
+    REQUIRE(first["until"]["event"].contains("cause"));   // the touch that caused it (events.why)
+    const Json hp = s.command("world.get", Json{{"entity", "Player"}, {"component", "Health"}}).value();
+    REQUIRE(hp["current"] == 20.0);
+    REQUIRE(hp["guard"].get<double>() > 0.2);
+    // Held still in it: hit again half a second later, then down to nothing and dead.
+    Json again = s.command("step", Json{{"ticks", 120}, {"until", Json{{"event", "health.depleted"}}}}).value();
+    REQUIRE(again["until"]["met"] == true);
+    REQUIRE(again["until"]["ticks"].get<int>() >= 50);   // two more hits, half a second apart
+    const Json dead = s.command("world.get", Json{{"entity", "Player"}, {"component", "Health"}}).value();
+    REQUIRE(dead["current"] == 0.0);
+    REQUIRE(dead["dead"] == true);
+    REQUIRE(s.command("world.get", Json{{"entity", "Spikes"}, {"component", "Hitbox"}}).value()["hits"] == 3);
+    // Same team: no hurt. A bullet: one hit, then gone.
+    REQUIRE(s.command("world.set", Json{{"entity", "Player"}, {"component", "Health"}, {"value", Json{{"current", 30}, {"dead", false}, {"guard", 0}}}}).has_value());
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Spikes"}}).has_value());
+    const Json here = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    REQUIRE(s.command("world.spawn", Json{{"name", "Friendly"}, {"components", Json{{"Transform", Json{{"position", here}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}, {"Hitbox", Json{{"team", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Bullet"}, {"components", Json{{"Transform", Json{{"position", here}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}, {"Hitbox", Json{{"damage", 5}, {"destroy", true}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Player"}, {"component", "Health"}}).value()["current"] == 25.0);
+    REQUIRE_FALSE(s.command("world.find", Json{{"path", "Bullet"}}).value().is_number());
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a hitbox on a 3D trigger hurts a character that walks into it", "[runtime][combat]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "walker";
+    o.bundle = root() / "build" / "ts" / "walker.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 20}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Player"}, {"component", "Health"}, {"value", Json{{"current", 50}, {"max", 50}}}}).has_value());
+    const Json at = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    const Json place = Json{{"position", Json{{"x", at["x"].get<double>() + 2.0}, {"y", at["y"]}, {"z", at["z"]}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Fire"}, {"components", Json{{"Transform", place}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"shape", "box"}, {"size", Json{{"x", 0.8}, {"y", 1}, {"z", 0.8}}}, {"is_trigger", true}}}, {"Hitbox", Json{{"damage", 15}}}}}}).has_value());
+    REQUIRE(s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 90}}).has_value());
+    Json r = s.command("step", Json{{"ticks", 90}, {"until", Json{{"event", "hit"}}}}).value();
+    INFO(r.dump());
+    REQUIRE(r["until"]["met"] == true);
+    REQUIRE(r["until"]["event"]["data"]["by"] == "/Fire");
+    REQUIRE(s.command("world.get", Json{{"entity", "Player"}, {"component", "Health"}}).value()["current"] == 35.0);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("an additive sprite adds its light to what is behind instead of covering it", "[runtime][sprites][additive]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // A red square over the middle of the view, in front of everything: covering, then adding.
+    const Json cam = s.command("world.get", Json{{"entity", "Camera"}, {"component", "Transform"}}).value()["position"];
+    REQUIRE(s.command("world.spawn", Json{{"name", "Glow"}, {"components", Json{
+        {"Transform", Json{{"position", Json{{"x", cam["x"]}, {"y", cam["y"]}, {"z", 0.5}}}}},
+        {"Sprite", Json{{"size", Json{{"x", 4}, {"y", 4}}}, {"color", Json{{"r", 0.6}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"layer", 100}}}}}}).has_value());
+    auto center = [&] {
+        REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+        return s.command("capture", Json{{"pixel", Json{{"x", 160}, {"y", 90}}}}).value()["pixel"];
+    };
+    const Json covered = center();
+    INFO(covered.dump());
+    REQUIRE(covered[1].get<int>() <= 2);   // red over everything: no green from behind
+    REQUIRE(s.command("world.set", Json{{"entity", "Glow"}, {"component", "Sprite"}, {"value", Json{{"additive", true}}}}).has_value());
+    const Json added = center();
+    INFO(added.dump());
+    REQUIRE(added[1].get<int>() > 10);     // what is behind shows through, its green kept
+    REQUIRE(added[0].get<int>() > covered[0].get<int>() - 2);   // and its red brightened, not replaced
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("sprites draw unlit through an orthographic camera and are picked by shape", "[runtime][sprites]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";

@@ -34,10 +34,27 @@ fields = [
 
 [[component]]
 name = "Health"
-doc = "Hit points. Gameplay decides what zero means; the engine only stores and reports it."
+doc = "Hit points. Hitboxes take them (docs/design/combat.md); gameplay decides what zero means beyond the health.depleted event."
 fields = [
     { name = "current", type = "f32", default = 100.0, doc = "Current hit points." },
     { name = "max", type = "f32", default = 100.0, doc = "Maximum hit points." },
+    { name = "team", type = "i32", default = 0, doc = "A hitbox of the same team (other than 0) does not hurt it." },
+    { name = "invulnerable", type = "f32", default = 0.0, doc = "Seconds after a hit during which no other hit lands." },
+    { name = "guard", type = "f32", default = 0.0, doc = "Seconds of invulnerability left (written by the engine)." },
+    { name = "dead", type = "bool", default = false, doc = "current reached 0 (written by the engine, with a health.depleted event; set it back with current to revive)." },
+]
+
+[[component]]
+name = "Hitbox"
+doc = "Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage)."
+fields = [
+    { name = "damage", type = "f32", default = 10.0, doc = "Hit points a hit takes; negative heals, up to max." },
+    { name = "knockback", type = "f32", default = 0.0, doc = "Units per second added to what it hits (its Velocity, Character or Body2D velocity), away from the hitbox." },
+    { name = "team", type = "i32", default = 0, doc = "It does not hurt a Health of the same team (0: hurts every team)." },
+    { name = "repeat", type = "f32", default = 0.0, doc = "Seconds between hits while a target stays in it; 0 hits once per entry." },
+    { name = "destroy", type = "bool", default = false, doc = "Destroy the hitbox's entity after its first hit (a bullet, a one-time trap)." },
+    { name = "enabled", type = "bool", default = true, doc = "false hurts nothing (a swing between attacks)." },
+    { name = "hits", type = "i32", default = 0, doc = "Hits it has landed (written by the engine)." },
 ]
 
 [[component]]
@@ -224,6 +241,7 @@ fields = [
     { name = "filter", type = "string", default = "linear", doc = "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles)." },
     { name = "visible", type = "bool", default = true, doc = "Whether the sprite is drawn." },
     { name = "sort_y", type = "bool", default = false, doc = "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer." },
+    { name = "additive", type = "bool", default = false, doc = "Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing." },
 ]
 
 [[component]]
@@ -444,6 +462,7 @@ fields = [
     { name = "child", type = "entity", default = 0, doc = "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none." },
     { name = "child_count", type = "i32", default = 8, doc = "Particles the child emits at each death." },
     { name = "collide", type = "bool", default = false, doc = "Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md)." },
+    { name = "additive", type = "bool", default = false, doc = "Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other." },
 ]
 
 [[component]]
@@ -662,6 +681,16 @@ fields = [
     { name = "roll_resistance", type = "f32", default = 0.3, doc = "Units per second squared the wheels lose to rolling when nothing drives or brakes them." },
     { name = "speed", type = "f32", default = 0.0, doc = "Forward speed, negative backing up (written by the engine)." },
     { name = "grounded", type = "i32", default = 0, doc = "Wheels on the ground (written by the engine)." },
+]
+
+[[component]]
+name = "Area2D"
+doc = "A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing."
+fields = [
+    { name = "size", type = "vec2", default = [0.5, 0.5], doc = "Half extents of the box." },
+    { name = "offset", type = "vec2", default = [0.0, 0.0], doc = "Box center relative to the entity's position." },
+    { name = "enabled", type = "bool", default = true, doc = "false notices nothing: the bodies inside are let out (area.exited) and none come in." },
+    { name = "inside", type = "i32", default = 0, doc = "How many bodies are in it (written by the engine)." },
 ]
 
 [[component]]

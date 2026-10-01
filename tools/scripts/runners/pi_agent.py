@@ -114,6 +114,15 @@ def main():
     seconds = round(time.time() - started, 1)
     if scratch:
         shutil.rmtree(scratch, ignore_errors=True)
+    # The agent's own event stream, kept when asked (POCKET_AGENT_TRACES=<dir>): what it called and
+    # why, for reading a run afterwards rather than only its counts.
+    traces = os.environ.get("POCKET_AGENT_TRACES")
+    if traces:
+        os.makedirs(traces, exist_ok=True)
+        with open(os.path.join(traces, f"{payload.get('name', 'task')}.jsonl"), "w") as f:
+            f.write(out)
+            if err.strip():
+                f.write("\n" + json.dumps({"type": "stderr", "text": err[-20000:]}) + "\n")
 
     usage = {"input": 0, "output": 0, "cache_read": 0, "total": 0}
     cost = 0.0
@@ -131,7 +140,13 @@ def main():
             continue
         kind = e.get("type")
         if kind == "tool_execution_start":
-            tools[e.get("toolName", "?")] = tools.get(e.get("toolName", "?"), 0) + 1
+            name = e.get("toolName", "?")
+            # oh-my-pi serves an extension's tools as devices: a write to xd://pocket is a call of the
+            # `pocket` tool, a read of xd://pocket its description. Counted under the tool's own name.
+            path = str((e.get("args") or {}).get("path", ""))
+            if name in ("write", "read") and path.startswith("xd://"):
+                name = path[5:] + ("" if name == "write" else " (docs)")
+            tools[name] = tools.get(name, 0) + 1
         elif kind == "tool_execution_end" and e.get("isError"):
             errors.append(e.get("toolName", "?"))
         elif kind == "message_end":

@@ -512,22 +512,75 @@ void to_json(Json& j, const Health& v) {
     j = Json::object();
     j["current"] = v.current;
     j["max"] = v.max;
+    j["team"] = v.team;
+    j["invulnerable"] = v.invulnerable;
+    j["guard"] = v.guard;
+    j["dead"] = v.dead;
 }
 
 void from_json(const Json& j, Health& v) {
     scalar_from_json(j, "current", v.current);
     scalar_from_json(j, "max", v.max);
+    scalar_from_json(j, "team", v.team);
+    scalar_from_json(j, "invulnerable", v.invulnerable);
+    scalar_from_json(j, "guard", v.guard);
+    scalar_from_json(j, "dead", v.dead);
 }
 
 void hash_component(StateHasherRef& h, const Health& v) {
     h.f32(v.current);
     h.f32(v.max);
+    h.i64(static_cast<std::int64_t>(v.team));
+    h.f32(v.invulnerable);
+    h.f32(v.guard);
+    h.u8(v.dead ? 1 : 0);
 }
 
 std::size_t numeric_span(Health& v, std::string_view path, float** out) {
     (void)v;
     if (path == "current") { *out = &v.current; return 1; }
     if (path == "max") { *out = &v.max; return 1; }
+    if (path == "invulnerable") { *out = &v.invulnerable; return 1; }
+    if (path == "guard") { *out = &v.guard; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Hitbox& v) {
+    j = Json::object();
+    j["damage"] = v.damage;
+    j["knockback"] = v.knockback;
+    j["team"] = v.team;
+    j["repeat"] = v.repeat;
+    j["destroy"] = v.destroy;
+    j["enabled"] = v.enabled;
+    j["hits"] = v.hits;
+}
+
+void from_json(const Json& j, Hitbox& v) {
+    scalar_from_json(j, "damage", v.damage);
+    scalar_from_json(j, "knockback", v.knockback);
+    scalar_from_json(j, "team", v.team);
+    scalar_from_json(j, "repeat", v.repeat);
+    scalar_from_json(j, "destroy", v.destroy);
+    scalar_from_json(j, "enabled", v.enabled);
+    scalar_from_json(j, "hits", v.hits);
+}
+
+void hash_component(StateHasherRef& h, const Hitbox& v) {
+    h.f32(v.damage);
+    h.f32(v.knockback);
+    h.i64(static_cast<std::int64_t>(v.team));
+    h.f32(v.repeat);
+    h.u8(v.destroy ? 1 : 0);
+    h.u8(v.enabled ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.hits));
+}
+
+std::size_t numeric_span(Hitbox& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "damage") { *out = &v.damage; return 1; }
+    if (path == "knockback") { *out = &v.knockback; return 1; }
+    if (path == "repeat") { *out = &v.repeat; return 1; }
     return 0;
 }
 
@@ -1149,6 +1202,7 @@ void to_json(Json& j, const Sprite& v) {
     j["filter"] = v.filter;
     j["visible"] = v.visible;
     j["sort_y"] = v.sort_y;
+    j["additive"] = v.additive;
 }
 
 void from_json(const Json& j, Sprite& v) {
@@ -1163,6 +1217,7 @@ void from_json(const Json& j, Sprite& v) {
     scalar_from_json(j, "filter", v.filter);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "sort_y", v.sort_y);
+    scalar_from_json(j, "additive", v.additive);
 }
 
 void hash_component(StateHasherRef& h, const Sprite& v) {
@@ -1185,6 +1240,7 @@ void hash_component(StateHasherRef& h, const Sprite& v) {
     h.str(v.filter);
     h.u8(v.visible ? 1 : 0);
     h.u8(v.sort_y ? 1 : 0);
+    h.u8(v.additive ? 1 : 0);
 }
 
 std::size_t numeric_span(Sprite& v, std::string_view path, float** out) {
@@ -1663,6 +1719,7 @@ void to_json(Json& j, const ParticleEmitter& v) {
     j["child"] = v.child;
     j["child_count"] = v.child_count;
     j["collide"] = v.collide;
+    j["additive"] = v.additive;
 }
 
 void from_json(const Json& j, ParticleEmitter& v) {
@@ -1690,6 +1747,7 @@ void from_json(const Json& j, ParticleEmitter& v) {
     scalar_from_json(j, "child", v.child);
     scalar_from_json(j, "child_count", v.child_count);
     scalar_from_json(j, "collide", v.collide);
+    scalar_from_json(j, "additive", v.additive);
 }
 
 void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
@@ -1730,6 +1788,7 @@ void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
     h.entity(v.child);
     h.i64(static_cast<std::int64_t>(v.child_count));
     h.u8(v.collide ? 1 : 0);
+    h.u8(v.additive ? 1 : 0);
 }
 
 std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out) {
@@ -2577,6 +2636,41 @@ std::size_t numeric_span(Vehicle& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Area2D& v) {
+    j = Json::object();
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["offset"], v.offset);
+    j["enabled"] = v.enabled;
+    j["inside"] = v.inside;
+}
+
+void from_json(const Json& j, Area2D& v) {
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "enabled", v.enabled);
+    scalar_from_json(j, "inside", v.inside);
+}
+
+void hash_component(StateHasherRef& h, const Area2D& v) {
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.u8(v.enabled ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.inside));
+}
+
+std::size_t numeric_span(Area2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 2; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const TopDown2D& v) {
     j = Json::object();
     vec_to_json(j["velocity"], v.velocity);
@@ -2988,9 +3082,22 @@ constexpr std::array<FieldInfo, 2> kVelocityFields = {{
     FieldInfo{"linear", "vec3", "Meters per second, in the parent's space.", {}},
     FieldInfo{"angular", "vec3", "Radians per second around local X, Y, Z.", {}},
 }};
-constexpr std::array<FieldInfo, 2> kHealthFields = {{
+constexpr std::array<FieldInfo, 6> kHealthFields = {{
     FieldInfo{"current", "f32", "Current hit points.", {}},
     FieldInfo{"max", "f32", "Maximum hit points.", {}},
+    FieldInfo{"team", "i32", "A hitbox of the same team (other than 0) does not hurt it.", {}},
+    FieldInfo{"invulnerable", "f32", "Seconds after a hit during which no other hit lands.", {}},
+    FieldInfo{"guard", "f32", "Seconds of invulnerability left (written by the engine).", {}},
+    FieldInfo{"dead", "bool", "current reached 0 (written by the engine, with a health.depleted event; set it back with current to revive).", {}},
+}};
+constexpr std::array<FieldInfo, 7> kHitboxFields = {{
+    FieldInfo{"damage", "f32", "Hit points a hit takes; negative heals, up to max.", {}},
+    FieldInfo{"knockback", "f32", "Units per second added to what it hits (its Velocity, Character or Body2D velocity), away from the hitbox.", {}},
+    FieldInfo{"team", "i32", "It does not hurt a Health of the same team (0: hurts every team).", {}},
+    FieldInfo{"repeat", "f32", "Seconds between hits while a target stays in it; 0 hits once per entry.", {}},
+    FieldInfo{"destroy", "bool", "Destroy the hitbox's entity after its first hit (a bullet, a one-time trap).", {}},
+    FieldInfo{"enabled", "bool", "false hurts nothing (a swing between attacks).", {}},
+    FieldInfo{"hits", "i32", "Hits it has landed (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 3> kModelFields = {{
     FieldInfo{"path", "string", "The model file, relative to the project.", {}},
@@ -3115,7 +3222,7 @@ constexpr std::array<FieldInfo, 24> kMeshRendererFields = {{
     FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own.", {}},
     FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small.", {}},
 }};
-constexpr std::array<FieldInfo, 11> kSpriteFields = {{
+constexpr std::array<FieldInfo, 12> kSpriteFields = {{
     FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color.", {}},
     FieldInfo{"size", "vec2", "Width and height in world units.", {}},
     FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture.", {}},
@@ -3127,6 +3234,7 @@ constexpr std::array<FieldInfo, 11> kSpriteFields = {{
     FieldInfo{"filter", "string", "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles).", {}},
     FieldInfo{"visible", "bool", "Whether the sprite is drawn.", {}},
     FieldInfo{"sort_y", "bool", "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer.", {}},
+    FieldInfo{"additive", "bool", "Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing.", {}},
 }};
 constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
     FieldInfo{"clip", "string", "Clip name; empty plays nothing.", {}},
@@ -3212,7 +3320,7 @@ constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine).", {}},
     FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick).", {}},
 }};
-constexpr std::array<FieldInfo, 24> kParticleEmitterFields = {{
+constexpr std::array<FieldInfo, 25> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft round spots (streaks when stretched).", {}},
     FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate.", {}},
     FieldInfo{"rate", "f32", "Particles per second while emitting.", {}},
@@ -3237,6 +3345,7 @@ constexpr std::array<FieldInfo, 24> kParticleEmitterFields = {{
     FieldInfo{"child", "entity", "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none.", {}},
     FieldInfo{"child_count", "i32", "Particles the child emits at each death.", {}},
     FieldInfo{"collide", "bool", "Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md).", {}},
+    FieldInfo{"additive", "bool", "Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner.", {}},
@@ -3404,6 +3513,12 @@ constexpr std::array<FieldInfo, 14> kVehicleFields = {{
     FieldInfo{"speed", "f32", "Forward speed, negative backing up (written by the engine).", {}},
     FieldInfo{"grounded", "i32", "Wheels on the ground (written by the engine).", {}},
 }};
+constexpr std::array<FieldInfo, 4> kArea2DFields = {{
+    FieldInfo{"size", "vec2", "Half extents of the box.", {}},
+    FieldInfo{"offset", "vec2", "Box center relative to the entity's position.", {}},
+    FieldInfo{"enabled", "bool", "false notices nothing: the bodies inside are let out (area.exited) and none come in.", {}},
+    FieldInfo{"inside", "i32", "How many bodies are in it (written by the engine).", {}},
+}};
 constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second along X and Y.", {}},
     FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width).", {}},
@@ -3487,11 +3602,12 @@ constexpr std::array<RecordInfo, 9> kRecords = {{
     RecordInfo{"TerrainLayer", kTerrainLayerFields},
 }};
 
-constexpr std::array<ComponentInfo, 40> kComponents = {{
+constexpr std::array<ComponentInfo, 42> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
-    ComponentInfo{"Health", "Hit points. Gameplay decides what zero means; the engine only stores and reports it.", true, kHealthFields},
+    ComponentInfo{"Health", "Hit points. Hitboxes take them (docs/design/combat.md); gameplay decides what zero means beyond the health.depleted event.", true, kHealthFields},
+    ComponentInfo{"Hitbox", "Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage).", true, kHitboxFields},
     ComponentInfo{"Model", "An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).", true, kModelFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
     ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
@@ -3521,6 +3637,7 @@ constexpr std::array<ComponentInfo, 40> kComponents = {{
     ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
+    ComponentInfo{"Area2D", "A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.", true, kArea2DFields},
     ComponentInfo{"TopDown2D", "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).", true, kTopDown2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},

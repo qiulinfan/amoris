@@ -26,6 +26,19 @@ export default function (pi: ExtensionAPI) {
         return body.result;
     }
 
+    // Several commands in one request (the control server answers a JSON-RPC batch in order); each
+    // answer is its result or its error, so one failing call does not hide the others.
+    async function batch(calls: Array<{ method: string; params?: unknown }>): Promise<any[]> {
+        if (!url) throw new Error("no Pocket runtime: set POCKET_RPC_URL or run /pocket-attach <url>");
+        const res = await fetch(`${url}/rpc`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, method: c.method, params: c.params ?? {} }))),
+        });
+        const body: any[] = await res.json();
+        return body.map((r, i) => (r.error ? { method: calls[i].method, error: r.error.message } : { method: calls[i].method, result: r.result }));
+    }
+
     function text(result: any): string {
         // Text results (world.tree, transcript, ui.snapshot, commands {text}) as text, the rest as
         // compact JSON.
@@ -44,12 +57,19 @@ export default function (pi: ExtensionAPI) {
             "world.set {entity, component, value}, world.destroy {entity}, step {ticks, until?} (until stops early: {event: \"coin.\"} or {state: \"score\", at_least: 3}), state, events.since {seq}, events.why {seq}, " +
             "transcript, render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
             "project.brief first: the project's files, scene, components, actions, state and problems as one text. " +
-            "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it.",
+            "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it. " +
+            "Several commands at once: `calls: [{method, params}, ...]` runs them in order in one request and answers each (its result or its error).",
         parameters: Type.Object({
-            method: Type.String({ description: "command name, e.g. world.tree" }),
+            method: Type.Optional(Type.String({ description: "command name, e.g. world.tree" })),
             params: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "the command's parameters as an object" })),
+            calls: Type.Optional(Type.Array(Type.Object({ method: Type.String(), params: Type.Optional(Type.Record(Type.String(), Type.Unknown())) }), { description: "several commands, run in order: [{method, params}, ...]" })),
         }),
-        async execute(_id, p: { method: string; params?: Record<string, unknown> }) {
+        async execute(_id, p: { method?: string; params?: Record<string, unknown>; calls?: Array<{ method: string; params?: Record<string, unknown> }> }) {
+            if (p.calls && p.calls.length > 0) {
+                const results = await batch(p.calls);
+                return { content: [{ type: "text", text: text(results) }], details: undefined };
+            }
+            if (!p.method) throw new Error("give a method (and params), or calls: [{method, params}, ...]");
             const result = await call(p.method, p.params ?? {});
             return { content: [{ type: "text", text: text(result) }], details: undefined };
         },

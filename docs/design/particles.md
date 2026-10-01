@@ -1,6 +1,6 @@
 # Particles
 
-An entity with a `ParticleEmitter` spawns particles: small unlit quads that live for a while, fly out of a cone, fall under gravity, slow with drag (or, with a `Wind`, drift toward the air's velocity: `docs/design/wind.md`), and shrink and fade from a start size and color to an end size and color. Sparks, smoke, dust, rain, a fountain, a hit flash: the same component with different numbers.
+An entity with a `ParticleEmitter` spawns particles: small unlit quads that live for a while, fly out of a cone, fall under gravity, slow with drag (or, with a `Wind`, drift toward the air's velocity: `docs/design/wind.md`), and shrink and fade from a start size and color to an end size and color. Sparks, smoke, dust, rain, a fountain, a hit flash: the same component with different numbers. They are alpha blended (smoke covers what is behind it), or with `additive: true` add their light to it (sparks, fire and magic glow brighter where they crowd).
 
 ```ts
 world.spawn("Fountain", { components: { Transform: { position: { x: -4, y: 0.2, z: -4 } }, ParticleEmitter: { rate: 40, speed: { x: 3, y: 4.5 }, spread: 12, gravity: { x: 0, y: -6, z: 0 } } } });

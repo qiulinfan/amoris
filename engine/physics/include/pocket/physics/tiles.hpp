@@ -36,6 +36,9 @@ class Physics2D {
     [[nodiscard]] Json describe() const;
 
    private:
+    // Area2D: which bodies each area held at the end of the last step, in the order they came in.
+    void update_areas(world::World& w);
+    std::vector<std::pair<world::EntityId, std::vector<world::EntityId>>> areas_;
     Stats2D stats_;
 };
 

@@ -66,6 +66,10 @@ onTick(() => {
 
 `TopDown2D` is the mover for games seen from above, on a map of any orientation: a point with a `radius` that moves by its `velocity` (units per second, no gravity) and is stopped by the map's solid cells. Each tick the move is cut into steps no longer than the radius and each step is tried along X then along Y; a step whose cell ahead of the center (radius along the move) is solid is dropped, and the engine writes `blocked_x` / `blocked_y` and the cell under the center (`tile_x`, `tile_y`, -1 off the map). The cell comes from the map's own geometry (`tilemap.cell` uses the same), so diamonds and hexagons block like squares. Scripts set the velocity from input each tick; a mover placed inside a wall may move out of it. Movers do not collide with each other or with `Body2D` bodies, and an entity carries one or the other, not both.
 
+## Areas: Area2D
+
+An `Area2D` is a box in the XY plane (`size` half extents, `offset` from the entity) that notices the 2D bodies, `Body2D` boxes and `TopDown2D` movers (a square of their radius), coming in and going out. After every 2D step it compares who is inside with who was, and emits `area.entered` and `area.exited` with the body as the subject and `{area, body}` paths as the data, in the order the world holds the areas and the bodies, so a replay and a lockstep peer see the same ones; `inside` counts them. It stops nothing: a checkpoint, a coin's pickup zone, a spike pit, a door's trigger are an area and a line of script (`events.since` with `"area."`), and an agent waits for one with `step {ticks, until: {event: "area.entered"}}`. `enabled: false` lets every body out (with `area.exited`) and notices none. `runtime_tests` (`[area2d]`).
+
 ## The sample
 
 The sample saves and loads (`onSave`, `onLoad`): a save carries the score, the player's facing and the coins' bobbing tweens in their phase, and on load the script finds the player, the level, the lift and the coins again by name, since a load makes new entities. That is what lets the planning player branch a run from a save slot (`docs/design/environment.md`).

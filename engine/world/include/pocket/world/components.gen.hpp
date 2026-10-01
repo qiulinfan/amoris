@@ -191,16 +191,36 @@ void from_json(const Json& j, Velocity& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Velocity& v, std::string_view path, float** out);
 
-/// Hit points. Gameplay decides what zero means; the engine only stores and reports it.
+/// Hit points. Hitboxes take them (docs/design/combat.md); gameplay decides what zero means beyond the health.depleted event.
 struct Health {
     float current = 100.0f;
     float max = 100.0f;
+    std::int32_t team = 0;
+    float invulnerable = 0.0f;
+    float guard = 0.0f;
+    bool dead = false;
     constexpr bool operator==(const Health&) const = default;
 };
 void to_json(Json& j, const Health& v);
 void from_json(const Json& j, Health& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Health& v, std::string_view path, float** out);
+
+/// Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage).
+struct Hitbox {
+    float damage = 10.0f;
+    float knockback = 0.0f;
+    std::int32_t team = 0;
+    float repeat = 0.0f;
+    bool destroy = false;
+    bool enabled = true;
+    std::int32_t hits = 0;
+    constexpr bool operator==(const Hitbox&) const = default;
+};
+void to_json(Json& j, const Hitbox& v);
+void from_json(const Json& j, Hitbox& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Hitbox& v, std::string_view path, float** out);
 
 /// An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).
 struct Model {
@@ -405,6 +425,7 @@ struct Sprite {
     std::string filter = "linear";
     bool visible = true;
     bool sort_y = false;
+    bool additive = false;
     constexpr bool operator==(const Sprite&) const = default;
 };
 void to_json(Json& j, const Sprite& v);
@@ -570,6 +591,7 @@ struct ParticleEmitter {
     std::uint64_t child = 0;
     std::int32_t child_count = 8;
     bool collide = false;
+    bool additive = false;
     constexpr bool operator==(const ParticleEmitter&) const = default;
 };
 void to_json(Json& j, const ParticleEmitter& v);
@@ -811,6 +833,19 @@ void from_json(const Json& j, Vehicle& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Vehicle& v, std::string_view path, float** out);
 
+/// A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.
+struct Area2D {
+    Vec2 size{0.5f, 0.5f};
+    Vec2 offset{0.0f, 0.0f};
+    bool enabled = true;
+    std::int32_t inside = 0;
+    constexpr bool operator==(const Area2D&) const = default;
+};
+void to_json(Json& j, const Area2D& v);
+void from_json(const Json& j, Area2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Area2D& v, std::string_view path, float** out);
+
 /// A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
 struct TopDown2D {
     Vec2 velocity{0.0f, 0.0f};
@@ -956,6 +991,7 @@ void hash_component(struct StateHasherRef& h, const Transform& v);
 void hash_component(struct StateHasherRef& h, const WorldTransform& v);
 void hash_component(struct StateHasherRef& h, const Velocity& v);
 void hash_component(struct StateHasherRef& h, const Health& v);
+void hash_component(struct StateHasherRef& h, const Hitbox& v);
 void hash_component(struct StateHasherRef& h, const Model& v);
 void hash_component(struct StateHasherRef& h, const Lifetime& v);
 void hash_component(struct StateHasherRef& h, const Camera& v);
@@ -985,6 +1021,7 @@ void hash_component(struct StateHasherRef& h, const Wind& v);
 void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
+void hash_component(struct StateHasherRef& h, const Area2D& v);
 void hash_component(struct StateHasherRef& h, const TopDown2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);

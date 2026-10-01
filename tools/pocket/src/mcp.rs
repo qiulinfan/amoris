@@ -88,10 +88,11 @@ fn tools_list() -> Value {
         }), &["url"])),
         tool("runtime_stop", "Stop the running session and return its final JSON report; an attached runtime is let go (quit: true stops it too).", obj_schema(json!({ "quit": { "type": "boolean", "default": false } }), &[])),
         tool("project_apply", "After editing the running project's scripts or project.toml: bundle and type-check them, reload the project and step it, in one call; answers the type errors, the reload, the state after and any script errors. A bundle that fails leaves the running project as it was.", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 } }), &[])),
-        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back), nav.* (nav.bake a walkability grid, nav.path / nav.reachable / nav.nearest over it) families plus state, step, capture, log.tail, report.", obj_schema(json!({
+        tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back), nav.* (nav.bake a walkability grid, nav.path / nav.reachable / nav.nearest over it) families plus state, step, capture, log.tail, report. Several at once: `calls: [{method, params}, ...]` runs them in order and answers each (its result or its error).", obj_schema(json!({
             "method": { "type": "string" },
-            "params": { "type": "object" }
-        }), &["method"])),
+            "params": { "type": "object" },
+            "calls": { "type": "array", "items": { "type": "object" }, "description": "several commands run in order: [{method, params}, ...]" }
+        }), &[])),
         tool("runtime_commands", "List the commands the running runtime understands, one line each with its parameters and what it does; family (world, render, physics, ...) or search (a word) narrows the list.", obj_schema(json!({
             "family": { "type": "string", "description": "e.g. world, render, physics, input, ui" },
             "search": { "type": "string", "description": "a word in a command's name, parameters or summary" }
@@ -355,7 +356,20 @@ impl<'a> McpServer<'a> {
             "runtime_attach" => self.attach(&args).map(|v| Self::text_result(v, false)),
             "project_apply" => self.rpc("project.apply", args).map(|v| Self::text_result(v, false)),
             "runtime_command" => {
-                let method = s("method").ok_or_else(|| anyhow!("method is required"))?;
+                if let Some(calls) = args.get("calls").and_then(|c| c.as_array()).filter(|c| !c.is_empty()) {
+                    // In order, each answered on its own: one failing call does not hide the others.
+                    let mut out = vec![];
+                    for c in calls {
+                        let method = c.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+                        let params = c.get("params").cloned().unwrap_or(json!({}));
+                        out.push(match self.rpc(&method, params) {
+                            Ok(v) => json!({ "method": method, "result": v }),
+                            Err(e) => json!({ "method": method, "error": format!("{e:#}") }),
+                        });
+                    }
+                    return Ok(Self::text_result(Value::Array(out), false));
+                }
+                let method = s("method").ok_or_else(|| anyhow!("method (or calls) is required"))?;
                 let params = args.get("params").cloned().unwrap_or(json!({}));
                 self.rpc(&method, params).map(|v| Self::text_result(v, false))
             }

@@ -33,12 +33,30 @@ Linear and angular velocity. The built-in motion system integrates Transform fro
 
 ## Health
 
-Hit points. Gameplay decides what zero means; the engine only stores and reports it.
+Hit points. Hitboxes take them (docs/design/combat.md); gameplay decides what zero means beyond the health.depleted event.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `current` | f32 | 100.0 | Current hit points. |
 | `max` | f32 | 100.0 | Maximum hit points. |
+| `team` | i32 | 0 | A hitbox of the same team (other than 0) does not hurt it. |
+| `invulnerable` | f32 | 0.0 | Seconds after a hit during which no other hit lands. |
+| `guard` | f32 | 0.0 | Seconds of invulnerability left (written by the engine). |
+| `dead` | bool | false | current reached 0 (written by the engine, with a health.depleted event; set it back with current to revive). |
+
+## Hitbox
+
+Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `damage` | f32 | 10.0 | Hit points a hit takes; negative heals, up to max. |
+| `knockback` | f32 | 0.0 | Units per second added to what it hits (its Velocity, Character or Body2D velocity), away from the hitbox. |
+| `team` | i32 | 0 | It does not hurt a Health of the same team (0: hurts every team). |
+| `repeat` | f32 | 0.0 | Seconds between hits while a target stays in it; 0 hits once per entry. |
+| `destroy` | bool | false | Destroy the hitbox's entity after its first hit (a bullet, a one-time trap). |
+| `enabled` | bool | true | false hurts nothing (a swing between attacks). |
+| `hits` | i32 | 0 | Hits it has landed (written by the engine). |
 
 ## Model
 
@@ -227,6 +245,7 @@ A 2D image: a textured unit square in the entity's XY plane, sized in world unit
 | `filter` | string | "linear" | Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles). |
 | `visible` | bool | true | Whether the sprite is drawn. |
 | `sort_y` | bool | false | Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer. |
+| `additive` | bool | false | Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing. |
 
 ## SpriteAnimation
 
@@ -376,6 +395,7 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 | `child` | entity | 0 | An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none. |
 | `child_count` | i32 | 8 | Particles the child emits at each death. |
 | `collide` | bool | false | Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md). |
+| `additive` | bool | false | Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other. |
 
 ## Bounds
 
@@ -590,6 +610,17 @@ A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBo
 | `roll_resistance` | f32 | 0.3 | Units per second squared the wheels lose to rolling when nothing drives or brakes them. |
 | `speed` | f32 | 0.0 | Forward speed, negative backing up (written by the engine). |
 | `grounded` | i32 | 0 | Wheels on the ground (written by the engine). |
+
+## Area2D
+
+A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `size` | vec2 | [0.5, 0.5] | Half extents of the box. |
+| `offset` | vec2 | [0.0, 0.0] | Box center relative to the entity's position. |
+| `enabled` | bool | true | false notices nothing: the bodies inside are let out (area.exited) and none come in. |
+| `inside` | i32 | 0 | How many bodies are in it (written by the engine). |
 
 ## TopDown2D
 

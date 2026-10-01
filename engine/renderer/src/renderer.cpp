@@ -2553,6 +2553,7 @@ struct Renderer::Impl {
     bool morph_full_warned = false;
     const Animation* animation = nullptr;  // poses for the frame being drawn
     WGPURenderPipeline sprite_pipeline = nullptr;
+    WGPURenderPipeline sprite_add_pipeline = nullptr;   // additive sprites and particles
     WGPURenderPipeline line_pipeline = nullptr;
     WGPUPipelineLayout line_layout = nullptr;
     WGPUShaderModule line_shader = nullptr;
@@ -3099,6 +3100,7 @@ struct Renderer::Impl {
         if (shadow_texture) wgpuTextureRelease(shadow_texture);
         if (shadow_sampler) wgpuSamplerRelease(shadow_sampler);
         if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
+        if (sprite_add_pipeline) wgpuRenderPipelineRelease(sprite_add_pipeline);
         if (line_pipeline) wgpuRenderPipelineRelease(line_pipeline);
         if (line_layout) wgpuPipelineLayoutRelease(line_layout);
         if (line_shader) wgpuShaderModuleRelease(line_shader);
@@ -5659,7 +5661,7 @@ struct Renderer::Impl {
     void release_scene_pipelines() {
         if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
         sky_pipeline = nullptr;
-        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
+        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
         }
@@ -5758,6 +5760,15 @@ struct Renderer::Impl {
         rpd.primitive.cullMode = WGPUCullMode_None;
         sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
+        // Additive: the color times its alpha added to what is there; the alpha left as it was.
+        WGPUBlendState add{};
+        add.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_One};
+        add.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+        targets[0].blend = &add;
+        rpd.label = rhi::str("pocket.sprite.add");
+        sprite_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!sprite_add_pipeline) return fail("gpu_pipeline_failed", "additive sprite pipeline creation failed");
+        targets[0].blend = &blend;
         // Debug lines: their own tiny shader over the frame uniform, alpha blended, depth tested
         // without writing, and no id writes (a line over an entity leaves its id in place).
         {
@@ -8054,6 +8065,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         const GpuMesh* mesh = nullptr;   // a tile layer mesh instead of the unit quad
         std::uint32_t first = 0, count = 0;
         std::int32_t sub = 0;            // file order of the layer within its map
+        bool additive = false;           // adds its light to what is behind (Sprite.additive, ParticleEmitter.additive)
     };
     std::vector<SpriteDraw> sprites;
     std::uint32_t tile_layers = 0, image_layers = 0, image_quads = 0;
@@ -8147,7 +8159,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         Vec3 d = t.position - im.camera.position;
         float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
         // Y-sorted sprites take their Y as the depth: the higher on the screen, the earlier drawn.
-        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, sp.sort_y ? t.position.y : depth, ou});
+        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, sp.sort_y ? t.position.y : depth, ou, nullptr, 0, 0, 0, sp.additive});
     });
     // Particles: one unlit quad each, facing the camera (or flat in XY), sized and tinted by age.
     std::uint32_t particle_count = 0;
@@ -8209,7 +8221,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
                 Vec3 d = pos - im.camera.position;
                 float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
-                sprites.push_back({e->texture, material, e->layer, depth, ou});
+                sprites.push_back({e->texture, material, e->layer, depth, ou, nullptr, 0, 0, 0, e->additive});
                 ++particle_count;
             }
         }
@@ -8592,9 +8604,11 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         wgpuRenderPassEncoderRelease(apass);
     }
     // Sprites and tile layers in draw order; the same loop serves the color pass and the id pass.
-    auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, std::uint32_t& counter) {
+    // `add`: the pipeline additive sprites draw with (the id pass gives the same one for both).
+    auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, WGPURenderPipeline add, std::uint32_t& counter) {
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
         wgpuRenderPassEncoderSetPipeline(pass, pipe);
+        bool adding = false;
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quad.vertices, 0, WGPU_WHOLE_SIZE);
@@ -8605,6 +8619,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             const SpriteDraw& s = sprites[i];
             if (s.mesh) {
                 // A tile layer: its own buffers, one draw, then back to the quad for sprites.
+                if (adding) { wgpuRenderPassEncoderSetPipeline(pass, pipe); adding = false; }
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s.mesh->vertices, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, s.mesh->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = s.mesh;
@@ -8619,8 +8634,12 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = &quad;
             }
+            if (s.additive != adding) {
+                wgpuRenderPassEncoderSetPipeline(pass, s.additive ? add : pipe);
+                adding = s.additive;
+            }
             std::size_t run = 1;
-            while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material) ++run;
+            while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material && sprites[i + run].additive == s.additive) ++run;
             wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
             wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
             counter++;
@@ -8662,7 +8681,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderSetBindGroup(ipass, 1, im.object_bg, 0, nullptr);
             draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline, nullptr, nullptr, im.id_cut_pipeline, &in_view_only, nullptr, im.id_cut_skinned_pipeline);
         }
-        if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.stats.id_draws);
+        if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.id_sprite_pipeline, im.stats.id_draws);
         wgpuRenderPassEncoderEnd(ipass);
         wgpuRenderPassEncoderRelease(ipass);
         if (ao_pass) im.draw_ao(frame);
@@ -8813,7 +8832,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         pass = im.begin_pass(frame.encoder, wrp);
         set_viewport(pass);
     }
-    if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.stats.draw_calls);
+    if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.sprite_add_pipeline, im.stats.draw_calls);
     if (debug && !debug->vertices().empty()) {
         const auto& verts = debug->vertices();
         if (verts.size() > im.line_capacity) {

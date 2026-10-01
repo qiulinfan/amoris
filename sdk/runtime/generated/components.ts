@@ -164,12 +164,38 @@ export interface Velocity {
     angular: Vec3;
 }
 
-/** Hit points. Gameplay decides what zero means; the engine only stores and reports it. */
+/** Hit points. Hitboxes take them (docs/design/combat.md); gameplay decides what zero means beyond the health.depleted event. */
 export interface Health {
     /** Current hit points. */
     current: number;
     /** Maximum hit points. */
     max: number;
+    /** A hitbox of the same team (other than 0) does not hurt it. */
+    team: number;
+    /** Seconds after a hit during which no other hit lands. */
+    invulnerable: number;
+    /** Seconds of invulnerability left (written by the engine). */
+    guard: number;
+    /** current reached 0 (written by the engine, with a health.depleted event; set it back with current to revive). */
+    dead: boolean;
+}
+
+/** Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage). */
+export interface Hitbox {
+    /** Hit points a hit takes; negative heals, up to max. */
+    damage: number;
+    /** Units per second added to what it hits (its Velocity, Character or Body2D velocity), away from the hitbox. */
+    knockback: number;
+    /** It does not hurt a Health of the same team (0: hurts every team). */
+    team: number;
+    /** Seconds between hits while a target stays in it; 0 hits once per entry. */
+    repeat: number;
+    /** Destroy the hitbox's entity after its first hit (a bullet, a one-time trap). */
+    destroy: boolean;
+    /** false hurts nothing (a swing between attacks). */
+    enabled: boolean;
+    /** Hits it has landed (written by the engine). */
+    hits: number;
 }
 
 /** An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models). */
@@ -436,6 +462,8 @@ export interface Sprite {
     visible: boolean;
     /** Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer. */
     sort_y: boolean;
+    /** Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing. */
+    additive: boolean;
 }
 
 /** Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends. */
@@ -654,6 +682,8 @@ export interface ParticleEmitter {
     child_count: number;
     /** Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md). */
     collide: boolean;
+    /** Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other. */
+    additive: boolean;
 }
 
 /** Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. */
@@ -984,6 +1014,18 @@ export interface Vehicle {
     grounded: number;
 }
 
+/** A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing. */
+export interface Area2D {
+    /** Half extents of the box. */
+    size: Vec2;
+    /** Box center relative to the entity's position. */
+    offset: Vec2;
+    /** false notices nothing: the bodies inside are let out (area.exited) and none come in. */
+    enabled: boolean;
+    /** How many bodies are in it (written by the engine). */
+    inside: number;
+}
+
 /** A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform). */
 export interface TopDown2D {
     /** Units per second along X and Y. */
@@ -1123,6 +1165,7 @@ export interface Components {
     WorldTransform: WorldTransform;
     Velocity: Velocity;
     Health: Health;
+    Hitbox: Hitbox;
     Model: Model;
     Lifetime: Lifetime;
     Camera: Camera;
@@ -1152,6 +1195,7 @@ export interface Components {
     Water: Water;
     Scatter: Scatter;
     Vehicle: Vehicle;
+    Area2D: Area2D;
     TopDown2D: TopDown2D;
     Collider: Collider;
     AudioSource: AudioSource;
@@ -1167,6 +1211,7 @@ export interface ComponentEnums {
     WorldTransform: {};
     Velocity: {};
     Health: {};
+    Hitbox: {};
     Model: {};
     Lifetime: {};
     Camera: {};
@@ -1196,6 +1241,7 @@ export interface ComponentEnums {
     Water: {};
     Scatter: {};
     Vehicle: {};
+    Area2D: {};
     TopDown2D: {};
     Collider: { shape: "box" | "sphere" | "capsule" | "mesh" };
     AudioSource: {};
@@ -1209,16 +1255,17 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every engine component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in EngineComponentName]: Components[K] } = {
     Transform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
     WorldTransform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
     Velocity: { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } },
-    Health: { current: 100, max: 100 },
+    Health: { current: 100, max: 100, team: 0, invulnerable: 0, guard: 0, dead: false },
+    Hitbox: { damage: 10, knockback: 0, team: 0, repeat: 0, destroy: false, enabled: true, hits: 0 },
     Model: { path: "", hash: "", live: true },
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
@@ -1229,7 +1276,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
-    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
+    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, additive: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
@@ -1237,7 +1284,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blend_clip: "", blend: 0, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
-    ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false },
+    ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false, additive: false },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
@@ -1248,6 +1295,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
+    Area2D: { size: { x: 0.5, y: 0.5 }, offset: { x: 0, y: 0 }, enabled: true, inside: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", node: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },

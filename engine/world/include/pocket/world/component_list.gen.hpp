@@ -6,6 +6,7 @@
     X(WorldTransform) \
     X(Velocity) \
     X(Health) \
+    X(Hitbox) \
     X(Model) \
     X(Lifetime) \
     X(Camera) \
@@ -35,6 +36,7 @@
     X(Water) \
     X(Scatter) \
     X(Vehicle) \
+    X(Area2D) \
     X(TopDown2D) \
     X(Collider) \
     X(AudioSource) \
