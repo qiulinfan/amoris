@@ -253,6 +253,9 @@ class Renderer {
     void set_msaa(int samples);
     // Look from `view` instead of the scene's camera until it is cleared (nullopt).
     void set_view(std::optional<ViewOverride> view);
+    // The next frame follows a gap (frames simulated and not drawn): what builds up over frames
+    // (TAA's history, motion blur's last view) starts over.
+    void cut();
     [[nodiscard]] int msaa() const;
     void set_shadows(ShadowSettings s);
     [[nodiscard]] ShadowSettings shadows() const;

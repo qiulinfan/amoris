@@ -566,6 +566,15 @@ pub fn bench(ws: &Workspace, config: &str, target: &str, file: Option<&str>, fra
 }
 
 #[allow(clippy::too_many_arguments)]
+/// How many runtime processes scenario and bench runs use at once: POCKET_JOBS, else half the
+/// machine's cores (each runtime draws on the GPU too).
+fn parallel_jobs() -> usize {
+    if let Some(n) = std::env::var("POCKET_JOBS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        return n.max(1);
+    }
+    std::thread::available_parallelism().map(|n| (n.get() / 2).max(1)).unwrap_or(2)
+}
+
 fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, seeds: u64, frames: i64, only: Option<&str>, kind: &str) -> Result<Report> {
     let t0 = Instant::now();
     let label = if kind == "benches" { "bench" } else { "scenario" };
@@ -593,7 +602,7 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
     let run_one = |bundle: &Path, name: Option<&str>, seed: u64, frames: i64| -> Result<serde_json::Value> {
         let mut cmd = toolchain::command(exe.to_str().unwrap());
         cmd.arg("--project").arg(&project).arg("--bundle").arg(&project_bundle.out).arg("--scenario").arg(bundle);
-        cmd.args(["--headless", "--json", "--log-level", "warn", "--size", "320x180", "--no-tick-hash"]);
+        cmd.args(["--headless", "--json", "--log-level", "warn", "--size", "320x180", "--no-tick-hash", "--render", "last"]);
         cmd.arg("--frames").arg(frames.to_string()).arg("--seed").arg(seed.to_string());
         if let Some(n) = name { cmd.arg("--scenario-name").arg(n); }
         let output = cmd.current_dir(&ws.root).output()?;
@@ -607,30 +616,63 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
     let mut all_ok = true;
     let mut total_runs = 0u64;
     let mut total_passed = 0u64;
+    // Discovery first (one frame lists the scenarios a bundle defines), then every run, each a
+    // runtime process of its own, on a pool of workers; the results go back in their order.
+    enum Entry { Failed(serde_json::Value), Scenario { src: PathBuf, name: String, bundle: PathBuf } }
+    let mut entries = vec![];
     for (src, out) in &files {
         let bundle = match bundle_project(ws, src, Some(out)) {
             Ok(b) => b,
             Err(e) => {
-                all_ok = false;
-                results.push(json!({ "file": src, "ok": false, "error": format!("{e:#}") }));
+                entries.push(Entry::Failed(json!({ "file": src, "ok": false, "error": format!("{e:#}") })));
                 continue;
             }
         };
-        // Discovery: one frame lists the scenarios the bundle defines.
         let probe = run_one(&bundle.out, None, 1, 1)?;
         let names: Vec<String> = probe.get("state").and_then(|s| s.get("__scenarios")).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect()).unwrap_or_default();
         if names.is_empty() {
-            all_ok = false;
-            results.push(json!({ "file": src, "ok": false, "error": "the bundle defines no scenarios (call scenario(name, build))", "probe": probe }));
+            entries.push(Entry::Failed(json!({ "file": src, "ok": false, "error": "the bundle defines no scenarios (call scenario(name, build))", "probe": probe })));
             continue;
         }
         for name in names.iter().filter(|n| only.map(|o| n.contains(o)).unwrap_or(true)) {
+            entries.push(Entry::Scenario { src: src.clone(), name: name.clone(), bundle: bundle.out.clone() });
+        }
+    }
+    let seed_count = seeds.max(1);
+    let jobs: Vec<(usize, u64)> = entries.iter().enumerate().filter(|(_, e)| matches!(e, Entry::Scenario { .. })).flat_map(|(i, _)| (1..=seed_count).map(move |s| (i, s))).collect();
+    let outcomes: Vec<std::sync::Mutex<Option<(Result<serde_json::Value>, u128)>>> = jobs.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..parallel_jobs().min(jobs.len().max(1)) {
+            scope.spawn(|| loop {
+                let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if k >= jobs.len() { break; }
+                let (i, seed) = jobs[k];
+                if let Entry::Scenario { name, bundle, .. } = &entries[i] {
+                    let started = Instant::now();
+                    let rep = run_one(bundle, Some(name), seed, frames);
+                    *outcomes[k].lock().unwrap() = Some((rep, started.elapsed().as_millis()));
+                }
+            });
+        }
+    });
+    let mut outcomes = outcomes.into_iter().map(|m| m.into_inner().unwrap());
+    for entry in &entries {
+        let (src, name) = match entry {
+            Entry::Failed(v) => {
+                all_ok = false;
+                results.push(v.clone());
+                continue;
+            }
+            Entry::Scenario { src, name, .. } => (src, name),
+        };
+        {
             let mut runs = vec![];
             let mut passed = 0u64;
             let mut ticks_to_pass: Vec<u64> = vec![];
-            for seed in 1..=seeds.max(1) {
-                let started = Instant::now();
-                let rep = run_one(&bundle.out, Some(name), seed, frames)?;
+            for seed in 1..=seed_count {
+                let (rep, elapsed_ms) = outcomes.next().flatten().ok_or_else(|| anyhow!("a {label} run did not finish"))?;
+                let rep = rep?;
                 let sc = rep.get("state").and_then(|s| s.get("__scenario")).cloned().unwrap_or(json!(null));
                 let status = sc.get("status").and_then(|s| s.as_str()).unwrap_or("missing").to_string();
                 let ok = status == "passed" && rep.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -639,7 +681,7 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
                 if ok { passed += 1; ticks_to_pass.push(ticks); }
                 total_runs += 1;
                 if ok { total_passed += 1; }
-                runs.push(json!({ "seed": seed, "ok": ok, "status": status, "ticks": ticks, "step": sc.get("label").cloned().unwrap_or(json!(null)), "error": error, "report": sc.get("report").cloned().unwrap_or(json!(null)), "bots": sc.get("bots").cloned().unwrap_or(json!(null)), "state": rep.get("state").cloned().unwrap_or(json!(null)), "elapsed_ms": started.elapsed().as_millis() }));
+                runs.push(json!({ "seed": seed, "ok": ok, "status": status, "ticks": ticks, "step": sc.get("label").cloned().unwrap_or(json!(null)), "error": error, "report": sc.get("report").cloned().unwrap_or(json!(null)), "bots": sc.get("bots").cloned().unwrap_or(json!(null)), "state": rep.get("state").cloned().unwrap_or(json!(null)), "elapsed_ms": elapsed_ms }));
             }
             let n = runs.len() as u64;
             if passed < n { all_ok = false; }

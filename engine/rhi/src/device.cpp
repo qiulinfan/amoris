@@ -66,6 +66,7 @@ struct Device::Impl {
     WGPUBindGroup blit_bg = nullptr;
     WGPURenderPipeline blit_pipeline = nullptr;
     std::uint32_t width = 0, height = 0;
+    bool unseen = false;   // the window has no area: frames are drawn offscreen and not presented
     std::uint64_t frame_index = 0;
     std::uint64_t presented = 0;
     std::uint64_t skipped_presents = 0;
@@ -370,7 +371,10 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
 }
 
 Status Device::resize(std::uint32_t width, std::uint32_t height) {
-    if (width == impl_->width && height == impl_->height) return {};
+    // A window with no area (minimized, a canvas in a collapsed page) keeps its targets and draws
+    // offscreen into them; nothing is presented until it has a size again.
+    impl_->unseen = width == 0 || height == 0;
+    if (impl_->unseen || (width == impl_->width && height == impl_->height)) return {};
     return impl_->create_targets(width, height);
 }
 
@@ -416,7 +420,7 @@ Status Device::end_frame(Frame& frame) {
     WGPUSurfaceTexture st{};
     WGPUTextureView surface_view = nullptr;
     bool present = false;
-    if (im.surface) {
+    if (im.surface && !im.unseen) {
         wgpuSurfaceGetCurrentTexture(im.surface, &st);
         if (st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal || st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
             surface_view = wgpuTextureCreateView(st.texture, nullptr);

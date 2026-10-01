@@ -23,7 +23,7 @@ flate2 = "1"
 tar = "0.4"
 lzma-rs = "0.3"
 indexmap = { version = "2", features = ["serde"] }
-oxc = { version = "0.150", features = ["transformer", "codegen", "semantic"] }
+oxc = { version = "0.150", features = ["transformer", "codegen", "semantic", "ast_visit"] }
 
 [profile.release]
 opt-level = 2

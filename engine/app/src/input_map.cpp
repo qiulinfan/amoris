@@ -31,6 +31,26 @@ constexpr float kMousePixelsPerUnit = 100.0f;
 
 }  // namespace
 
+const char* mouse_button_source(int button) {
+    switch (button) {
+        case 1: return "mouse:left";
+        case 2: return "mouse:middle";
+        case 3: return "mouse:right";
+        case 4: return "mouse:x1";
+        case 5: return "mouse:x2";
+        default: return nullptr;
+    }
+}
+
+int mouse_button_of(std::string_view source) {
+    for (int b = 1; b <= 5; ++b) if (source == mouse_button_source(b)) return b;
+    return 0;
+}
+
+namespace {
+
+}  // namespace
+
 Status InputMap::configure(const Json& actions) {
     if (!actions.is_object()) return fail("bad_args", "actions must be an object of name -> bindings");
     std::map<std::string, Action> next;
@@ -99,6 +119,13 @@ void InputMap::apply(const platform::Event& event) {
         case EventType::KeyUp: source = event.key_name; button = true; is_down = false; break;
         case EventType::PadButton: source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; button = true; is_down = event.pressed; break;
         case EventType::PadAxis: source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; axis = true; axis_value = event.value; break;
+        case EventType::MouseDown:
+        case EventType::MouseUp: {
+            const char* name = mouse_button_source(event.button);
+            if (!name) return;
+            source = name; button = true; is_down = event.type == EventType::MouseDown;
+            break;
+        }
         case EventType::MouseMove:
             // Two sources at once, each accumulated over the tick; +y is down the screen.
             apply_delta("mouse:x", event.dx / kMousePixelsPerUnit);

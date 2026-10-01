@@ -1,0 +1,10 @@
+{
+  "name": "pkgdemo",
+  "private": true,
+  "dependencies": {
+    "@types/seedrandom": "3.0.8",
+    "inkjs": "2.4.0",
+    "seedrandom": "3.0.5",
+    "simplex-noise": "4.0.3"
+  }
+}

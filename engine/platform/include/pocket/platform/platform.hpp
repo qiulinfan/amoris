@@ -93,6 +93,17 @@ class Platform {
     // Shake gamepad `pad` (its index) for `ms` milliseconds, the low and high motors in 0..1.
     // False when there is no such pad or it cannot rumble.
     bool rumble(int pad, float low, float high, int ms);
+    // The pointer. `locked` captures it: hidden, held in the window, motion as unbounded deltas.
+    // Escape lets it go and the next click in the window takes it again (in a browser the page's
+    // pointer lock does the same). `visible` false hides an uncaptured pointer. Headless, the
+    // request is only remembered.
+    void set_cursor(bool locked, bool visible);
+    struct Cursor {
+        bool locked = false;    // asked for
+        bool held = false;      // captured now
+        bool visible = true;
+    };
+    [[nodiscard]] Cursor cursor() const;
 
    private:
     Platform();

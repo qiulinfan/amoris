@@ -7,8 +7,9 @@
 <style>
   html, body { margin: 0; height: 100%; background: #101014; color: #cfd2dc; font: 14px system-ui, sans-serif; }
   body { overflow: hidden; }
-  /* The canvas fills the page; the runtime follows its size (and the device pixel ratio). */
-  canvas { display: block; outline: none; width: 100vw; height: 100vh; }
+  /* The canvas fills the page; the runtime follows its size (and the device pixel ratio). Fingers
+     on it are the game's: the browser neither scrolls nor zooms the page under them. */
+  canvas { display: block; outline: none; width: 100vw; height: 100vh; touch-action: none; }
   #status { position: fixed; left: 12px; bottom: 10px; opacity: 0.8; pointer-events: none; }
   #status:empty { display: none; }
   /* The page's own controls (shown with the editor): what the editor saves lives in the page's file

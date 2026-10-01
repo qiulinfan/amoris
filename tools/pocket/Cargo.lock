@@ -693,6 +693,7 @@ checksum = "a653a52b27d6bad0846e16d65aa1455419be260cfff170225adce49406be810f"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",
+ "oxc_ast_visit",
  "oxc_codegen",
  "oxc_diagnostics",
  "oxc_parser",

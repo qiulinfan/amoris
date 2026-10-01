@@ -37,6 +37,21 @@ namespace pocket::app {
 
 namespace {
 
+// What a hold presses: a key, or a mouse button, which a hold presses away from the interface (it
+// presses the action bound to it; ui.click is what clicks an element).
+platform::Event press_event(const std::string& key, bool down) {
+    platform::Event e;
+    if (const int b = mouse_button_of(key)) {
+        e.type = down ? platform::EventType::MouseDown : platform::EventType::MouseUp;
+        e.button = b;
+        e.x = e.y = -1;
+    } else {
+        e.type = down ? platform::EventType::KeyDown : platform::EventType::KeyUp;
+        e.key_name = key;
+    }
+    return e;
+}
+
 Status write_png(const std::filesystem::path& path, const rhi::Image& img) {
     if (path.has_parent_path()) POCKET_TRY_VOID(fs::ensure_dir(path.parent_path()));
     int ok = stbi_write_png(path.string().c_str(), static_cast<int>(img.width), static_cast<int>(img.height), 4, img.rgba.data(), static_cast<int>(img.width * 4));
@@ -247,6 +262,13 @@ void Session::apply_project_settings() {
         else for (const auto& [name, bj] : j["buses"].items()) if (bj.is_object()) audio_->set_bus(name, bus_settings(audio_->bus(name), bj));
     }
     if (project_.contains("input") && project_["input"].is_object()) gestures_.configure(project_["input"]);
+    // [input] cursor: how the pointer starts, "visible" (the default), "hidden" or "locked" (docs/design/input.md, The cursor).
+    {
+        const Json* c = project_.contains("input") && project_["input"].is_object() && project_["input"].contains("cursor") ? &project_["input"]["cursor"] : nullptr;
+        const std::string mode = c && c->is_string() ? c->get<std::string>() : "visible";
+        if (mode != "visible" && mode != "hidden" && mode != "locked") log::warn("runtime", "[input] cursor is \"visible\", \"hidden\" or \"locked\", not {}", c->dump());
+        set_cursor(mode == "locked", mode != "hidden");
+    }
     if (project_.contains("input") && project_["input"].is_object() && project_["input"].contains("actions")) {
         if (auto r = input_map_.configure(project_["input"]["actions"]); !r) log::warn("runtime", "project input map: {}", r.error().to_string());
         else log::info("runtime", "input map: {} actions from project.toml", input_map_.size());
@@ -606,6 +628,25 @@ Status Session::start() {
     (void)bundle_src;
     // script.eval helper: indirect eval in the global scope, errors reported as values.
     if (auto r = host_->evaluate("globalThis.__pocket_eval = function (src) { try { const v = (0, eval)(src); return v === undefined ? null : v; } catch (e) { return { error: String(e && e.stack ? e.stack : e) }; } };", "<pocket:eval>"); !r) record_error(r.error());
+    // Math.random from the run's seed, so code that reaches for it (a library, an agent's habit)
+    // replays, runs a scenario at many seeds and plays in lockstep like random() does. sfc32 on
+    // 32-bit integer operations gives the same bits on every JavaScript engine; it is a stream of
+    // its own, so calling one does not move the other.
+    if (auto r = host_->evaluate(R"(globalThis.__pocket_seed_random = function (lo, hi) {
+    let a = lo | 0, b = hi | 0, c = 0x6a09e667 | 0, d = 1;
+    const next = function random() {
+        const t = (((a + b) | 0) + d) | 0;
+        d = (d + 1) | 0;
+        a = b ^ (b >>> 9);
+        b = (c + (c << 3)) | 0;
+        c = (c << 21) | (c >>> 11);
+        c = (c + t) | 0;
+        return (t >>> 0) / 4294967296;
+    };
+    for (let i = 0; i < 15; i++) next();
+    Math.random = next;
+};)", "<pocket:random>"); !r) record_error(r.error());
+    seed_math_random();
     if (!options_.editor_bundle.empty()) {
         if (auto r = load_bundle(options_.editor_bundle, "editor"); !r) record_error(r.error());
     }
@@ -620,6 +661,11 @@ Status Session::start() {
     if (!options_.editor_bundle.empty()) dispatch("start", Json::object(), "editor");
     else dispatch("start", Json::object());
     return {};
+}
+
+void Session::seed_math_random() {
+    const auto lo = static_cast<std::uint32_t>(options_.seed) ^ 0x9e3779b9u, hi = static_cast<std::uint32_t>(options_.seed >> 32) ^ 0x85ebca6bu;
+    if (auto r = host_->evaluate(std::format("__pocket_seed_random({}, {});", lo, hi), "<pocket:random>"); !r) record_error(r.error());
 }
 
 void Session::bind_natives() {
@@ -712,10 +758,7 @@ void Session::run_tick() {
         std::vector<platform::Event> downs;
         for (const auto& [k, ticks] : pending_holds_) {
             if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], tick + ticks); continue; }
-            platform::Event down;
-            down.type = platform::EventType::KeyDown;
-            down.key_name = k;
-            downs.push_back(down);
+            downs.push_back(press_event(k, true));
             held_keys_[k] = tick + ticks;
         }
         pending_holds_.clear();
@@ -872,7 +915,7 @@ bool Session::net_tick_ready() {
         InputMap* map = p == 0 ? &input_map_ : (p - 1 < player_maps_.size() ? &player_maps_[p - 1] : nullptr);
         if (!map || !all[p].is_array()) continue;
         for (const Json& ev : all[p]) {
-            map->apply(platform::event_from_json(ev));
+            if (!(ev.contains("ui") && ev.value("type", "") == "mouse_down")) map->apply(platform::event_from_json(ev));   // a press its sender's interface took
             Json j = ev;
             j["player"] = p;
             tagged.push_back(std::move(j));
@@ -1791,22 +1834,33 @@ Result<bool> Session::poll_input(Json& input_events, int& ticks, bool simulating
     advance_rumble();
     if (net_) {
         // Lockstep: this peer's input acts on the tick it is committed for, for everyone at once.
-        for (auto& e : events) if (e.type != platform::EventType::Resize && e.type != platform::EventType::Quit) net_queue_.push_back(platform::event_to_json(e));
+        for (auto& e : events) {
+            if (e.type == platform::EventType::Resize || e.type == platform::EventType::Quit) continue;
+            Json j = platform::event_to_json(e);
+            if (const ui::NodeId on = ui_press_target(e)) j["ui"] = on;   // every peer leaves the action alone
+            net_queue_.push_back(std::move(j));
+        }
     } else {
-        for (auto& e : events) input_map_.apply(e);
+        for (auto& e : events) if (!ui_press_target(e)) input_map_.apply(e);
         for (auto& e : events) input_events.push_back(platform::event_to_json(e));
     }
+    // While the pointer is captured, its presses and motion are the game's, not the interface's.
+    const bool held = cursor_held();
+    auto pointer = [](const platform::Event& e) { return e.type == platform::EventType::MouseMove || e.type == platform::EventType::MouseDown || e.type == platform::EventType::MouseUp || e.type == platform::EventType::MouseWheel; };
     if (ui_) {
         float w = 0, h = 0, scale = 1;
         ui_size(w, h, scale);
         ui_->layout(w, h, scale);
         bool wants_text = false;
-        std::vector<Json> ui_events = ui_->handle_events(events, wants_text);
+        std::vector<platform::Event> unheld;
+        if (held) for (const auto& e : events) if (!pointer(e)) unheld.push_back(e);
+        std::vector<Json> ui_events = ui_->handle_events(held ? unheld : events, wants_text);
         platform_->set_text_input(wants_text);
         if (wants_text) { const ui::Rect c = ui_->caret_rect(); platform_->set_text_input_area(static_cast<int>(c.x), static_cast<int>(c.y), static_cast<int>(c.w), static_cast<int>(c.h)); }
         // Tag input events that landed on the interface so gameplay code can ignore them.
         for (std::size_t i = 0; i < events.size(); ++i) {
             const platform::Event& e = events[i];
+            if (held && pointer(e)) continue;
             ui::NodeId target = 0;
             switch (e.type) {
                 case platform::EventType::MouseMove:
@@ -1856,7 +1910,7 @@ Json Session::inject_events(std::vector<platform::Event> events) {
     if (net_) {
         for (auto& e : events) net_queue_.push_back(platform::event_to_json(e));   // for the tick it is committed for
     } else {
-        for (auto& e : events) { input_map_.apply(e); input_events.push_back(platform::event_to_json(e)); }
+        for (auto& e : events) { if (!ui_press_target(e)) input_map_.apply(e); input_events.push_back(platform::event_to_json(e)); }
     }
     // Synthetic input is part of the run: record it so a replay reproduces it.
     if (journal_ && journal_->recording && !journal_->frames.empty()) {
@@ -2206,6 +2260,7 @@ Result<Json> Session::env_command(std::string_view op, const Json& p) {
         recorder_.clear();
         errors_.clear();
         rng_.reseed(options_.seed);
+        seed_math_random();
         if (auto r = command("project.reload", Json{{"scene", true}, {"scripts", true}}, "env"); !r) return fail(r.error());
         Json s = dispatch("state", nullptr);
         last_state_ = s.is_object() ? s : Json::object();
@@ -2963,6 +3018,13 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown physics command '{}'", op);
 }
 
+Status Session::ensure_drawn() {
+    if (!frame_stale_ || !errors_.empty() || !renderer_) return {};
+    renderer_->cut();
+    frame_stale_ = false;
+    return render_frame();
+}
+
 Result<Json> Session::render_command(std::string_view op, const Json& p) {
     if (op == "stats") return renderer_->describe();
     if (op == "pick") {
@@ -3457,15 +3519,27 @@ bool Session::advance_rumble() {
     return any;
 }
 
+void Session::set_cursor(bool locked, bool visible) {
+    cursor_locked_ = locked;
+    cursor_visible_ = visible;
+    // The editor never captures or hides the pointer: its panels need it (a run of the game does).
+    if (platform_ && options_.editor_bundle.empty()) platform_->set_cursor(locked, visible);
+}
+
+bool Session::cursor_held() const { return platform_ && options_.editor_bundle.empty() && platform_->cursor().held; }
+
+ui::NodeId Session::ui_press_target(const platform::Event& e) const {
+    // A press on the interface is the interface's: the action bound to that button stays where it was.
+    if (!ui_ || e.type != platform::EventType::MouseDown || cursor_held()) return 0;
+    return ui_->hit_test(e.x, e.y);
+}
+
 void Session::release_expired_holds() {
     if (held_keys_.empty()) return;
     std::vector<platform::Event> ups;
     for (auto it = held_keys_.begin(); it != held_keys_.end();) {
         if (clock_.tick >= it->second) {
-            platform::Event up;
-            up.type = platform::EventType::KeyUp;
-            up.key_name = it->first;
-            ups.push_back(up);
+            ups.push_back(press_event(it->first, false));
             it = held_keys_.erase(it);
         } else {
             ++it;
@@ -3594,6 +3668,13 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
     }
     if (op == "actions") return input_map_.snapshot();
     if (op == "describe") return input_map_.describe();
+    if (op == "cursor") {
+        // Capture the pointer (first-person, mouse orbit) or hide it; Escape lets it go and a click
+        // takes it again (docs/design/input.md, The cursor).
+        for (const char* k : {"locked", "visible"}) if (p.contains(k) && !p[k].is_boolean()) return fail("bad_args", "{} is true or false", k);
+        if (p.contains("locked") || p.contains("visible")) set_cursor(opt<bool>(p, "locked", cursor_locked_), opt<bool>(p, "visible", cursor_visible_));
+        return Json{{"locked", cursor_locked_}, {"held", cursor_held()}, {"visible", cursor_visible_}};
+    }
     if (op == "state") {
         Json j;
         j["platform"] = platform_->describe();
@@ -3605,6 +3686,7 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         j["held"] = Json::object();
         for (auto& [k, until] : held_keys_) j["held"][k] = until;
         j["actions"] = input_map_.snapshot();
+        j["cursor"] = Json{{"locked", cursor_locked_}, {"held", cursor_held()}, {"visible", cursor_visible_}};
         return j;
     }
     if (op == "rumble") {
@@ -3737,10 +3819,7 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         std::vector<platform::Event> downs;
         for (const auto& k : keys) {
             if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], clock_.tick + ticks); continue; }
-            platform::Event down;
-            down.type = platform::EventType::KeyDown;
-            down.key_name = k;
-            downs.push_back(down);
+            downs.push_back(press_event(k, true));
             held_keys_[k] = clock_.tick + ticks;
         }
         if (!downs.empty()) inject_events(std::move(downs));
@@ -4323,7 +4402,10 @@ Status Session::frame() {
     dispatch("frame", frame_info());
     host_->drain_microtasks();
     std::uint64_t presented_before = device_->presented_frames();
-    if (skip_render_) {
+    // --render last: a headless run with a frame budget draws only its last frame.
+    const bool skip = skip_render_ || (options_.render_last && options_.headless && options_.frames > 0 && frames_ + 1 < static_cast<std::uint64_t>(options_.frames));
+    if (skip) {
+        frame_stale_ = true;
         // Not drawn (a headless step's earlier ticks): what drawing does besides the GPU's work.
         if (audio_) audio_->pump();
         update_terrains();
@@ -4333,6 +4415,8 @@ Status Session::frame() {
             ui_->layout(w, h, scale);
         }
     } else if (errors_.empty()) {
+        if (frame_stale_) renderer_->cut();
+        frame_stale_ = false;
         Stopwatch render_sw;
         auto r = render_frame();
         perf_render_.add(render_sw.ms());
@@ -4873,7 +4957,35 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         return r;
     }
     if (op == "summary") return w.summary();
-    if (op == "schema") return world::World::schema();
+    if (op == "schema") {
+        // Every component, or the ones asked for: by name (component, components) or by a word in
+        // the name, a field or the docs (search).
+        Json all = world::World::schema();
+        const std::string one = opt<std::string>(p, "component", "");
+        std::set<std::string> names;
+        if (!one.empty()) names.insert(one);
+        for (const std::string& n : string_list(p, "components")) names.insert(n);
+        std::string find = opt<std::string>(p, "search", "");
+        for (char& c : find) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (names.empty() && find.empty()) return all;
+        Json picked = Json::array();
+        for (const Json& c : all["components"]) {
+            const std::string n = c["name"].get<std::string>();
+            bool take = names.contains(n);
+            if (!take && !find.empty()) {
+                std::string hay = c.dump();
+                for (char& ch : hay) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                take = hay.find(find) != std::string::npos;
+            }
+            if (take) picked.push_back(c);
+        }
+        for (const std::string& n : names) {
+            bool found = false;
+            for (const Json& c : picked) found = found || c["name"] == n;
+            if (!found) return fail("bad_args", "no component named '{}' (world.schema without a name lists them)", n);
+        }
+        return Json{{"components", picked}};
+    }
     if (op == "update_transforms") {
         w.update_transforms();
         return Json::object();
@@ -5359,6 +5471,11 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         }
     }
     const Json& p = *chosen;
+    // What reads the drawn frame or its camera sees the world as it is now: after headless ticks that
+    // skipped drawing, the first such call draws. A script's render.stats (a game showing its frame
+    // numbers each tick) describes the last frame drawn instead, so it does not undo the skipping.
+    static constexpr std::string_view readers[] = {"capture", "render.stats", "render.pick", "render.ids", "render.visible", "render.compare", "render.views", "render.project", "render.unproject"};
+    if (std::find(std::begin(readers), std::end(readers), name) != std::end(readers) && !(source == "script" && name == "render.stats")) POCKET_TRY_VOID(ensure_drawn());
     if (name.starts_with("world.")) return world_command(name.substr(6), p, source);
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("recorder.")) return recorder_command(name.substr(9), p);
@@ -5614,27 +5731,57 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return world::build_transcript(state_history_, world_->events(), to).to_json();
     }
     if (name == "report") return report();
+    // A command's family is what comes before its first dot (world, render, ...; the session's own,
+    // such as step and state, are their own); search matches the name, parameters or summary.
+    auto lower = [](std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
+    const std::string family = opt<std::string>(p, "family", ""), search = lower(opt<std::string>(p, "search", ""));
+    auto wanted = [&](const CommandHelp& h) {
+        const std::string n(h.name);
+        if (!family.empty() && n.substr(0, n.find('.')) != family) return false;
+        if (!search.empty() && lower(n + " " + std::string(h.params) + " " + std::string(h.summary)).find(search) == std::string::npos) return false;
+        return true;
+    };
     if (name == "help") {
         // How to call a command, from the engine itself.
         const std::string which = opt<std::string>(p, "command", "");
         if (which.empty()) {
             Json all = Json::array();
-            for (const CommandHelp& h : command_helps()) all.push_back(command_help_json(h));
-            return Json{{"commands", all}, {"note", "every command also answers help {command} on its own; parameters with ? are optional, a | b are alternatives"}};
+            for (const CommandHelp& h : command_helps()) if (wanted(h)) all.push_back(command_help_json(h));
+            return Json{{"commands", all}, {"note", "every command also answers help {command} on its own; parameters with ? are optional, a | b are alternatives; family or search narrows the list"}};
         }
         if (const CommandHelp* h = command_help(which)) return command_help_json(*h);
         return fail("unknown_command", "no command named '{}'{}", which, command_suggestions(which).empty() ? std::string() : "; did you mean " + Json(command_suggestions(which)).dump() + "?");
     }
+    if (name == "commands" && opt<bool>(p, "text", false)) {
+        // One line a command, the compact form for an agent's context: its usage and the first
+        // clause of its summary (help {command} has the rest).
+        std::string text;
+        for (const CommandHelp& h : command_helps()) {
+            if (!wanted(h)) continue;
+            std::string what(h.summary);
+            const std::size_t end = std::min({what.find(". "), what.find("; "), what.find(": ")});
+            if (end != std::string::npos) what = what.substr(0, end);
+            if (what.size() > 100) what = what.substr(0, 97) + "...";
+            text += command_help_json(h)["usage"].get<std::string>() + " - " + what + "\n";
+        }
+        return Json{{"text", text + "(help {command} for any command's full description)\n"}};
+    }
     if (name == "commands" && opt<bool>(p, "usage", false)) {
         Json all = Json::array();
         for (const CommandHelp& h : command_helps()) {
+            if (!wanted(h)) continue;
             Json j = command_help_json(h);
             all.push_back(Json{{"usage", j["usage"]}, {"summary", j["summary"]}});
         }
         return all;
     }
+    if (name == "commands" && (!family.empty() || !search.empty())) {
+        Json names = Json::array();
+        for (const CommandHelp& h : command_helps()) if (wanted(h)) names.push_back(std::string(h.name));
+        return names;
+    }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

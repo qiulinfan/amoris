@@ -83,6 +83,34 @@ TEST_CASE("mouse motion and wheel are axes read as deltas over a tick", "[input]
     REQUIRE(m.describe()["look_x"]["axis"] == Json::array({"mouse:x", "pad:rightx"}));
 }
 
+TEST_CASE("mouse buttons are action sources beside keys and pad buttons", "[input][mouse]") {
+    app::InputMap m;
+    REQUIRE(m.configure(Json{{"fire", Json::array({"mouse:left", "pad:right_shoulder"})}, {"aim", Json::array({"mouse:right"})}}).has_value());
+    platform::Event down;
+    down.type = platform::EventType::MouseDown;
+    down.button = 1;
+    m.apply(down);
+    Json s = m.snapshot();
+    REQUIRE(s["fire"]["pressed"] == true);
+    REQUIRE(s["fire"]["down"] == true);
+    REQUIRE(s["aim"]["down"] == false);
+    m.consume_edges();
+    REQUIRE(m.snapshot()["fire"]["down"] == true);   // held until the button comes up
+    platform::Event up = down;
+    up.type = platform::EventType::MouseUp;
+    m.apply(up);
+    REQUIRE(m.snapshot()["fire"]["released"] == true);
+    REQUIRE(m.snapshot()["fire"]["down"] == false);
+    // A button with no name (a sixth) moves nothing; the names go both ways.
+    down.button = 9;
+    m.apply(down);
+    REQUIRE(m.snapshot()["fire"]["down"] == false);
+    REQUIRE(std::string(app::mouse_button_source(3)) == "mouse:right");
+    REQUIRE(app::mouse_button_of("mouse:x2") == 5);
+    REQUIRE(app::mouse_button_of("mouse:x") == 0);
+    REQUIRE(m.keys_of("fire", 1) == std::vector<std::string>{"mouse:left"});
+}
+
 TEST_CASE("input map edges last until consumed", "[input]") {
     app::InputMap m;
     REQUIRE(m.configure(Json{{"jump", Json::array({"Space", "pad:a"})}}).has_value());

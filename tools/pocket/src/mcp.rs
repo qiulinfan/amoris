@@ -56,20 +56,23 @@ fn tools_list() -> Value {
             "file": { "type": "string", "description": "One scenario file instead of every file under scenarios/" },
             "seeds": { "type": "integer", "default": 5 },
             "frames": { "type": "integer", "default": 1800, "description": "frame budget per run" },
-            "only": { "type": "string", "description": "substring filter on scenario names" }
+            "only": { "type": "string", "description": "substring filter on scenario names" },
+            "config": { "type": "string", "default": "release", "description": "build configuration of the runtime: release (optimized, the default for agent work) or debug (sanitized, slower)" },
         }), &["project"])),
         tool("pocket_bench", "Run a project's perception benchmarks (benches/*.ts: gameplay questions answered through the instruments) and return, per question, whether the answer was correct, the tokens it cost and what frame-by-frame vision would have cost.", obj_schema(json!({
             "project": { "type": "string", "description": "Project name under samples/ or a directory with project.toml" },
             "file": { "type": "string", "description": "One benchmark file instead of every file under benches/" },
             "frames": { "type": "integer", "default": 1800, "description": "frame budget per run" },
-            "only": { "type": "string", "description": "substring filter on questions" }
+            "only": { "type": "string", "description": "substring filter on questions" },
+            "config": { "type": "string", "default": "release", "description": "build configuration of the runtime: release (optimized, the default for agent work) or debug (sanitized, slower)" },
         }), &["project"])),
         tool("pocket_run_headless", "Run a project headless for N frames and return its JSON report (exposed state, state hash, world summary, events, optional capture).", obj_schema(json!({
             "project": { "type": "string", "description": "Project name under samples/ or a directory with project.toml" },
             "frames": { "type": "integer", "default": 120 },
             "capture": { "type": "string", "description": "PNG path for the last frame" },
             "seed": { "type": "integer" },
-            "size": { "type": "string", "description": "WxH, e.g. 640x360" }
+            "size": { "type": "string", "description": "WxH, e.g. 640x360" },
+            "config": { "type": "string", "default": "release", "description": "build configuration of the runtime: release (optimized, the default for agent work) or debug (sanitized, slower)" },
         }), &["project"])),
         tool("runtime_start", "Start a project in a paused runtime with the control server, so it can be stepped and inspected. One session at a time.", obj_schema(json!({
             "project": { "type": "string" },
@@ -77,7 +80,8 @@ fn tools_list() -> Value {
             "editor": { "type": "boolean", "default": false, "description": "open the project in the Pocket editor (hierarchy, inspector, play/stop) and operate it through ui_* tools" },
             "seed": { "type": "integer" },
             "size": { "type": "string", "description": "WxH render target size" },
-            "history": { "type": "integer", "description": "keep the last N ticks for recorder.at/diff/track/first (time travel)" }
+            "history": { "type": "integer", "description": "keep the last N ticks for recorder.at/diff/track/first (time travel)" },
+            "config": { "type": "string", "default": "release", "description": "build configuration of the runtime: release (optimized, the default for agent work) or debug (sanitized, slower)" },
         }), &["project"])),
         tool("runtime_attach", "Attach to a runtime that is already running with its control server (started with --serve, an editor, a benchmark harness), by its url; tools then act on it. The server attaches to $POCKET_RPC_URL by itself when that is set.", obj_schema(json!({
             "url": { "type": "string", "description": "the control server's base url, e.g. http://127.0.0.1:4711" }
@@ -88,7 +92,10 @@ fn tools_list() -> Value {
             "method": { "type": "string" },
             "params": { "type": "object" }
         }), &["method"])),
-        tool("runtime_commands", "List every command the running runtime understands, with each one's parameters and what it does (usage).", obj_schema(json!({}), &[])),
+        tool("runtime_commands", "List the commands the running runtime understands, one line each with its parameters and what it does; family (world, render, physics, ...) or search (a word) narrows the list.", obj_schema(json!({
+            "family": { "type": "string", "description": "e.g. world, render, physics, input, ui" },
+            "search": { "type": "string", "description": "a word in a command's name, parameters or summary" }
+        }), &[])),
         tool("runtime_help", "How to call one command: its parameters (? optional, a | b alternatives) and what it does. A command refuses parameters it does not take and says which it takes.", obj_schema(json!({ "command": { "type": "string", "description": "e.g. world.set" } }), &["command"])),
         tool("world_tree", "The AI-native tree: one line per entity with the fields that differ from defaults.", obj_schema(json!({
             "root": { "description": "Entity id or path" },
@@ -105,7 +112,11 @@ fn tools_list() -> Value {
             "limit": { "type": "integer", "default": 200 }
         }), &[])),
         tool("world_describe", "Everything about one entity: path, parent, children, component values.", obj_schema(json!({ "entity": { "description": "Entity id, name or path" }, "path": { "type": "string", "description": "the entity's name or path, instead of entity" } }), &[])),
-        tool("world_schema", "Component vocabulary: names, fields, types, docs, defaults.", obj_schema(json!({}), &[])),
+        tool("world_schema", "Component vocabulary: names, fields, types, docs, defaults; component or components for some, search for those that mention a word.", obj_schema(json!({
+            "component": { "type": "string" },
+            "components": { "type": "array", "items": { "type": "string" } },
+            "search": { "type": "string" }
+        }), &[])),
         tool("step", "Advance the paused simulation by N ticks and return the state summary (tick, exposed state, hashes).", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 } }), &[])),
         tool("events_since", "Causal event log entries after a sequence number, oldest first.", obj_schema(json!({
             "seq": { "type": "integer", "default": 0 },
@@ -178,12 +189,14 @@ impl<'a> McpServer<'a> {
         }
         let project = args.get("project").and_then(|p| p.as_str()).ok_or_else(|| anyhow!("project is required"))?;
         let dir = crate::commands::find_project(self.ws, project).ok_or_else(|| anyhow!("unknown project '{project}'"))?;
-        let outcome = crate::commands::build_targets(self.ws, "debug", &["pocket_runtime".to_string()], false)?;
+        // The optimized runtime unless asked otherwise (docs/decisions/0006-agent-runs-release.md).
+        let config = args.get("config").and_then(|c| c.as_str()).unwrap_or("release");
+        let outcome = crate::commands::build_targets(self.ws, config, &["pocket_runtime".to_string()], false)?;
         if !outcome.ok {
             bail!("runtime build failed:\n{}", outcome.output);
         }
         let bundle = crate::commands::bundle_project(self.ws, &dir, None)?;
-        let exe = crate::commands::exe_path(self.ws, "debug", "pocket_runtime")?;
+        let exe = crate::commands::exe_path(self.ws, config, "pocket_runtime")?;
         let mut cmd = crate::commands::runtime_command(self.ws, &exe);
         cmd.arg("--project").arg(&dir).arg("--bundle").arg(&bundle.out).args(["--serve", "0", "--paused", "--json", "--log-level", "warn"]);
         if args.get("editor").and_then(|e| e.as_bool()).unwrap_or(false) {
@@ -313,12 +326,12 @@ impl<'a> McpServer<'a> {
             "pocket_gen" => Ok(Self::report_result(crate::commands::gen(self.ws, args.get("check").and_then(|c| c.as_bool()).unwrap_or(false))?)),
             "pocket_scenario" => {
                 let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
-                let rep = crate::commands::scenario(self.ws, "debug", &project, s("file").as_deref(), args.get("seeds").and_then(|v| v.as_u64()).unwrap_or(5), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
+                let rep = crate::commands::scenario(self.ws, s("config").as_deref().unwrap_or("release"), &project, s("file").as_deref(), args.get("seeds").and_then(|v| v.as_u64()).unwrap_or(5), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
                 Ok(Self::report_result(rep))
             }
             "pocket_bench" => {
                 let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
-                let rep = crate::commands::bench(self.ws, "debug", &project, s("file").as_deref(), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
+                let rep = crate::commands::bench(self.ws, s("config").as_deref().unwrap_or("release"), &project, s("file").as_deref(), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
                 Ok(Self::report_result(rep))
             }
             "pocket_run_headless" => {
@@ -327,7 +340,7 @@ impl<'a> McpServer<'a> {
                 if let Some(c) = s("capture") { extra.push("--capture".into()); extra.push(c); }
                 if let Some(seed) = args.get("seed").and_then(|v| v.as_u64()) { extra.push("--seed".into()); extra.push(seed.to_string()); }
                 if let Some(size) = s("size") { extra.push("--size".into()); extra.push(size); }
-                let rep = crate::commands::run_captured(self.ws, "debug", &project, &extra)?;
+                let rep = crate::commands::run_captured(self.ws, s("config").as_deref().unwrap_or("release"), &project, &extra)?;
                 Ok(Self::report_result(rep))
             }
             "runtime_start" => self.start_session(&args).map(|v| Self::text_result(v, false)),
@@ -339,12 +352,17 @@ impl<'a> McpServer<'a> {
                 let params = args.get("params").cloned().unwrap_or(json!({}));
                 self.rpc(&method, params).map(|v| Self::text_result(v, false))
             }
-            "runtime_commands" => self.rpc("commands", json!({ "usage": true })).map(|v| Self::text_result(v, false)),
+            "runtime_commands" => {
+                // One line a command, narrowed by family or search when given.
+                let mut params = json!({ "text": true });
+                for k in ["family", "search"] { if let Some(v) = args.get(k) { params[k] = v.clone(); } }
+                self.rpc("commands", params).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false))
+            }
             "runtime_help" => self.rpc("help", args).map(|v| Self::text_result(v, false)),
             "world_tree" => self.rpc("world.tree", args).map(|v| Self::text_result(v.get("text").cloned().unwrap_or(v), false)),
             "world_query" => self.rpc("world.query", args).map(|v| Self::text_result(v, false)),
             "world_describe" => self.rpc("world.describe", args).map(|v| Self::text_result(v, false)),
-            "world_schema" => self.rpc("world.schema", json!({})).map(|v| Self::text_result(v, false)),
+            "world_schema" => self.rpc("world.schema", args).map(|v| Self::text_result(v, false)),
             "step" => self.rpc("step", args).map(|v| Self::text_result(v, false)),
             "events_since" => self.rpc("events.since", args).map(|v| Self::text_result(v, false)),
             "capture" => self.capture(args),

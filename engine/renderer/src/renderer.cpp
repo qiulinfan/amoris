@@ -8851,6 +8851,10 @@ void Renderer::set_view(std::optional<ViewOverride> view) {
     impl_->view_override = view;
     impl_->taa_valid = false;   // a cut: no history to blend with
 }
+void Renderer::cut() {
+    impl_->taa_valid = false;
+    impl_->motion_prev_set = false;
+}
 
 void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4
 int Renderer::msaa() const { return impl_->msaa; }

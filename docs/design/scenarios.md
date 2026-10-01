@@ -35,7 +35,7 @@ The scenario bundle is its own script context (`--scenario <bundle>`) loaded aft
 
 ## The runner
 
-`pocket scenario <project> [--file f] [--seeds N] [--frames F] [--only substring]` bundles each `scenarios/*.ts`, runs it once for a frame to list its scenarios, then runs every scenario at seeds 1..N with the frame budget (a scenario still running at the end fails with a note to raise `--frames`), and reports per scenario: seeds run, passed and failed, ticks to pass (min, average, max), and for each failing seed the step it was on and why. The same runner is the `pocket_scenario` MCP tool, and `pocket test` runs the samples' scenarios at three seeds as the `scenarios:<sample>` modules.
+`pocket scenario <project> [--file f] [--seeds N] [--frames F] [--only substring]` bundles each `scenarios/*.ts`, runs it once for a frame to list its scenarios, then runs every scenario at seeds 1..N with the frame budget (a scenario still running at the end fails with a note to raise `--frames`), and reports per scenario: seeds run, passed and failed, ticks to pass (min, average, max), and for each failing seed the step it was on and why. The runtimes it starts are release builds (ADR 0006) run with `--render last`: a tick is drawn only when something reads the picture (a `match`, `capture`, `render.visible`, `render.project`), which leaves a scenario's time to the simulation. The same runner is the `pocket_scenario` MCP tool, and `pocket test` runs the samples' scenarios at three seeds as the `scenarios:<sample>` modules.
 
 Runs are deterministic per seed: a failing seed replays exactly, and `--history` with `recorder.track` or a `transcript` explains it. `tests/evidence/scenarios/` holds the reports for the physics and sprites samples.
 

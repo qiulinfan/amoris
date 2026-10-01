@@ -222,6 +222,11 @@ class Session {
     std::map<int, RumblePattern> rumble_;
     std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
     bool in_tick_ = false;
+    bool cursor_locked_ = false, cursor_visible_ = true;   // what the game asked for (input.cursor, [input] cursor)
+    void set_cursor(bool locked, bool visible);
+    void seed_math_random();   // Math.random's own stream from the run seed
+    [[nodiscard]] bool cursor_held() const;   // the pointer is captured now: its presses and motion are the game's
+    [[nodiscard]] ui::NodeId ui_press_target(const platform::Event& e) const;   // the element a mouse press lands on (0: the game's)
     // Typed-array packing buffers shared with scripts (never freed while a script may hold them).
     std::vector<float> pack_data_;
     std::vector<double> pack_ids_;
@@ -251,6 +256,9 @@ class Session {
     double scale_left_ = 0.0;    // real seconds the scale holds before returning to 1 (0: until the next call)
     bool stepping_ = false;      // inside `step`: a frame is exactly one tick whatever the scale
     bool skip_render_ = false;   // inside a headless `step` before its last tick: simulate, do not draw
+    bool frame_stale_ = false;   // ticks ran since the last drawn frame: draw before a command reads it
+    // Draw now when the last frame is stale (capture, render.pick and the rest read what was drawn).
+    Status ensure_drawn();
     bool quit_ = false;
     bool started_ = false;
     bool stopped_ = false;

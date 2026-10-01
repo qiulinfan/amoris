@@ -58,7 +58,7 @@ class PocketEnv:
 
     def __init__(self, project, *, root=None, config=None, bundle=None, size="320x180", seed=1, max_ticks=0, log_level="warn", runtime=None, extra_args=()):
         self.root = root or find_root()
-        config = config or os.environ.get("POCKET_CONFIG", "debug")
+        config = config or os.environ.get("POCKET_CONFIG", "release")
         project_dir = project if os.path.isabs(project) else os.path.join(self.root, project)
         if not os.path.isdir(project_dir) and os.path.isdir(os.path.join(self.root, "samples", project)):
             project_dir = os.path.join(self.root, "samples", project)

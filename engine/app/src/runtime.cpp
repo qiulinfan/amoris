@@ -79,6 +79,12 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--title") { POCKET_TRY(v, need(i, "--title")); o.title = v; ++i; }
         else if (a == "--inspectable") o.inspectable = true;
         else if (a == "--no-tick-hash") o.hash_every_tick = false;
+        else if (a == "--render") {
+            POCKET_TRY(v, need(i, "--render"));
+            if (v != "last" && v != "each") return fail("bad_args", "--render is last or each");
+            o.render_last = v == "last";
+            ++i;
+        }
         else if (a == "--history") { POCKET_TRY(v, need(i, "--history")); o.history = std::stoi(v); ++i; }
         else if (a == "--scenario") { POCKET_TRY(v, need(i, "--scenario")); o.scenario_bundle = v; ++i; }
         else if (a == "--scenario-name") { POCKET_TRY(v, need(i, "--scenario-name")); o.scenario = v; ++i; }

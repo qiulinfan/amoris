@@ -27,9 +27,12 @@ export default function (pi: ExtensionAPI) {
     }
 
     function text(result: any): string {
-        // Text results (world.tree, transcript, ui.snapshot) as text, the rest as JSON.
-        const t = result && typeof result.text === "string" && Object.keys(result).length <= 3 ? result.text : JSON.stringify(result, null, 2);
-        return t.length > LIMIT ? `${t.slice(0, LIMIT)}\n[cut: ${t.length - LIMIT} more characters; ask for less, e.g. a depth, a limit or one entity]` : t;
+        // Text results (world.tree, transcript, ui.snapshot, commands {text}) as text, the rest as
+        // compact JSON.
+        const t = result && typeof result.text === "string" && Object.keys(result).length <= 3 ? result.text : JSON.stringify(result);
+        return t.length > LIMIT
+            ? `${t.slice(0, LIMIT)}\n[cut: ${t.length - LIMIT} more characters; ask for less: commands {family | search, text: true}, help {command | family}, world.schema {component | search}, world.tree {depth}, world.query {limit}, one entity]`
+            : t;
     }
 
     pi.registerTool({
@@ -40,7 +43,7 @@ export default function (pi: ExtensionAPI) {
             "world.tree {depth} (the scene as text), world.query {with, name}, world.describe {entity}, world.spawn {name, components}, " +
             "world.set {entity, component, value}, world.destroy {entity}, step {ticks}, state, events.since {seq}, events.why {seq}, " +
             "transcript, render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
-            "`commands` lists them all. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it.",
+            "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it.",
         parameters: Type.Object({
             method: Type.String({ description: "command name, e.g. world.tree" }),
             params: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "the command's parameters as an object" })),

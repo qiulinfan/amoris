@@ -45,6 +45,36 @@ app::Options hello_options(int frames) {
 
 }  // namespace
 
+TEST_CASE("Math.random follows the run seed, on a stream of its own", "[runtime][random]") {
+    auto draws = [](std::uint64_t seed, const char* source) {
+        auto o = hello_options(10);
+        o.seed = seed;
+        app::Session s(o);
+        REQUIRE(s.start().has_value());
+        Json v = s.command("script.eval", Json{{"source", source}}).value();
+        REQUIRE(s.finish().has_value());
+        return v;
+    };
+    const char* three = "[Math.random(), Math.random(), Math.random()]";
+    const Json a = draws(7, three);
+    INFO(a.dump());
+    // The same bits a browser or V8 computes from seed 7 (sfc32 on 32-bit integer operations).
+    REQUIRE(a == Json::array({0.9593075499869883, 0.7410346050746739, 0.4709692746400833}));
+    REQUIRE(draws(7, three) == a);
+    REQUIRE(draws(8, three) != a);
+    // random() is another stream: drawing from it leaves Math.random's where it was.
+    REQUIRE(draws(7, "[Math.random(), __pocket.random(), Math.random()][2]") == a[1]);
+    // A new episode starts the stream again.
+    auto o = hello_options(10);
+    o.seed = 7;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("script.eval", Json{{"source", "Math.random()"}}).value() == a[0]);
+    REQUIRE(s.command("env.reset", Json{{"seed", 7}}).has_value());
+    REQUIRE(s.command("script.eval", Json{{"source", "Math.random()"}}).value() == a[0]);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("hello runs headless and reports state", "[runtime]") {
     auto o = hello_options(120);
     o.capture = root() / "build" / "test-out" / "hello-120.png";
@@ -3247,6 +3277,53 @@ TEST_CASE("an anchored element follows its entity's projection and hides when th
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a click on the interface is the interface's; elsewhere it presses the action bound to the button", "[runtime][input][mouse]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("input.map", Json{{"actions", Json{{"fire", Json::array({"mouse:left"})}}}}).has_value());
+    Json ops = Json::array();
+    ops.push_back(Json::array({"create", 71, "box"}));
+    ops.push_back(Json::array({"set", 71, Json{{"position", "absolute"}, {"left", 10}, {"top", 10}, {"width", 100}, {"height", 40}, {"name", "menu"}, {"on", Json::array({"click"})}}}));
+    ops.push_back(Json::array({"append", 1, 71}));
+    REQUIRE(s.command("ui.apply", Json{{"ops", ops}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto fire = [&] { return s.command("input.actions", Json::object()).value()["fire"]; };
+    // On the button: a click for the interface, and the action stays at rest.
+    Json on = s.command("ui.click", Json{{"x", 60}, {"y", 30}}).value();
+    INFO(on.dump());
+    REQUIRE(on["input"][1]["ui"] == 71);
+    REQUIRE(fire()["pressed"] == false);
+    // Off it: the game's click, pressed (and released) for the next tick to see.
+    REQUIRE(s.command("ui.click", Json{{"x", 250}, {"y", 120}}).has_value());
+    REQUIRE(fire()["pressed"] == true);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(fire()["pressed"] == false);
+    // An agent presses the action by name; the press is the button's, away from the interface.
+    Json held = s.command("input.hold", Json{{"action", "fire"}, {"ticks", 3}}).value();
+    REQUIRE(held["keys"] == Json::array({"mouse:left"}));
+    REQUIRE(fire()["down"] == true);
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(fire()["down"] == false);
+    // The cursor: asked for and remembered headless, never held without a window.
+    Json c = s.command("input.cursor", Json{{"locked", true}}).value();
+    REQUIRE(c["locked"] == true);
+    REQUIRE(c["held"] == false);
+    REQUIRE(s.command("input.state", Json::object()).value()["cursor"]["locked"] == true);
+    REQUIRE_FALSE(s.command("input.cursor", Json{{"locked", "yes"}}).has_value());
+    REQUIRE(s.command("input.cursor", Json{{"visible", false}}).value() == Json{{"locked", true}, {"held", false}, {"visible", false}});
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("rumble answers false without a pad and plays patterns on the tick clock", "[runtime][input][rumble]") {
     app::Options o;
     o.project_dir = root() / "samples" / "hello";
@@ -3999,6 +4076,19 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
     REQUIRE(set["params"] == Json::array({"entity", "component", "value", "cause"}));
     Json usage = s.command("commands", Json{{"usage", true}}).value();
     REQUIRE(usage.size() == listed.size());
+    // Narrowed for an agent's context: a family, a word, one line each, one component's schema.
+    const Json world_family = s.command("commands", Json{{"family", "world"}}).value();
+    REQUIRE(world_family.size() > 20);
+    for (const Json& c : world_family) REQUIRE(c.get<std::string>().starts_with("world."));
+    REQUIRE(s.command("commands", Json{{"search", "raycast"}}).value() == Json::array({"physics.raycast"}));
+    const std::string text = s.command("commands", Json{{"text", true}}).value()["text"].get<std::string>();
+    REQUIRE(std::count(text.begin(), text.end(), '\n') == static_cast<long>(listed.size()) + 1);
+    REQUIRE(text.size() < 20000);   // inside the pi extension's 24,000 characters
+    const Json light = s.command("world.schema", Json{{"component", "Light"}}).value();
+    REQUIRE(light["components"].size() == 1);
+    REQUIRE(light.dump().size() < 4000);
+    REQUIRE_FALSE(s.command("world.schema", Json{{"component", "Lite"}}).has_value());
+    REQUIRE(s.command("help", Json{{"family", "nav"}}).value()["commands"].size() >= 5);
     // A mistyped command is answered with the names it is close to.
     auto typo = s.command("world.spwan", Json::object());
     REQUIRE_FALSE(typo.has_value());

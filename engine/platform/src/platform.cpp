@@ -13,6 +13,9 @@
 EM_JS(void, pocket_web_text_input, (int enabled), {
     if (typeof Module !== "undefined" && typeof Module.pocketTextInput === "function") Module.pocketTextInput(!!enabled);
 });
+EM_JS(int, pocket_web_pointer_locked, (), {
+    return document.pointerLockElement ? 1 : 0;
+});
 // clang-format on
 #endif
 
@@ -189,6 +192,8 @@ struct Platform::Impl {
     }
     int pixel_w = 0, pixel_h = 0;
     bool text_input = false;
+    bool cursor_locked = false, cursor_visible = true;
+    bool cursor_let_go = false;   // Escape released a locked pointer; a click takes it again
     std::map<SDL_JoystickID, SDL_Gamepad*> pads;  // open gamepads by instance id
     int pad_index(SDL_JoystickID id) const {
         int i = 0;
@@ -272,6 +277,13 @@ std::vector<Event> Platform::poll() {
                 if (ev.key >= 0 && ev.key < static_cast<int>(impl_->input.keys.size())) {
                     impl_->input.keys[static_cast<std::size_t>(ev.key)] = e.type == SDL_EVENT_KEY_DOWN;
                 }
+#ifndef __EMSCRIPTEN__
+                // Escape lets a locked pointer go (a browser does this itself).
+                if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE && impl_->cursor_locked && !impl_->cursor_let_go) {
+                    impl_->cursor_let_go = true;
+                    SDL_SetWindowRelativeMouseMode(impl_->window, false);
+                }
+#endif
                 out.push_back(ev);
                 break;
             }
@@ -284,6 +296,13 @@ std::vector<Event> Platform::poll() {
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? EventType::MouseDown : EventType::MouseUp;
+#ifndef __EMSCRIPTEN__
+                // A click takes a pointer Escape let go back (in a browser SDL asks for the lock again).
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && impl_->cursor_locked && impl_->cursor_let_go) {
+                    impl_->cursor_let_go = false;
+                    SDL_SetWindowRelativeMouseMode(impl_->window, true);
+                }
+#endif
                 ev.button = e.button.button; ev.x = e.button.x; ev.y = e.button.y;
                 ev.clicks = std::max(1, static_cast<int>(e.button.clicks));
                 ev.mods = mods_from_sdl(SDL_GetModState());
@@ -428,6 +447,28 @@ void Platform::set_text_input_area(int x, int y, int w, int h) {
     if (!impl_->window) return;
     const SDL_Rect r{x, y, std::max(1, w), std::max(1, h)};
     SDL_SetTextInputArea(impl_->window, &r, 0);
+}
+
+void Platform::set_cursor(bool locked, bool visible) {
+    impl_->cursor_locked = locked;
+    impl_->cursor_visible = visible;
+    impl_->cursor_let_go = false;
+    if (!impl_->window) return;
+    SDL_SetWindowRelativeMouseMode(impl_->window, locked);
+    if (visible) SDL_ShowCursor();
+    else SDL_HideCursor();
+}
+
+Platform::Cursor Platform::cursor() const {
+    Cursor c;
+    c.locked = impl_->cursor_locked;
+    c.visible = impl_->cursor_visible;
+#ifdef __EMSCRIPTEN__
+    c.held = impl_->window && c.locked && pocket_web_pointer_locked() != 0;
+#else
+    c.held = impl_->window && c.locked && !impl_->cursor_let_go && SDL_GetWindowRelativeMouseMode(impl_->window);
+#endif
+    return c;
 }
 
 bool Platform::rumble(int pad, float low, float high, int ms) {

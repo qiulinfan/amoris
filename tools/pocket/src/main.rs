@@ -75,7 +75,8 @@ enum Command {
     Bench {
         /// Project name under samples/ or a directory with project.toml.
         target: String,
-        #[arg(long, default_value = "debug")]
+        /// Build configuration of the runtime (release by default; debug is sanitized and slower).
+        #[arg(long, default_value = "release")]
         config: String,
         /// One benchmark file instead of every file under <project>/benches/.
         #[arg(long)]
@@ -91,7 +92,8 @@ enum Command {
     Scenario {
         /// Project name under samples/ or a directory with project.toml.
         target: String,
-        #[arg(long, default_value = "debug")]
+        /// Build configuration of the runtime (release by default; debug is sanitized and slower).
+        #[arg(long, default_value = "release")]
         config: String,
         /// One scenario file instead of every file under <project>/scenarios/.
         #[arg(long)]

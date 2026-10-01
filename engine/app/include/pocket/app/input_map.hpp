@@ -11,9 +11,15 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pocket::app {
+
+// A mouse button's binding name ("mouse:left" for 1, middle 2, right 3, x1 4, x2 5; null otherwise),
+// and back (0 for anything that is not one).
+const char* mouse_button_source(int button);
+int mouse_button_of(std::string_view source);
 
 class InputMap {
    public:

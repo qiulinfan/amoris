@@ -85,4 +85,16 @@ export const input = {
     press(target: { key: string } | { action: string }): void {
         cmd("input.press", target);
     },
+    /** Capture the pointer (hidden, held in the window, every motion reaching `mouse:x` / `mouse:y`), or let it go. Escape lets it go and a click takes it again. */
+    lockCursor(locked = true): void {
+        cmd("input.cursor", { locked });
+    },
+    /** Show or hide the pointer while it is not captured (a game that draws its own). */
+    showCursor(visible = true): void {
+        cmd("input.cursor", { visible });
+    },
+    /** `locked`: what the game asked for; `held`: captured now (false after Escape until the next click, and always headless or in the editor). */
+    cursor(): { locked: boolean; held: boolean; visible: boolean } {
+        return cmd("input.cursor", {});
+    },
 };
