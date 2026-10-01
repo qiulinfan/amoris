@@ -28,7 +28,7 @@ float idx(const Json& j, std::size_t i, float fallback) {
 [[maybe_unused]] void vec_from_json(const Json& j, Vec3& v) { v = {num(j, "x", idx(j, 0, v.x)), num(j, "y", idx(j, 1, v.y)), num(j, "z", idx(j, 2, v.z))}; }
 [[maybe_unused]] void vec_from_json(const Json& j, Vec4& v) { v = {num(j, "x", idx(j, 0, v.x)), num(j, "y", idx(j, 1, v.y)), num(j, "z", idx(j, 2, v.z)), num(j, "w", idx(j, 3, v.w))}; }
 [[maybe_unused]] void vec_from_json(const Json& j, Quat& v) { v = {num(j, "x", idx(j, 0, v.x)), num(j, "y", idx(j, 1, v.y)), num(j, "z", idx(j, 2, v.z)), num(j, "w", idx(j, 3, v.w))}; }
-[[maybe_unused]] void vec_from_json(const Json& j, Color4& v) { v = {num(j, "r", idx(j, 0, v.r)), num(j, "g", idx(j, 1, v.g)), num(j, "b", idx(j, 2, v.b)), num(j, "a", idx(j, 3, v.a))}; }
+[[maybe_unused]] void vec_from_json(const Json& j, Color4& v) { if (j.is_string()) { (void)parse_hex_color(j.get<std::string>(), v); return; } v = {num(j, "r", idx(j, 0, v.r)), num(j, "g", idx(j, 1, v.g)), num(j, "b", idx(j, 2, v.b)), num(j, "a", idx(j, 3, v.a))}; }
 
 template <class T>
 void scalar_from_json(const Json& j, const char* key, T& v) {
@@ -1330,6 +1330,8 @@ void to_json(Json& j, const Sprite& v) {
     j["material"] = v.material;
     vec_to_json(j["params"], v.params);
     j["additive"] = v.additive;
+    j["lit"] = v.lit;
+    j["normal_map"] = v.normal_map;
 }
 
 void from_json(const Json& j, Sprite& v) {
@@ -1347,6 +1349,8 @@ void from_json(const Json& j, Sprite& v) {
     scalar_from_json(j, "material", v.material);
     if (j.is_object() && j.contains("params")) vec_from_json(j["params"], v.params);
     scalar_from_json(j, "additive", v.additive);
+    scalar_from_json(j, "lit", v.lit);
+    scalar_from_json(j, "normal_map", v.normal_map);
 }
 
 void hash_component(StateHasherRef& h, const Sprite& v) {
@@ -1375,6 +1379,8 @@ void hash_component(StateHasherRef& h, const Sprite& v) {
     h.f32(v.params.z);
     h.f32(v.params.w);
     h.u8(v.additive ? 1 : 0);
+    h.u8(v.lit ? 1 : 0);
+    h.str(v.normal_map);
 }
 
 std::size_t numeric_span(Sprite& v, std::string_view path, float** out) {
@@ -1453,6 +1459,7 @@ void to_json(Json& j, const TileMap& v) {
     vec_to_json(j["color"], v.color);
     j["order"] = v.order;
     j["visible"] = v.visible;
+    j["lit"] = v.lit;
 }
 
 void from_json(const Json& j, TileMap& v) {
@@ -1462,6 +1469,7 @@ void from_json(const Json& j, TileMap& v) {
     if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
     scalar_from_json(j, "order", v.order);
     scalar_from_json(j, "visible", v.visible);
+    scalar_from_json(j, "lit", v.lit);
 }
 
 void hash_component(StateHasherRef& h, const TileMap& v) {
@@ -1474,6 +1482,7 @@ void hash_component(StateHasherRef& h, const TileMap& v) {
     h.f32(v.color.a);
     h.i64(static_cast<std::int64_t>(v.order));
     h.u8(v.visible ? 1 : 0);
+    h.u8(v.lit ? 1 : 0);
 }
 
 std::size_t numeric_span(TileMap& v, std::string_view path, float** out) {
@@ -4227,7 +4236,7 @@ constexpr std::array<FieldInfo, 26> kMeshRendererFields = {{
     FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own.", {}},
     FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small.", {}},
 }};
-constexpr std::array<FieldInfo, 14> kSpriteFields = {{
+constexpr std::array<FieldInfo, 16> kSpriteFields = {{
     FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color.", {}},
     FieldInfo{"size", "vec2", "Width and height in world units.", {}},
     FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture.", {}},
@@ -4242,6 +4251,8 @@ constexpr std::array<FieldInfo, 14> kSpriteFields = {{
     FieldInfo{"material", "string", "A material the project wrote: a WGSL file in the project defining fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f, the sprite's colour at a pixel (docs/design/sprites.md, Materials). Empty: the texture times the colour.", {}},
     FieldInfo{"params", "vec4", "Four numbers for its material, per sprite (a flash's strength, a dissolve's progress, an outline's width).", {}},
     FieldInfo{"additive", "bool", "Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing.", {}},
+    FieldInfo{"lit", "bool", "Lit by the scene's lights (docs/design/sprites.md, Light): point and spot lights in front of it, the sun, and the ambient light (render.ambient), instead of drawn as it is. A torch in a dark dungeon.", {}},
+    FieldInfo{"normal_map", "string", "With lit: a normal map for the texture (tangent space, the same frames as the texture), so light catches its bumps and edges.", {}},
 }};
 constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
     FieldInfo{"clip", "string", "Clip name; empty plays nothing.", {}},
@@ -4253,13 +4264,14 @@ constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
     FieldInfo{"time", "f32", "Seconds into the current frame; advanced by the engine.", {}},
     FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play.", {}},
 }};
-constexpr std::array<FieldInfo, 6> kTileMapFields = {{
+constexpr std::array<FieldInfo, 7> kTileMapFields = {{
     FieldInfo{"map", "string", "Project-relative Tiled JSON map (.tmj).", {}},
     FieldInfo{"layer", "string", "Draw only this tile layer; empty draws every visible one.", {}},
     FieldInfo{"tile_size", "f32", "World units per tile.", {}},
     FieldInfo{"color", "color", "Tint and opacity over the whole map.", {}},
     FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this.", {}},
     FieldInfo{"visible", "bool", "Whether the map is drawn.", {}},
+    FieldInfo{"lit", "bool", "Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient.", {}},
 }};
 constexpr std::array<FieldInfo, 7> kAnimationGraphFields = {{
     FieldInfo{"states", "list:AnimationState", "The states; the first is where it starts.", {}},

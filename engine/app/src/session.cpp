@@ -354,6 +354,18 @@ void Session::apply_project_settings() {
         if (r.contains("bloom_strength") && r["bloom_strength"].is_number()) b.strength = r["bloom_strength"].get<float>();
         if (r.contains("bloom_radius") && r["bloom_radius"].is_number()) b.radius = r["bloom_radius"].get<float>();
         renderer_->set_bloom(b);
+        // [render] ambient = "#202030", or {color, intensity}.
+        if (r.contains("ambient")) {
+            renderer::AmbientSettings a = renderer_->ambient();
+            const Json& aj = r["ambient"];
+            if (aj.is_object()) {
+                if (aj.contains("color")) (void)read_tint(aj["color"], a.color);
+                a.intensity = opt<float>(aj, "intensity", a.intensity);
+            } else {
+                (void)read_tint(aj, a.color);
+            }
+            renderer_->set_ambient(a);
+        }
         // [render] grade = true, or a [render.grade] table with the settings (on unless it says enabled = false).
         if (r.contains("grade")) {
             renderer::GradeSettings g = renderer_->grade();
@@ -805,6 +817,33 @@ void Session::bind_natives() {
         const world::EntityId id = args[0].is_number_unsigned() || args[0].is_number_integer() ? args[0].get<world::EntityId>() : resolve_entity(args[0]);
         const auto n = static_cast<std::size_t>(std::clamp<std::int64_t>(args[2].get<std::int64_t>(), 0, static_cast<std::int64_t>(nums_.size())));
         return world_->set_numbers(id, args[1].get_ref<const std::string&>(), nums_.data(), n);
+    });
+    // The same by component index and entity id, numbers only (no JSON either way): what the SDK
+    // uses once it has the index of a component (component_index, asked once per name).
+    host_->bind("component_index", [this](const Json& args) -> Result<Json> {
+        if (args.empty() || !args[0].is_string()) return -1;
+        return world_->component_index(args[0].get_ref<const std::string&>());
+    });
+    host_->bind_numbers("get_nums_at", [this](const double* a, std::size_t n) -> double {
+        if (n < 2 || !(a[0] >= 0) || !(a[1] >= 0)) return -2;
+        return static_cast<double>(world_->get_numbers(static_cast<world::EntityId>(a[0]), static_cast<int>(a[1]), nums_.data()));
+    });
+    host_->bind_numbers("set_nums_at", [this](const double* a, std::size_t n) -> double {
+        if (n < 3 || !(a[0] >= 0) || !(a[1] >= 0) || !(a[2] >= 0)) return -2;
+        const auto count = static_cast<std::size_t>(std::min(a[2], static_cast<double>(nums_.size())));
+        return static_cast<double>(world_->set_numbers(static_cast<world::EntityId>(a[0]), static_cast<int>(a[1]), nums_.data(), count));
+    });
+    // A patch: the numbers whose bits are set in the mask, laid over the component as it is.
+    host_->bind_numbers("patch_nums_at", [this](const double* a, std::size_t n) -> double {
+        if (n < 3 || !(a[0] >= 0) || !(a[1] >= 0) || !(a[2] >= 1) || a[2] > 2147483647.0) return -2;
+        const auto id = static_cast<world::EntityId>(a[0]);
+        const int component = static_cast<int>(a[1]);
+        const auto mask = static_cast<std::uint32_t>(a[2]);
+        double current[256];
+        const long count = world_->get_numbers(id, component, current);
+        if (count < 0) return static_cast<double>(count);
+        for (long i = 0; i < count && i < 32; ++i) if (mask & (1u << i)) current[i] = nums_[static_cast<std::size_t>(i)];
+        return static_cast<double>(world_->set_numbers(id, component, current, static_cast<std::size_t>(count)));
     });
     host_->bind("command", [this](const Json& args) -> Result<Json> {
         if (args.empty() || !args[0].is_string()) return fail("bad_args", "command(name, params?)");
@@ -2917,6 +2956,114 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         j["center"] = cell_center(cx, cy);
         return j;
     }
+    if (op == "sight" || op == "fov") {
+        // Line of sight and field of view over the cells (docs/design/tilemaps.md, Sight): a cell
+        // hides what is behind it when it is solid (not one-way), or, with `layers`, when one of
+        // those layers has a tile there; a tile's `opaque` property says otherwise either way.
+        if (!map->orthogonal()) return fail("bad_map", "tilemap.{} needs an orthogonal map; this one is {}", op, map->describe().value("orientation", std::string("not")));
+        std::vector<const assets::TileLayer*> blockers;
+        if (p.contains("layers")) {
+            if (!p["layers"].is_array()) return fail("bad_args", "layers: [\"walls\", ...]");
+            for (const Json& n : p["layers"]) {
+                const auto it = std::find_if(map->layers.begin(), map->layers.end(), [&](const assets::TileLayer& l) { return n.is_string() && l.name == n.get<std::string>(); });
+                if (it == map->layers.end()) {
+                    std::string names;
+                    for (const auto& l : map->layers) names += (names.empty() ? "" : ", ") + l.name;
+                    return fail("no_layer", "no tile layer {} (the map has {})", n.dump(), names);
+                }
+                blockers.push_back(&*it);
+            }
+        }
+        std::vector<signed char> memo(static_cast<std::size_t>(std::max(map->width, 0)) * static_cast<std::size_t>(std::max(map->height, 0)), -1);
+        auto opaque = [&](int cx, int cy) -> bool {
+            if (cx < 0 || cy < 0 || cx >= map->width || cy >= map->height) return false;
+            signed char& m = memo[static_cast<std::size_t>(cy) * static_cast<std::size_t>(map->width) + static_cast<std::size_t>(cx)];
+            if (m >= 0) return m != 0;
+            bool hides = false, has = false;
+            if (blockers.empty()) hides = map->solidity_at(cx, cy) == 1;
+            for (const assets::TileLayer& l : map->layers) {
+                if (cx >= l.width || cy >= l.height) continue;
+                const std::uint32_t gid = l.gids[static_cast<std::size_t>(cy) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(cx)];
+                if (!gid) continue;
+                if (!blockers.empty() && std::find(blockers.begin(), blockers.end(), &l) != blockers.end()) hides = true;
+                if (const assets::TileSet* set = map->tileset_for(gid)) {
+                    const int local = static_cast<int>((gid & assets::TileMap::kIdMask) - set->first_gid);
+                    if (auto it = set->tile_properties.find(local); it != set->tile_properties.end() && it->second.contains("opaque") && it->second["opaque"].is_boolean()) {
+                        hides = it->second["opaque"].get<bool>();
+                        has = true;
+                    }
+                }
+                if (has) break;
+            }
+            m = hides ? 1 : 0;
+            return hides;
+        };
+        // In cell units, y down the map.
+        auto to_grid = [&](const Json& v, double& gx, double& gy) {
+            gx = (v.value("x", 0.0) - origin.x) / ts;
+            gy = (origin.y - v.value("y", 0.0)) / ts;
+        };
+        // The cells a segment crosses, in order (Amanatides and Woo); the first opaque one past the
+        // start stops it. Answers whether it got through, and where it stopped.
+        auto trace = [&](double ax, double ay, double bx, double by, int& hx, int& hy, double& t_hit) {
+            int x = static_cast<int>(std::floor(ax)), y = static_cast<int>(std::floor(ay));
+            const int ex = static_cast<int>(std::floor(bx)), ey = static_cast<int>(std::floor(by));
+            const double dx = bx - ax, dy = by - ay;
+            const int stx = dx > 0 ? 1 : -1, sty = dy > 0 ? 1 : -1;
+            const double tdx = dx != 0 ? std::fabs(1.0 / dx) : 1e30, tdy = dy != 0 ? std::fabs(1.0 / dy) : 1e30;
+            double tmx = dx != 0 ? ((dx > 0 ? std::floor(ax) + 1 - ax : ax - std::floor(ax)) * tdx) : 1e30;
+            double tmy = dy != 0 ? ((dy > 0 ? std::floor(ay) + 1 - ay : ay - std::floor(ay)) * tdy) : 1e30;
+            t_hit = 1.0;
+            for (int guard = 0; guard < 100000 && !(x == ex && y == ey); ++guard) {
+                if (tmx < tmy) { t_hit = tmx; tmx += tdx; x += stx; }
+                else { t_hit = tmy; tmy += tdy; y += sty; }
+                if (t_hit > 1.0) break;
+                if (opaque(x, y)) { hx = x; hy = y; return false; }
+            }
+            t_hit = 1.0;
+            return true;
+        };
+        double ax, ay;
+        if (!p.contains("from")) return fail("bad_args", "tilemap.{} needs from: {{x, y}}", op);
+        to_grid(p["from"], ax, ay);
+        if (op == "sight") {
+            if (!p.contains("to")) return fail("bad_args", "tilemap.sight needs to: {{x, y}}");
+            double bx, by;
+            to_grid(p["to"], bx, by);
+            int hx = 0, hy = 0;
+            double t = 1.0;
+            const bool clear = trace(ax, ay, bx, by, hx, hy, t);
+            Json j{{"visible", clear}, {"distance", std::hypot(bx - ax, by - ay) * ts}};
+            if (!clear) {
+                j["blocked_at"] = Json{{"tile_x", hx}, {"tile_y", hy}, {"point", Json{{"x", origin.x + (ax + (bx - ax) * t) * ts}, {"y", origin.y - (ay + (by - ay) * t) * ts}}}, {"distance", std::hypot(bx - ax, by - ay) * t * ts}};
+            }
+            return j;
+        }
+        // Field of view: every cell within `radius` cells whose center or one of four points near its
+        // corners can be seen from `from`. Walls that face the viewer are seen; what is behind is not.
+        const double radius = std::clamp(opt<double>(p, "radius", 8.0), 0.0, 256.0);
+        const int ox = static_cast<int>(std::floor(ax)), oy = static_cast<int>(std::floor(ay)), r = static_cast<int>(std::ceil(radius));
+        Json cells = Json::array();
+        int seen_walls = 0;
+        for (int cy = oy - r; cy <= oy + r; ++cy) {
+            for (int cx = ox - r; cx <= ox + r; ++cx) {
+                if (cx < 0 || cy < 0 || cx >= map->width || cy >= map->height) continue;
+                const double ddx = cx + 0.5 - ax, ddy = cy + 0.5 - ay;
+                if (ddx * ddx + ddy * ddy > radius * radius) continue;
+                bool seen = cx == ox && cy == oy;
+                static constexpr double kPoints[5][2] = {{0.5, 0.5}, {0.1, 0.1}, {0.9, 0.1}, {0.1, 0.9}, {0.9, 0.9}};
+                for (int k = 0; k < 5 && !seen; ++k) {
+                    int hx = 0, hy = 0;
+                    double t = 1.0;
+                    seen = trace(ax, ay, cx + kPoints[k][0], cy + kPoints[k][1], hx, hy, t) || (hx == cx && hy == cy);
+                }
+                if (!seen) continue;
+                cells.push_back(Json::array({cx, cy}));
+                if (opaque(cx, cy)) seen_walls++;
+            }
+        }
+        return Json{{"from", Json{{"tile_x", ox}, {"tile_y", oy}}}, {"radius", radius}, {"count", cells.size()}, {"walls", seen_walls}, {"cells", cells}};
+    }
     if (op == "solid") {
         int cx, cy;
         if (p.contains("tile_x") || p.contains("tile_y")) {
@@ -3922,6 +4069,15 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         renderer_->set_bloom(b);
         b = renderer_->bloom();
         return Json{{"enabled", b.enabled}, {"threshold", b.threshold}, {"strength", b.strength}, {"radius", b.radius}};
+    }
+    if (op == "ambient") {
+        // The flat light from all around where there is no Sky: dark for a dungeon between its torches.
+        renderer::AmbientSettings a = renderer_->ambient();
+        if (p.is_object() && p.contains("color") && !read_tint(p["color"], a.color)) return fail("bad_args", "ambient color: {{r, g, b}}, [r, g, b] or \"#rrggbb\"");
+        a.intensity = opt<float>(p, "intensity", a.intensity);
+        renderer_->set_ambient(a);
+        a = renderer_->ambient();
+        return Json{{"color", Json{{"r", a.color.r}, {"g", a.color.g}, {"b", a.color.b}}}, {"intensity", a.intensity}};
     }
     if (op == "grade") {
         renderer::GradeSettings g = renderer_->grade();
@@ -5200,6 +5356,12 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
             j["entities"] = world_->entity_count();
         }
         bool start = scripts && (was_active || options_.editor_bundle.empty());
+        if (start && scene) {
+            // A restart plays as a fresh run would: random() and Math.random from the run's seed
+            // again, so a game edited and reloaded meets the same rocks, cards and rolls.
+            rng_.reseed(options_.seed);
+            seed_math_random();
+        }
         if (start) dispatch("start", Json::object(), "project");
         host_->drain_microtasks();
         world_->events().emit(clock_.tick, "project.reloaded", 0, Json{{"scene", scene}, {"scripts", scripts}, {"started", start}}, 0, "runtime");
@@ -5461,6 +5623,10 @@ Result<Json> Session::world_lint(const Json& p) {
     ecs.each([&](flecs::entity e, const world::Sprite& sp) {
         if (auto it = sprite_material_errors_.find(sp.material); !sp.material.empty() && it != sprite_material_errors_.end())
             add("error", e.id(), "Sprite", std::format("its material {} is drawn plain: {}", sp.material, it->second), "fix the WGSL (it defines fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f), then assets.reload");
+        // Light on sprites (docs/design/sprites.md, Light).
+        if (!sp.normal_map.empty() && !sp.lit) add("info", e.id(), "Sprite", "a normal map on a sprite that is not lit does nothing", "set Sprite.lit, or leave normal_map empty");
+        if (sp.lit && sp.additive) add("info", e.id(), "Sprite", "an additive sprite is a light of its own and is drawn unlit", "leave lit off for glows and flames");
+        if (sp.lit && !sp.material.empty()) add("info", e.id(), "Sprite", std::format("a sprite drawn through its material {} is not lit", sp.material), "light it in the material, or drop the material");
     });
     // 2D rigid bodies (docs/design/physics2d.md).
     ecs.each([&](flecs::entity e, const world::RigidBody2D&) {
@@ -7115,7 +7281,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

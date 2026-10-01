@@ -701,6 +701,32 @@ Json World::snapshot() const {
     return out;
 }
 
+int World::component_index(std::string_view component) const {
+    for (std::size_t i = 0; i < impl_->ops.size(); ++i) if (impl_->ops[i].name == component) return static_cast<int>(i);
+    return -1;
+}
+
+long World::get_numbers(EntityId id, int component, double* out) const {
+    if (component < 0 || static_cast<std::size_t>(component) >= impl_->ops.size()) return -2;
+    const ComponentOps& op = impl_->ops[static_cast<std::size_t>(component)];
+    if (!op.read_numbers) return -2;
+    flecs::entity e = impl_->ecs.entity(id);
+    if (!live(e)) return -3;
+    if (!op.has(e)) return -1;
+    const std::size_t n = op.read_numbers(e, out);
+    return n == kNotNumeric ? -2 : static_cast<long>(n);
+}
+
+long World::set_numbers(EntityId id, int component, const double* in, std::size_t n) {
+    if (component < 0 || static_cast<std::size_t>(component) >= impl_->ops.size()) return -2;
+    ComponentOps& op = impl_->ops[static_cast<std::size_t>(component)];
+    if (!op.write_numbers) return -2;
+    flecs::entity e = impl_->ecs.entity(id);
+    if (!live(e)) return -3;
+    if (!op.has(e)) return -1;
+    return op.write_numbers(e, in, n) ? static_cast<long>(n) : -4;
+}
+
 long World::set_numbers(EntityId id, std::string_view component, const double* in, std::size_t n) {
     const ComponentOps* op = impl_->find(component);
     if (!op || !op->write_numbers) return -2;

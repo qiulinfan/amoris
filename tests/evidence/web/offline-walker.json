@@ -1,0 +1,70 @@
+{
+  "url": "http://localhost:4718/walker/",
+  "chrome": "Chrome/154.0.8037.92",
+  "online": {
+    "scope": "http://localhost:4718/walker/",
+    "caches": [
+      "pocket:http://localhost:4718/walker/:53c9014d7857"
+    ],
+    "kept": [
+      "./",
+      "index.html",
+      "icon-192.png",
+      "icon-512.png",
+      "manifest.webmanifest",
+      "pocket_runtime.js",
+      "pocket_runtime.wasm",
+      "walker.data",
+      "walker.data.js"
+    ],
+    "manifest": {
+      "background_color": "#101014",
+      "display": "fullscreen",
+      "icons": [
+        {
+          "purpose": "any",
+          "sizes": "192x192",
+          "src": "icon-192.png",
+          "type": "image/png"
+        },
+        {
+          "purpose": "any",
+          "sizes": "512x512",
+          "src": "icon-512.png",
+          "type": "image/png"
+        }
+      ],
+      "name": "Pocket: walker",
+      "orientation": "landscape",
+      "scope": "./",
+      "short_name": "walker",
+      "start_url": "./",
+      "theme_color": "#101014"
+    }
+  },
+  "offline": {
+    "controlled": true,
+    "online": false,
+    "state": {
+      "score": 0,
+      "jumps": 0,
+      "player.x": 0,
+      "player.y": 0.91,
+      "player.z": 5,
+      "hero.state": "move",
+      "hero.clip": "idle",
+      "player.grounded": true,
+      "player.on_wall": false,
+      "lift.y": 2.55
+    },
+    "from_cache": [
+      "walker.data.js",
+      "pocket_runtime.js",
+      "walker.data",
+      "manifest.webmanifest",
+      "pocket_runtime.wasm",
+      "icon-192.png",
+      "icon-192.png"
+    ]
+  }
+}

@@ -121,6 +121,14 @@ export const tilemap = {
     solid(entity: EntityRef, at: { x: number; y: number } | { tile_x: number; tile_y: number }): boolean {
         return (command("tilemap.solid", { entity, ...at }) as { solid: boolean }).solid;
     },
+    /** Whether the straight line from one world point to another is clear of cells that hide what is behind them (solid cells, or tiles of `layers`; a tile's `opaque` property says otherwise), and where it is stopped when it is not. */
+    sight(entity: EntityRef, from: { x: number; y: number }, to: { x: number; y: number }, layers?: string[]): { visible: boolean; distance: number; blocked_at?: { tile_x: number; tile_y: number; point: { x: number; y: number }; distance: number } } {
+        return command("tilemap.sight", { entity, from, to, layers }) as { visible: boolean; distance: number; blocked_at?: { tile_x: number; tile_y: number; point: { x: number; y: number }; distance: number } };
+    },
+    /** The cells seen from a world point within `radius` cells (8), the walls that face it included: fog of war, a guard's view, a torch's reach. */
+    fov(entity: EntityRef, from: { x: number; y: number }, radius = 8, layers?: string[]): { cells: Array<[number, number]>; count: number; walls: number } {
+        return command("tilemap.fov", { entity, from, radius, layers }) as { cells: Array<[number, number]>; count: number; walls: number };
+    },
     /** Tile coordinates of a world position. */
     cell(entity: EntityRef, x: number, y: number): { tile_x: number; tile_y: number; inside: boolean; center: { x: number; y: number } } {
         return command("tilemap.cell", { entity, x, y }) as { tile_x: number; tile_y: number; inside: boolean; center: { x: number; y: number } };

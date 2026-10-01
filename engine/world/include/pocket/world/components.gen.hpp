@@ -18,6 +18,9 @@ struct Color4 {
     constexpr bool operator==(const Color4&) const = default;
 };
 
+// "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (the # optional) as a color picker shows it; false (and `out` as it was) for anything else.
+bool parse_hex_color(std::string_view text, Color4& out);
+
 // Records: the values held by list fields of components.
 /// One level of detail of a MeshRenderer (docs/design/rendering.md, Levels of detail): a simpler mesh drawn when the entity is small on screen.
 struct MeshLod {
@@ -482,6 +485,8 @@ struct Sprite {
     std::string material = "";
     Vec4 params{0.0f, 0.0f, 0.0f, 0.0f};
     bool additive = false;
+    bool lit = false;
+    std::string normal_map = "";
     constexpr bool operator==(const Sprite&) const = default;
 };
 void to_json(Json& j, const Sprite& v);
@@ -514,6 +519,7 @@ struct TileMap {
     Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
     std::int32_t order = -10;
     bool visible = true;
+    bool lit = false;
     constexpr bool operator==(const TileMap&) const = default;
 };
 void to_json(Json& j, const TileMap& v);

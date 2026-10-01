@@ -1253,6 +1253,9 @@ def dodge_check(env, answer):
     p1 = entity_pos(env, "Player")
     if not (near(p1["x"] - p0["x"], 6, 0.45) and near(p1["y"], p0["y"], 0.15)):
         return False, f"holding move_x for a second moved the Player from {p0} to {p1}, not 6 along x"
+    # Out of the rocks' way (they fall between x -8 and 8), so a random hit cannot end the game
+    # before the checks below; the brief has the game read the Player's Transform every tick.
+    env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": 20, "y": p1["y"]}}})
     env.command("step", {"ticks": 150})
     rocks = env.command("world.query", {"name": "Rock*", "with": ["Transform"]})["entities"]
     if len(rocks) < 3:

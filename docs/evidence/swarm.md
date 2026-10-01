@@ -64,3 +64,16 @@ A script's `world.get` and `world.set` of a component whose fields are all numbe
 | numbers without JSON | 5.80, 5.86, 5.84 |
 
 The typed-array path (`world.pack`) is still 0.35 ms: the per-entity calls are three native calls each now rather than two JSON round trips, about a third of a microsecond each. The world after the run is the same (the full suite's goldens and `tests/ts/world.test.ts`, which compares the two paths' answers, pass).
+
+## Natives that take numbers, readers made per component (2026-10-01)
+
+Timing the pieces inside the runtime (`script.eval`, 30000 calls each, release) put a numeric read at 0.09 µs and a write at 0.13 µs by component index, 0.23 µs by name: the natives were a fifth of the 1.9 µs an entity cost. The rest was the SDK's own JavaScript: a loop over the layout building the object field by field, another walking the patch with `Object.keys` arrays, and a second read before every write. Three changes, each measured on its own (one run each, then three of the last):
+
+| Release, Apple M5, `samples/swarm` (3000 `world.get` + `world.set` a tick) | ms a tick |
+|---|---|
+| before | 5.9 |
+| numbers-only natives (`bind_numbers`: arguments read as doubles, no JSON either way) taking a component index the SDK asks once per name | 5.25 |
+| a reader and a patcher made once per component (`new Function` over its fields: one object shape, no loops, keys counted with `for in`) | 3.29 |
+| the write as one call: the patch's numbers and a mask of which ones, laid over the component in the engine | 2.64, 2.64, 2.63 |
+
+The script phase of the swarm (both paths, alternating) went from 3.16 to 1.53 ms a tick. An entity given by name or path, a patch the numbers cannot hold and a component of more than 31 numbers take the earlier paths. The web build binds the numbers-only natives through its JSON bridge (the same answers, without the gain).

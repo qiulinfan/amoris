@@ -987,6 +987,164 @@ def make_crates(out):
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
 
 
+# A dark dungeon lit by torches (samples/dungeon, docs/design/sprites.md, Light).
+def dungeon_tiles(tile=16):
+    """Four tiles in a row: flagstones, bricks, fog (black) and fog already seen (black, see-through)."""
+    import random
+    rnd = random.Random(7)
+    w = tile * 4
+    px = bytearray(w * tile * 4)
+    def put(x, y, c):
+        i = (y * w + x) * 4
+        px[i:i + 4] = bytes(c)
+    for y in range(tile):
+        for x in range(tile):
+            # Flagstones: four stones a tile, grout between them, a little speckle.
+            grout = x % 8 == 0 or y % 8 == 0
+            g = 70 if grout else 118 + rnd.randint(-10, 10) + (8 if (x // 8 + y // 8) % 2 else 0)
+            put(x, y, (g, g, int(g * 1.05), 255))
+            # Bricks: rows of four pixels, every other row shifted by half a brick.
+            row = y // 4
+            mortar = y % 4 == 3 or (x + (4 if row % 2 else 0)) % 8 == 7
+            b = 52 if mortar else 104 + rnd.randint(-12, 12)
+            put(tile + x, y, (b, int(b * 0.78), int(b * 0.66), 255))
+            put(2 * tile + x, y, (0, 0, 0, 255))
+            put(3 * tile + x, y, (0, 0, 0, 160))
+    return png(w, tile, px)
+
+
+def heights_to_normals(size, h, strength):
+    """A normal map (tangent space, +Y up the image as glTF has it) from a height field h[y][x]."""
+    import math
+    px = bytearray()
+    for y in range(size):
+        for x in range(size):
+            dx = (h[y][min(x + 1, size - 1)] - h[y][max(x - 1, 0)]) * 0.5 * strength
+            dy = (h[min(y + 1, size - 1)][x] - h[max(y - 1, 0)][x]) * 0.5 * strength
+            n = (-dx, dy, 1.0)
+            l = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+            px += bytes((int((n[0] / l * 0.5 + 0.5) * 255), int((n[1] / l * 0.5 + 0.5) * 255), int((n[2] / l * 0.5 + 0.5) * 255), 255))
+    return png(size, size, px)
+
+
+def crate_normal(size=32):
+    """The crate's relief: the frame and the brace stand out, the planks sit lower with grooves between them."""
+    h = [[0.0] * size for _ in range(size)]
+    for y in range(size):
+        for x in range(size):
+            edge = x < 3 or y < 3 or x >= size - 3 or y >= size - 3
+            brace = abs(x - y) <= 1 or abs((size - 1 - x) - y) <= 1
+            groove = y % 6 == 5
+            h[y][x] = 1.0 if edge else 0.7 if brace else -0.4 if groove else 0.0
+    return heights_to_normals(size, h, 2.0)
+
+
+def torch_png(size=16):
+    """An iron bracket with a wooden stick."""
+    px = bytearray()
+    for y in range(size):
+        for x in range(size):
+            stick = 6 <= x <= 9 and 4 <= y <= 13
+            ring = 4 <= x <= 11 and 4 <= y <= 5
+            plate = 5 <= x <= 10 and 12 <= y <= 15
+            if ring or plate:
+                px += bytes((70, 70, 78, 255))
+            elif stick:
+                px += bytes((120, 80, 45, 255))
+            else:
+                px += bytes((0, 0, 0, 0))
+    return png(size, size, px)
+
+
+def flame_png(size=16):
+    """A soft teardrop of fire, white at its heart, for an additive sprite."""
+    import math
+    px = bytearray()
+    for y in range(size):
+        for x in range(size):
+            fx, fy = (x + 0.5) / size - 0.5, (y + 0.5) / size - 0.62
+            r = math.sqrt((fx * 1.6) ** 2 + (fy if fy > 0 else fy * 0.55) ** 2)
+            a = max(0.0, 1.0 - r / 0.42)
+            heat = a ** 0.6
+            px += bytes((255, int(120 + 135 * heat * heat), int(40 * heat ** 3 + 0 * heat), int(255 * min(1.0, a * 1.4))))
+    return png(size, size, px)
+
+
+def hero_topdown_png(size=16):
+    """Someone seen from above: a cloak, a hood, a lantern hand to the right."""
+    px = bytearray()
+    for y in range(size):
+        for x in range(size):
+            cx, cy = x + 0.5 - 8, y + 0.5 - 8
+            body = cx * cx / 36 + cy * cy / 30 <= 1
+            hood = cx * cx + (cy + 1) ** 2 <= 9
+            hand = (x - 13) ** 2 + (y - 9) ** 2 <= 2
+            if hood:
+                px += bytes((70, 52, 120, 255))
+            elif hand:
+                px += bytes((230, 190, 150, 255))
+            elif body:
+                px += bytes((96, 72, 160, 255))
+            else:
+                px += bytes((0, 0, 0, 0))
+    return png(size, size, px)
+
+
+def dungeon_map():
+    """32 by 20: four rooms joined by corridors, walls around them, a fog layer over all, and an
+    object layer with the start, the torches on the walls and the crates."""
+    W, H = 32, 20
+    floor = [[False] * W for _ in range(H)]
+    def room(x0, y0, x1, y1):
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                floor[y][x] = True
+    room(1, 1, 10, 8); room(15, 1, 30, 7); room(3, 12, 13, 18); room(18, 11, 29, 18)
+    room(10, 4, 15, 4); room(6, 8, 6, 12); room(24, 7, 24, 11); room(13, 15, 18, 15)
+    floor_layer = [1 if floor[y][x] else 0 for y in range(H) for x in range(W)]
+    wall_layer = [0 if floor[y][x] else 2 for y in range(H) for x in range(W)]
+    fog_layer = [3] * (W * H)
+    tile = 16
+    def obj(i, name, kind, cx, cy):
+        return {"id": i, "name": name, "type": kind, "x": cx * tile, "y": cy * tile, "width": 0, "height": 0, "point": True, "rotation": 0, "visible": True}
+    things = [obj(1, "Start", "start", 5.5, 5.5)]
+    torches = [(1.5, 1.0), (9.5, 1.0), (18.5, 1.0), (27.5, 1.0), (4.5, 12.0), (12.5, 12.0), (20.5, 11.0), (28.5, 11.0)]
+    for k, (x, y) in enumerate(torches):
+        things.append(obj(10 + k, f"Torch_{k + 1}", "torch", x, y))
+    crates = [(9.5, 7.5), (8.5, 7.5), (29.5, 6.5), (3.5, 17.5), (12.5, 13.5), (28.5, 17.5), (27.5, 17.5)]
+    for k, (x, y) in enumerate(crates):
+        things.append(obj(30 + k, f"Crate_{k + 1}", "crate", x, y))
+    def layer(i, name, data, props=None):
+        l = {"id": i, "name": name, "type": "tilelayer", "width": W, "height": H, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": data}
+        if props:
+            l["properties"] = props
+        return l
+    return {
+        "type": "map", "version": "1.10", "orientation": "orthogonal", "renderorder": "right-down",
+        "width": W, "height": H, "tilewidth": tile, "tileheight": tile, "infinite": False,
+        "nextlayerid": 5, "nextobjectid": 40,
+        "layers": [
+            layer(1, "floor", floor_layer),
+            layer(2, "walls", wall_layer, [{"name": "solid", "type": "bool", "value": True}]),
+            layer(3, "fog", fog_layer),
+            {"id": 4, "name": "things", "type": "objectgroup", "x": 0, "y": 0, "opacity": 1, "visible": True, "draworder": "topdown", "objects": things},
+        ],
+        "tilesets": [{"firstgid": 1, "name": "dungeon", "image": "dungeon_tiles.png", "imagewidth": tile * 4, "imageheight": tile, "tilewidth": tile, "tileheight": tile, "tilecount": 4, "columns": 4, "margin": 0, "spacing": 0}],
+    }
+
+
+def make_dungeon(out):
+    os.makedirs(out, exist_ok=True)
+    for name, data in (("dungeon_tiles.png", dungeon_tiles()), ("crate.png", crate_png()), ("crate_n.png", crate_normal()), ("torch.png", torch_png()),
+                       ("flame.png", flame_png()), ("hero.png", hero_topdown_png())):
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
+        print(name, os.path.getsize(os.path.join(out, name)), "bytes")
+    with open(os.path.join(out, "dungeon.tmj"), "w") as f:
+        json.dump(dungeon_map(), f, separators=(",", ":"))
+    print("dungeon.tmj", os.path.getsize(os.path.join(out, "dungeon.tmj")), "bytes")
+
+
 def bowl(radius=2.5, k=0.25, rings=20, segments=48):
     """A paraboloid bowl y = k * r^2 open to +Y: a mesh collider the physics sample's marble rolls
     down. Normals from the analytic gradient, uvs from the footprint, front faces upward."""
@@ -1213,6 +1371,9 @@ def main():
         doc, buf = arm_bow()
         write_glb(os.path.join(out, "arm_bow.glb"), doc, buf)
         print("arm_bow.glb", os.path.getsize(os.path.join(out, "arm_bow.glb")), "bytes")
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--dungeon":
+        make_dungeon(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "dungeon", "assets"))
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--walker":
         make_walker(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "walker", "assets"))

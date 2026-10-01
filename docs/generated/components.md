@@ -252,6 +252,8 @@ A 2D image: a textured unit square in the entity's XY plane, sized in world unit
 | `material` | string | "" | A material the project wrote: a WGSL file in the project defining fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f, the sprite's colour at a pixel (docs/design/sprites.md, Materials). Empty: the texture times the colour. |
 | `params` | vec4 | [0.0, 0.0, 0.0, 0.0] | Four numbers for its material, per sprite (a flash's strength, a dissolve's progress, an outline's width). |
 | `additive` | bool | false | Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing. |
+| `lit` | bool | false | Lit by the scene's lights (docs/design/sprites.md, Light): point and spot lights in front of it, the sun, and the ambient light (render.ambient), instead of drawn as it is. A torch in a dark dungeon. |
+| `normal_map` | string | "" | With lit: a normal map for the texture (tangent space, the same frames as the texture), so light catches its bumps and edges. |
 
 ## SpriteAnimation
 
@@ -280,6 +282,7 @@ Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-
 | `color` | color | [1.0, 1.0, 1.0, 1.0] | Tint and opacity over the whole map. |
 | `order` | i32 | -10 | Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this. |
 | `visible` | bool | true | Whether the map is drawn. |
+| `lit` | bool | false | Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient. |
 
 ## AnimationGraph
 

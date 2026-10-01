@@ -80,6 +80,11 @@ class World {
     // path without JSON): the count, or -1 when the entity lacks it, -2 when it is not all numbers
     // (or unknown), -3 when the entity is gone, and for set -4 when the count is not the component's.
     long get_numbers(EntityId id, std::string_view component, double* out) const;
+    // The same by the component's index (component_index), without finding it by name: -2 for an
+    // index that names none. The index is fixed for the world's life.
+    [[nodiscard]] int component_index(std::string_view component) const;
+    long get_numbers(EntityId id, int component, double* out) const;
+    long set_numbers(EntityId id, int component, const double* in, std::size_t n);
     // Every entity's saved components (the derived ones, WorldTransform and Bounds, left out) by
     // id, with its path: what world.mark keeps and world.diff compares.
     [[nodiscard]] Json snapshot() const;

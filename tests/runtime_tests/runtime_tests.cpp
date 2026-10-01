@@ -72,6 +72,11 @@ TEST_CASE("Math.random follows the run seed, on a stream of its own", "[runtime]
     REQUIRE(s.command("script.eval", Json{{"source", "Math.random()"}}).value() == a[0]);
     REQUIRE(s.command("env.reset", Json{{"seed", 7}}).has_value());
     REQUIRE(s.command("script.eval", Json{{"source", "Math.random()"}}).value() == a[0]);
+    // So does a restart of the scene and the scripts (an edit applied), for both streams.
+    const Json native = s.command("script.eval", Json{{"source", "__pocket.random()"}}).value();
+    REQUIRE(s.command("project.reload", Json::object()).has_value());
+    REQUIRE(s.command("script.eval", Json{{"source", "Math.random()"}}).value() == a[0]);
+    REQUIRE(s.command("script.eval", Json{{"source", "__pocket.random()"}}).value() == native);
     REQUIRE(s.finish().has_value());
 }
 
@@ -4704,6 +4709,131 @@ TEST_CASE("a tile map made by code is filled, collided with, and saved with the 
     REQUIRE(t.command("world.load", Json{{"scene", scene}}).has_value());
     REQUIRE(t.command("tilemap.solid", Json{{"entity", "Dungeon"}, {"tile_x", 11}, {"tile_y", 5}}).value()["solid"] == true);
     REQUIRE(t.finish().has_value());
+}
+
+TEST_CASE("sight and a field of view over a tile map stop at walls and at the layers named", "[runtime][tilemap][sight]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // A 12 by 6 room at x 100: a wall down column 6 from row 0 to row 4, a tuft of grass at (3, 2).
+    REQUIRE(s.command("tilemap.create", Json{{"name", "maps/room.tmj"}, {"width", 12}, {"height", 6}, {"layers", Json::array({Json{{"name", "walls"}, {"solid", true}}, "grass"})}, {"tilesets", Json::array({Json{{"image", "assets/tiles.png"}}})}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Room"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 100}, {"y", 0}, {"z", 0}}}}}, {"TileMap", Json{{"map", "maps/room.tmj"}}}}}}).has_value());
+    REQUIRE(s.command("tilemap.fill", Json{{"entity", "Room"}, {"tile_x", 6}, {"tile_y", 0}, {"width", 1}, {"height", 5}, {"layer", "walls"}, {"id", 1}}).has_value());
+    REQUIRE(s.command("tilemap.set", Json{{"entity", "Room"}, {"tile_x", 3}, {"tile_y", 2}, {"layer", "grass"}, {"id", 2}}).has_value());
+    const Json eye{{"x", 102.5}, {"y", -2.5}};
+    auto sight = [&](double x, double y, Json layers = nullptr, Json from = nullptr) {
+        Json args{{"entity", "Room"}, {"from", from.is_null() ? eye : from}, {"to", Json{{"x", x}, {"y", y}}}};
+        if (!layers.is_null()) args["layers"] = layers;
+        return s.command("tilemap.sight", args).value();
+    };
+    // Through the wall: stopped at its near face, three and a half units on.
+    Json r = sight(109.5, -2.5);
+    INFO(r.dump());
+    REQUIRE(r["visible"] == false);
+    REQUIRE(r["blocked_at"]["tile_x"] == 6);
+    REQUIRE(r["blocked_at"]["tile_y"] == 2);
+    REQUIRE(r["blocked_at"]["point"]["x"].get<double>() == Catch::Approx(106.0).margin(1e-6));
+    REQUIRE(r["blocked_at"]["distance"].get<double>() == Catch::Approx(3.5).margin(1e-6));
+    // Short of it, clear; under its end (row 5 is open), clear; the grass hides nothing by default.
+    REQUIRE(sight(104.5, -2.5)["visible"] == true);
+    REQUIRE(sight(109.5, -5.5)["visible"] == false);   // the line clips the wall's foot at row 4
+    REQUIRE(sight(102.5, -5.5)["visible"] == true);
+    // Naming the layers that hide: the grass stops the line, the wall no longer does.
+    REQUIRE(sight(104.5, -2.5, Json::array({"grass"}))["blocked_at"]["tile_x"] == 3);
+    REQUIRE(sight(109.5, -0.5)["visible"] == false);
+    REQUIRE(sight(109.5, -0.5, Json::array({"grass"}), Json{{"x", 102.5}, {"y", -0.5}})["visible"] == true);   // along row 0, through the wall
+    REQUIRE_FALSE(s.command("tilemap.sight", Json{{"entity", "Room"}, {"from", eye}, {"to", eye}, {"layers", Json::array({"nope"})}}).has_value());
+    // The field of view: the near side and the wall's face, nothing behind the wall.
+    const Json fov = s.command("tilemap.fov", Json{{"entity", "Room"}, {"from", eye}, {"radius", 8}}).value();
+    auto has = [&](int x, int y) { for (const Json& c : fov["cells"]) if (c[0] == x && c[1] == y) return true; return false; };
+    REQUIRE(has(2, 2));
+    REQUIRE(has(4, 2));
+    REQUIRE(has(6, 2));
+    REQUIRE(has(6, 0));
+    REQUIRE_FALSE(has(8, 2));
+    REQUIRE_FALSE(has(7, 1));
+    REQUIRE(fov["walls"].get<int>() == 5);
+    REQUIRE(fov["count"] == fov["cells"].size());
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("lit sprites and maps take the scene's lights and ambient, normal maps bend them, unlit ones stay", "[runtime][sprites][lit2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "dungeon";
+    o.bundle = root() / "build" / "ts" / "dungeon.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.command("render.bloom", Json{{"enabled", false}}).has_value());
+    // Held still (a hit-stop: frames draw, no tick runs): the script's ticks would move the camera
+    // back to the player and flicker the torches.
+    REQUIRE(s.command("time.scale", Json{{"scale", 0}}).has_value());
+    // Every light out, the camera close over the first crate (at 9.5, -7.5; 0.9 across).
+    for (const Json& e : s.command("world.query", Json{{"with", Json::array({"Light"})}}).value()["entities"]) {
+        REQUIRE(s.command("world.set", Json{{"entity", e["id"]}, {"component", "Light"}, {"value", Json{{"intensity", 0}}}}).has_value());
+    }
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 9.5}, {"y", -7.5}, {"z", 10}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"ortho_size", 1.5}}}}).has_value());
+    // Paused, so the moves are put into the world transforms by hand before each frame.
+    auto pixel = [&](double x, double y) {
+        REQUIRE(s.command("world.update_transforms", Json::object()).has_value());
+        REQUIRE(s.frame().has_value());
+        const Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", 0}}}}).value();
+        const Json px = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return px[0].get<int>() + px[1].get<int>() + px[2].get<int>();
+    };
+    // No light at all (and no sun: the key light a scene without one gets is not for sprites): the
+    // crate and the floor beside it are black.
+    Json amb = s.command("render.ambient", Json{{"color", "#ffffff"}, {"intensity", 0}}).value();
+    REQUIRE(amb["intensity"] == 0.0);
+    REQUIRE(pixel(9.5, -7.5) < 10);
+    REQUIRE(pixel(9.5, -6.5) < 10);
+    // White ambient: the crate shows its own colours, as an unlit sprite would.
+    REQUIRE(s.command("render.ambient", Json{{"intensity", 1}}).has_value());
+    const int ambient_lit = pixel(9.5, -7.5);
+    INFO("ambient " << ambient_lit);
+    REQUIRE(ambient_lit > 150);
+    // In the dark again, a lamp near the crate lights it, and the floor more where it is nearer.
+    REQUIRE(s.command("render.ambient", Json{{"intensity", 0}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 9.5}, {"y", -6.5}, {"z", 0.6}}}}}, {"Light", Json{{"kind", "point"}, {"color", "#ffffff"}, {"intensity", 2}, {"range", 4}}}}}}).has_value());
+    const int near_floor = pixel(9.25, -6.3), far_floor = pixel(10.75, -6.3);   // on stones, off the grout
+    INFO("floor near " << near_floor << " far " << far_floor);
+    REQUIRE(pixel(9.5, -7.5) > 30);
+    REQUIRE(near_floor > far_floor + 20);
+    // A light low on the right: the frame's inner edges of the normal map face each other, so the
+    // left one (facing right) takes more light than the right one (facing left), nearer as it is.
+    REQUIRE(s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 15.5}, {"y", -7.4}, {"z", 0.25}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"intensity", 6}, {"range", 30}}}}).has_value());
+    const double row = -7.5 + (0.5 - 10.5 / 32) * 0.9;
+    const int left_edge = pixel(9.5 - (0.5 - 2.5 / 32) * 0.9, row), right_edge = pixel(9.5 + (0.5 - 2.5 / 32) * 0.9 - 0.03, row);
+    INFO("left edge " << left_edge << " right edge " << right_edge);
+    REQUIRE(left_edge > right_edge + 15);
+    // Without the normal map the two are alike (the right one a little nearer the light).
+    REQUIRE(s.command("world.set", Json{{"entity", "Crate_1"}, {"component", "Sprite"}, {"value", Json{{"normal_map", ""}}}}).has_value());
+    const int flat_left = pixel(9.5 - (0.5 - 2.5 / 32) * 0.9, row), flat_right = pixel(9.5 + (0.5 - 2.5 / 32) * 0.9 - 0.03, row);
+    INFO("flat left " << flat_left << " flat right " << flat_right);
+    REQUIRE(std::abs(flat_left - flat_right) < std::abs(left_edge - right_edge));
+    // An unlit sprite (the flames) is as bright in the dark as it was drawn.
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1.5}, {"y", -1.2}, {"z", 10}}}}}}).has_value());
+    const Json flame = s.command("world.get", Json{{"entity", "Torch_1/Flame"}, {"component", "WorldTransform"}}).value();
+    REQUIRE(pixel(flame["position"]["x"].get<double>(), flame["position"]["y"].get<double>()) > 300);
+    REQUIRE(s.finish().has_value());
 }
 
 TEST_CASE("a mesh made from numbers is drawn, collided with, and saved with the scene", "[runtime][mesh][made]") {

@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JavaScriptCore.h>
 
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace pocket::script {
@@ -127,6 +128,34 @@ void binding_finalize(JSObjectRef obj) {
     delete static_cast<Binding*>(JSObjectGetPrivate(obj));
 }
 
+struct NumberBinding {
+    NumberFn fn;
+};
+
+JSValueRef number_trampoline(JSContextRef ctx, JSObjectRef function, JSObjectRef, size_t argc, const JSValueRef argv[], JSValueRef*) {
+    auto* b = static_cast<NumberBinding*>(JSObjectGetPrivate(function));
+    if (!b) return JSValueMakeUndefined(ctx);
+    double args[8];
+    const std::size_t n = std::min<std::size_t>(argc, 8);
+    for (std::size_t i = 0; i < n; ++i) args[i] = JSValueIsNumber(ctx, argv[i]) ? JSValueToNumber(ctx, argv[i], nullptr) : std::numeric_limits<double>::quiet_NaN();
+    return JSValueMakeNumber(ctx, b->fn(args, n));
+}
+
+void number_finalize(JSObjectRef obj) {
+    delete static_cast<NumberBinding*>(JSObjectGetPrivate(obj));
+}
+
+JSClassRef number_class() {
+    static JSClassRef cls = [] {
+        JSClassDefinition def = kJSClassDefinitionEmpty;
+        def.className = "PocketNumbers";
+        def.callAsFunction = number_trampoline;
+        def.finalize = number_finalize;
+        return JSClassCreate(&def);
+    }();
+    return cls;
+}
+
 JSClassRef binding_class() {
     static JSClassRef cls = [] {
         JSClassDefinition def = kJSClassDefinitionEmpty;
@@ -215,6 +244,10 @@ class JscHost final : public ScriptHost {
     void bind(std::string_view name, NativeFn fn) override {
         auto* b = new Binding{std::move(fn), std::string(name)};
         JSObjectRef f = JSObjectMake(ctx_, binding_class(), b);
+        set_property(native_, name, f);
+    }
+    void bind_numbers(std::string_view name, NumberFn fn) override {
+        JSObjectRef f = JSObjectMake(ctx_, number_class(), new NumberBinding{std::move(fn)});
         set_property(native_, name, f);
     }
 

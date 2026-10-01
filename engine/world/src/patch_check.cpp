@@ -99,7 +99,12 @@ Status check_value(const FieldInfo& f, const Json& v, const std::string& where) 
             }
             return {};
         }
-        return fail("bad_args", "{} is a {}: {{{}}} or an array of numbers, not {}", where, t, std::string(keys.begin(), keys.end()), v.dump());
+        if (t == "color" && v.is_string()) {
+            Color4 c;
+            if (parse_hex_color(v.get<std::string>(), c)) return {};
+            return fail("bad_args", "{} is a color: \"#rrggbb\" (or #rgb, #rrggbbaa), {{r, g, b, a}} or an array of numbers, not {}", where, v.dump());
+        }
+        return fail("bad_args", "{} is a {}: {{{}}}{} or an array of numbers, not {}", where, t, std::string(keys.begin(), keys.end()), t == "color" ? ", \"#rrggbb\"" : "", v.dump());
     }
     if (t.starts_with("list:")) {
         const std::string_view record = t.substr(5);
@@ -144,5 +149,26 @@ Status check_components(std::span<const ComponentInfo> known, const Json& compon
 
 Status World::check_patch(std::string_view component, const Json& patch) const { return check_component_patch(component_infos_all(), component, patch); }
 Status World::check_components(const Json& components) const { return pocket::world::check_components(component_infos_all(), components); }
+
+bool parse_hex_color(std::string_view text, Color4& out) {
+    if (!text.empty() && text.front() == '#') text.remove_prefix(1);
+    if (text.size() != 3 && text.size() != 4 && text.size() != 6 && text.size() != 8) return false;
+    auto digit = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    const bool shorthand = text.size() <= 4;
+    const std::size_t channels = shorthand ? text.size() : text.size() / 2;
+    float v[4] = {1, 1, 1, 1};
+    for (std::size_t i = 0; i < channels; ++i) {
+        const int hi = digit(text[shorthand ? i : 2 * i]), lo = digit(text[shorthand ? i : 2 * i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        v[i] = static_cast<float>(hi * 16 + lo) / 255.0f;
+    }
+    out = {v[0], v[1], v[2], v[3]};
+    return true;
+}
 
 }  // namespace pocket::world

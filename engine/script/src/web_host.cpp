@@ -156,6 +156,15 @@ class WebHost final : public ScriptHost {
         bindings().push_back({n, std::move(fn)});
         pocket_web_bind(static_cast<int>(bindings().size() - 1), n.c_str());
     }
+    // Through the JSON path on the web: the same answers, without the native fast path.
+    void bind_numbers(std::string_view name, NumberFn fn) override {
+        bind(name, [fn = std::move(fn)](const Json& args) -> Result<Json> {
+            double a[8];
+            const std::size_t n = std::min<std::size_t>(args.size(), 8);
+            for (std::size_t i = 0; i < n; ++i) a[i] = args[i].is_number() ? args[i].get<double>() : std::numeric_limits<double>::quiet_NaN();
+            return Json(fn(a, n));
+        });
+    }
     void share_f32(std::string_view name, float* data, std::size_t count) override { share(name, 0, data, count); }
     void share_f64(std::string_view name, double* data, std::size_t count) override { share(name, 1, data, count); }
     void share_u32(std::string_view name, std::uint32_t* data, std::size_t count) override { share(name, 2, data, count); }

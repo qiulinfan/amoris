@@ -512,6 +512,10 @@ export interface Sprite {
     params: Vec4;
     /** Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing. */
     additive: boolean;
+    /** Lit by the scene's lights (docs/design/sprites.md, Light): point and spot lights in front of it, the sun, and the ambient light (render.ambient), instead of drawn as it is. A torch in a dark dungeon. */
+    lit: boolean;
+    /** With lit: a normal map for the texture (tangent space, the same frames as the texture), so light catches its bumps and edges. */
+    normal_map: string;
 }
 
 /** Plays a clip (a run of sheet frames registered with sprite.clip or [sprite_clips] in project.toml) on the entity's Sprite: every tick the engine advances time, picks the frame and writes Sprite.uv (and texture when the clip names one). Emits sprite.finished when a non-looping clip ends. */
@@ -548,6 +552,8 @@ export interface TileMap {
     order: number;
     /** Whether the map is drawn. */
     visible: boolean;
+    /** Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient. */
+    lit: boolean;
 }
 
 /** A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters. */
@@ -1497,9 +1503,9 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, material: "", material_params: { x: 0, y: 0, z: 0, w: 0 }, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
-    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, material: "", params: { x: 0, y: 0, z: 0, w: 0 }, additive: false },
+    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, material: "", params: { x: 0, y: 0, z: 0, w: 0 }, additive: false, lit: false, normal_map: "" },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
-    TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
+    TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true, lit: false },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
     Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },

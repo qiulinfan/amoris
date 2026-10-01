@@ -22,6 +22,9 @@ struct Config {
 
 // A native function callable from script as __pocket.<name>(...args). `args` is a JSON array.
 using NativeFn = std::function<Result<Json>(const Json& args)>;
+// A native that takes numbers and answers one (up to eight arguments; anything else arrives as NaN):
+// no JSON on the way in or out, for calls made thousands of times a tick.
+using NumberFn = std::function<double(const double* args, std::size_t count)>;
 
 class ScriptHost {
    public:
@@ -35,6 +38,8 @@ class ScriptHost {
     virtual Status evaluate(std::string_view source, std::string_view url) = 0;
     // Install __pocket.<name>.
     virtual void bind(std::string_view name, NativeFn fn) = 0;
+    // Install __pocket.<name> as a numbers-only native.
+    virtual void bind_numbers(std::string_view name, NumberFn fn) = 0;
     // Expose engine memory as __pocket.<name> (Float32Array / Uint32Array / Uint8Array). No copy;
     // the memory must outlive the host.
     virtual void share_f32(std::string_view name, float* data, std::size_t count) = 0;

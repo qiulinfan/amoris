@@ -177,16 +177,53 @@ pub struct WebSettings {
     pub subset_font: bool,
     /// Characters to keep besides those found in the project's sources.
     pub font_text: String,
+    /// The installed game's name ([window] title, else the project's name).
+    pub title: String,
+    /// A PNG of the project's for the installed game's icon; a plain one is drawn without it.
+    pub icon: Option<String>,
+    /// How the installed game opens: fullscreen (default), standalone, minimal-ui or browser.
+    pub display: String,
+    /// landscape, portrait or any; by default from the [window] size.
+    pub orientation: String,
+    /// The splash screen's colour and the page's.
+    pub background: String,
+    /// The browser's bar around the game.
+    pub theme: String,
+    /// A service worker that keeps the game's files, so it starts without a network (default true).
+    pub offline: bool,
 }
 
 impl WebSettings {
     pub fn from_project(project: &Path) -> Result<WebSettings> {
-        let mut out = WebSettings { subset_font: true, font_text: String::new() };
+        let name = project.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "game".into());
+        let mut out = WebSettings {
+            subset_font: true,
+            font_text: String::new(),
+            title: name,
+            icon: None,
+            display: "fullscreen".into(),
+            orientation: "any".into(),
+            background: "#101014".into(),
+            theme: "#101014".into(),
+            offline: true,
+        };
         let text = match std::fs::read_to_string(project.join("project.toml")) {
             Ok(t) => t,
             Err(_) => return Ok(out),
         };
         let pf: crate::ts::ProjectFile = toml::from_str(&text).context("parsing project.toml")?;
+        if !pf.name.is_empty() {
+            out.title = pf.name.clone();
+        }
+        if let Some(toml::Value::Table(window)) = &pf.window {
+            if let Some(toml::Value::String(s)) = window.get("title") {
+                out.title = s.clone();
+            }
+            let size = |k: &str| window.get(k).and_then(|v| v.as_integer());
+            if let (Some(w), Some(h)) = (size("width"), size("height")) {
+                out.orientation = if w > h { "landscape" } else if h > w { "portrait" } else { "any" }.into();
+            }
+        }
         if let Some(toml::Value::Table(web)) = pf.other.get("web") {
             if let Some(toml::Value::Boolean(b)) = web.get("subset_font") {
                 out.subset_font = *b;
@@ -194,10 +231,180 @@ impl WebSettings {
             if let Some(toml::Value::String(s)) = web.get("font_text") {
                 out.font_text = s.clone();
             }
+            let text = |k: &str| web.get(k).and_then(|v| v.as_str()).map(str::to_string);
+            if let Some(s) = text("title") {
+                out.title = s;
+            }
+            out.icon = text("icon");
+            for (key, slot) in [("display", &mut out.display), ("orientation", &mut out.orientation), ("background", &mut out.background), ("theme", &mut out.theme)] {
+                if let Some(s) = text(key) {
+                    *slot = s;
+                }
+            }
+            if let Some(toml::Value::Boolean(b)) = web.get("offline") {
+                out.offline = *b;
+            }
+        }
+        if !["fullscreen", "standalone", "minimal-ui", "browser"].contains(&out.display.as_str()) {
+            return Err(anyhow!("[web] display = \"{}\": fullscreen, standalone, minimal-ui or browser", out.display));
         }
         Ok(out)
     }
 }
+
+/// A PNG of RGBA rows, deflated (the manifest's icons when the project gives none).
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut raw = Vec::with_capacity((width as usize * 4 + 1) * height as usize);
+    for row in rgba.chunks(width as usize * 4) {
+        raw.push(0);
+        raw.extend_from_slice(row);
+    }
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    z.write_all(&raw).expect("deflating to memory");
+    let idat = z.finish().expect("deflating to memory");
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut chunk = |kind: &[u8], data: &[u8]| {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let mut crc = flate2::Crc::new();
+        crc.update(kind);
+        crc.update(data);
+        out.extend_from_slice(&crc.sum().to_be_bytes());
+    };
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(b"IHDR", &ihdr);
+    chunk(b"IDAT", &idat);
+    chunk(b"IEND", &[]);
+    out
+}
+
+/// A plain icon: a rounded square of the theme colour with a ring and a dot, edges smoothed.
+fn default_icon(size: u32, color: &str) -> Vec<u8> {
+    let hex = color.trim_start_matches('#');
+    let c = |i: usize| u8::from_str_radix(hex.get(i..i + 2).unwrap_or("40"), 16).unwrap_or(0x40) as f32;
+    let (r, g, b) = if hex.len() >= 6 { (c(0), c(2), c(4)) } else { (0x2b as f32, 0x6c as f32, 0xb0 as f32) };
+    // A dark theme makes a dark icon: lift it so the icon shows on a home screen.
+    let lift = if r + g + b < 150.0 { 1.0 } else { 0.0 };
+    let base = [r + (0x3a as f32 - r) * lift, g + (0x7b as f32 - g) * lift, b + (0xd5 as f32 - b) * lift];
+    let s = size as f32;
+    let mut px = vec![0u8; (size * size * 4) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            // Coverage of the rounded square (corner radius a fifth of the side).
+            let rad = s * 0.2;
+            let qx = (fx - s / 2.0).abs() - (s / 2.0 - rad);
+            let qy = (fy - s / 2.0).abs() - (s / 2.0 - rad);
+            let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - rad;
+            let square = (0.5 - outside).clamp(0.0, 1.0);
+            let d = ((fx - s / 2.0).powi(2) + (fy - s / 2.0).powi(2)).sqrt();
+            let ring = (0.5 - ((d - s * 0.27).abs() - s * 0.055)).clamp(0.0, 1.0);
+            let dot = (0.5 - (d - s * 0.09)).clamp(0.0, 1.0);
+            let white = ring.max(dot);
+            let i = ((y * size + x) * 4) as usize;
+            for k in 0..3 {
+                px[i + k] = (base[k] + (255.0 - base[k]) * white * 0.92).round().clamp(0.0, 255.0) as u8;
+            }
+            px[i + 3] = (square * 255.0).round() as u8;
+        }
+    }
+    encode_png(size, size, &px)
+}
+
+/// The width and height a PNG's header gives.
+fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((u32::from_be_bytes(bytes[16..20].try_into().ok()?), u32::from_be_bytes(bytes[20..24].try_into().ok()?)))
+}
+
+/// What makes a pack an installable app (docs/web.md, Installed and offline): the manifest, its
+/// icons and, unless [web] offline = false, a service worker that keeps every file of the pack in a
+/// cache named for their contents. Returns the files written and the lines for the page's head.
+fn write_app_files(dist: &Path, project: &Path, name: &str, web: &WebSettings, files: &[String], page: &str) -> Result<(Vec<String>, String)> {
+    use sha2::Digest;
+    let mut written = Vec::new();
+    let mut icons = Vec::new();
+    if let Some(icon) = &web.icon {
+        let bytes = std::fs::read(project.join(icon)).with_context(|| format!("[web] icon = \"{icon}\": reading it"))?;
+        let (w, h) = png_size(&bytes).ok_or_else(|| anyhow!("[web] icon = \"{icon}\" is not a PNG"))?;
+        std::fs::write(dist.join("icon.png"), &bytes)?;
+        icons.push(json!({ "src": "icon.png", "sizes": format!("{w}x{h}"), "type": "image/png", "purpose": "any" }));
+        written.push("icon.png".to_string());
+    } else {
+        for size in [192u32, 512] {
+            let file = format!("icon-{size}.png");
+            std::fs::write(dist.join(&file), default_icon(size, &web.theme))?;
+            icons.push(json!({ "src": file, "sizes": format!("{size}x{size}"), "type": "image/png", "purpose": "any" }));
+            written.push(file);
+        }
+    }
+    let manifest = json!({
+        "name": web.title,
+        "short_name": if web.title.chars().count() <= 12 { web.title.clone() } else { name.to_string() },
+        "start_url": "./",
+        "scope": "./",
+        "display": web.display,
+        "orientation": web.orientation,
+        "background_color": web.background,
+        "theme_color": web.theme,
+        "icons": icons,
+    });
+    std::fs::write(dist.join("manifest.webmanifest"), serde_json::to_string_pretty(&manifest)?)?;
+    written.push("manifest.webmanifest".to_string());
+    let touch_icon = if web.icon.is_some() { "icon.png" } else { "icon-192.png" };
+    let mut head = format!(
+        "<link rel=\"manifest\" href=\"manifest.webmanifest\">\n<meta name=\"theme-color\" content=\"{}\">\n<link rel=\"icon\" href=\"{touch_icon}\">\n<link rel=\"apple-touch-icon\" href=\"{touch_icon}\">\n<meta name=\"mobile-web-app-capable\" content=\"yes\">\n<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">",
+        web.theme
+    );
+    if web.offline {
+        // The cache is named for the pack's contents, so a new pack replaces it on the next visit.
+        let mut all: Vec<String> = files.iter().cloned().chain(written.iter().cloned()).collect();
+        all.sort();
+        let mut hash = sha2::Sha256::new();
+        hash.update(page.as_bytes());
+        for f in &all {
+            hash.update(f.as_bytes());
+            hash.update(std::fs::read(dist.join(f))?);
+        }
+        let version: String = hash.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect();
+        let mut cached = vec!["./".to_string(), "index.html".to_string()];
+        cached.extend(all);
+        let sw = SERVICE_WORKER.replace("__POCKET_VERSION__", &version).replace("__POCKET_FILES__", &serde_json::to_string(&cached)?);
+        std::fs::write(dist.join("sw.js"), sw)?;
+        written.push("sw.js".to_string());
+        head.push_str("\n<script>if (\"serviceWorker\" in navigator && location.protocol.startsWith(\"http\")) navigator.serviceWorker.register(\"sw.js\").catch((e) => console.warn(\"service worker:\", e));</script>");
+    }
+    Ok((written, head))
+}
+
+const SERVICE_WORKER: &str = r#"// The service worker of a packed Pocket game (docs/web.md, Installed and offline): every file of the
+// pack is kept in a cache named for their contents, so the game starts without a network once it has
+// been opened; a new pack has another name, and its worker replaces the old cache on the next visit.
+const CACHE = "pocket:" + self.registration.scope + ":__POCKET_VERSION__";
+const FILES = __POCKET_FILES__;
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+});
+self.addEventListener("activate", (e) => {
+  const mine = "pocket:" + self.registration.scope + ":";
+  e.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k.startsWith(mine) && k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+self.addEventListener("fetch", (e) => {
+  if (e.request.method !== "GET") return;
+  e.respondWith(caches.open(CACHE)
+    .then((c) => c.match(e.request, { ignoreSearch: true }))
+    .then((hit) => hit || fetch(e.request)));
+});
+"#;
 
 /// The characters a packed font must cover: printable ASCII, general and CJK punctuation, fullwidth
 /// forms, every character in the sources, scenes, settings and text files under `dirs` (the project,
@@ -346,10 +553,17 @@ const WEB_SHELL: &str = include_str!("web_shell.html");
 
 /// The page for a project: the shell with its placeholders filled (the name, the configuration,
 /// the extra runtime arguments and the editor flag that shows the page's download button).
-fn render_shell(name: &str, config: &str, editor: bool) -> String {
+fn render_shell(name: &str, config: &str, editor: bool, head: &str, background: &str) -> String {
     let title = serde_json::to_string(name).unwrap_or_else(|_| format!("\"{name}\""));
     let extra_args = if editor { r#", "--editor", "/game/editor.js", "--paused""# } else { "" };
-    WEB_SHELL.replace("__POCKET_NAME__", name).replace("__POCKET_TITLE__", &title).replace("__POCKET_CONFIG__", config).replace("__POCKET_EXTRA_ARGS__", extra_args).replace("__POCKET_EDITOR__", if editor { "true" } else { "false" })
+    WEB_SHELL
+        .replace("__POCKET_NAME__", name)
+        .replace("__POCKET_TITLE__", &title)
+        .replace("__POCKET_CONFIG__", config)
+        .replace("__POCKET_EXTRA_ARGS__", extra_args)
+        .replace("__POCKET_EDITOR__", if editor { "true" } else { "false" })
+        .replace("__POCKET_BACKGROUND__", background)
+        .replace("__POCKET_HEAD__", head)
 }
 
 pub fn pack_web(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make_zip: bool, editor: bool) -> Result<Report> {
@@ -397,8 +611,13 @@ pub fn pack_web(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, 
         return Ok(Report::failure("pack", format!("file_packager failed: {}", String::from_utf8_lossy(&out.stderr))));
     }
     total += std::fs::metadata(&data)?.len() + std::fs::metadata(&data_js)?.len();
-    // The page.
-    std::fs::write(dist.join("index.html"), render_shell(&name, config, editor))?;
+    // The page, and what makes it an installable app: a manifest, icons and the offline worker.
+    let packed: Vec<String> = vec!["pocket_runtime.js".into(), "pocket_runtime.wasm".into(), format!("{name}.data"), format!("{name}.data.js")];
+    let (app_files, head) = write_app_files(&dist, &project, &name, &web, &packed, &render_shell(&name, config, editor, "", &web.background))?;
+    std::fs::write(dist.join("index.html"), render_shell(&name, config, editor, &head, &web.background))?;
+    for f in &app_files {
+        total += std::fs::metadata(dist.join(f))?.len();
+    }
     std::fs::write(dist.join("README.txt"), format!("{name} for the web (packed by pocket, {config} configuration)\n\nServe this folder from any static web server and open index.html; file:// does not work because the\nbrowser must fetch the wasm module. For a quick look: python3 -m http.server --directory . 8080\n\nContents: index.html (the page), pocket_runtime.js + pocket_runtime.wasm (the engine), {name}.data + {name}.data.js\n(the project: scripts bundled, settings, scene, assets, UI font). The page exposes window.pocket for tests and agents\n(pocket.command(name, params) runs any runtime command, pocket.download(path) saves a file of the page's file system,\nsuch as the scene the editor saved or a save slot, to the visitor's downloads; docs/web.md in the repository has the details).\n"))?;
     let mut rep_data = json!({ "project": project, "dist": dist, "config": config, "bytes": total, "staged_bytes": staged.bytes, "font": staged.font, "editor": editor, "index": dist.join("index.html") });
     if make_zip {
@@ -426,13 +645,42 @@ mod tests {
     #[test]
     fn web_shell_fills_every_placeholder() {
         for editor in [false, true] {
-            let page = render_shell("my game", "wasm", editor);
+            let page = render_shell("my game", "wasm", editor, "<link rel=\"manifest\" href=\"manifest.webmanifest\">", "#223344");
             assert!(!page.contains("__POCKET_"), "a placeholder was left in the page");
+            assert!(page.contains("<link rel=\"manifest\"") && page.contains("background: #223344"));
             assert!(page.contains("<title>my game</title>"));
             assert!(page.contains("pocket_command_async"));
             assert_eq!(page.contains("\"--editor\""), editor);
             assert!(page.contains(if editor { "const editor = true;" } else { "const editor = false;" }));
         }
+    }
+
+    #[test]
+    fn app_files_make_a_manifest_icons_and_a_worker_named_for_the_contents() {
+        let dir = std::env::temp_dir().join(format!("pocket-app-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("game.data"), b"one").unwrap();
+        let web = WebSettings { subset_font: true, font_text: String::new(), title: "A Long Game Title".into(), icon: None, display: "fullscreen".into(), orientation: "landscape".into(), background: "#000000".into(), theme: "#102030".into(), offline: true };
+        let files = vec!["game.data".to_string()];
+        let (written, head) = write_app_files(&dir, &dir, "game", &web, &files, "page").unwrap();
+        assert_eq!(written, ["icon-192.png", "icon-512.png", "manifest.webmanifest", "sw.js"]);
+        assert_eq!(png_size(&std::fs::read(dir.join("icon-512.png")).unwrap()), Some((512, 512)));
+        let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.webmanifest")).unwrap()).unwrap();
+        assert_eq!(manifest["short_name"], "game");
+        assert_eq!(manifest["orientation"], "landscape");
+        assert_eq!(manifest["icons"].as_array().unwrap().len(), 2);
+        assert!(head.contains("serviceWorker") && head.contains("theme-color"));
+        let sw = std::fs::read_to_string(dir.join("sw.js")).unwrap();
+        assert!(sw.contains("\"game.data\"") && sw.contains("\"index.html\"") && !sw.contains("__POCKET_"));
+        // Other contents, another cache.
+        std::fs::write(dir.join("game.data"), b"two").unwrap();
+        write_app_files(&dir, &dir, "game", &web, &files, "page").unwrap();
+        assert_ne!(sw, std::fs::read_to_string(dir.join("sw.js")).unwrap());
+        // Offline off: no worker.
+        let (written, head) = write_app_files(&dir, &dir, "game", &WebSettings { offline: false, ..web }, &files, "page").unwrap();
+        assert!(!written.contains(&"sw.js".to_string()) && !head.contains("serviceWorker"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

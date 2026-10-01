@@ -7,7 +7,7 @@
 // same values and the same checks, and anything else (a name for a value, a missing component, a
 // cause) takes the command.
 import { numericLayouts } from "./generated/components";
-import type { ComponentEnums, ComponentName, Components, Vec3 } from "./generated/components";
+import type { Color, ComponentEnums, ComponentName, Components, Vec3 } from "./generated/components";
 
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
@@ -19,72 +19,117 @@ declare const __pocket: {
     __nums?: Float64Array;
     get_nums?(entity: EntityRef, component: string): number;
     set_nums?(entity: EntityRef, component: string, count: number): number;
+    component_index?(component: string): number;
+    get_nums_at?(entity: number, component: number): number;
+    set_nums_at?(entity: number, component: number, count: number): number;
+    patch_nums_at?(entity: number, component: number, mask: number): number;
 };
+
+// A component's index in the world, asked once per name: the numbers-only natives take it in place
+// of the name (an entity given by id; one given by name or path goes through get_nums).
+const componentIndex = new Map<string, number>();
+function indexOf(component: string): number {
+    let i = componentIndex.get(component);
+    if (i === undefined) {
+        i = __pocket.component_index !== undefined ? __pocket.component_index(component) : -1;
+        componentIndex.set(component, i);
+    }
+    return i;
+}
+function getNums(entity: EntityRef, component: string): number {
+    if (typeof entity === "number" && __pocket.get_nums_at !== undefined) {
+        const i = indexOf(component);
+        if (i >= 0) return __pocket.get_nums_at(entity, i);
+    }
+    return __pocket.get_nums!(entity, component);
+}
+function setNums(entity: EntityRef, component: string, count: number): number {
+    if (typeof entity === "number" && __pocket.set_nums_at !== undefined) {
+        const i = indexOf(component);
+        if (i >= 0) return __pocket.set_nums_at(entity, i, count);
+    }
+    return __pocket.set_nums!(entity, component, count);
+}
 
 type NumKind = "n" | "b" | "v2" | "v3" | "v4" | "q" | "c";
 const PARTS: { readonly [K in Exclude<NumKind, "n" | "b">]: readonly string[] } = { v2: ["x", "y"], v3: ["x", "y", "z"], v4: ["x", "y", "z", "w"], q: ["x", "y", "z", "w"], c: ["r", "g", "b", "a"] };
 
-function readNums(layout: ReadonlyArray<readonly [string, NumKind]>, nums: Float64Array): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    let i = 0;
-    for (const [name, kind] of layout) {
-        if (kind === "n") out[name] = nums[i++];
-        else if (kind === "b") out[name] = nums[i++] !== 0;
-        else {
-            const v: Record<string, number> = {};
-            for (const p of PARTS[kind]) v[p] = nums[i++];
-            out[name] = v;
-        }
-    }
-    return out;
+type Layout = ReadonlyArray<readonly [string, NumKind]>;
+type Reader = (nums: Float64Array) => Record<string, unknown>;
+type Patcher = (nums: Float64Array, patch: Record<string, unknown>, keys: (o: object) => number) => number;
+
+// Each component's reader and patcher are made once, as straight-line functions over its fields:
+// an object of one shape built at once, a patch checked field by field without loops or arrays,
+// which is what keeps a world.get and world.set a microsecond or so (sdk world.ts, numeric path).
+const readers = new Map<Layout, Reader>();
+const patchers = new Map<Layout, Patcher>();
+
+function countKeys(o: object): number {
+    let n = 0;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for (const _ in o) n++;
+    return n;
 }
 
-// A patch written over the numbers; false when it holds what only the command takes (a field the
-// component lacks, a value's name, an array, a number that is not finite).
-function patchNums(layout: ReadonlyArray<readonly [string, NumKind]>, nums: Float64Array, patch: unknown): boolean {
-    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) return false;
-    const p = patch as Record<string, unknown>;
-    let i = 0;
-    let used = 0;
-    for (const [name, kind] of layout) {
-        const v = p[name];
-        if (kind === "n" || kind === "b") {
-            if (v !== undefined) {
-                if (typeof v === "number" && Number.isFinite(v)) nums[i] = v;
-                else if (typeof v === "boolean") nums[i] = v ? 1 : 0;
-                else return false;
-                used++;
-            }
-            i++;
-            continue;
+function readNums(layout: Layout, nums: Float64Array): Record<string, unknown> {
+    let read = readers.get(layout);
+    if (read === undefined) {
+        let i = 0;
+        const fields: string[] = [];
+        for (const [name, kind] of layout) {
+            const key = JSON.stringify(name);
+            if (kind === "n") fields.push(`${key}: n[${i++}]`);
+            else if (kind === "b") fields.push(`${key}: n[${i++}] !== 0`);
+            else fields.push(`${key}: { ${PARTS[kind].map((p) => `${p}: n[${i++}]`).join(", ")} }`);
         }
-        const parts = PARTS[kind];
-        if (v !== undefined) {
-            if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-            const o = v as Record<string, unknown>;
-            let given = 0;
-            for (let k = 0; k < parts.length; k++) {
-                const x = o[parts[k]];
-                if (x === undefined) continue;
-                if (typeof x !== "number" || !Number.isFinite(x)) return false;
-                nums[i + k] = x;
-                given++;
-            }
-            if (given !== Object.keys(o).length) return false;
-            used++;
-        }
-        i += parts.length;
+        read = new Function("n", `return { ${fields.join(", ")} };`) as Reader;
+        readers.set(layout, read);
     }
-    return used === Object.keys(p).length;
+    return read(nums);
+}
+
+// A patch written into the numbers: the mask of those it gives (bit i for number i), or 0 when it
+// holds what only the command takes (a field the component lacks, a value's name, an array, a number
+// that is not finite) or the component has more than 31 numbers.
+function patchNums(layout: Layout, nums: Float64Array, patch: unknown): number {
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) return 0;
+    let write = patchers.get(layout);
+    if (write === undefined) {
+        let i = 0;
+        const lines = ["let used = 0, g = 0, m = 0, v, x;"];
+        for (const [name, kind] of layout) {
+            const key = JSON.stringify(name);
+            if (kind === "n" || kind === "b") {
+                lines.push(`v = p[${key}]; if (v !== undefined) { if (typeof v === "number" && Number.isFinite(v)) n[${i}] = v; else if (typeof v === "boolean") n[${i}] = v ? 1 : 0; else return 0; m |= ${1 << i}; used++; }`);
+                i++;
+                continue;
+            }
+            const parts = PARTS[kind];
+            let body = `v = p[${key}]; if (v !== undefined) { if (typeof v !== "object" || v === null || Array.isArray(v)) return 0; g = 0;`;
+            parts.forEach((part, k) => {
+                body += ` x = v.${part}; if (x !== undefined) { if (typeof x !== "number" || !Number.isFinite(x)) return 0; n[${i + k}] = x; m |= ${1 << (i + k)}; g++; }`;
+            });
+            body += " if (g !== keys(v)) return 0; used++; }";
+            lines.push(body);
+            i += parts.length;
+        }
+        lines.push("return used === keys(p) ? m : 0;");
+        write = i > 31 ? () => 0 : (new Function("n", "p", "keys", lines.join("\n")) as Patcher);
+        patchers.set(layout, write);
+    }
+    return write(nums, patch as Record<string, unknown>, countKeys);
 }
 
 /** Entity handle (a stable id) or a path such as "/Level/Player" or a bare name. */
 export type Entity = number;
 export type EntityRef = Entity | string;
 
-export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+type DeepPartialField<V> = V extends object ? DeepPartial<V> : V;
+export type DeepPartial<T> = { [K in keyof T]?: DeepPartialField<T[K]> };
+// A colour field also takes "#rrggbb" (or #rgb, #rrggbbaa), as a colour picker shows it.
+type FieldInput<T> = T extends Color ? Color | string : T;
 /** A component as a write gives it: a field with value names takes the name too (`Light.kind: "point"`); reads give numbers. */
-export type ComponentInput<K extends ComponentName> = { [F in keyof Components[K]]: F extends keyof ComponentEnums[K] ? Components[K][F] | ComponentEnums[K][F] : Components[K][F] };
+export type ComponentInput<K extends ComponentName> = { [F in keyof Components[K]]: F extends keyof ComponentEnums[K] ? Components[K][F] | ComponentEnums[K][F] : FieldInput<Components[K][F]> };
 export type ComponentPatch = { [K in ComponentName]?: DeepPartial<ComponentInput<K>> };
 
 export function command<T = unknown>(name: string, params?: unknown): T {
@@ -157,7 +202,7 @@ export const world = {
     get<K extends ComponentName>(entity: EntityRef, component: K): Components[K] | undefined {
         const layout = numericLayouts[component];
         if (layout !== undefined && __pocket.get_nums !== undefined) {
-            const n = __pocket.get_nums(entity, component);
+            const n = getNums(entity, component);
             if (n >= 0) return readNums(layout, __pocket.__nums!) as unknown as Components[K];
             if (n === -1) return undefined;   // the entity has no such component
         }
@@ -167,10 +212,17 @@ export const world = {
     set<K extends ComponentName>(entity: EntityRef, component: K, value: DeepPartial<ComponentInput<K>>, cause?: number): void {
         const layout = numericLayouts[component];
         if (cause === undefined && layout !== undefined && __pocket.get_nums !== undefined) {
-            // The component as it is, the patch over it, written back: when the entity has it and
-            // the patch is all numbers.
-            const n = __pocket.get_nums(entity, component);
-            if (n >= 0 && patchNums(layout, __pocket.__nums!, value) && __pocket.set_nums!(entity, component, n) >= 0) return;
+            if (typeof entity === "number" && __pocket.patch_nums_at !== undefined) {
+                // The numbers the patch gives, laid over the component in the engine: one call.
+                const i = indexOf(component);
+                const mask = i >= 0 ? patchNums(layout, __pocket.__nums!, value) : 0;
+                if (mask !== 0 && __pocket.patch_nums_at(entity, i, mask) >= 0) return;
+            } else {
+                // The component as it is, the patch over it, written back: when the entity has it and
+                // the patch is all numbers.
+                const n = getNums(entity, component);
+                if (n >= 0 && patchNums(layout, __pocket.__nums!, value) !== 0 && setNums(entity, component, n) >= 0) return;
+            }
         }
         command("world.set", { entity, component, value, cause, quiet: true });   // the answer's value is for agents; a script reads with get
     },

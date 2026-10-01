@@ -102,6 +102,13 @@ struct TonemapSettings {
 };
 
 // Grading: the finished frame's look, applied in the final pass after tone mapping.
+// The flat light every surface gets from all around when there is no Sky (render.ambient): the
+// darkness of a 2D dungeon between its torches, or a brighter fill. The color as a picker shows it.
+struct AmbientSettings {
+    rhi::Color color{0.18f, 0.19f, 0.22f, 1.0f};
+    float intensity = 1.0f;
+};
+
 struct GradeSettings {
     bool enabled = false;
     float exposure = 1.0f;       // multiplies the scene before tone mapping (1 as rendered)
@@ -275,6 +282,8 @@ class Renderer {
     // Grading over the finished frame, after bloom (off by default); takes effect at the next frame.
     void set_grade(GradeSettings s);
     [[nodiscard]] GradeSettings grade() const;
+    void set_ambient(AmbientSettings s);
+    [[nodiscard]] AmbientSettings ambient() const;
     // Exposure and tone mapping of the HDR scene into the frame; takes effect at the next frame.
     // Ambient occlusion (off by default); takes effect at the next frame.
     void set_ao(AoSettings s);

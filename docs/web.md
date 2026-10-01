@@ -22,6 +22,10 @@ dist/web/<name>/
   pocket_runtime.wasm   the engine
   <name>.data           the project as a virtual file system mounted at /game: project.js (bundled
   <name>.data.js        scripts), project.json (settings), project/ (scene, assets), fonts/
+  manifest.webmanifest  the installed game's name, icons, colours, orientation and display
+  icon-192.png          icons drawn by the tool, or icon.png, the project's own ([web] icon)
+  icon-512.png
+  sw.js                 the service worker that keeps the pack for play without a network
   README.txt
 ```
 
@@ -38,6 +42,25 @@ subset_font = false          # ship the whole font instead
 ```
 
 Subsetting runs `python3 -m fontTools.subset` (`python3 -m pip install fonttools`; `pocket doctor` reports it under `web`). Shaping tables for the kept glyphs stay, so ligatures and kerning survive.
+
+### Installed and offline
+
+A pack is an installable web app. The manifest names the game (`[web] title`, else `[window] title`, else the project's name), opens it `fullscreen` (`[web] display`: also `standalone`, `minimal-ui` or `browser`), turns a phone the way the window is wide or tall (`[web] orientation` to say otherwise), and gives the splash screen and the browser's bar their colours (`background`, `theme`). Its icons are the project's PNG (`[web] icon`, any size; its header gives the size the manifest declares) or two the tool draws in the theme colour, a ring and a dot on a rounded square. A phone's browser offers "Add to Home Screen" or "Install", and the game opens from there without the browser's address bar.
+
+The page registers `sw.js` (over http and https; a page opened from a file has no worker): on its first visit the worker keeps every file of the pack in a cache named for the pack's contents, and from then on answers from that cache, so the game starts with no network at all. A new pack is a new cache name, so its worker takes the new files on the next visit and deletes the old cache of that folder (other games on the same server keep theirs). `[web] offline = false` packs without the worker.
+
+```toml
+[web]
+title = "Crate Topple"       # the installed game's name
+icon = "assets/icon.png"     # a PNG, 512 by 512 is what stores ask for
+display = "fullscreen"       # fullscreen, standalone, minimal-ui, browser
+orientation = "landscape"    # landscape, portrait, any (from [window] by default)
+background = "#101014"       # the splash screen and the page
+theme = "#2a6cb0"            # the browser's bar; the drawn icon's colour
+offline = true               # the service worker
+```
+
+`tools/scripts/web_offline.py <project>` checks it in a headless Google Chrome with a profile of its own: it opens the served pack, waits for the worker to keep it, reads the manifest, takes the network away, reloads, and asks the game for its state and a capture (`offline-<project>.json` and `.png` under `tests/evidence/web/`).
 
 ## The page's handle: `window.pocket`
 
@@ -77,7 +100,7 @@ Shader note: Tint (the browser's WGSL compiler) enforces uniform control flow ar
 
 ## Evidence
 
-`tests/evidence/web/` holds `hello.png`, `sprites.png`, `ui.png` and `editor.png`, PNGs the runtime wrote with its own `capture` command inside Chromium 152 and posted back to `web_evidence.py`, `variants.json` with the four runtime builds measured (sizes, 600 ticks of the physics sample, a capture, and the editor page's download button exercised: the scene the editor saved read back and handed to `pocket.download`), and `web.json` with the measurements: canvas and capture sizes, the render stats, a keyboard-driven move of the sprites player (input.state and the Transform before and after), the viewport resize, the UI sample's Chinese, Japanese, Korean and accented text drawn from the 44 KB subset font, text typed into its name field (accented and CJK characters through the hidden field), a save slot that survived a reload, and the physics project open in the editor. `arena-join.png` and `arena-join.json` (2026-09-29) are the arena sample in the `wasm-small` build joined over a WebSocket to a native host, a lockstep game with both players steering and no desync. `lights-web.png` and `lights-web.json` (2026-09-29) are the hello sample in the `wasm-small` build with the sun dimmed, a spot light that casts shadows and volumetric fog added through `pocket.command` in the page: the clustered lights, the shadow atlas and the volumetric pass running on WebGPU in Chromium (the beam in the air, the ball's shadow in the spot), with the render stats that say so.
+`tests/evidence/web/` holds `hello.png`, `sprites.png`, `ui.png` and `editor.png`, PNGs the runtime wrote with its own `capture` command inside Chromium 152 and posted back to `web_evidence.py`, `variants.json` with the four runtime builds measured (sizes, 600 ticks of the physics sample, a capture, and the editor page's download button exercised: the scene the editor saved read back and handed to `pocket.download`), and `web.json` with the measurements: canvas and capture sizes, the render stats, a keyboard-driven move of the sprites player (input.state and the Transform before and after), the viewport resize, the UI sample's Chinese, Japanese, Korean and accented text drawn from the 44 KB subset font, text typed into its name field (accented and CJK characters through the hidden field), a save slot that survived a reload, and the physics project open in the editor. `arena-join.png` and `arena-join.json` (2026-09-29) are the arena sample in the `wasm-small` build joined over a WebSocket to a native host, a lockstep game with both players steering and no desync. `offline-walker.png` and `offline-walker.json` (2026-10-01) are the walker sample in Chrome 152 headless after the network was taken away and the page reloaded: the service worker had kept the nine files of the pack, the page was controlled by it, every file came from its cache, and the game started, answered `state` and drew its yard and its hero through WebGPU. `lights-web.png` and `lights-web.json` (2026-09-29) are the hello sample in the `wasm-small` build with the sun dimmed, a spot light that casts shadows and volumetric fog added through `pocket.command` in the page: the clustered lights, the shadow atlas and the volumetric pass running on WebGPU in Chromium (the beam in the air, the ball's shadow in the spot), with the render stats that say so.
 
 ## Two runtimes: Asyncify and JSPI
 
