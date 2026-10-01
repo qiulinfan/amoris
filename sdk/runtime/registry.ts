@@ -4,6 +4,8 @@
 // drops one context at a time. SDK modules import this instead of pocket.ts to avoid cycles.
 import type { Tick, Frame, InputEvent } from "./pocket";
 
+declare const __pocket: { clock(): number };
+
 export interface Handlers {
     start: Array<() => void>;
     stop: Array<() => void>;
@@ -27,13 +29,28 @@ export interface Registry {
     actions: Record<string, unknown>;
     /** Every player's action states in a lockstep game (docs/design/networking.md), player 0 first. */
     players?: Array<Record<string, unknown>>;
+    /** What each handler has cost since script.profile last started over, by handler. */
+    costs: Map<Function, HandlerCost>;
+}
+
+/** A handler's cost (script.profile): where it was registered, how often it ran and for how long. */
+export interface HandlerCost {
+    kind: string;
+    context: string;
+    name: string;
+    /** The registering call's place in the bundle (`<bundle>:<line>:<column>`), made the source's by the runtime. */
+    at: string;
+    calls: number;
+    ms: number;
+    max: number;
 }
 
 export const registry: Registry = (() => {
     const g = globalThis as unknown as { __pocket_registry?: Registry };
-    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set(), keysPressed: new Set(), actions: {} };
+    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set(), keysPressed: new Set(), actions: {}, costs: new Map() };
     if (g.__pocket_registry.actions === undefined) g.__pocket_registry.actions = {};
     if (g.__pocket_registry.keysPressed === undefined) g.__pocket_registry.keysPressed = new Set();
+    if (g.__pocket_registry.costs === undefined) g.__pocket_registry.costs = new Map();
     return g.__pocket_registry;
 })();
 
@@ -53,5 +70,45 @@ export const contextName: string = (() => {
     return typeof g.__pocket_bundle === "string" ? g.__pocket_bundle : "main";
 })();
 export const own = contextHandlers(contextName);
+
+type Kind = "start" | "stop" | "tick" | "frame" | "input" | "contacts";
+
+// The place in the bundle of the call `depth` frames up from here, this function's caller being 1
+// ("name@url:line:column" in JavaScriptCore, "at name (url:line:column)" in V8): the url and the
+// numbers. A call in tail position leaves no frame of its own in JavaScriptCore (strict code has
+// proper tail calls), so the place can be its caller's.
+function site(depth: number): string {
+    const frames = (new Error().stack ?? "").split("\n");
+    const frame = frames[depth] ?? "";
+    const m = /([^\s@()]+:\d+(?::\d+)?)\)?\s*$/.exec(frame);
+    return m ? m[1] : "";
+}
+
+/**
+ * Add a handler to this bundle's list of `kind`, noting where it was registered: the call `depth`
+ * frames above (2: whoever called register; 3: whoever called the function that called it).
+ */
+export function register(kind: Kind, f: Function, depth = 2): void {
+    (own[kind] as Function[]).push(f);
+    registry.costs.set(f, { kind, context: contextName, name: f.name, at: site(depth), calls: 0, ms: 0, max: 0 });
+}
+
+/** Run a handler, adding the time it took to its cost. */
+export function timed<A>(f: (a: A) => unknown, a: A): void {
+    const t0 = __pocket.clock();
+    try {
+        f(a);
+    } finally {
+        const dt = __pocket.clock() - t0;
+        let c = registry.costs.get(f);
+        if (c === undefined) {
+            c = { kind: "", context: "", name: f.name, at: "", calls: 0, ms: 0, max: 0 };
+            registry.costs.set(f, c);
+        }
+        c.calls += 1;
+        c.ms += dt;
+        if (dt > c.max) c.max = dt;
+    }
+}
 export const keysDown = registry.keysDown;
 export const keysPressed = registry.keysPressed;

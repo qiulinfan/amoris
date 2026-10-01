@@ -18,6 +18,9 @@ namespace pocket::script {
 
 struct Config {
     bool inspectable = false;  // allow Safari Web Inspector to attach (JavaScriptCore)
+    // What console.* writes, made over before it is logged (the runtime names the bundle's lines
+    // by the files they came from). Where the host has its own console (the browser), unused.
+    std::function<std::string(std::string)> console_text;
 };
 
 // A native function callable from script as __pocket.<name>(...args). `args` is a JSON array.

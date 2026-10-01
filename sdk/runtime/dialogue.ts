@@ -5,7 +5,7 @@
 // a scene, and the game and an agent follow it through events.
 import { events } from "./events";
 import { input } from "./input";
-import { own, keysPressed } from "./registry";
+import { own, keysPressed, register, registry } from "./registry";
 import { Button, Label, h, mount, signal } from "./ui";
 import { command } from "./world";
 
@@ -387,10 +387,11 @@ export const dialogue = {
                 options.onEnd?.(c);
             }
         };
-        own.tick.push(tick);
+        register("tick", tick, 3);
         const close = () => {
             const i = own.tick.indexOf(tick);
             if (i >= 0) own.tick.splice(i, 1);
+            registry.costs.delete(tick);
             handle.unmount();
         };
         return { close };

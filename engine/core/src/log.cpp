@@ -139,3 +139,11 @@ Sink jsonl_file_sink(const std::string& path) {
 }
 
 }  // namespace pocket::log
+
+// Leak checking off where AddressSanitizer would do it (Linux): the graphics drivers keep their
+// allocations to the end, and macOS's sanitizer never checked leaks, so both report the same.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+extern "C" __attribute__((visibility("default"), used)) const char* __asan_default_options() { return "detect_leaks=0"; }
+#endif
+#endif

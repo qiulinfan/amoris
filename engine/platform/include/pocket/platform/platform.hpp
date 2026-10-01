@@ -77,7 +77,16 @@ class Platform {
     [[nodiscard]] const InputState& input() const;
 
     [[nodiscard]] bool headless() const;
-    [[nodiscard]] void* metal_layer() const;  // CAMetalLayer*, null when headless
+    // What a GPU surface is made from: the window's CAMetalLayer on macOS, its X11 display and
+    // window or its Wayland display and surface on Linux; all null when headless.
+    struct NativeWindow {
+        void* metal_layer = nullptr;
+        void* x11_display = nullptr;
+        std::uint64_t x11_window = 0;
+        void* wayland_display = nullptr;
+        void* wayland_surface = nullptr;
+    };
+    [[nodiscard]] NativeWindow native_window() const;
     [[nodiscard]] std::string canvas_selector() const;  // web: the window's <canvas>; empty elsewhere
     [[nodiscard]] int pixel_width() const;
     [[nodiscard]] int pixel_height() const;

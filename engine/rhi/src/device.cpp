@@ -2,6 +2,10 @@
 
 #include <pocket/core/log.hpp>
 
+#include <cstdio>
+#include <cstdlib>
+#include <format>
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #else
@@ -42,6 +46,11 @@ const char* backend_name(WGPUBackendType t) {
         case WGPUBackendType_WebGPU: return "webgpu";
         default: return "unknown";
     }
+}
+
+std::string& last_held() {
+    static std::string held;
+    return held;
 }
 
 }  // namespace
@@ -229,6 +238,30 @@ struct Device::Impl {
         if (blit_pipeline) wgpuRenderPipelineRelease(blit_pipeline);
         if (blit_bgl) wgpuBindGroupLayoutRelease(blit_bgl);
         if (blit_sampler) wgpuSamplerRelease(blit_sampler);
+#ifndef __EMSCRIPTEN__
+        // What is still held as the device goes (everything else has let go by now): an object a
+        // subsystem forgot to release, by its kind. Printed with POCKET_GPU_REPORT=1.
+        last_held().clear();
+        if (instance) {
+            WGPUGlobalReport r{};
+            wgpuGenerateReport(instance, &r);
+            const WGPUHubReport& h = r.hub;
+            const std::pair<const char*, const WGPURegistryReport*> kinds[] = {
+                {"pipeline layouts", &h.pipelineLayouts}, {"shader modules", &h.shaderModules}, {"bind group layouts", &h.bindGroupLayouts},
+                {"bind groups", &h.bindGroups}, {"command buffers", &h.commandBuffers}, {"render bundles", &h.renderBundles},
+                {"render pipelines", &h.renderPipelines}, {"compute pipelines", &h.computePipelines}, {"pipeline caches", &h.pipelineCaches},
+                {"query sets", &h.querySets}, {"buffers", &h.buffers}, {"textures", &h.textures}, {"texture views", &h.textureViews}, {"samplers", &h.samplers}};
+            std::string held;
+            for (const auto& [name, reg] : kinds) {
+                if (reg->numKeptFromUser > 0) held += std::format("{}{} {}", held.empty() ? "" : ", ", reg->numKeptFromUser, name);
+            }
+            last_held() = held;
+            if (std::getenv("POCKET_GPU_REPORT")) {
+                const std::string line = std::format("rhi: still held as the device goes: {}\n", held.empty() ? std::string("nothing") : held);
+                std::fputs(line.c_str(), stderr);   // whatever the log level: it was asked for
+            }
+        }
+#endif
         if (surface) { wgpuSurfaceUnconfigure(surface); wgpuSurfaceRelease(surface); }
         if (queue) wgpuQueueRelease(queue);
         if (device) wgpuDeviceRelease(device);
@@ -256,6 +289,8 @@ void Device::poll(bool wait) { device_progress(impl_->instance, impl_->device, w
 
 Device::Device() : impl_(std::make_unique<Impl>()) {}
 Device::~Device() = default;
+
+std::string Device::held_when_last_destroyed() { return last_held(); }
 
 Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     std::unique_ptr<Device> d(new Device());
@@ -285,6 +320,26 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
         sd.label = str("pocket.surface");
         im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
         if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from Metal layer");
+    } else if (config.wayland_surface) {
+        WGPUSurfaceSourceWaylandSurface src{};
+        src.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
+        src.display = config.wayland_display;
+        src.surface = config.wayland_surface;
+        WGPUSurfaceDescriptor sd{};
+        sd.nextInChain = &src.chain;
+        sd.label = str("pocket.surface");
+        im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
+        if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from the Wayland surface");
+    } else if (config.x11_window) {
+        WGPUSurfaceSourceXlibWindow src{};
+        src.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
+        src.display = config.x11_display;
+        src.window = config.x11_window;
+        WGPUSurfaceDescriptor sd{};
+        sd.nextInChain = &src.chain;
+        sd.label = str("pocket.surface");
+        im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
+        if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from the X11 window");
     }
 #endif
 

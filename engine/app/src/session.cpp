@@ -205,8 +205,82 @@ Session::Session(const Options& options) : options_(options) {}
 Session::~Session() = default;
 
 void Session::record_error(const Error& e) {
-    log::error("runtime", "{}", e.to_string());
-    errors_.push_back(error_json(e));
+    Error mapped = e;
+    mapped.message = source_lines(e.message);
+    mapped.detail = source_lines(e.detail);
+    log::error("runtime", "{}", mapped.to_string());
+    errors_.push_back(error_json(mapped));
+}
+
+void Session::read_bundle_lines(const std::filesystem::path& bundle) {
+    const std::string url = bundle.string();
+    std::erase_if(bundle_lines_, [&](const BundleLines& b) { return b.url == url; });
+    auto text = fs::read_text(std::filesystem::path(url + ".lines.json"));
+    if (!text) return;   // a bundle made by hand or by an older tool: its own lines are shown
+    const Json j = Json::parse(*text, nullptr, false);
+    if (!j.is_object() || !j.contains("modules") || !j["modules"].is_array()) return;
+    std::error_code ec;
+    const auto project = std::filesystem::weakly_canonical(options_.project_dir, ec);
+    BundleLines b;
+    b.url = url;
+    for (const Json& m : j["modules"]) {
+        if (!m.is_object() || !m.contains("lines") || !m["lines"].is_array()) continue;
+        BundleLines::Module mod;
+        const std::filesystem::path source = m.value("source", std::string());
+        const auto rel = source.lexically_relative(project);
+        mod.source = !project.empty() && !rel.empty() && *rel.begin() != ".." ? rel.generic_string() : source.generic_string();
+        mod.first = m.value("first", std::size_t{0});
+        mod.lines = m["lines"].get<std::vector<std::uint32_t>>();
+        b.modules.push_back(std::move(mod));
+    }
+    bundle_lines_.push_back(std::move(b));
+}
+
+std::string Session::source_lines(std::string_view text) const {
+    std::string out;
+    std::size_t from = 0;
+    while (from < text.size()) {
+        // The earliest place a bundle is named, followed by :<line>.
+        std::size_t best = std::string_view::npos;
+        const BundleLines* in = nullptr;
+        for (const BundleLines& b : bundle_lines_) {
+            const std::size_t at = text.find(b.url, from);
+            if (at != std::string_view::npos && (best == std::string_view::npos || at < best)) {
+                best = at;
+                in = &b;
+            }
+        }
+        if (!in) break;
+        std::size_t i = best + in->url.size();
+        auto digits = [&](std::size_t& k) {
+            std::size_t n = 0;
+            const std::size_t start = k;
+            while (k < text.size() && text[k] >= '0' && text[k] <= '9') n = n * 10 + static_cast<std::size_t>(text[k++] - '0');
+            return k > start ? n : std::string_view::npos;
+        };
+        const BundleLines::Module* mod = nullptr;
+        std::size_t line = 0, end = i;
+        if (i < text.size() && text[i] == ':') {
+            std::size_t k = i + 1;
+            line = digits(k);
+            if (line != std::string_view::npos) {
+                end = k;
+                if (k < text.size() && text[k] == ':') {
+                    std::size_t c = k + 1;
+                    if (digits(c) != std::string_view::npos) end = c;
+                }
+                for (const auto& m : in->modules) {
+                    if (line >= m.first && line < m.first + m.lines.size()) mod = &m;
+                }
+            }
+        }
+        out.append(text.substr(from, best - from));
+        if (mod) out += std::format("{}:{}", mod->source, mod->lines[line - mod->first]);
+        else out.append(text.substr(best, end - best));   // the bundle's own lines (its prelude)
+        from = std::max(end, best + in->url.size());
+    }
+    out.append(text.substr(std::min(from, text.size())));
+    return out;
 }
 
 bool Session::finished() const {
@@ -502,7 +576,12 @@ Status Session::start() {
     platform_ = std::move(platform);
 
     rhi::Config rc;
-    rc.metal_layer = platform_->metal_layer();
+    const platform::Platform::NativeWindow native = platform_->native_window();
+    rc.metal_layer = native.metal_layer;
+    rc.x11_display = native.x11_display;
+    rc.x11_window = native.x11_window;
+    rc.wayland_display = native.wayland_display;
+    rc.wayland_surface = native.wayland_surface;
     rc.canvas_selector = platform_->canvas_selector();
     rc.width = static_cast<std::uint32_t>(platform_->pixel_width());
     rc.height = static_cast<std::uint32_t>(platform_->pixel_height());
@@ -511,6 +590,7 @@ Status Session::start() {
 
     script::Config sc;
     sc.inspectable = options_.inspectable;
+    sc.console_text = [this](std::string text) { return bundle_lines_.empty() ? text : source_lines(text); };
     POCKET_TRY(host, script::ScriptHost::create(sc));
     host_ = std::move(host);
 
@@ -750,9 +830,9 @@ void Session::seed_math_random() {
 }
 
 void Session::bind_natives() {
-    host_->bind("log", [](const Json& args) -> Result<Json> {
+    host_->bind("log", [this](const Json& args) -> Result<Json> {
         std::string level = args.size() > 0 && args[0].is_string() ? args[0].get<std::string>() : "info";
-        std::string msg = args.size() > 1 && args[1].is_string() ? args[1].get<std::string>() : (args.size() > 1 ? args[1].dump() : "");
+        std::string msg = source_lines(args.size() > 1 && args[1].is_string() ? args[1].get<std::string>() : (args.size() > 1 ? args[1].dump() : ""));
         Json fields = nullptr;
         if (args.size() > 2 && args[2].is_string()) fields = Json::parse(args[2].get<std::string>(), nullptr, false);
         else if (args.size() > 2) fields = args[2];
@@ -767,6 +847,7 @@ void Session::bind_natives() {
     host_->bind("random", [this](const Json&) -> Result<Json> { return rng_.next_double(); });
     // Wall-clock milliseconds since the session started, for measuring script cost (never for gameplay).
     host_->bind("now", [this](const Json&) -> Result<Json> { return total_.ms(); });
+    host_->bind_numbers("clock", [this](const double*, std::size_t) -> double { return total_.ms(); });   // the same without JSON
     host_->bind("info", [this](const Json&) -> Result<Json> {
         Json j;
         j["tickRate"] = options_.tick_rate;
@@ -802,16 +883,19 @@ void Session::bind_natives() {
         return world_->component_index(args[0].get_ref<const std::string&>());
     });
     host_->bind_numbers("get_nums_at", [this](const double* a, std::size_t n) -> double {
+        ++script_numbers_[0];
         if (n < 2 || !(a[0] >= 0) || !(a[1] >= 0)) return -2;
         return static_cast<double>(world_->get_numbers(static_cast<world::EntityId>(a[0]), static_cast<int>(a[1]), nums_.data()));
     });
     host_->bind_numbers("set_nums_at", [this](const double* a, std::size_t n) -> double {
+        ++script_numbers_[1];
         if (n < 3 || !(a[0] >= 0) || !(a[1] >= 0) || !(a[2] >= 0)) return -2;
         const auto count = static_cast<std::size_t>(std::min(a[2], static_cast<double>(nums_.size())));
         return static_cast<double>(world_->set_numbers(static_cast<world::EntityId>(a[0]), static_cast<int>(a[1]), nums_.data(), count));
     });
     // A patch: the numbers whose bits are set in the mask, laid over the component as it is.
     host_->bind_numbers("patch_nums_at", [this](const double* a, std::size_t n) -> double {
+        ++script_numbers_[1];
         if (n < 3 || !(a[0] >= 0) || !(a[1] >= 0) || !(a[2] >= 1) || a[2] > 2147483647.0) return -2;
         const auto id = static_cast<world::EntityId>(a[0]);
         const int component = static_cast<int>(a[1]);
@@ -826,8 +910,13 @@ void Session::bind_natives() {
         if (args.empty() || !args[0].is_string()) return fail("bad_args", "command(name, params?)");
         static const Json kNone = Json::object();
         const Json& given = args.size() > 1 ? args[1] : kNone;
-        if (given.is_string()) return command(args[0].get_ref<const std::string&>(), Json::parse(given.get<std::string>(), nullptr, false), "script");
-        return command(args[0].get_ref<const std::string&>(), given, "script");
+        const std::string& method = args[0].get_ref<const std::string&>();
+        Stopwatch took;
+        auto r = given.is_string() ? command(method, Json::parse(given.get<std::string>(), nullptr, false), "script") : command(method, given, "script");
+        CallCost& c = script_calls_[method];   // script.profile
+        c.calls += 1;
+        c.ms += took.ms();
+        return r;
     });
 }
 
@@ -852,6 +941,7 @@ bool Session::context_active(const std::string& name) {
 
 Status Session::load_bundle(const std::filesystem::path& path, const std::string& name) {
     POCKET_TRY(src, fs::read_text(path));
+    read_bundle_lines(path);
     // The SDK reads __pocket_bundle while the bundle evaluates and registers its handlers under
     // that context, so several bundles (editor + project) share one script host.
     POCKET_TRY_VOID(host_->evaluate(std::format("globalThis.__pocket_bundle = {};", Json(name).dump()), "<pocket:bundle>"));
@@ -899,11 +989,13 @@ void Session::run_tick() {
         inject_events(std::move(due));
     }
     in_tick_ = true;
-    if (assets_) assets_->set_tile_time(static_cast<std::uint64_t>(clock_.sim_seconds() * 1000.0));   // the animated tiles' clock
+    if (assets_) assets_->set_tile_time(static_cast<std::uint64_t>(static_cast<double>(tick - run_start_) * clock_.tick_seconds * 1000.0));   // the animated tiles' clock
+    // The scripts' clock counts from the run's start (a restart begins at tick 0, as a fresh run
+    // does); the session's tick, which events, the journal and the recorder go by, carries on.
     Json t;
-    t["tick"] = tick;
+    t["tick"] = tick - run_start_;
     t["dt"] = clock_.tick_seconds;
-    t["time"] = clock_.sim_seconds();
+    t["time"] = static_cast<double>(tick - run_start_) * clock_.tick_seconds;
     if (input_map_.size() > 0) t["actions"] = input_map_.snapshot();
     t["locale"] = locale_;
     t["locale_rev"] = locale_rev_;
@@ -2222,8 +2314,8 @@ void Session::ui_size(float& width, float& height, float& scale) const {
 Json Session::frame_info() const {
     Json j;
     j["frame"] = frames_;
-    j["tick"] = clock_.tick;
-    j["time"] = clock_.sim_seconds();
+    j["tick"] = clock_.tick - run_start_;
+    j["time"] = static_cast<double>(clock_.tick - run_start_) * clock_.tick_seconds;
     j["dt"] = clock_.tick_seconds;
     j["paused"] = paused_;
     j["time_scale"] = time_scale_;
@@ -5394,12 +5486,61 @@ Result<Json> Session::script_command(std::string_view op, const Json& p) {
         j["ok"] = errors_.empty();
         return j;
     }
+    if (op == "profile") {
+        // Where the scripts' time goes since the profile last started over: each handler (with the
+        // file and line it was registered at) and each command the scripts called.
+        const bool reset = opt<bool>(p, "reset", false);
+        const std::int64_t ticks = clock_.tick - profile_from_tick_;
+        const std::uint64_t frames = frames_ - profile_from_frame_;
+        Json handlers = Json::array();
+        double total = 0;
+        if (has_dispatch_) {
+            auto r = host_->call("__pocket_dispatch", Json::array({"profile", Json{{"reset", reset}}}));
+            if (r && r->is_array()) handlers = std::move(*r);
+        }
+        for (const Json& h : handlers) total += h.value("ms", 0.0);
+        auto round3 = [](double v) { return std::round(v * 1000.0) / 1000.0; };
+        for (Json& h : handlers) {
+            const double ms = h.value("ms", 0.0);
+            const auto calls = h.value("calls", std::uint64_t{1});
+            h["at"] = source_lines(h.value("at", std::string()));
+            h["ms"] = round3(ms);
+            h["max_ms"] = round3(h.value("max", 0.0));
+            h.erase("max");
+            h["ms_per_call"] = round3(ms / static_cast<double>(std::max<std::uint64_t>(calls, 1)));
+            h["share"] = total > 0 ? std::round(ms / total * 100.0) / 100.0 : 0.0;
+        }
+        std::vector<std::pair<std::string, CallCost>> calls(script_calls_.begin(), script_calls_.end());
+        std::sort(calls.begin(), calls.end(), [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
+        Json commands = Json::array();
+        const double per = static_cast<double>(std::max<std::int64_t>(ticks, 1));
+        for (const auto& [method, c] : calls) {
+            commands.push_back(Json{{"method", method}, {"calls", c.calls}, {"ms", round3(c.ms)}, {"calls_per_tick", std::round(static_cast<double>(c.calls) / per * 10.0) / 10.0}});
+        }
+        Json j;
+        j["ticks"] = ticks;
+        j["frames"] = frames;
+        j["script_ms"] = round3(total);
+        j["script_ms_per_tick"] = round3(total / per);
+        j["handlers"] = std::move(handlers);
+        j["commands"] = std::move(commands);
+        j["component_reads"] = script_numbers_[0];
+        j["component_writes"] = script_numbers_[1];
+        if (reset) {
+            script_calls_.clear();
+            script_numbers_[0] = script_numbers_[1] = 0;
+            profile_from_tick_ = clock_.tick;
+            profile_from_frame_ = frames_;
+        }
+        return j;
+    }
     if (op == "eval") {
         std::string source = opt<std::string>(p, "source", "");
         if (source.empty()) return fail("bad_args", "eval needs source");
         // Evaluated by a helper installed before the bundles so results come back as JSON.
         POCKET_TRY(v, host_->call("__pocket_eval", Json::array({source})));
         host_->drain_microtasks();
+        if (v.is_object() && v.contains("error") && v["error"].is_string()) v["error"] = source_lines(v["error"].get<std::string>());
         return v;
     }
     return fail("unknown_command", "unknown script command '{}'", op);
@@ -5548,6 +5689,10 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
             // silence, the last run's sounds stopped (the scene's own start again).
             rng_.reseed(options_.seed);
             seed_math_random();
+            // And on a clock of its own from tick 0: what the scripts see as the tick and the time,
+            // and the wind, waves and cloth.
+            run_start_ = clock_.tick;
+            world_->set_run_start(run_start_);
             if (audio_) audio_->stop_all();
             // Nothing held over either: an action an agent held for the last run is let go.
             for (auto& [key, until] : held_keys_) until = clock_.tick;
@@ -7114,12 +7259,14 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
                 else missing.push_back(key);
             }
             Json j{{"tick", clock_.tick}, {"state", picked}, {"paused", paused_}, {"ok", errors_.empty()}};
+            if (run_start_ > 0) j["run_tick"] = clock_.tick - run_start_;
             if (!missing.empty()) j["missing"] = missing;
             if (!errors_.empty()) j["errors"] = Json::array({errors_.back()});
             return j;
         }
         Json j;
         j["tick"] = clock_.tick;
+        if (run_start_ > 0) j["run_tick"] = clock_.tick - run_start_;   // the scripts' t.tick since the last restart
         j["frames"] = frames_;
         j["sim_seconds"] = clock_.sim_seconds();
         j["state"] = last_state_;
@@ -7484,7 +7631,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

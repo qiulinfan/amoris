@@ -3275,8 +3275,7 @@ struct Renderer::Impl {
         if (timer_resolve) wgpuBufferRelease(timer_resolve);
         if (timer_set) wgpuQuerySetRelease(timer_set);
         release_assets();
-        release_texture(white);
-        release_texture(flat_normal);
+        for (GpuTexture* t : {&white, &flat_normal, &soft_spot, &no_splat, &no_layers}) release_texture(*t);
         if (sampler) wgpuSamplerRelease(sampler);
         if (nearest_sampler) wgpuSamplerRelease(nearest_sampler);
         if (material_bgl) wgpuBindGroupLayoutRelease(material_bgl);
@@ -3377,6 +3376,9 @@ struct Renderer::Impl {
         if (id_pipeline) wgpuRenderPipelineRelease(id_pipeline);
         if (id_skinned_pipeline) wgpuRenderPipelineRelease(id_skinned_pipeline);
         if (id_sprite_pipeline) wgpuRenderPipelineRelease(id_sprite_pipeline);
+        for (WGPURenderPipeline p : {cut_pipeline, cut_skinned_pipeline, id_cut_pipeline, id_cut_skinned_pipeline}) if (p) wgpuRenderPipelineRelease(p);
+        for (WGPUTextureView v : {glass_view, glass_stub_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {glass_tex, glass_stub}) if (t) wgpuTextureRelease(t);
         if (object_bg) wgpuBindGroupRelease(object_bg);
         if (frame_bg) wgpuBindGroupRelease(frame_bg);
         if (object_buffer) wgpuBufferRelease(object_buffer);

@@ -4,7 +4,7 @@
 
 #include <pocket/core/log.hpp>
 
-#include <JavaScriptCore/JavaScriptCore.h>
+#include <JavaScriptCore/JavaScript.h>   // the C API: Apple's framework, or WebKitGTK's JavaScriptCore on Linux
 
 #include <cstring>
 #include <limits>
@@ -106,6 +106,7 @@ Json value_to_json(JSContextRef ctx, JSValueRef v) {
 struct Binding {
     NativeFn fn;
     std::string name;
+    std::function<std::string(std::string)> text;   // console.*: Config::console_text
 };
 
 JSValueRef native_trampoline(JSContextRef ctx, JSObjectRef function, JSObjectRef, size_t argc, const JSValueRef argv[], JSValueRef* exception) {
@@ -179,6 +180,7 @@ JSValueRef console_trampoline(JSContextRef ctx, JSObjectRef function, JSObjectRe
             line += j.is_string() ? j.get<std::string>() : j.dump();
         }
     }
+    if (b && b->text) line = b->text(std::move(line));
     log::Level level = log::Level::Info;
     if (b) {
         if (b->name == "warn") level = log::Level::Warn;
@@ -215,7 +217,7 @@ class JscHost final : public ScriptHost {
         // console.*
         JSObjectRef console = JSObjectMake(ctx_, nullptr, nullptr);
         for (const char* level : {"log", "info", "warn", "error", "debug"}) {
-            auto* b = new Binding{nullptr, level};
+            auto* b = new Binding{nullptr, level, config.console_text};
             JSObjectRef fn = JSObjectMake(ctx_, console_class(), b);
             set_property(console, level, fn);
         }

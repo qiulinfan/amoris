@@ -104,8 +104,81 @@ pub struct Dependency {
     /// dependencies are skipped), "port" (an Emscripten port supplies it), "skip".
     #[serde(default)]
     pub wasm: String,
+    /// System packages found with pkg-config (their include directories and libraries), for a
+    /// "system" dependency on Linux.
+    #[serde(default)]
+    pub pkg_config: Vec<String>,
+    /// What changes on another host: keyed "linux-aarch64", "linux-x86_64" or "linux" (the more
+    /// specific first), each field given replacing the one above. The fields above describe macOS.
+    #[serde(default)]
+    pub platforms: IndexMap<String, DependencyOverride>,
 }
 fn one() -> u32 { 1 }
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyOverride {
+    pub kind: Option<String>,
+    pub url: Option<String>,
+    pub sha256: Option<String>,
+    pub strip_components: Option<u32>,
+    pub cmake_args: Option<Vec<String>>,
+    pub include_dirs: Option<Vec<String>>,
+    pub libs: Option<Vec<String>>,
+    pub frameworks: Option<Vec<String>>,
+    pub weak_frameworks: Option<Vec<String>>,
+    pub link_flags: Option<Vec<String>>,
+    pub defines: Option<Vec<String>>,
+    pub pkg_config: Option<Vec<String>>,
+}
+
+impl Dependency {
+    /// The dependency as this host has it: its platform's fields over the shared ones, and its
+    /// pkg-config packages' include directories and libraries added.
+    fn for_host(mut self, os: &str, arch: &str) -> Result<Self> {
+        let keys = [format!("{os}-{arch}"), os.to_string()];
+        let mut chosen = None;
+        for k in &keys {
+            if let Some(o) = self.platforms.get(k) {
+                chosen = Some(o.clone());
+                break;
+            }
+        }
+        if let Some(o) = chosen {
+            if let Some(v) = o.kind { self.kind = v; }
+            if let Some(v) = o.url { self.url = v; }
+            if let Some(v) = o.sha256 { self.sha256 = v; }
+            if let Some(v) = o.strip_components { self.strip_components = v; }
+            if let Some(v) = o.cmake_args { self.cmake_args = v; }
+            if let Some(v) = o.include_dirs { self.include_dirs = v; }
+            if let Some(v) = o.libs { self.libs = v; }
+            if let Some(v) = o.frameworks { self.frameworks = v; }
+            if let Some(v) = o.weak_frameworks { self.weak_frameworks = v; }
+            if let Some(v) = o.link_flags { self.link_flags = v; }
+            if let Some(v) = o.defines { self.defines = v; }
+            if let Some(v) = o.pkg_config { self.pkg_config = v; }
+        }
+        if os != "macos" {
+            // Frameworks are Apple's.
+            self.frameworks.clear();
+            self.weak_frameworks.clear();
+        }
+        if !self.pkg_config.is_empty() {
+            let run = |flag: &str| -> Result<Vec<String>> {
+                let out = std::process::Command::new("pkg-config").arg(flag).args(&self.pkg_config).output().with_context(|| format!("running pkg-config for {}", self.name))?;
+                if !out.status.success() {
+                    bail!("pkg-config {} {}: {}", flag, self.pkg_config.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+                }
+                Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().map(|s| s.to_string()).collect())
+            };
+            for f in run("--cflags-only-I")? {
+                if let Some(dir) = f.strip_prefix("-I") { self.include_dirs.push(dir.to_string()); }
+            }
+            self.link_flags.extend(run("--libs")?);
+        }
+        Ok(self)
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
@@ -178,7 +251,11 @@ pub struct Workspace {
 impl Workspace {
     pub fn load(root: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(root.join("pocket.toml")).context("reading pocket.toml")?;
-        let file: WorkspaceFile = toml::from_str(&text).context("parsing pocket.toml")?;
+        let mut file: WorkspaceFile = toml::from_str(&text).context("parsing pocket.toml")?;
+        let deps = std::mem::take(&mut file.dependencies);
+        for d in deps {
+            file.dependencies.push(d.for_host(std::env::consts::OS, std::env::consts::ARCH)?);
+        }
         let mut modules = IndexMap::new();
         for dir in &file.workspace.module_dirs {
             let base = root.join(dir);

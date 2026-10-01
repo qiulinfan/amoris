@@ -202,8 +202,11 @@ class World {
     // cache of where the colliders are, with tick_index for what systems move in a tick.
     [[nodiscard]] std::uint64_t placement_version() const;
     void set_tick_index(std::int64_t tick);
-    // Simulated time: the tick index times the length of the last tick (what waves move by).
+    // Simulated time since the run began (the tick it began on set by set_run_start: a restarted
+    // project's wind, waves and cloth start over as a fresh run's do), in ticks times the length
+    // of the last tick.
     [[nodiscard]] double seconds() const;
+    void set_run_start(std::int64_t tick);
     // Deterministic hash of every entity path and component value in tree order.
     [[nodiscard]] std::uint64_t hash() const;
 

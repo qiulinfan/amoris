@@ -1,6 +1,6 @@
 // Physics queries and contact callbacks.
 import { command, type Entity, type EntityRef, type Vec3 } from "./world";
-import { registry, own } from "./registry";
+import { registry, register, timed } from "./registry";
 
 export interface RayHit {
     entity: Entity;
@@ -48,13 +48,13 @@ export interface JointState {
 
 /** Receive every contact of the tick (after the physics step, before the world systems). */
 export function onContacts(handler: (contacts: Contact[]) => void): void {
-    own.contacts.push(handler as (contacts: unknown[]) => void);  // on the shared registry: any bundle's dispatch reaches it
+    register("contacts", handler, 3);  // on the shared registry: any bundle's dispatch reaches it
 }
 
 export function dispatchContacts(contacts: Contact[]): void {
     for (const [name, h] of registry.contexts) {
         if (!registry.active.has(name)) continue;
-        for (const fn of h.contacts) fn(contacts);
+        for (const fn of h.contacts) timed(fn, contacts);
     }
 }
 

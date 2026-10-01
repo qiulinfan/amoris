@@ -7,6 +7,7 @@
 declare const __pocket: {
     log(level: string, message: string, fields?: string): void;
     now(): number;
+    clock(): number;
     setClearColor(r: number, g: number, b: number, a?: number): void;
     random(): number;
     info(): RuntimeInfo;
@@ -158,7 +159,7 @@ export interface InputEvent {
 
 export type LogFields = Record<string, unknown>;
 
-import { registry, contextHandlers, contextName, own, keysDown, keysPressed } from "./registry";
+import { registry, contextHandlers, contextName, own, keysDown, keysPressed, register, timed } from "./registry";
 import type { Handlers } from "./registry";
 
 export interface Frame {
@@ -180,27 +181,27 @@ export function scriptContext(): string {
 
 /** Run every rendered frame, paused or not. Gameplay belongs in onTick; interfaces and tools here. */
 export function onFrame(handler: (f: Frame) => void): void {
-    own.frame.push(handler);
+    register("frame", handler, 3);
 }
 
 /** Run once before the first tick. */
 export function onStart(handler: () => void): void {
-    own.start.push(handler);
+    register("start", handler, 3);
 }
 
 /** Run once after the last tick. */
 export function onStop(handler: () => void): void {
-    own.stop.push(handler);
+    register("stop", handler, 3);
 }
 
 /** Run every fixed simulation tick. Never reads the wall clock: use `t.dt`. */
 export function onTick(handler: (t: Tick) => void): void {
-    own.tick.push(handler);
+    register("tick", handler, 3);
 }
 
 /** Receive normalized input events for the frame. */
 export function onInput(handler: (events: InputEvent[]) => void): void {
-    own.input.push(handler);
+    register("input", handler, 3);
 }
 
 /**
@@ -298,7 +299,7 @@ declare global {
 // performance.now() for measuring script cost; gameplay must use tick time, never this.
 {
     const g = globalThis as { performance?: { now(): number } };
-    if (g.performance === undefined) g.performance = { now: () => __pocket.now() };
+    if (g.performance === undefined) g.performance = { now: () => __pocket.clock() };
 }
 
 /** HSV (0..1) to linear RGB. */
@@ -347,18 +348,18 @@ export function isActive(): boolean {
         case "start": {
             if (typeof context === "string") registry.active.add(context);
             else for (const name of registry.contexts.keys()) registry.active.add(name);
-            for (const h of selected(context)) for (const f of h.start) f();
+            for (const h of selected(context)) for (const f of h.start) timed(f, undefined);
             flushUi();
             return undefined;
         }
         case "tick":
             setActionSnapshot((arg as Tick).actions, (arg as Tick).players);
             setTickLocale((arg as Tick).locale, (arg as Tick).locale_rev);
-            for (const h of selected(context)) for (const f of h.tick) f(arg as Tick);
+            for (const h of selected(context)) for (const f of h.tick) timed(f, arg as Tick);
             registry.keysPressed.clear();   // like the actions' edges: a press is seen by one tick
             return undefined;
         case "frame":
-            for (const h of selected(context)) for (const f of h.frame) f(arg as Frame);
+            for (const h of selected(context)) for (const f of h.frame) timed(f, arg as Frame);
             flushUi();
             return undefined;
         case "state":
@@ -392,7 +393,7 @@ export function isActive(): boolean {
                 }
                 else if (e.type === "key_up" && e.key !== undefined) keysDown.delete(e.key);
             }
-            for (const h of selected(context)) for (const f of h.input) f(events);
+            for (const h of selected(context)) for (const f of h.input) timed(f, events);
             return undefined;
         }
         case "ui":
@@ -408,10 +409,16 @@ export function isActive(): boolean {
             }
             return false;
         case "stop":
-            for (const h of selected(context)) for (const f of h.stop) f();
+            for (const h of selected(context)) for (const f of h.stop) timed(f, undefined);
             if (typeof context === "string") registry.active.delete(context);
             else registry.active.clear();
             return undefined;
+        case "profile": {
+            // What each handler has cost (script.profile), the costliest first; `reset` starts over.
+            const out = [...registry.costs.values()].filter((c) => c.calls > 0).sort((a, b) => b.ms - a.ms).map((c) => ({ ...c }));
+            if ((arg as { reset?: boolean } | undefined)?.reset) for (const c of registry.costs.values()) { c.calls = 0; c.ms = 0; c.max = 0; }
+            return out;
+        }
         case "active":
             return typeof arg === "string" ? registry.active.has(arg) : registry.active.size > 0;
         case "unload": {
@@ -421,6 +428,7 @@ export function isActive(): boolean {
             if (h && registry.active.has(name)) for (const f of h.stop) f();
             registry.active.delete(name);
             registry.contexts.delete(name);
+            for (const [f, c] of registry.costs) if (c.context === name) registry.costs.delete(f);
             if (name === "project" || name === "main") unmountContext(name);
             return undefined;
         }

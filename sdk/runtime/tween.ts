@@ -1,7 +1,7 @@
 // Tweens: change a number, or the numeric fields of a component, over simulation time with an
 // easing curve. Driven by ticks (never the wall clock), so tweens are deterministic, pause with
 // the game and appear in transcripts like any other change.
-import { own } from "./registry";
+import { register } from "./registry";
 import { repro } from "./repro";
 import type { Tick } from "./pocket";
 import { world } from "./world";
@@ -173,7 +173,7 @@ function update(t: Tick): void {
     active.length = w;
 }
 
-own.tick.push(update);
+register("tick", update);
 
 type Leaf = number | string | boolean;
 type Tree = { [k: string]: Tree | Leaf };

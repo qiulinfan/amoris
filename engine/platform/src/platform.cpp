@@ -177,8 +177,10 @@ Json event_to_json(const Event& e) {
 struct Platform::Impl {
     Config config;
     SDL_Window* window = nullptr;
+#ifdef __APPLE__
     SDL_MetalView metal_view = nullptr;
-    void* layer = nullptr;
+#endif
+    Platform::NativeWindow native;
     bool sdl_initialized = false;
     bool quit = false;
     InputState input;
@@ -203,7 +205,7 @@ struct Platform::Impl {
     }
 
     ~Impl() {
-#ifndef __EMSCRIPTEN__
+#ifdef __APPLE__
         if (metal_view) SDL_Metal_DestroyView(metal_view);
 #endif
         if (window) SDL_DestroyWindow(window);
@@ -239,8 +241,10 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
     // The page sizes the canvas (CSS); SDL follows it and reports resizes, so the window is
     // always resizable in the browser.
     SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
-#else
+#elif defined(__APPLE__)
     SDL_WindowFlags flags = SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#else
+    SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;   // Vulkan through the window's X11 or Wayland handles
 #endif
     if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
     if (!config.visible) flags |= SDL_WINDOW_HIDDEN;
@@ -248,10 +252,17 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
     SDL_Window* w = SDL_CreateWindow(config.title.c_str(), config.width, config.height, flags);
     if (!w) return fail("window_create_failed", "SDL_CreateWindow failed: {}", SDL_GetError());
     p->impl_->window = w;
-#ifndef __EMSCRIPTEN__
+#if defined(__APPLE__)
     p->impl_->metal_view = SDL_Metal_CreateView(w);
     if (!p->impl_->metal_view) return fail("metal_view_failed", "SDL_Metal_CreateView failed: {}", SDL_GetError());
-    p->impl_->layer = SDL_Metal_GetLayer(p->impl_->metal_view);
+    p->impl_->native.metal_layer = SDL_Metal_GetLayer(p->impl_->metal_view);
+#elif !defined(__EMSCRIPTEN__)
+    const SDL_PropertiesID props = SDL_GetWindowProperties(w);
+    p->impl_->native.wayland_display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+    p->impl_->native.wayland_surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+    p->impl_->native.x11_display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+    p->impl_->native.x11_window = static_cast<std::uint64_t>(SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+    if (!p->impl_->native.wayland_surface && !p->impl_->native.x11_window) return fail("window_handles_missing", "the window has neither a Wayland surface nor an X11 window (video driver {})", SDL_GetCurrentVideoDriver());
 #endif
     SDL_GetWindowSizeInPixels(w, &p->impl_->pixel_w, &p->impl_->pixel_h);
     log::info("platform", "window {}x{} points, {}x{} pixels, driver {}", config.width, config.height, p->impl_->pixel_w, p->impl_->pixel_h, SDL_GetCurrentVideoDriver());
@@ -419,7 +430,7 @@ std::vector<Event> Platform::poll() {
 bool Platform::quit_requested() const { return impl_->quit; }
 const InputState& Platform::input() const { return impl_->input; }
 bool Platform::headless() const { return impl_->config.headless; }
-void* Platform::metal_layer() const { return impl_->layer; }
+Platform::NativeWindow Platform::native_window() const { return impl_->native; }
 std::string Platform::canvas_selector() const {
 #ifdef __EMSCRIPTEN__
     return impl_->window ? "#canvas" : "";

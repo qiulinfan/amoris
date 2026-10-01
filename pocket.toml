@@ -88,6 +88,14 @@ wasm = "port"
 frameworks = ["Metal", "QuartzCore", "CoreFoundation", "Foundation", "CoreGraphics", "IOKit", "IOSurface", "AppKit"]
 license = "MIT OR Apache-2.0"
 
+[dependencies.platforms.linux-aarch64]
+url = "https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.1.1/wgpu-linux-aarch64-release.zip"
+sha256 = "015fcdf1dbae82e614a783cc38017e5399ae0927a889fe9b69c9b664bc61b47a"
+
+[dependencies.platforms.linux-x86_64]
+url = "https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.1.1/wgpu-linux-x86_64-release.zip"
+sha256 = "95a4d90c071005a98d03eab348beaa6b07e16eb00d1dcdb9f8348f75eb97ec5a"
+
 [[dependencies]]
 name = "freetype"
 version = "2.14.3"
@@ -121,6 +129,14 @@ strip_components = 1
 wasm = "skip"
 license = "Apache-2.0"
 
+[dependencies.platforms.linux-aarch64]
+url = "https://registry.npmjs.org/@typescript/typescript-linux-arm64/-/typescript-linux-arm64-7.0.2.tgz"
+sha256 = "c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea"
+
+[dependencies.platforms.linux-x86_64]
+url = "https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz"
+sha256 = "7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3"
+
 [[dependencies]]
 name = "noto-sans-arabic"
 version = "2.010"
@@ -143,3 +159,8 @@ version = "system"
 kind = "system"
 frameworks = ["JavaScriptCore"]
 license = "Apple system framework"
+
+# On Linux, WebKitGTK's JavaScriptCore with the same C API (4.1: 6.0 keeps only the GObject one):
+# apt install libjavascriptcoregtk-4.1-dev.
+[dependencies.platforms.linux]
+pkg_config = ["javascriptcoregtk-4.1"]

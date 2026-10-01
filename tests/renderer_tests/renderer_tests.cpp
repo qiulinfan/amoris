@@ -2,6 +2,7 @@
 #include <pocket/app/session.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
+#include <pocket/rhi/device.hpp>
 
 #include <catch_amalgamated.hpp>
 
@@ -2781,4 +2782,18 @@ TEST_CASE("the frame's GPU time by pass, what the camera's passes leave out, and
         }
     }
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a session lets go of everything it made on the GPU: nothing is left holding the device", "[renderer][gpu][teardown]") {
+    {
+        app::Session s(playground_options());
+        REQUIRE(s.start().has_value());
+        auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", std::move(components)}}).has_value()); };
+        // The lazily made parts too: glass and its copy of the scene, a cut-out material, a particle.
+        spawn("Pane", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"transmission", 1}}}});
+        spawn("Leaf", Json{{"Transform", Json{{"position", Json{{"x", 1}, {"y", 1}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"cutoff", 0.5}}}});
+        for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    }
+    INFO("still held: " << rhi::Device::held_when_last_destroyed());
+    REQUIRE(rhi::Device::held_when_last_destroyed().empty());
 }

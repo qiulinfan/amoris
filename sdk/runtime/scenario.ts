@@ -6,7 +6,7 @@
 import { command, render } from "./world";
 import { input } from "./input";
 import { events } from "./events";
-import { registry, own } from "./registry";
+import { registry, own, register } from "./registry";
 import type { Tick, RuntimeInfo } from "./pocket";
 import { expect, ExpectationError } from "./expect";
 
@@ -324,8 +324,8 @@ export function scenario(name: string, build: (g: ScenarioTools) => void): void 
     if (!installed) {
         // Registered on the first definition, so bundles without scenarios expose nothing extra.
         installed = true;
-        own.start.push(onStartScenario);
-        own.tick.push(onTickScenario);
+        register("start", onStartScenario, 3);
+        register("tick", onTickScenario, 3);
         own.exposed.set("__scenarios", () => scenarios.map((s) => s.name));
         own.exposed.set("__scenario", () => (current ? { ...current } : null));
     }

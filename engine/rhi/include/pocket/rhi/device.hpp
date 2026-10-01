@@ -14,7 +14,11 @@
 namespace pocket::rhi {
 
 struct Config {
-    void* metal_layer = nullptr;  // CAMetalLayer*; null for headless
+    void* metal_layer = nullptr;  // CAMetalLayer* on macOS; null for headless
+    void* x11_display = nullptr;  // Linux: an X11 display and window, or a Wayland display and surface
+    std::uint64_t x11_window = 0;
+    void* wayland_display = nullptr;
+    void* wayland_surface = nullptr;
     std::string canvas_selector;  // web: the <canvas> to present into ("#canvas"); empty for headless
     std::uint32_t width = 640;
     std::uint32_t height = 360;
@@ -80,6 +84,10 @@ class Device {
     // Frames submitted so far (end_frame calls): work recorded before the last one is on the GPU.
     [[nodiscard]] std::uint64_t submitted_frames() const;
     [[nodiscard]] Json describe() const;
+    // What the last device to go was still held by as it went, by kind ("2 textures, 3 texture
+    // views"; empty for nothing): an object a subsystem never released keeps the whole device, and
+    // its memory, alive. POCKET_GPU_REPORT=1 prints it as each device goes. Native only.
+    [[nodiscard]] static std::string held_when_last_destroyed();
 
     // Helpers shared by renderers.
     Result<WGPUShaderModule> create_shader(const char* label, std::string_view wgsl);

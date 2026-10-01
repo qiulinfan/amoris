@@ -130,7 +130,11 @@ TEST_CASE("hello runs headless and reports state", "[runtime]") {
     REQUIRE(rep["state"]["bounces"].get<int>() >= 1);
     REQUIRE(rep["state"]["ball.y"].get<double>() >= 0.0);
     REQUIRE(rep["state_hash"].get<std::string>().size() == 16);
+#ifdef __APPLE__
     REQUIRE(rep["gpu"]["backend"] == "metal");
+#else
+    REQUIRE(rep["gpu"]["backend"] == "vulkan");
+#endif
     REQUIRE(rep["script"]["engine"] == "JavaScriptCore");
     // The top-left pixel is sky: it must show the clear color the script set on the last tick.
     // The center shows the ball or the ground, so it must differ from the sky.
@@ -199,6 +203,41 @@ TEST_CASE("script errors are reported, not fatal", "[runtime]") {
     REQUIRE((*r)["errors"].size() >= 1);
     REQUIRE((*r)["errors"][0]["code"] == "script_error");
     REQUIRE((*r)["errors"][0]["message"].get<std::string>().find("boom") != std::string::npos);
+}
+
+TEST_CASE("a script error names the file and line that were written, through the bundle's line map", "[runtime][sourcelines]") {
+    auto o = hello_options(3);
+    auto broken = root() / "build" / "test-out" / "mapped.js";
+    // Lines 2 and 3 of the bundle came from lines 40 and 41 of scripts/fake.ts.
+    REQUIRE(fs::write_text(broken, "// made by hand\nglobalThis.__pocket_dispatch = function(kind){\n if (kind === 'tick') throw new Error('boom'); };\n").has_value());
+    const auto fake = std::filesystem::weakly_canonical(o.project_dir) / "scripts" / "fake.ts";
+    REQUIRE(fs::write_text(std::filesystem::path(broken.string() + ".lines.json"), Json{{"modules", Json::array({Json{{"source", fake.string()}, {"first", 2}, {"lines", {40, 41}}}})}}.dump()).has_value());
+    o.bundle = broken;
+    o.project_config = broken.string() + ".project.json";
+    auto r = app::run(o);
+    REQUIRE(r.has_value());
+    const Json& e = (*r)["errors"][0];
+    INFO(e.dump());
+    REQUIRE(e.value("detail", std::string()).find("scripts/fake.ts:41") != std::string::npos);
+    REQUIRE(e.value("detail", std::string()).find("mapped.js:3") == std::string::npos);
+}
+
+TEST_CASE("script.profile breaks the script time down by handler, at the line it was registered, and by command", "[runtime][profile]") {
+    app::Session s(hello_options(-1));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 20}}).has_value());
+    Json p = s.command("script.profile", Json{{"reset", true}}).value();
+    INFO(p.dump());
+    REQUIRE(p["ticks"] == 20);
+    bool tick = false;
+    for (const Json& h : p["handlers"]) {
+        if (h["kind"] == "tick" && h["at"] == "scripts/main.ts:22") tick = h["calls"] == 20 && h["ms"].get<double>() >= 0;
+    }
+    REQUIRE(tick);
+    REQUIRE(s.command("step", Json{{"ticks", 5}}).has_value());
+    p = s.command("script.profile", Json::object()).value();
+    REQUIRE(p["ticks"] == 5);
+    for (const Json& h : p["handlers"]) REQUIRE(h["calls"].get<int>() <= 5);
 }
 
 TEST_CASE("prefab files instantiate, save and reload through the session", "[runtime][prefab]") {

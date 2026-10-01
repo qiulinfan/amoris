@@ -29,6 +29,7 @@
 
 #include <deque>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -55,6 +56,9 @@ class Session {
     [[nodiscard]] bool quit_requested() const { return quit_; }  // set by the quit command or request_quit
     [[nodiscard]] bool ok() const { return errors_.empty(); }
     void record_error(const Error& e);
+    // `<bundle>:<line>[:<column>]` in text made the source's `<file>:<line>` (the file relative to
+    // the project when it is the project's).
+    [[nodiscard]] std::string source_lines(std::string_view text) const;
     [[nodiscard]] const Options& options() const { return options_; }
     [[nodiscard]] world::World& world() { return *world_; }
     [[nodiscard]] rhi::Device& device() { return *device_; }
@@ -232,6 +236,24 @@ class Session {
     std::unique_ptr<ui::Document> ui_;
     std::filesystem::path font_path_;
     std::vector<std::string> bundle_names_;
+    // Where the bundles' lines came from (`<bundle>.lines.json`, written by `pocket ts`), so that a
+    // script error, a stack in the log and a handler in script.profile name the file and line that
+    // were written, not the bundle's.
+    struct BundleLines {
+        struct Module { std::string source; std::size_t first = 0; std::vector<std::uint32_t> lines; };
+        std::string url;
+        std::vector<Module> modules;   // in the bundle's order
+    };
+    std::vector<BundleLines> bundle_lines_;
+    // What the scripts' commands have cost since script.profile last started over (the numbers-only
+    // reads and writes of components counted apart: they are too quick to time one by one).
+    struct CallCost { std::uint64_t calls = 0; double ms = 0; };
+    std::unordered_map<std::string, CallCost> script_calls_;
+    std::uint64_t script_numbers_[2]{};   // component reads, writes
+    std::int64_t profile_from_tick_ = 0;
+    std::int64_t run_start_ = 0;   // the session tick the run (re)started on: the scripts' tick 0
+    std::uint64_t profile_from_frame_ = 0;
+    void read_bundle_lines(const std::filesystem::path& bundle);
     std::map<std::string, Json> prefab_cache_;  // parsed prefab files by project-relative path
     InputMap input_map_;
     Gestures gestures_;

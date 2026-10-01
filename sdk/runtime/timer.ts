@@ -1,7 +1,7 @@
 // Timers in simulation time: `timer.after`, `timer.every`, and `wait()` for async gameplay
 // ("open the door, wait two seconds, close it"). Driven by ticks, so they pause with the game
 // and replay exactly. The global setTimeout family maps onto the same clock in milliseconds.
-import { own } from "./registry";
+import { register } from "./registry";
 import { command } from "./world";
 import type { Tick } from "./pocket";
 
@@ -61,7 +61,7 @@ function update(t: Tick): void {
     pending.length = w;
 }
 
-own.tick.push(update);
+register("tick", update);
 
 export const timer = {
     /** Call `fn` once after `seconds` of simulation time. */

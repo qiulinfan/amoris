@@ -43,13 +43,22 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     let std_flag = format!("-std={}", ws.file.toolchain.cxx_standard);
     let warn = cfg.warnings.as_ref().unwrap_or(&ws.file.toolchain.warnings).join(" ");
     let cxxflags = format!("{} {} {} {}", std_flag, common.join(" "), ws.file.toolchain.cxx_flags.join(" "), cfg.cxx_flags.join(" "));
-    let cflags = format!("-std=c17 {} {} {}", common.join(" "), ws.file.toolchain.c_flags.join(" "), cfg.c_flags.join(" "));
+    // GNU C on Linux: glibc declares POSIX's clocks and sleeps (flecs uses them) only outside strict ISO C.
+    let c_std = if tc.host_os == "linux" && !wasm { "gnu17" } else { "c17" };
+    let cflags = format!("-std={c_std} {} {} {}", common.join(" "), ws.file.toolchain.c_flags.join(" "), cfg.c_flags.join(" "));
     writeln!(n, "cxxflags = {}\ncflags = {}\nwarn = {}", cxxflags, cflags, warn)?;
     writeln!(n, "rule cxx\n  command = $cxx -MD -MF $out.d $cxxflags $warn $flags -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = CXX $out")?;
     writeln!(n, "rule objcxx\n  command = $cxx -x objective-c++ -fobjc-arc -MD -MF $out.d $cxxflags $warn $flags -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = OBJCXX $out")?;
     writeln!(n, "rule cc\n  command = $cc -MD -MF $out.d $cflags $warn $flags -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = CC $out")?;
     writeln!(n, "rule ar\n  command = rm -f $out && $ar rcs $out $in\n  description = AR $out")?;
-    writeln!(n, "rule link\n  command = $cxx $ldflags -o $out $in $libs\n  description = LINK $out")?;
+    // On Linux the static libraries go in a group (GNU-style linkers read archives once, in order)
+    // and lld links; Apple's linker resolves archives in any order.
+    let linux = tc.host_os == "linux" && !wasm;
+    if linux {
+        writeln!(n, "rule link\n  command = $cxx -fuse-ld=lld $ldflags -o $out -Wl,--start-group $in -Wl,--end-group $libs -ldl -lpthread -lm\n  description = LINK $out")?;
+    } else {
+        writeln!(n, "rule link\n  command = $cxx $ldflags -o $out $in $libs\n  description = LINK $out")?;
+    }
 
     let mut targets = vec![];
     for (name, m) in &graph.modules {

@@ -46,7 +46,7 @@ What UBT does well: explicit module graph, target types, platform abstraction, c
 
 ## 4. `pocket`: the design
 
-Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and TypeScript nodes, foreign CMake builds, prebuilt fetch), 4.5 (`--json`, `compile_commands.json`) and the commands `setup`, `doctor`, `build`, `run`, `test`, `ts`, `graph`, `clean` exist in `tools/pocket`. The executor is Ninja invoked as a subprocess; n2 embedding, codegen nodes, `check`, `fmt`, `mcp` and the other platforms are future tool milestones (4.10). Since then `gen`, `mcp` and `check` have come (2026-09-29: `check` runs TypeScript 7's native compiler, the `tsgo` line below released as `tsc`, as a prebuilt dependency; `docs/sdk.md`, Types).
+Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and TypeScript nodes, foreign CMake builds, prebuilt fetch), 4.5 (`--json`, `compile_commands.json`) and the commands `setup`, `doctor`, `build`, `run`, `test`, `ts`, `graph`, `clean` exist in `tools/pocket`. The executor is Ninja invoked as a subprocess; n2 embedding, codegen nodes, `check`, `fmt`, `mcp` and the other platforms are future tool milestones (4.11). Since then `gen`, `mcp` and `check` have come (2026-09-29: `check` runs TypeScript 7's native compiler, the `tsgo` line below released as `tsc`, as a prebuilt dependency; `docs/sdk.md`, Types).
 
 `pocket` is a single static Rust binary. It is the only tool a fresh checkout needs. It is a generator, an executor, a toolchain manager, a package fetcher and an agent interface at once, but each part is a separate crate with a narrow job.
 
@@ -120,11 +120,24 @@ The graph is emitted as Ninja-compatible files (so `ninja` itself can run them w
 
 Developers never need CMake, Node, Python or .NET to build and run the engine.
 
-### 4.9 Deliberate non-goals for v0
+### 4.9 Linux
+
+The engine builds, runs and passes its tests on Linux (aarch64, measured in a container on Apple silicon; the x86_64 archives are pinned beside the aarch64 ones but not yet run). `tools/scripts/linux.sh` builds and tests the working tree as it is in an Ubuntu 26.04 container (`tools/docker/linux/Dockerfile`: clang 21 with libstdc++ 15, CMake, Ninja, Rust, WebKitGTK's JavaScriptCore, SDL3's X11 and Wayland build dependencies, and Mesa's software Vulkan, llvmpipe, so the renderer runs without a GPU). The tree is copied into a Docker volume with its own `.pocket/deps` and `build/`, so nothing in the checkout changes:
+
+```
+tools/scripts/linux.sh test --config release   # build the tool, set up the dependencies, build, test
+tools/scripts/linux.sh exec "<command>"        # run something in the copy after building debug
+```
+
+What differs from macOS is in `pocket.toml` and the tool, not in the engine's code paths: a dependency's `[dependencies.platforms.<os>-<arch>]` or `[dependencies.platforms.<os>]` table replaces its fields on that host (wgpu-native's and TypeScript's Linux archives), a `system` dependency can name `pkg_config` packages (`javascriptcoregtk-4.1`, which keeps JavaScriptCore's C API), frameworks are dropped off Apple hosts, executables link with lld inside a `--start-group`, and C compiles as `gnu17` (glibc declares the POSIX clocks flecs uses only outside strict ISO C). The platform layer hands the renderer an X11 or Wayland window where macOS gets a `CAMetalLayer`, and WebGPU runs on Vulkan.
+
+On 2026-10-01 the release configuration passed 23 of the 24 test modules, and the one failure was a test that expected the Metal backend (it now expects Vulkan off Apple). The debug configuration's sanitizers over the CPU renderer need more memory than the container's 20 GB for `runtime_tests`. That run also found the renderer leaving pipelines and textures behind when it went: `rhi::Device::held_when_last_destroyed()` lists what is still held as a device goes, `POCKET_GPU_REPORT=1` prints it for every device, and `renderer_tests` (`[teardown]`) keeps it at nothing.
+
+### 4.10 Deliberate non-goals for v0
 
 Distributed builds, remote caches, C++ modules, unity builds, precompiled headers by default, a GUI, cross-compilation to mobile or consoles. Each returns as a milestone when a concrete need appears.
 
-### 4.10 Tool milestones
+### 4.11 Tool milestones
 
 - v0 (M0): macOS, static libraries and executables, tests, prebuilt fetch, TypeScript transform, `--json`.
 - v1 (M1): codegen nodes, in-engine TypeScript test runner, Linux CI, foreign builds.

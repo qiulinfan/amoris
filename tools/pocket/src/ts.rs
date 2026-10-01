@@ -19,7 +19,7 @@ use oxc::ast::ast::{
     Argument, BindingPattern, CallExpression, Declaration, ExportDefaultDeclarationKind, Expression, ImportDeclarationSpecifier, ModuleExportName, Statement,
 };
 use oxc::ast_visit::{walk, Visit};
-use oxc::codegen::Codegen;
+use oxc::codegen::{Codegen, CodegenOptions};
 use oxc::parser::Parser;
 use oxc::semantic::SemanticBuilder;
 use oxc::span::{GetSpan, SourceType, Span};
@@ -50,8 +50,9 @@ struct Rewrite {
     replacement: String,
 }
 
-/// Transform one TypeScript/TSX file to plain JavaScript (ES module syntax kept).
-pub fn transform_to_js(path: &Path, source: &str) -> Result<String> {
+/// Transform one TypeScript/TSX file to plain JavaScript (ES module syntax kept), with the line of
+/// the source each line of it came from (1-based; a line nothing maps keeps the line before's).
+pub fn transform_to_js(path: &Path, source: &str) -> Result<(String, Vec<u32>)> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).unwrap_or_else(|_| SourceType::ts());
     let parsed = Parser::new(&allocator, source, source_type).parse();
@@ -71,7 +72,32 @@ pub fn transform_to_js(path: &Path, source: &str) -> Result<String> {
         let msgs: Vec<String> = ret.diagnostics.iter().map(|e| e.to_string()).collect();
         bail!("{}: transform errors:\n{}", path.display(), msgs.join("\n"));
     }
-    Ok(Codegen::new().build(&program).code)
+    let options = CodegenOptions { source_map_path: Some(path.to_path_buf()), ..CodegenOptions::default() };
+    let out = Codegen::new().with_options(options).build(&program);
+    let mut lines = vec![0u32; out.code.matches('\n').count() + 1];
+    if let Some(map) = &out.map {
+        // The first token on a line is its leftmost: where the statement there starts.
+        for t in map.get_tokens() {
+            let at = t.get_dst_line() as usize;
+            if at < lines.len() && lines[at] == 0 {
+                lines[at] = t.get_src_line() + 1;
+            }
+        }
+    }
+    let mut last = 1;
+    for l in lines.iter_mut() {
+        if *l == 0 {
+            *l = last;
+        } else {
+            last = *l;
+        }
+    }
+    Ok((out.code, lines))
+}
+
+/// Lines 1..=n of a file kept as it is.
+fn same_lines(text: &str) -> Vec<u32> {
+    (1..=text.matches('\n').count() as u32 + 1).collect()
 }
 
 fn export_name(n: &ModuleExportName) -> String {
@@ -227,7 +253,9 @@ pub fn rewrite_module(path: &Path, js: &str) -> Result<(String, Vec<String>)> {
     let mut out = js.to_string();
     for r in rewrites {
         let (s, e) = (r.span.start as usize, r.span.end as usize);
-        out.replace_range(s..e, &r.replacement);
+        // As many lines as what it replaces, so the body's lines stay the transformed file's.
+        let breaks = out[s..e].matches('\n').count();
+        out.replace_range(s..e, &(r.replacement + &"\n".repeat(breaks)));
     }
     if !exports_tail.is_empty() {
         out.push('\n');
@@ -406,7 +434,8 @@ impl<'a> Visit<'a> for Requires {
 /// How a file becomes a module: the project's TypeScript and a package's ES modules are
 /// rewritten, a package's CommonJS is wrapped, JSON is its value.
 enum Module {
-    Esm { body: String, imports: Vec<String> },
+    // `lines`: the source line of each line of the body.
+    Esm { body: String, imports: Vec<String>, lines: Vec<u32> },
     Cjs { source: String, requires: Vec<String> },
 }
 
@@ -419,9 +448,9 @@ fn load_module(path: &Path) -> Result<Module> {
     }
     let in_package = path.components().any(|c| c.as_os_str() == "node_modules");
     if !(in_package && matches!(ext.as_str(), "js" | "mjs" | "cjs")) {
-        let js = transform_to_js(path, &source)?;
+        let (js, lines) = transform_to_js(path, &source)?;
         let (body, imports) = rewrite_module(path, &js)?;
-        return Ok(Module::Esm { body, imports });
+        return Ok(Module::Esm { body, imports, lines });
     }
     // A package's JavaScript: an ES module when it says so (import or export, or .mjs), else CommonJS.
     if ext != "cjs" {
@@ -430,7 +459,7 @@ fn load_module(path: &Path) -> Result<Module> {
         let esm = !parsed.diagnostics.has_errors() && (ext == "mjs" || parsed.program.body.iter().any(|s| s.is_module_declaration()));
         if esm {
             let (body, imports) = rewrite_module(path, &source)?;
-            return Ok(Module::Esm { body, imports });
+            return Ok(Module::Esm { body, imports, lines: same_lines(&source) });
         }
     }
     let allocator = Allocator::default();
@@ -448,7 +477,9 @@ fn load_module(path: &Path) -> Result<Module> {
 /// Bundle `entry` and everything it imports into `out`.
 pub fn bundle(entry: &Path, sdk_dir: &Path, root: &Path, out: &Path) -> Result<BundleOutput> {
     let entry = std::fs::canonicalize(entry).with_context(|| format!("entry {}", entry.display()))?;
-    let mut modules: IndexMap<PathBuf, String> = IndexMap::new(); // path -> module definition
+    // path -> the module's definition, the source line of each line of its body, and the line of
+    // the definition its body starts on (0-based)
+    let mut modules: IndexMap<PathBuf, (String, Vec<u32>, usize)> = IndexMap::new();
     let mut ids: IndexMap<PathBuf, String> = IndexMap::new();
     let mut cjs: Vec<String> = vec![];
     let mut queue = vec![entry.clone()];
@@ -458,7 +489,7 @@ pub fn bundle(entry: &Path, sdk_dir: &Path, root: &Path, out: &Path) -> Result<B
         }
         let id = module_id(&path, sdk_dir, root);
         let def = match load_module(&path)? {
-            Module::Esm { body, imports } => {
+            Module::Esm { body, imports, lines } => {
                 // Resolve imports now so the body can refer to canonical ids.
                 let mut body_final = body;
                 for spec in &imports {
@@ -471,7 +502,7 @@ pub fn bundle(entry: &Path, sdk_dir: &Path, root: &Path, out: &Path) -> Result<B
                     body_final = body_final.replace(&format!("__pocket_import({})", js_string(spec)), &format!("__pocket_import({})", js_string(&tid)));
                     queue.push(target);
                 }
-                format!("function(__exports, __pocket_require){{\n\"use strict\";\n{body_final}\n}}")
+                (format!("function(__exports, __pocket_require){{\n\"use strict\";\n{body_final}\n}}"), lines, 2)
             }
             Module::Cjs { source, requires } => {
                 // What it requires by name maps to bundled ids; what cannot be found throws when (if) it is required.
@@ -493,11 +524,13 @@ pub fn bundle(entry: &Path, sdk_dir: &Path, root: &Path, out: &Path) -> Result<B
                     }
                 }
                 cjs.push(id.clone());
-                format!(
+                let lines = same_lines(&source);
+                let def = format!(
                     "function(e, r, m){{ (function(exports, require, module, process, global){{\n{source}\n}}).call(e, e, __pocket_cjs_require({}, {}), m, __pocket_process, globalThis); }}",
                     serde_json::Value::Object(found),
                     serde_json::Value::Object(missing)
-                )
+                );
+                (def, lines, 1)
             }
         };
         ids.insert(path.clone(), id);
@@ -517,13 +550,22 @@ pub fn bundle(entry: &Path, sdk_dir: &Path, root: &Path, out: &Path) -> Result<B
         text.push_str("const __pocket_import = __pocket_require;\n");
     }
     let mut names = vec![];
-    for (path, def) in &modules {
+    // Where each module's lines are in the bundle, for the runtime to say where a script error or
+    // a handler is in the files that were written (docs/sdk.md, Errors and cost).
+    let mut map = vec![];
+    let mut line = text.matches('\n').count() + 1;
+    for (path, (def, lines, offset)) in &modules {
         let id = &ids[path];
         names.push(id.clone());
-        text.push_str(&format!("__defs[{}] = {};\n", js_string(id), def));
+        map.push(serde_json::json!({"source": path.to_string_lossy(), "first": line + offset, "lines": lines}));
+        let entry = format!("__defs[{}] = {};\n", js_string(id), def);
+        line += entry.matches('\n').count();
+        text.push_str(&entry);
     }
     text.push_str(&format!("__pocket_require({});\n}})();\n", js_string(&ids[&entry])));
     std::fs::write(out, text).with_context(|| format!("writing {}", out.display()))?;
+    let lines_out = PathBuf::from(format!("{}.lines.json", out.display()));
+    std::fs::write(&lines_out, serde_json::to_string(&serde_json::json!({"modules": map}))?).with_context(|| format!("writing {}", lines_out.display()))?;
     Ok(BundleOutput { modules: names })
 }
 

@@ -289,6 +289,7 @@ struct World::Impl {
     mutable std::unordered_map<std::string, EntityId> by_bare_name;
     mutable std::uint64_t by_bare_name_at = ~0ull;
     std::int64_t tick = 0;
+    std::int64_t run_start = 0;   // the tick the run began on (seconds count from it)
     double tick_seconds = 1.0 / 60.0;
     flecs::query<Transform, Velocity> motion;
     flecs::query<Lifetime> lifetime;
@@ -566,7 +567,8 @@ std::uint64_t World::placement_version() const { return impl_->placement + impl_
 
 std::int64_t World::tick_index() const { return impl_->tick; }
 void World::set_tick_index(std::int64_t tick) { impl_->tick = tick; }
-double World::seconds() const { return static_cast<double>(impl_->tick) * impl_->tick_seconds; }
+double World::seconds() const { return static_cast<double>(impl_->tick - impl_->run_start) * impl_->tick_seconds; }
+void World::set_run_start(std::int64_t tick) { impl_->run_start = tick; }
 
 Result<EntityId> World::spawn(std::string_view name, EntityId parent, const Json& components, std::uint64_t cause) {
     if (name.find('/') != std::string::npos || name.find(':') != std::string::npos) {

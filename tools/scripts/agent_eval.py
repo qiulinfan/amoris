@@ -1947,6 +1947,354 @@ def guard_view_check(env, answer):
     return True, f"{want['cells']} cells in view, the torch {'sees' if want['sees'] else 'does not see'} the player"
 
 
+
+# Diagnose and fix: a game with something wrong in it, a report of what a player sees, and a fix
+# that has to leave the rest of the game as it was. The check compares the fixed game with the
+# broken one where they should agree (measured in the same runtime before the agent starts).
+
+def write_project(project_dir, script, scene=EMPTY_SCENE, toml=GAME_TOML):
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(toml.format(name=os.path.basename(project_dir)))
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write(scene)
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+        f.write(script)
+
+
+# A swarm: bees fly to the nearest flower, take a grain of pollen and carry it home; a flower that
+# has given five grains wilts and grows again further round. Every bee queries every flower every
+# tick, which is where the time goes.
+SWARM_TS = """import { expose, onStart, onTick, world } from "pocket";
+
+const BEES = 120;
+const FLOWERS = 16;
+const SPEED = 4;
+const carrying: boolean[] = [];
+const target: number[] = [];
+const given: number[] = [];
+const turn: number[] = [];
+let pollen = 0;
+
+function flowerAt(i: number): { x: number; y: number; z: number } {
+    const a = (i / FLOWERS) * Math.PI * 2 + turn[i] * 0.7;
+    const r = turn[i] % 2 === 0 ? 12 : 8;
+    return { x: Math.cos(a) * r, y: 0, z: Math.sin(a) * r };
+}
+
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 22, z: 18 }, rotation: { x: -0.5, y: 0, z: 0, w: 0.866 } }, Camera: {} } });
+    world.spawn("Sun", { components: { Transform: { rotation: { x: -0.4, y: 0.3, z: 0.1, w: 0.86 } }, Light: { kind: 0, intensity: 2 } } });
+    world.spawn("Hive", { components: { Transform: { position: { x: 0, y: 0.5, z: 0 } }, MeshRenderer: { mesh: "cube", color: [0.6, 0.45, 0.2] } } });
+    for (let i = 0; i < FLOWERS; i++) {
+        turn.push(0);
+        given.push(0);
+        world.spawn(`Flower_${i}`, { components: { Transform: { position: flowerAt(i), scale: { x: 0.6, y: 0.6, z: 0.6 } }, MeshRenderer: { mesh: "sphere", color: [1, 0.4, 0.7] } } });
+    }
+    for (let i = 0; i < BEES; i++) {
+        carrying.push(false);
+        target.push(-1);
+        world.spawn(`Bee_${i}`, { components: { Transform: { position: { x: (i % 12) - 5.5, y: 1, z: Math.floor(i / 12) - 4.5 }, scale: { x: 0.2, y: 0.2, z: 0.2 } }, MeshRenderer: { mesh: "sphere", color: [1, 0.85, 0.1] } } });
+    }
+});
+
+// Each bee heads for the nearest flower, or home with a grain.
+onTick(function fly({ dt }) {
+    for (let i = 0; i < BEES; i++) {
+        const bee = `Bee_${i}`;
+        const p = world.get(bee, "Transform")!.position;
+        let goal = { x: 0, y: 1, z: 0 };
+        if (!carrying[i]) {
+            let best = Infinity;
+            for (const f of world.query({ name: "Flower_*", with: ["Transform"] })) {
+                const q = f.Transform!.position;
+                const d = Math.hypot(q.x - p.x, q.z - p.z);
+                if (d < best) {
+                    best = d;
+                    goal = { x: q.x, y: 1, z: q.z };
+                    target[i] = Number(f.path.slice("/Flower_".length));
+                }
+            }
+        }
+        const dx = goal.x - p.x;
+        const dz = goal.z - p.z;
+        const d = Math.hypot(dx, dz);
+        if (d <= SPEED * dt) {
+            world.set(bee, "Transform", { position: goal });
+            if (carrying[i]) {
+                carrying[i] = false;
+                pollen += 1;
+            } else {
+                carrying[i] = true;
+                const k = target[i];
+                given[k] += 1;
+                if (given[k] % 5 === 0) {
+                    turn[k] += 1;
+                    world.set(`Flower_${k}`, "Transform", { position: flowerAt(k) });
+                }
+            }
+        } else {
+            world.set(bee, "Transform", { position: { x: p.x + (dx / d) * SPEED * dt, y: 1, z: p.z + (dz / d) * SPEED * dt } });
+        }
+    }
+});
+
+expose("pollen", () => pollen);
+expose("carrying", () => carrying.filter((c) => c).length);
+"""
+
+# The same game with the flowers read once a tick (and a flower that moves read again, as the
+# game read it): what the reference solution writes.
+SWARM_FAST_TS = SWARM_TS.replace("""    for (let i = 0; i < BEES; i++) {
+        const bee = `Bee_${i}`;""", """    const flowers = world.query({ name: "Flower_*", with: ["Transform"] }).map((f) => ({ k: Number(f.path.slice("/Flower_".length)), p: f.Transform!.position }));
+    for (let i = 0; i < BEES; i++) {
+        const bee = `Bee_${i}`;""").replace("""            for (const f of world.query({ name: "Flower_*", with: ["Transform"] })) {
+                const q = f.Transform!.position;""", """            for (const f of flowers) {
+                const q = f.p;""").replace("""                    target[i] = Number(f.path.slice("/Flower_".length));""", """                    target[i] = f.k;""").replace("""                    world.set(`Flower_${k}`, "Transform", { position: flowerAt(k) });""", """                    world.set(`Flower_${k}`, "Transform", { position: flowerAt(k) });
+                    for (const f of flowers) if (f.k === k) f.p = world.get(`Flower_${k}`, "Transform")!.position;""")
+assert SWARM_FAST_TS.count("world.query") == 1
+
+
+def swarm_setup(project_dir):
+    write_project(project_dir, SWARM_TS)
+
+
+def swarm_look(env, ticks):
+    """Reload the game, run it `ticks`, and answer where it got to and what its script cost a tick
+    over the last 60 of them."""
+    env.command("project.reload", {})
+    env.command("step", {"ticks": ticks - 60})
+    env.command("script.profile", {"reset": True})
+    env.command("step", {"ticks": 60})
+    cost = env.command("script.profile", {})["script_ms_per_tick"]
+    st = env.command("state", {})["state"]
+    bees = {r["path"]: r["Transform"]["position"] for r in env.command("world.query", {"name": "Bee_*", "with": ["Transform"]})["entities"]}
+    flowers = {r["path"]: r["Transform"]["position"] for r in env.command("world.query", {"name": "Flower_*", "with": ["Transform"]})["entities"]}
+    return {"pollen": st.get("pollen"), "carrying": st.get("carrying"), "bees": bees, "flowers": flowers, "ms": cost}
+
+
+def swarm_before(env):
+    env.task_state = swarm_look(env, 360)
+    env.command("project.reload", {})
+    s = env.task_state
+    if not s["pollen"] or s["ms"] <= 0:
+        return False, f"the swarm did not run: {s['pollen']} pollen, {s['ms']} ms a tick"
+    return True, ""
+
+
+def swarm_solve(env, project_dir):
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+        f.write(SWARM_FAST_TS)
+    return None
+
+
+def same_places(a, b, tol=1e-3):
+    if set(a) != set(b):
+        return f"entities {sorted(set(a) ^ set(b))[:4]} are in one run and not the other"
+    for k in a:
+        if any(abs(a[k][c] - b[k][c]) > tol for c in ("x", "y", "z")):
+            return f"{k} is at {a[k]} instead of {b[k]}"
+    return ""
+
+
+def swarm_check(env, answer):
+    was = getattr(env, "task_state", None)
+    if not was:
+        return False, "no measurement of the game before the fix"
+    now = swarm_look(env, 360)
+    if now["pollen"] != was["pollen"] or now["carrying"] != was["carrying"]:
+        return False, f"the game plays differently: {now['pollen']} pollen and {now['carrying']} carrying after 6 seconds, not {was['pollen']} and {was['carrying']}"
+    for what in ("bees", "flowers"):
+        why = same_places(now[what], was[what])
+        if why:
+            return False, f"the game plays differently: {why}"
+    if now["ms"] > was["ms"] * 0.25:
+        return False, f"the scripts take {now['ms']:.3f} ms a tick, not under a quarter of the {was['ms']:.3f} ms they took"
+    return True, f"same swarm, {was['ms']:.2f} -> {now['ms']:.2f} ms of script a tick"
+
+
+# A cannon: a pellet every tenth of a second, arcing up and landing; a landed pellet is meant to
+# be cleared away, but the sweep looks for pellets below the ground, and a landed one rests on it.
+CANNON_TS = """import { events, expose, onStart, onTick, world } from "pocket";
+import type { Entity } from "pocket";
+
+interface Pellet { id: Entity; x: number; y: number; vx: number; vy: number; landed: boolean }
+const pellets: Pellet[] = [];
+let fired = 0;
+let landed = 0;
+
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 4, z: 14 } }, Camera: { orthographic: true, ortho_size: 7 } } });
+    world.spawn("Ground", { components: { Transform: { position: { x: 0, y: -0.1, z: 0 } }, Sprite: { size: { x: 30, y: 0.2 }, color: { r: 0.3, g: 0.6, b: 0.3, a: 1 } } } });
+    world.spawn("Cannon", { components: { Transform: { position: { x: 0, y: 0.3, z: 0 } }, Sprite: { size: { x: 0.8, y: 0.6 }, color: { r: 0.2, g: 0.2, b: 0.25, a: 1 } } } });
+});
+
+// Every sixth tick a pellet, sent up at an angle that sweeps from left to right and back.
+onTick(function fire({ tick }) {
+    if (tick % 6 !== 0) return;
+    fired += 1;
+    const a = Math.PI / 2 + Math.sin(fired * 0.37) * 0.6;
+    const id = world.spawn(`Pellet_${fired}`, { components: { Transform: { position: { x: 0, y: 0.5, z: 0 } }, Sprite: { size: { x: 0.2, y: 0.2 }, color: { r: 1, g: 0.6, b: 0.2, a: 1 } } } });
+    pellets.push({ id, x: 0, y: 0.5, vx: Math.cos(a) * 8, vy: Math.sin(a) * 8, landed: false });
+});
+
+// Pellets fly under gravity until they reach the ground, where they stop.
+onTick(function fly({ dt }) {
+    for (const p of pellets) {
+        if (p.landed) continue;
+        p.vy -= 9.8 * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        if (p.y <= 0) {
+            p.y = 0;
+            p.landed = true;
+            landed += 1;
+            events.emit("pellet.landed", { x: p.x });
+        }
+        world.set(p.id, "Transform", { position: { x: p.x, y: p.y, z: 0 } });
+    }
+});
+
+// Landed pellets are cleared away.
+onTick(function sweep() {
+    for (let i = pellets.length - 1; i >= 0; i--) {
+        if (pellets[i].y < 0) {
+            world.destroy(pellets[i].id);
+            pellets.splice(i, 1);
+        }
+    }
+});
+
+expose("fired", () => fired);
+expose("landed", () => landed);
+"""
+
+CANNON_FIXED_TS = CANNON_TS.replace("        if (pellets[i].y < 0) {", "        if (pellets[i].landed) {")
+
+
+def cannon_setup(project_dir):
+    write_project(project_dir, CANNON_TS)
+
+
+def cannon_look(env, ticks):
+    env.command("project.reload", {})
+    seq = env.command("events.last_seq", {})["seq"]
+    env.command("step", {"ticks": ticks})
+    st = env.command("state", {})["state"]
+    flying = {r["path"]: r["Transform"]["position"] for r in env.command("world.query", {"name": "Pellet_*", "with": ["Transform"], "limit": 100000})["entities"] if r["Transform"]["position"]["y"] > 0}
+    pellets = env.command("world.query", {"name": "Pellet_*", "limit": 100000})["count"]
+    landings = env.command("events.since", {"seq": seq, "type": "pellet.landed", "limit": 100000})["events"]
+    return {"fired": st.get("fired"), "landed": st.get("landed"), "flying": flying, "pellets": pellets, "landings": [round(e["data"]["x"], 4) for e in landings]}
+
+
+def cannon_before(env):
+    env.task_state = cannon_look(env, 1800)
+    env.command("project.reload", {})
+    s = env.task_state
+    if s["pellets"] < 250:
+        return False, f"the cannon did not leave its pellets about: {s['pellets']} after 30 seconds"
+    return True, ""
+
+
+def cannon_solve(env, project_dir):
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+        f.write(CANNON_FIXED_TS)
+    return None
+
+
+def cannon_check(env, answer):
+    was = getattr(env, "task_state", None)
+    if not was:
+        return False, "no measurement of the game before the fix"
+    now = cannon_look(env, 1800)
+    if now["fired"] != was["fired"] or now["landed"] != was["landed"]:
+        return False, f"the cannon plays differently: fired {now['fired']}, landed {now['landed']} after 30 seconds, not {was['fired']} and {was['landed']}"
+    if now["landings"] != was["landings"]:
+        return False, "the pellets land in other places than they did"
+    why = same_places(now["flying"], was["flying"])
+    if why:
+        return False, f"the pellets in the air fly differently: {why}"
+    if now["pellets"] > len(now["flying"]) + 2:
+        return False, f"{now['pellets']} pellets after 30 seconds, {len(now['flying'])} of them in the air: the landed ones still pile up"
+    return True, f"{was['pellets']} pellets left about before, {now['pellets']} now, the same {now['landed']} landings"
+
+
+# Crates dropped on a floor; the blue one falls through it. The floor shares a negative collision
+# group with the ghost, which drifts through it on purpose, and the blue crate was put in that
+# group too.
+def crate_scene():
+    def box(name, x, y, color, group=0, extra=None):
+        c = {"Transform": {"position": {"x": x, "y": y, "z": 0}}, "MeshRenderer": {"mesh": "cube", "color": color},
+             "RigidBody": {"kind": "dynamic"}, "Collider": {"size": {"x": 0.5, "y": 0.5, "z": 0.5}, "group": group}}
+        c.update(extra or {})
+        return {"name": name, "components": c}
+    ents = [
+        {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 3, "z": 12}}, "Camera": {}}},
+        {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.4, "y": 0.3, "z": 0.1, "w": 0.86}}, "Light": {"kind": 0, "intensity": 2}}},
+        {"name": "Floor", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 16, "y": 1, "z": 6}}, "MeshRenderer": {"mesh": "cube", "color": [0.5, 0.5, 0.5]},
+                                         "RigidBody": {"kind": "static"}, "Collider": {"size": {"x": 8, "y": 0.5, "z": 3}, "group": -2}}},
+        box("RedCrate", -3, 3, [0.9, 0.2, 0.2]),
+        box("GreenCrate", 0, 4, [0.2, 0.8, 0.3], 0, {"Collider": {"size": {"x": 0.5, "y": 0.5, "z": 0.5}, "layer": 1, "mask": 4294967295}}),
+        box("BlueCrate", 3, 3.5, [0.2, 0.3, 0.9], -2),
+        {"name": "Ghost", "components": {"Transform": {"position": {"x": 6, "y": 3, "z": 0}, "scale": {"x": 0.8, "y": 0.8, "z": 0.8}}, "MeshRenderer": {"mesh": "sphere", "color": [0.9, 0.9, 1.0]},
+                                         "RigidBody": {"kind": "dynamic"}, "Collider": {"shape": 1, "size": {"x": 0.4, "y": 0.4, "z": 0.4}, "group": -2}}},
+    ]
+    return json.dumps({"format": "pocket-scene", "entities": ents}, indent=1) + "\n"
+
+
+CRATES_TS = """import { expose, onTick, world } from "pocket";
+
+// How many crates are resting on the floor (within a hand of it, hardly moving).
+let resting = 0;
+onTick(() => {
+    resting = 0;
+    for (const name of ["RedCrate", "GreenCrate", "BlueCrate"]) {
+        const t = world.get(name, "Transform");
+        if (t && Math.abs(t.position.y - 0.5) < 0.1) resting += 1;
+    }
+});
+expose("resting", () => resting);
+"""
+
+
+def sinking_setup(project_dir):
+    write_project(project_dir, CRATES_TS, scene=crate_scene())
+
+
+def sinking_solve(env, project_dir):
+    path = os.path.join(project_dir, "scene.json")
+    with open(path) as f:
+        scene = json.load(f)
+    for e in scene["entities"]:
+        if e["name"] == "BlueCrate":
+            e["components"]["Collider"]["group"] = 0
+    with open(path, "w") as f:
+        json.dump(scene, f, indent=1)
+    return "group"
+
+
+def sinking_check(env, answer):
+    env.command("project.reload", {})
+    env.command("step", {"ticks": 180})
+    def pos(name):
+        return env.command("world.get", {"entity": name, "component": "Transform"})["position"]
+    blue = pos("BlueCrate")
+    if not (near(blue["y"], 0.5, 0.06) and near(blue["x"], 3, 0.1)):
+        return False, f"BlueCrate is at {blue} three seconds in, not resting on the floor where it fell (x 3, y 0.5)"
+    for name, x in (("RedCrate", -3), ("GreenCrate", 0)):
+        p = pos(name)
+        if not (near(p["y"], 0.5, 0.06) and near(p["x"], x, 0.1)):
+            return False, f"{name} is at {p}, no longer resting where it was"
+    ghost = pos("Ghost")
+    if ghost["y"] > -2:
+        return False, f"the Ghost no longer drifts through the floor (it is at y {ghost['y']:.2f})"
+    floor = env.command("world.get", {"entity": "Floor", "component": "Collider"})
+    if floor.get("group") != -2:
+        return False, f"the Floor's collision group was changed to {floor.get('group')}"
+    if not isinstance(answer, str) or "group" not in answer.lower():
+        return False, f"BlueCrate lands now, but the answer {answer!r} does not name the field that was wrong (its Collider's group)"
+    return True, f"BlueCrate rests at y {blue['y']:.3f}, the Ghost still sinks; answered {answer!r}"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -2044,6 +2392,12 @@ TASKS = [
      "task": "In the dungeon game, about where the Player stands now: how many map cells can it see within 6 cells, as the map's field of view counts them, and does the torch Torch_6 have a clear line of sight from where it is to the Player? Answer with an object {\"cells\": number, \"sees\": boolean}."},
     {"name": "vault_level", "project": "dungeon", "ticks": 2, "solve": vault_level_solve, "check": vault_level_check,
      "task": "Add a vault to the running dungeon game: a new tile map named maps/vault.tmj, 12 by 8 cells, with the dungeon's tiles (assets/dungeon_tiles.png: tile 0 floor, tile 1 wall), solid walls all around its edge and a solid 2 by 2 pillar at its center (cells 5 and 6 across, 3 and 4 down), floor everywhere else, and objects on the floor: three of type coin and one of type start. Show it as an entity named Vault at x 40, y 0. Answer null."},
+    {"name": "slow_swarm", "project": "blank", "ticks": 0, "script": True, "setup": swarm_setup, "before": swarm_before, "solve": swarm_solve, "check": swarm_check,
+     "task": "Players say this game has become slow: a swarm of bees flies between flowers and a hive, and each tick takes far too long. Find what makes it slow and make the scripts take under a quarter of the time a tick they take now, without changing what the game does: the same bees and flowers in the same places and the same pollen, tick for tick. Answer null."},
+    {"name": "leaky_cannon", "project": "blank", "ticks": 0, "script": True, "setup": cannon_setup, "before": cannon_before, "solve": cannon_solve, "check": cannon_check,
+     "task": "Players say this game gets slower the longer it runs. A cannon fires pellets that arc up and land. Find what is wrong and fix it, without changing how many pellets are fired or how they fly and where they land. Answer null."},
+    {"name": "sinking_crate", "project": "blank", "ticks": 0, "script": True, "edits": "scene.json", "setup": sinking_setup, "solve": sinking_solve, "check": sinking_check,
+     "task": "In this level three crates drop onto the floor, but the blue one (BlueCrate) falls straight through it. Find why and fix the level's scene so that BlueCrate lands on the floor like the other crates, leaving the rest as it is (the Ghost drifts through the floor on purpose). Answer the name of the component field that was wrong."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]
@@ -2111,7 +2465,7 @@ def scratch_copy(task):
 def scratch_remove(project_dir):
     shutil.rmtree(project_dir, ignore_errors=True)
     name = os.path.basename(project_dir)
-    for suffix in (".js", ".js.project.json"):
+    for suffix in (".js", ".js.project.json", ".js.lines.json"):
         try:
             os.remove(os.path.join(ROOT, "build", "ts", name + suffix))
         except FileNotFoundError:
@@ -2157,6 +2511,10 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
             # Every task on a copy outside the repository (the reference and null runners need none).
             outside = runner not in ("reference", "null") or t.get("script")
             project_dir = scratch_copy(t) if outside else os.path.join(project_root or ROOT, "samples", t["project"])
+            if "setup" in t:
+                # The game as the task finds it, written into the copy before the runtime starts.
+                t["setup"](project_dir)
+                bundle(project_dir)
             # POCKET_EVAL_RUNTIME: a copy of the runtime to test (so a long run is not changed by a rebuild).
             env = PocketEnv(project_dir, root=project_root, runtime=os.environ.get("POCKET_EVAL_RUNTIME") or None)
             if t["ticks"]:
