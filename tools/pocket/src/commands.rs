@@ -349,10 +349,59 @@ pub fn new_from_template(ws: &Workspace, name: &str, dir: &Path, from: &str) -> 
         bail!("{} already exists", project.display());
     }
     let files = copy_template(&src, &project, name)?;
+    write_project_guide(ws, &project, name)?;
     let mut rep = Report::success("new", format!("created {} from {} ({files} files; run: pocket run {name}; editor: pocket editor {name})", project.display(), src.display()));
     rep.data = json!({ "project": project, "from": src, "files": files });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
+}
+
+/// A new project's guide for coding agents (AGENTS.md, and CLAUDE.md pointing at it): how to run,
+/// read, change and check the game. Written when the project has none.
+fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()> {
+    if project.join("AGENTS.md").exists() {
+        return Ok(());
+    }
+    let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
+    let tool = root.join(".pocket").join("pocket");
+    let docs = root.join("docs");
+    let guide = format!(
+        r#"# {name}
+
+A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's own guide is `{engine}`, and its documentation is under `{docs}` (`mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part).
+
+## The loop
+
+1. Start the game paused with its control server: `{tool} run {name} -- --serve 4711 --paused` (or the MCP tool `runtime_start`).
+2. Read it first: `{tool} rpc project.brief` gives the files, the scene, the components in use, the input actions, the exposed state and what looks wrong.
+3. Change the world with commands (`world.spawn`, `world.set`, `world.destroy`; `help {{"command": "world.set"}}` says how to call one), or edit the files below and apply them to the running game with `project.apply`, which bundles, type-checks, reloads and steps it in one call.
+4. Check what happened: `step {{"ticks": 600, "until": {{"event": "coin."}}}}`, `state`, `world.query`, `events.since`, `transcript`; `capture {{"path": "shot.png"}}` when it has to be seen. Several commands go in one call as `{{"calls": [{{"method", "params"}}, ...]}}`.
+
+## The files
+
+- `project.toml`: the name, the window, the input actions (`[input.actions]`), render and physics settings.
+- `scene.json`: the entities the game starts with.
+- `scripts/`: the game's logic in TypeScript (`import ... from "pocket"`); `{tool} check {name}` reads its types.
+- `components.toml`, when there is one: the game's own components, so its state lives on entities.
+- `prefabs/` and `assets/`: what the scripts instantiate and draw.
+- `scenarios/*.ts`, when there are some: plays of the game with checks, run with `{tool} scenario {name}`.
+
+## What keeps it working
+
+- Keep the game's state on entities: a component in `components.toml` rather than a variable in a script, so the world, saves, replays and agents can see it.
+- Expose what matters with `expose("name", () => value)`: it is what `state` and the run's report show.
+- Use `random()` and the SDK's `repro` math in gameplay, so a seed plays the same game every time.
+- After a change, `{tool} check {name}` reports no type errors and the scenarios still pass.
+"#,
+        engine = root.join("AGENTS.md").display(),
+        docs = docs.display(),
+        tool = tool.display(),
+    );
+    std::fs::write(project.join("AGENTS.md"), guide)?;
+    if !project.join("CLAUDE.md").exists() {
+        std::fs::write(project.join("CLAUDE.md"), "@AGENTS.md\n")?;
+    }
+    Ok(())
 }
 
 pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
@@ -370,7 +419,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::write(project.join("scene.json"), r#"{
   "format": "pocket-scene",
   "entities": [
-    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 20, "y": 1, "z": 20 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.35, "g": 0.4, "b": 0.32, "a": 1 } }, "RigidBody": { "kind": 0 }, "Collider": { "shape": 0 } } },
+    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 20, "y": 1, "z": 20 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.35, "g": 0.4, "b": 0.32, "a": 1 } }, "RigidBody": { "kind": "static" }, "Collider": { "shape": "box" } } },
     { "name": "Player", "components": { "Transform": { "position": { "x": 0, "y": 0.5, "z": 0 } }, "MeshRenderer": { "mesh": "sphere", "color": { "r": 0.2, "g": 0.6, "b": 0.9, "a": 1 } }, "Health": { "current": 100, "max": 100 } } },
     { "name": "Sun", "components": { "Transform": { "rotation": { "x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89 } }, "Light": { "kind": 0, "intensity": 1.2 } } },
     { "name": "Camera", "components": { "Transform": { "position": { "x": 0, "y": 6, "z": 10 }, "rotation": { "x": -0.26, "y": 0, "z": 0, "w": 0.97 } }, "Camera": {} } }
@@ -380,7 +429,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::write(project.join("prefabs").join("crate.json"), r#"{
   "format": "pocket-scene",
   "entities": [
-    { "name": "Crate", "components": { "Transform": { "position": { "x": 0, "y": 3, "z": 0 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.8, "g": 0.55, "b": 0.25, "a": 1 } }, "RigidBody": { "kind": 1, "mass": 1 }, "Collider": { "shape": 0 } } }
+    { "name": "Crate", "components": { "Transform": { "position": { "x": 0, "y": 3, "z": 0 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.8, "g": 0.55, "b": 0.25, "a": 1 } }, "RigidBody": { "kind": "dynamic", "mass": 1 }, "Collider": { "shape": "box" } } }
   ]
 }
 "#)?;
@@ -415,8 +464,9 @@ expose("player.z", () => Number(z.toFixed(3)));
 expose("crates", () => crates);
 "#))?;
     std::fs::write(project.join("assets").join(".gitkeep"), "")?;
+    write_project_guide(ws, &project, name)?;
     let mut rep = Report::success("new", format!("created {} (run: pocket run {name}; editor: pocket editor {name})", project.display()));
-    rep.data = json!({ "project": project, "files": ["project.toml", "scene.json", "prefabs/crate.json", "scripts/main.ts", "assets/"] });
+    rep.data = json!({ "project": project, "files": ["project.toml", "scene.json", "prefabs/crate.json", "scripts/main.ts", "assets/", "AGENTS.md", "CLAUDE.md"] });
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
 }

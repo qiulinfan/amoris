@@ -322,11 +322,24 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `from_clip` | string | "" | The clip fading out (keeps playing at its own time until the fade ends); empty when none. |
 | `from_time` | f32 | 0.0 | Seconds into from_clip, advanced by the engine. |
 | `layers` | list:AnimationLayer | [] | Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). |
+| `cues` | list:AnimationCue | [] | Moments of the clips announced as animation.cue events {name, clip, time} as the base clip passes them, every loop (docs/design/animation.md, Cues). |
 | `root_motion` | i32: 0 `off`, 1 `move`, 2 `report` | 0 | 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). |
 | `root` | string | "" | The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. |
 | `root_delta` | vec3 | [0.0, 0.0, 0.0] | The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine). |
 | `root_rotation` | bool | false | With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion). |
 | `root_delta_yaw` | f32 | 0.0 | The root's yaw change this tick in radians while root_rotation is on (written by the engine). |
+
+## Attach
+
+Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `target` | string | "" | The entity whose model has the joint, by name or path. |
+| `joint` | string | "" | The joint (a node of the model) by its name. |
+| `offset` | vec3 | [0.0, 0.0, 0.0] | Where it sits in the joint's frame. |
+| `rotation` | quat | [0.0, 0.0, 0.0, 1.0] | How it is turned in the joint's frame. |
+| `found` | bool | false | The target and its joint were found this tick (written by the engine). |
 
 ## IK
 
@@ -773,6 +786,16 @@ One wheel of a Vehicle (docs/design/physics.md, Vehicles): where its suspension 
 | `contact` | bool | false | On the ground this step (written by the engine). |
 | `compression` | f32 | 0.0 | How far the suspension is pushed in, 0..rest (written by the engine). |
 | `spin` | f32 | 0.0 | How far the wheel has rolled, in radians (written by the engine). |
+
+## AnimationCue
+
+A moment of a clip that is announced (docs/design/animation.md, Cues): when the playing clip passes `time`, an animation.cue event names it. A footstep, the frame a swing should hurt, the moment a door's latch clicks.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `clip` | string | "" | The clip it belongs to; empty for whatever clip is playing. |
+| `time` | f32 | 0.0 | Seconds into the clip. |
+| `name` | string | "" | What the event calls it (step, hit, latch). |
 
 ## AnimationLayer
 

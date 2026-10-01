@@ -88,7 +88,7 @@ A dynamic body in a `Water` body's extent is buoyed by the water it displaces, c
 
 - `physics.raycast {origin, direction, max_distance, include_triggers, mask}`: the nearest hit (entity, point, normal, distance), against boxes, spheres, capsules and mesh triangles (both faces, the normal turned toward the ray) on the layers of `mask`.
 - `physics.sweep {origin, direction, radius, max_distance, include_triggers, mask}`: a sphere of `radius` cast along the direction: the nearest shape it would touch (entity, the distance its center can travel, the touching point, the normal there), exact against rounded boxes, capsules, spheres and mesh triangles; where a character of that radius can go, what a thrown ball would hit first.
-- `physics.overlap {center, radius, mask}`: the entities whose shapes overlap a sphere, on the layers of `mask`.
+- `physics.overlap {center, radius, shape, size, height, rotation, characters, mask}`: the entities whose shapes overlap a shape placed at `center`, on the layers of `mask`: a sphere of `radius` (the default), a box of half extents `size`, or a capsule of `radius` and `height` along its local Y, turned by `rotation`. Characters count too (their capsules, on layer 1), unless `characters: false`: a sword's arc as a turned box in front of the swinger finds who it reaches, a player or a crate alike.
 - `physics.layers`: the project's layer names and their bits.
 - `physics.ignore {a, b, ignore}` and `physics.ignored`: an exception for one pair, and the exceptions standing.
 - `physics.contacts`: every contact of the last step (pair, point, normal, depth, trigger flag); the SDK's `onContacts` receives the same list each tick.

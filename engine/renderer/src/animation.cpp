@@ -906,6 +906,8 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
     std::map<world::EntityId, Pose> next;
     struct Finish { world::EntityId id; std::string clip; int layer = -1; };
     std::vector<Finish> finished;
+    struct Cue { world::EntityId id; std::string name, clip; float time; };
+    std::vector<Cue> cues;
     struct Move { world::EntityId id; Vec3 delta; float yaw = 0; };
     std::vector<Move> moves;  // root motion to apply to transforms after the query
     // The locals of every posed entity: the clips land first, then IK and look-at turn joints,
@@ -940,6 +942,17 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
                     finished.push_back({e.id(), a.clip});
                 } else if (a.time < 0) {
                     a.time = 0;
+                }
+            }
+            // The cues the clip passed this tick, through a wrap at the end (or the start, going back).
+            if (!a.cues.empty() && a.time != old_time) {
+                const bool forward = a.speed * rate >= 0;
+                for (const world::AnimationCue& c : a.cues) {
+                    if (!c.clip.empty() && c.clip != a.clip) continue;
+                    bool passed = false;
+                    if (forward) passed = wrapped ? (c.time > old_time || c.time <= a.time) : (c.time > old_time && c.time <= a.time);
+                    else passed = wrapped ? (c.time < old_time || c.time >= a.time) : (c.time < old_time && c.time >= a.time);
+                    if (passed) cues.push_back({e.id(), c.name, a.clip, c.time});
                 }
             }
         }
@@ -1084,6 +1097,7 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         if (mv.yaw != 0) moved.rotation = normalize(moved.rotation * Quat::from_axis_angle({0, 1, 0}, mv.yaw));
         world.set_typed<world::Transform>(mv.id, moved);
     }
+    for (const Cue& c : cues) world.events().emit(world.tick_index(), "animation.cue", c.id, Json{{"name", c.name}, {"clip", c.clip}, {"time", c.time}, {"path", world.path(c.id)}});
     for (const Finish& f : finished) {
         Json data{{"path", world.path(f.id)}, {"clip", f.clip}};
         if (f.layer >= 0) data["layer"] = f.layer;

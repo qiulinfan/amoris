@@ -200,6 +200,31 @@ std::size_t numeric_span(Wheel& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const AnimationCue& v) {
+    j = Json::object();
+    j["clip"] = v.clip;
+    j["time"] = v.time;
+    j["name"] = v.name;
+}
+
+void from_json(const Json& j, AnimationCue& v) {
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "time", v.time);
+    scalar_from_json(j, "name", v.name);
+}
+
+void hash_record(StateHasherRef& h, const AnimationCue& v) {
+    h.str(v.clip);
+    h.f32(v.time);
+    h.str(v.name);
+}
+
+std::size_t numeric_span(AnimationCue& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "time") { *out = &v.time; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const AnimationLayer& v) {
     j = Json::object();
     j["clip"] = v.clip;
@@ -1469,6 +1494,8 @@ void to_json(Json& j, const Animator& v) {
     j["from_time"] = v.from_time;
     j["layers"] = Json::array();
     for (const auto& x : v.layers) { Json e; to_json(e, x); j["layers"].push_back(std::move(e)); }
+    j["cues"] = Json::array();
+    for (const auto& x : v.cues) { Json e; to_json(e, x); j["cues"].push_back(std::move(e)); }
     j["root_motion"] = v.root_motion;
     j["root"] = v.root;
     vec_to_json(j["root_delta"], v.root_delta);
@@ -1493,6 +1520,10 @@ void from_json(const Json& j, Animator& v) {
         v.layers.clear();
         for (const Json& e : j["layers"]) { AnimationLayer x; from_json(e, x); v.layers.push_back(std::move(x)); }
     }
+    if (j.is_object() && j.contains("cues") && j["cues"].is_array()) {
+        v.cues.clear();
+        for (const Json& e : j["cues"]) { AnimationCue x; from_json(e, x); v.cues.push_back(std::move(x)); }
+    }
     enum_from_json(j, "root_motion", v.root_motion, {"off", "move", "report"});
     scalar_from_json(j, "root", v.root);
     if (j.is_object() && j.contains("root_delta")) vec_from_json(j["root_delta"], v.root_delta);
@@ -1515,6 +1546,8 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.from_time);
     h.i64(static_cast<std::int64_t>(v.layers.size()));
     for (const auto& x : v.layers) hash_record(h, x);
+    h.i64(static_cast<std::int64_t>(v.cues.size()));
+    for (const auto& x : v.cues) hash_record(h, x);
     h.i64(static_cast<std::int64_t>(v.root_motion));
     h.str(v.root);
     h.f32(v.root_delta.x);
@@ -1537,11 +1570,60 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
         std::size_t index = 0;
         if (list_index(rest, index) && index < v.layers.size()) return numeric_span(v.layers[index], rest, out);
     }
+    if (path.starts_with("cues.")) {
+        std::string_view rest = path.substr(5);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.cues.size()) return numeric_span(v.cues[index], rest, out);
+    }
     if (path == "root_delta") { *out = &v.root_delta.x; return 3; }
     if (path == "root_delta.x") { *out = &v.root_delta.x; return 1; }
     if (path == "root_delta.y") { *out = &v.root_delta.y; return 1; }
     if (path == "root_delta.z") { *out = &v.root_delta.z; return 1; }
     if (path == "root_delta_yaw") { *out = &v.root_delta_yaw; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Attach& v) {
+    j = Json::object();
+    j["target"] = v.target;
+    j["joint"] = v.joint;
+    vec_to_json(j["offset"], v.offset);
+    vec_to_json(j["rotation"], v.rotation);
+    j["found"] = v.found;
+}
+
+void from_json(const Json& j, Attach& v) {
+    scalar_from_json(j, "target", v.target);
+    scalar_from_json(j, "joint", v.joint);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    if (j.is_object() && j.contains("rotation")) vec_from_json(j["rotation"], v.rotation);
+    scalar_from_json(j, "found", v.found);
+}
+
+void hash_component(StateHasherRef& h, const Attach& v) {
+    h.str(v.target);
+    h.str(v.joint);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
+    h.f32(v.rotation.x);
+    h.f32(v.rotation.y);
+    h.f32(v.rotation.z);
+    h.f32(v.rotation.w);
+    h.u8(v.found ? 1 : 0);
+}
+
+std::size_t numeric_span(Attach& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
+    if (path == "rotation") { *out = &v.rotation.x; return 4; }
+    if (path == "rotation.x") { *out = &v.rotation.x; return 1; }
+    if (path == "rotation.y") { *out = &v.rotation.y; return 1; }
+    if (path == "rotation.z") { *out = &v.rotation.z; return 1; }
+    if (path == "rotation.w") { *out = &v.rotation.w; return 1; }
     return 0;
 }
 
@@ -3029,6 +3111,11 @@ constexpr std::array<FieldInfo, 9> kWheelFields = {{
     FieldInfo{"compression", "f32", "How far the suspension is pushed in, 0..rest (written by the engine).", {}},
     FieldInfo{"spin", "f32", "How far the wheel has rolled, in radians (written by the engine).", {}},
 }};
+constexpr std::array<FieldInfo, 3> kAnimationCueFields = {{
+    FieldInfo{"clip", "string", "The clip it belongs to; empty for whatever clip is playing.", {}},
+    FieldInfo{"time", "f32", "Seconds into the clip.", {}},
+    FieldInfo{"name", "string", "What the event calls it (step, hit, latch).", {}},
+}};
 constexpr std::array<FieldInfo, 8> kAnimationLayerFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them).", {}},
     FieldInfo{"weight", "f32", "0..1: how much of the layer shows (the blend factor, or the scale of an additive change).", {}},
@@ -3273,7 +3360,7 @@ constexpr std::array<FieldInfo, 7> kTimelineFields = {{
     FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine).", {}},
 }};
 constexpr std::string_view kAnimator_root_motionNames[] = {"off", "move", "report"};
-constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 19> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose).", {}},
     FieldInfo{"playing", "bool", "Whether time advances.", {}},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished).", {}},
@@ -3287,11 +3374,19 @@ constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
     FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none.", {}},
     FieldInfo{"from_time", "f32", "Seconds into from_clip, advanced by the engine.", {}},
     FieldInfo{"layers", "list:AnimationLayer", "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them).", {}},
+    FieldInfo{"cues", "list:AnimationCue", "Moments of the clips announced as animation.cue events {name, clip, time} as the base clip passes them, every loop (docs/design/animation.md, Cues).", {}},
     FieldInfo{"root_motion", "i32", "0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion).", kAnimator_root_motionNames},
     FieldInfo{"root", "string", "The node whose translation is the root motion; empty picks the clip's topmost node with a translation track.", {}},
     FieldInfo{"root_delta", "vec3", "The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine).", {}},
     FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion).", {}},
     FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine).", {}},
+}};
+constexpr std::array<FieldInfo, 5> kAttachFields = {{
+    FieldInfo{"target", "string", "The entity whose model has the joint, by name or path.", {}},
+    FieldInfo{"joint", "string", "The joint (a node of the model) by its name.", {}},
+    FieldInfo{"offset", "vec3", "Where it sits in the joint's frame.", {}},
+    FieldInfo{"rotation", "quat", "How it is turned in the joint's frame.", {}},
+    FieldInfo{"found", "bool", "The target and its joint were found this tick (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 14> kIKFields = {{
     FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints).", {}},
@@ -3590,11 +3685,12 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights.", {}},
 }};
 
-constexpr std::array<RecordInfo, 9> kRecords = {{
+constexpr std::array<RecordInfo, 10> kRecords = {{
     RecordInfo{"MeshLod", kMeshLodFields},
     RecordInfo{"MorphWeight", kMorphWeightFields},
     RecordInfo{"IKLimit", kIKLimitFields},
     RecordInfo{"Wheel", kWheelFields},
+    RecordInfo{"AnimationCue", kAnimationCueFields},
     RecordInfo{"AnimationLayer", kAnimationLayerFields},
     RecordInfo{"AnimationState", kAnimationStateFields},
     RecordInfo{"AnimationTransition", kAnimationTransitionFields},
@@ -3602,7 +3698,7 @@ constexpr std::array<RecordInfo, 9> kRecords = {{
     RecordInfo{"TerrainLayer", kTerrainLayerFields},
 }};
 
-constexpr std::array<ComponentInfo, 42> kComponents = {{
+constexpr std::array<ComponentInfo, 43> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -3624,6 +3720,7 @@ constexpr std::array<ComponentInfo, 42> kComponents = {{
     ComponentInfo{"AnimationGraph", "A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters.", true, kAnimationGraphFields},
     ComponentInfo{"Timeline", "Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end.", true, kTimelineFields},
     ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
+    ComponentInfo{"Attach", "Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays.", true, kAttachFields},
     ComponentInfo{"IK", "Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.", true, kIKFields},
     ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},
     ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.", true, kParticleEmitterFields},

@@ -37,6 +37,30 @@ namespace pocket::app {
 
 namespace {
 
+// A matrix taken apart into a translation, a rotation and a scale (no shear).
+void decompose_matrix(const Mat4& m, Vec3& t, Quat& r, Vec3& s) {
+    t = {m.at(3, 0), m.at(3, 1), m.at(3, 2)};
+    Vec3 c0{m.at(0, 0), m.at(0, 1), m.at(0, 2)}, c1{m.at(1, 0), m.at(1, 1), m.at(1, 2)}, c2{m.at(2, 0), m.at(2, 1), m.at(2, 2)};
+    s = {length(c0), length(c1), length(c2)};
+    if (s.x > 0) c0 = c0 * (1.0f / s.x);
+    if (s.y > 0) c1 = c1 * (1.0f / s.y);
+    if (s.z > 0) c2 = c2 * (1.0f / s.z);
+    const float tr = c0.x + c1.y + c2.z;
+    if (tr > 0) {
+        const float k = std::sqrt(tr + 1.0f) * 2.0f;
+        r = {(c1.z - c2.y) / k, (c2.x - c0.z) / k, (c0.y - c1.x) / k, 0.25f * k};
+    } else if (c0.x > c1.y && c0.x > c2.z) {
+        const float k = std::sqrt(1.0f + c0.x - c1.y - c2.z) * 2.0f;
+        r = {0.25f * k, (c1.x + c0.y) / k, (c2.x + c0.z) / k, (c1.z - c2.y) / k};
+    } else if (c1.y > c2.z) {
+        const float k = std::sqrt(1.0f + c1.y - c0.x - c2.z) * 2.0f;
+        r = {(c1.x + c0.y) / k, 0.25f * k, (c2.y + c1.z) / k, (c2.x - c0.z) / k};
+    } else {
+        const float k = std::sqrt(1.0f + c2.z - c0.x - c1.y) * 2.0f;
+        r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
+    }
+}
+
 // What a hold presses: a key, or a mouse button, which a hold presses away from the interface (it
 // presses the action bound to it; ui.click is what clicks an element).
 platform::Event press_event(const std::string& key, bool down) {
@@ -820,6 +844,7 @@ void Session::run_tick() {
     world_->tick(clock_.tick_seconds);
     particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    update_attachments();   // after the poses: what is held follows the joint as it is now
     if (audio_) tick_audio(clock_.tick_seconds);
     if (ui_) ui_->advance(static_cast<float>(clock_.tick_seconds));   // the interface's transitions run on the simulation clock
     if (recorder_.recording()) recorder_.record(*world_, tick);
@@ -2970,9 +2995,22 @@ Result<Json> Session::physics_command(std::string_view op, const Json& p) {
         return j;
     }
     if (op == "overlap") {
-        Vec3 center = vec3_of(p.value("center", Json(nullptr)), {0, 0, 0});
+        // A sphere by default; a box (size: half extents) or a capsule (radius and height, like a
+        // Character's), turned by rotation, for a sword's arc or a body's reach.
+        physics::Physics::Probe probe;
+        probe.position = vec3_of(p.value("center", Json(nullptr)), {0, 0, 0});
+        const std::string shape = opt<std::string>(p, "shape", "sphere");
+        const float radius = opt<float>(p, "radius", 1.0f);
+        if (shape == "sphere") { probe.shape = 1; probe.half = {radius, radius, radius}; }
+        else if (shape == "box") { probe.shape = 0; probe.half = vec3_of(p.value("size", Json(nullptr)), {0.5f, 0.5f, 0.5f}); }
+        else if (shape == "capsule") { probe.shape = 2; probe.half = {radius, std::max(opt<float>(p, "height", 2.0f) * 0.5f - radius, 0.0f), radius}; }
+        else return fail("bad_args", "shape is sphere, box or capsule, not '{}'", shape);
+        if (p.contains("rotation") && p["rotation"].is_object()) {
+            const Json& q = p["rotation"];
+            probe.rotation = Quat{q.value("x", 0.0f), q.value("y", 0.0f), q.value("z", 0.0f), q.value("w", 1.0f)};
+        }
         const std::uint32_t mask = mask_of();
-        auto ids = physics_->overlap_sphere(*world_, center, opt<float>(p, "radius", 1.0f), [mask](world::EntityId, const world::RigidBody&, const world::Collider& col) { return (col.layer & mask) != 0; });
+        auto ids = physics_->overlap(*world_, probe, [mask](world::EntityId, const world::RigidBody&, const world::Collider& col) { return (col.layer & mask) != 0; }, opt<bool>(p, "characters", true), mask);
         Json arr = Json::array();
         for (auto id : ids) arr.push_back(Json{{"id", id}, {"path", world_->path(id)}});
         return arr;
@@ -3533,7 +3571,8 @@ bool Session::apply_hit(world::EntityId box, world::EntityId target, std::uint64
     world::Hitbox hb = *hb_now;
     world::Health hp = *hp_now;
     if (hb.team != 0 && hb.team == hp.team) return false;   // a team does not hurt its own
-    if (hp.guard > 0.0f || (hp.dead && hb.damage > 0.0f)) return false;
+    if (hp.current > 0.0f) hp.dead = false;                   // a script that set the hit points back revived it
+    if (hp.guard > 0.0f || (hp.current <= 0.0f && hb.damage > 0.0f)) return false;
     hp.current = hb.damage >= 0.0f ? std::max(0.0f, hp.current - hb.damage) : std::min(hp.max, hp.current - hb.damage);
     hp.guard = std::max(hp.invulnerable, 0.0f);
     const std::uint64_t seq = world_->events().emit(clock_.tick, "hit", target, Json{{"by", world_->path(box)}, {"to", world_->path(target)}, {"damage", hb.damage}, {"health", hp.current}}, cause, "engine");
@@ -3603,6 +3642,50 @@ void Session::update_hits(std::uint64_t since_seq) {
     }
     std::erase_if(touches_, [&](const Touch& t) { return !world_->alive(t.box) || !world_->alive(t.target); });
     for (world::EntityId id : spent) if (world_->alive(id)) (void)world_->destroy(id);
+}
+
+void Session::update_attachments() {
+    // Each Attach: the joint's frame in the world (the target's place times the pose's node), the
+    // offset in it, and that brought into the attached entity's parent's space.
+    struct Placed { world::EntityId id; Vec3 position; Quat rotation; bool found; };
+    std::vector<Placed> placed;
+    world_->ecs().each([&](flecs::entity e, const world::Attach& a) {
+        Placed out{e.id(), {}, {}, false};
+        const world::EntityId target = a.target.empty() ? 0 : world_->find(a.target);
+        const auto* mr = target ? world_->try_get<world::MeshRenderer>(target) : nullptr;
+        const auto* wt = target ? world_->try_get<world::WorldTransform>(target) : nullptr;
+        if (mr && wt && assets_ && target != e.id()) {
+            if (auto mesh = assets_->mesh(mr->mesh)) {
+                const assets::Mesh& m = **mesh;
+                int node = -1;
+                for (std::size_t i = 0; i < m.nodes.size(); ++i) if (m.nodes[i].name == a.joint) { node = static_cast<int>(i); break; }
+                if (node >= 0) {
+                    const renderer::Pose* pose = animation_->pose(target);
+                    const Mat4 g = pose && static_cast<std::size_t>(node) < pose->globals.size() ? pose->globals[static_cast<std::size_t>(node)] : m.rest_global(node);
+                    Mat4 at = Mat4::trs(wt->position, wt->rotation, wt->scale) * g * Mat4::trs(a.offset, a.rotation, {1, 1, 1});
+                    if (const world::EntityId parent = world_->parent(e.id())) {
+                        if (const auto* pw = world_->try_get<world::WorldTransform>(parent)) at = Mat4::trs(pw->position, pw->rotation, pw->scale).inverse_affine() * at;
+                    }
+                    Vec3 scale;
+                    decompose_matrix(at, out.position, out.rotation, scale);
+                    out.rotation = normalize(out.rotation);
+                    out.found = true;
+                }
+            }
+        }
+        placed.push_back(out);
+    });
+    if (placed.empty()) return;
+    for (const Placed& p : placed) {
+        world::Attach a = *world_->try_get<world::Attach>(p.id);
+        if (a.found != p.found) { a.found = p.found; world_->set_typed<world::Attach>(p.id, a); }
+        if (!p.found) continue;
+        world::Transform t = world_->try_get<world::Transform>(p.id) ? *world_->try_get<world::Transform>(p.id) : world::Transform{};
+        t.position = p.position;
+        t.rotation = p.rotation;   // its own scale stays
+        world_->set_typed<world::Transform>(p.id, t);
+    }
+    world_->update_transforms();   // so this tick's frame draws it where the joint is
 }
 
 void Session::set_cursor(bool locked, bool visible) {
@@ -4705,6 +4788,12 @@ Result<Json> Session::world_lint(const Json& p) {
         if (col && !col->is_trigger) add("warning", e.id(), "Hitbox", "its Collider is solid: bodies stop at it instead of coming in, so it never hits", "set Collider.is_trigger true");
         if (hb.damage == 0 && hb.knockback == 0) add("info", e.id(), "Hitbox", "it hits for nothing: no damage and no knockback", "set Hitbox.damage (negative heals)");
     });
+    ecs.each([&](flecs::entity e, const world::Attach& a) {
+        const world::EntityId target = a.target.empty() ? 0 : world_->find(a.target);
+        if (!target) add("warning", e.id(), "Attach", std::format("Attach.target '{}' names no entity, so it stays where it is", a.target), "name the animated entity (its name or path)");
+        else if (!world_->try_get<world::MeshRenderer>(target)) add("warning", e.id(), "Attach", std::format("{} draws no model, so it has no joints to hold this at", a.target), "attach to an entity whose MeshRenderer draws a model with that joint");
+        else if (!a.found) add("info", e.id(), "Attach", std::format("no joint named '{}' was found on {} (yet)", a.joint, a.target), "animation.pose {entity} lists the joints by name");
+    });
     ecs.each([&](flecs::entity e, const world::Area2D& a) {
         if (a.size.x <= 0 || a.size.y <= 0) add("warning", e.id(), "Area2D", "an area with no size notices nothing", "give Area2D.size half extents above 0");
     });
@@ -4853,28 +4942,7 @@ Result<Json> Session::model_children(const std::string& mesh_path, std::vector<s
     for (const assets::Node& n : mesh->nodes) name_count[n.name]++;
     for (const assets::Submesh& sm : mesh->submeshes) if (sm.origin >= 0 && static_cast<std::size_t>(sm.origin) < count) uses[static_cast<std::size_t>(sm.origin)]++;
     // A node authored as a matrix has default TRS fields: take the matrix apart.
-    auto decompose = [](const Mat4& m, Vec3& t, Quat& r, Vec3& s) {
-        t = {m.at(3, 0), m.at(3, 1), m.at(3, 2)};
-        Vec3 c0{m.at(0, 0), m.at(0, 1), m.at(0, 2)}, c1{m.at(1, 0), m.at(1, 1), m.at(1, 2)}, c2{m.at(2, 0), m.at(2, 1), m.at(2, 2)};
-        s = {length(c0), length(c1), length(c2)};
-        if (s.x > 0) c0 = c0 * (1.0f / s.x);
-        if (s.y > 0) c1 = c1 * (1.0f / s.y);
-        if (s.z > 0) c2 = c2 * (1.0f / s.z);
-        const float tr = c0.x + c1.y + c2.z;
-        if (tr > 0) {
-            const float k = std::sqrt(tr + 1.0f) * 2.0f;
-            r = {(c1.z - c2.y) / k, (c2.x - c0.z) / k, (c0.y - c1.x) / k, 0.25f * k};
-        } else if (c0.x > c1.y && c0.x > c2.z) {
-            const float k = std::sqrt(1.0f + c0.x - c1.y - c2.z) * 2.0f;
-            r = {0.25f * k, (c1.x + c0.y) / k, (c2.x + c0.z) / k, (c1.z - c2.y) / k};
-        } else if (c1.y > c2.z) {
-            const float k = std::sqrt(1.0f + c1.y - c0.x - c2.z) * 2.0f;
-            r = {(c1.x + c0.y) / k, 0.25f * k, (c2.y + c1.z) / k, (c2.x - c0.z) / k};
-        } else {
-            const float k = std::sqrt(1.0f + c2.z - c0.x - c1.y) * 2.0f;
-            r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
-        }
-    };
+    auto decompose = [](const Mat4& m, Vec3& t, Quat& r, Vec3& s) { decompose_matrix(m, t, r, s); };
     std::function<Json(int)> entity_of = [&](int ni) -> Json {
         const assets::Node& n = mesh->nodes[static_cast<std::size_t>(ni)];
         const bool named = !n.name.empty() && name_count[n.name] == 1;

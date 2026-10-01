@@ -77,6 +77,19 @@ void from_json(const Json& j, Wheel& v);
 std::size_t numeric_span(Wheel& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const Wheel& v);
 
+/// A moment of a clip that is announced (docs/design/animation.md, Cues): when the playing clip passes `time`, an animation.cue event names it. A footstep, the frame a swing should hurt, the moment a door's latch clicks.
+struct AnimationCue {
+    std::string clip = "";
+    float time = 0.0f;
+    std::string name = "";
+    constexpr bool operator==(const AnimationCue&) const = default;
+};
+void to_json(Json& j, const AnimationCue& v);
+void from_json(const Json& j, AnimationCue& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationCue& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const AnimationCue& v);
+
 /// One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers.
 struct AnimationLayer {
     std::string clip = "";
@@ -512,6 +525,7 @@ struct Animator {
     std::string from_clip = "";
     float from_time = 0.0f;
     std::vector<AnimationLayer> layers = {};
+    std::vector<AnimationCue> cues = {};
     std::int32_t root_motion = 0;
     std::string root = "";
     Vec3 root_delta{0.0f, 0.0f, 0.0f};
@@ -523,6 +537,20 @@ void to_json(Json& j, const Animator& v);
 void from_json(const Json& j, Animator& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Animator& v, std::string_view path, float** out);
+
+/// Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays.
+struct Attach {
+    std::string target = "";
+    std::string joint = "";
+    Vec3 offset{0.0f, 0.0f, 0.0f};
+    Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    bool found = false;
+    constexpr bool operator==(const Attach&) const = default;
+};
+void to_json(Json& j, const Attach& v);
+void from_json(const Json& j, Attach& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Attach& v, std::string_view path, float** out);
 
 /// Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.
 struct IK {
@@ -1008,6 +1036,7 @@ void hash_component(struct StateHasherRef& h, const TileMap& v);
 void hash_component(struct StateHasherRef& h, const AnimationGraph& v);
 void hash_component(struct StateHasherRef& h, const Timeline& v);
 void hash_component(struct StateHasherRef& h, const Animator& v);
+void hash_component(struct StateHasherRef& h, const Attach& v);
 void hash_component(struct StateHasherRef& h, const IK& v);
 void hash_component(struct StateHasherRef& h, const LookAt& v);
 void hash_component(struct StateHasherRef& h, const ParticleEmitter& v);

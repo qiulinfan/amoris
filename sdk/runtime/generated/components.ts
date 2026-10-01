@@ -58,6 +58,16 @@ export interface Wheel {
     spin: number;
 }
 
+/** A moment of a clip that is announced (docs/design/animation.md, Cues): when the playing clip passes `time`, an animation.cue event names it. A footstep, the frame a swing should hurt, the moment a door's latch clicks. */
+export interface AnimationCue {
+    /** The clip it belongs to; empty for whatever clip is playing. */
+    clip: string;
+    /** Seconds into the clip. */
+    time: number;
+    /** What the event calls it (step, hit, latch). */
+    name: string;
+}
+
 /** One clip layered over an Animator's base clip (docs/design/animation.md): sampled at its own time, limited to the nodes of `mask`, and either blended in at `weight` or added as the clip's change since its first frame. animation.layer adds, updates and removes layers. */
 export interface AnimationLayer {
     /** Clip name from the asset (animation.clips lists them). */
@@ -566,6 +576,8 @@ export interface Animator {
     from_time: number;
     /** Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). */
     layers: AnimationLayer[];
+    /** Moments of the clips announced as animation.cue events {name, clip, time} as the base clip passes them, every loop (docs/design/animation.md, Cues). */
+    cues: AnimationCue[];
     /** 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). */
     root_motion: number;
     /** The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. */
@@ -576,6 +588,20 @@ export interface Animator {
     root_rotation: boolean;
     /** The root's yaw change this tick in radians while root_rotation is on (written by the engine). */
     root_delta_yaw: number;
+}
+
+/** Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays. */
+export interface Attach {
+    /** The entity whose model has the joint, by name or path. */
+    target: string;
+    /** The joint (a node of the model) by its name. */
+    joint: string;
+    /** Where it sits in the joint's frame. */
+    offset: Vec3;
+    /** How it is turned in the joint's frame. */
+    rotation: Quat;
+    /** The target and its joint were found this tick (written by the engine). */
+    found: boolean;
 }
 
 /** Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector. */
@@ -1182,6 +1208,7 @@ export interface Components {
     AnimationGraph: AnimationGraph;
     Timeline: Timeline;
     Animator: Animator;
+    Attach: Attach;
     IK: IK;
     LookAt: LookAt;
     ParticleEmitter: ParticleEmitter;
@@ -1228,6 +1255,7 @@ export interface ComponentEnums {
     AnimationGraph: {};
     Timeline: {};
     Animator: { root_motion: "off" | "move" | "report" };
+    Attach: {};
     IK: {};
     LookAt: {};
     ParticleEmitter: {};
@@ -1255,9 +1283,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Default value of every engine component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in EngineComponentName]: Components[K] } = {
@@ -1281,7 +1309,8 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blend_clip: "", blend: 0, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blend_clip: "", blend: 0, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
+    Attach: { target: "", joint: "", offset: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, found: false },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false, additive: false },
@@ -1311,6 +1340,7 @@ export interface Records {
     MorphWeight: MorphWeight;
     IKLimit: IKLimit;
     Wheel: Wheel;
+    AnimationCue: AnimationCue;
     AnimationLayer: AnimationLayer;
     AnimationState: AnimationState;
     AnimationTransition: AnimationTransition;
@@ -1323,6 +1353,7 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     MorphWeight: { target: "", weight: 0 },
     IKLimit: { joint: "", min_bend: 0, max_bend: 180, side: { x: 0, y: 0, z: 0 } },
     Wheel: { offset: { x: 0, y: 0, z: 0 }, radius: 0.35, rest: 0.3, steer: false, drive: false, visual: "", contact: false, compression: 0, spin: 0 },
+    AnimationCue: { clip: "", time: 0, name: "" },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
     AnimationState: { name: "", clip: "", blend: "", clips: "", speed: 1, loop: true },
     AnimationTransition: { from: "*", to: "", when: "", after: 0, fade: 0.2 },

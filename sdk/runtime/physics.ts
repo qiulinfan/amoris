@@ -69,8 +69,12 @@ export const physics = {
         const r = command<(RayHit & { radius: number }) | null>("physics.sweep", { origin, direction, radius, ...options });
         return r === null ? undefined : r;
     },
-    /** Colliders overlapping a sphere, on the layers of `mask` (all by default). */
-    overlap(center: Vec3 | [number, number, number], radius: number, options: { mask?: number | Array<string | number> } = {}): Array<{ id: Entity; path: string }> {
+    /**
+     * What a shape at `center` overlaps, on the layers of `mask` (all by default): colliders and Characters
+     * (`characters: false` leaves them out). A sphere of `radius` by default; `shape: "box"` with `size` (half
+     * extents) or `shape: "capsule"` with `radius` and `height`, turned by `rotation` (a sword's arc, a reach).
+     */
+    overlap(center: Vec3 | [number, number, number], radius: number, options: { mask?: number | Array<string | number>; shape?: "sphere" | "box" | "capsule"; size?: Vec3; height?: number; rotation?: { x: number; y: number; z: number; w: number }; characters?: boolean } = {}): Array<{ id: Entity; path: string }> {
         return command("physics.overlap", { center, radius, ...options });
     },
     /** The named collision layers of the project ([physics] layers in project.toml): name to bit. */

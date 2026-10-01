@@ -2521,6 +2521,49 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
     return out;
 }
 
+std::vector<world::EntityId> Physics::overlap(const world::World& w, const Probe& shape, const Filter& accept, bool characters, std::uint32_t character_mask) const {
+    std::vector<world::EntityId> out;
+    Body probe;
+    probe.shape = std::clamp(shape.shape, 0, 2);
+    probe.position = shape.position;
+    probe.rotation = normalize(shape.rotation);
+    probe.half = probe.shape == 1 ? Vec3{shape.half.x, shape.half.x, shape.half.x} : shape.half;
+    update_aabb(probe);
+    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
+        if (!accept(e.id(), rb, col)) return;
+        const world::Transform t = placed(e, rb, authored);
+        Body b;
+        b.id = e.id();
+        b.position = t.position + t.rotation.rotate(col.offset);
+        b.rotation = t.rotation;
+        b.shape = col.shape;
+        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+        if (b.shape == 3) b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
+        update_aabb(b);
+        Vec3 n;
+        if (overlap_pair(probe, b, n)) out.push_back(e.id());
+    });
+    each_scattered(w, [&](const Body& b, const world::RigidBody& rb, const world::Collider& col) {
+        Vec3 n;
+        if (accept(b.id, rb, col) && overlap_pair(probe, b, n)) out.push_back(b.id);
+    });
+    if (characters && (character_mask & 1u) != 0) {
+        w.ecs().each([&](flecs::entity e, const world::Character& c, const world::WorldTransform& t) {
+            Body b;
+            b.id = e.id();
+            b.shape = 2;
+            b.position = t.position;
+            b.half = Vec3{c.radius, std::max(c.height * 0.5f - c.radius, 0.0f), c.radius};
+            update_aabb(b);
+            Vec3 n;
+            if (overlap_pair(probe, b, n)) out.push_back(e.id());
+        });
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());   // a Scatter once, however many of its copies
+    return out;
+}
+
 // Characters (docs/design/physics.md, Characters): upright capsules moved by their velocity after
 // the rigid bodies. A character on the ground walks with its capsule lifted by `step`, so an edge
 // lower than that passes under it, and then finds the ground again under the lifted capsule's round

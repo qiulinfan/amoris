@@ -23,6 +23,7 @@
     X(AnimationGraph) \
     X(Timeline) \
     X(Animator) \
+    X(Attach) \
     X(IK) \
     X(LookAt) \
     X(ParticleEmitter) \

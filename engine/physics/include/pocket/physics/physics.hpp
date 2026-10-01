@@ -120,6 +120,12 @@ class Physics {
     using Filter = std::function<bool(world::EntityId, const world::RigidBody&, const world::Collider&)>;
     [[nodiscard]] Result<RayHit> raycast(const world::World& world, Vec3 origin, Vec3 direction, float max_distance, const Filter& accept) const;
     [[nodiscard]] std::vector<world::EntityId> overlap_sphere(const world::World& world, Vec3 center, float radius, const Filter& accept) const;
+    // What a shape placed in the world overlaps: a sphere (half.x its radius), a box (half extents)
+    // or a capsule (half.x its radius, half.y half the length of its segment, along its local Y),
+    // turned by `rotation`: rigid bodies' colliders, Scatter copies, and with `characters` the
+    // Character capsules too (on layer 1 for `accept`'s mask), sorted by id.
+    struct Probe { int shape = 1; Vec3 position{0, 0, 0}; Quat rotation{}; Vec3 half{0.5f, 0.5f, 0.5f}; };
+    [[nodiscard]] std::vector<world::EntityId> overlap(const world::World& world, const Probe& probe, const Filter& accept, bool characters, std::uint32_t character_mask = 0xFFFFFFFFu) const;
     // A sphere of `radius` cast from `origin` along `direction`: the nearest shape it would touch
     // within `max_distance` (the distance its center can travel, the point where it touches, the
     // surface normal there), against exact shapes: rounded boxes, capsules, spheres and mesh triangles.

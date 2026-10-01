@@ -226,6 +226,7 @@ class Session {
     struct Touch { world::EntityId box = 0, target = 0; double next = 0; };
     std::vector<Touch> touches_;
     void update_hits(std::uint64_t since_seq);
+    void update_attachments();   // Attach: entities held at a joint of an animated model
     bool apply_hit(world::EntityId box, world::EntityId target, std::uint64_t cause, std::vector<world::EntityId>& spent);
     bool cursor_locked_ = false, cursor_visible_ = true;   // what the game asked for (input.cursor, [input] cursor)
     void set_cursor(bool locked, bool visible);

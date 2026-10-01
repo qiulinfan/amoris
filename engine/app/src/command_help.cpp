@@ -117,7 +117,7 @@ constexpr CommandHelp kHelp[] = {
     {"physics.stats", "", "Bodies, contacts, joints and step times of the last step."},
     {"physics.raycast", "origin, direction, max_distance?, include_triggers?, mask?", "The first collider along a ray."},
     {"physics.sweep", "origin, direction, radius?, max_distance?, include_triggers?, mask?", "The first collider a moving sphere touches."},
-    {"physics.overlap", "center, radius, mask?", "Every collider within a radius."},
+    {"physics.overlap", "center, radius?, shape?, size?, height?, rotation?, characters?, mask?", "Every collider (and Character) a shape placed at center overlaps: a sphere of radius (1), a box of half extents size, or a capsule of radius and height, turned by rotation; characters: false leaves the Characters out."},
     {"physics.contacts", "", "The touching pairs of the last step."},
     {"physics.gravity", "gravity?", "The world's gravity vector."},
     {"physics.joints", "", "Every joint with its current values."},

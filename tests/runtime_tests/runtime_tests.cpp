@@ -982,7 +982,7 @@ TEST_CASE("a hitbox hurts the Health that comes into it, pushes it away, waits o
     REQUIRE(dead["dead"] == true);
     REQUIRE(s.command("world.get", Json{{"entity", "Spikes"}, {"component", "Hitbox"}}).value()["hits"] == 3);
     // Same team: no hurt. A bullet: one hit, then gone.
-    REQUIRE(s.command("world.set", Json{{"entity", "Player"}, {"component", "Health"}, {"value", Json{{"current", 30}, {"dead", false}, {"guard", 0}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Player"}, {"component", "Health"}, {"value", Json{{"current", 30}, {"guard", 0}}}}).has_value());   // revived by its hit points alone
     REQUIRE(s.command("world.destroy", Json{{"entity", "Spikes"}}).has_value());
     const Json here = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
     REQUIRE(s.command("world.spawn", Json{{"name", "Friendly"}, {"components", Json{{"Transform", Json{{"position", here}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}, {"Hitbox", Json{{"team", 1}}}}}}).has_value());
@@ -998,6 +998,48 @@ TEST_CASE("a hitbox hurts the Health that comes into it, pushes it away, waits o
     bool named = false;
     for (const Json& pr : lint["problems"]) named = named || (pr["component"] == "Hitbox" && pr["path"] == "/Lonely");
     REQUIRE(named);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("an overlap query takes a sphere, a turned box or a capsule, and finds characters too", "[runtime][physics][overlap]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "walker";
+    o.bundle = root() / "build" / "ts" / "walker.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 10}}).has_value());
+    const Json at = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    auto paths = [&](const Json& params) {
+        std::vector<std::string> out;
+        for (const Json& r : s.command("physics.overlap", params).value()) out.push_back(r["path"].get<std::string>());
+        return out;
+    };
+    auto has = [](const std::vector<std::string>& v, const char* p) { return std::find(v.begin(), v.end(), p) != v.end(); };
+    REQUIRE(has(paths(Json{{"center", at}, {"radius", 0.2}}), "/Player"));
+    // A character with no collider of its own is found as a Character, unless characters are left out.
+    const Json ghost_at = Json{{"x", at["x"].get<double>()}, {"y", at["y"].get<double>() + 6}, {"z", at["z"]}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ghost"}, {"components", Json{{"Transform", Json{{"position", ghost_at}}}, {"Character", Json{{"gravity", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json ghost_now = s.command("world.get", Json{{"entity", "Ghost"}, {"component", "WorldTransform"}}).value()["position"];
+    REQUIRE(has(paths(Json{{"center", ghost_now}, {"radius", 0.2}}), "/Ghost"));
+    REQUIRE_FALSE(has(paths(Json{{"center", ghost_now}, {"radius", 0.2}, {"characters", false}}), "/Ghost"));
+    // A thin box beside the player: square on, it misses; turned 90 degrees about Y, its long side reaches.
+    const Json beside = Json{{"x", at["x"].get<double>() + 1.0}, {"y", at["y"]}, {"z", at["z"]}};
+    const Json slab = Json{{"x", 0.1}, {"y", 0.5}, {"z", 1.2}};
+    REQUIRE_FALSE(has(paths(Json{{"center", beside}, {"shape", "box"}, {"size", slab}}), "/Player"));
+    REQUIRE(has(paths(Json{{"center", beside}, {"shape", "box"}, {"size", slab}, {"rotation", Json{{"x", 0}, {"y", 0.7071068}, {"z", 0}, {"w", 0.7071068}}}}), "/Player"));
+    // A capsule standing a little off: reaches it with a radius that touches.
+    const Json off = Json{{"x", at["x"].get<double>() + 0.5}, {"y", at["y"]}, {"z", at["z"]}};
+    REQUIRE(has(paths(Json{{"center", off}, {"shape", "capsule"}, {"radius", 0.3}, {"height", 1.8}}), "/Player"));
+    REQUIRE_FALSE(has(paths(Json{{"center", off}, {"shape", "capsule"}, {"radius", 0.1}, {"height", 1.8}}), "/Player"));
+    REQUIRE_FALSE(s.command("physics.overlap", Json{{"center", at}, {"shape", "cone"}}).has_value());
     REQUIRE(s.finish().has_value());
 }
 
@@ -3510,6 +3552,80 @@ TEST_CASE("project.brief says what the project is made of and what it is doing, 
     for (std::string_view want : {"project playground", "scripts: scripts/main.ts", "scenarios: scenarios/crowd.ts", "roots: Level (+", "components in use: Transform", "project component Enemy {damage f32, kind i32: grunt|brute", "exposed state: enemies=", "events: ", "enemy.spawned x", "lint: 0 errors", "next: "}) {
         REQUIRE(t.find(want) != std::string::npos);
     }
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a clip's cues are announced as it passes them, every loop, either way", "[runtime][animation][cues]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The arm waves (a one-second loop): a cue half way, and one for a clip it is not playing.
+    const Json cues = Json::array({Json{{"time", 0.5}, {"name", "mid"}}, Json{{"clip", "nod"}, {"time", 0.2}, {"name", "other"}}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Arm"}, {"component", "Animator"}, {"value", Json{{"cues", cues}, {"time", 0}}}}).has_value());
+    const auto since = s.command("events.last_seq", Json::object()).value();
+    Json first = s.command("step", Json{{"ticks", 60}, {"until", Json{{"event", "animation.cue"}}}}).value();
+    INFO(first.dump());
+    REQUIRE(first["until"]["met"] == true);
+    REQUIRE(first["until"]["event"]["data"]["name"] == "mid");
+    REQUIRE(first["until"]["event"]["data"]["clip"] == "wave");
+    REQUIRE(first["until"]["ticks"].get<int>() >= 29);
+    REQUIRE(first["until"]["ticks"].get<int>() <= 31);
+    REQUIRE(s.command("step", Json{{"ticks", 125}}).has_value());   // two more loops (and a little: sixtieths add up short of 2.5)
+    const Json all = s.command("events.since", Json{{"seq", since}, {"type", "animation.cue"}}).value();
+    REQUIRE(all["events"].size() == 3);
+    for (const Json& e : all["events"]) REQUIRE(e["data"]["name"] == "mid");
+    // Played backwards, the cue is passed going back.
+    REQUIRE(s.command("world.set", Json{{"entity", "Arm"}, {"component", "Animator"}, {"value", Json{{"speed", -1}}}}).has_value());
+    Json back = s.command("step", Json{{"ticks", 70}, {"until", Json{{"event", "animation.cue"}}}}).value();
+    REQUIRE(back["until"]["met"] == true);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("an attached entity follows a joint of an animated model", "[runtime][animation][attach]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json parts;
+    parts["Transform"] = Json{{"scale", Json{{"x", 0.1}, {"y", 0.6}, {"z", 0.1}}}};
+    parts["MeshRenderer"] = Json{{"mesh", "cube"}};
+    parts["Attach"] = Json{{"target", "Arm"}, {"joint", "tip"}, {"offset", Json{{"x", 0}, {"y", 0.5}, {"z", 0}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sword"}, {"components", parts}}).has_value());
+    for (int round = 0; round < 3; ++round) {
+        REQUIRE(s.command("step", Json{{"ticks", 17}}).has_value());
+        const Json pose = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
+        Json tip;
+        for (const Json& j : pose["joints"]) if (j["name"] == "tip") tip = j;
+        REQUIRE(tip.is_object());
+        const Json sword = s.command("world.get", Json{{"entity", "Sword"}, {"component", "WorldTransform"}}).value();
+        INFO(tip.dump() << " " << sword.dump());
+        // Half a unit along the joint's own Y from the joint (the arm is at unit scale).
+        for (const char* k : {"x", "y", "z"}) {
+            REQUIRE(sword["position"][k].get<double>() == Catch::Approx(tip["position"][k].get<double>() + 0.5 * tip["axis_y"][k].get<double>()).margin(1e-3));
+        }
+        REQUIRE(sword["scale"]["y"].get<double>() == Catch::Approx(0.6));   // its own scale stays
+    }
+    REQUIRE(s.command("world.get", Json{{"entity", "Sword"}, {"component", "Attach"}}).value()["found"] == true);
+    REQUIRE(s.command("world.set", Json{{"entity", "Sword"}, {"component", "Attach"}, {"value", Json{{"joint", "elbow"}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Sword"}, {"component", "Attach"}}).value()["found"] == false);   // no such joint
     REQUIRE(s.finish().has_value());
 }
 
