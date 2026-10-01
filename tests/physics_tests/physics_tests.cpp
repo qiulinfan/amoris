@@ -416,6 +416,34 @@ TEST_CASE("a hinge keeps its axis, stops at its limit and reports the angle", "[
     REQUIRE(limited);
 }
 
+TEST_CASE("a ball joint with a limit keeps its body's axis within a cone", "[physics][joint][cone]") {
+    // A rod hanging from a world point on a ball joint, kicked hard sideways: free, it swings far
+    // up; with a cone of half a radian about straight down, it stops at the cone's edge.
+    auto swing = [](bool limit) {
+        World w;
+        physics::Physics p;
+        EntityId rod = w.spawn("Rod", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 2}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 2}, {"size", {{"x", 0.05}, {"y", 0.45}, {"z", 0.05}}}}}, {"Velocity", {{"linear", {{"x", 6}, {"y", 0}, {"z", 2}}}}}}).value();
+        Json j{{"kind", 1}, {"anchor", {{"x", 0}, {"y", 0.5}, {"z", 0}}}, {"target_anchor", {{"x", 0}, {"y", 2.5}, {"z", 0}}}};
+        if (limit) j.update(Json{{"limit", true}, {"upper", 0.5}, {"axis", {{"x", 0}, {"y", -1}, {"z", 0}}}, {"target_axis", {{"x", 0}, {"y", -1}, {"z", 0}}}});
+        REQUIRE(w.set(rod, "Joint", j).has_value());
+        float most = 0, worst = 0;
+        for (int i = 0; i < 180; ++i) {
+            run(p, w, 1);
+            const Transform* t = w.try_get<Transform>(rod);
+            const Vec3 down = t->rotation.rotate(Vec3{0, -1, 0});
+            most = std::max(most, std::acos(std::clamp(-down.y, -1.0f, 1.0f)));
+            worst = std::max(worst, length(t->position + t->rotation.rotate(Vec3{0, 0.5f, 0}) - Vec3{0, 2.5f, 0}));
+        }
+        return std::pair{most, worst};
+    };
+    const auto [free_angle, free_gap] = swing(false);
+    const auto [cone_angle, cone_gap] = swing(true);
+    INFO("free " << free_angle << " (pin " << free_gap << "), in the cone " << cone_angle << " (pin " << cone_gap << ")");
+    REQUIRE(free_angle > 1.0f);
+    REQUIRE(cone_angle < 0.6f);
+    REQUIRE(cone_gap < 0.05f);
+}
+
 TEST_CASE("a hinge motor turns a wheel at its speed within its torque", "[physics][joint]") {
     World w;
     physics::Physics p;

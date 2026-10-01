@@ -1718,6 +1718,12 @@ void Physics::step(world::World& w, double dt_d) {
         float k_l1 = 0, k_l2 = 0, k_l_axis = 0;
         float slide_motor_impulse = 0, slide_limit_impulse = 0;
         int slide_state = 0;
+        // Ball joints with a limit: the body's axis kept within a cone about the target's (a swing
+        // limit), the cone's half angle `upper`; held only while at its edge.
+        bool cone = false;
+        float cone_angle = 0, k_cone = 0, cone_impulse = 0;
+        Vec3 cone_n;
+        bool cone_active = false;
     };
     std::vector<JointState> joints;
     std::vector<std::pair<EntityId, float>> lengths_to_write;
@@ -1775,7 +1781,7 @@ void Physics::step(world::World& w, double dt_d) {
         js.spring = j.kind == 0 && j.stiffness > 0;
         js.stiffness = j.stiffness;
         js.damping = j.damping;
-        if (j.kind == 2 || j.kind == 3) {
+        if (j.kind == 2 || j.kind == 3 || (j.kind == 1 && j.limit)) {
             js.axis_a = length(j.axis) > 1e-6f ? normalize(j.axis) : Vec3{0, 0, 1};
             js.perp_a = any_perpendicular(js.axis_a);
             const Quat inv_b = conj(js.rot_b);
@@ -1785,7 +1791,11 @@ void Physics::step(world::World& w, double dt_d) {
             if (length(j.reference) > 1e-6f) js.ref_b = normalize(j.reference);
             else { js.ref_b = normalize(inv_b.rotate(a.rotation.rotate(js.perp_a))); take_frame = true; }
             if (take_frame) frames_to_write.emplace_back(e.id(), js.axis_b, js.ref_b);
-            js.limit = j.limit;
+            if (j.kind == 1) {
+                js.cone = true;
+                js.cone_angle = std::clamp(j.upper, 0.0f, kPi);
+            }
+            js.limit = j.kind != 1 && j.limit;
             js.lower = j.lower;
             js.upper = j.upper;
             js.motor_speed = j.motor_speed;
@@ -1864,6 +1874,21 @@ void Physics::step(world::World& w, double dt_d) {
                 js.k_inv.at(0, 2) = (m10 * m21 - m11 * m20) * inv; js.k_inv.at(1, 2) = (m01 * m20 - m00 * m21) * inv; js.k_inv.at(2, 2) = (m00 * m11 - m01 * m10) * inv;
             }
             js.n = {};  // no velocity bias: the position pass below removes drift
+            if (js.cone) {
+                // At the cone's edge, the turn that would carry the axis farther out is held.
+                const Quat rb_rot = js.b_is_body ? im.bodies[js.b].rotation : js.rot_b;
+                const Vec3 wa = a.rotation.rotate(js.axis_a), wb = rb_rot.rotate(js.axis_b);
+                const Vec3 c = cross(wb, wa);
+                const float sin_t = length(c);
+                const float angle = repro::atan2(sin_t, dot(wa, wb));
+                js.cone_active = sin_t > 1e-5f && angle >= js.cone_angle - 0.01f;
+                if (js.cone_active) {
+                    js.cone_n = c * (1.0f / sin_t);
+                    js.k_cone = 0;
+                    if (inv_a > 0) js.k_cone += dot(js.cone_n, mul3(ia_w, js.cone_n));
+                    if (inv_b > 0) js.k_cone += dot(js.cone_n, mul3(ib_w, js.cone_n));
+                }
+            }
             if (js.kind == 2 || js.kind == 3) {
                 js.axis_w = a.rotation.rotate(js.axis_a);
                 js.t1 = any_perpendicular(js.axis_w);
@@ -1993,6 +2018,17 @@ void Physics::step(world::World& w, double dt_d) {
                 }
                 if (js.k_t1 > 0) apply_ang(js.t1 * (-dot(js.t1, rel_ang()) / js.k_t1));
                 if (js.k_t2 > 0) apply_ang(js.t2 * (-dot(js.t2, rel_ang()) / js.k_t2));
+            }
+            if (js.cone && js.cone_active && js.k_cone > 0) {
+                // Ball joint at its cone's edge: no relative turn outward (impulse to a +, b -).
+                const Vec3 rel_w = a.angular - (bp ? bp->angular : Vec3{});
+                float dj = -dot(js.cone_n, rel_w) / js.k_cone;
+                const float next = std::min(js.cone_impulse + dj, 0.0f);
+                dj = next - js.cone_impulse;
+                js.cone_impulse = next;
+                const Vec3 L = js.cone_n * dj;
+                if (a_dyn) a.angular += mul3(a.inv_inertia_world, L);
+                if (b_dyn) bp->angular -= mul3(bp->inv_inertia_world, L);
             }
             Vec3 va = a_dyn || a.kind == 2 ? a.velocity + cross(a.angular, js.ra) : Vec3{0, 0, 0};
             Vec3 vb = bp ? (bp->kind != 1 ? bp->velocity + cross(bp->angular, js.rb) : Vec3{0, 0, 0}) : Vec3{0, 0, 0};
@@ -2382,6 +2418,23 @@ void Physics::step(world::World& w, double dt_d) {
                 if (a_dyn) { a.position += P * inv_a; turn(a, mul3(a.inv_inertia_world, cross(ra, P))); }
                 if (b_dyn) { bp->position -= P * inv_b; turn(*bp, mul3(bp->inv_inertia_world, cross(rb, P)) * -1.0f); }
             }
+            if (js.cone) {
+                // Ball joint past its cone: turn both back to its edge, by their shares of the turn.
+                const Quat rb_rot = bp ? bp->rotation : js.rot_b;
+                const Vec3 wa = a.rotation.rotate(js.axis_a), wb = rb_rot.rotate(js.axis_b);
+                const Vec3 c = cross(wb, wa);
+                const float sin_t = length(c);
+                const float viol = repro::atan2(sin_t, dot(wa, wb)) - js.cone_angle;
+                if (sin_t > 1e-5f && viol > 1e-4f) {
+                    const Vec3 n = c * (1.0f / sin_t);
+                    const float fix = std::min(viol, max_correction);
+                    const float ka = a_dyn ? dot(n, mul3(a.inv_inertia_world, n)) : 0.0f, kb = b_dyn ? dot(n, mul3(bp->inv_inertia_world, n)) : 0.0f;
+                    if (ka + kb > 0) {
+                        if (a_dyn) turn(a, n * (-fix * ka / (ka + kb)));
+                        if (b_dyn) turn(*bp, n * (fix * kb / (ka + kb)));
+                    }
+                }
+            }
             if (js.kind == 2 || js.kind == 3) {
                 // Hinge: bring the axes back together, then the angle back inside its limits, turning
                 // each body by its share of the inverse inertia about the correction axis. A slider
@@ -2763,7 +2816,8 @@ void Physics::move_characters(world::World& w, double dt_d) {
         const float seg = half_h - r;                                  // half the straight part
         const float lift = std::clamp(c.step, 0.0f, 2.0f * seg);       // how far the walking capsule's foot is raised
         const float cos_max = repro::cos(std::clamp(c.max_slope, 0.0f, 89.0f) * 3.14159265f / 180.0f);
-        auto usable = [&](const Body& b) { return b.id != id && (b.layer & c.mask); };
+        // Itself, layers it does not collide with, and the pairs kept apart on purpose (physics.ignore) stop nothing.
+        auto usable = [&](const Body& b) { return b.id != id && (b.layer & c.mask) && (im.ignored.empty() || !im.ignored.contains(ordered(id, b.id))); };
         // The capsule at `center`, lifted by `raise` at its foot (its top stays).
         auto capsule = [&](Vec3 center, float raise) {
             Body cap;

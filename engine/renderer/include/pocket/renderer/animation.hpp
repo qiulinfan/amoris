@@ -27,6 +27,10 @@ class Animation {
     // Advance every entity with an Animator and a skinned MeshRenderer asset; poses are rebuilt.
     void step(world::World& world, assets::AssetStore& assets, float dt);
     [[nodiscard]] const Pose* pose(world::EntityId id) const;
+    // A pose made elsewhere (a ragdoll's) in place of the one step made, until the next step.
+    void set_pose(world::EntityId id, Pose pose) { poses_[id] = std::move(pose); }
+    // From `pose` into what the clips make, eased over `seconds` (a ragdoll standing up).
+    void fade_from(world::EntityId id, const assets::Mesh& mesh, const Pose& pose, float seconds);
     [[nodiscard]] std::size_t posed() const { return poses_.size(); }
     // Joints of an entity's pose in world space (position and the bone's Y axis), for agents.
     [[nodiscard]] Json describe_pose(const world::World& world, world::EntityId id, const assets::Mesh& mesh) const;

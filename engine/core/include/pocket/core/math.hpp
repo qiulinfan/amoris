@@ -174,6 +174,9 @@ struct Mat4 {
     Mat4 inverse() const;         // any invertible matrix (projections included); identity when singular
 };
 
+// A matrix taken apart into a translation, a rotation and a scale (no shear).
+void decompose(const Mat4& m, Vec3& t, Quat& r, Vec3& s);
+
 constexpr float kPi = std::numbers::pi_v<float>;
 constexpr float radians(float degrees) { return degrees * (kPi / 180.0f); }
 constexpr float degrees(float rad) { return rad * (180.0f / kPi); }

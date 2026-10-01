@@ -30,6 +30,29 @@ Mat4 Mat4::inverse() const {
     return r;
 }
 
+void decompose(const Mat4& m, Vec3& t, Quat& r, Vec3& s) {
+    t = {m.at(3, 0), m.at(3, 1), m.at(3, 2)};
+    Vec3 c0{m.at(0, 0), m.at(0, 1), m.at(0, 2)}, c1{m.at(1, 0), m.at(1, 1), m.at(1, 2)}, c2{m.at(2, 0), m.at(2, 1), m.at(2, 2)};
+    s = {length(c0), length(c1), length(c2)};
+    if (s.x > 0) c0 = c0 * (1.0f / s.x);
+    if (s.y > 0) c1 = c1 * (1.0f / s.y);
+    if (s.z > 0) c2 = c2 * (1.0f / s.z);
+    const float tr = c0.x + c1.y + c2.z;
+    if (tr > 0) {
+        const float k = std::sqrt(tr + 1.0f) * 2.0f;
+        r = {(c1.z - c2.y) / k, (c2.x - c0.z) / k, (c0.y - c1.x) / k, 0.25f * k};
+    } else if (c0.x > c1.y && c0.x > c2.z) {
+        const float k = std::sqrt(1.0f + c0.x - c1.y - c2.z) * 2.0f;
+        r = {0.25f * k, (c1.x + c0.y) / k, (c2.x + c0.z) / k, (c1.z - c2.y) / k};
+    } else if (c1.y > c2.z) {
+        const float k = std::sqrt(1.0f + c1.y - c0.x - c2.z) * 2.0f;
+        r = {(c1.x + c0.y) / k, 0.25f * k, (c2.y + c1.z) / k, (c2.x - c0.z) / k};
+    } else {
+        const float k = std::sqrt(1.0f + c2.z - c0.x - c1.y) * 2.0f;
+        r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
+    }
+}
+
 Mat4 Mat4::inverse_affine() const {
     // Invert the 3x3 linear part then the translation.
     float a00 = at(0, 0), a01 = at(1, 0), a02 = at(2, 0);

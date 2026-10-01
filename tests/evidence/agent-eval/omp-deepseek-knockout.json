@@ -1,0 +1,45 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via extension --model deepseek/deepseek-flash --env-file /Users/qiulinfan/.omp/agent/.env",
+  "passed": 1,
+  "total": 1,
+  "seconds": 77.9,
+  "tasks": [
+    {
+      "name": "knockout",
+      "project": "walker",
+      "ok": true,
+      "seconds": 77.9,
+      "detail": "health used up, the hero limp on 11 bodies with its head at 0.18, the player still (0.00)",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 77.6,
+        "turns": 25,
+        "tool_calls": 33,
+        "tools": {
+          "pocket": 9,
+          "read": 11,
+          "grep": 8,
+          "edit": 4,
+          "bash": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 37449,
+          "output": 12147,
+          "cache_read": 689792,
+          "total": 739388
+        },
+        "cost_usd": 0.014975
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.015,
+    "tokens": 739388,
+    "tool_calls": 33
+  }
+}

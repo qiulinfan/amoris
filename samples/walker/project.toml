@@ -13,6 +13,7 @@ move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", 
 move_z = { negative = ["W", "Up", "pad:dpad_up"], positive = ["S", "Down", "pad:dpad_down"], axis = ["pad:lefty"] }
 jump = ["Space", "pad:a"]
 crouch = ["C", "pad:b"]
+limp = ["R", "pad:y"]
 
 # The hero's clips are files of their own, as Mixamo gives them (docs/design/animation.md, Clips from
 # other files); each is named by its file: walk, run, crouch and the rest.

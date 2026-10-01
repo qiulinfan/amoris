@@ -25,6 +25,7 @@
     X(Timeline) \
     X(Animator) \
     X(Attach) \
+    X(Ragdoll) \
     X(IK) \
     X(LookAt) \
     X(ParticleEmitter) \

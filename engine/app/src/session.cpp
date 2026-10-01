@@ -4,6 +4,7 @@
 
 #include "command_help.hpp"
 #include "journal.hpp"
+#include "ragdoll.hpp"
 #include "web_fs.hpp"
 #include <pocket/world/water.hpp>
 #include <pocket/world/wind.hpp>
@@ -36,30 +37,6 @@ extern char** environ;
 namespace pocket::app {
 
 namespace {
-
-// A matrix taken apart into a translation, a rotation and a scale (no shear).
-void decompose_matrix(const Mat4& m, Vec3& t, Quat& r, Vec3& s) {
-    t = {m.at(3, 0), m.at(3, 1), m.at(3, 2)};
-    Vec3 c0{m.at(0, 0), m.at(0, 1), m.at(0, 2)}, c1{m.at(1, 0), m.at(1, 1), m.at(1, 2)}, c2{m.at(2, 0), m.at(2, 1), m.at(2, 2)};
-    s = {length(c0), length(c1), length(c2)};
-    if (s.x > 0) c0 = c0 * (1.0f / s.x);
-    if (s.y > 0) c1 = c1 * (1.0f / s.y);
-    if (s.z > 0) c2 = c2 * (1.0f / s.z);
-    const float tr = c0.x + c1.y + c2.z;
-    if (tr > 0) {
-        const float k = std::sqrt(tr + 1.0f) * 2.0f;
-        r = {(c1.z - c2.y) / k, (c2.x - c0.z) / k, (c0.y - c1.x) / k, 0.25f * k};
-    } else if (c0.x > c1.y && c0.x > c2.z) {
-        const float k = std::sqrt(1.0f + c0.x - c1.y - c2.z) * 2.0f;
-        r = {0.25f * k, (c1.x + c0.y) / k, (c2.x + c0.z) / k, (c1.z - c2.y) / k};
-    } else if (c1.y > c2.z) {
-        const float k = std::sqrt(1.0f + c1.y - c0.x - c2.z) * 2.0f;
-        r = {(c1.x + c0.y) / k, 0.25f * k, (c2.y + c1.z) / k, (c2.x - c0.z) / k};
-    } else {
-        const float k = std::sqrt(1.0f + c2.z - c0.x - c1.y) * 2.0f;
-        r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
-    }
-}
 
 // What a hold presses: a key, or a mouse button, which a hold presses away from the interface (it
 // presses the action bound to it; ui.click is what clicks an element).
@@ -979,6 +956,10 @@ void Session::run_tick() {
     world_->tick(clock_.tick_seconds);
     particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    if (assets_ && physics_) {
+        if (!ragdolls_) ragdolls_ = std::make_unique<Ragdolls>();
+        ragdolls_->step(*world_, *assets_, *animation_, *physics_);   // after the clips: a limp body's pose is its bodies'
+    }
     update_attachments();   // after the poses: what is held follows the joint as it is now
     if (audio_) tick_audio(clock_.tick_seconds);
     if (ui_) ui_->advance(static_cast<float>(clock_.tick_seconds));   // the interface's transitions run on the simulation clock
@@ -4612,7 +4593,7 @@ void Session::update_attachments() {
                         if (const auto* pw = world_->try_get<world::WorldTransform>(parent)) at = Mat4::trs(pw->position, pw->rotation, pw->scale).inverse_affine() * at;
                     }
                     Vec3 scale;
-                    decompose_matrix(at, out.position, out.rotation, scale);
+                    decompose(at, out.position, out.rotation, scale);
                     out.rotation = normalize(out.rotation);
                     out.found = true;
                 }
@@ -5427,7 +5408,7 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
             if (v.size() > most) s += std::format(", +{} more", v.size() - most);
             return s;
         };
-        line(std::format("project {} ({}), tick {}, {}, seed {}{}", name_, options_.project_dir.filename().string(), clock_.tick, paused_ ? "paused" : "running", options_.seed, options_.headless ? ", headless" : ""));
+        line(std::format("project {} ({}), tick {} ({} ticks a second, {:.4g} s each), {}, seed {}{}", name_, options_.project_dir.filename().string(), clock_.tick, std::lround(1.0 / clock_.tick_seconds), clock_.tick_seconds, paused_ ? "paused" : "running", options_.seed, options_.headless ? ", headless" : ""));
         // Files by kind, the build's and the tools' left out.
         std::map<std::string, std::vector<std::string>> files;
         std::error_code ec;
@@ -5966,7 +5947,6 @@ Result<Json> Session::model_children(const std::string& mesh_path, std::vector<s
     for (const assets::Node& n : mesh->nodes) name_count[n.name]++;
     for (const assets::Submesh& sm : mesh->submeshes) if (sm.origin >= 0 && static_cast<std::size_t>(sm.origin) < count) uses[static_cast<std::size_t>(sm.origin)]++;
     // A node authored as a matrix has default TRS fields: take the matrix apart.
-    auto decompose = [](const Mat4& m, Vec3& t, Quat& r, Vec3& s) { decompose_matrix(m, t, r, s); };
     std::function<Json(int)> entity_of = [&](int ni) -> Json {
         const assets::Node& n = mesh->nodes[static_cast<std::size_t>(ni)];
         const bool named = !n.name.empty() && name_count[n.name] == 1;

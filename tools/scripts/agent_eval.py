@@ -15,6 +15,7 @@ to a runner, then checks the world through the same commands. Runners:
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -720,6 +721,46 @@ def walker_sprint_solve(env, project_dir):
             raise RuntimeError("the walker script changed shape")
         return t.replace(a, 'const speed = crouching ? SPEED * 0.4 : input.down("sprint") ? 9 : SPEED;', 1)
     edit_main(project_dir, transform)
+
+
+def knockout_solve(env, project_dir):
+    # Health on the player at start; when it runs out, the hero goes limp as R makes it.
+    def transform(t):
+        start = "    seen = events.lastSeq();\n});"
+        limp = "    if (limp) {\n        world.set(player, \"Character\""
+        if start not in t or limp not in t:
+            raise RuntimeError("the walker script changed shape")
+        t = t.replace(start, "    seen = events.lastSeq();\n    if (player) world.set(player, \"Health\", { current: 30, max: 30 });\n});", 1)
+        return t.replace(limp, "    if (!limp && hero && world.get(player, \"Health\")?.dead) {\n        limp = true;\n        world.set(hero, \"Ragdoll\", { active: true });\n    }\n" + limp, 1)
+    edit_main(project_dir, transform)
+
+
+def knockout_check(env, answer):
+    health = env.command("world.get", {"entity": "Player", "component": "Health"})
+    if not health or health.get("max") != 30 or health.get("current") != 30:
+        return False, f"the Player's Health is {health}, not 30 of 30"
+    at = entity_pos(env, "Player")
+    env.command("world.spawn", {"name": "Spikes", "components": {"Transform": {"position": {"x": at["x"] + 1.5, "y": at["y"], "z": at["z"]}}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box", "size": {"x": 0.5, "y": 1, "z": 0.5}, "is_trigger": True}, "Hitbox": {"damage": 40}}})
+    env.command("input.hold", {"action": "move_x", "ticks": 90})
+    r = env.command("step", {"ticks": 90, "until": {"event": "health.depleted"}})
+    if not r["until"]["met"]:
+        return False, "walking into 40 damage of spikes did not use up the player's health"
+    env.command("step", {"ticks": 150})
+    rag = env.command("world.get", {"entity": "Player/Hero", "component": "Ragdoll"})
+    if not rag or not rag.get("active") or rag.get("bodies", 0) < 5:
+        return False, f"the hero is not limp after the player's health ran out: Ragdoll {rag}"
+    head = next((j for j in env.command("animation.pose", {"entity": "Player/Hero"})["joints"] if j["name"] == "Head"), None)
+    if head is None or head["position"]["y"] > 0.8:
+        return False, f"the hero's head is at {head and head['position']['y']}, not on the ground"
+    before = entity_pos(env, "Player")
+    env.command("input.hold", {"action": "move_x", "ticks": 60})
+    env.command("input.hold", {"action": "move_z", "ticks": 60})
+    env.command("step", {"ticks": 60})
+    after = entity_pos(env, "Player")
+    moved = math.hypot(after["x"] - before["x"], after["z"] - before["z"])
+    if moved > 0.3:
+        return False, f"the move actions still move the player after it fell ({moved:.2f} units in a second)"
+    return True, f"health used up, the hero limp on {rag['bodies']} bodies with its head at {head['position']['y']:.2f}, the player still ({moved:.2f})"
 
 
 def walker_sprint_check(env, answer):
@@ -1902,6 +1943,8 @@ TASKS = [
      "task": "Strew red flowers over the terrain named Hills: spawn an entity named Flowers that draws small red spheres (a MeshRenderer with mesh \"sphere\" and color r 1, g 0, b 0.1) with a Scatter placing copies on Hills over the whole terrain, only where the ground is no steeper than 20 degrees. At least 50 flowers must stand."},
     {"name": "car_speed", "project": "drive", "ticks": 120, "solve": car_speed_solve, "check": car_speed_check,
      "task": "Make the car named Car faster: set its Vehicle's top_speed to 35 and power to 14, then drive it with the throttle action held for 300 ticks (5 seconds of game time) and answer with the car's speed at the end as the number \"answer\" (the game's script sets the car's throttle from the throttle action every tick)."},
+    {"name": "knockout", "project": "walker", "ticks": 0, "script": True, "solve": knockout_solve, "check": knockout_check,
+     "task": "In the walker game, give the Player entity a Health of 30 (current and max) when the game starts, and when the player's health is used up make the hero (the entity Player/Hero, the player's body) go limp as a ragdoll: it falls where it stands and lies there, and from then on the move actions no longer move the player. Answer null."},
     {"name": "walker_sprint", "project": "walker", "ticks": 0, "script": True, "solve": walker_sprint_solve, "check": walker_sprint_check,
      "task": "Give the walker a sprint: add an input action named sprint bound to the left Shift key (LShift) in project.toml, and edit scripts/main.ts so that while sprint is held the player walks at 9 units per second instead of 5 (and at 5 otherwise)."},
     {"name": "raft", "project": "hills", "ticks": 2, "solve": raft_solve, "check": raft_check,

@@ -363,6 +363,18 @@ Holds the entity at a joint of an animated model (docs/design/animation.md, Atta
 | `rotation` | quat | [0.0, 0.0, 0.0, 1.0] | How it is turned in the joint's frame. |
 | `found` | bool | false | The target and its joint were found this tick (written by the engine). |
 
+## Ragdoll
+
+Lets a skinned character go limp (docs/design/animation.md, Ragdolls). While active its bones are rigid bodies made from its mesh, a capsule for each bone fitted around the vertices that bone moves, held together at the joints by ball joints, falling and colliding with the world but not with each other or the entity's own collider, and its pose follows them instead of its clips. They are made from the pose it is in when it becomes active, moving as the entity was; off again, they go and the clips have the pose back.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `active` | bool | false | true makes the bodies and hands them the pose; false (again) takes them away. |
+| `mass` | f32 | 70.0 | Kilograms in all, shared among the bodies by their volume. |
+| `follow` | bool | true | The entity moves across the ground (x and z) with the ragdoll's root body (the hips), so a camera or a script following it keeps the body in view; its height stays, so it stands up on its feet. |
+| `bodies` | i32 | 0 | How many bodies it is made of while active; written by the engine. |
+| `root` | string | "" | While active, the path of the entity holding the bodies, each named after its bone (physics.impulse on one is a blow); written by the engine. |
+
 ## IK
 
 Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.
@@ -474,12 +486,12 @@ Connects this body to another body, to any entity as a fixed point, or to a poin
 | `damping` | f32 | 0.0 | Springs: newton-seconds per meter, the drag on the stretch speed. |
 | `break_force` | f32 | 0.0 | Force (newtons) above which the joint breaks; 0 never breaks. |
 | `force` | f32 | 0.0 | Force the joint carried in the last step, written by the engine. |
-| `axis` | vec3 | [0.0, 0.0, 1.0] | Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame. |
-| `target_axis` | vec3 | [0.0, 0.0, 0.0] | Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here. |
+| `axis` | vec3 | [0.0, 0.0, 1.0] | Hinge: the axis of rotation; slider: the axis of travel; a limited ball joint: the axis its cone holds. In this body's local frame. |
+| `target_axis` | vec3 | [0.0, 0.0, 0.0] | Hinge, slider and limited ball joint: the axis in the target's frame (a ball joint's cone is about it); zero takes the body's axis at the first step and writes it here. |
 | `reference` | vec3 | [0.0, 0.0, 0.0] | Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here. |
-| `limit` | bool | false | Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them. |
+| `limit` | bool | false | Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them. Ball: keep the body's axis within a cone of half angle upper about the target's axis (a swing limit; the turn about the axis stays free). |
 | `lower` | f32 | -1.5708 | Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider. |
-| `upper` | f32 | 1.5708 | Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider. |
+| `upper` | f32 | 1.5708 | Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider, the cone's half angle in radians for a ball joint. |
 | `motor_speed` | f32 | 0.0 | The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's. |
 | `motor_torque` | f32 | 0.0 | Hinge: the most torque the motor applies; 0 turns the motor off. |
 | `motor_force` | f32 | 0.0 | Slider: the most force the motor applies along the axis; 0 turns the motor off. |

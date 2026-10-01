@@ -1109,6 +1109,13 @@ struct Animation::Kept {
     std::map<world::EntityId, Work> work;
     Locals scratch;
     std::vector<char> done;
+    // Poses faded out of (a ragdoll's as it stands up): the locals it had, and how far the fade is.
+    struct Fade {
+        std::string mesh;
+        Locals from;
+        float time = 0, seconds = 0;
+    };
+    std::map<world::EntityId, Fade> fades;
     std::unordered_map<world::EntityId, CompiledGraph> graphs;
     std::vector<world::EntityId> posed;
 };
@@ -1330,10 +1337,24 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         }
         Pose& pose = poses_[it->first];
         pose.mesh = it->second.path;
-        compose(*it->second.mesh, it->second.locals, pose, kept.done);
+        auto fade = kept.fades.find(it->first);
+        if (fade != kept.fades.end() && fade->second.mesh == it->second.path && fade->second.from.tr.size() == it->second.locals.tr.size()) {
+            // Out of a pose made elsewhere into the clips', eased.
+            Kept::Fade& f = fade->second;
+            f.time += dt;
+            const float t = std::clamp(f.time / std::max(f.seconds, 1e-4f), 0.0f, 1.0f);
+            kept.scratch = f.from;
+            mix_into(kept.scratch, it->second.locals, t * t * (3.0f - 2.0f * t));
+            compose(*it->second.mesh, kept.scratch, pose, kept.done);
+            if (f.time >= f.seconds) kept.fades.erase(fade);
+        } else {
+            if (fade != kept.fades.end()) kept.fades.erase(fade);
+            compose(*it->second.mesh, it->second.locals, pose, kept.done);
+        }
         posed.push_back(it->first);
         ++it;
     }
+    for (auto it = kept.fades.begin(); it != kept.fades.end();) it = std::binary_search(posed.begin(), posed.end(), it->first) ? std::next(it) : kept.fades.erase(it);   // nothing posed it: nothing to fade into
     // Script-set morph weights: over the clip's, for entities with or without an Animator.
     world.ecs().each([&](flecs::entity e, const world::Morph& morph, const world::MeshRenderer& mr) {
         auto m = assets.mesh(mr.mesh);
@@ -1368,6 +1389,27 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         if (f.layer >= 0) data["layer"] = f.layer;
         world.events().emit(world.tick_index(), "animation.finished", f.id, data);
     }
+}
+
+void Animation::fade_from(world::EntityId id, const assets::Mesh& mesh, const Pose& pose, float seconds) {
+    const std::size_t n = mesh.nodes.size();
+    if (pose.globals.size() != n || seconds <= 0) return;
+    if (!kept_) kept_ = std::make_shared<Kept>();
+    Kept::Fade f;
+    f.mesh = pose.mesh;
+    f.seconds = seconds;
+    f.from.tr.resize(n);
+    f.from.sc.resize(n);
+    f.from.rot.resize(n);
+    f.from.animated.assign(n, true);
+    for (std::size_t i = 0; i < n; ++i) {
+        const int p = mesh.nodes[i].parent;
+        const Mat4 local = p >= 0 && static_cast<std::size_t>(p) < n ? pose.globals[static_cast<std::size_t>(p)].inverse_affine() * pose.globals[i] : pose.globals[i];
+        decompose(local, f.from.tr[i], f.from.rot[i], f.from.sc[i]);
+    }
+    f.from.weights = pose.weights;
+    f.from.weights.resize(mesh.morph_targets.size(), 0.0f);
+    kept_->fades[id] = std::move(f);
 }
 
 const Pose* Animation::pose(world::EntityId id) const {

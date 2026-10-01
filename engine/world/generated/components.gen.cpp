@@ -1809,6 +1809,37 @@ std::size_t numeric_span(Attach& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Ragdoll& v) {
+    j = Json::object();
+    j["active"] = v.active;
+    j["mass"] = v.mass;
+    j["follow"] = v.follow;
+    j["bodies"] = v.bodies;
+    j["root"] = v.root;
+}
+
+void from_json(const Json& j, Ragdoll& v) {
+    scalar_from_json(j, "active", v.active);
+    scalar_from_json(j, "mass", v.mass);
+    scalar_from_json(j, "follow", v.follow);
+    scalar_from_json(j, "bodies", v.bodies);
+    scalar_from_json(j, "root", v.root);
+}
+
+void hash_component(StateHasherRef& h, const Ragdoll& v) {
+    h.u8(v.active ? 1 : 0);
+    h.f32(v.mass);
+    h.u8(v.follow ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.bodies));
+    h.str(v.root);
+}
+
+std::size_t numeric_span(Ragdoll& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "mass") { *out = &v.mass; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const IK& v) {
     j = Json::object();
     j["end"] = v.end;
@@ -3848,6 +3879,9 @@ bool write_numbers(Animator&, const double*, std::size_t) { return false; }
 std::size_t read_numbers(const Attach&, double*) { return kNotNumeric; }
 bool write_numbers(Attach&, const double*, std::size_t) { return false; }
 
+std::size_t read_numbers(const Ragdoll&, double*) { return kNotNumeric; }
+bool write_numbers(Ragdoll&, const double*, std::size_t) { return false; }
+
 std::size_t read_numbers(const IK&, double*) { return kNotNumeric; }
 bool write_numbers(IK&, const double*, std::size_t) { return false; }
 
@@ -4378,6 +4412,13 @@ constexpr std::array<FieldInfo, 5> kAttachFields = {{
     FieldInfo{"rotation", "quat", "How it is turned in the joint's frame.", {}},
     FieldInfo{"found", "bool", "The target and its joint were found this tick (written by the engine).", {}},
 }};
+constexpr std::array<FieldInfo, 5> kRagdollFields = {{
+    FieldInfo{"active", "bool", "true makes the bodies and hands them the pose; false (again) takes them away.", {}},
+    FieldInfo{"mass", "f32", "Kilograms in all, shared among the bodies by their volume.", {}},
+    FieldInfo{"follow", "bool", "The entity moves across the ground (x and z) with the ragdoll's root body (the hips), so a camera or a script following it keeps the body in view; its height stays, so it stands up on its feet.", {}},
+    FieldInfo{"bodies", "i32", "How many bodies it is made of while active; written by the engine.", {}},
+    FieldInfo{"root", "string", "While active, the path of the entity holding the bodies, each named after its bone (physics.impulse on one is a blow); written by the engine.", {}},
+}};
 constexpr std::array<FieldInfo, 14> kIKFields = {{
     FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints).", {}},
     FieldInfo{"bones", "i32", "How many bones the chain has, counted up from `end` (2 for a limb: upper and lower).", {}},
@@ -4461,12 +4502,12 @@ constexpr std::array<FieldInfo, 23> kJointFields = {{
     FieldInfo{"damping", "f32", "Springs: newton-seconds per meter, the drag on the stretch speed.", {}},
     FieldInfo{"break_force", "f32", "Force (newtons) above which the joint breaks; 0 never breaks.", {}},
     FieldInfo{"force", "f32", "Force the joint carried in the last step, written by the engine.", {}},
-    FieldInfo{"axis", "vec3", "Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame.", {}},
-    FieldInfo{"target_axis", "vec3", "Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here.", {}},
+    FieldInfo{"axis", "vec3", "Hinge: the axis of rotation; slider: the axis of travel; a limited ball joint: the axis its cone holds. In this body's local frame.", {}},
+    FieldInfo{"target_axis", "vec3", "Hinge, slider and limited ball joint: the axis in the target's frame (a ball joint's cone is about it); zero takes the body's axis at the first step and writes it here.", {}},
     FieldInfo{"reference", "vec3", "Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here.", {}},
-    FieldInfo{"limit", "bool", "Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them.", {}},
+    FieldInfo{"limit", "bool", "Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them. Ball: keep the body's axis within a cone of half angle upper about the target's axis (a swing limit; the turn about the axis stays free).", {}},
     FieldInfo{"lower", "f32", "Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider.", {}},
-    FieldInfo{"upper", "f32", "Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider.", {}},
+    FieldInfo{"upper", "f32", "Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider, the cone's half angle in radians for a ball joint.", {}},
     FieldInfo{"motor_speed", "f32", "The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's.", {}},
     FieldInfo{"motor_torque", "f32", "Hinge: the most torque the motor applies; 0 turns the motor off.", {}},
     FieldInfo{"motor_force", "f32", "Slider: the most force the motor applies along the axis; 0 turns the motor off.", {}},
@@ -4759,7 +4800,7 @@ constexpr std::array<RecordInfo, 13> kRecords = {{
     RecordInfo{"Point2D", kPoint2DFields},
 }};
 
-constexpr std::array<ComponentInfo, 49> kComponents = {{
+constexpr std::array<ComponentInfo, 50> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -4783,6 +4824,7 @@ constexpr std::array<ComponentInfo, 49> kComponents = {{
     ComponentInfo{"Timeline", "Plays a timeline file (docs/design/timelines.md): keyed tracks that move the fields of entities' components over time, set others at moments, and events fired at times, on the simulation clock. A cutscene, a door's swing, a day's end.", true, kTimelineFields},
     ComponentInfo{"Animator", "Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the engine advances time, samples the clip's keyframes into the file's node hierarchy and poses the skinned mesh (docs/design/animation.md). Emits animation.finished when a non-looping clip ends. Use animation.play / animation.stop, or set the fields directly.", true, kAnimatorFields},
     ComponentInfo{"Attach", "Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays.", true, kAttachFields},
+    ComponentInfo{"Ragdoll", "Lets a skinned character go limp (docs/design/animation.md, Ragdolls). While active its bones are rigid bodies made from its mesh, a capsule for each bone fitted around the vertices that bone moves, held together at the joints by ball joints, falling and colliding with the world but not with each other or the entity's own collider, and its pose follows them instead of its clips. They are made from the pose it is in when it becomes active, moving as the entity was; off again, they go and the clips have the pose back.", true, kRagdollFields},
     ComponentInfo{"IK", "Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.", true, kIKFields},
     ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},
     ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.", true, kParticleEmitterFields},

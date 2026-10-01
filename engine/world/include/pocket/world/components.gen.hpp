@@ -616,6 +616,20 @@ void from_json(const Json& j, Attach& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Attach& v, std::string_view path, float** out);
 
+/// Lets a skinned character go limp (docs/design/animation.md, Ragdolls). While active its bones are rigid bodies made from its mesh, a capsule for each bone fitted around the vertices that bone moves, held together at the joints by ball joints, falling and colliding with the world but not with each other or the entity's own collider, and its pose follows them instead of its clips. They are made from the pose it is in when it becomes active, moving as the entity was; off again, they go and the clips have the pose back.
+struct Ragdoll {
+    bool active = false;
+    float mass = 70.0f;
+    bool follow = true;
+    std::int32_t bodies = 0;
+    std::string root = "";
+    constexpr bool operator==(const Ragdoll&) const = default;
+};
+void to_json(Json& j, const Ragdoll& v);
+void from_json(const Json& j, Ragdoll& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Ragdoll& v, std::string_view path, float** out);
+
 /// Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.
 struct IK {
     std::string end = "";
@@ -1200,6 +1214,7 @@ void hash_component(struct StateHasherRef& h, const AnimationGraph& v);
 void hash_component(struct StateHasherRef& h, const Timeline& v);
 void hash_component(struct StateHasherRef& h, const Animator& v);
 void hash_component(struct StateHasherRef& h, const Attach& v);
+void hash_component(struct StateHasherRef& h, const Ragdoll& v);
 void hash_component(struct StateHasherRef& h, const IK& v);
 void hash_component(struct StateHasherRef& h, const LookAt& v);
 void hash_component(struct StateHasherRef& h, const ParticleEmitter& v);
@@ -1277,6 +1292,8 @@ std::size_t read_numbers(const Animator& v, double* out);
 bool write_numbers(Animator& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Attach& v, double* out);
 bool write_numbers(Attach& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Ragdoll& v, double* out);
+bool write_numbers(Ragdoll& v, const double* in, std::size_t n);
 std::size_t read_numbers(const IK& v, double* out);
 bool write_numbers(IK& v, const double* in, std::size_t n);
 std::size_t read_numbers(const LookAt& v, double* out);

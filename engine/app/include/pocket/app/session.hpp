@@ -191,6 +191,7 @@ class Session {
     std::unique_ptr<renderer::Particles> particles_;
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
+    std::unique_ptr<class Ragdolls> ragdolls_;   // characters gone limp (docs/design/animation.md, Ragdolls)
     std::unique_ptr<physics::Physics2D> physics2d_;
     std::unique_ptr<physics::Rigid2D> rigid2d_;   // RigidBody2D, Collider2D, Joint2D on Box2D (docs/design/physics2d.md)
     nav::Nav nav_;

@@ -1092,6 +1092,80 @@ TEST_CASE("an overlap query takes a sphere, a turned box or a capsule, and finds
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a ragdoll makes a character's bones into bodies that fall, and gives the pose back", "[runtime][ragdoll]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "walker";
+    o.bundle = root() / "build" / "ts" / "walker.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 20}}).has_value());
+    auto head = [&]() {
+        for (const Json& j : s.command("animation.pose", Json{{"entity", "Player/Hero"}}).value()["joints"]) {
+            if (j["name"] == "Head") return j["position"];
+        }
+        return Json();
+    };
+    const double standing = head()["y"].get<double>();
+    const Json hero_at = s.command("world.get", Json{{"entity", "Player/Hero"}, {"component", "WorldTransform"}}).value()["position"];
+    REQUIRE(s.command("world.set", Json{{"entity", "Player/Hero"}, {"component", "Ragdoll"}, {"value", Json{{"active", true}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json made = s.command("world.get", Json{{"entity", "Player/Hero"}, {"component", "Ragdoll"}}).value();
+    INFO(made.dump());
+    // A body for each of the hero's eleven bones, each named after it, under an entity of their own.
+    REQUIRE(made["bodies"] == 11);
+    const std::string rag = made["root"].get<std::string>();
+    REQUIRE(s.command("world.children", Json{{"entity", rag}}).value().size() == 11);
+    REQUIRE(s.command("world.get", Json{{"entity", rag + "/LeftForeArm"}, {"component", "Collider"}}).value()["shape"] == 2);
+    REQUIRE(s.command("world.get", Json{{"entity", rag + "/LeftForeArm"}, {"component", "Joint"}}).value()["target"] == rag + "/LeftArm");
+    REQUIRE(s.command("events.recent", Json{{"type", "ragdoll.started"}}).value().size() == 1);
+    const Json hips_at = s.command("world.get", Json{{"entity", rag + "/Hips"}, {"component", "Transform"}}).value()["position"];
+    // At first the pose is the one it stood in.
+    REQUIRE(std::abs(head()["y"].get<double>() - standing) < 0.05);
+    REQUIRE(s.command("step", Json{{"ticks", 150}}).has_value());
+    // On the ground: every body low, the head with them, the entity moved along with the hips.
+    for (const Json& b : s.command("world.children", Json{{"entity", rag}}).value()) {
+        const double y = s.command("world.get", Json{{"entity", b}, {"component", "Transform"}}).value()["position"]["y"].get<double>();
+        INFO(s.command("world.describe", Json{{"entity", b}}).value()["name"] << " at " << y);
+        REQUIRE(y > -0.05);
+        REQUIRE(y < 0.6);
+    }
+    const double fallen = head()["y"].get<double>();
+    INFO("head standing " << standing << ", fallen " << fallen);
+    REQUIRE(fallen < 0.5);
+    REQUIRE(standing > 1.4);
+    const Json hero_now = s.command("world.get", Json{{"entity", "Player/Hero"}, {"component", "WorldTransform"}}).value()["position"];
+    const Json hips_now = s.command("world.get", Json{{"entity", rag + "/Hips"}, {"component", "Transform"}}).value()["position"];
+    // Followed the hips across the ground, its height kept.
+    REQUIRE(std::abs(hero_now["y"].get<double>() - hero_at["y"].get<double>()) < 0.05);
+    REQUIRE(std::abs((hero_now["x"].get<double>() - hero_at["x"].get<double>()) - (hips_now["x"].get<double>() - hips_at["x"].get<double>())) < 0.02);
+    REQUIRE(std::abs((hero_now["z"].get<double>() - hero_at["z"].get<double>()) - (hips_now["z"].get<double>() - hips_at["z"].get<double>())) < 0.02);
+    // Off again: the bodies go and the clips have the pose back.
+    REQUIRE(s.command("world.set", Json{{"entity", "Player/Hero"}, {"component", "Ragdoll"}, {"value", Json{{"active", false}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.command("world.find", Json{{"path", rag}}).value().is_null());
+    REQUIRE(s.command("world.get", Json{{"entity", "Player/Hero"}, {"component", "Ragdoll"}}).value()["bodies"] == 0);
+    REQUIRE(s.command("events.recent", Json{{"type", "ragdoll.stopped"}}).value().size() == 1);
+    // Standing up is a fade from the pose it lay in: part way after two ticks, up after half a second.
+    const double rising = head()["y"].get<double>();
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    const double up = head()["y"].get<double>();
+    INFO("head two ticks into standing up " << rising << ", after half a second " << up);
+    REQUIRE(rising < standing - 0.3);
+    REQUIRE(std::abs(up - standing) < 0.15);
+    // A mesh without bones cannot go limp, and says so once.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "cube"}}}, {"Ragdoll", Json{{"active", true}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 3}}).has_value());
+    REQUIRE(s.command("events.recent", Json{{"type", "ragdoll.refused"}}).value().size() == 1);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a hitbox on a 3D trigger hurts a character that walks into it", "[runtime][combat]") {
     app::Options o;
     o.project_dir = root() / "samples" / "walker";

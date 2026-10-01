@@ -664,6 +664,20 @@ export interface Attach {
     found: boolean;
 }
 
+/** Lets a skinned character go limp (docs/design/animation.md, Ragdolls). While active its bones are rigid bodies made from its mesh, a capsule for each bone fitted around the vertices that bone moves, held together at the joints by ball joints, falling and colliding with the world but not with each other or the entity's own collider, and its pose follows them instead of its clips. They are made from the pose it is in when it becomes active, moving as the entity was; off again, they go and the clips have the pose back. */
+export interface Ragdoll {
+    /** true makes the bodies and hands them the pose; false (again) takes them away. */
+    active: boolean;
+    /** Kilograms in all, shared among the bodies by their volume. */
+    mass: number;
+    /** The entity moves across the ground (x and z) with the ragdoll's root body (the hips), so a camera or a script following it keeps the body in view; its height stays, so it stands up on its feet. */
+    follow: boolean;
+    /** How many bodies it is made of while active; written by the engine. */
+    bodies: number;
+    /** While active, the path of the entity holding the bodies, each named after its bone (physics.impulse on one is a blow); written by the engine. */
+    root: string;
+}
+
 /** Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector. */
 export interface IK {
     /** The chain's last node, a joint name (animation.clips lists the skins' joints). */
@@ -826,17 +840,17 @@ export interface Joint {
     break_force: number;
     /** Force the joint carried in the last step, written by the engine. */
     force: number;
-    /** Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame. */
+    /** Hinge: the axis of rotation; slider: the axis of travel; a limited ball joint: the axis its cone holds. In this body's local frame. */
     axis: Vec3;
-    /** Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here. */
+    /** Hinge, slider and limited ball joint: the axis in the target's frame (a ball joint's cone is about it); zero takes the body's axis at the first step and writes it here. */
     target_axis: Vec3;
     /** Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here. */
     reference: Vec3;
-    /** Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them. */
+    /** Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them. Ball: keep the body's axis within a cone of half angle upper about the target's axis (a swing limit; the turn about the axis stays free). */
     limit: boolean;
     /** Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider. */
     lower: number;
-    /** Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider. */
+    /** Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider, the cone's half angle in radians for a ball joint. */
     upper: number;
     /** The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's. */
     motor_speed: number;
@@ -1396,6 +1410,7 @@ export interface Components {
     Timeline: Timeline;
     Animator: Animator;
     Attach: Attach;
+    Ragdoll: Ragdoll;
     IK: IK;
     LookAt: LookAt;
     ParticleEmitter: ParticleEmitter;
@@ -1449,6 +1464,7 @@ export interface ComponentEnums {
     Timeline: {};
     Animator: { root_motion: "off" | "move" | "report" };
     Attach: {};
+    Ragdoll: {};
     IK: {};
     LookAt: {};
     ParticleEmitter: {};
@@ -1481,9 +1497,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1531,6 +1547,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
     Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
     Attach: { target: "", joint: "", offset: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, found: false },
+    Ragdoll: { active: false, mass: 70, follow: true, bodies: 0, root: "" },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false, additive: false },

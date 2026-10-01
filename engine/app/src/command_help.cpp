@@ -35,7 +35,7 @@ constexpr CommandHelp kHelp[] = {
     {"world.reparent", "entity, parent?, keep_world?, cause?", "Move an entity under another (no parent: to the root)."},
     {"world.rename", "entity, name, cause?", "Give an entity a new name."},
     {"world.tree", "root?, depth?, max_entities?, values?, components?", "The scene as text: one line per entity with the fields that differ from defaults."},
-    {"world.query", "with?, without?, name?, under?, fields?, limit?", "Entities with (or without) components, a name pattern, under an entity; fields picks component values to return."},
+    {"world.query", "with?, without?, name?, under?, fields?, limit?", "Entities with (or without) components, a name pattern (* any run of characters, ? one: \"Coin*\", \"Segment_?\"; matched against the whole name), under an entity; fields picks component values to return."},
     {"world.summary", "", "Counts: entities, roots, components in use."},
     {"world.lint", "limit?", "What is likely wrong with the world: parts that do nothing together (a Collider without a RigidBody), files that are not there, names that name nothing, no active camera, script errors; each problem with its severity (error, warning, info), entity, component, what it does and a fix; ok when there is no error."},
     {"world.schema", "component?, components?, search?", "Every component: its fields, types, defaults and docs; or one (component), several (components), or those whose name, fields or docs mention search."},

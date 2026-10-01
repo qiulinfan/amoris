@@ -107,3 +107,28 @@ scenario("the body runs, crouches and jumps with the character", (g) => {
     g.until(() => g.state<boolean>("player.grounded"), { timeout: 1.5, label: "landed" });
     g.until(() => g.state("hero.state") === "move", { timeout: 0.5, label: "back to moving" });
 });
+
+scenario("going limp drops the body to the ground, and it stands up where it fell", (g) => {
+    let standing = 0;
+    g.wait(0.3);
+    g.check(() => {
+        standing = g.state<number>("hero.head_y");
+        expect(standing).toBeGreaterThan(1.2);
+    }, "standing");
+    g.press("limp");
+    g.wait(2.5);
+    g.check(() => {
+        expect(g.state<boolean>("hero.limp")).toBe(true);
+        expect(g.count("ragdoll.started")).toBe(1);
+        expect(g.state<number>("hero.head_y")).toBeLessThan(standing - 1);   // the head on the ground
+    }, "limp on the ground");
+    g.press("limp");
+    g.wait(0.5);
+    g.check(() => {
+        expect(g.count("ragdoll.stopped")).toBe(1);
+        expect(g.state<number>("hero.head_y")).toBeGreaterThan(standing - 0.3);   // up again
+        expect(world.find("Hero_ragdoll")).toBeUndefined();
+    }, "standing again");
+    route(g, [{ x: 2, z: 3 }]);
+    g.until(() => Math.abs(g.state<number>("player.x") - 2) < 0.2, { timeout: 4, label: "walks again" });
+});
