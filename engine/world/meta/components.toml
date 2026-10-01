@@ -665,6 +665,22 @@ fields = [
 ]
 
 [[component]]
+name = "Cloth"
+doc = "A sheet of cloth hanging from the entity (docs/design/physics.md, Cloth): a flag, a cape, a curtain, a banner. Particles in a grid held to each other at their rest distances (along the weave, across it and two apart, so it bends but does not stretch), the pinned ones carried by the entity's transform, the rest pulled down by gravity, blown by the Wind and kept out of the colliders of the bodies around it. Drawn by the entity's MeshRenderer (its colour, texture and material) as a mesh the engine makes every tick, seen from both sides."
+fields = [
+    { name = "size", type = "vec2", default = [1.5, 1.0], doc = "Width (along the entity's x) and height (hanging down its -y from its origin) of the sheet at rest, in metres." },
+    { name = "segments", type = "vec2", default = [12.0, 8.0], doc = "Squares across and down (each rounded and held to 1..48)." },
+    { name = "pin", type = "i32", default = 0, enum = ["top", "corners", "left", "none"], doc = "What holds it: 0 the top edge (a curtain, a banner), 1 the two top corners (a hammock, washing on a line), 2 the left edge (a flag on its pole), 3 nothing (it falls)." },
+    { name = "stiffness", type = "f32", default = 0.9, doc = "How much of their stretch the threads take back each pass, 0..1." },
+    { name = "damping", type = "f32", default = 0.02, doc = "Fraction of its speed a particle loses each tick (air)." },
+    { name = "weight", type = "f32", default = 0.4, doc = "Kilograms of the whole sheet: a light one flutters in a breeze, a heavy one hangs." },
+    { name = "wind", type = "f32", default = 1.0, doc = "How strongly the Wind pushes on it (0 for none)." },
+    { name = "collide", type = "bool", default = true, doc = "Keep it out of the colliders (spheres, capsules, boxes) of the bodies near it." },
+    { name = "thickness", type = "f32", default = 0.02, doc = "How far from a collider's surface it stays, in metres." },
+    { name = "enabled", type = "bool", default = true, doc = "false freezes it where it is." },
+]
+
+[[component]]
 name = "Wind"
 doc = "The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer."
 fields = [

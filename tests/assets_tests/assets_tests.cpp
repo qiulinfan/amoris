@@ -636,6 +636,46 @@ TEST_CASE("a material's KHR_texture_transform offset and scale are read", "[asse
     REQUIRE_FALSE((*crate)->materials[0].uv_transformed);
 }
 
+TEST_CASE("a double-sided material gets a back: its triangles again, wound the other way, normals turned over", "[assets][gltf][doublesided]") {
+    // The same quad twice: single-sided, then double-sided.
+    auto quad = [&](const char* name, bool two) {
+        const std::filesystem::path file = project() / "assets" / name;
+        {
+            std::ofstream out(file);
+            out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"name":"quad","mesh":0}],
+                "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],
+                "materials":[{"name":"leaf","doubleSided":)" << (two ? "true" : "false") << R"(}],
+                "buffers":[{"byteLength":140,"uri":"data:application/octet-stream;base64,)" << "AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAPwAAAD8AAAAAAAAAvwAAAD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAEAAgAAAAIAAwA=" << R"("}],
+                "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":48},{"buffer":0,"byteOffset":48,"byteLength":48},{"buffer":0,"byteOffset":96,"byteLength":32},{"buffer":0,"byteOffset":128,"byteLength":12}],
+                "accessors":[{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3","min":[-0.5,-0.5,0],"max":[0.5,0.5,0]},{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":4,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":6,"type":"SCALAR"}]})";
+        }
+        assets::AssetStore store(project());
+        auto m = store.mesh(std::string("assets/") + name);
+        std::filesystem::remove(file);
+        REQUIRE(m.has_value());
+        return **m;
+    };
+    const assets::Mesh one = quad("one-sided-test.gltf", false);
+    const assets::Mesh two = quad("two-sided-test.gltf", true);
+    REQUIRE(one.vertices.size() == 4);
+    REQUIRE(one.indices.size() == 6);
+    REQUIRE(one.submeshes.size() == 1);
+    REQUIRE(two.vertices.size() == 8);
+    REQUIRE(two.indices.size() == 12);
+    REQUIRE(two.submeshes.size() == 2);
+    REQUIRE(two.submeshes[1].first_index == 6);
+    REQUIRE(two.submeshes[1].material == 0);
+    for (std::size_t v = 0; v < 4; ++v) {
+        REQUIRE(two.vertices[4 + v].position == two.vertices[v].position);
+        REQUIRE(two.vertices[4 + v].normal.z == Catch::Approx(-two.vertices[v].normal.z));
+    }
+    // Each back triangle faces the other way: its winding's normal is the turned-over one.
+    for (std::size_t t = 6; t < 12; t += 3) {
+        const Vec3 a = two.vertices[two.indices[t]].position, b = two.vertices[two.indices[t + 1]].position, c = two.vertices[two.indices[t + 2]].position;
+        REQUIRE(cross(b - a, c - a).z < 0);
+    }
+}
+
 TEST_CASE("OBJ files with MTL materials: objects as nodes, materials, uvs flipped, missing normals smoothed", "[assets][obj]") {
     const std::filesystem::path dir = project() / "assets" / "obj-test";
     std::filesystem::create_directories(dir);

@@ -2628,6 +2628,64 @@ std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Cloth& v) {
+    j = Json::object();
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["segments"], v.segments);
+    j["pin"] = v.pin;
+    j["stiffness"] = v.stiffness;
+    j["damping"] = v.damping;
+    j["weight"] = v.weight;
+    j["wind"] = v.wind;
+    j["collide"] = v.collide;
+    j["thickness"] = v.thickness;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Cloth& v) {
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("segments")) vec_from_json(j["segments"], v.segments);
+    enum_from_json(j, "pin", v.pin, {"top", "corners", "left", "none"});
+    scalar_from_json(j, "stiffness", v.stiffness);
+    scalar_from_json(j, "damping", v.damping);
+    scalar_from_json(j, "weight", v.weight);
+    scalar_from_json(j, "wind", v.wind);
+    scalar_from_json(j, "collide", v.collide);
+    scalar_from_json(j, "thickness", v.thickness);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Cloth& v) {
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.segments.x);
+    h.f32(v.segments.y);
+    h.i64(static_cast<std::int64_t>(v.pin));
+    h.f32(v.stiffness);
+    h.f32(v.damping);
+    h.f32(v.weight);
+    h.f32(v.wind);
+    h.u8(v.collide ? 1 : 0);
+    h.f32(v.thickness);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Cloth& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "segments") { *out = &v.segments.x; return 2; }
+    if (path == "segments.x") { *out = &v.segments.x; return 1; }
+    if (path == "segments.y") { *out = &v.segments.y; return 1; }
+    if (path == "stiffness") { *out = &v.stiffness; return 1; }
+    if (path == "damping") { *out = &v.damping; return 1; }
+    if (path == "weight") { *out = &v.weight; return 1; }
+    if (path == "wind") { *out = &v.wind; return 1; }
+    if (path == "thickness") { *out = &v.thickness; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Wind& v) {
     j = Json::object();
     j["direction"] = v.direction;
@@ -3951,6 +4009,38 @@ bool write_numbers(Character&, const double*, std::size_t) { return false; }
 std::size_t read_numbers(const Terrain&, double*) { return kNotNumeric; }
 bool write_numbers(Terrain&, const double*, std::size_t) { return false; }
 
+std::size_t read_numbers(const Cloth& v, double* out) {
+    out[0] = static_cast<double>(v.size.x);
+    out[1] = static_cast<double>(v.size.y);
+    out[2] = static_cast<double>(v.segments.x);
+    out[3] = static_cast<double>(v.segments.y);
+    out[4] = static_cast<double>(v.pin);
+    out[5] = static_cast<double>(v.stiffness);
+    out[6] = static_cast<double>(v.damping);
+    out[7] = static_cast<double>(v.weight);
+    out[8] = static_cast<double>(v.wind);
+    out[9] = static_cast<double>(v.collide);
+    out[10] = static_cast<double>(v.thickness);
+    out[11] = static_cast<double>(v.enabled);
+    return 12;
+}
+bool write_numbers(Cloth& v, const double* in, std::size_t n) {
+    if (n != 12) return false;
+    v.size.x = static_cast<float>(in[0]);
+    v.size.y = static_cast<float>(in[1]);
+    v.segments.x = static_cast<float>(in[2]);
+    v.segments.y = static_cast<float>(in[3]);
+    v.pin = static_cast<std::int32_t>(in[4]);
+    v.stiffness = static_cast<float>(in[5]);
+    v.damping = static_cast<float>(in[6]);
+    v.weight = static_cast<float>(in[7]);
+    v.wind = static_cast<float>(in[8]);
+    v.collide = in[9] != 0;
+    v.thickness = static_cast<float>(in[10]);
+    v.enabled = in[11] != 0;
+    return true;
+}
+
 std::size_t read_numbers(const Wind& v, double* out) {
     out[0] = static_cast<double>(v.direction);
     out[1] = static_cast<double>(v.speed);
@@ -4575,6 +4665,19 @@ constexpr std::array<FieldInfo, 16> kTerrainFields = {{
     FieldInfo{"layers", "list:TerrainLayer", "Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture.", {}},
     FieldInfo{"layermap", "string", "A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none.", {}},
 }};
+constexpr std::string_view kCloth_pinNames[] = {"top", "corners", "left", "none"};
+constexpr std::array<FieldInfo, 10> kClothFields = {{
+    FieldInfo{"size", "vec2", "Width (along the entity's x) and height (hanging down its -y from its origin) of the sheet at rest, in metres.", {}},
+    FieldInfo{"segments", "vec2", "Squares across and down (each rounded and held to 1..48).", {}},
+    FieldInfo{"pin", "i32", "What holds it: 0 the top edge (a curtain, a banner), 1 the two top corners (a hammock, washing on a line), 2 the left edge (a flag on its pole), 3 nothing (it falls).", kCloth_pinNames},
+    FieldInfo{"stiffness", "f32", "How much of their stretch the threads take back each pass, 0..1.", {}},
+    FieldInfo{"damping", "f32", "Fraction of its speed a particle loses each tick (air).", {}},
+    FieldInfo{"weight", "f32", "Kilograms of the whole sheet: a light one flutters in a breeze, a heavy one hangs.", {}},
+    FieldInfo{"wind", "f32", "How strongly the Wind pushes on it (0 for none).", {}},
+    FieldInfo{"collide", "bool", "Keep it out of the colliders (spheres, capsules, boxes) of the bodies near it.", {}},
+    FieldInfo{"thickness", "f32", "How far from a collider's surface it stays, in metres.", {}},
+    FieldInfo{"enabled", "bool", "false freezes it where it is.", {}},
+}};
 constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"direction", "f32", "Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction.", {}},
     FieldInfo{"speed", "f32", "Units a second.", {}},
@@ -4800,7 +4903,7 @@ constexpr std::array<RecordInfo, 13> kRecords = {{
     RecordInfo{"Point2D", kPoint2DFields},
 }};
 
-constexpr std::array<ComponentInfo, 50> kComponents = {{
+constexpr std::array<ComponentInfo, 51> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -4834,6 +4937,7 @@ constexpr std::array<ComponentInfo, 50> kComponents = {{
     ComponentInfo{"Body2D", "A 2D platformer body: an axis-aligned box in the XY plane that falls under gravity and is stopped by the solid tiles of a TileMap and by kinematic bodies (docs/design/tilemaps.md, 2D physics). Every tick the engine adds gravity, carries the body with the platform it rides, moves along X then Y, resolves against solid cells (one-way tiles only from above), walks slopes and steps, writes Transform.position and the contact flags, and emits body2d.landed. A kinematic body moves by its velocity alone and is a platform for the others. Scripts steer by writing velocity.", true, kBody2DFields},
     ComponentInfo{"Character", "A 3D character: an upright capsule centred on the entity that walks, climbs steps and slopes, stands on moving platforms and slides along walls, moved by the engine every tick after the rigid bodies (docs/design/physics.md, Characters). Scripts set velocity.x and z from input and velocity.y for a jump; the engine adds gravity, stops the capsule at every collider (static, kinematic and dynamic, triggers aside), and writes back where it stands. Give the entity a kinematic RigidBody and a capsule Collider of the same size too when rigid bodies should bump into it and triggers and raycasts should see it; the character passes over its own collider.", true, kCharacterFields},
     ComponentInfo{"Terrain", "Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.", true, kTerrainFields},
+    ComponentInfo{"Cloth", "A sheet of cloth hanging from the entity (docs/design/physics.md, Cloth): a flag, a cape, a curtain, a banner. Particles in a grid held to each other at their rest distances (along the weave, across it and two apart, so it bends but does not stretch), the pinned ones carried by the entity's transform, the rest pulled down by gravity, blown by the Wind and kept out of the colliders of the bodies around it. Drawn by the entity's MeshRenderer (its colour, texture and material) as a mesh the engine makes every tick, seen from both sides.", true, kClothFields},
     ComponentInfo{"Wind", "The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.", true, kWindFields},
     ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},

@@ -3184,6 +3184,8 @@ struct Renderer::Impl {
         std::vector<std::string> node_names;   // the file's nodes by index, for MeshRenderer.node
         std::vector<assets::Material> materials;
         std::uint32_t morph_base = 0, morph_targets = 0, morph_vertices = 0;  // the asset's deltas in the morph buffer
+        std::uint64_t revision = 0;   // the asset's revision uploaded (cloth: written again in place when it moves on)
+        std::uint32_t vertex_count = 0;
     };
     std::map<std::string, AssetMesh> asset_meshes;
     // Levels of detail (docs/design/rendering.md): a mesh's vertices with fewer triangles, an index
@@ -7748,16 +7750,8 @@ fn time() -> f32 { return fx.time.x; }
     }
 
     // A glTF mesh by project path, uploaded on first use; null when unavailable.
-    AssetMesh* asset_mesh(const std::string& path) {
-        if (auto it = asset_meshes.find(path); it != asset_meshes.end()) return &it->second;
-        if (!assets) { report_missing(path, "no asset store"); return nullptr; }
-        if (failed.contains(path)) { note_missing(path); return nullptr; }
-        auto m = assets->mesh(path);
-        if (!m) {
-            report_missing(path, m.error().message);
-            return nullptr;
-        }
-        const assets::Mesh& src = **m;
+    // A mesh's vertices as they go up to the GPU.
+    static std::vector<Vertex> gpu_vertices(const assets::Mesh& src) {
         std::vector<Vertex> verts;
         verts.reserve(src.vertices.size());
         // Vertex colors go up sRGB-encoded in 8 bits (dark shades keep their steps), decoded per vertex.
@@ -7770,7 +7764,35 @@ fn time() -> f32 { return fx.time.x; }
             const std::uint32_t a = static_cast<std::uint32_t>(std::lround(std::clamp(v.color.w, 0.0f, 1.0f) * 255.0f));
             verts.push_back({v.position, v.normal, v.uv, enc(v.color.x) | (enc(v.color.y) << 8) | (enc(v.color.z) << 16) | (a << 24), pack_tangent(v.tangent)});
         }
+        return verts;
+    }
+
+    AssetMesh* asset_mesh(const std::string& path) {
+        if (auto it = asset_meshes.find(path); it != asset_meshes.end()) {
+            // A cloth's mesh is made again every tick it moves: its new vertices written over the old.
+            if (path.starts_with("cloth:") && assets) {
+                if (auto m = assets->mesh(path); m && (*m)->revision != it->second.revision && (*m)->vertices.size() == it->second.vertex_count && (*m)->indices.size() == it->second.gpu.index_count) {
+                    const std::vector<Vertex> verts = gpu_vertices(**m);
+                    device->write_buffer(it->second.gpu.vertices, 0, verts.data(), verts.size() * sizeof(Vertex));
+                    it->second.gpu.aabb_min = (*m)->aabb_min;
+                    it->second.gpu.aabb_max = (*m)->aabb_max;
+                    it->second.revision = (*m)->revision;
+                }
+            }
+            return &it->second;
+        }
+        if (!assets) { report_missing(path, "no asset store"); return nullptr; }
+        if (failed.contains(path)) { note_missing(path); return nullptr; }
+        auto m = assets->mesh(path);
+        if (!m) {
+            report_missing(path, m.error().message);
+            return nullptr;
+        }
+        const assets::Mesh& src = **m;
+        const std::vector<Vertex> verts = gpu_vertices(src);
         AssetMesh am;
+        am.revision = src.revision;
+        am.vertex_count = static_cast<std::uint32_t>(src.vertices.size());
         am.gpu.vertices = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
         am.gpu.indices = device->create_buffer(path.c_str(), WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, src.indices.size() * sizeof(std::uint32_t), src.indices.data());
         if (src.skinned()) am.gpu.skin = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, src.skin_vertices.size() * sizeof(assets::SkinVertex), src.skin_vertices.data());

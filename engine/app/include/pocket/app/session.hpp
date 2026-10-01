@@ -11,6 +11,7 @@
 #include <pocket/audio/audio.hpp>
 #include <pocket/core/core.hpp>
 #include <pocket/nav/nav.hpp>
+#include <pocket/physics/cloth.hpp>
 #include <pocket/physics/physics.hpp>
 #include <pocket/physics/rigid2d.hpp>
 #include <pocket/physics/tiles.hpp>
@@ -192,6 +193,7 @@ class Session {
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<class Ragdolls> ragdolls_;   // characters gone limp (docs/design/animation.md, Ragdolls)
+    physics::ClothRunner cloth_;                 // sheets of cloth (docs/design/physics.md, Cloth)
     std::unique_ptr<physics::Physics2D> physics2d_;
     std::unique_ptr<physics::Rigid2D> rigid2d_;   // RigidBody2D, Collider2D, Joint2D on Box2D (docs/design/physics2d.md)
     nav::Nav nav_;

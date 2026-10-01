@@ -118,6 +118,7 @@ constexpr CommandHelp kHelp[] = {
     {"audio.reverb", "room?, damping?, mix?", "The room every voice plays in: how long its reverb rings, how fast its high end dies, how loud it is (room 0 is dry)."},
     {"audio.master", "volume?, muted?", "The master volume and mute."},
     {"physics.stats", "", "Bodies, contacts, joints and step times of the last step."},
+    {"physics.cloth", "entity, points?", "Where a Cloth is now: its particles across and down, the box around them and the lowest one; points: true lists every particle, row by row from the top-left."},
     {"physics.raycast", "origin, direction, max_distance?, include_triggers?, mask?", "The first collider along a ray."},
     {"physics.sweep", "origin, direction, radius?, max_distance?, include_triggers?, mask?", "The first collider a moving sphere touches."},
     {"physics.overlap", "center, radius?, shape?, size?, height?, rotation?, characters?, mask?", "Every collider (and Character) a shape placed at center overlaps: a sphere of radius (1), a box of half extents size, or a capsule of radius and height, turned by rotation; characters: false leaves the Characters out."},

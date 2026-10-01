@@ -1157,6 +1157,48 @@ Mat4 transpose_of(const Mat4& m) {
 
 }  // namespace
 
+// Double-sided materials (glTF doubleSided): the renderer draws the faces that face it, so each
+// submesh with such a material gets a back of its own: its vertices again with their normals turned
+// over (and their tangents' handedness, so a normal map bends the light the same way, their skin
+// and morph deltas with them), its triangles wound the other way, as a submesh after the others.
+void add_back_faces(Mesh& mesh) {
+    const std::size_t submeshes = mesh.submeshes.size();
+    for (std::size_t s = 0; s < submeshes; ++s) {
+        const Submesh front = mesh.submeshes[s];
+        if (front.material >= mesh.materials.size() || !mesh.materials[front.material].double_sided || front.index_count < 3) continue;
+        std::map<std::uint32_t, std::uint32_t> twin_of;
+        auto twin = [&](std::uint32_t v) {
+            auto [it, fresh] = twin_of.try_emplace(v, static_cast<std::uint32_t>(mesh.vertices.size()));
+            if (fresh) {
+                MeshVertex mv = mesh.vertices[v];
+                mv.normal = mv.normal * -1.0f;
+                mv.tangent.w = -mv.tangent.w;
+                mesh.vertices.push_back(mv);
+                if (v < mesh.skin_vertices.size()) {
+                    const SkinVertex sv = mesh.skin_vertices[v];
+                    mesh.skin_vertices.push_back(sv);
+                }
+                for (MorphTarget& mt : mesh.morph_targets) {
+                    const Vec3 p = v < mt.positions.size() ? mt.positions[v] : Vec3{0, 0, 0};
+                    const Vec3 n = v < mt.normals.size() ? mt.normals[v] : Vec3{0, 0, 0};
+                    mt.positions.push_back(p);
+                    mt.normals.push_back(n * -1.0f);
+                }
+            }
+            return it->second;
+        };
+        Submesh back = front;
+        back.back = true;
+        back.first_index = static_cast<std::uint32_t>(mesh.indices.size());
+        for (std::uint32_t i = front.first_index; i + 2 < front.first_index + front.index_count && i + 2 < mesh.indices.size(); i += 3) {
+            const std::uint32_t a = twin(mesh.indices[i]), b = twin(mesh.indices[i + 1]), c = twin(mesh.indices[i + 2]);
+            mesh.indices.insert(mesh.indices.end(), {a, c, b});
+        }
+        back.index_count = static_cast<std::uint32_t>(mesh.indices.size()) - back.first_index;
+        mesh.submeshes.push_back(back);
+    }
+}
+
 void fill_tangents(Mesh& mesh) {
     bool missing = false;
     for (const MeshVertex& v : mesh.vertices) if (v.tangent.w == 0) { missing = true; break; }
@@ -1660,6 +1702,7 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             }
         }
     }
+    add_back_faces(mesh);
     // The bounds, with the moving parts where their nodes rest.
     bool first = true;
     for (const Submesh& sm : mesh.submeshes) {
@@ -1794,6 +1837,7 @@ bool AssetStore::has_mesh(const std::string& path) const { return meshes_.contai
 
 void AssetStore::put_mesh(const std::string& path, Mesh mesh) {
     mesh.path = path;
+    if (auto it = meshes_.find(path); it != meshes_.end()) mesh.revision = it->second->revision + 1;
     meshes_[path] = std::make_unique<Mesh>(std::move(mesh));
     failures_.erase(path);
 }

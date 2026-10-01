@@ -100,6 +100,9 @@ struct Submesh {
     int node = -1;
     // The node whose mesh instance produced this geometry (whether baked or not); -1 for none.
     int origin = -1;
+    // The back made for a double-sided material (add_back_faces): drawn, but not collided with
+    // (a mesh collider keeps the file's own faces).
+    bool back = false;
 };
 
 // Skinning data of one vertex, parallel to Mesh::vertices (zeros for unskinned geometry).
@@ -173,6 +176,7 @@ struct AnimationClip {
 
 struct Mesh {
     std::string path;
+    std::uint64_t revision = 0;    // bumped each time put_mesh replaces it (an engine-made mesh that changes, a cloth's)
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<Submesh> submeshes;
@@ -377,6 +381,9 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
 // Tangents made from the uvs for the vertices whose file gave none (every mesh the store loads,
 // and terrains).
 void fill_tangents(Mesh& mesh);
+// Each submesh whose material is double-sided given a back of its own (its vertices again with
+// normals turned over, its triangles wound the other way): the renderer draws front faces only.
+void add_back_faces(Mesh& mesh);
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path);
 // Wavefront OBJ with its MTL libraries (read through `read`, project-relative paths): one node per
 // object, one submesh per object and material, normals smoothed where the file has none.

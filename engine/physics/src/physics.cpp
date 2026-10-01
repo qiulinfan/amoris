@@ -182,7 +182,7 @@ struct MeshShape {
                 return it->second;
             };
             for (const assets::Submesh& sm : mesh.submeshes) {
-                if (sm.origin != node || sm.skin >= 0) continue;
+                if (sm.origin != node || sm.skin >= 0 || sm.back) continue;
                 for (std::uint32_t i = sm.first_index; i + 2 < sm.first_index + sm.index_count; i += 3) {
                     if (!valid(i)) continue;
                     const bool baked = sm.node < 0;
@@ -202,7 +202,7 @@ struct MeshShape {
                 }
             }
             for (const assets::Submesh& sm : mesh.submeshes) {
-                if (sm.skin >= 0) continue;  // skinned geometry moves with its joints: no collision
+                if (sm.skin >= 0 || sm.back) continue;  // skinned geometry moves with its joints: no collision; a double-sided material's back is for drawing
                 for (std::uint32_t i = sm.first_index; i + 2 < sm.first_index + sm.index_count; i += 3)
                     if (valid(i)) add({mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]});
             }

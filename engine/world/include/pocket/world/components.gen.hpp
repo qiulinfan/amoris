@@ -847,6 +847,25 @@ void from_json(const Json& j, Terrain& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Terrain& v, std::string_view path, float** out);
 
+/// A sheet of cloth hanging from the entity (docs/design/physics.md, Cloth): a flag, a cape, a curtain, a banner. Particles in a grid held to each other at their rest distances (along the weave, across it and two apart, so it bends but does not stretch), the pinned ones carried by the entity's transform, the rest pulled down by gravity, blown by the Wind and kept out of the colliders of the bodies around it. Drawn by the entity's MeshRenderer (its colour, texture and material) as a mesh the engine makes every tick, seen from both sides.
+struct Cloth {
+    Vec2 size{1.5f, 1.0f};
+    Vec2 segments{12.0f, 8.0f};
+    std::int32_t pin = 0;
+    float stiffness = 0.9f;
+    float damping = 0.02f;
+    float weight = 0.4f;
+    float wind = 1.0f;
+    bool collide = true;
+    float thickness = 0.02f;
+    bool enabled = true;
+    constexpr bool operator==(const Cloth&) const = default;
+};
+void to_json(Json& j, const Cloth& v);
+void from_json(const Json& j, Cloth& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Cloth& v, std::string_view path, float** out);
+
 /// The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.
 struct Wind {
     float direction = 0.0f;
@@ -1224,6 +1243,7 @@ void hash_component(struct StateHasherRef& h, const Joint& v);
 void hash_component(struct StateHasherRef& h, const Body2D& v);
 void hash_component(struct StateHasherRef& h, const Character& v);
 void hash_component(struct StateHasherRef& h, const Terrain& v);
+void hash_component(struct StateHasherRef& h, const Cloth& v);
 void hash_component(struct StateHasherRef& h, const Wind& v);
 void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
@@ -1312,6 +1332,8 @@ std::size_t read_numbers(const Character& v, double* out);
 bool write_numbers(Character& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Terrain& v, double* out);
 bool write_numbers(Terrain& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Cloth& v, double* out);
+bool write_numbers(Cloth& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Wind& v, double* out);
 bool write_numbers(Wind& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Water& v, double* out);

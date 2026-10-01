@@ -986,6 +986,30 @@ export interface Terrain {
     layermap: string;
 }
 
+/** A sheet of cloth hanging from the entity (docs/design/physics.md, Cloth): a flag, a cape, a curtain, a banner. Particles in a grid held to each other at their rest distances (along the weave, across it and two apart, so it bends but does not stretch), the pinned ones carried by the entity's transform, the rest pulled down by gravity, blown by the Wind and kept out of the colliders of the bodies around it. Drawn by the entity's MeshRenderer (its colour, texture and material) as a mesh the engine makes every tick, seen from both sides. */
+export interface Cloth {
+    /** Width (along the entity's x) and height (hanging down its -y from its origin) of the sheet at rest, in metres. */
+    size: Vec2;
+    /** Squares across and down (each rounded and held to 1..48). */
+    segments: Vec2;
+    /** What holds it: 0 the top edge (a curtain, a banner), 1 the two top corners (a hammock, washing on a line), 2 the left edge (a flag on its pole), 3 nothing (it falls). */
+    pin: number;
+    /** How much of their stretch the threads take back each pass, 0..1. */
+    stiffness: number;
+    /** Fraction of its speed a particle loses each tick (air). */
+    damping: number;
+    /** Kilograms of the whole sheet: a light one flutters in a breeze, a heavy one hangs. */
+    weight: number;
+    /** How strongly the Wind pushes on it (0 for none). */
+    wind: number;
+    /** Keep it out of the colliders (spheres, capsules, boxes) of the bodies near it. */
+    collide: boolean;
+    /** How far from a collider's surface it stays, in metres. */
+    thickness: number;
+    /** false freezes it where it is. */
+    enabled: boolean;
+}
+
 /** The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer. */
 export interface Wind {
     /** Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction. */
@@ -1420,6 +1444,7 @@ export interface Components {
     Body2D: Body2D;
     Character: Character;
     Terrain: Terrain;
+    Cloth: Cloth;
     Wind: Wind;
     Water: Water;
     Scatter: Scatter;
@@ -1474,6 +1499,7 @@ export interface ComponentEnums {
     Body2D: {};
     Character: {};
     Terrain: {};
+    Cloth: { pin: "top" | "corners" | "left" | "none" };
     Wind: {};
     Water: {};
     Scatter: {};
@@ -1497,9 +1523,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1515,6 +1541,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     Fog: [["color", "c"], ["density", "n"], ["height", "n"], ["falloff", "n"], ["start", "n"], ["max_opacity", "n"], ["enabled", "b"], ["volumetric", "b"], ["anisotropy", "n"], ["steps", "n"], ["distance", "n"]],
     Bounds: [["min", "v3"], ["max", "v3"]],
     RigidBody: [["kind", "n"], ["mass", "n"], ["restitution", "n"], ["friction", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["gravity_scale", "n"], ["sleeping", "b"], ["lock_rotation", "b"], ["ccd", "b"]],
+    Cloth: [["size", "v2"], ["segments", "v2"], ["pin", "n"], ["stiffness", "n"], ["damping", "n"], ["weight", "n"], ["wind", "n"], ["collide", "b"], ["thickness", "n"], ["enabled", "b"]],
     Wind: [["direction", "n"], ["speed", "n"], ["gusts", "n"], ["gust_length", "n"], ["enabled", "b"]],
     Area2D: [["size", "v2"], ["offset", "v2"], ["enabled", "b"], ["inside", "n"]],
     RigidBody2D: [["kind", "n"], ["velocity", "v2"], ["angular_velocity", "n"], ["gravity_scale", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["fixed_rotation", "b"], ["bullet", "b"], ["awake", "b"], ["enabled", "b"]],
@@ -1557,6 +1584,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
     Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
+    Cloth: { size: { x: 1.5, y: 1 }, segments: { x: 12, y: 8 }, pin: 0, stiffness: 0.9, damping: 0.02, weight: 0.4, wind: 1, collide: true, thickness: 0.02, enabled: true },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
     Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },

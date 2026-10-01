@@ -1092,6 +1092,91 @@ TEST_CASE("an overlap query takes a sphere, a turned box or a capsule, and finds
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("cloth hangs at its length, streams out in the wind, keeps out of a ball and is drawn", "[runtime][cloth]") {
+    auto o = hello_options(1000);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // Away from the sample's own things (its script keeps running on them).
+    auto sheet = [&](const char* name, double x, Json cloth) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 3}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}, {"Cloth", cloth}}}}).has_value());
+    };
+    // A curtain from its top edge, a flag from its left edge, a sheet a ball pushes into.
+    sheet("Curtain", 50, Json{{"size", Json{{"x", 1.0}, {"y", 2.0}}}, {"segments", Json{{"x", 8}, {"y", 12}}}});
+    sheet("Flag", 54, Json{{"size", Json{{"x", 1.6}, {"y", 1.0}}}, {"segments", Json{{"x", 12}, {"y", 8}}}, {"pin", "left"}, {"weight", 0.2}});
+    sheet("Screen", 58, Json{{"size", Json{{"x", 1.6}, {"y", 2.0}}}, {"segments", Json{{"x", 12}, {"y", 12}}}});
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ball"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 58}, {"y", 2}, {"z", 0.3}}}}}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"shape", "sphere"}, {"size", Json{{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 120}}).has_value());
+    const Json curtain = s.command("physics.cloth", Json{{"entity", "Curtain"}}).value();
+    INFO(curtain.dump());
+    REQUIRE(curtain["particles"] == 9 * 13);
+    REQUIRE(curtain["across"] == 9);
+    // Hanging straight: as long as it is, not stretched by its own weight beyond a few percent.
+    REQUIRE(curtain["bounds"]["min"]["y"].get<double>() == Catch::Approx(1.0).margin(0.08));
+    REQUIRE(std::abs(curtain["bounds"]["max"]["z"].get<double>()) < 0.05);
+    // Without wind the flag droops: its free edge far below the pole's top.
+    const Json still = s.command("physics.cloth", Json{{"entity", "Flag"}}).value();
+    REQUIRE(still["lowest"]["y"].get<double>() < 2.0 - 0.3);
+    // The screen keeps half a ball's width and a thread's thickness from the ball's centre.
+    for (const Json& pt : s.command("physics.cloth", Json{{"entity", "Screen"}, {"points", true}}).value()["points"]) {
+        const double dx = pt[0].get<double>() - 58, dy = pt[1].get<double>() - 2, dz = pt[2].get<double>() - 0.3;
+        REQUIRE(std::sqrt(dx * dx + dy * dy + dz * dz) > 0.5);
+    }
+    // A wind along +x: the flag streams out from its pole, its far edge nearly as high as the pole's top.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wind"}, {"components", Json{{"Wind", Json{{"direction", 0}, {"speed", 8}, {"gusts", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 240}}).has_value());
+    const Json flying = s.command("physics.cloth", Json{{"entity", "Flag"}}).value();
+    INFO(flying.dump());
+    REQUIRE(flying["bounds"]["max"]["x"].get<double>() > 54 - 0.8 + 1.6 * 0.8);   // the pole at 53.2
+    REQUIRE(flying["lowest"]["y"].get<double>() > still["lowest"]["y"].get<double>() + 0.2);
+    // Drawn as a mesh of its own, both sides: two triangles a square, twice.
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["triangles"].get<int>() >= 4 * (8 * 12 + 12 * 8 + 12 * 12));
+    REQUIRE(s.command("physics.stats", Json::object()).value()["cloth"] == 3);
+    // Taken off, its sheet goes.
+    REQUIRE(s.command("world.remove", Json{{"entity", "Curtain"}, {"component", "Cloth"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("physics.stats", Json::object()).value()["cloth"] == 2);
+    REQUIRE_FALSE(s.command("physics.cloth", Json{{"entity", "Curtain"}}).has_value());
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a cape is cloth attached to a character's spine: it goes where the walker goes", "[runtime][cloth][cape]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "walker";
+    o.bundle = root() / "build" / "ts" / "walker.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 5}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Cape"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "cube"}}},
+        {"Attach", Json{{"target", "Player/Hero"}, {"joint", "Spine"}, {"offset", Json{{"x", 0}, {"y", 0.5}, {"z", -0.14}}}}},
+        {"Cloth", Json{{"size", Json{{"x", 0.55}, {"y", 1.0}}}, {"segments", Json{{"x", 8}, {"y", 12}}}, {"weight", 0.6}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    const double x0 = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"]["x"].get<double>();
+    REQUIRE(s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 90}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 90}}).has_value());
+    const Json player = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    const Json cape = s.command("physics.cloth", Json{{"entity", "Cape"}, {"points", true}}).value();
+    const Json top = cape["points"][4];   // the middle of its pinned top edge
+    const Json at = s.command("world.get", Json{{"entity", "Cape"}, {"component", "WorldTransform"}}).value()["position"];
+    INFO("player " << player.dump() << ", cape top " << top.dump() << ", the cape's place " << at.dump());
+    REQUIRE(player["x"].get<double>() > x0 + 3);
+    // Its top held at the place on the spine it is attached to, the rest hanging below and behind.
+    REQUIRE(std::abs(top[0].get<double>() - at["x"].get<double>()) < 0.05);
+    REQUIRE(std::abs(top[1].get<double>() - at["y"].get<double>()) < 0.05);
+    REQUIRE(std::abs(top[2].get<double>() - at["z"].get<double>()) < 0.05);
+    REQUIRE(cape["lowest"]["y"].get<double>() < at["y"].get<double>() - 0.5);
+    REQUIRE(std::abs(cape["lowest"]["x"].get<double>() - player["x"].get<double>()) < 1.0);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a ragdoll makes a character's bones into bodies that fall, and gives the pose back", "[runtime][ragdoll]") {
     app::Options o;
     o.project_dir = root() / "samples" / "walker";

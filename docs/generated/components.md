@@ -574,6 +574,23 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `layers` | list:TerrainLayer | [] | Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture. |
 | `layermap` | string | "" | A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none. |
 
+## Cloth
+
+A sheet of cloth hanging from the entity (docs/design/physics.md, Cloth): a flag, a cape, a curtain, a banner. Particles in a grid held to each other at their rest distances (along the weave, across it and two apart, so it bends but does not stretch), the pinned ones carried by the entity's transform, the rest pulled down by gravity, blown by the Wind and kept out of the colliders of the bodies around it. Drawn by the entity's MeshRenderer (its colour, texture and material) as a mesh the engine makes every tick, seen from both sides.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `size` | vec2 | [1.5, 1.0] | Width (along the entity's x) and height (hanging down its -y from its origin) of the sheet at rest, in metres. |
+| `segments` | vec2 | [12.0, 8.0] | Squares across and down (each rounded and held to 1..48). |
+| `pin` | i32: 0 `top`, 1 `corners`, 2 `left`, 3 `none` | 0 | What holds it: 0 the top edge (a curtain, a banner), 1 the two top corners (a hammock, washing on a line), 2 the left edge (a flag on its pole), 3 nothing (it falls). |
+| `stiffness` | f32 | 0.9 | How much of their stretch the threads take back each pass, 0..1. |
+| `damping` | f32 | 0.02 | Fraction of its speed a particle loses each tick (air). |
+| `weight` | f32 | 0.4 | Kilograms of the whole sheet: a light one flutters in a breeze, a heavy one hangs. |
+| `wind` | f32 | 1.0 | How strongly the Wind pushes on it (0 for none). |
+| `collide` | bool | true | Keep it out of the colliders (spheres, capsules, boxes) of the bodies near it. |
+| `thickness` | f32 | 0.02 | How far from a collider's surface it stays, in metres. |
+| `enabled` | bool | true | false freezes it where it is. |
+
 ## Wind
 
 The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.

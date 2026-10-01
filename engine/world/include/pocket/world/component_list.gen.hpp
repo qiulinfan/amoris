@@ -35,6 +35,7 @@
     X(Body2D) \
     X(Character) \
     X(Terrain) \
+    X(Cloth) \
     X(Wind) \
     X(Water) \
     X(Scatter) \

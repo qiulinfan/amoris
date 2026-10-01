@@ -536,7 +536,7 @@ def converse(env, buy):
     env.command("step", {"ticks": 2})
     env.command("input.press", {"action": "talk"})
     env.command("step", {"ticks": 3})
-    offered, shown = False, False
+    offered, shown, bought = False, False, False
     for _ in range(120):
         if not env.command("ui.query", {"name": "dialogue"}):
             break
@@ -545,7 +545,10 @@ def converse(env, buy):
         if choices:
             buying = [c for c in choices if re.search(r"potion|buy", c, re.I)]
             offered = offered or bool(buying)
-            pick = buying[0] if buy and buying else choices[-1]
+            # One potion a talk: a merchant who asks again after a sale is left the second time.
+            leaving = [c for c in choices if c not in buying] or choices
+            pick = buying[0] if buy and buying and not bought else leaving[-1]
+            bought = bought or pick in buying
             env.command("input.press", {"key": pick.split(".")[0]})
         else:
             env.command("input.press", {"key": "Space"})
@@ -820,6 +823,52 @@ def hill_raise_check(env, answer):
     if not isinstance(answer, (int, float)) or abs(answer - h) > 0.05:
         return False, f"answered {answer!r}, the ground stands {h:.3f} high"
     return True, f"the ground at {HILL_AT} raised to {h:.2f}, nothing moved 12 units away"
+
+
+# ---- the cloth task
+def yard_flag_solve(env):
+    env.command("world.spawn", {"name": "Pole", "components": {"Transform": {"position": {"x": -6, "y": 1.5, "z": 4}, "scale": {"x": 0.08, "y": 3, "z": 0.08}}, "MeshRenderer": {"mesh": "cube", "color": {"r": 0.4, "g": 0.4, "b": 0.4, "a": 1}}}})
+    env.command("world.spawn", {"name": "Flag", "components": {"Transform": {"position": {"x": -5.2, "y": 3, "z": 4}}, "MeshRenderer": {"mesh": "cube", "color": {"r": 0.9, "g": 0.1, "b": 0.1, "a": 1}},
+                "Cloth": {"size": {"x": 1.6, "y": 1.0}, "segments": {"x": 16, "y": 10}, "pin": "left", "weight": 0.2}}})
+    env.command("world.spawn", {"name": "Breeze", "components": {"Wind": {"direction": 0, "speed": 6}}})
+    env.command("step", {"ticks": 180})
+    c = env.command("physics.cloth", {"entity": "Flag"})
+    return round(c["bounds"]["max"]["x"] - (-6), 2)
+
+
+def yard_flag_check(env, answer):
+    pole = entity_pos(env, "Pole")
+    if pole is None or not near(pole["x"], -6, 0.1) or not near(pole["z"], 4, 0.1):
+        return False, f"no entity Pole at x -6, z 4 ({pole})"
+    flag = env.command("world.find", {"path": "Flag"})
+    cloth = env.command("world.get", {"entity": "Flag", "component": "Cloth"}) if isinstance(flag, int) else None
+    if not cloth:
+        return False, "no entity Flag with a Cloth"
+    if cloth.get("pin") != 2 or not near(cloth["size"]["x"], 1.6, 0.05) or not near(cloth["size"]["y"], 1.0, 0.05):
+        return False, f"the Flag's Cloth is {cloth['size']} pinned by {cloth.get('pin')}, not 1.6 by 1 pinned along its left edge"
+    color = (env.command("world.get", {"entity": "Flag", "component": "MeshRenderer"}) or {}).get("color", {})
+    if not (color.get("r", 0) > 0.6 and color.get("g", 1) < 0.35 and color.get("b", 1) < 0.35):
+        return False, f"the flag is not red ({color})"
+    winds = [w for w in env.command("world.query", {"with": ["Wind"], "fields": ["Wind"]})["entities"]]
+    blowing = [w for w in winds if (w.get("Wind") or {}).get("speed", 0) >= 5 and (w.get("Wind") or {}).get("enabled", True)]
+    if not blowing:
+        return False, f"no Wind of at least 5 units a second ({winds})"
+    env.command("step", {"ticks": 180})
+    c = env.command("physics.cloth", {"entity": "Flag", "points": True})
+    across = c["across"]
+    edge = [c["points"][j * across] for j in range(c["down"])]
+    top = max(p[1] for p in edge)
+    if any(abs(p[0] - pole["x"]) > 0.15 or abs(p[2] - pole["z"]) > 0.15 for p in edge):
+        return False, f"the flag's pinned edge is not on the pole: {edge[0]} .. {edge[-1]}"
+    pole_top = pole["y"] + 1.5
+    if abs(top - pole_top) > 0.4:
+        return False, f"the flag's top is at {top:.2f}, not at the pole's top ({pole_top:.2f})"
+    reach = c["bounds"]["max"]["x"] - pole["x"]
+    if reach < 1.2:
+        return False, f"the flag reaches {reach:.2f} past the pole: it does not stream out downwind"
+    if not isinstance(answer, (int, float)) or not 0.8 <= answer <= 1.7:
+        return False, f"answered {answer}, not how far the flag reaches past the pole (about {reach:.2f})"
+    return True, f"a red flag on the pole streams out {reach:.2f} in the wind (answered {answer})"
 
 
 def flowers_solve(env):
@@ -1939,6 +1988,8 @@ TASKS = [
      "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
     {"name": "hill_raise", "project": "hills", "ticks": 2, "before": hill_raise_before, "solve": hill_raise_solve, "check": hill_raise_check,
      "task": "Raise the ground of the terrain named Hills at x 20, z -20 until it stands at least 10 units high there, without changing the ground 12 or more units away from that point; then answer with the ground's height at x 20, z -20 as the number \"answer\"."},
+    {"name": "yard_flag", "project": "walker", "ticks": 2, "solve": yard_flag_solve, "check": yard_flag_check,
+     "task": "Raise a flag in the walker's yard: an entity named Pole drawn as a thin grey box 3 units tall standing on the ground at x -6, z 4, and an entity named Flag that is a red sheet of cloth 1.6 wide and 1 tall, held along its left edge down the pole from the pole's top, streaming out in a wind (add one) that blows toward +x at 6 units a second. Then let 3 seconds of game time pass and answer with how far the flag's far edge reaches past the pole along x, as the number \"answer\"."},
     {"name": "flowers", "project": "hills", "ticks": 2, "solve": flowers_solve, "check": flowers_check,
      "task": "Strew red flowers over the terrain named Hills: spawn an entity named Flowers that draws small red spheres (a MeshRenderer with mesh \"sphere\" and color r 1, g 0, b 0.1) with a Scatter placing copies on Hills over the whole terrain, only where the ground is no steeper than 20 degrees. At least 50 flowers must stand."},
     {"name": "car_speed", "project": "drive", "ticks": 120, "solve": car_speed_solve, "check": car_speed_check,
