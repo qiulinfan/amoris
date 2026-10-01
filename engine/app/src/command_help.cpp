@@ -99,7 +99,7 @@ constexpr CommandHelp kHelp[] = {
     {"input.actions", "", "The action map as it is."},
     {"input.describe", "", "Actions with the keys, buttons and axes bound to them."},
     {"input.hold", "key | action, ticks?, sign?, value?", "Press a key, a mouse button (mouse:left) or an action for ticks, through the same path as real input."},
-    {"input.press", "key | action, sign?, value?", "Press a key or an action for one tick."},
+    {"input.press", "key | action, sign?, value?", "Press a key or an action for one tick; a key still down goes up and down again, so presses a tick apart are two."},
     {"input.axis", "action, value", "Set an action's value directly, -1 to 1, until set again (0 lets go): a stick tilted part way, an on-screen stick (touch.ts); past 0.5 either way the action is down. Journaled like any input."},
     {"input.touch", "x, y, phase?, finger?, pressure?", "A finger down, moving or up at window points, pressing 0..1 (1 by default)."},
     {"input.pad", "pad?, button | axis, pressed?, value?", "A gamepad button or axis."},

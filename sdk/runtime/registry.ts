@@ -21,6 +21,8 @@ export interface Registry {
     /** Contexts that received "start"; only they get ticks, frames, input and contacts. */
     active: Set<string>;
     keysDown: Set<string>;
+    /** Keys that went down since the last tick began (a press and its release between two ticks included); emptied after each tick. */
+    keysPressed: Set<string>;
     /** The tick's action snapshot, shared by every bundle (each has its own copy of the SDK's modules). */
     actions: Record<string, unknown>;
     /** Every player's action states in a lockstep game (docs/design/networking.md), player 0 first. */
@@ -29,8 +31,9 @@ export interface Registry {
 
 export const registry: Registry = (() => {
     const g = globalThis as unknown as { __pocket_registry?: Registry };
-    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set(), actions: {} };
+    if (g.__pocket_registry === undefined) g.__pocket_registry = { contexts: new Map(), active: new Set(), keysDown: new Set(), keysPressed: new Set(), actions: {} };
     if (g.__pocket_registry.actions === undefined) g.__pocket_registry.actions = {};
+    if (g.__pocket_registry.keysPressed === undefined) g.__pocket_registry.keysPressed = new Set();
     return g.__pocket_registry;
 })();
 
@@ -51,3 +54,4 @@ export const contextName: string = (() => {
 })();
 export const own = contextHandlers(contextName);
 export const keysDown = registry.keysDown;
+export const keysPressed = registry.keysPressed;

@@ -904,10 +904,14 @@ void Session::run_tick() {
     // tick's scripts see and a one-tick press lasts through a whole tick.
     if (!pending_holds_.empty()) {
         std::vector<platform::Event> downs;
-        for (const auto& [k, ticks] : pending_holds_) {
-            if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], tick + ticks); continue; }
-            downs.push_back(press_event(k, true));
-            held_keys_[k] = tick + ticks;
+        for (const PendingHold& h : pending_holds_) {
+            if (held_keys_.contains(h.key)) {
+                held_keys_[h.key] = std::max(held_keys_[h.key], tick + h.ticks);
+                if (!h.press) continue;
+                downs.push_back(press_event(h.key, false));
+            }
+            downs.push_back(press_event(h.key, true));
+            held_keys_.try_emplace(h.key, tick + h.ticks);
         }
         pending_holds_.clear();
         if (!downs.empty()) inject_events(std::move(downs));
@@ -4943,7 +4947,7 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         if (in_tick_) {
             // Asked for by a script mid-tick: the press lands at the start of the next tick, where
             // its pressed edge is seen by every script of that tick (this tick's edges are spent).
-            for (const auto& k : keys) pending_holds_.emplace_back(k, ticks);
+            for (const auto& k : keys) pending_holds_.push_back(PendingHold{k, ticks, op == "press"});
             Json j;
             j["keys"] = keys;
             j["from_tick"] = clock_.tick + 1;
@@ -4953,9 +4957,15 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         }
         std::vector<platform::Event> downs;
         for (const auto& k : keys) {
-            if (held_keys_.contains(k)) { held_keys_[k] = std::max(held_keys_[k], clock_.tick + ticks); continue; }
+            if (held_keys_.contains(k)) {
+                // Held already: a hold goes on longer; a press is a new press, so the key goes up
+                // and down again and the next tick sees its edge (presses a tick apart are two).
+                held_keys_[k] = std::max(held_keys_[k], clock_.tick + ticks);
+                if (op != "press") continue;
+                downs.push_back(press_event(k, false));
+            }
             downs.push_back(press_event(k, true));
-            held_keys_[k] = clock_.tick + ticks;
+            held_keys_.try_emplace(k, clock_.tick + ticks);
         }
         if (!downs.empty()) inject_events(std::move(downs));
         Json j;

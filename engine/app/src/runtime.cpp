@@ -39,6 +39,9 @@ std::string usage() {
   --save-dir <dir>      where save slots are written and read (default: the user data directory)
   --font <file>         UI font file (overrides the project config and POCKET_FONT)
   --history N           keep the last N ticks for the recorder.* time-travel commands
+  --tick-hash           fold the state and the whole world into the run's hash every tick (the
+                        default headless, recording or replaying; a window playing skips it)
+  --no-tick-hash        never hash per tick
   --scenario <bundle>   load a gameplay scenario bundle (script context "scenario") after the project
   --scenario-name NAME  which scenario of that bundle runs (default: the first)
   --net-host PORT       host a lockstep game on PORT (0: any free port) for --net-players (default 2)
@@ -50,6 +53,7 @@ std::string usage() {
 
 Result<Options> parse_args(const std::vector<std::string>& args) {
     Options o;
+    bool tick_hash_given = false;
     auto need = [&](std::size_t i, const char* flag) -> Result<std::string> {
         if (i + 1 >= args.size()) return fail("bad_args", "{} needs a value", flag);
         return args[i + 1];
@@ -78,7 +82,8 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--log-file") { POCKET_TRY(v, need(i, "--log-file")); o.log_file = v; ++i; }
         else if (a == "--title") { POCKET_TRY(v, need(i, "--title")); o.title = v; ++i; }
         else if (a == "--inspectable") o.inspectable = true;
-        else if (a == "--no-tick-hash") o.hash_every_tick = false;
+        else if (a == "--no-tick-hash") { o.hash_every_tick = false; tick_hash_given = true; }
+        else if (a == "--tick-hash") { o.hash_every_tick = true; tick_hash_given = true; }
         else if (a == "--render") {
             POCKET_TRY(v, need(i, "--render"));
             if (v != "last" && v != "each") return fail("bad_args", "--render is last or each");
@@ -108,6 +113,10 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
     if (o.bundle.empty()) return fail("bad_args", "--bundle is required");
     if (o.project_config.empty()) o.project_config = o.bundle.string() + ".project.json";
     if (!o.replay.empty() && !o.record.empty()) return fail("bad_args", "--record and --replay are exclusive");
+    // The per-tick hash is what replays, tests and determinism checks compare; a window someone is
+    // playing (a packed game, pocket run, the editor) has no one to compare it with, and at ten
+    // thousand entities it is over a millisecond a tick.
+    if (!tick_hash_given && !o.headless && o.record.empty() && o.replay.empty()) o.hash_every_tick = false;
     if (o.net_host >= 0 && !o.net_join.empty()) return fail("bad_args", "--net-host and --net-join are exclusive");
     return o;
 }

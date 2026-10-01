@@ -63,6 +63,8 @@ export { input } from "./input";
 export { tween, ease } from "./tween";
 export { repro } from "./repro";
 export { rng, Rng, Noise, noise } from "./rng";
+export { dialogue, Conversation } from "./dialogue";
+export type { DialogueScript, DialogueStep, DialogueLine, ShowOptions } from "./dialogue";
 export type { RandomSource, FbmOptions } from "./rng";
 export type { Easing, EaseName, TweenOptions, TweenHandle } from "./tween";
 export { timer, time, wait, nextTick, lastTick } from "./timer";
@@ -156,7 +158,7 @@ export interface InputEvent {
 
 export type LogFields = Record<string, unknown>;
 
-import { registry, contextHandlers, contextName, own, keysDown } from "./registry";
+import { registry, contextHandlers, contextName, own, keysDown, keysPressed } from "./registry";
 import type { Handlers } from "./registry";
 
 export interface Frame {
@@ -281,6 +283,11 @@ export function isKeyDown(key: string): boolean {
     return keysDown.has(key);
 }
 
+/** Whether a key went down since the last tick: true for one tick per press, even a press released before the tick ran. */
+export function isKeyPressed(key: string): boolean {
+    return keysPressed.has(key);
+}
+
 declare global {
     /** Wall-clock milliseconds, for measuring what a script costs; gameplay must use tick time, never this. */
     const performance: { now(): number };
@@ -348,6 +355,7 @@ export function isActive(): boolean {
             setActionSnapshot((arg as Tick).actions, (arg as Tick).players);
             setTickLocale((arg as Tick).locale, (arg as Tick).locale_rev);
             for (const h of selected(context)) for (const f of h.tick) f(arg as Tick);
+            registry.keysPressed.clear();   // like the actions' edges: a press is seen by one tick
             return undefined;
         case "frame":
             for (const h of selected(context)) for (const f of h.frame) f(arg as Frame);
@@ -378,7 +386,10 @@ export function isActive(): boolean {
         case "input": {
             const events = arg as InputEvent[];
             for (const e of events) {
-                if (e.type === "key_down" && e.key !== undefined) keysDown.add(e.key);
+                if (e.type === "key_down" && e.key !== undefined) {
+                    keysDown.add(e.key);
+                    registry.keysPressed.add(e.key);
+                }
                 else if (e.type === "key_up" && e.key !== undefined) keysDown.delete(e.key);
             }
             for (const h of selected(context)) for (const f of h.input) f(events);

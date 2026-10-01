@@ -1,0 +1,26 @@
+{
+  "vars": { "gold": 7 },
+  "start": "gate",
+  "nodes": {
+    "gate": [
+      { "if": "paid", "then": [ { "say": "Guard", "text": "Already paid. Go on through." }, { "end": true } ] },
+      { "say": "Guard", "text": "Halt, traveller! Nobody passes this gate for free." },
+      { "say": "Guard", "text": "The toll is five gold." },
+      { "choice": [
+        { "text": "Pay the toll ({gold} gold left)", "if": "gold >= 5", "set": { "gold": "gold - 5", "paid": true }, "goto": "paid" },
+        { "text": "Ask about the castle", "goto": "castle" },
+        { "text": "Walk away", "goto": "end" }
+      ] }
+    ],
+    "castle": [
+      { "say": "Guard", "text": "The castle? The queen has not been seen in a month." },
+      { "say": "Guard", "text": "If you want to look for her, you'll still pay the toll." },
+      { "goto": "gate" }
+    ],
+    "paid": [
+      { "say": "Guard", "text": "Thank you kindly. {gold} gold to your name now; spend it well." },
+      { "event": "gate.open" },
+      { "text": "The gate creaks open." }
+    ]
+  }
+}

@@ -273,6 +273,14 @@ TEST_CASE("input actions carry edges across frames and release held keys", "[run
     // The released edge was consumed by the tick that saw it (see input_map_tests for edges).
     REQUIRE(after["move_x"]["released"] == false);
     REQUIRE(s.command("input.state", Json::object()).value()["held"].empty());
+    // Presses a tick apart are two presses: the second lets the key up and presses it again.
+    REQUIRE(s.command("input.press", Json{{"action", "jump"}}).value()["actions"]["jump"]["pressed"] == true);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("input.press", Json{{"action", "jump"}}).value()["actions"]["jump"]["pressed"] == true);
+    REQUIRE(s.command("input.hold", Json{{"action", "jump"}, {"ticks", 5}}).value()["actions"]["jump"]["pressed"] == true);   // a hold only holds longer
+    REQUIRE(s.command("input.state", Json::object()).value()["held"]["Space"].get<std::int64_t>() > 0);
+    for (int i = 0; i < 6; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("input.actions", Json::object()).value()["jump"]["down"] == false);
     // Pad events map like keys; a pad axis within the deadzone is nothing.
     Json st = s.command("input.state", Json::object()).value();
     REQUIRE(st["pads"] == 0);

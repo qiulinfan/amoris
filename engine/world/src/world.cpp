@@ -262,6 +262,20 @@ struct World::Impl {
     std::function<bool(const std::string&, Vec3&, Vec3&)> mesh_bounds_source;
     std::map<EntityId, std::string> derived_meshes;             // meshes the engine made for an entity (a terrain's)
     std::map<EntityId, std::vector<World::Instance>> derived_instances;   // copies the engine placed (a scatter's)
+    // (Declared before the flecs world, which outlives them otherwise: its teardown removes
+    // components, and the observers below write here.)
+    // What changed since world transforms were last propagated and boxes last made, so a tick
+    // touches only that (docs/design/world-model.md, What a tick costs): Transforms written (an
+    // observer, and the motion system, which writes in place), and boxes to make again (a new
+    // WorldTransform, a MeshRenderer or Sprite written). `*_all` asks for everything: at the start,
+    // when a mesh's extents are learned, or when the lists grow past `kChangedCap`.
+    static constexpr std::size_t kChangedCap = 1u << 16;
+    std::vector<EntityId> moved;
+    bool moved_all = true;
+    std::vector<EntityId> reshaped;
+    bool reshaped_all = true;
+    std::vector<EntityId> unsized;   // meshes whose extents were not known yet: tried again each time
+    bool deriving = false;           // the engine writing WorldTransform and Bounds itself
     flecs::world ecs;
     EventLog events;
     std::vector<EntityId> roots;  // creation order
@@ -307,9 +321,79 @@ struct World::Impl {
         bounds = ecs.query<const MeshRenderer, const WorldTransform>();
         sprite_bounds = ecs.query<const Sprite, const WorldTransform>();
         sprite_anim = ecs.query<SpriteAnimation, Sprite>();
-        ecs.observer<Transform>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity, const Transform&) { ++placement; });
+        ecs.observer<Transform>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity e, const Transform&) {
+            ++placement;
+            mark_moved(e.id());
+        });
+        // The derived components written by anyone else are made again from their sources.
+        ecs.observer<WorldTransform>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity e, const WorldTransform&) {
+            if (!deriving) mark_moved(e.id());
+        });
+        ecs.observer<Bounds>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity e, const Bounds&) {
+            if (!deriving) mark_reshaped(e.id());
+        });
+        ecs.observer<MeshRenderer>().event(flecs::OnSet).each([this](flecs::entity e, const MeshRenderer&) { mark_reshaped(e.id()); });
+        ecs.observer<Sprite>().event(flecs::OnSet).each([this](flecs::entity e, const Sprite&) { mark_reshaped(e.id()); });
         ecs.observer<RigidBody>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity, const RigidBody&) { ++placement; });
         ecs.observer<Collider>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity, const Collider&) { ++placement; });
+    }
+
+    void mark_moved(EntityId id) {
+        if (moved_all) return;
+        if (moved.size() >= kChangedCap) {
+            moved.clear();
+            moved_all = true;
+            return;
+        }
+        moved.push_back(id);
+    }
+
+    void mark_reshaped(EntityId id) {
+        if (reshaped_all) return;
+        if (reshaped.size() >= kChangedCap) {
+            reshaped.clear();
+            reshaped_all = true;
+            return;
+        }
+        reshaped.push_back(id);
+    }
+
+    // World transforms of what moved and everything under it, in any order: an entity whose
+    // ancestor moved too is placed with that ancestor's subtree, and the others read their parents'
+    // world transforms, which nothing this tick changed. Everything when asked for.
+    void propagate_moved() {
+        if (moved_all) {
+            moved.clear();
+            moved_all = false;
+            for (EntityId r : roots) {
+                flecs::entity e = ecs.entity(r);
+                if (live(e)) propagate(e, nullptr);
+            }
+            return;
+        }
+        if (moved.empty()) return;
+        std::vector<EntityId> list;
+        list.swap(moved);
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end());
+        for (EntityId id : list) {
+            flecs::entity e = ecs.entity(id);
+            if (!live(e)) continue;
+            bool covered = false;
+            bool placed = false;
+            WorldTransform above{};
+            for (flecs::entity a = e.parent(); live(a); a = a.parent()) {
+                if (std::binary_search(list.begin(), list.end(), a.id())) {
+                    covered = true;
+                    break;
+                }
+                if (!placed && a.has<Transform>()) {
+                    if (const WorldTransform* w = a.try_get<WorldTransform>()) above = *w;
+                    placed = true;
+                }
+            }
+            if (!covered) propagate(e, placed ? &above : nullptr);
+        }
     }
 
     void forget_root(EntityId id) {
@@ -328,6 +412,8 @@ struct World::Impl {
     }
 
     void propagate(flecs::entity e, const WorldTransform* parent) {
+        const bool outer = !deriving;
+        deriving = true;
         WorldTransform wt;
         const Transform* local = e.try_get<Transform>();
         if (local) {
@@ -342,12 +428,24 @@ struct World::Impl {
                 wt.scale = local->scale;
             }
             const WorldTransform* current = e.try_get<WorldTransform>();
-            if (!current || !(*current == wt)) e.set<WorldTransform>(wt);
+            if (!current || !(*current == wt)) {
+                e.set<WorldTransform>(wt);
+                mark_reshaped(e.id());
+            }
         } else if (parent) {
             wt = *parent;
         }
-        const WorldTransform* next = local ? e.try_get<WorldTransform>() : parent;
-        for (EntityId c : ordered_children(e)) propagate(ecs.entity(c), next);
+        // A copy, not a pointer into the table: a child given its first WorldTransform can move
+        // into this entity's table and grow it.
+        const WorldTransform* next = local ? &wt : parent;
+        if (e.has(flecs::OrderedChildren)) {
+            const ecs_entities_t ids = ecs_get_ordered_children(ecs.c_ptr(), e.id());
+            for (int32_t i = 0; i < ids.count; ++i) {
+                flecs::entity c = ecs.entity(ids.ids[i]);
+                if (live(c)) propagate(c, next);
+            }
+        }
+        if (outer) deriving = false;
     }
 
     void visit(EntityId id, int depth, const std::function<bool(EntityId, int)>& fn) const {
@@ -1064,12 +1162,22 @@ Status World::unpack(std::string_view component, const std::vector<std::string>&
     return {};
 }
 
-void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
-void World::set_mesh_bounds_source(std::function<bool(const std::string&, Vec3&, Vec3&)> source) { impl_->mesh_bounds_source = std::move(source); }
+void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) {
+    auto [it, added] = impl_->mesh_bounds.try_emplace(std::string(mesh), min, max);
+    if (!added && it->second.first == min && it->second.second == max) return;
+    it->second = {min, max};
+    impl_->reshaped_all = true;   // every entity drawing it, whichever they are
+}
+
+void World::set_mesh_bounds_source(std::function<bool(const std::string&, Vec3&, Vec3&)> source) {
+    impl_->mesh_bounds_source = std::move(source);
+    impl_->reshaped_all = true;
+}
 
 void World::set_derived_mesh(EntityId id, std::string path) {
     if (path.empty()) impl_->derived_meshes.erase(id);
     else impl_->derived_meshes[id] = std::move(path);
+    impl_->mark_reshaped(id);
 }
 
 const std::string* World::derived_mesh(EntityId id) const {
@@ -1086,10 +1194,14 @@ const std::vector<World::Instance>* World::derived_instances(EntityId id) const 
 }
 
 void World::update_bounds() {
-    // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives).
-    // Adding Bounds is a structural change, so the writes are deferred until the query ends.
-    impl_->ecs.defer_begin();
-    impl_->bounds.each([this](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
+    // World-space bounds of rendered meshes (primitive extents mirror engine/renderer/primitives)
+    // and sprites, for what was placed anew or reshaped since the last time (all of them when
+    // asked). Adding Bounds is a structural change, so the writes are deferred until the end.
+    Impl& m = *impl_;
+    if (!m.reshaped_all && m.reshaped.empty() && m.unsized.empty()) return;
+    m.deriving = true;
+    m.ecs.defer_begin();
+    auto mesh_box = [this](flecs::entity e, const MeshRenderer& mr, const WorldTransform& wt) {
         Vec3 lo{-0.5f, -0.5f, -0.5f}, hi{0.5f, 0.5f, 0.5f};
         const std::string* derived = derived_mesh(e.id());
         const std::string& mesh = derived ? *derived : mr.mesh;
@@ -1102,6 +1214,8 @@ void World::update_bounds() {
                 impl_->mesh_bounds[mesh] = {a, b};
                 lo = a;
                 hi = b;
+            } else {
+                impl_->unsized.push_back(e.id());   // not loaded yet: a unit box until it is
             }
         }
         Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
@@ -1116,9 +1230,9 @@ void World::update_bounds() {
         }
         const Bounds* current = e.try_get<Bounds>();
         if (!current || !(*current == b)) e.set<Bounds>(b);
-    });
+    };
     // Sprites: the unit quad scaled by size and shifted by the anchor, flat in local XY.
-    impl_->sprite_bounds.each([](flecs::entity e, const Sprite& sp, const WorldTransform& wt) {
+    auto sprite_box = [](flecs::entity e, const Sprite& sp, const WorldTransform& wt) {
         Vec3 lo{(0.0f - sp.anchor.x) * sp.size.x, (0.0f - sp.anchor.y) * sp.size.y, 0};
         Vec3 hi{(1.0f - sp.anchor.x) * sp.size.x, (1.0f - sp.anchor.y) * sp.size.y, 0};
         Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
@@ -1133,12 +1247,35 @@ void World::update_bounds() {
         }
         const Bounds* current = e.try_get<Bounds>();
         if (!current || !(*current == b)) e.set<Bounds>(b);
-    });
-    impl_->ecs.defer_end();
+    };
+    if (m.reshaped_all) {
+        m.reshaped_all = false;
+        m.reshaped.clear();
+        m.unsized.clear();
+        m.bounds.each(mesh_box);
+        m.sprite_bounds.each(sprite_box);
+    } else {
+        std::vector<EntityId> list;
+        list.swap(m.reshaped);
+        list.insert(list.end(), m.unsized.begin(), m.unsized.end());
+        m.unsized.clear();
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end());
+        for (EntityId id : list) {
+            flecs::entity e = m.ecs.entity(id);
+            if (!live(e)) continue;
+            const WorldTransform* wt = e.try_get<WorldTransform>();
+            if (!wt) continue;
+            if (const MeshRenderer* mr = e.try_get<MeshRenderer>()) mesh_box(e, *mr, *wt);
+            if (const Sprite* sp = e.try_get<Sprite>()) sprite_box(e, *sp, *wt);
+        }
+    }
+    m.ecs.defer_end();
+    m.deriving = false;
 }
 
 void World::update_transforms() {
-    for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
+    impl_->propagate_moved();
     update_bounds();
 }
 
@@ -1146,11 +1283,12 @@ void World::tick(double dt) {
     auto fdt = static_cast<float>(dt);
     if (dt > 0) impl_->tick_seconds = dt;
     // Motion: integrate velocity into the local transform.
-    impl_->motion.each([fdt](flecs::entity, Transform& t, Velocity& v) {
+    impl_->motion.each([this, fdt](flecs::entity e, Transform& t, Velocity& v) {
+        const bool turning = v.angular.x != 0 || v.angular.y != 0 || v.angular.z != 0;
+        if (!turning && v.linear.x == 0 && v.linear.y == 0 && v.linear.z == 0) return;
         t.position += v.linear * fdt;
-        if (v.angular.x != 0 || v.angular.y != 0 || v.angular.z != 0) {
-            t.rotation = normalize(t.rotation * Quat::from_euler(v.angular * fdt));
-        }
+        if (turning) t.rotation = normalize(t.rotation * Quat::from_euler(v.angular * fdt));
+        impl_->mark_moved(e.id());   // written in place: no observer sees it
     });
     // Lifetime: collect expired entities, destroy after iteration.
     std::vector<EntityId> expired;
@@ -1207,8 +1345,8 @@ void World::tick(double dt) {
         const SpriteAnimation* a = try_get<SpriteAnimation>(id);
         impl_->events.emit(impl_->tick, "sprite.finished", id, Json{{"path", path(id)}, {"clip", a ? a->clip : ""}});
     }
-    // Transform propagation in tree order.
-    for (EntityId r : roots()) impl_->propagate(impl_->ecs.entity(r), nullptr);
+    // World transforms and boxes of what moved.
+    impl_->propagate_moved();
     update_bounds();
     impl_->tick++;
 }
@@ -1432,7 +1570,11 @@ Result<std::vector<EntityId>> World::instantiate(const Json& fragment, EntityId 
         return {};
     };
     for (const auto& e : fragment["entities"]) POCKET_TRY_VOID(load_entity(e, parent, true));
-    for (EntityId r : created) impl_->propagate(impl_->ecs.entity(r), parent ? impl_->ecs.entity(parent).try_get<WorldTransform>() : nullptr);
+    // The parent's world transform copied: placing what was made can grow the parent's table.
+    WorldTransform above{};
+    const WorldTransform* at = parent ? impl_->ecs.entity(parent).try_get<WorldTransform>() : nullptr;
+    if (at) above = *at;
+    for (EntityId r : created) impl_->propagate(impl_->ecs.entity(r), at ? &above : nullptr);
     return created;
 }
 

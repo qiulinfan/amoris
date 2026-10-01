@@ -239,7 +239,12 @@ class Session {
     struct RumbleStep { float low = 0, high = 0; int ms = 0; };
     struct RumblePattern { std::vector<RumbleStep> steps; std::size_t next = 0; std::int64_t next_tick = 0; int repeat = 1; };
     std::map<int, RumblePattern> rumble_;
-    std::vector<std::pair<std::string, int>> pending_holds_;
+    struct PendingHold {
+        std::string key;
+        int ticks = 1;
+        bool press = false;   // a press: a key still down from before goes up and down again
+    };
+    std::vector<PendingHold> pending_holds_;
     std::vector<platform::Event> pending_events_;
     world::PathRunner paths_;   // Paths and their followers (docs/design/paths.md)   // input a script made during a tick (input.axis): applied at the next tick's start  // holds asked for during a tick: pressed at the next tick's start
     bool in_tick_ = false;

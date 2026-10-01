@@ -77,3 +77,15 @@ Timing the pieces inside the runtime (`script.eval`, 30000 calls each, release) 
 | the write as one call: the patch's numbers and a mask of which ones, laid over the component in the engine | 2.64, 2.64, 2.63 |
 
 The script phase of the swarm (both paths, alternating) went from 3.16 to 1.53 ms a tick. An entity given by name or path, a patch the numbers cannot hold and a component of more than 31 numbers take the earlier paths. The web build binds the numbers-only natives through its JSON bridge (the same answers, without the gain).
+
+## A still world (2026-10-01)
+
+Ten thousand cubes spawned into `samples/hello` and left standing, 300 headless ticks in release (Apple M5, `perf` averages):
+
+| | world ms/tick | state ms/tick | tick ms |
+|---|---:|---:|---:|
+| every transform propagated and every box made each tick (before) | 0.349 | 1.276 | 1.637 |
+| only what was written (`docs/design/world-model.md`, What a tick costs) | 0.015 | 1.276 | 1.303 |
+| the same without the per-tick hash (`--no-tick-hash`, now the default for a window being played) | 0.015 | 0.003 | 0.030 |
+
+The same ten thousand with a Transform alone: 0.158 ms of world systems before, 0.007 after. The swarm, which moves all three thousand of its cubes every tick, spends 0.5 to 0.6 ms in world systems either way (three runs each way, alternated: 0.545, 0.582, 0.584 against 0.498, 0.520, 0.632 with everything propagated). The world hashes in the goldens are unchanged.

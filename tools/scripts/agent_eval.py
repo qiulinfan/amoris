@@ -28,7 +28,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/paths.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/localization.md", "docs/design/networking.md"]
+DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/paths.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/dialogue.md", "docs/design/localization.md", "docs/design/networking.md"]
 # Where a run's copies live: outside the repository, so an agent finds the game and the docs there
 # and nothing of the harness (whose checks are the answers) beside them. Made by run().
 EVAL_DIR = None
@@ -478,6 +478,114 @@ def vault_level_check(env, answer):
         if not (1 <= cx <= 10 and 1 <= cy <= 6) or solid(cx, cy):
             return False, f"{o['name']} is at cell ({cx}, {cy}), not on the vault's floor"
     return True, "a 12 by 8 vault, walled, a solid pillar, 3 coins and a start on its floor"
+
+
+# ---- the conversation task
+MERCHANT = """{
+  "start": "hello",
+  "nodes": {
+    "hello": [
+      { "say": "Merchant", "text": "Potions! Fresh potions, three gold apiece." },
+      { "choice": [
+        { "text": "Buy a potion (3 gold)", "if": "gold >= 3", "set": { "gold": "gold - 3", "potions": "potions + 1" }, "goto": "sold" },
+        { "text": "Leave", "goto": "end" }
+      ] }
+    ],
+    "sold": [ { "say": "Merchant", "text": "A fine choice. You have {potions} now." } ]
+  }
+}
+"""
+
+MERCHANT_TALK = """    const m = world.get(merchant, "Transform")!.position;
+    if (input.pressed("talk") && Math.hypot(m.x - x, m.y - y) < 1.8) {
+        talking = dialogue.start("dialogue/merchant.dialogue.json", { gold, potions });
+        dialogue.show(talking, { onEnd: (c) => {
+            gold = Number(c.vars.gold);
+            potions = Number(c.vars.potions);
+            talking = null;
+        } });
+        return;
+    }
+"""
+
+
+def merchant_talk_solve(env, project_dir):
+    os.makedirs(os.path.join(project_dir, "dialogue"), exist_ok=True)
+    with open(os.path.join(project_dir, "dialogue", "merchant.dialogue.json"), "w") as f:
+        f.write(MERCHANT)
+
+    def transform(t):
+        spawn = '    guard = world.spawn("Guard", { components: box(3.1, 1.2, 0.7, 0.9, "#c0392b") });'
+        near_guard = '    const g = world.get(guard, "Transform")!.position;'
+        expose = 'expose("gold", () => gold);'
+        if spawn not in t or near_guard not in t or expose not in t or "let paid = false;" not in t:
+            raise RuntimeError("the talk script changed shape")
+        t = t.replace("let paid = false;", "let paid = false;\nlet potions = 0;\nlet merchant = 0;", 1)
+        t = t.replace(spawn, spawn + '\n    merchant = world.spawn("Merchant", { components: box(-2, 2, 0.7, 0.9, "#8e44ad") });', 1)
+        t = t.replace(near_guard, MERCHANT_TALK + near_guard, 1)
+        return t.replace(expose, expose + '\nexpose("potions", () => potions);', 1)
+    edit_main(project_dir, transform)
+
+
+def converse(env, buy):
+    """Stand beside the merchant, press talk and play the conversation as a player would: Space past
+    the lines, a choice by its number key (the one that buys when `buy` and one is offered, else
+    the last). Answers whether a buying choice was offered and whether a box showed at all."""
+    env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": -2.8, "y": 2, "z": 0}}})
+    env.command("step", {"ticks": 2})
+    env.command("input.press", {"action": "talk"})
+    env.command("step", {"ticks": 3})
+    offered, shown = False, False
+    for _ in range(120):
+        if not env.command("ui.query", {"name": "dialogue"}):
+            break
+        shown = True
+        choices = [n["text"] for n in env.command("ui.query", {"type": "text"}) if re.match(r"^\d+\. ", n.get("text", ""))]
+        if choices:
+            buying = [c for c in choices if re.search(r"potion|buy", c, re.I)]
+            offered = offered or bool(buying)
+            pick = buying[0] if buy and buying else choices[-1]
+            env.command("input.press", {"key": pick.split(".")[0]})
+        else:
+            env.command("input.press", {"key": "Space"})
+        env.command("step", {"ticks": 3})
+    env.command("step", {"ticks": 2})
+    return offered, shown
+
+
+def merchant_talk_check(env, answer):
+    p = entity_pos(env, "Merchant")
+    if p is None or not near(p["x"], -2, 0.05) or not near(p["y"], 2, 0.05):
+        return False, f"no entity Merchant at x -2, y 2 ({p})"
+    try:
+        script = json.loads(env.command("project.read", {"path": "dialogue/merchant.dialogue.json"})["text"])
+    except Exception as e:  # noqa: BLE001
+        return False, f"dialogue/merchant.dialogue.json does not read as JSON: {e}"
+    if not isinstance(script.get("nodes"), dict) or not script["nodes"]:
+        return False, "dialogue/merchant.dialogue.json has no nodes"
+    st = lambda: env.command("state", {})["state"]  # noqa: E731
+    if state_key(st(), "potions") is None:
+        return False, "no state \"potions\" exposed"
+    seen = []
+    for want_gold, want_potions in ((4, 1), (1, 2)):
+        offered, shown = converse(env, True)
+        if not shown:
+            return False, "pressing talk beside the merchant shows no dialogue box"
+        if not offered:
+            return False, f"with {want_gold + 3} gold the merchant offers no potion"
+        s = st()
+        seen.append((state_key(s, "gold"), state_key(s, "potions")))
+        if seen[-1] != (want_gold, want_potions):
+            return False, f"after buying, gold and potions are {seen[-1]}, not ({want_gold}, {want_potions})"
+    offered, shown = converse(env, True)
+    if offered:
+        return False, "with 1 gold the merchant still offers a potion"
+    s = st()
+    if (state_key(s, "gold"), state_key(s, "potions")) != (1, 2):
+        return False, f"a talk without buying left gold and potions at ({state_key(s, 'gold')}, {state_key(s, 'potions')})"
+    if not env.command("events.since", {"seq": 0, "type": "dialogue.choice"}):
+        return False, "no dialogue.choice events: the talk did not go through the SDK's dialogue"
+    return True, f"two potions bought, gold and potions {seen}, then none offered at 1 gold"
 
 
 def jump_sound_check(env, answer):
@@ -1784,6 +1892,8 @@ TASKS = [
      "task": "Give the sprites game a sound for picking up a coin, made as a sound recipe: a .sfx file of your own under assets/, a short bright chime that plays every time a coin is collected. Answer null."},
     {"name": "theme_song", "project": "sprites", "ticks": 0, "script": True, "solve": theme_song_solve, "check": theme_song_check, "edits": "a new score",
      "task": "Give the sprites game background music written as a score: a .song file of your own under assets/ with at least two instruments, a melody of at least eight notes and a bass line, playing in a loop from the start. Answer null."},
+    {"name": "merchant_talk", "project": "talk", "ticks": 0, "script": True, "solve": merchant_talk_solve, "check": merchant_talk_check, "edits": "scripts/main.ts and a new dialogue script",
+     "task": "Add a potion merchant to the talk game. Spawn an entity named Merchant drawn as a sprite at x -2, y 2, who talks when the player presses the talk action within 1.8 units of it, the way the guard does. Write the conversation as a dialogue script, dialogue/merchant.dialogue.json, shown with the SDK's dialogue box: the merchant greets the player and offers a choice to buy a potion for 3 gold, offered only while the player has at least 3 gold, or to leave. Buying takes 3 gold and gives one potion. Expose the player's potions as the state \"potions\"; the gold already exposed as \"gold\" must stay the player's gold, the same in both conversations. Answer null."},
     {"name": "lamp_prefab", "project": "hello", "ticks": 0, "script": True, "solve": lamp_prefab_solve, "check": lamp_prefab_check,
      "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
     {"name": "hill_raise", "project": "hills", "ticks": 2, "before": hill_raise_before, "solve": hill_raise_solve, "check": hill_raise_check,
