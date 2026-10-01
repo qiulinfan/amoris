@@ -76,6 +76,11 @@ class World {
     // Merge `partial` onto the current value (or the default when absent), then store.
     Status set(EntityId id, std::string_view component, const Json& partial, std::uint64_t cause = 0);
     Status remove(EntityId id, std::string_view component, std::uint64_t cause = 0);
+    // A component's fields as plain numbers (generated read_numbers / write_numbers; the scripts'
+    // path without JSON): the count, or -1 when the entity lacks it, -2 when it is not all numbers
+    // (or unknown), -3 when the entity is gone, and for set -4 when the count is not the component's.
+    long get_numbers(EntityId id, std::string_view component, double* out) const;
+    long set_numbers(EntityId id, std::string_view component, const double* in, std::size_t n);
     [[nodiscard]] std::vector<std::string> components_of(EntityId id) const;
     // Every serialized component of an entity as {name: value} (what scenes and the recorder store).
     [[nodiscard]] Json components_json(EntityId id) const;

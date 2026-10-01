@@ -668,6 +668,7 @@ Status Session::start() {
     world_ = std::make_unique<world::World>();
     physics_ = std::make_unique<physics::Physics>();
     physics2d_ = std::make_unique<physics::Physics2D>();
+    rigid2d_ = std::make_unique<physics::Rigid2D>();
     timelines_ = std::make_unique<Timelines>(options_.project_dir);
     assets_ = std::make_unique<assets::AssetStore>(options_.project_dir);
     // [assets] blender = "/path/to/blender": where Blender is for the formats it imports.
@@ -774,11 +775,28 @@ void Session::bind_natives() {
         j["scenario"] = options_.scenario;
         return j;
     });
+    // world.get and world.set of a component whose fields are all numbers, without JSON (sdk
+    // world.ts): the values cross in the shared Float64Array __pocket.__nums, in the generated
+    // order; the answer is their count, or below 0 for the SDK to take the JSON path instead.
+    nums_.assign(256, 0.0);
+    host_->share_f64("__nums", nums_.data(), nums_.size());
+    host_->bind("get_nums", [this](const Json& args) -> Result<Json> {
+        if (args.size() < 2 || !args[1].is_string()) return -2;
+        const world::EntityId id = args[0].is_number_unsigned() || args[0].is_number_integer() ? args[0].get<world::EntityId>() : resolve_entity(args[0]);
+        return world_->get_numbers(id, args[1].get_ref<const std::string&>(), nums_.data());
+    });
+    host_->bind("set_nums", [this](const Json& args) -> Result<Json> {
+        if (args.size() < 3 || !args[1].is_string() || !args[2].is_number()) return -2;
+        const world::EntityId id = args[0].is_number_unsigned() || args[0].is_number_integer() ? args[0].get<world::EntityId>() : resolve_entity(args[0]);
+        const auto n = static_cast<std::size_t>(std::clamp<std::int64_t>(args[2].get<std::int64_t>(), 0, static_cast<std::int64_t>(nums_.size())));
+        return world_->set_numbers(id, args[1].get_ref<const std::string&>(), nums_.data(), n);
+    });
     host_->bind("command", [this](const Json& args) -> Result<Json> {
         if (args.empty() || !args[0].is_string()) return fail("bad_args", "command(name, params?)");
-        Json params = args.size() > 1 ? args[1] : Json::object();
-        if (params.is_string()) params = Json::parse(params.get<std::string>(), nullptr, false);
-        return command(args[0].get<std::string>(), params, "script");
+        static const Json kNone = Json::object();
+        const Json& given = args.size() > 1 ? args[1] : kNone;
+        if (given.is_string()) return command(args[0].get_ref<const std::string&>(), Json::parse(given.get<std::string>(), nullptr, false), "script");
+        return command(args[0].get_ref<const std::string&>(), given, "script");
     });
 }
 
@@ -885,6 +903,10 @@ void Session::run_tick() {
         dispatch("contacts", contacts);
     }
     if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    if (rigid2d_ && assets_) {
+        const Vec3 g = physics_->settings().gravity;
+        rigid2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds), Vec2{g.x, g.y});
+    }
     update_hits(before_physics);   // the touches the 3D and 2D steps just reported
     nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
     update_camera_rigs(static_cast<float>(clock_.tick_seconds));   // after everything that moves what they follow
@@ -3260,6 +3282,61 @@ Result<Json> Session::particles_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown particles command '{}'", op);
 }
 
+// 2D rigid bodies' questions and pushes (docs/design/physics2d.md).
+Result<Json> Session::physics2d_command(std::string_view op, const Json& p) {
+    auto& w = *world_;
+    auto v2 = [](const Json& j, Vec2 d) {
+        if (j.is_array() && j.size() >= 2) return Vec2{j[0].get<float>(), j[1].get<float>()};
+        if (j.is_object()) return Vec2{j.value("x", d.x), j.value("y", d.y)};
+        return d;
+    };
+    const auto mask = static_cast<std::uint32_t>(opt<std::int64_t>(p, "mask", 0xFFFFFFFFll));
+    if (op == "stats") return rigid2d_->describe();
+    if (op == "raycast") {
+        // From `from` to `to`, or along `direction` for `distance`.
+        const Vec2 from = v2(p.value("from", Json()), Vec2{0, 0});
+        Vec2 to = v2(p.value("to", Json()), from);
+        if (!p.contains("to")) {
+            Vec2 d = v2(p.value("direction", Json()), Vec2{0, -1});
+            const float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len <= 0) return fail("bad_args", "direction must not be zero");
+            const float dist = static_cast<float>(opt<double>(p, "distance", 100.0));
+            to = Vec2{from.x + d.x / len * dist, from.y + d.y / len * dist};
+        }
+        const auto hit = rigid2d_->raycast(from, to, mask);
+        if (!hit) return Json{{"hit", false}};
+        const float len = std::sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
+        return Json{{"hit", true}, {"entity", hit->entity}, {"path", w.alive(hit->entity) ? w.path(hit->entity) : std::string()}, {"point", Json{{"x", hit->point.x}, {"y", hit->point.y}}}, {"normal", Json{{"x", hit->normal.x}, {"y", hit->normal.y}}}, {"distance", hit->fraction * len}};
+    }
+    if (op == "overlap") {
+        // A box (half, angle) or a circle (radius) at `center`: the bodies whose shapes it touches.
+        const Vec2 c = v2(p.value("center", Json()), Vec2{0, 0});
+        const Vec2 half = v2(p.value("half", Json()), Vec2{0.5f, 0.5f});
+        const float radius = static_cast<float>(opt<double>(p, "radius", 0.0));
+        Json found = Json::array();
+        for (world::EntityId id : rigid2d_->overlap(c, half, static_cast<float>(opt<double>(p, "angle", 0.0)), radius, mask))
+            found.push_back(Json{{"entity", id}, {"path", w.alive(id) ? w.path(id) : std::string()}});
+        return Json{{"entities", found}};
+    }
+    if (op == "impulse") {
+        const world::EntityId id = resolve_entity(p.value("entity", Json()));
+        if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p.value("entity", Json()).dump());
+        std::optional<Vec2> at;
+        if (p.contains("point")) at = v2(p["point"], Vec2{0, 0});
+        POCKET_TRY(now, rigid2d_->impulse(id, v2(p.value("impulse", Json()), Vec2{0, 0}), at, static_cast<float>(opt<double>(p, "angular", 0.0))));
+        // The new speed in the component at once (the next step sets the same in the body).
+        if (const auto* rb = w.try_get<world::RigidBody2D>(id)) {
+            world::RigidBody2D next = *rb;
+            next.velocity = now.first;
+            next.angular_velocity = now.second;
+            next.awake = true;
+            w.set_typed<world::RigidBody2D>(id, next);
+        }
+        return Json{{"velocity", Json{{"x", now.first.x}, {"y", now.first.y}}}, {"angular_velocity", now.second}};
+    }
+    return fail("unknown_command", "physics2d.{} is not a command (raycast, overlap, impulse, stats)", op);
+}
+
 Result<Json> Session::physics_command(std::string_view op, const Json& p) {
     if (op == "stats") {
         Json j = physics_->describe();
@@ -5141,7 +5218,9 @@ Result<Json> Session::world_lint(const Json& p) {
     ecs.each([&](flecs::entity e, const world::Hitbox& hb) {
         const auto* col = e.try_get<world::Collider>();
         const bool trigger = col && col->is_trigger && e.has<world::RigidBody>();
-        if (!trigger && !e.has<world::Area2D>()) add("warning", e.id(), "Hitbox", "a Hitbox notices nothing on its own, so it hurts nothing", "add a trigger Collider (is_trigger, with a static or kinematic RigidBody) for 3D bodies, or an Area2D for 2D ones");
+        const auto* col2 = e.try_get<world::Collider2D>();
+        if (!trigger && !e.has<world::Area2D>() && !(col2 && col2->sensor)) add("warning", e.id(), "Hitbox", "a Hitbox notices nothing on its own, so it hurts nothing", "add a trigger Collider (is_trigger, with a static or kinematic RigidBody) for 3D bodies, an Area2D for Body2D and TopDown2D movers, or a sensor Collider2D for 2D rigid bodies");
+        if (col2 && !col2->sensor && !col) add("warning", e.id(), "Hitbox", "its Collider2D is solid: bodies stop at it instead of coming in, so it never hits", "set Collider2D.sensor true");
         if (col && !col->is_trigger) add("warning", e.id(), "Hitbox", "its Collider is solid: bodies stop at it instead of coming in, so it never hits", "set Collider.is_trigger true");
         if (hb.damage == 0 && hb.knockback == 0) add("info", e.id(), "Hitbox", "it hits for nothing: no damage and no knockback", "set Hitbox.damage (negative heals)");
     });
@@ -5153,6 +5232,17 @@ Result<Json> Session::world_lint(const Json& p) {
     });
     ecs.each([&](flecs::entity e, const world::Area2D& a) {
         if (a.size.x <= 0 || a.size.y <= 0) add("warning", e.id(), "Area2D", "an area with no size notices nothing", "give Area2D.size half extents above 0");
+    });
+    // 2D rigid bodies (docs/design/physics2d.md).
+    ecs.each([&](flecs::entity e, const world::RigidBody2D&) {
+        if (!e.has<world::Collider2D>()) add("warning", e.id(), "RigidBody2D", "a RigidBody2D with no Collider2D has no shape: it falls through everything and nothing touches it", "add a Collider2D (box, circle, capsule or polygon)");
+        if (e.has<world::Body2D>() || e.has<world::TopDown2D>()) add("error", e.id(), "RigidBody2D", "a RigidBody2D and a Body2D or TopDown2D both move the Transform, each its own way", "keep one: RigidBody2D for physics objects, Body2D for a platformer's character");
+        if (world_->parent(e.id()) != 0) add("warning", e.id(), "RigidBody2D", "a 2D rigid body under a parent: the step writes its Transform as its place in the world", "make it a root (world.reparent to none)");
+    });
+    ecs.each([&](flecs::entity e, const world::Joint2D& j) {
+        if (!e.has<world::RigidBody2D>()) add("warning", e.id(), "Joint2D", "a Joint2D holds this entity's RigidBody2D, and it has none", "add a RigidBody2D (and a Collider2D) to it");
+        if (j.body && !world_->alive(static_cast<world::EntityId>(j.body))) add("warning", e.id(), "Joint2D", "Joint2D.body names an entity that is gone", "set body to another body's entity, or 0 to hold it to the world");
+        else if (j.body && !world_->try_get<world::RigidBody2D>(static_cast<world::EntityId>(j.body))) add("warning", e.id(), "Joint2D", "Joint2D.body has no RigidBody2D, so the joint is not made", "give the other entity a RigidBody2D, or set body to 0 for a point in the world");
     });
     ecs.each([&](flecs::entity e, const world::Decal& d) {
         if (file_missing(d.texture)) add("error", e.id(), "Decal", std::format("the decal's image {} is not in the project", d.texture), "point Decal.texture at an image in the project, or clear it for the built-in spot");
@@ -5427,14 +5517,34 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         return id;
     };
     std::uint64_t cause = opt<std::uint64_t>(p, "cause", 0);
+    // A field that holds an entity (Joint2D.body, Joint.target...) may name it: "Plank0" or a path,
+    // turned into its id here, so a caller need not look ids up first.
+    auto name_entities = [&](const std::string& comp, Json& value) -> Status {
+        if (!value.is_object()) return {};
+        for (const world::ComponentInfo& info : w.component_infos_all()) {
+            if (info.name != comp) continue;
+            for (const world::FieldInfo& f : info.fields) {
+                if (f.type != "entity") continue;
+                const std::string key(f.name);
+                if (!value.contains(key) || !value[key].is_string()) continue;
+                const world::EntityId target = resolve_entity(value[key]);
+                if (!w.alive(target)) return fail("no_such_entity", "{}.{}: no entity named {}", comp, key, value[key].dump());
+                value[key] = target;
+            }
+            break;
+        }
+        return {};
+    };
     if (op == "spawn") {
         world::EntityId parent = 0;
         if (p.contains("parent") && !p["parent"].is_null()) {
             parent = resolve_entity(p["parent"]);
             if (!w.alive(parent)) return fail("no_such_entity", "no parent for {}", p["parent"].dump());
         }
-        POCKET_TRY_VOID(w.check_components(p.value("components", Json::object())));
-        POCKET_TRY(id, w.spawn(opt<std::string>(p, "name", ""), parent, p.value("components", Json::object()), cause));
+        Json comps = p.value("components", Json::object());
+        if (comps.is_object()) for (auto& [cname, cvalue] : comps.items()) POCKET_TRY_VOID(name_entities(cname, cvalue));
+        POCKET_TRY_VOID(w.check_components(comps));
+        POCKET_TRY(id, w.spawn(opt<std::string>(p, "name", ""), parent, comps, cause));
         Json j;
         j["id"] = id;
         j["path"] = w.path(id);
@@ -5457,9 +5567,11 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         if (!p.contains("value") || !p["value"].is_object()) return fail("bad_args", "world.set needs value: the fields to change as an object, e.g. {{entity: \"Ball\", component: \"MeshRenderer\", value: {{color: {{r: 0, g: 1, b: 0, a: 1}}}}}}");
         if (!p.contains("component") || !p["component"].is_string()) return fail("bad_args", "world.set needs component: the component's name, e.g. \"MeshRenderer\" (world.schema lists them)");
         const std::string comp = p["component"].get<std::string>();
-        POCKET_TRY_VOID(w.check_patch(comp, p["value"]));
-        POCKET_TRY_VOID(w.set(id, comp, p["value"], cause));
-        if (opt<bool>(p, "quiet", false)) return Json{{"ok", true}};   // a caller that does not read it back (the SDK)
+        Json value = p["value"];
+        POCKET_TRY_VOID(name_entities(comp, value));
+        POCKET_TRY_VOID(w.check_patch(comp, value));
+        POCKET_TRY_VOID(w.set(id, comp, value, cause));
+        if (opt<bool>(p, "quiet", false)) return source == "script" ? Json() : Json{{"ok", true}};   // a caller that does not read it back (the SDK: nothing to turn into a value)
         POCKET_TRY(now, w.get(id, comp));
         return Json{{"ok", true}, {"value", now}};   // the component as it is now, the patch merged in
     }
@@ -5837,8 +5949,67 @@ void Session::build_debug_draw() {
             else if (c.shape == 2) debug_draw_.capsule(center, c.size.x, c.size.y, t.rotation, color);
             else debug_draw_.box(center, c.size, t.rotation, color);
         });
+        // 2D shapes as outlines in their plane, in the same colours (docs/design/physics2d.md).
+        w.ecs().each([&](flecs::entity e, const world::Collider2D& c, const world::Transform& authored) {
+            rhi::Color color{0.6f, 0.6f, 0.6f, 1};
+            Vec3 pos = authored.position;
+            Quat rot = authored.rotation;
+            if (const auto* rb = e.try_get<world::RigidBody2D>()) {
+                if (rb->kind == 0) color = rb->awake ? rhi::Color{0.2f, 1.0f, 0.2f, 1} : rhi::Color{0.15f, 0.5f, 0.15f, 1};
+                else if (rb->kind == 2) color = {0.3f, 0.6f, 1.0f, 1};
+            } else if (const auto* wt = e.try_get<world::WorldTransform>()) {
+                pos = wt->position;
+                rot = wt->rotation;
+            }
+            if (c.sensor) color = {1.0f, 0.9f, 0.2f, 1};
+            const Vec3 sc{authored.scale.x, authored.scale.y, 1};
+            // A point of the shape's own space in the world.
+            auto at = [&](float x, float y) { return pos + rot.rotate(Vec3{x * sc.x, y * sc.y, 0}); };
+            auto loop = [&](const std::vector<std::pair<float, float>>& pts) {
+                for (std::size_t i = 0; i < pts.size(); ++i) {
+                    const auto& [x0, y0] = pts[i];
+                    const auto& [x1, y1] = pts[(i + 1) % pts.size()];
+                    debug_draw_.line(at(x0, y0), at(x1, y1), color);
+                }
+            };
+            const float ca = std::cos(c.angle), sa = std::sin(c.angle);
+            auto turned = [&](float x, float y) { return std::pair{c.offset.x + x * ca - y * sa, c.offset.y + x * sa + y * ca}; };
+            std::vector<std::pair<float, float>> pts;
+            if (c.shape == 1 || c.shape == 2) {
+                // A circle, or a capsule's two half circles and its sides.
+                const float r = c.radius;
+                const float half = c.shape == 2 ? c.size.y : 0.0f;
+                for (int i = 0; i <= 24; ++i) {
+                    const float a = static_cast<float>(i) / 24.0f * 6.2831853f;
+                    const float y = (a < 3.14159265f ? half : -half) + r * std::sin(a);
+                    pts.push_back({c.offset.x + r * std::cos(a), c.offset.y + y});
+                }
+                loop(pts);
+                if (c.shape == 1) debug_draw_.line(at(c.offset.x, c.offset.y), at(c.offset.x + r, c.offset.y), color);   // a spoke shows the turn
+            } else if (c.shape == 3) {
+                for (const world::Point2D& p : c.points) pts.push_back({p.x, p.y});
+                if (pts.size() >= 2) loop(pts);
+            } else {
+                pts = {turned(-c.size.x, -c.size.y), turned(c.size.x, -c.size.y), turned(c.size.x, c.size.y), turned(-c.size.x, c.size.y)};
+                loop(pts);
+            }
+        });
     }
     if (debug_flags_.joints) {
+        // 2D joints: a line between the anchors, in the colour of their kind.
+        w.ecs().each([&](flecs::entity, const world::Joint2D& j, const world::Transform& t) {
+            const Vec3 a = t.position + t.rotation.rotate(Vec3{j.anchor.x, j.anchor.y, 0});
+            Vec3 b{j.other_anchor.x, j.other_anchor.y, t.position.z};
+            if (j.body) {
+                const auto* tt = w.try_get<world::Transform>(static_cast<world::EntityId>(j.body));
+                if (!tt) return;
+                b = tt->position + tt->rotation.rotate(Vec3{j.other_anchor.x, j.other_anchor.y, 0});
+            }
+            const rhi::Color color = j.kind == 1 ? rhi::Color{1.0f, 0.4f, 0.8f, 1} : rhi::Color{1.0f, 0.6f, 0.2f, 1};
+            debug_draw_.line(a, b, color);
+            debug_draw_.sphere(a, 0.05f, color, 8);
+            debug_draw_.sphere(b, 0.05f, color, 8);
+        });
         w.ecs().each([&](flecs::entity e, const world::Joint& j, const world::Transform& t) {
             Vec3 a = t.position + t.rotation.rotate(j.anchor);
             Vec3 b = j.target_anchor;
@@ -6186,6 +6357,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
+    if (name.starts_with("physics2d.")) return physics2d_command(name.substr(10), p);
     if (name.starts_with("nav.")) return nav_command(name.substr(4), p);
     if (name.starts_with("env.")) return env_command(name.substr(4), p);
     if (name.starts_with("sprite.")) return sprite_command(name.substr(7), p);
@@ -6607,7 +6779,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

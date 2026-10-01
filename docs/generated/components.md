@@ -635,6 +635,68 @@ A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and g
 | `enabled` | bool | true | false notices nothing: the bodies inside are let out (area.exited) and none come in. |
 | `inside` | i32 | 0 | How many bodies are in it (written by the engine). |
 
+## RigidBody2D
+
+A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `kind` | i32: 0 `dynamic`, 1 `static`, 2 `kinematic` | 0 | 0 dynamic (falls, is pushed), 1 static (never moves), 2 kinematic (moves by its velocity alone, pushes dynamic bodies). |
+| `velocity` | vec2 | [0.0, 0.0] | Units per second (written by the engine; write it to set it). |
+| `angular_velocity` | f32 | 0.0 | Radians per second, counter-clockwise (written by the engine; write it to set it). |
+| `gravity_scale` | f32 | 1.0 | How much of the world's gravity pulls it (0: floats). |
+| `linear_damping` | f32 | 0.0 | Slows its velocity, as air does (0 to a few). |
+| `angular_damping` | f32 | 0.0 | Slows its turning. |
+| `fixed_rotation` | bool | false | Never turns: a character standing upright, a crate that slides without tipping. |
+| `bullet` | bool | false | Swept against other dynamic bodies too, so a fast small body does not pass through them (static ones are always swept). |
+| `awake` | bool | true | Whether it is simulated now: a body at rest falls asleep and wakes when touched (written by the engine; false puts it to sleep, true wakes it). |
+| `enabled` | bool | true | false takes it out of the simulation: nothing touches it, it does not move. |
+
+## Collider2D
+
+A 2D shape for the entity's RigidBody2D (docs/design/physics2d.md), or, on an entity without one, a static body of its own (a wall, a ramp, a sensor in the level). Sizes are in the entity's own units, multiplied by its Transform's scale.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `shape` | i32: 0 `box`, 1 `circle`, 2 `capsule`, 3 `polygon` | 0 | 0 box (size), 1 circle (radius), 2 capsule (two circles of radius along Y, size.y apart from the center each way), 3 polygon (points, convex, at most 8). |
+| `size` | vec2 | [0.5, 0.5] | Half extents of a box; a capsule's half length along Y in size.y. |
+| `radius` | f32 | 0.5 | A circle's or capsule's radius; a box or polygon's rounding of its corners. |
+| `offset` | vec2 | [0.0, 0.0] | The shape's center from the entity's position, in its own space. |
+| `angle` | f32 | 0.0 | A box's or polygon's turn within the body, radians. |
+| `points` | list:Point2D | [] | A polygon's corners, in the entity's own space (their convex hull is taken; at most 8). |
+| `density` | f32 | 1.0 | Mass per square unit; a dynamic body's mass and how it turns come from its shapes. |
+| `friction` | f32 | 0.6 | How much it grips what it slides on (0 ice, 1 rubber). |
+| `restitution` | f32 | 0.0 | Bounciness 0..1. |
+| `sensor` | bool | false | Notices 2D rigid bodies coming in and going out (trigger.enter and trigger.exit, as 3D triggers do; a Hitbox's shape) and stops nothing. |
+| `layer` | u32 | 1 | Bits of the layers this shape is on. |
+| `mask` | u32 | 4294967295 | Bits of the layers it collides with; two shapes collide when each is on a layer the other's mask holds. A TileMap's cells are on layer bit 0. |
+
+## Joint2D
+
+Two 2D rigid bodies held together (docs/design/physics2d.md): this entity's RigidBody2D and `body` (or a point fixed in the world when it names none). A hinge for a door or a wheel, a rope's length, a slider, a weld; a motor drives a hinge or a slider, a spring softens a weld or a length, and a joint pulled past `break_force` breaks.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `kind` | i32: 0 `revolute`, 1 `distance`, 2 `prismatic`, 3 `weld`, 4 `wheel` | 0 | 0 revolute (a hinge at the anchors), 1 distance (the anchors kept `length` apart, or between min_length and max_length), 2 prismatic (slides along `axis`), 3 weld (held fast, or springy with `hertz`), 4 wheel (slides along `axis` on a spring and turns freely: a car's wheel). |
+| `body` | entity | 0 | The other body; 0 (or none) holds this one to the world at `other_anchor`. |
+| `anchor` | vec2 | [0.0, 0.0] | Where it holds on this body, in its own space. |
+| `other_anchor` | vec2 | [0.0, 0.0] | Where it holds on the other body, in its own space; in the world when there is no other body. |
+| `axis` | vec2 | [1.0, 0.0] | A prismatic or wheel joint's line, in the other body's space (a car's chassis for its wheel; the world's when there is no other body); the motor of a wheel joint turns this body. |
+| `length` | f32 | -1.0 | A distance joint's length; below 0 the anchors' distance when it is made. |
+| `min_length` | f32 | 0.0 | A distance joint's least length (with enable_limit; a rope that goes slack). |
+| `max_length` | f32 | 100000.0 | A distance joint's greatest length (with enable_limit). |
+| `enable_limit` | bool | false | Hold a revolute joint's turn or a prismatic or wheel joint's travel between lower and upper, a distance joint's length between min and max. |
+| `lower` | f32 | 0.0 | The least turn (radians) or travel (units). |
+| `upper` | f32 | 0.0 | The greatest turn or travel. |
+| `enable_motor` | bool | false | Drive the joint at motor_speed. |
+| `motor_speed` | f32 | 0.0 | Radians per second for a revolute or wheel joint, units per second for a prismatic one. |
+| `max_motor_force` | f32 | 10.0 | The most torque (revolute, wheel) or force (prismatic) the motor gives. |
+| `enable_spring` | bool | false | A spring along the joint: a weld that wobbles, a length that stretches, a wheel's suspension. |
+| `hertz` | f32 | 4.0 | The spring's stiffness as a frequency. |
+| `damping_ratio` | f32 | 0.7 | The spring's damping (0 rings, 1 settles at once). |
+| `collide_connected` | bool | false | Whether the two bodies still collide with each other. |
+| `break_force` | f32 | 0.0 | Above this force the joint breaks: it is removed and joint2d.broken says so (0: never). |
+
 ## TopDown2D
 
 A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
@@ -860,4 +922,13 @@ One textured layer of a Terrain's ground (docs/design/terrain.md, Layers): an im
 | `slope` | vec2 | [0.0, 90.0] | The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit). |
 | `height` | vec2 | [0.0, 1.0] | The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit). |
 | `cover` | f32 | 1.0 | How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything. |
+
+## Point2D
+
+A point in a 2D shape's own space (docs/design/physics2d.md).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `x` | f32 | 0.0 | Across. |
+| `y` | f32 | 0.0 | Up. |
 

@@ -169,6 +169,18 @@ void from_json(const Json& j, TerrainLayer& v);
 std::size_t numeric_span(TerrainLayer& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const TerrainLayer& v);
 
+/// A point in a 2D shape's own space (docs/design/physics2d.md).
+struct Point2D {
+    float x = 0.0f;
+    float y = 0.0f;
+    constexpr bool operator==(const Point2D&) const = default;
+};
+void to_json(Json& j, const Point2D& v);
+void from_json(const Json& j, Point2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Point2D& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const Point2D& v);
+
 /// Position, rotation and scale relative to the parent entity (or the world when there is no parent).
 struct Transform {
     Vec3 position{0.0f, 0.0f, 0.0f};
@@ -874,6 +886,74 @@ void from_json(const Json& j, Area2D& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Area2D& v, std::string_view path, float** out);
 
+/// A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way).
+struct RigidBody2D {
+    std::int32_t kind = 0;
+    Vec2 velocity{0.0f, 0.0f};
+    float angular_velocity = 0.0f;
+    float gravity_scale = 1.0f;
+    float linear_damping = 0.0f;
+    float angular_damping = 0.0f;
+    bool fixed_rotation = false;
+    bool bullet = false;
+    bool awake = true;
+    bool enabled = true;
+    constexpr bool operator==(const RigidBody2D&) const = default;
+};
+void to_json(Json& j, const RigidBody2D& v);
+void from_json(const Json& j, RigidBody2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(RigidBody2D& v, std::string_view path, float** out);
+
+/// A 2D shape for the entity's RigidBody2D (docs/design/physics2d.md), or, on an entity without one, a static body of its own (a wall, a ramp, a sensor in the level). Sizes are in the entity's own units, multiplied by its Transform's scale.
+struct Collider2D {
+    std::int32_t shape = 0;
+    Vec2 size{0.5f, 0.5f};
+    float radius = 0.5f;
+    Vec2 offset{0.0f, 0.0f};
+    float angle = 0.0f;
+    std::vector<Point2D> points = {};
+    float density = 1.0f;
+    float friction = 0.6f;
+    float restitution = 0.0f;
+    bool sensor = false;
+    std::uint32_t layer = 1;
+    std::uint32_t mask = 4294967295;
+    constexpr bool operator==(const Collider2D&) const = default;
+};
+void to_json(Json& j, const Collider2D& v);
+void from_json(const Json& j, Collider2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Collider2D& v, std::string_view path, float** out);
+
+/// Two 2D rigid bodies held together (docs/design/physics2d.md): this entity's RigidBody2D and `body` (or a point fixed in the world when it names none). A hinge for a door or a wheel, a rope's length, a slider, a weld; a motor drives a hinge or a slider, a spring softens a weld or a length, and a joint pulled past `break_force` breaks.
+struct Joint2D {
+    std::int32_t kind = 0;
+    std::uint64_t body = 0;
+    Vec2 anchor{0.0f, 0.0f};
+    Vec2 other_anchor{0.0f, 0.0f};
+    Vec2 axis{1.0f, 0.0f};
+    float length = -1.0f;
+    float min_length = 0.0f;
+    float max_length = 100000.0f;
+    bool enable_limit = false;
+    float lower = 0.0f;
+    float upper = 0.0f;
+    bool enable_motor = false;
+    float motor_speed = 0.0f;
+    float max_motor_force = 10.0f;
+    bool enable_spring = false;
+    float hertz = 4.0f;
+    float damping_ratio = 0.7f;
+    bool collide_connected = false;
+    float break_force = 0.0f;
+    constexpr bool operator==(const Joint2D&) const = default;
+};
+void to_json(Json& j, const Joint2D& v);
+void from_json(const Json& j, Joint2D& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Joint2D& v, std::string_view path, float** out);
+
 /// A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).
 struct TopDown2D {
     Vec2 velocity{0.0f, 0.0f};
@@ -1051,6 +1131,9 @@ void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
 void hash_component(struct StateHasherRef& h, const Area2D& v);
+void hash_component(struct StateHasherRef& h, const RigidBody2D& v);
+void hash_component(struct StateHasherRef& h, const Collider2D& v);
+void hash_component(struct StateHasherRef& h, const Joint2D& v);
 void hash_component(struct StateHasherRef& h, const TopDown2D& v);
 void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
@@ -1058,5 +1141,102 @@ void hash_component(struct StateHasherRef& h, const AudioListener& v);
 void hash_component(struct StateHasherRef& h, const NavObstacle& v);
 void hash_component(struct StateHasherRef& h, const NavAgent& v);
 void hash_component(struct StateHasherRef& h, const Morph& v);
+
+/// A component's fields as plain numbers in metadata order (vectors by their parts, flags as 0 or 1),
+/// for the scripts' path that skips JSON; kNotNumeric when a field is not a number (a string, an
+/// entity, a list). write_numbers takes them back, false unless `n` is the count read gives.
+inline constexpr std::size_t kNotNumeric = static_cast<std::size_t>(-1);
+std::size_t read_numbers(const Transform& v, double* out);
+bool write_numbers(Transform& v, const double* in, std::size_t n);
+std::size_t read_numbers(const WorldTransform& v, double* out);
+bool write_numbers(WorldTransform& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Velocity& v, double* out);
+bool write_numbers(Velocity& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Health& v, double* out);
+bool write_numbers(Health& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Hitbox& v, double* out);
+bool write_numbers(Hitbox& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Model& v, double* out);
+bool write_numbers(Model& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Lifetime& v, double* out);
+bool write_numbers(Lifetime& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Camera& v, double* out);
+bool write_numbers(Camera& v, const double* in, std::size_t n);
+std::size_t read_numbers(const CameraRig& v, double* out);
+bool write_numbers(CameraRig& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Light& v, double* out);
+bool write_numbers(Light& v, const double* in, std::size_t n);
+std::size_t read_numbers(const ReflectionProbe& v, double* out);
+bool write_numbers(ReflectionProbe& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Decal& v, double* out);
+bool write_numbers(Decal& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Fog& v, double* out);
+bool write_numbers(Fog& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Sky& v, double* out);
+bool write_numbers(Sky& v, const double* in, std::size_t n);
+std::size_t read_numbers(const MeshRenderer& v, double* out);
+bool write_numbers(MeshRenderer& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Sprite& v, double* out);
+bool write_numbers(Sprite& v, const double* in, std::size_t n);
+std::size_t read_numbers(const SpriteAnimation& v, double* out);
+bool write_numbers(SpriteAnimation& v, const double* in, std::size_t n);
+std::size_t read_numbers(const TileMap& v, double* out);
+bool write_numbers(TileMap& v, const double* in, std::size_t n);
+std::size_t read_numbers(const AnimationGraph& v, double* out);
+bool write_numbers(AnimationGraph& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Timeline& v, double* out);
+bool write_numbers(Timeline& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Animator& v, double* out);
+bool write_numbers(Animator& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Attach& v, double* out);
+bool write_numbers(Attach& v, const double* in, std::size_t n);
+std::size_t read_numbers(const IK& v, double* out);
+bool write_numbers(IK& v, const double* in, std::size_t n);
+std::size_t read_numbers(const LookAt& v, double* out);
+bool write_numbers(LookAt& v, const double* in, std::size_t n);
+std::size_t read_numbers(const ParticleEmitter& v, double* out);
+bool write_numbers(ParticleEmitter& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Bounds& v, double* out);
+bool write_numbers(Bounds& v, const double* in, std::size_t n);
+std::size_t read_numbers(const RigidBody& v, double* out);
+bool write_numbers(RigidBody& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Joint& v, double* out);
+bool write_numbers(Joint& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Body2D& v, double* out);
+bool write_numbers(Body2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Character& v, double* out);
+bool write_numbers(Character& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Terrain& v, double* out);
+bool write_numbers(Terrain& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Wind& v, double* out);
+bool write_numbers(Wind& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Water& v, double* out);
+bool write_numbers(Water& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Scatter& v, double* out);
+bool write_numbers(Scatter& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Vehicle& v, double* out);
+bool write_numbers(Vehicle& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Area2D& v, double* out);
+bool write_numbers(Area2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const RigidBody2D& v, double* out);
+bool write_numbers(RigidBody2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Collider2D& v, double* out);
+bool write_numbers(Collider2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Joint2D& v, double* out);
+bool write_numbers(Joint2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const TopDown2D& v, double* out);
+bool write_numbers(TopDown2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Collider& v, double* out);
+bool write_numbers(Collider& v, const double* in, std::size_t n);
+std::size_t read_numbers(const AudioSource& v, double* out);
+bool write_numbers(AudioSource& v, const double* in, std::size_t n);
+std::size_t read_numbers(const AudioListener& v, double* out);
+bool write_numbers(AudioListener& v, const double* in, std::size_t n);
+std::size_t read_numbers(const NavObstacle& v, double* out);
+bool write_numbers(NavObstacle& v, const double* in, std::size_t n);
+std::size_t read_numbers(const NavAgent& v, double* out);
+bool write_numbers(NavAgent& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Morph& v, double* out);
+bool write_numbers(Morph& v, const double* in, std::size_t n);
 
 }  // namespace pocket::world

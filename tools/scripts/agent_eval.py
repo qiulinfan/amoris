@@ -28,7 +28,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/localization.md", "docs/design/networking.md"]
+DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/localization.md", "docs/design/networking.md"]
 # Where a run's copies live: outside the repository, so an agent finds the game and the docs there
 # and nothing of the harness (whose checks are the answers) beside them. Made by run().
 EVAL_DIR = None
@@ -1002,6 +1002,130 @@ def spike_trap_check(env, answer):
     return True, f"spikes took 60 in four hits; depleted at tick {answer}"
 
 
+def roof_mesh_solve(env):
+    pts = [[-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1], [0, 1, 0]]
+    made = env.command("mesh.create", {"name": "roof", "positions": pts, "indices": [0, 4, 1, 1, 4, 2, 2, 4, 3, 3, 4, 0]})
+    env.command("world.spawn", {"name": "Roof", "components": {"Transform": {"position": {"x": 0, "y": 2, "z": 0}}, "MeshRenderer": {"mesh": "mesh:roof", "color": {"r": 1, "g": 0.5, "b": 0.1, "a": 1}}}})
+    return made["triangles"]
+
+
+def roof_mesh_check(env, answer):
+    meshes = [m["mesh"] for m in env.command("mesh.list", {})["meshes"]]
+    if "mesh:roof" not in meshes:
+        return False, f"no mesh named roof (made: {meshes})"
+    roof = env.command("world.find", {"path": "Roof"})
+    if not isinstance(roof, int):
+        return False, "no entity named Roof"
+    mr = env.command("world.get", {"entity": roof, "component": "MeshRenderer"})
+    if mr.get("mesh") != "mesh:roof":
+        return False, f"Roof draws {mr.get('mesh')!r}"
+    c = mr["color"]
+    if not (c["r"] > 0.8 and 0.25 < c["g"] < 0.75 and c["b"] < 0.35):
+        return False, f"Roof's color is {c}, not orange"
+    env.command("step", {"ticks": 1})
+    b = env.command("world.get", {"entity": roof, "component": "Bounds"})
+    lo, hi = b["min"], b["max"]
+    if not (near(lo["y"], 2, 0.02) and near(hi["y"], 3, 0.02) and near(lo["x"], -1, 0.02) and near(hi["x"], 1, 0.02) and near(lo["z"], -1, 0.02) and near(hi["z"], 1, 0.02)):
+        return False, f"Roof spans {lo} to {hi}, not a 2 by 2 base at y 2 rising to 3"
+    if not isinstance(answer, int) or answer < 4 or answer > 6:
+        return False, f"answered {answer!r} triangles"
+    return True, f"a {answer}-triangle roof spanning y 2..3"
+
+
+def walled_room_solve(env):
+    env.command("tilemap.create", {"name": "maps/room.tmj", "width": 10, "height": 8, "tile_width": 16, "layers": [{"name": "walls", "solid": True}], "tilesets": [{"image": "assets/tiles.png"}]})
+    env.command("world.spawn", {"name": "Room", "components": {"Transform": {"position": {"x": 30, "y": 0, "z": 0}}, "TileMap": {"map": "maps/room.tmj"}}})
+    for args in ({"tile_x": 0, "tile_y": 0, "width": 10, "height": 1}, {"tile_x": 0, "tile_y": 7, "width": 10, "height": 1}, {"tile_x": 0, "tile_y": 0, "width": 1, "height": 8}, {"tile_x": 9, "tile_y": 0, "width": 1, "height": 8}):
+        env.command("tilemap.fill", {"entity": "Room", "layer": "walls", "id": 0, **args})
+    env.command("world.spawn", {"name": "Pebble", "components": {"Transform": {"position": {"x": 35, "y": -2, "z": 0}}, "RigidBody2D": {}, "Collider2D": {"shape": "circle", "radius": 0.25}}})
+    env.command("step", {"ticks": 120})
+    return env.command("world.get", {"entity": "Pebble", "component": "Transform"})["position"]["y"]
+
+
+def walled_room_check(env, answer):
+    room = env.command("world.find", {"path": "Room"})
+    if not isinstance(room, int):
+        return False, "no entity named Room"
+    tm = env.command("world.get", {"entity": room, "component": "TileMap"})
+    if tm.get("map") != "maps/room.tmj":
+        return False, f"Room draws {tm.get('map')!r}"
+    info = env.command("tilemap.info", {"entity": room})
+    if info.get("width") != 10 or info.get("height") != 8:
+        return False, f"the map is {info.get('width')} by {info.get('height')}"
+    for x in range(10):
+        for y in range(8):
+            border = x in (0, 9) or y in (0, 7)
+            solid = env.command("tilemap.solid", {"entity": room, "tile_x": x, "tile_y": y})["solid"]
+            if solid != border:
+                return False, f"cell ({x}, {y}) is {'solid' if solid else 'open'}"
+    t = env.command("world.get", {"entity": room, "component": "Transform"})["position"]
+    if not (near(t["x"], 30) and near(t["y"], 0)):
+        return False, f"Room is at {t}"
+    pebble = env.command("world.find", {"path": "Pebble"})
+    if not isinstance(pebble, int):
+        return False, "no entity named Pebble"
+    col = env.command("world.get", {"entity": pebble, "component": "Collider2D"})
+    if not col or col["shape"] != 1 or not near(col["radius"], 0.25):
+        return False, f"Pebble's Collider2D is {col}"
+    y = env.command("world.get", {"entity": pebble, "component": "Transform"})["position"]["y"]
+    if not near(y, -6.75, 0.05):
+        return False, f"the Pebble rests at y {y}, not on the floor's top at -7"
+    if not isinstance(answer, (int, float)) or not near(answer, y, 0.05):
+        return False, f"answered {answer!r}, the Pebble is at {y}"
+    return True, f"a walled 10 by 8 room; the pebble rests at {y:.3f}"
+
+
+def plank_bridge_solve(env):
+    for i in range(5):
+        joint = {"kind": "revolute", "anchor": {"x": -0.5, "y": 0}}
+        if i == 0:
+            joint["other_anchor"] = {"x": -4.5, "y": 4}
+        else:
+            joint["body"] = env.command("world.find", {"path": f"Plank{i - 1}"})
+            joint["other_anchor"] = {"x": 0.5, "y": 0}
+        env.command("world.spawn", {"name": f"Plank{i}", "components": {"Transform": {"position": {"x": -4 + i, "y": 4, "z": 0}}, "RigidBody2D": {}, "Collider2D": {"size": {"x": 0.5, "y": 0.1}}, "Joint2D": joint}})
+    # The sixth hinge, from a body of its own: an entity holds one Joint2D.
+    env.command("world.spawn", {"name": "Post", "components": {"Transform": {"position": {"x": 0.5, "y": 4, "z": 0}}, "RigidBody2D": {"kind": "static"}, "Collider2D": {"size": {"x": 0.05, "y": 0.05}, "mask": 0},
+                "Joint2D": {"kind": "revolute", "body": env.command("world.find", {"path": "Plank4"}), "other_anchor": {"x": 0.5, "y": 0}}}})
+    env.command("step", {"ticks": 120})
+    return min(env.command("world.get", {"entity": f"Plank{i}", "component": "Transform"})["position"]["y"] for i in range(5))
+
+
+def plank_bridge_check(env, answer):
+    import math
+    ends = []
+    ys = []
+    for i in range(5):
+        p = env.command("world.find", {"path": f"Plank{i}"})
+        if not isinstance(p, int):
+            return False, f"no entity named Plank{i}"
+        col = env.command("world.get", {"entity": p, "component": "Collider2D"})
+        if not col or col["shape"] != 0 or not (near(col["size"]["x"], 0.5) and near(col["size"]["y"], 0.1)):
+            return False, f"Plank{i}'s Collider2D is {col}"
+        if not env.command("world.get", {"entity": p, "component": "RigidBody2D"}):
+            return False, f"Plank{i} has no RigidBody2D"
+        t = env.command("world.get", {"entity": p, "component": "Transform"})
+        a = 2 * math.atan2(t["rotation"]["z"], t["rotation"]["w"])
+        c = t["position"]
+        ends.append(((c["x"] - 0.5 * math.cos(a), c["y"] - 0.5 * math.sin(a)), (c["x"] + 0.5 * math.cos(a), c["y"] + 0.5 * math.sin(a))))
+        ys.append(c["y"])
+    def gap(p, q):
+        return math.hypot(p[0] - q[0], p[1] - q[1])
+    if gap(ends[0][0], (-4.5, 4)) > 0.05:
+        return False, f"Plank0's left end is at {ends[0][0]}, not held at (-4.5, 4)"
+    if gap(ends[4][1], (0.5, 4)) > 0.05:
+        return False, f"Plank4's right end is at {ends[4][1]}, not held at (0.5, 4)"
+    for i in range(4):
+        if gap(ends[i][1], ends[i + 1][0]) > 0.05:
+            return False, f"Plank{i} and Plank{i + 1} came apart ({gap(ends[i][1], ends[i + 1][0]):.3f})"
+    low = min(ys)
+    if not (low < 4.0 and low > 3.0):
+        return False, f"the lowest plank is at {low}: the bridge does not hang"
+    if not isinstance(answer, (int, float)) or not near(answer, low, 0.05):
+        return False, f"answered {answer!r}, the lowest plank is at {low}"
+    return True, f"five planks hang between the points, lowest at {low:.3f}"
+
+
 def brute_enemies_solve(env):
     rows = env.command("world.query", {"with": ["Enemy"]})["entities"]
     for row in rows:
@@ -1099,6 +1223,12 @@ TASKS = [
      "task": "Put a spike trap under the player: give the entity named Player 60 health (current and max) with half a second of invulnerability after each hit, and spawn an entity named Spikes where the player stands that notices 2D bodies in a box of half extents 1 by 0.5 and hurts what is in it by 15, again every half second while it stays. Then run the game, leaving the player where it is, until its health is used up, and answer with the tick at which that was reported, as the integer \"answer\"."},
     {"name": "brute_enemies", "project": "playground", "ticks": 600, "before": clear_enemies_before, "solve": brute_enemies_solve, "check": brute_enemies_check,
      "task": "The playground declares a component of its own for its enemies. Make every enemy now in the world a brute that does 25 damage, without stepping the game, and answer with how many enemies there are, as the integer \"answer\"."},
+    {"name": "roof_mesh", "project": "hello", "ticks": 0, "solve": roof_mesh_solve, "check": roof_mesh_check,
+     "task": "Make a mesh named roof from numbers: a square pyramid with its base corners at (-1, 0, -1), (1, 0, -1), (1, 0, 1) and (-1, 0, 1) and its apex at (0, 1, 0), its four sloping sides facing outward (a base is up to you). Spawn an entity named Roof that draws it in orange, placed at (0, 2, 0). Answer with how many triangles the mesh has, as the integer \"answer\"."},
+    {"name": "walled_room", "project": "sprites", "ticks": 0, "solve": walled_room_solve, "check": walled_room_check,
+     "task": "Make a tile map by code named maps/room.tmj: 10 tiles wide and 8 high, 16-pixel tiles, with assets/tiles.png as its tileset and one tile layer named walls whose tiles are all solid. Put the tileset's first tile in every cell of the map's border and leave the inside empty. Show it with an entity named Room at x 30, y 0. Then drop a 2D rigid body named Pebble, a circle of radius 0.25, from x 35, y -2 inside the room, run the game for two seconds, and answer with the Pebble's y, as the number \"answer\"."},
+    {"name": "plank_bridge", "project": "crates", "ticks": 0, "solve": plank_bridge_solve, "check": plank_bridge_check,
+     "task": "Hang a bridge in the crates game: five planks named Plank0 to Plank4, each a dynamic 2D rigid body with a box shape of half extents 0.5 by 0.1, laid end to end at height 4 with their centers at x -4, -3, -2, -1 and 0. Hinge each plank to the next where their ends meet, hinge Plank0's left end to a fixed point in the world at (-4.5, 4), and Plank4's right end to a fixed point at (0.5, 4). Run the game for two seconds and answer with the lowest plank center's y, as the number \"answer\"."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]

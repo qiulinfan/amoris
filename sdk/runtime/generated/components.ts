@@ -146,6 +146,14 @@ export interface TerrainLayer {
     cover: number;
 }
 
+/** A point in a 2D shape's own space (docs/design/physics2d.md). */
+export interface Point2D {
+    /** Across. */
+    x: number;
+    /** Up. */
+    y: number;
+}
+
 /** Position, rotation and scale relative to the parent entity (or the world when there is no parent). */
 export interface Transform {
     /** Local position in meters. */
@@ -1052,6 +1060,100 @@ export interface Area2D {
     inside: number;
 }
 
+/** A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way). */
+export interface RigidBody2D {
+    /** 0 dynamic (falls, is pushed), 1 static (never moves), 2 kinematic (moves by its velocity alone, pushes dynamic bodies). */
+    kind: number;
+    /** Units per second (written by the engine; write it to set it). */
+    velocity: Vec2;
+    /** Radians per second, counter-clockwise (written by the engine; write it to set it). */
+    angular_velocity: number;
+    /** How much of the world's gravity pulls it (0: floats). */
+    gravity_scale: number;
+    /** Slows its velocity, as air does (0 to a few). */
+    linear_damping: number;
+    /** Slows its turning. */
+    angular_damping: number;
+    /** Never turns: a character standing upright, a crate that slides without tipping. */
+    fixed_rotation: boolean;
+    /** Swept against other dynamic bodies too, so a fast small body does not pass through them (static ones are always swept). */
+    bullet: boolean;
+    /** Whether it is simulated now: a body at rest falls asleep and wakes when touched (written by the engine; false puts it to sleep, true wakes it). */
+    awake: boolean;
+    /** false takes it out of the simulation: nothing touches it, it does not move. */
+    enabled: boolean;
+}
+
+/** A 2D shape for the entity's RigidBody2D (docs/design/physics2d.md), or, on an entity without one, a static body of its own (a wall, a ramp, a sensor in the level). Sizes are in the entity's own units, multiplied by its Transform's scale. */
+export interface Collider2D {
+    /** 0 box (size), 1 circle (radius), 2 capsule (two circles of radius along Y, size.y apart from the center each way), 3 polygon (points, convex, at most 8). */
+    shape: number;
+    /** Half extents of a box; a capsule's half length along Y in size.y. */
+    size: Vec2;
+    /** A circle's or capsule's radius; a box or polygon's rounding of its corners. */
+    radius: number;
+    /** The shape's center from the entity's position, in its own space. */
+    offset: Vec2;
+    /** A box's or polygon's turn within the body, radians. */
+    angle: number;
+    /** A polygon's corners, in the entity's own space (their convex hull is taken; at most 8). */
+    points: Point2D[];
+    /** Mass per square unit; a dynamic body's mass and how it turns come from its shapes. */
+    density: number;
+    /** How much it grips what it slides on (0 ice, 1 rubber). */
+    friction: number;
+    /** Bounciness 0..1. */
+    restitution: number;
+    /** Notices 2D rigid bodies coming in and going out (trigger.enter and trigger.exit, as 3D triggers do; a Hitbox's shape) and stops nothing. */
+    sensor: boolean;
+    /** Bits of the layers this shape is on. */
+    layer: number;
+    /** Bits of the layers it collides with; two shapes collide when each is on a layer the other's mask holds. A TileMap's cells are on layer bit 0. */
+    mask: number;
+}
+
+/** Two 2D rigid bodies held together (docs/design/physics2d.md): this entity's RigidBody2D and `body` (or a point fixed in the world when it names none). A hinge for a door or a wheel, a rope's length, a slider, a weld; a motor drives a hinge or a slider, a spring softens a weld or a length, and a joint pulled past `break_force` breaks. */
+export interface Joint2D {
+    /** 0 revolute (a hinge at the anchors), 1 distance (the anchors kept `length` apart, or between min_length and max_length), 2 prismatic (slides along `axis`), 3 weld (held fast, or springy with `hertz`), 4 wheel (slides along `axis` on a spring and turns freely: a car's wheel). */
+    kind: number;
+    /** The other body; 0 (or none) holds this one to the world at `other_anchor`. */
+    body: number;
+    /** Where it holds on this body, in its own space. */
+    anchor: Vec2;
+    /** Where it holds on the other body, in its own space; in the world when there is no other body. */
+    other_anchor: Vec2;
+    /** A prismatic or wheel joint's line, in the other body's space (a car's chassis for its wheel; the world's when there is no other body); the motor of a wheel joint turns this body. */
+    axis: Vec2;
+    /** A distance joint's length; below 0 the anchors' distance when it is made. */
+    length: number;
+    /** A distance joint's least length (with enable_limit; a rope that goes slack). */
+    min_length: number;
+    /** A distance joint's greatest length (with enable_limit). */
+    max_length: number;
+    /** Hold a revolute joint's turn or a prismatic or wheel joint's travel between lower and upper, a distance joint's length between min and max. */
+    enable_limit: boolean;
+    /** The least turn (radians) or travel (units). */
+    lower: number;
+    /** The greatest turn or travel. */
+    upper: number;
+    /** Drive the joint at motor_speed. */
+    enable_motor: boolean;
+    /** Radians per second for a revolute or wheel joint, units per second for a prismatic one. */
+    motor_speed: number;
+    /** The most torque (revolute, wheel) or force (prismatic) the motor gives. */
+    max_motor_force: number;
+    /** A spring along the joint: a weld that wobbles, a length that stretches, a wheel's suspension. */
+    enable_spring: boolean;
+    /** The spring's stiffness as a frequency. */
+    hertz: number;
+    /** The spring's damping (0 rings, 1 settles at once). */
+    damping_ratio: number;
+    /** Whether the two bodies still collide with each other. */
+    collide_connected: boolean;
+    /** Above this force the joint breaks: it is removed and joint2d.broken says so (0: never). */
+    break_force: number;
+}
+
 /** A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform). */
 export interface TopDown2D {
     /** Units per second along X and Y. */
@@ -1223,6 +1325,9 @@ export interface Components {
     Scatter: Scatter;
     Vehicle: Vehicle;
     Area2D: Area2D;
+    RigidBody2D: RigidBody2D;
+    Collider2D: Collider2D;
+    Joint2D: Joint2D;
     TopDown2D: TopDown2D;
     Collider: Collider;
     AudioSource: AudioSource;
@@ -1270,6 +1375,9 @@ export interface ComponentEnums {
     Scatter: {};
     Vehicle: {};
     Area2D: {};
+    RigidBody2D: { kind: "dynamic" | "static" | "kinematic" };
+    Collider2D: { shape: "box" | "circle" | "capsule" | "polygon" };
+    Joint2D: { kind: "revolute" | "distance" | "prismatic" | "weld" | "wheel" };
     TopDown2D: {};
     Collider: { shape: "box" | "sphere" | "capsule" | "mesh" };
     AudioSource: {};
@@ -1283,9 +1391,30 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+
+/** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
+export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
+    Transform: [["position", "v3"], ["rotation", "q"], ["scale", "v3"]],
+    WorldTransform: [["position", "v3"], ["rotation", "q"], ["scale", "v3"]],
+    Velocity: [["linear", "v3"], ["angular", "v3"]],
+    Health: [["current", "n"], ["max", "n"], ["team", "n"], ["invulnerable", "n"], ["guard", "n"], ["dead", "b"]],
+    Hitbox: [["damage", "n"], ["knockback", "n"], ["team", "n"], ["repeat", "n"], ["destroy", "b"], ["enabled", "b"], ["hits", "n"]],
+    Lifetime: [["seconds", "n"]],
+    Camera: [["fov_degrees", "n"], ["orthographic", "b"], ["ortho_size", "n"], ["near", "n"], ["far", "n"], ["active", "b"]],
+    Light: [["kind", "n"], ["color", "c"], ["intensity", "n"], ["range", "n"], ["inner_angle", "n"], ["outer_angle", "n"], ["shadows", "b"]],
+    ReflectionProbe: [["size", "v3"], ["intensity", "n"], ["box_projection", "b"], ["realtime", "b"], ["enabled", "b"]],
+    Fog: [["color", "c"], ["density", "n"], ["height", "n"], ["falloff", "n"], ["start", "n"], ["max_opacity", "n"], ["enabled", "b"], ["volumetric", "b"], ["anisotropy", "n"], ["steps", "n"], ["distance", "n"]],
+    Bounds: [["min", "v3"], ["max", "v3"]],
+    RigidBody: [["kind", "n"], ["mass", "n"], ["restitution", "n"], ["friction", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["gravity_scale", "n"], ["sleeping", "b"], ["lock_rotation", "b"], ["ccd", "b"]],
+    Wind: [["direction", "n"], ["speed", "n"], ["gusts", "n"], ["gust_length", "n"], ["enabled", "b"]],
+    Area2D: [["size", "v2"], ["offset", "v2"], ["enabled", "b"], ["inside", "n"]],
+    RigidBody2D: [["kind", "n"], ["velocity", "v2"], ["angular_velocity", "n"], ["gravity_scale", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["fixed_rotation", "b"], ["bullet", "b"], ["awake", "b"], ["enabled", "b"]],
+    AudioListener: [["enabled", "b"]],
+    NavObstacle: [["radius", "n"], ["enabled", "b"]],
+};
 
 /** Default value of every engine component, as the engine initializes it. */
 export const componentDefaults: { readonly [K in EngineComponentName]: Components[K] } = {
@@ -1325,6 +1454,9 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     Area2D: { size: { x: 0.5, y: 0.5 }, offset: { x: 0, y: 0 }, enabled: true, inside: 0 },
+    RigidBody2D: { kind: 0, velocity: { x: 0, y: 0 }, angular_velocity: 0, gravity_scale: 1, linear_damping: 0, angular_damping: 0, fixed_rotation: false, bullet: false, awake: true, enabled: true },
+    Collider2D: { shape: 0, size: { x: 0.5, y: 0.5 }, radius: 0.5, offset: { x: 0, y: 0 }, angle: 0, points: [], density: 1, friction: 0.6, restitution: 0, sensor: false, layer: 1, mask: 4294967295 },
+    Joint2D: { kind: 0, body: 0, anchor: { x: 0, y: 0 }, other_anchor: { x: 0, y: 0 }, axis: { x: 1, y: 0 }, length: -1, min_length: 0, max_length: 100000, enable_limit: false, lower: 0, upper: 0, enable_motor: false, motor_speed: 0, max_motor_force: 10, enable_spring: false, hertz: 4, damping_ratio: 0.7, collide_connected: false, break_force: 0 },
     TopDown2D: { velocity: { x: 0, y: 0 }, radius: 0.3, map: "", blocked_x: false, blocked_y: false, tile_x: -1, tile_y: -1 },
     Collider: { shape: 0, size: { x: 0.5, y: 0.5, z: 0.5 }, offset: { x: 0, y: 0, z: 0 }, is_trigger: false, mesh: "", node: "", layer: 1, mask: 4294967295, group: 0 },
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
@@ -1346,6 +1478,7 @@ export interface Records {
     AnimationTransition: AnimationTransition;
     AnimationParam: AnimationParam;
     TerrainLayer: TerrainLayer;
+    Point2D: Point2D;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
@@ -1359,6 +1492,7 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     AnimationTransition: { from: "*", to: "", when: "", after: 0, fade: 0.2 },
     AnimationParam: { name: "", value: 0, trigger: false },
     TerrainLayer: { name: "", texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, tile: 4, slope: { x: 0, y: 90 }, height: { x: 0, y: 1 }, cover: 1 },
+    Point2D: { x: 0, y: 0 },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

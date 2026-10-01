@@ -12,6 +12,7 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | dr_mp3 | 0.7.4 (master, 2026-09) | public domain / MIT-0 | vendored header (`third_party/stb/include/dr_mp3.h`, from github.com/mackron/dr_libs, compiled in `stb_impl.c`); decodes MP3 clips for the audio module |
 | Catch2 | 3.16.0 | BSL-1.0 | vendored amalgamation |
 | Yoga | 3.2.1 | MIT | vendored sources |
+| Box2D | 3.1.1 | MIT | vendored sources (`third_party/box2d`, the `src` and `include` directories of github.com/erincatto/box2d at tag v3.1.1); 2D rigid bodies, shapes and joints for the physics module (`docs/design/physics2d.md`) |
 | meshoptimizer | 1.3 | MIT | vendored sources (`third_party/meshoptimizer/src`, from github.com/zeux/meshoptimizer); simplifies meshes for levels of detail in the assets module |
 | SDL3 | 3.4.16 | Zlib | fetched source, built with CMake by `pocket setup` |
 | wgpu-native | 29.0.1.1 | MIT or Apache-2.0 | fetched prebuilt archive |

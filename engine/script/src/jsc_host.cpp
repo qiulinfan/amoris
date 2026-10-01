@@ -18,6 +18,9 @@ struct JsString {
         std::string tmp(s);
         ref = JSStringCreateWithUTF8CString(tmp.c_str());
     }
+    // A string already ending in a zero (std::string's c_str): no copy on the way.
+    explicit JsString(const std::string& s) : ref(JSStringCreateWithUTF8CString(s.c_str())) {}
+    explicit JsString(const char* s) : ref(JSStringCreateWithUTF8CString(s)) {}
     explicit JsString(JSStringRef r) : ref(r) {}
     ~JsString() { if (ref) JSStringRelease(ref); }
     JsString(const JsString&) = delete;
@@ -108,6 +111,7 @@ JSValueRef native_trampoline(JSContextRef ctx, JSObjectRef function, JSObjectRef
     auto* b = static_cast<Binding*>(JSObjectGetPrivate(function));
     if (!b) return JSValueMakeUndefined(ctx);
     Json args = Json::array();
+    args.get_ref<Json::array_t&>().reserve(argc);
     for (size_t i = 0; i < argc; ++i) args.push_back(value_to_json(ctx, argv[i]));
     Result<Json> r = b->fn(args);
     if (!r) {

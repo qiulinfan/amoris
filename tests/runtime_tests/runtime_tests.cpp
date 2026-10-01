@@ -4221,6 +4221,90 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("2D rigid bodies stack, swing on joints, hit through sensors, land on tiles and repeat exactly", "[runtime][physics2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    auto spawn = [](app::Session& s, const std::string& name, Json comps) {
+        auto r = s.command("world.spawn", Json{{"name", name}, {"components", comps}});
+        INFO(name);
+        REQUIRE(r.has_value());
+    };
+    auto at = [](float x, float y) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", 0}}}}; };
+    auto build = [&](app::Session& s) {
+        // A floor of its own far from the sample's level, three boxes over it, a pendulum, a hazard.
+        spawn(s, "Floor", Json{{"Transform", at(60, 0)}, {"Collider2D", Json{{"size", Json{{"x", 10}, {"y", 0.5}}}}}});
+        for (int i = 0; i < 3; ++i) spawn(s, "Box" + std::to_string(i), Json{{"Transform", at(60, 1.2f + 1.1f * static_cast<float>(i))}, {"RigidBody2D", Json::object()}, {"Collider2D", Json{{"size", Json{{"x", 0.5}, {"y", 0.5}}}}}});
+        spawn(s, "Bob", Json{{"Transform", at(80, 10)}, {"RigidBody2D", Json::object()}, {"Collider2D", Json{{"shape", "circle"}, {"radius", 0.25}}}, {"Joint2D", Json{{"kind", "revolute"}, {"anchor", Json{{"x", -2}, {"y", 0}}}, {"other_anchor", Json{{"x", 78}, {"y", 10}}}}}});   // hinged two units to its left
+        spawn(s, "Spikes", Json{{"Transform", at(70, 3)}, {"Collider2D", Json{{"size", Json{{"x", 1}, {"y", 0.2}}}, {"sensor", true}}}, {"Hitbox", Json{{"damage", 10}}}});
+        spawn(s, "Victim", Json{{"Transform", at(70, 6)}, {"RigidBody2D", Json::object()}, {"Collider2D", Json{{"shape", "circle"}, {"radius", 0.3}}}, {"Health", Json{{"current", 30}, {"max", 30}}}});
+        // A ball over the sample's own tile level: it lands on the solid tiles.
+        spawn(s, "Marble", Json{{"Transform", at(0, 2)}, {"RigidBody2D", Json::object()}, {"Collider2D", Json{{"shape", "circle"}, {"radius", 0.3}}}});
+    };
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    build(s);
+    REQUIRE(s.command("step", Json{{"ticks", 240}}).has_value());
+    auto get = [&](app::Session& ss, const std::string& e, const std::string& c) { return ss.command("world.get", Json{{"entity", e}, {"component", c}}).value(); };
+    // The stack stands: each box a unit above the one under it, asleep.
+    for (int i = 0; i < 3; ++i) {
+        const Json t = get(s, "Box" + std::to_string(i), "Transform");
+        INFO(t.dump());
+        REQUIRE(t["position"]["y"].get<double>() == Catch::Approx(1.0 + i).margin(0.03));
+        REQUIRE(t["position"]["x"].get<double>() == Catch::Approx(60).margin(0.03));
+    }
+    REQUIRE(get(s, "Box2", "RigidBody2D")["awake"] == false);
+    // The pendulum swings at its length from the pivot.
+    const Json bob = get(s, "Bob", "Transform")["position"];
+    REQUIRE(std::hypot(bob["x"].get<double>() - 78, bob["y"].get<double>() - 10) == Catch::Approx(2).margin(0.02));
+    REQUIRE(bob["y"].get<double>() < 9.9);
+    // The sensor stopped nothing and its hitbox hurt what fell through it.
+    REQUIRE(get(s, "Victim", "Health")["current"].get<double>() == Catch::Approx(20));
+    REQUIRE(get(s, "Victim", "Transform")["position"]["y"].get<double>() < 2);
+    // The marble rests on the level's tiles.
+    const Json ball = get(s, "Marble", "Transform")["position"];
+    INFO(ball.dump() << " " << get(s, "Marble", "RigidBody2D").dump());
+    const Json below = s.command("tilemap.solid", Json{{"entity", "Level"}, {"x", ball["x"]}, {"y", ball["y"].get<double>() - 0.5}}).value();
+    REQUIRE(below["solid"] == true);
+    REQUIRE(std::fabs(get(s, "Marble", "RigidBody2D")["velocity"]["y"].get<double>()) < 0.05);
+    // Questions: a ray down onto the top box, an overlap at the stack, a push.
+    const Json ray = s.command("physics2d.raycast", Json{{"from", Json{{"x", 60}, {"y", 10}}}, {"direction", Json{{"x", 0}, {"y", -1}}}}).value();
+    REQUIRE(ray["path"] == "/Box2");
+    REQUIRE(ray["point"]["y"].get<double>() == Catch::Approx(3.5).margin(0.03));
+    REQUIRE(s.command("physics2d.overlap", Json{{"center", Json{{"x", 60}, {"y", 1.5}}}, {"half", Json{{"x", 0.2}, {"y", 0.8}}}}).value()["entities"].size() == 2);
+    REQUIRE(s.command("physics2d.impulse", Json{{"entity", "Box2"}, {"impulse", Json{{"x", 3}, {"y", 0}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    REQUIRE(get(s, "Box2", "Transform")["position"]["x"].get<double>() > 60.5);
+    const Json stats = s.command("physics2d.stats", Json::object()).value();
+    INFO(stats.dump());
+    REQUIRE(stats["bodies"] == 8);   // the floor and the spikes are static bodies of their own
+    REQUIRE(stats["joints"] == 1);
+    REQUIRE(stats["tile_shapes"].get<int>() > 0);
+    const std::string hash = s.command("state", Json::object()).value()["world_hash"].get<std::string>();
+    // A field holding an entity takes its name.
+    const Json box0 = s.command("world.find", Json{{"path", "Box0"}}).value();
+    REQUIRE(s.command("world.spawn", Json{{"name", "Tag"}, {"components", Json{{"Transform", at(90, 0)}, {"Joint2D", Json{{"body", "Box0"}}}}}}).has_value());
+    REQUIRE(get(s, "Tag", "Joint2D")["body"] == box0);
+    REQUIRE_FALSE(s.command("world.set", Json{{"entity", "Tag"}, {"component", "Joint2D"}, {"value", Json{{"body", "Nobody"}}}}).has_value());
+    REQUIRE(s.finish().has_value());
+    // The same again, step for step: the same world.
+    app::Session t(o);
+    REQUIRE(t.start().has_value());
+    build(t);
+    REQUIRE(t.command("step", Json{{"ticks", 240}}).has_value());
+    REQUIRE(t.command("physics2d.impulse", Json{{"entity", "Box2"}, {"impulse", Json{{"x", 3}, {"y", 0}}}}).has_value());
+    REQUIRE(t.command("step", Json{{"ticks", 30}}).has_value());
+    REQUIRE(t.command("state", Json::object()).value()["world_hash"] == hash);
+    REQUIRE(t.finish().has_value());
+}
+
 TEST_CASE("a tile map made by code is filled, collided with, and saved with the scene", "[runtime][tilemap][made]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";
@@ -4634,7 +4718,7 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
     const Json world_family = s.command("commands", Json{{"family", "world"}}).value();
     REQUIRE(world_family.size() > 20);
     for (const Json& c : world_family) REQUIRE(c.get<std::string>().starts_with("world."));
-    REQUIRE(s.command("commands", Json{{"search", "raycast"}}).value() == Json::array({"physics.raycast"}));
+    REQUIRE(s.command("commands", Json{{"search", "raycast"}}).value() == Json::array({"physics.raycast", "physics2d.raycast"}));
     const std::string text = s.command("commands", Json{{"text", true}}).value()["text"].get<std::string>();
     REQUIRE(std::count(text.begin(), text.end(), '\n') == static_cast<long>(listed.size()) + 1);
     REQUIRE(text.size() < 20000);   // inside the pi extension's 24,000 characters

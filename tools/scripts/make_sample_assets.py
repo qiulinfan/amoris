@@ -13,6 +13,7 @@ Usage: python3 tools/scripts/make_sample_assets.py [output dir]   (default: samp
        python3 tools/scripts/make_sample_assets.py --sprites [dir]  PNG sprites for samples/sprites/assets
        python3 tools/scripts/make_sample_assets.py --decals [dir]   decal images and a puddle's normal map for samples/showcase/assets
        python3 tools/scripts/make_sample_assets.py --ground [dir]   tiling ground textures (grass, rock, sand, dirt) for samples/hills/assets
+       python3 tools/scripts/make_sample_assets.py --crates [dir]   a crate, a ball and a plank for samples/crates/assets
 """
 import base64
 import json
@@ -612,6 +613,58 @@ def make_sprites(out):
     print("level.tmj", os.path.getsize(os.path.join(out, "level.tmj")), "bytes")
 
 
+def crate_png(size=32):
+    """A wooden crate: planks in two browns, a dark frame and a diagonal brace."""
+    px = bytearray()
+    for y in range(size):
+        for x in range(size):
+            edge = x < 3 or y < 3 or x >= size - 3 or y >= size - 3
+            brace = abs(x - y) <= 1 or abs((size - 1 - x) - y) <= 1
+            if edge:
+                px += bytes((92, 58, 30, 255))
+            elif brace:
+                px += bytes((120, 78, 40, 255))
+            else:
+                light = 168 if (y // 6) % 2 == 0 else 150
+                px += bytes((light, int(light * 0.68), int(light * 0.38), 255))
+    return png(size, size, px)
+
+
+def ball_png(size=64):
+    """A ball: a soft-edged disc lit from the upper left, with a stripe that shows its turn."""
+    px = bytearray()
+    c = (size - 1) / 2
+    for y in range(size):
+        for x in range(size):
+            dx, dy = x - c, y - c
+            d = (dx * dx + dy * dy) ** 0.5
+            a = max(0.0, min(1.0, c - d + 0.5))
+            light = 0.65 + 0.35 * max(0.0, (-dx - dy) / (c * 1.5))
+            stripe = abs(dy) < size * 0.08
+            r, g, b = (250, 250, 250) if stripe else (220, 70, 60)
+            px += bytes((int(r * light), int(g * light), int(b * light), int(a * 255)))
+    return png(size, size, px)
+
+
+def plank_png(width=64, height=8):
+    """A plank: wood grain in lines, darker ends."""
+    px = bytearray()
+    for y in range(height):
+        for x in range(width):
+            end = x < 2 or x >= width - 2
+            grain = 140 + (16 if (y + x // 9) % 3 == 0 else 0)
+            px += bytes((100, 64, 32, 255) if end else (grain, int(grain * 0.7), int(grain * 0.42), 255))
+    return png(width, height, px)
+
+
+def make_crates(out):
+    os.makedirs(out, exist_ok=True)
+    for name, data in (("crate.png", crate_png()), ("ball.png", ball_png()), ("plank.png", plank_png())):
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
+        print(name, os.path.getsize(os.path.join(out, name)), "bytes")
+
+
 def bowl(radius=2.5, k=0.25, rings=20, segments=48):
     """A paraboloid bowl y = k * r^2 open to +Y: a mesh collider the physics sample's marble rolls
     down. Normals from the analytic gradient, uvs from the footprint, front faces upward."""
@@ -832,6 +885,9 @@ def main():
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--sprites":
         make_sprites(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "sprites", "assets"))
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--crates":
+        make_crates(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "crates", "assets"))
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--sounds":
         make_sounds(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "audio", "assets"))

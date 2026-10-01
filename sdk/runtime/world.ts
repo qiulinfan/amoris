@@ -2,12 +2,81 @@
 //
 // Every call goes through one native command with JSON parameters; the same commands are served
 // over HTTP to external agents, so what a script can do, an agent can do, with the same words.
+// world.get and world.set of a component whose fields are all numbers (Transform, Velocity,
+// Health, RigidBody2D, ...) skip the JSON: the numbers cross in a shared Float64Array, with the
+// same values and the same checks, and anything else (a name for a value, a missing component, a
+// cause) takes the command.
+import { numericLayouts } from "./generated/components";
 import type { ComponentEnums, ComponentName, Components, Vec3 } from "./generated/components";
 
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
 
-declare const __pocket: { command(name: string, params?: unknown): unknown; __pack_data?: Float32Array; __pack_ids?: Float64Array };
+declare const __pocket: {
+    command(name: string, params?: unknown): unknown;
+    __pack_data?: Float32Array;
+    __pack_ids?: Float64Array;
+    __nums?: Float64Array;
+    get_nums?(entity: EntityRef, component: string): number;
+    set_nums?(entity: EntityRef, component: string, count: number): number;
+};
+
+type NumKind = "n" | "b" | "v2" | "v3" | "v4" | "q" | "c";
+const PARTS: { readonly [K in Exclude<NumKind, "n" | "b">]: readonly string[] } = { v2: ["x", "y"], v3: ["x", "y", "z"], v4: ["x", "y", "z", "w"], q: ["x", "y", "z", "w"], c: ["r", "g", "b", "a"] };
+
+function readNums(layout: ReadonlyArray<readonly [string, NumKind]>, nums: Float64Array): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    let i = 0;
+    for (const [name, kind] of layout) {
+        if (kind === "n") out[name] = nums[i++];
+        else if (kind === "b") out[name] = nums[i++] !== 0;
+        else {
+            const v: Record<string, number> = {};
+            for (const p of PARTS[kind]) v[p] = nums[i++];
+            out[name] = v;
+        }
+    }
+    return out;
+}
+
+// A patch written over the numbers; false when it holds what only the command takes (a field the
+// component lacks, a value's name, an array, a number that is not finite).
+function patchNums(layout: ReadonlyArray<readonly [string, NumKind]>, nums: Float64Array, patch: unknown): boolean {
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) return false;
+    const p = patch as Record<string, unknown>;
+    let i = 0;
+    let used = 0;
+    for (const [name, kind] of layout) {
+        const v = p[name];
+        if (kind === "n" || kind === "b") {
+            if (v !== undefined) {
+                if (typeof v === "number" && Number.isFinite(v)) nums[i] = v;
+                else if (typeof v === "boolean") nums[i] = v ? 1 : 0;
+                else return false;
+                used++;
+            }
+            i++;
+            continue;
+        }
+        const parts = PARTS[kind];
+        if (v !== undefined) {
+            if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+            const o = v as Record<string, unknown>;
+            let given = 0;
+            for (let k = 0; k < parts.length; k++) {
+                const x = o[parts[k]];
+                if (x === undefined) continue;
+                if (typeof x !== "number" || !Number.isFinite(x)) return false;
+                nums[i + k] = x;
+                given++;
+            }
+            if (given !== Object.keys(o).length) return false;
+            used++;
+        }
+        i += parts.length;
+    }
+    return used === Object.keys(p).length;
+}
 
 /** Entity handle (a stable id) or a path such as "/Level/Player" or a bare name. */
 export type Entity = number;
@@ -86,10 +155,23 @@ export const world = {
         command("world.destroy", { entity, cause });
     },
     get<K extends ComponentName>(entity: EntityRef, component: K): Components[K] | undefined {
+        const layout = numericLayouts[component];
+        if (layout !== undefined && __pocket.get_nums !== undefined) {
+            const n = __pocket.get_nums(entity, component);
+            if (n >= 0) return readNums(layout, __pocket.__nums!) as unknown as Components[K];
+            if (n === -1) return undefined;   // the entity has no such component
+        }
         const v = command<Components[K] | null>("world.get", { entity, component });
         return v === null ? undefined : v;
     },
     set<K extends ComponentName>(entity: EntityRef, component: K, value: DeepPartial<ComponentInput<K>>, cause?: number): void {
+        const layout = numericLayouts[component];
+        if (cause === undefined && layout !== undefined && __pocket.get_nums !== undefined) {
+            // The component as it is, the patch over it, written back: when the entity has it and
+            // the patch is all numbers.
+            const n = __pocket.get_nums(entity, component);
+            if (n >= 0 && patchNums(layout, __pocket.__nums!, value) && __pocket.set_nums!(entity, component, n) >= 0) return;
+        }
         command("world.set", { entity, component, value, cause, quiet: true });   // the answer's value is for agents; a script reads with get
     },
     remove(entity: EntityRef, component: ComponentName, cause?: number): void {

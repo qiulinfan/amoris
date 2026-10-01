@@ -1,0 +1,15 @@
+name = "crates"
+entry = "scripts/main.tsx"
+
+[window]
+title = "Pocket: crates"
+width = 960
+height = 540
+
+[physics]
+gravity = [0.0, -9.8, 0.0]
+
+# Actions instead of keys; agents hold them by name (docs/design/input.md).
+[input.actions]
+move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", "pad:dpad_right"], axis = ["pad:leftx"] }
+fire = ["Space", "pad:a", "mouse:left"]

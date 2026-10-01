@@ -412,6 +412,29 @@ std::size_t numeric_span(TerrainLayer& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Point2D& v) {
+    j = Json::object();
+    j["x"] = v.x;
+    j["y"] = v.y;
+}
+
+void from_json(const Json& j, Point2D& v) {
+    scalar_from_json(j, "x", v.x);
+    scalar_from_json(j, "y", v.y);
+}
+
+void hash_record(StateHasherRef& h, const Point2D& v) {
+    h.f32(v.x);
+    h.f32(v.y);
+}
+
+std::size_t numeric_span(Point2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "x") { *out = &v.x; return 1; }
+    if (path == "y") { *out = &v.y; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Transform& v) {
     j = Json::object();
     vec_to_json(j["position"], v.position);
@@ -2753,6 +2776,227 @@ std::size_t numeric_span(Area2D& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const RigidBody2D& v) {
+    j = Json::object();
+    j["kind"] = v.kind;
+    vec_to_json(j["velocity"], v.velocity);
+    j["angular_velocity"] = v.angular_velocity;
+    j["gravity_scale"] = v.gravity_scale;
+    j["linear_damping"] = v.linear_damping;
+    j["angular_damping"] = v.angular_damping;
+    j["fixed_rotation"] = v.fixed_rotation;
+    j["bullet"] = v.bullet;
+    j["awake"] = v.awake;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, RigidBody2D& v) {
+    enum_from_json(j, "kind", v.kind, {"dynamic", "static", "kinematic"});
+    if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
+    scalar_from_json(j, "angular_velocity", v.angular_velocity);
+    scalar_from_json(j, "gravity_scale", v.gravity_scale);
+    scalar_from_json(j, "linear_damping", v.linear_damping);
+    scalar_from_json(j, "angular_damping", v.angular_damping);
+    scalar_from_json(j, "fixed_rotation", v.fixed_rotation);
+    scalar_from_json(j, "bullet", v.bullet);
+    scalar_from_json(j, "awake", v.awake);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const RigidBody2D& v) {
+    h.i64(static_cast<std::int64_t>(v.kind));
+    h.f32(v.velocity.x);
+    h.f32(v.velocity.y);
+    h.f32(v.angular_velocity);
+    h.f32(v.gravity_scale);
+    h.f32(v.linear_damping);
+    h.f32(v.angular_damping);
+    h.u8(v.fixed_rotation ? 1 : 0);
+    h.u8(v.bullet ? 1 : 0);
+    h.u8(v.awake ? 1 : 0);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(RigidBody2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "velocity") { *out = &v.velocity.x; return 2; }
+    if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
+    if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
+    if (path == "angular_velocity") { *out = &v.angular_velocity; return 1; }
+    if (path == "gravity_scale") { *out = &v.gravity_scale; return 1; }
+    if (path == "linear_damping") { *out = &v.linear_damping; return 1; }
+    if (path == "angular_damping") { *out = &v.angular_damping; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Collider2D& v) {
+    j = Json::object();
+    j["shape"] = v.shape;
+    vec_to_json(j["size"], v.size);
+    j["radius"] = v.radius;
+    vec_to_json(j["offset"], v.offset);
+    j["angle"] = v.angle;
+    j["points"] = Json::array();
+    for (const auto& x : v.points) { Json e; to_json(e, x); j["points"].push_back(std::move(e)); }
+    j["density"] = v.density;
+    j["friction"] = v.friction;
+    j["restitution"] = v.restitution;
+    j["sensor"] = v.sensor;
+    j["layer"] = v.layer;
+    j["mask"] = v.mask;
+}
+
+void from_json(const Json& j, Collider2D& v) {
+    enum_from_json(j, "shape", v.shape, {"box", "circle", "capsule", "polygon"});
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    scalar_from_json(j, "radius", v.radius);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "angle", v.angle);
+    if (j.is_object() && j.contains("points") && j["points"].is_array()) {
+        v.points.clear();
+        for (const Json& e : j["points"]) { Point2D x; from_json(e, x); v.points.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "friction", v.friction);
+    scalar_from_json(j, "restitution", v.restitution);
+    scalar_from_json(j, "sensor", v.sensor);
+    scalar_from_json(j, "layer", v.layer);
+    scalar_from_json(j, "mask", v.mask);
+}
+
+void hash_component(StateHasherRef& h, const Collider2D& v) {
+    h.i64(static_cast<std::int64_t>(v.shape));
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.radius);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.angle);
+    h.i64(static_cast<std::int64_t>(v.points.size()));
+    for (const auto& x : v.points) hash_record(h, x);
+    h.f32(v.density);
+    h.f32(v.friction);
+    h.f32(v.restitution);
+    h.u8(v.sensor ? 1 : 0);
+    h.i64(static_cast<std::int64_t>(v.layer));
+    h.i64(static_cast<std::int64_t>(v.mask));
+}
+
+std::size_t numeric_span(Collider2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 2; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "radius") { *out = &v.radius; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 2; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "angle") { *out = &v.angle; return 1; }
+    if (path.starts_with("points.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.points.size()) return numeric_span(v.points[index], rest, out);
+    }
+    if (path == "density") { *out = &v.density; return 1; }
+    if (path == "friction") { *out = &v.friction; return 1; }
+    if (path == "restitution") { *out = &v.restitution; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Joint2D& v) {
+    j = Json::object();
+    j["kind"] = v.kind;
+    j["body"] = v.body;
+    vec_to_json(j["anchor"], v.anchor);
+    vec_to_json(j["other_anchor"], v.other_anchor);
+    vec_to_json(j["axis"], v.axis);
+    j["length"] = v.length;
+    j["min_length"] = v.min_length;
+    j["max_length"] = v.max_length;
+    j["enable_limit"] = v.enable_limit;
+    j["lower"] = v.lower;
+    j["upper"] = v.upper;
+    j["enable_motor"] = v.enable_motor;
+    j["motor_speed"] = v.motor_speed;
+    j["max_motor_force"] = v.max_motor_force;
+    j["enable_spring"] = v.enable_spring;
+    j["hertz"] = v.hertz;
+    j["damping_ratio"] = v.damping_ratio;
+    j["collide_connected"] = v.collide_connected;
+    j["break_force"] = v.break_force;
+}
+
+void from_json(const Json& j, Joint2D& v) {
+    enum_from_json(j, "kind", v.kind, {"revolute", "distance", "prismatic", "weld", "wheel"});
+    scalar_from_json(j, "body", v.body);
+    if (j.is_object() && j.contains("anchor")) vec_from_json(j["anchor"], v.anchor);
+    if (j.is_object() && j.contains("other_anchor")) vec_from_json(j["other_anchor"], v.other_anchor);
+    if (j.is_object() && j.contains("axis")) vec_from_json(j["axis"], v.axis);
+    scalar_from_json(j, "length", v.length);
+    scalar_from_json(j, "min_length", v.min_length);
+    scalar_from_json(j, "max_length", v.max_length);
+    scalar_from_json(j, "enable_limit", v.enable_limit);
+    scalar_from_json(j, "lower", v.lower);
+    scalar_from_json(j, "upper", v.upper);
+    scalar_from_json(j, "enable_motor", v.enable_motor);
+    scalar_from_json(j, "motor_speed", v.motor_speed);
+    scalar_from_json(j, "max_motor_force", v.max_motor_force);
+    scalar_from_json(j, "enable_spring", v.enable_spring);
+    scalar_from_json(j, "hertz", v.hertz);
+    scalar_from_json(j, "damping_ratio", v.damping_ratio);
+    scalar_from_json(j, "collide_connected", v.collide_connected);
+    scalar_from_json(j, "break_force", v.break_force);
+}
+
+void hash_component(StateHasherRef& h, const Joint2D& v) {
+    h.i64(static_cast<std::int64_t>(v.kind));
+    h.entity(v.body);
+    h.f32(v.anchor.x);
+    h.f32(v.anchor.y);
+    h.f32(v.other_anchor.x);
+    h.f32(v.other_anchor.y);
+    h.f32(v.axis.x);
+    h.f32(v.axis.y);
+    h.f32(v.length);
+    h.f32(v.min_length);
+    h.f32(v.max_length);
+    h.u8(v.enable_limit ? 1 : 0);
+    h.f32(v.lower);
+    h.f32(v.upper);
+    h.u8(v.enable_motor ? 1 : 0);
+    h.f32(v.motor_speed);
+    h.f32(v.max_motor_force);
+    h.u8(v.enable_spring ? 1 : 0);
+    h.f32(v.hertz);
+    h.f32(v.damping_ratio);
+    h.u8(v.collide_connected ? 1 : 0);
+    h.f32(v.break_force);
+}
+
+std::size_t numeric_span(Joint2D& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "anchor") { *out = &v.anchor.x; return 2; }
+    if (path == "anchor.x") { *out = &v.anchor.x; return 1; }
+    if (path == "anchor.y") { *out = &v.anchor.y; return 1; }
+    if (path == "other_anchor") { *out = &v.other_anchor.x; return 2; }
+    if (path == "other_anchor.x") { *out = &v.other_anchor.x; return 1; }
+    if (path == "other_anchor.y") { *out = &v.other_anchor.y; return 1; }
+    if (path == "axis") { *out = &v.axis.x; return 2; }
+    if (path == "axis.x") { *out = &v.axis.x; return 1; }
+    if (path == "axis.y") { *out = &v.axis.y; return 1; }
+    if (path == "length") { *out = &v.length; return 1; }
+    if (path == "min_length") { *out = &v.min_length; return 1; }
+    if (path == "max_length") { *out = &v.max_length; return 1; }
+    if (path == "lower") { *out = &v.lower; return 1; }
+    if (path == "upper") { *out = &v.upper; return 1; }
+    if (path == "motor_speed") { *out = &v.motor_speed; return 1; }
+    if (path == "max_motor_force") { *out = &v.max_motor_force; return 1; }
+    if (path == "hertz") { *out = &v.hertz; return 1; }
+    if (path == "damping_ratio") { *out = &v.damping_ratio; return 1; }
+    if (path == "break_force") { *out = &v.break_force; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const TopDown2D& v) {
     j = Json::object();
     vec_to_json(j["velocity"], v.velocity);
@@ -3083,6 +3327,465 @@ std::size_t numeric_span(Morph& v, std::string_view path, float** out) {
     return 0;
 }
 
+std::size_t read_numbers(const Transform& v, double* out) {
+    out[0] = static_cast<double>(v.position.x);
+    out[1] = static_cast<double>(v.position.y);
+    out[2] = static_cast<double>(v.position.z);
+    out[3] = static_cast<double>(v.rotation.x);
+    out[4] = static_cast<double>(v.rotation.y);
+    out[5] = static_cast<double>(v.rotation.z);
+    out[6] = static_cast<double>(v.rotation.w);
+    out[7] = static_cast<double>(v.scale.x);
+    out[8] = static_cast<double>(v.scale.y);
+    out[9] = static_cast<double>(v.scale.z);
+    return 10;
+}
+bool write_numbers(Transform& v, const double* in, std::size_t n) {
+    if (n != 10) return false;
+    v.position.x = static_cast<float>(in[0]);
+    v.position.y = static_cast<float>(in[1]);
+    v.position.z = static_cast<float>(in[2]);
+    v.rotation.x = static_cast<float>(in[3]);
+    v.rotation.y = static_cast<float>(in[4]);
+    v.rotation.z = static_cast<float>(in[5]);
+    v.rotation.w = static_cast<float>(in[6]);
+    v.scale.x = static_cast<float>(in[7]);
+    v.scale.y = static_cast<float>(in[8]);
+    v.scale.z = static_cast<float>(in[9]);
+    return true;
+}
+
+std::size_t read_numbers(const WorldTransform& v, double* out) {
+    out[0] = static_cast<double>(v.position.x);
+    out[1] = static_cast<double>(v.position.y);
+    out[2] = static_cast<double>(v.position.z);
+    out[3] = static_cast<double>(v.rotation.x);
+    out[4] = static_cast<double>(v.rotation.y);
+    out[5] = static_cast<double>(v.rotation.z);
+    out[6] = static_cast<double>(v.rotation.w);
+    out[7] = static_cast<double>(v.scale.x);
+    out[8] = static_cast<double>(v.scale.y);
+    out[9] = static_cast<double>(v.scale.z);
+    return 10;
+}
+bool write_numbers(WorldTransform& v, const double* in, std::size_t n) {
+    if (n != 10) return false;
+    v.position.x = static_cast<float>(in[0]);
+    v.position.y = static_cast<float>(in[1]);
+    v.position.z = static_cast<float>(in[2]);
+    v.rotation.x = static_cast<float>(in[3]);
+    v.rotation.y = static_cast<float>(in[4]);
+    v.rotation.z = static_cast<float>(in[5]);
+    v.rotation.w = static_cast<float>(in[6]);
+    v.scale.x = static_cast<float>(in[7]);
+    v.scale.y = static_cast<float>(in[8]);
+    v.scale.z = static_cast<float>(in[9]);
+    return true;
+}
+
+std::size_t read_numbers(const Velocity& v, double* out) {
+    out[0] = static_cast<double>(v.linear.x);
+    out[1] = static_cast<double>(v.linear.y);
+    out[2] = static_cast<double>(v.linear.z);
+    out[3] = static_cast<double>(v.angular.x);
+    out[4] = static_cast<double>(v.angular.y);
+    out[5] = static_cast<double>(v.angular.z);
+    return 6;
+}
+bool write_numbers(Velocity& v, const double* in, std::size_t n) {
+    if (n != 6) return false;
+    v.linear.x = static_cast<float>(in[0]);
+    v.linear.y = static_cast<float>(in[1]);
+    v.linear.z = static_cast<float>(in[2]);
+    v.angular.x = static_cast<float>(in[3]);
+    v.angular.y = static_cast<float>(in[4]);
+    v.angular.z = static_cast<float>(in[5]);
+    return true;
+}
+
+std::size_t read_numbers(const Health& v, double* out) {
+    out[0] = static_cast<double>(v.current);
+    out[1] = static_cast<double>(v.max);
+    out[2] = static_cast<double>(v.team);
+    out[3] = static_cast<double>(v.invulnerable);
+    out[4] = static_cast<double>(v.guard);
+    out[5] = static_cast<double>(v.dead);
+    return 6;
+}
+bool write_numbers(Health& v, const double* in, std::size_t n) {
+    if (n != 6) return false;
+    v.current = static_cast<float>(in[0]);
+    v.max = static_cast<float>(in[1]);
+    v.team = static_cast<std::int32_t>(in[2]);
+    v.invulnerable = static_cast<float>(in[3]);
+    v.guard = static_cast<float>(in[4]);
+    v.dead = in[5] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const Hitbox& v, double* out) {
+    out[0] = static_cast<double>(v.damage);
+    out[1] = static_cast<double>(v.knockback);
+    out[2] = static_cast<double>(v.team);
+    out[3] = static_cast<double>(v.repeat);
+    out[4] = static_cast<double>(v.destroy);
+    out[5] = static_cast<double>(v.enabled);
+    out[6] = static_cast<double>(v.hits);
+    return 7;
+}
+bool write_numbers(Hitbox& v, const double* in, std::size_t n) {
+    if (n != 7) return false;
+    v.damage = static_cast<float>(in[0]);
+    v.knockback = static_cast<float>(in[1]);
+    v.team = static_cast<std::int32_t>(in[2]);
+    v.repeat = static_cast<float>(in[3]);
+    v.destroy = in[4] != 0;
+    v.enabled = in[5] != 0;
+    v.hits = static_cast<std::int32_t>(in[6]);
+    return true;
+}
+
+std::size_t read_numbers(const Model&, double*) { return kNotNumeric; }
+bool write_numbers(Model&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Lifetime& v, double* out) {
+    out[0] = static_cast<double>(v.seconds);
+    return 1;
+}
+bool write_numbers(Lifetime& v, const double* in, std::size_t n) {
+    if (n != 1) return false;
+    v.seconds = static_cast<float>(in[0]);
+    return true;
+}
+
+std::size_t read_numbers(const Camera& v, double* out) {
+    out[0] = static_cast<double>(v.fov_degrees);
+    out[1] = static_cast<double>(v.orthographic);
+    out[2] = static_cast<double>(v.ortho_size);
+    out[3] = static_cast<double>(v.near);
+    out[4] = static_cast<double>(v.far);
+    out[5] = static_cast<double>(v.active);
+    return 6;
+}
+bool write_numbers(Camera& v, const double* in, std::size_t n) {
+    if (n != 6) return false;
+    v.fov_degrees = static_cast<float>(in[0]);
+    v.orthographic = in[1] != 0;
+    v.ortho_size = static_cast<float>(in[2]);
+    v.near = static_cast<float>(in[3]);
+    v.far = static_cast<float>(in[4]);
+    v.active = in[5] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const CameraRig&, double*) { return kNotNumeric; }
+bool write_numbers(CameraRig&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Light& v, double* out) {
+    out[0] = static_cast<double>(v.kind);
+    out[1] = static_cast<double>(v.color.r);
+    out[2] = static_cast<double>(v.color.g);
+    out[3] = static_cast<double>(v.color.b);
+    out[4] = static_cast<double>(v.color.a);
+    out[5] = static_cast<double>(v.intensity);
+    out[6] = static_cast<double>(v.range);
+    out[7] = static_cast<double>(v.inner_angle);
+    out[8] = static_cast<double>(v.outer_angle);
+    out[9] = static_cast<double>(v.shadows);
+    return 10;
+}
+bool write_numbers(Light& v, const double* in, std::size_t n) {
+    if (n != 10) return false;
+    v.kind = static_cast<std::int32_t>(in[0]);
+    v.color.r = static_cast<float>(in[1]);
+    v.color.g = static_cast<float>(in[2]);
+    v.color.b = static_cast<float>(in[3]);
+    v.color.a = static_cast<float>(in[4]);
+    v.intensity = static_cast<float>(in[5]);
+    v.range = static_cast<float>(in[6]);
+    v.inner_angle = static_cast<float>(in[7]);
+    v.outer_angle = static_cast<float>(in[8]);
+    v.shadows = in[9] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const ReflectionProbe& v, double* out) {
+    out[0] = static_cast<double>(v.size.x);
+    out[1] = static_cast<double>(v.size.y);
+    out[2] = static_cast<double>(v.size.z);
+    out[3] = static_cast<double>(v.intensity);
+    out[4] = static_cast<double>(v.box_projection);
+    out[5] = static_cast<double>(v.realtime);
+    out[6] = static_cast<double>(v.enabled);
+    return 7;
+}
+bool write_numbers(ReflectionProbe& v, const double* in, std::size_t n) {
+    if (n != 7) return false;
+    v.size.x = static_cast<float>(in[0]);
+    v.size.y = static_cast<float>(in[1]);
+    v.size.z = static_cast<float>(in[2]);
+    v.intensity = static_cast<float>(in[3]);
+    v.box_projection = in[4] != 0;
+    v.realtime = in[5] != 0;
+    v.enabled = in[6] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const Decal&, double*) { return kNotNumeric; }
+bool write_numbers(Decal&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Fog& v, double* out) {
+    out[0] = static_cast<double>(v.color.r);
+    out[1] = static_cast<double>(v.color.g);
+    out[2] = static_cast<double>(v.color.b);
+    out[3] = static_cast<double>(v.color.a);
+    out[4] = static_cast<double>(v.density);
+    out[5] = static_cast<double>(v.height);
+    out[6] = static_cast<double>(v.falloff);
+    out[7] = static_cast<double>(v.start);
+    out[8] = static_cast<double>(v.max_opacity);
+    out[9] = static_cast<double>(v.enabled);
+    out[10] = static_cast<double>(v.volumetric);
+    out[11] = static_cast<double>(v.anisotropy);
+    out[12] = static_cast<double>(v.steps);
+    out[13] = static_cast<double>(v.distance);
+    return 14;
+}
+bool write_numbers(Fog& v, const double* in, std::size_t n) {
+    if (n != 14) return false;
+    v.color.r = static_cast<float>(in[0]);
+    v.color.g = static_cast<float>(in[1]);
+    v.color.b = static_cast<float>(in[2]);
+    v.color.a = static_cast<float>(in[3]);
+    v.density = static_cast<float>(in[4]);
+    v.height = static_cast<float>(in[5]);
+    v.falloff = static_cast<float>(in[6]);
+    v.start = static_cast<float>(in[7]);
+    v.max_opacity = static_cast<float>(in[8]);
+    v.enabled = in[9] != 0;
+    v.volumetric = in[10] != 0;
+    v.anisotropy = static_cast<float>(in[11]);
+    v.steps = static_cast<std::int32_t>(in[12]);
+    v.distance = static_cast<float>(in[13]);
+    return true;
+}
+
+std::size_t read_numbers(const Sky&, double*) { return kNotNumeric; }
+bool write_numbers(Sky&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const MeshRenderer&, double*) { return kNotNumeric; }
+bool write_numbers(MeshRenderer&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Sprite&, double*) { return kNotNumeric; }
+bool write_numbers(Sprite&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const SpriteAnimation&, double*) { return kNotNumeric; }
+bool write_numbers(SpriteAnimation&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const TileMap&, double*) { return kNotNumeric; }
+bool write_numbers(TileMap&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const AnimationGraph&, double*) { return kNotNumeric; }
+bool write_numbers(AnimationGraph&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Timeline&, double*) { return kNotNumeric; }
+bool write_numbers(Timeline&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Animator&, double*) { return kNotNumeric; }
+bool write_numbers(Animator&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Attach&, double*) { return kNotNumeric; }
+bool write_numbers(Attach&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const IK&, double*) { return kNotNumeric; }
+bool write_numbers(IK&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const LookAt&, double*) { return kNotNumeric; }
+bool write_numbers(LookAt&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const ParticleEmitter&, double*) { return kNotNumeric; }
+bool write_numbers(ParticleEmitter&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Bounds& v, double* out) {
+    out[0] = static_cast<double>(v.min.x);
+    out[1] = static_cast<double>(v.min.y);
+    out[2] = static_cast<double>(v.min.z);
+    out[3] = static_cast<double>(v.max.x);
+    out[4] = static_cast<double>(v.max.y);
+    out[5] = static_cast<double>(v.max.z);
+    return 6;
+}
+bool write_numbers(Bounds& v, const double* in, std::size_t n) {
+    if (n != 6) return false;
+    v.min.x = static_cast<float>(in[0]);
+    v.min.y = static_cast<float>(in[1]);
+    v.min.z = static_cast<float>(in[2]);
+    v.max.x = static_cast<float>(in[3]);
+    v.max.y = static_cast<float>(in[4]);
+    v.max.z = static_cast<float>(in[5]);
+    return true;
+}
+
+std::size_t read_numbers(const RigidBody& v, double* out) {
+    out[0] = static_cast<double>(v.kind);
+    out[1] = static_cast<double>(v.mass);
+    out[2] = static_cast<double>(v.restitution);
+    out[3] = static_cast<double>(v.friction);
+    out[4] = static_cast<double>(v.linear_damping);
+    out[5] = static_cast<double>(v.angular_damping);
+    out[6] = static_cast<double>(v.gravity_scale);
+    out[7] = static_cast<double>(v.sleeping);
+    out[8] = static_cast<double>(v.lock_rotation);
+    out[9] = static_cast<double>(v.ccd);
+    return 10;
+}
+bool write_numbers(RigidBody& v, const double* in, std::size_t n) {
+    if (n != 10) return false;
+    v.kind = static_cast<std::int32_t>(in[0]);
+    v.mass = static_cast<float>(in[1]);
+    v.restitution = static_cast<float>(in[2]);
+    v.friction = static_cast<float>(in[3]);
+    v.linear_damping = static_cast<float>(in[4]);
+    v.angular_damping = static_cast<float>(in[5]);
+    v.gravity_scale = static_cast<float>(in[6]);
+    v.sleeping = in[7] != 0;
+    v.lock_rotation = in[8] != 0;
+    v.ccd = in[9] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const Joint&, double*) { return kNotNumeric; }
+bool write_numbers(Joint&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Body2D&, double*) { return kNotNumeric; }
+bool write_numbers(Body2D&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Character&, double*) { return kNotNumeric; }
+bool write_numbers(Character&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Terrain&, double*) { return kNotNumeric; }
+bool write_numbers(Terrain&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Wind& v, double* out) {
+    out[0] = static_cast<double>(v.direction);
+    out[1] = static_cast<double>(v.speed);
+    out[2] = static_cast<double>(v.gusts);
+    out[3] = static_cast<double>(v.gust_length);
+    out[4] = static_cast<double>(v.enabled);
+    return 5;
+}
+bool write_numbers(Wind& v, const double* in, std::size_t n) {
+    if (n != 5) return false;
+    v.direction = static_cast<float>(in[0]);
+    v.speed = static_cast<float>(in[1]);
+    v.gusts = static_cast<float>(in[2]);
+    v.gust_length = static_cast<float>(in[3]);
+    v.enabled = in[4] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const Water&, double*) { return kNotNumeric; }
+bool write_numbers(Water&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Scatter&, double*) { return kNotNumeric; }
+bool write_numbers(Scatter&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Vehicle&, double*) { return kNotNumeric; }
+bool write_numbers(Vehicle&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Area2D& v, double* out) {
+    out[0] = static_cast<double>(v.size.x);
+    out[1] = static_cast<double>(v.size.y);
+    out[2] = static_cast<double>(v.offset.x);
+    out[3] = static_cast<double>(v.offset.y);
+    out[4] = static_cast<double>(v.enabled);
+    out[5] = static_cast<double>(v.inside);
+    return 6;
+}
+bool write_numbers(Area2D& v, const double* in, std::size_t n) {
+    if (n != 6) return false;
+    v.size.x = static_cast<float>(in[0]);
+    v.size.y = static_cast<float>(in[1]);
+    v.offset.x = static_cast<float>(in[2]);
+    v.offset.y = static_cast<float>(in[3]);
+    v.enabled = in[4] != 0;
+    v.inside = static_cast<std::int32_t>(in[5]);
+    return true;
+}
+
+std::size_t read_numbers(const RigidBody2D& v, double* out) {
+    out[0] = static_cast<double>(v.kind);
+    out[1] = static_cast<double>(v.velocity.x);
+    out[2] = static_cast<double>(v.velocity.y);
+    out[3] = static_cast<double>(v.angular_velocity);
+    out[4] = static_cast<double>(v.gravity_scale);
+    out[5] = static_cast<double>(v.linear_damping);
+    out[6] = static_cast<double>(v.angular_damping);
+    out[7] = static_cast<double>(v.fixed_rotation);
+    out[8] = static_cast<double>(v.bullet);
+    out[9] = static_cast<double>(v.awake);
+    out[10] = static_cast<double>(v.enabled);
+    return 11;
+}
+bool write_numbers(RigidBody2D& v, const double* in, std::size_t n) {
+    if (n != 11) return false;
+    v.kind = static_cast<std::int32_t>(in[0]);
+    v.velocity.x = static_cast<float>(in[1]);
+    v.velocity.y = static_cast<float>(in[2]);
+    v.angular_velocity = static_cast<float>(in[3]);
+    v.gravity_scale = static_cast<float>(in[4]);
+    v.linear_damping = static_cast<float>(in[5]);
+    v.angular_damping = static_cast<float>(in[6]);
+    v.fixed_rotation = in[7] != 0;
+    v.bullet = in[8] != 0;
+    v.awake = in[9] != 0;
+    v.enabled = in[10] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const Collider2D&, double*) { return kNotNumeric; }
+bool write_numbers(Collider2D&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Joint2D&, double*) { return kNotNumeric; }
+bool write_numbers(Joint2D&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const TopDown2D&, double*) { return kNotNumeric; }
+bool write_numbers(TopDown2D&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Collider&, double*) { return kNotNumeric; }
+bool write_numbers(Collider&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const AudioSource&, double*) { return kNotNumeric; }
+bool write_numbers(AudioSource&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const AudioListener& v, double* out) {
+    out[0] = static_cast<double>(v.enabled);
+    return 1;
+}
+bool write_numbers(AudioListener& v, const double* in, std::size_t n) {
+    if (n != 1) return false;
+    v.enabled = in[0] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const NavObstacle& v, double* out) {
+    out[0] = static_cast<double>(v.radius);
+    out[1] = static_cast<double>(v.enabled);
+    return 2;
+}
+bool write_numbers(NavObstacle& v, const double* in, std::size_t n) {
+    if (n != 2) return false;
+    v.radius = static_cast<float>(in[0]);
+    v.enabled = in[1] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const NavAgent&, double*) { return kNotNumeric; }
+bool write_numbers(NavAgent&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const Morph&, double*) { return kNotNumeric; }
+bool write_numbers(Morph&, const double*, std::size_t) { return false; }
+
 namespace {
 
 constexpr std::array<FieldInfo, 3> kMeshLodFields = {{
@@ -3154,6 +3857,10 @@ constexpr std::array<FieldInfo, 7> kTerrainLayerFields = {{
     FieldInfo{"slope", "vec2", "The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit).", {}},
     FieldInfo{"height", "vec2", "The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit).", {}},
     FieldInfo{"cover", "f32", "How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything.", {}},
+}};
+constexpr std::array<FieldInfo, 2> kPoint2DFields = {{
+    FieldInfo{"x", "f32", "Across.", {}},
+    FieldInfo{"y", "f32", "Up.", {}},
 }};
 constexpr std::array<FieldInfo, 3> kTransformFields = {{
     FieldInfo{"position", "vec3", "Local position in meters.", {}},
@@ -3614,6 +4321,56 @@ constexpr std::array<FieldInfo, 4> kArea2DFields = {{
     FieldInfo{"enabled", "bool", "false notices nothing: the bodies inside are let out (area.exited) and none come in.", {}},
     FieldInfo{"inside", "i32", "How many bodies are in it (written by the engine).", {}},
 }};
+constexpr std::string_view kRigidBody2D_kindNames[] = {"dynamic", "static", "kinematic"};
+constexpr std::array<FieldInfo, 10> kRigidBody2DFields = {{
+    FieldInfo{"kind", "i32", "0 dynamic (falls, is pushed), 1 static (never moves), 2 kinematic (moves by its velocity alone, pushes dynamic bodies).", kRigidBody2D_kindNames},
+    FieldInfo{"velocity", "vec2", "Units per second (written by the engine; write it to set it).", {}},
+    FieldInfo{"angular_velocity", "f32", "Radians per second, counter-clockwise (written by the engine; write it to set it).", {}},
+    FieldInfo{"gravity_scale", "f32", "How much of the world's gravity pulls it (0: floats).", {}},
+    FieldInfo{"linear_damping", "f32", "Slows its velocity, as air does (0 to a few).", {}},
+    FieldInfo{"angular_damping", "f32", "Slows its turning.", {}},
+    FieldInfo{"fixed_rotation", "bool", "Never turns: a character standing upright, a crate that slides without tipping.", {}},
+    FieldInfo{"bullet", "bool", "Swept against other dynamic bodies too, so a fast small body does not pass through them (static ones are always swept).", {}},
+    FieldInfo{"awake", "bool", "Whether it is simulated now: a body at rest falls asleep and wakes when touched (written by the engine; false puts it to sleep, true wakes it).", {}},
+    FieldInfo{"enabled", "bool", "false takes it out of the simulation: nothing touches it, it does not move.", {}},
+}};
+constexpr std::string_view kCollider2D_shapeNames[] = {"box", "circle", "capsule", "polygon"};
+constexpr std::array<FieldInfo, 12> kCollider2DFields = {{
+    FieldInfo{"shape", "i32", "0 box (size), 1 circle (radius), 2 capsule (two circles of radius along Y, size.y apart from the center each way), 3 polygon (points, convex, at most 8).", kCollider2D_shapeNames},
+    FieldInfo{"size", "vec2", "Half extents of a box; a capsule's half length along Y in size.y.", {}},
+    FieldInfo{"radius", "f32", "A circle's or capsule's radius; a box or polygon's rounding of its corners.", {}},
+    FieldInfo{"offset", "vec2", "The shape's center from the entity's position, in its own space.", {}},
+    FieldInfo{"angle", "f32", "A box's or polygon's turn within the body, radians.", {}},
+    FieldInfo{"points", "list:Point2D", "A polygon's corners, in the entity's own space (their convex hull is taken; at most 8).", {}},
+    FieldInfo{"density", "f32", "Mass per square unit; a dynamic body's mass and how it turns come from its shapes.", {}},
+    FieldInfo{"friction", "f32", "How much it grips what it slides on (0 ice, 1 rubber).", {}},
+    FieldInfo{"restitution", "f32", "Bounciness 0..1.", {}},
+    FieldInfo{"sensor", "bool", "Notices 2D rigid bodies coming in and going out (trigger.enter and trigger.exit, as 3D triggers do; a Hitbox's shape) and stops nothing.", {}},
+    FieldInfo{"layer", "u32", "Bits of the layers this shape is on.", {}},
+    FieldInfo{"mask", "u32", "Bits of the layers it collides with; two shapes collide when each is on a layer the other's mask holds. A TileMap's cells are on layer bit 0.", {}},
+}};
+constexpr std::string_view kJoint2D_kindNames[] = {"revolute", "distance", "prismatic", "weld", "wheel"};
+constexpr std::array<FieldInfo, 19> kJoint2DFields = {{
+    FieldInfo{"kind", "i32", "0 revolute (a hinge at the anchors), 1 distance (the anchors kept `length` apart, or between min_length and max_length), 2 prismatic (slides along `axis`), 3 weld (held fast, or springy with `hertz`), 4 wheel (slides along `axis` on a spring and turns freely: a car's wheel).", kJoint2D_kindNames},
+    FieldInfo{"body", "entity", "The other body; 0 (or none) holds this one to the world at `other_anchor`.", {}},
+    FieldInfo{"anchor", "vec2", "Where it holds on this body, in its own space.", {}},
+    FieldInfo{"other_anchor", "vec2", "Where it holds on the other body, in its own space; in the world when there is no other body.", {}},
+    FieldInfo{"axis", "vec2", "A prismatic or wheel joint's line, in the other body's space (a car's chassis for its wheel; the world's when there is no other body); the motor of a wheel joint turns this body.", {}},
+    FieldInfo{"length", "f32", "A distance joint's length; below 0 the anchors' distance when it is made.", {}},
+    FieldInfo{"min_length", "f32", "A distance joint's least length (with enable_limit; a rope that goes slack).", {}},
+    FieldInfo{"max_length", "f32", "A distance joint's greatest length (with enable_limit).", {}},
+    FieldInfo{"enable_limit", "bool", "Hold a revolute joint's turn or a prismatic or wheel joint's travel between lower and upper, a distance joint's length between min and max.", {}},
+    FieldInfo{"lower", "f32", "The least turn (radians) or travel (units).", {}},
+    FieldInfo{"upper", "f32", "The greatest turn or travel.", {}},
+    FieldInfo{"enable_motor", "bool", "Drive the joint at motor_speed.", {}},
+    FieldInfo{"motor_speed", "f32", "Radians per second for a revolute or wheel joint, units per second for a prismatic one.", {}},
+    FieldInfo{"max_motor_force", "f32", "The most torque (revolute, wheel) or force (prismatic) the motor gives.", {}},
+    FieldInfo{"enable_spring", "bool", "A spring along the joint: a weld that wobbles, a length that stretches, a wheel's suspension.", {}},
+    FieldInfo{"hertz", "f32", "The spring's stiffness as a frequency.", {}},
+    FieldInfo{"damping_ratio", "f32", "The spring's damping (0 rings, 1 settles at once).", {}},
+    FieldInfo{"collide_connected", "bool", "Whether the two bodies still collide with each other.", {}},
+    FieldInfo{"break_force", "f32", "Above this force the joint breaks: it is removed and joint2d.broken says so (0: never).", {}},
+}};
 constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
     FieldInfo{"velocity", "vec2", "Units per second along X and Y.", {}},
     FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width).", {}},
@@ -3685,7 +4442,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights.", {}},
 }};
 
-constexpr std::array<RecordInfo, 10> kRecords = {{
+constexpr std::array<RecordInfo, 11> kRecords = {{
     RecordInfo{"MeshLod", kMeshLodFields},
     RecordInfo{"MorphWeight", kMorphWeightFields},
     RecordInfo{"IKLimit", kIKLimitFields},
@@ -3696,9 +4453,10 @@ constexpr std::array<RecordInfo, 10> kRecords = {{
     RecordInfo{"AnimationTransition", kAnimationTransitionFields},
     RecordInfo{"AnimationParam", kAnimationParamFields},
     RecordInfo{"TerrainLayer", kTerrainLayerFields},
+    RecordInfo{"Point2D", kPoint2DFields},
 }};
 
-constexpr std::array<ComponentInfo, 43> kComponents = {{
+constexpr std::array<ComponentInfo, 46> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -3735,6 +4493,9 @@ constexpr std::array<ComponentInfo, 43> kComponents = {{
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
     ComponentInfo{"Area2D", "A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.", true, kArea2DFields},
+    ComponentInfo{"RigidBody2D", "A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way).", true, kRigidBody2DFields},
+    ComponentInfo{"Collider2D", "A 2D shape for the entity's RigidBody2D (docs/design/physics2d.md), or, on an entity without one, a static body of its own (a wall, a ramp, a sensor in the level). Sizes are in the entity's own units, multiplied by its Transform's scale.", true, kCollider2DFields},
+    ComponentInfo{"Joint2D", "Two 2D rigid bodies held together (docs/design/physics2d.md): this entity's RigidBody2D and `body` (or a point fixed in the world when it names none). A hinge for a door or a wheel, a rope's length, a slider, a weld; a motor drives a hinge or a slider, a spring softens a weld or a length, and a joint pulled past `break_force` breaks.", true, kJoint2DFields},
     ComponentInfo{"TopDown2D", "A top-down 2D mover on a tile map of any orientation (orthogonal, isometric, staggered, hexagonal; docs/design/tilemaps.md, Top-down bodies): a point with a radius in the XY plane that moves by its velocity, no gravity, and is stopped by the map's solid cells: the move is tried along X then along Y in steps no longer than the radius, so thin walls hold, and a step whose cell ahead is solid is dropped. Scripts set the velocity from input; the engine writes what was blocked and the cell under the center. Not for the same entity as a Body2D (both move the transform).", true, kTopDown2DFields},
     ComponentInfo{"Collider", "Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push.", true, kColliderFields},
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},

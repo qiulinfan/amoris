@@ -119,3 +119,35 @@ export const physics = {
         command("world.set", { entity, component: "RigidBody", value: { sleeping: false } });
     },
 };
+
+type V2 = { x: number; y: number } | [number, number];
+
+export interface RayHit2D {
+    hit: true;
+    entity: Entity;
+    path: string;
+    point: { x: number; y: number };
+    normal: { x: number; y: number };
+    distance: number;
+}
+
+/** 2D rigid bodies (RigidBody2D, Collider2D, Joint2D on Box2D; docs/design/physics2d.md): their questions and pushes. */
+export const physics2d = {
+    /** The nearest 2D shape (a body's or a TileMap's solid cells) a segment from `from` to `to` meets, or undefined. */
+    raycast(from: V2, to: V2, mask?: number): RayHit2D | undefined {
+        const r = command<RayHit2D | { hit: false }>("physics2d.raycast", mask === undefined ? { from, to } : { from, to, mask });
+        return r.hit ? r : undefined;
+    },
+    /** The bodies whose shapes a box (half extents, turned by angle) or, with radius, a circle at `center` touches. */
+    overlap(center: V2, shape: { half?: V2; angle?: number; radius?: number; mask?: number } = {}): Array<{ entity: Entity; path: string }> {
+        return command<{ entities: Array<{ entity: Entity; path: string }> }>("physics2d.overlap", { center, ...shape }).entities;
+    },
+    /** Push a body now: an impulse (mass times velocity), at a world point or its center, and an angular one. Answers its new velocity. */
+    impulse(entity: EntityRef, impulse: V2, options: { point?: V2; angular?: number } = {}): { velocity: { x: number; y: number }; angular_velocity: number } {
+        return command("physics2d.impulse", { entity, impulse, ...options }) as { velocity: { x: number; y: number }; angular_velocity: number };
+    },
+    /** Bodies, awake, shapes, joints, contacts, the TileMaps it collides with, the last step's milliseconds. */
+    stats(): Record<string, unknown> {
+        return command("physics2d.stats", {}) as Record<string, unknown>;
+    },
+};

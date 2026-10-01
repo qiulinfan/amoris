@@ -38,6 +38,9 @@
     X(Scatter) \
     X(Vehicle) \
     X(Area2D) \
+    X(RigidBody2D) \
+    X(Collider2D) \
+    X(Joint2D) \
     X(TopDown2D) \
     X(Collider) \
     X(AudioSource) \

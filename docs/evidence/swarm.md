@@ -52,3 +52,15 @@ The digest is new (`hello-golden.json` and the reproducible-math sweep pin were 
 ## The JSON path's answers (2026-10-01)
 
 `world.set` came to answer with the component as it now is (`{ok, value}`), which a script never reads: the swarm's JSON path went from 16 to 26 ms a tick for its 6000 commands. The SDK's `world.set` now passes `quiet: true` (answered `{ok}` alone), and the path is 17.7 ms again (three runs: 17.9, 17.8, 17.5); an agent's `world.set` still gets the value. Looking every command's help up by hash instead of along the table, and its parameter names once instead of every call, changed nothing measurable: the cost is in the JSON each call makes and reads on both sides.
+
+## Numbers without JSON (2026-10-01)
+
+A script's `world.get` and `world.set` of a component whose fields are all numbers (Transform, Velocity, Health, RigidBody2D and the rest `pocket gen` finds; `numericLayouts` in the generated SDK) no longer go through JSON: the engine writes the component's fields into a shared `Float64Array` in the generated order (`read_numbers`), the SDK builds the object from it, and a write reads the component, lays the patch over the numbers and hands them back (`write_numbers`). A patch the numbers cannot hold (a value's name, an array, a field the component lacks, a number that is not finite), a missing component and a `cause` take the command as before, so the rules and the error messages are the command's. Before that, the copies on the command path were cut (the binding no longer copies the parameters, a quiet script `world.set` answers nothing to convert): 17.7 to 16.2 ms.
+
+| Release, Apple M5, `samples/swarm` (3000 `world.get` + `world.set` a tick) | ms a tick, three runs |
+|---|---|
+| JSON commands (before) | 17.8, 17.9, 17.6 |
+| fewer copies | 16.5, 16.2, 16.1 |
+| numbers without JSON | 5.80, 5.86, 5.84 |
+
+The typed-array path (`world.pack`) is still 0.35 ms: the per-entity calls are three native calls each now rather than two JSON round trips, about a third of a microsecond each. The world after the run is the same (the full suite's goldens and `tests/ts/world.test.ts`, which compares the two paths' answers, pass).

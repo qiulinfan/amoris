@@ -32,6 +32,10 @@ struct ComponentOps {
     std::function<Json()> defaults;
     std::function<std::size_t(flecs::entity, std::string_view, float**)> span;  // numeric field floats (mutable)
     std::function<void(flecs::entity)> modified;
+    // Every field as plain numbers, for the scripts' path without JSON (kNotNumeric / false when a
+    // field is not a number); empty for a project's components.
+    std::function<std::size_t(flecs::entity, double*)> read_numbers = {};
+    std::function<bool(flecs::entity, const double*, std::size_t)> write_numbers = {};
 };
 
 #define POCKET_OPS(C)                                                                                   \
@@ -44,7 +48,9 @@ struct ComponentOps {
         [](StateHasherRef& h, flecs::entity e) { hash_component(h, e.get<C>()); },                      \
         []() { Json j; to_json(j, C{}); return j; },                                                    \
         [](flecs::entity e, std::string_view path, float** out) { return numeric_span(e.get_mut<C>(), path, out); }, \
-        [](flecs::entity e) { e.modified<C>(); }},
+        [](flecs::entity e) { e.modified<C>(); },                                                       \
+        [](flecs::entity e, double* out) { return read_numbers(e.get<C>(), out); },                     \
+        [](flecs::entity e, const double* in, std::size_t n) { C v = e.get<C>(); if (!write_numbers(v, in, n)) return false; e.set<C>(v); return true; }},
 
 const std::vector<ComponentOps>& engine_ops() {
     static const std::vector<ComponentOps> table = [] {
@@ -259,6 +265,11 @@ struct World::Impl {
     flecs::world ecs;
     EventLog events;
     std::vector<EntityId> roots;  // creation order
+    // Bumped by everything that changes a name or the tree (spawn, destroy, rename, reparent,
+    // clear): bare-name lookups that had to walk the tree are kept until it moves.
+    std::uint64_t structure = 0;
+    mutable std::unordered_map<std::string, EntityId> by_bare_name;
+    mutable std::uint64_t by_bare_name_at = ~0ull;
     std::int64_t tick = 0;
     double tick_seconds = 1.0 / 60.0;
     flecs::query<Transform, Velocity> motion;
@@ -459,6 +470,7 @@ Result<EntityId> World::spawn(std::string_view name, EntityId parent, const Json
         p = impl_->ecs.entity(parent);
         if (!live(p)) return fail("no_such_entity", "parent {} is not alive", parent);
     }
+    ++impl_->structure;
     flecs::entity e = impl_->ecs.entity();
     if (live(p)) {
         p.add(flecs::OrderedChildren);
@@ -503,6 +515,7 @@ Result<EntityId> World::spawn(std::string_view name, EntityId parent, const Json
 Status World::destroy(EntityId id, std::uint64_t cause) {
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
+    ++impl_->structure;
     std::vector<EntityId> subtree;
     impl_->visit(id, 0, [&](EntityId x, int) { subtree.push_back(x); return true; });
     for (EntityId x : subtree) {
@@ -524,26 +537,41 @@ EntityId World::from_index(std::uint32_t index) const {
 }
 
 EntityId World::find(std::string_view path) const {
-    std::string p(path);
-    while (!p.empty() && p.front() == '/') p.erase(p.begin());
-    if (p.empty()) return 0;
+    while (!path.empty() && path.front() == '/') path.remove_prefix(1);
+    if (path.empty()) return 0;
+    const bool bare = path.find('/') == std::string_view::npos;
     std::string sep_path;
-    for (char c : p) sep_path += c == '/' ? std::string("::") : std::string(1, c);
-    flecs::entity e = impl_->ecs.lookup(sep_path.c_str(), "::", "::", false);
-    if (!live(e) && p.find('/') == std::string::npos) {
-        // Bare name: first match in tree order.
-        EntityId found = 0;
-        for (EntityId r : impl_->roots) {
-            if (found) break;
-            impl_->visit(r, 0, [&](EntityId x, int) {
-                if (found) return false;
-                if (name(x) == p) { found = x; return false; }
-                return true;
-            });
+    if (bare) {
+        sep_path.assign(path);
+    } else {
+        sep_path.reserve(path.size() + 8);
+        for (char c : path) {
+            if (c == '/') sep_path += "::";
+            else sep_path += c;
         }
-        return found;
     }
-    return live(e) ? e.id() : 0;
+    flecs::entity e = impl_->ecs.lookup(sep_path.c_str(), "::", "::", false);
+    if (live(e)) return e.id();
+    if (!bare) return 0;
+    // A bare name below the roots: the first match in tree order, kept until the tree changes.
+    if (impl_->by_bare_name_at != impl_->structure) {
+        impl_->by_bare_name.clear();
+        impl_->by_bare_name_at = impl_->structure;
+    }
+    if (auto it = impl_->by_bare_name.find(sep_path); it != impl_->by_bare_name.end()) {
+        if (it->second == 0 || alive(it->second)) return it->second;
+    }
+    EntityId found = 0;
+    for (EntityId r : impl_->roots) {
+        if (found) break;
+        impl_->visit(r, 0, [&](EntityId x, int) {
+            if (found) return false;
+            if (name(x) == sep_path) { found = x; return false; }
+            return true;
+        });
+    }
+    impl_->by_bare_name[sep_path] = found;
+    return found;
 }
 
 std::string World::path(EntityId id) const {
@@ -564,6 +592,7 @@ Status World::rename(EntityId id, std::string_view new_name) {
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
     std::string n(new_name);
+    ++impl_->structure;
     e.set_name(n.c_str());
     return {};
 }
@@ -572,6 +601,7 @@ Status World::reparent(EntityId id, EntityId new_parent) {
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
     if (new_parent == id) return fail("bad_parent", "an entity cannot be its own parent");
+    ++impl_->structure;
     if (new_parent != 0) {
         flecs::entity p = impl_->ecs.entity(new_parent);
         if (!live(p)) return fail("no_such_entity", "parent {} is not alive", new_parent);
@@ -643,6 +673,25 @@ Status World::set(EntityId id, std::string_view component, const Json& partial, 
         impl_->events.emit(impl_->tick, "component.added", id, data, cause);
     }
     return {};
+}
+
+long World::get_numbers(EntityId id, std::string_view component, double* out) const {
+    const ComponentOps* op = impl_->find(component);
+    if (!op || !op->read_numbers) return -2;
+    flecs::entity e = impl_->ecs.entity(id);
+    if (!live(e)) return -3;
+    if (!op->has(e)) return -1;
+    const std::size_t n = op->read_numbers(e, out);
+    return n == kNotNumeric ? -2 : static_cast<long>(n);
+}
+
+long World::set_numbers(EntityId id, std::string_view component, const double* in, std::size_t n) {
+    const ComponentOps* op = impl_->find(component);
+    if (!op || !op->write_numbers) return -2;
+    flecs::entity e = impl_->ecs.entity(id);
+    if (!live(e)) return -3;
+    if (!op->has(e)) return -1;
+    return op->write_numbers(e, in, n) ? static_cast<long>(n) : -4;
 }
 
 Status World::remove(EntityId id, std::string_view component, std::uint64_t cause) {

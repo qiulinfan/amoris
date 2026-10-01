@@ -12,6 +12,7 @@
 #include <pocket/core/core.hpp>
 #include <pocket/nav/nav.hpp>
 #include <pocket/physics/physics.hpp>
+#include <pocket/physics/rigid2d.hpp>
 #include <pocket/physics/tiles.hpp>
 #include <pocket/platform/platform.hpp>
 #include <pocket/renderer/renderer.hpp>
@@ -137,10 +138,12 @@ class Session {
     bool net_tick_ready();
     Result<Json> net_command(std::string_view op, const Json& p);
     Result<Json> mesh_command(std::string_view op, const Json& p);
+    Result<Json> physics2d_command(std::string_view op, const Json& p);
     Result<Json> make_mesh(const std::string& name, const Json& spec);
     Json saved_maps(bool edited) const;
     Status restore_maps(const Json& maps);
-    std::map<std::string, Json> made_meshes_;   // mesh.create's requests by name, carried by saved scenes
+    std::map<std::string, Json> made_meshes_;
+    std::vector<double> nums_;   // __pocket.__nums: a component's numbers for world.get/set without JSON   // mesh.create's requests by name, carried by saved scenes
     // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
     // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.
     struct TerrainState {
@@ -181,6 +184,7 @@ class Session {
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<physics::Physics2D> physics2d_;
+    std::unique_ptr<physics::Rigid2D> rigid2d_;   // RigidBody2D, Collider2D, Joint2D on Box2D (docs/design/physics2d.md)
     nav::Nav nav_;
     // The environment interface (docs/design/environment.md): episodes over env.reset/step/observe.
     int env_episode_ = 0;

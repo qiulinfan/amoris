@@ -4,3 +4,4 @@ description = "Deterministic rigid body physics: boxes and spheres, static/dynam
 sources = ["src/**/*.cpp"]
 public_include = ["include"]
 public_deps = ["pocket_core", "pocket_world", "pocket_assets"]
+private_deps = ["box2d"]

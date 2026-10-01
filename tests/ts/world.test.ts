@@ -109,3 +109,32 @@ test("input actions map keys and synthetic holds", () => {
     expect(d.move_x.axis![0]).toBe("pad:leftx");
     expect(() => input.hold({ action: "nope" })).toThrow();
 });
+
+test("numbers without JSON: the same values and the same rules as the command", () => {
+    const { command } = require_command();
+    const e = world.spawn("Mover", { components: { Transform: { position: { x: 1, y: 2, z: 3 } }, RigidBody2D: { kind: "kinematic" } } });
+    // A read gives what the command gives.
+    expect(world.get(e, "Transform")).toEqual(command("world.get", { entity: e, component: "Transform" }));
+    // A partial write keeps the rest; floats are kept as the engine keeps them.
+    world.set(e, "Transform", { position: { y: 0.1 } });
+    const t = world.get(e, "Transform")!;
+    expect(t.position.x).toBe(1);
+    expect(t.position.z).toBe(3);
+    expect(t.position.y).toBe((command("world.get", { entity: e, component: "Transform" }) as { position: { y: number } }).position.y);
+    expect(Math.abs(t.position.y - 0.1)).toBeLessThan(1e-6);
+    // Flags and names: a value's name takes the command, and lands the same.
+    world.set(e, "RigidBody2D", { kind: "static", fixed_rotation: true });
+    expect(world.get(e, "RigidBody2D")!.kind).toBe(1);
+    expect(world.get(e, "RigidBody2D")!.fixed_rotation).toBe(true);
+    // A component the entity lacks: read undefined, and a write adds it (the command's path).
+    expect(world.get(e, "Velocity")).toBeUndefined();
+    world.set(e, "Velocity", { linear: { x: 2 } });
+    expect(world.get(e, "Velocity")!.linear.x).toBe(2);
+    // By name as well as by id; a field the component lacks is still refused.
+    expect(world.get("Mover", "Transform")!.position.x).toBe(1);
+    expect(() => world.set(e, "Transform", { positon: { x: 0 } } as never)).toThrow();
+});
+
+function require_command(): { command: (name: string, params?: unknown) => unknown } {
+    return { command: (name, params) => (globalThis as unknown as { __pocket: { command(n: string, p?: unknown): unknown } }).__pocket.command(name, params) };
+}

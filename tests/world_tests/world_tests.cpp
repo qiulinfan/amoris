@@ -373,3 +373,28 @@ TEST_CASE("events.why walks cause links", "[world][events]") {
     REQUIRE(ev.why(999).empty());
     REQUIRE(ev.find(b)->cause == a);
 }
+
+TEST_CASE("a bare name finds the first entity so named in tree order, as the tree changes", "[world][find]") {
+    World w;
+    const EntityId a = w.spawn("A", 0, Json::object()).value();
+    const EntityId b = w.spawn("B", 0, Json::object()).value();
+    const EntityId leaf = w.spawn("Leaf", b, Json::object()).value();
+    REQUIRE(w.find("Leaf") == leaf);
+    REQUIRE(w.find("Leaf") == leaf);   // the second time from the kept answer
+    // One under the earlier root comes first in tree order.
+    const EntityId earlier = w.spawn("Leaf", a, Json::object()).value();
+    REQUIRE(w.find("Leaf") == earlier);
+    REQUIRE(w.rename(earlier, "Twig").has_value());
+    REQUIRE(w.find("Leaf") == leaf);
+    REQUIRE(w.find("Twig") == earlier);
+    REQUIRE(w.reparent(leaf, a).has_value());
+    REQUIRE(w.find("Leaf") == leaf);
+    REQUIRE(w.find("/A/Leaf") == leaf);
+    REQUIRE(w.destroy(leaf).has_value());
+    REQUIRE(w.find("Leaf") == 0);
+    REQUIRE(w.find("Nothing") == 0);
+    const EntityId late = w.spawn("Nothing", b, Json::object()).value();
+    REQUIRE(w.find("Nothing") == late);   // a miss kept before is forgotten when the tree changes
+    w.clear();
+    REQUIRE(w.find("Twig") == 0);
+}
