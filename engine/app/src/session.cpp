@@ -4697,6 +4697,17 @@ Result<Json> Session::world_lint(const Json& p) {
         if (file_missing(t.path)) add("error", e.id(), "Timeline", std::format("the timeline file {} is not in the project", t.path), "write it (timeline.write, project.write) or point Timeline.path at one");
         else if (!t.error.empty()) add("warning", e.id(), "Timeline", std::format("a track does not apply: {}", t.error), "timeline.info {path} lists every track's problem");
     });
+    // Hits and zones (docs/design/combat.md): a hitbox needs something that notices touches.
+    ecs.each([&](flecs::entity e, const world::Hitbox& hb) {
+        const auto* col = e.try_get<world::Collider>();
+        const bool trigger = col && col->is_trigger && e.has<world::RigidBody>();
+        if (!trigger && !e.has<world::Area2D>()) add("warning", e.id(), "Hitbox", "a Hitbox notices nothing on its own, so it hurts nothing", "add a trigger Collider (is_trigger, with a static or kinematic RigidBody) for 3D bodies, or an Area2D for 2D ones");
+        if (col && !col->is_trigger) add("warning", e.id(), "Hitbox", "its Collider is solid: bodies stop at it instead of coming in, so it never hits", "set Collider.is_trigger true");
+        if (hb.damage == 0 && hb.knockback == 0) add("info", e.id(), "Hitbox", "it hits for nothing: no damage and no knockback", "set Hitbox.damage (negative heals)");
+    });
+    ecs.each([&](flecs::entity e, const world::Area2D& a) {
+        if (a.size.x <= 0 || a.size.y <= 0) add("warning", e.id(), "Area2D", "an area with no size notices nothing", "give Area2D.size half extents above 0");
+    });
     ecs.each([&](flecs::entity e, const world::Decal& d) {
         if (file_missing(d.texture)) add("error", e.id(), "Decal", std::format("the decal's image {} is not in the project", d.texture), "point Decal.texture at an image in the project, or clear it for the built-in spot");
     });
@@ -5023,6 +5034,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         const std::string comp = p["component"].get<std::string>();
         POCKET_TRY_VOID(w.check_patch(comp, p["value"]));
         POCKET_TRY_VOID(w.set(id, comp, p["value"], cause));
+        if (opt<bool>(p, "quiet", false)) return Json{{"ok", true}};   // a caller that does not read it back (the SDK)
         POCKET_TRY(now, w.get(id, comp));
         return Json{{"ok", true}, {"value", now}};   // the component as it is now, the patch merged in
     }
@@ -5625,7 +5637,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");
     }
     {
-        const std::vector<std::string> keys = command_param_names(h->params);
+        const std::vector<std::string>& keys = command_param_names(*h);
         auto takes = [&](const std::string& k) { return std::find(keys.begin(), keys.end(), k) != keys.end(); };
         if (given.contains("path") && !given.contains("entity") && takes("entity") && !takes("path")) {
             adjusted = given;

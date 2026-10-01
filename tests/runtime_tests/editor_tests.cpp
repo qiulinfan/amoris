@@ -703,6 +703,26 @@ TEST_CASE("editor paints tiles in the scene pane and undoes the stroke", "[edito
     ok(s.finish());
 }
 
+TEST_CASE("inspector steps a named code through its names", "[editor][names]") {
+    app::Session s(editor_options("assets"));
+    ok(s.start());
+    s.set_paused(true);
+    // An entity of its own with a light, so its few fields sit at the top of the inspector.
+    ok(s.command("world.spawn", Json{{"name", "Aa"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", "point"}}}}}}));
+    for (int i = 0; i < 20; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Aa")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    std::string snap = ok(s.command("ui.snapshot", Json{{"depth", 18}, {"max_nodes", 3000}}))["text"].get<std::string>();
+    INFO(snap);
+    REQUIRE(snap.find("point") != std::string::npos);   // the kind shown by its name
+    // The light's rows are at the foot of the pane: scroll it down, then step the kind on.
+    ok(s.command("ui.wheel", Json{{"id", find_named(s, "inspector")}, {"dy", -6}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "Light.kind:next")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "Light"}}))["kind"] == 2);   // point -> spot
+}
+
 TEST_CASE("inspector shows list fields as JSON and takes them back", "[editor][layers]") {
     app::Session s(editor_options("assets"));
     ok(s.start());

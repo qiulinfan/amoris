@@ -22,6 +22,7 @@ std::span<const CommandHelp> command_helps();
 const CommandHelp* command_help(std::string_view name);
 // The parameter names a signature mentions (alternatives and optional ones included).
 std::vector<std::string> command_param_names(std::string_view params);
+const std::vector<std::string>& command_param_names(const CommandHelp& help);   // the same, worked out once a command
 // Whether a signature accepts keys beyond the ones it names ("...").
 bool command_params_open(std::string_view params);
 Json command_help_json(const CommandHelp& h);

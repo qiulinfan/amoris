@@ -1,6 +1,7 @@
 #include "command_help.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 
 namespace pocket::app {
 
@@ -23,7 +24,7 @@ constexpr CommandHelp kHelp[] = {
     {"world.spawn", "name?, parent?, components?, cause?", "Create an entity with components ({Transform: {...}, MeshRenderer: {...}}); answers its id and path."},
     {"world.destroy", "entity, cause?", "Remove an entity and its children."},
     {"world.get", "entity, component", "One component's values of an entity."},
-    {"world.set", "entity, component, value, cause?", "Change a component: value holds the fields to change ({color: {r, g, b, a}}; a named code by its name, {kind: \"point\"}); the component is added when missing. Answers {ok, value}, the component as it now is; a field it does not have or a value of the wrong type is refused and nothing is applied."},
+    {"world.set", "entity, component, value, cause?, quiet?", "Change a component: value holds the fields to change ({color: {r, g, b, a}}; a named code by its name, {kind: \"point\"}); the component is added when missing. Answers {ok, value}, the component as it now is (quiet: true answers {ok} alone, for callers that do not read it); a field it does not have or a value of the wrong type is refused and nothing is applied."},
     {"world.remove", "entity, component, cause?", "Take a component off an entity."},
     {"world.has", "entity, component", "Whether an entity has a component."},
     {"world.describe", "entity", "Everything about one entity: name, path, parent, children and every component's values."},
@@ -236,8 +237,23 @@ std::size_t distance(std::string_view a, std::string_view b) {
 std::span<const CommandHelp> command_helps() { return kHelp; }
 
 const CommandHelp* command_help(std::string_view name) {
-    for (const CommandHelp& h : kHelp) if (h.name == name) return &h;
-    return nullptr;
+    // Every command call looks its help up (to check its keys): by hash, not along the table.
+    static const std::unordered_map<std::string_view, const CommandHelp*> index = [] {
+        std::unordered_map<std::string_view, const CommandHelp*> m;
+        for (const CommandHelp& h : kHelp) m.emplace(h.name, &h);
+        return m;
+    }();
+    const auto it = index.find(name);
+    return it == index.end() ? nullptr : it->second;
+}
+
+const std::vector<std::string>& command_param_names(const CommandHelp& h) {
+    static const std::unordered_map<const CommandHelp*, std::vector<std::string>> names = [] {
+        std::unordered_map<const CommandHelp*, std::vector<std::string>> m;
+        for (const CommandHelp& c : kHelp) m.emplace(&c, command_param_names(c.params));
+        return m;
+    }();
+    return names.at(&h);
 }
 
 std::vector<std::string> command_param_names(std::string_view params) {

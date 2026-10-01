@@ -48,3 +48,7 @@ Every tick folds the exposed state and the whole world into the run's tick hash 
 | the entity-order map built only when a component refers to an entity | 0.38 to 0.43 |
 
 The digest is new (`hello-golden.json` and the reproducible-math sweep pin were regenerated); what is hashed is unchanged, and the mixing uses 64-bit integer operations only, so native and web builds agree as before.
+
+## The JSON path's answers (2026-10-01)
+
+`world.set` came to answer with the component as it now is (`{ok, value}`), which a script never reads: the swarm's JSON path went from 16 to 26 ms a tick for its 6000 commands. The SDK's `world.set` now passes `quiet: true` (answered `{ok}` alone), and the path is 17.7 ms again (three runs: 17.9, 17.8, 17.5); an agent's `world.set` still gets the value. Looking every command's help up by hash instead of along the table, and its parameter names once instead of every call, changed nothing measurable: the cost is in the JSON each call makes and reads on both sides.

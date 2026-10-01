@@ -33,6 +33,8 @@ export { debug } from "./debug";
 export type { DebugColor, DebugOptions } from "./debug";
 export type { RecorderStatus, RecordedEntity, RecordedDiff, Comparison } from "./recorder";
 export { physics, onContacts } from "./physics";
+export { combat } from "./combat";
+export type { ShotOptions } from "./combat";
 export { sprites } from "./sprites";
 export { particles } from "./particles";
 export { animation } from "./animation";

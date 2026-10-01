@@ -19,6 +19,8 @@ world.set(player, "Health", { current: 30, max: 30, invulnerable: 0.5, team: 1 }
 onTick(() => { for (const e of events.since(seen)) if (e.type === "health.depleted" && e.subject === player) respawn(); });
 ```
 
+The SDK's `combat` has the two shapes most games want: `combat.shoot(from, direction, {speed, damage, knockback, team, seconds, radius, color, space})` fires a bullet, a small moving hitbox that goes on its first hit or after `seconds` (in 3D a kinematic trigger sphere, for rigid bodies and characters; with `space: "2d"` a square `Area2D` with a sprite, for 2D bodies), and `combat.swing(hitbox, seconds)` switches a hitbox on for a moment of game time and off again (a sword's arc, a stomp). Both are made of the components above, so the world, the transcript and an agent see every bullet. `world.lint` names a hitbox that cannot notice anything (no trigger collider with a body, no `Area2D`), one on a solid collider, and one that hits for nothing.
+
 An agent asks the same way: `step {ticks: 600, until: {event: "health.depleted"}}` runs until something dies, `events.why {seq}` says what killed it.
 
-`runtime_tests` (`[combat]`): spikes in a 2D level take a player from 30 to 0 in three hits half a second apart with its guard between, a same-team hitbox does nothing and a bullet hits once and is gone; a 3D trigger hurts a walking character.
+`runtime_tests` (`[combat]`): spikes in a 2D level take a player from 30 to 0 in three hits half a second apart with its guard between, a same-team hitbox does nothing, a 2D bullet flies into the player, hits once and is gone, and the lint names a lone hitbox; a 3D trigger hurts a walking character and a 3D bullet does the same and goes.

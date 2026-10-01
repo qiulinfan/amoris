@@ -90,7 +90,7 @@ export const world = {
         return v === null ? undefined : v;
     },
     set<K extends ComponentName>(entity: EntityRef, component: K, value: DeepPartial<ComponentInput<K>>, cause?: number): void {
-        command("world.set", { entity, component, value, cause });
+        command("world.set", { entity, component, value, cause, quiet: true });   // the answer's value is for agents; a script reads with get
     },
     remove(entity: EntityRef, component: ComponentName, cause?: number): void {
         command("world.remove", { entity, component, cause });

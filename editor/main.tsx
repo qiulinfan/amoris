@@ -3,7 +3,7 @@
 // (hierarchy, inspector, console, transcript) is also reachable by `ui_snapshot`, and every
 // button is reachable by `ui_click`. Every edit is undoable (editor/history.ts) and the scene
 // pane has a translate gizmo (editor/gizmo.ts) that agents drag with `ui.drag`.
-import { Button, Checkbox, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, physics, render, setProjectRoot, signal, terrain, theme, tilemap, ui, world } from "pocket";
+import { Button, Checkbox, Choice, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, physics, render, setProjectRoot, signal, terrain, theme, tilemap, ui, world } from "pocket";
 import type { Bus, ComponentName, Described, Dim, Scene, Transform, UiEvent, VNode, WorldEvent } from "pocket";
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
@@ -16,7 +16,7 @@ import type { Vec3 } from "pocket";
 // ------------------------------------------------------------------------------------ state
 interface TreeRow { id: number; name: string; path: string; depth: number }
 interface LogRow { seq: number; tick?: number; level: string; cat: string; msg: string }
-interface SchemaField { name: string; type: string; doc: string }
+interface SchemaField { name: string; type: string; doc: string; names?: string[] }
 interface SchemaComponent { name: string; doc: string; serialized: boolean; fields: SchemaField[]; default?: Record<string, unknown> }
 // The panes live in three docks (left, right, bottom), each showing one of its panes at a time
 // behind tabs; a tab dragged onto another dock moves its pane there. The widths keep their first
@@ -1319,6 +1319,17 @@ function fieldInputs(entity: number, comp: ComponentName, field: SchemaField, va
                 <Label text={field.name} muted />
                 <box flex={1} />
                 <Button label={value ? "true" : "false"} small name={`${comp}.${field.name}`} onClick={() => setField(entity, comp, field.name, null, value ? "false" : "true", "bool")} />
+            </Row>
+        );
+    }
+    const names = field.names;
+    if (names && names.length > 0 && typeof value === "number") {
+        // A code with value names (Light.kind, RigidBody.kind, a project's own): stepped through by name.
+        return (
+            <Row gap={4} key={field.name}>
+                <Label text={field.name} muted />
+                <box flex={1} />
+                <Choice value={names[value] ?? String(value)} options={names} width={140} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, String(names.indexOf(v)), "float")} />
             </Row>
         );
     }

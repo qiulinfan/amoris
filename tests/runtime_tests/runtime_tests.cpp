@@ -986,10 +986,18 @@ TEST_CASE("a hitbox hurts the Health that comes into it, pushes it away, waits o
     REQUIRE(s.command("world.destroy", Json{{"entity", "Spikes"}}).has_value());
     const Json here = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
     REQUIRE(s.command("world.spawn", Json{{"name", "Friendly"}, {"components", Json{{"Transform", Json{{"position", here}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}, {"Hitbox", Json{{"team", 1}}}}}}).has_value());
-    REQUIRE(s.command("world.spawn", Json{{"name", "Bullet"}, {"components", Json{{"Transform", Json{{"position", here}}}, {"Area2D", Json{{"size", Json{{"x", 1}, {"y", 1}}}}}, {"Hitbox", Json{{"damage", 5}, {"destroy", true}}}}}}).has_value());
+    // A bullet as combat.shoot makes one in 2D: an Area2D moving by its Velocity, from two units away.
+    const Json start = Json{{"position", Json{{"x", here["x"].get<double>() - 2}, {"y", here["y"]}, {"z", 0}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Bullet"}, {"components", Json{{"Transform", start}, {"Velocity", Json{{"linear", Json{{"x", 10}, {"y", 0}, {"z", 0}}}}}, {"Area2D", Json{{"size", Json{{"x", 0.15}, {"y", 0.15}}}}}, {"Hitbox", Json{{"damage", 5}, {"destroy", true}}}, {"Lifetime", Json{{"seconds", 2}}}}}}).has_value());
     REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
     REQUIRE(s.command("world.get", Json{{"entity", "Player"}, {"component", "Health"}}).value()["current"] == 25.0);
     REQUIRE_FALSE(s.command("world.find", Json{{"path", "Bullet"}}).value().is_number());
+    // A hitbox with nothing to notice touches is named by the lint.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lonely"}, {"components", Json{{"Transform", Json::object()}, {"Hitbox", Json::object()}}}}).has_value());
+    const Json lint = s.command("world.lint", Json::object()).value();
+    bool named = false;
+    for (const Json& pr : lint["problems"]) named = named || (pr["component"] == "Hitbox" && pr["path"] == "/Lonely");
+    REQUIRE(named);
     REQUIRE(s.finish().has_value());
 }
 
@@ -1017,6 +1025,19 @@ TEST_CASE("a hitbox on a 3D trigger hurts a character that walks into it", "[run
     REQUIRE(r["until"]["met"] == true);
     REQUIRE(r["until"]["event"]["data"]["by"] == "/Fire");
     REQUIRE(s.command("world.get", Json{{"entity", "Player"}, {"component", "Health"}}).value()["current"] == 35.0);
+    // A bullet as combat.shoot makes one in 3D: a kinematic trigger sphere moving by its Velocity.
+    const Json now = s.command("world.get", Json{{"entity", "Player"}, {"component", "Transform"}}).value()["position"];
+    const Json from = Json{{"x", now["x"].get<double>() - 4}, {"y", now["y"]}, {"z", now["z"]}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Shot"}, {"components", Json{
+        {"Transform", Json{{"position", from}}}, {"Velocity", Json{{"linear", Json{{"x", 12}, {"y", 0}, {"z", 0}}}}},
+        {"RigidBody", Json{{"kind", "kinematic"}}}, {"Collider", Json{{"shape", "sphere"}, {"size", Json{{"x", 0.15}, {"y", 0.15}, {"z", 0.15}}}, {"is_trigger", true}}},
+        {"Hitbox", Json{{"damage", 5}, {"destroy", true}}}, {"Lifetime", Json{{"seconds", 2}}}}}}).has_value());
+    Json shot = s.command("step", Json{{"ticks", 60}, {"until", Json{{"event", "hit"}}}}).value();
+    INFO(shot.dump());
+    REQUIRE(shot["until"]["met"] == true);
+    REQUIRE(shot["until"]["event"]["data"]["by"] == "/Shot");
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE_FALSE(s.command("world.find", Json{{"path", "Shot"}}).value().is_number());   // gone on its hit
     REQUIRE(s.finish().has_value());
 }
 
@@ -4325,8 +4346,8 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
         REQUIRE_FALSE((*h)["summary"].get<std::string>().empty());
     }
     Json set = s.command("help", Json{{"command", "world.set"}}).value();
-    REQUIRE(set["usage"] == "world.set {entity, component, value, cause?}");
-    REQUIRE(set["params"] == Json::array({"entity", "component", "value", "cause"}));
+    REQUIRE(set["usage"] == "world.set {entity, component, value, cause?, quiet?}");
+    REQUIRE(set["params"] == Json::array({"entity", "component", "value", "cause", "quiet"}));
     Json usage = s.command("commands", Json{{"usage", true}}).value();
     REQUIRE(usage.size() == listed.size());
     // Narrowed for an agent's context: a family, a word, one line each, one component's schema.
