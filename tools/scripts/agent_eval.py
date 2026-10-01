@@ -2387,6 +2387,56 @@ def coins_check(env, answer):
     return True, "four coins taken, the next one glowing each time, level.complete once, no script error"
 
 
+# A house drawn as voxels: a text file the agent writes, read by the engine like any model.
+HOUSE_VOXELS = {
+    "voxel": 0.25,
+    "palette": {"w": "#e8dcc0", "r": "#a8322d", "d": "#5a3a22", "g": "#9cc9e8"},
+    "layers": [
+        ["wwwwww", "w....w", "w....w", "w....w", "w....w", "wwddww"],
+        ["wwwwww", "w....w", "w....w", "w....w", "w....w", "wwddww"],
+        ["wwwwww", "w....w", "g....g", "w....w", "w....w", "wgwwgw"],
+        ["wwwwww", "w....w", "w....w", "w....w", "w....w", "wwwwww"],
+        ["rrrrrr", "rrrrrr", "rrrrrr", "rrrrrr", "rrrrrr", "rrrrrr"],
+        ["......", "rrrrrr", "rrrrrr", "rrrrrr", "rrrrrr", "......"],
+        ["......", "......", "rrrrrr", "rrrrrr", "......", "......"],
+    ],
+}
+
+
+def house_solve(env, project_dir):
+    os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
+    with open(os.path.join(project_dir, "assets", "house.voxels"), "w") as f:
+        json.dump(HOUSE_VOXELS, f, indent=1)
+    edit_main(project_dir, lambda s: s.replace("onStart(() => {", 'onStart(() => {\n    world.spawn("House", { components: { Transform: { position: { x: 10, y: 0, z: 0 } }, MeshRenderer: { mesh: "assets/house.voxels" } } });', 1))
+    return None
+
+
+def house_check(env, answer):
+    found = [r for r in env.command("world.query", {"with": ["MeshRenderer", "Transform"], "fields": ["MeshRenderer", "Transform"]})["entities"] if r["MeshRenderer"].get("mesh") == "assets/house.voxels"]
+    if not found:
+        return False, "no entity draws assets/house.voxels"
+    p = found[0]["Transform"]["position"]
+    if not (near(p["x"], 10, 0.01) and near(p["y"], 0, 0.01) and near(p["z"], 0, 0.01)):
+        return False, f"the house is at {p}, not (10, 0, 0)"
+    d = env.command("assets.describe", {"path": "assets/house.voxels"})
+    if d.get("error") or d.get("importer") != "voxels":
+        return False, f"the engine does not read assets/house.voxels as voxels: {d.get('error') or d.get('importer')}"
+    text = env.command("project.read", {"path": "assets/house.voxels"})["text"]
+    v = json.loads("\n".join(l for l in text.splitlines() if not l.strip().startswith("//")))
+    layers = v["layers"]
+    width = max(len(r) for layer in layers for r in layer)
+    depth = max(len(layer) for layer in layers)
+    if len(layers) < 6 or width < 6 or depth < 6:
+        return False, f"the house is {width} by {depth} cells and {len(layers)} high, not at least 6 each way"
+    colours = {ch for layer in layers for row in layer for ch in row if ch not in ". "}
+    if len(colours) < 3:
+        return False, f"the house uses {len(colours)} colours, not walls, a roof and a door"
+    if not any(ch != "." and ch != " " for row in layers[0] for ch in row):
+        return False, "the bottom layer is empty: the house does not stand on the ground"
+    tri = d.get("triangles", 0)
+    return True, f"{width} by {depth} by {len(layers)} cells in {len(colours)} colours, {tri} triangles, at (10, 0, 0)"
+
+
 # A festival: two rows of poles, each with a cloth flag woven far finer than a flag that size needs,
 # so the cloth is where each tick goes. A fix keeps every flag where it is, its size, pin and colour,
 # still flying in the wind, at a weave of 8 by 5 or more.
@@ -2574,6 +2624,8 @@ TASKS = [
      "task": "Players say this game gets slower the longer it runs. A cannon fires pellets that arc up and land. Find what is wrong and fix it, without changing how many pellets are fired or how they fly and where they land. Answer null."},
     {"name": "sinking_crate", "project": "blank", "ticks": 0, "script": True, "edits": "scene.json", "setup": sinking_setup, "solve": sinking_solve, "check": sinking_check,
      "task": "In this level three crates drop onto the floor, but the blue one (BlueCrate) falls straight through it. Find why and fix the level's scene so that BlueCrate lands on the floor like the other crates, leaving the rest as it is (the Ghost drifts through the floor on purpose). Answer the name of the component field that was wrong."},
+    {"name": "voxel_house", "project": "hello", "ticks": 0, "script": True, "edits": "a new voxel model in assets/ and scripts/main.ts", "solve": house_solve, "check": house_check,
+     "task": "Draw a small house as a voxel model of your own, written as text in assets/house.voxels: walls of one colour, a roof of another and a door, at least 6 cells wide, 6 deep and 6 high, standing on its bottom layer. Show it in the game from the start at (10, 0, 0). Answer null."},
     {"name": "frozen_coins", "project": "blank", "ticks": 0, "script": True, "setup": coins_setup, "solve": coins_solve, "check": coins_check,
      "task": "Players say this game freezes when they take the last coin: they walk right (the move_x action) and take the coins one by one, the next coin glowing each time, and taking the last should complete the level. Find what is wrong and fix it, leaving the rest of the game as it is. Answer null."},
     {"name": "festival_flags", "project": "blank", "ticks": 0, "script": True, "edits": "scene.json", "setup": festival_setup, "before": festival_before, "solve": festival_solve, "check": festival_check,

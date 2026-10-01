@@ -70,7 +70,7 @@ fn newest_asset(project: &Path) -> SystemTime {
             // reaches the running game: docs/design/assets.md, Live models).
             if matches!(
                 ext.as_str(),
-                "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "ogg" | "mp3" | "glb" | "gltf" | "bin" | "obj" | "stl" | "ply" | "blend" | "fbx" | "dae" | "usd" | "usda" | "usdc" | "usdz" | "abc" | "3ds" | "x3d" | "wrl"
+                "png" | "jpg" | "jpeg" | "bmp" | "tga" | "tmj" | "wav" | "ogg" | "mp3" | "glb" | "gltf" | "bin" | "obj" | "stl" | "ply" | "vox" | "voxels" | "blend" | "fbx" | "dae" | "usd" | "usda" | "usdc" | "usdz" | "abc" | "3ds" | "x3d" | "wrl"
             ) {
                 if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
                     if m > *newest {

@@ -4,6 +4,7 @@
 #include <catch_amalgamated.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -1127,4 +1128,79 @@ TEST_CASE("an image says what it looks like, in numbers, colour names and charac
     REQUIRE(d["ascii"][0].get<std::string>()[0] == ' ');
     // Without ascii, the numbers alone.
     REQUIRE_FALSE(store.describe("assets/star.svg").contains("ascii"));
+}
+
+TEST_CASE("voxel models: text layers and MagicaVoxel files meshed greedily, colours in the vertices", "[assets][voxels]") {
+    const std::filesystem::path dir = project() / "assets" / "voxel-test";
+    std::filesystem::create_directories(dir);
+    // Two red cells side by side and one green on top of the right one; a glowing cell apart.
+    std::ofstream(dir / "pair.voxels") << R"({
+  // comments are allowed
+  "voxel": 0.5,
+  "palette": {"r": "#ff0000", "g": [0, 1, 0], "l": {"color": "#ffd27a", "emissive": 4}},
+  "layers": [
+    ["rr.l"],
+    [".g"]
+  ]
+})";
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/voxel-test/pair.voxels");
+    REQUIRE(m.has_value());
+    const assets::Mesh& v = **m;
+    REQUIRE(v.importer == "voxels");
+    // Red: the pair's shared face hidden and its faces merged (bottom, front, back, left one quad
+    // each; the top only over the left cell, the right end one) = 6 quads; green: 5 (its bottom
+    // sits on red); the lamp: 6.
+    REQUIRE(v.indices.size() == static_cast<std::size_t>(6 * (6 + 5 + 6)));
+    REQUIRE(v.aabb_min.x == Catch::Approx(-1.0f));   // four cells of 0.5 across, centred
+    REQUIRE(v.aabb_max.x == Catch::Approx(1.0f));
+    REQUIRE(v.aabb_min.y == Catch::Approx(0.0f));
+    REQUIRE(v.aabb_max.y == Catch::Approx(1.0f));
+    bool red = false, green = false;
+    for (const assets::MeshVertex& x : v.vertices) {
+        red = red || (x.color.x > 0.99f && x.color.y < 0.01f);
+        green = green || (x.color.y > 0.99f && x.color.x < 0.01f);
+    }
+    REQUIRE((red && green));
+    // The lamp glows: a material of its own with an emissive colour; the rest share a plain one.
+    REQUIRE(v.materials.size() == 2);
+    REQUIRE(v.materials[1].emissive.x > 3.0f);
+    REQUIRE(v.submeshes.size() == 2);
+    REQUIRE_FALSE(store.mesh("assets/voxel-test/missing.voxels").has_value());
+    std::ofstream(dir / "bad.voxels") << R"({"palette": {"r": "#f00"}, "layers": [["rx"]]})";
+    auto bad = store.mesh("assets/voxel-test/bad.voxels");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("'x'") != std::string::npos);
+
+    // MagicaVoxel: z is up; two cells along its x, palette entries 1 (red) and 2 (green).
+    {
+        std::string body;
+        auto u32 = [&](std::string& s, std::uint32_t x) { s.append(reinterpret_cast<const char*>(&x), 4); };
+        auto chunk = [&](const char* id, const std::string& content) {
+            std::string c(id, 4);
+            u32(c, static_cast<std::uint32_t>(content.size()));
+            u32(c, 0);
+            return c + content;
+        };
+        std::string size, xyzi, rgba;
+        u32(size, 2); u32(size, 1); u32(size, 3);
+        u32(xyzi, 3);
+        for (std::array<std::uint8_t, 4> c : {std::array<std::uint8_t, 4>{0, 0, 0, 1}, {1, 0, 0, 2}, {1, 0, 2, 1}}) xyzi.append(reinterpret_cast<const char*>(c.data()), 4);
+        for (int i = 0; i < 256; ++i) u32(rgba, i == 0 ? 0xFF0000FFu : i == 1 ? 0xFF00FF00u : 0xFF808080u);
+        body = chunk("SIZE", size) + chunk("XYZI", xyzi) + chunk("RGBA", rgba);
+        std::string file = "VOX ";
+        u32(file, 150);
+        file += "MAIN";
+        u32(file, 0);
+        u32(file, static_cast<std::uint32_t>(body.size()));
+        file += body;
+        std::ofstream(dir / "pair.vox", std::ios::binary) << file;
+    }
+    auto x = store.mesh("assets/voxel-test/pair.vox");
+    REQUIRE(x.has_value());
+    REQUIRE((*x)->importer == "vox");
+    // The file's z up is the engine's y: the third cell floats two above the second. The red and
+    // green side by side hide the face between them (5 quads each), the floating one shows 6.
+    REQUIRE((*x)->aabb_max.y == Catch::Approx(0.3f));
+    REQUIRE((*x)->indices.size() == static_cast<std::size_t>(6 * (5 + 5 + 6)));
 }

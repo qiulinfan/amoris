@@ -159,7 +159,7 @@ export interface InputEvent {
 
 export type LogFields = Record<string, unknown>;
 
-import { registry, contextHandlers, contextName, own, keysDown, keysPressed, register, timed } from "./registry";
+import { registry, contextHandlers, contextName, own, keysDown, keysPressed, noteExpose, register, timed, timedGet } from "./registry";
 import type { Handlers } from "./registry";
 
 export interface Frame {
@@ -254,6 +254,7 @@ export const saves = {
  */
 export function expose(name: string, getter: () => unknown): void {
     own.exposed.set(name, getter);
+    noteExpose(name, getter);
 }
 
 export function log(message: string, fields?: LogFields): void {
@@ -323,7 +324,7 @@ function collectState(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [ctx, h] of registry.contexts) {
         if (!registry.active.has(ctx)) continue;
-        for (const [name, getter] of h.exposed) out[name] = getter();
+        for (const [name, getter] of h.exposed) out[name] = timedGet(getter);
     }
     return out;
 }
@@ -342,6 +343,11 @@ function selected(context: unknown, activeOnly = true): Handlers[] {
 export function isActive(): boolean {
     return registry.active.has(contextName);
 }
+
+// The SDK as script.eval sees it (world, events, input, ... as names of their own): this bundle's,
+// the last loaded (the project's after the editor's).
+import * as sdk from "./pocket";
+(globalThis as Record<string, unknown>).__pocket_sdk = () => sdk;
 
 (globalThis as Record<string, unknown>).__pocket_dispatch = function (kind: string, arg: unknown, context?: unknown): unknown {
     switch (kind) {

@@ -93,6 +93,27 @@ export function register(kind: Kind, f: Function, depth = 2): void {
     registry.costs.set(f, { kind, context: contextName, name: f.name, at: site(depth), calls: 0, ms: 0, max: 0 });
 }
 
+/** Note where an exposed value's getter was made (`expose` calls it): script.profile times it under its name. */
+export function noteExpose(name: string, getter: Function, depth = 3): void {
+    registry.costs.set(getter, { kind: "expose", context: contextName, name, at: site(depth), calls: 0, ms: 0, max: 0 });
+}
+
+/** A getter's value, adding the time it took to its cost. */
+export function timedGet(getter: () => unknown): unknown {
+    const t0 = __pocket.clock();
+    try {
+        return getter();
+    } finally {
+        const dt = __pocket.clock() - t0;
+        const c = registry.costs.get(getter);
+        if (c !== undefined) {
+            c.calls += 1;
+            c.ms += dt;
+            if (dt > c.max) c.max = dt;
+        }
+    }
+}
+
 /** Run a handler, adding the time it took to its cost. */
 export function timed<A>(f: (a: A) => unknown, a: A): void {
     const t0 = __pocket.clock();

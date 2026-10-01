@@ -1,0 +1,23 @@
+{
+  // A tree drawn in layers from the ground up: each layer's rows run from the back to the front,
+  // each row's letters from left to right; "." is empty (docs/design/assets.md, Voxel models).
+  "voxel": 0.25,
+  "palette": {
+    "b": "#6b4a2b",
+    "g": "#3f8f3a",
+    "d": "#2f6e2c",
+    "a": {"color": "#d0312d", "roughness": 0.4},
+    "f": {"color": "#fff3a0", "emissive": 2.5}
+  },
+  "layers": [
+    [".......", ".......", ".......", "...b...", ".......", ".......", "......."],
+    [".......", ".......", ".......", "...b...", ".......", ".......", "......."],
+    [".......", ".......", ".......", "...b...", ".......", ".......", "......."],
+    [".......", "..ggg..", ".ggggg.", ".ggbgg.", ".ggggg.", "..ggg..", "......."],
+    ["..ddd..", ".ggggg.", "ggggggg", "gggbgga", "ggggggg", ".ggggg.", "..dad.."],
+    ["..ggg..", ".ggggg.", "ggggggg", "ggggggg", "agggggg", ".ggggg.", "..ggg.."],
+    [".......", "..ggg..", ".ggdgg.", ".ggggg.", ".gdggg.", "..ggg..", "......."],
+    [".......", ".......", "..ggg..", "..ggg..", "..ggg..", ".......", "f......"],
+    [".......", ".......", ".......", "...g...", ".......", ".......", "......."]
+  ]
+}

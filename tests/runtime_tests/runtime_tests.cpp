@@ -205,6 +205,38 @@ TEST_CASE("script errors are reported, not fatal", "[runtime]") {
     REQUIRE((*r)["errors"][0]["message"].get<std::string>().find("boom") != std::string::npos);
 }
 
+TEST_CASE("script.eval has the SDK's exports as names and answers an error with its message", "[runtime][eval]") {
+    app::Session s(hello_options(-1));
+    REQUIRE(s.start().has_value());
+    const Json made = s.command("script.eval", Json{{"source", "world.spawn('Evaled')"}}).value();
+    REQUIRE(made.is_number());
+    REQUIRE(s.command("script.eval", Json{{"source", "pocket.world.find('Evaled')"}}).value() == made);
+    const Json bad = s.command("script.eval", Json{{"source", "nothingHere.x"}}).value();
+    INFO(bad.dump());
+    REQUIRE(bad["error"].get<std::string>().find("Can't find variable: nothingHere") != std::string::npos);
+    // A var stays for the next call, as in a console.
+    REQUIRE(s.command("script.eval", Json{{"source", "var kept = 41; kept + 1"}}).value() == 42);
+    REQUIRE(s.command("script.eval", Json{{"source", "kept"}}).value() == 41);
+}
+
+TEST_CASE("a reload after a script error drops the old handlers before the new bundle's join", "[runtime][reload]") {
+    app::Session s(hello_options(-1));
+    REQUIRE(s.start().has_value());
+    auto handlers = [&] { return s.command("script.eval", Json{{"source", "globalThis.__pocket_registry.contexts.get('project').tick.length"}}).value().get<int>(); };
+    const int ticks = handlers();
+    REQUIRE(ticks > 0);
+    // hello's tick throws once its ball is gone: a script error stops the simulation.
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    (void)s.command("step", Json{{"ticks", 2}});
+    REQUIRE_FALSE(s.ok());
+    const Json r = s.command("project.reload", Json::object()).value();
+    INFO(r.dump());
+    REQUIRE(r["ok"] == true);
+    REQUIRE(handlers() == ticks);
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    REQUIRE(s.ok());
+}
+
 TEST_CASE("a script error names the file and line that were written, through the bundle's line map", "[runtime][sourcelines]") {
     auto o = hello_options(3);
     auto broken = root() / "build" / "test-out" / "mapped.js";

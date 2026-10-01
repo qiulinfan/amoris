@@ -9,11 +9,15 @@
 #   tools/scripts/linux.sh exec "<shell command>"   # run it in the copy, after building
 
 #   tools/scripts/linux.sh <command>  # any pocket command, e.g. "run hello -- --headless --frames 60 --json"
-# Needs Docker (colima start on a Mac).
+#   POCKET_LINUX_ARCH=amd64 tools/scripts/linux.sh ...   # the same on x86_64 (its own image and volume)
+# Needs Docker (colima start on a Mac; `colima start --vm-type vz --vz-rosetta` runs x86_64 through Rosetta).
 set -e
 root=$(cd "$(dirname "$0")/../.." && pwd)
-image=pocket-linux
-docker build -q -t "$image" "$root/tools/docker/linux" >/dev/null
+arch=${POCKET_LINUX_ARCH:-}
+image=pocket-linux${arch:+-$arch}
+volume=$image
+platform=${arch:+--platform linux/$arch}
+docker build -q $platform -t "$image" "$root/tools/docker/linux" >/dev/null
 step=${1:-test}
 [ $# -gt 0 ] && shift
 case "$step" in
@@ -23,7 +27,7 @@ case "$step" in
     test) cmd="./.pocket/pocket build $* && ./.pocket/pocket test $*" ;;
     *) cmd="./.pocket/pocket $step $*" ;;
 esac
-docker run --rm -i $( [ "$step" = shell ] && echo -t ) -v "$root":/src:ro -v pocket-linux:/work "$image" bash -c "
+docker run --rm -i $platform $( [ "$step" = shell ] && echo -t ) -v "$root":/src:ro -v "$volume":/work "$image" bash -c "
     set -e
     mkdir -p /work/aipocket
     rsync -a --delete --exclude /build --exclude /.pocket/deps --exclude /.pocket/cache --exclude /.pocket/pocket --exclude /tools/pocket/target --exclude /dist --exclude /.codex --exclude /.git /src/ /work/aipocket/

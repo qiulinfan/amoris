@@ -22,7 +22,7 @@ interface SchemaComponent { name: string; doc: string; serialized: boolean; fiel
 // behind tabs; a tab dragged onto another dock moves its pane there. The widths keep their first
 // names: `hierarchy` is the left dock's, `inspector` the right's.
 interface Layout { hierarchy: number; inspector: number; bottom: number; docks: Record<Dock, Pane[]>; active: Record<Dock, Pane | "">; }
-interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "blender" }
+interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "vox" | "voxels" | "blender" }
 type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script" | "timeline";
 const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script", "timeline"];
 type Pane = "hierarchy" | "inspector" | Tab;
@@ -876,7 +876,7 @@ function describeAsset(path: string): string {
         if (typeof d.error === "string") return d.error;
         if (d.kind === "mesh") {
             const count = (v: unknown, one: string) => { const n = Array.isArray(v) ? v.length : 0; return n > 0 ? `, ${n} ${one}${n > 1 ? "s" : ""}` : ""; };
-            const via = d.importer === "blender" ? `; read through Blender, kept as ${String(d.converted)}` : d.importer === "obj" ? "; an OBJ" : d.importer === "stl" ? "; an STL" : d.importer === "ply" ? "; a PLY" : "";
+            const via = d.importer === "blender" ? `; read through Blender, kept as ${String(d.converted)}` : d.importer === "obj" ? "; an OBJ" : d.importer === "stl" ? "; an STL" : d.importer === "ply" ? "; a PLY" : d.importer === "vox" ? "; a MagicaVoxel model" : d.importer === "voxels" ? "; voxels written as text" : "";
             return `${String(d.vertices)} vertices, ${String(d.triangles)} triangles, ${String(d.submeshes)} submeshes, ${String(d.nodes)} nodes${count(d.clips, "clip")}${count(d.lights, "light")}${count(d.cameras, "camera")}${via}`;
         }
         if (d.kind === "tilemap") {

@@ -15,3 +15,5 @@ The run's log shows what an agent sees without pixels:
 and the report's `render` block: `{"draw_calls": 5, "meshes": 4, "assets": {"meshes": 2, "textures": 1, "missing": ["assets/does-not-exist.glb"]}}`.
 
 Reproduce: `pocket test --filter assets`, `pocket test --filter renderer`, `python3 tools/scripts/make_sample_assets.py` (regenerates the binary files byte for byte).
+
+`voxels.png` (`tools/scripts/voxel_evidence.py`, 2026-10-01): `samples/assets/assets/tree.voxels`, a tree written as nine text layers of a seven-letter palette (trunk, two greens, red apples a little glossy, a glowing firefly), shown three times on a lawn and turned 0, 45 and 135 degrees, at 960x540 in release. It meshes into 226 triangles in three materials (the plain cells, the apples, the firefly).

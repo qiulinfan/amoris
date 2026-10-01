@@ -394,6 +394,11 @@ Result<Mesh> parse_stl(const std::string& bytes, const std::string& display_path
 // given (normals smoothed when not), polygon faces fanned into triangles, one gray material (white
 // when the vertices are coloured).
 Result<Mesh> parse_ply(const std::string& bytes, const std::string& display_path);
+// Voxel models (docs/design/assets.md, Voxel models): MagicaVoxel's .vox (its first model and its
+// palette) and .voxels (JSON: a palette of letters and layers of rows drawn in them), meshed
+// greedily, colours in the vertices, around the bottom centre.
+Result<Mesh> parse_vox(const std::string& bytes, const std::string& display_path);
+Result<Mesh> parse_voxels(const std::string& text, const std::string& display_path);
 // Formats Blender reads and the engine converts through it (.blend, .fbx, .dae, .usd*, .abc, ...).
 bool blender_format(std::string_view extension);
 // Blender's executable: `configured`, else POCKET_BLENDER, the usual install places, PATH; "" for none.

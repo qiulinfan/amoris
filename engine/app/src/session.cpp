@@ -788,7 +788,22 @@ Status Session::start() {
     started_ = true;
     (void)bundle_src;
     // script.eval helper: indirect eval in the global scope, errors reported as values.
-    if (auto r = host_->evaluate("globalThis.__pocket_eval = function (src) { try { const v = (0, eval)(src); return v === undefined ? null : v; } catch (e) { return { error: String(e && e.stack ? e.stack : e) }; } };", "<pocket:eval>"); !r) record_error(r.error());
+    // The SDK's exports are names of their own in what script.eval runs (world, events, input, ...,
+    // and pocket for all of them; kept current across reloads, never over a name the page or a game
+    // made global), and an error answers with its message as well as its frames.
+    if (auto r = host_->evaluate(R"(globalThis.__pocket_eval = function (src) {
+    const sdk = typeof globalThis.__pocket_sdk === "function" ? globalThis.__pocket_sdk() : null;
+    if (sdk) {
+        const ours = globalThis.__pocket_eval_names || (globalThis.__pocket_eval_names = new Set());
+        for (const k of ["pocket", ...Object.keys(sdk)]) {
+            if (!/^[A-Za-z_$][\w$]*$/.test(k) || (k in globalThis && !ours.has(k))) continue;
+            globalThis[k] = k === "pocket" ? sdk : sdk[k];
+            ours.add(k);
+        }
+    }
+    try { const v = (0, eval)(src); return v === undefined ? null : v; }
+    catch (e) { return { error: String(e) + (e && e.stack ? "\n" + e.stack : "") }; }
+};)", "<pocket:eval>"); !r) record_error(r.error());
     // Math.random from the run's seed, so code that reaches for it (a library, an agent's habit)
     // replays, runs a scenario at many seeds and plays in lockstep like random() does. sfc32 on
     // 32-bit integer operations gives the same bits on every JavaScript engine; it is a stream of
@@ -5508,8 +5523,10 @@ Result<Json> Session::script_command(std::string_view op, const Json& p) {
         std::filesystem::path path = name == "editor" ? options_.editor_bundle : name == "scenario" ? options_.scenario_bundle : options_.bundle;
         if (name != "editor" && name != "project" && name != "scenario") return fail("bad_args", "unknown script context '{}'", name);
         if (path.empty()) return fail("bad_args", "no bundle for context '{}'", name);
-        dispatch("unload", name, name);
+        // The errors go first: dispatch runs nothing while a script error stands, and the old
+        // handlers must be dropped, or the new bundle's would join them (the old tick still throwing).
         errors_.clear();
+        dispatch("unload", name, name);
         if (auto r = load_bundle(path, name); !r) { record_error(r.error()); return fail(r.error()); }
         has_dispatch_ = host_->has_function("__pocket_dispatch");
         if (start) dispatch("start", Json::object(), name);
@@ -5704,8 +5721,9 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         timelines_->forget();
         j["settings"] = settings;
         if (scripts) {
-            dispatch("unload", "project", "project");
+            // Errors first, so the unload runs (see script.reload).
             errors_.clear();
+            dispatch("unload", "project", "project");
             if (auto r = load_bundle(options_.bundle, "project"); !r) { record_error(r.error()); return fail(r.error()); }
             has_dispatch_ = host_->has_function("__pocket_dispatch");
         }

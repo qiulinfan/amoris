@@ -293,9 +293,9 @@ export const world = {
         return command<{ roots: Entity[] }>("world.instantiate", { mesh: path, parent: options.parent, name: options.name, position: options.position, cause: options.cause }).roots[0];
     },
     /**
-     * Read a model now and describe it: glTF, OBJ (with its MTL) and STL are read by the engine; .blend,
-     * .fbx, .dae, .usd, .abc and .ply go through Blender once per file content into `.imported/` (`force`
-     * converts again). Any mesh path works in a MeshRenderer or instantiateMesh without this; it is for
+     * Read a model now and describe it: glTF, OBJ (with its MTL), STL, PLY and voxel models (.vox,
+     * .voxels) are read by the engine; .blend, .fbx, .dae, .usd and .abc go through Blender once per
+     * file content into `.imported/` (`force` converts again). Any mesh path works in a MeshRenderer or instantiateMesh without this; it is for
      * seeing what a file holds (materials, lights, cameras, parts) before using it.
      */
     importModel(path: string, force = false): { path: string; importer: string; converted?: string; cached?: boolean; seconds?: number; blender_found: boolean; mesh: Record<string, unknown> } {
