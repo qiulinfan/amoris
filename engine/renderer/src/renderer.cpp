@@ -211,6 +211,8 @@ constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // millimetres against a bias of tenths of a unit, at half the memory traffic of 32-bit floats.
 // The lights' atlas keeps 32-bit floats: a perspective depth crowds its precision near the light.
 constexpr WGPUTextureFormat kCascadeDepth = WGPUTextureFormat_Depth16Unorm;
+// The raw ambient occlusion: occlusion and contact shadow, and the view depth for the blur to weigh by.
+constexpr WGPUTextureFormat kAoRawFormat = WGPUTextureFormat_RGBA16Float;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
 // The id pass's surface targets (screen-space reflections): the normal (octahedral), roughness and
 // metallic; and the albedo.
@@ -1325,7 +1327,7 @@ fn ssr_px(c: vec4f) -> vec2f {
     let k0 = 1.0 / c0.w;
     let k1 = 1.0 / c1.w;
     let steps = max(u32(ssr.params.z), 8u);
-    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))));
+    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))) + ssr.more.y);
     let lo_px = vec2i(frame.viewport.xy);
     let hi_px = vec2i(frame.viewport.xy + frame.viewport.zw);
     var prev_t = 0.0;
@@ -2202,7 +2204,7 @@ fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
 @fragment fn fs_ao(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let full = vec2i(pos.xy * 2.0);
     let d = depth_at(full);
-    if (d >= 1.0) { return vec4f(1.0); }
+    if (d >= 1.0) { return vec4f(1.0, 1.0, 6.0e4, 1.0); }   // the sky: unoccluded, and far for the blur
     let fp = vec2f(full) + 0.5;
     let p = world_at(fp, d);
     // The normal from the neighbors on the nearer side, so an edge does not bend it.
@@ -2263,21 +2265,21 @@ fn view_depth(p: vec3f) -> f32 { return dot(p - ao.camera.xyz, ao.fwd.xyz); }
             }
         }
     }
-    return vec4f(ambient, contact, 0.0, 1.0);
+    // The view depth rides along in b, so the blur weighs its neighbours without rebuilding them.
+    return vec4f(ambient, contact, here, 1.0);
 }
 @fragment fn fs_ao_blur(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let c = vec2i(pos.xy);
     let dims = vec2i(textureDimensions(src));
-    let center = view_depth(world_at(vec2f(c * 2) + 0.5, depth_at(c * 2)));
+    let center = textureLoad(src, c, 0).b;
     var sum = vec2f(0.0);
     var weight = 0.0;
     for (var y = -2; y <= 2; y = y + 1) {
         for (var x = -2; x <= 2; x = x + 1) {
             let q = clamp(c + vec2i(x, y), vec2i(0), dims - vec2i(1));
-            let qd = depth_at(q * 2);
-            let vd = select(view_depth(world_at(vec2f(q * 2) + 0.5, qd)), 1e9, qd >= 1.0);
-            let w = 1.0 / (1.0 + abs(vd - center) * 8.0 / max(ao.params.x, 1e-3));
-            sum = sum + textureLoad(src, q, 0).rg * w;
+            let t = textureLoad(src, q, 0);
+            let w = 1.0 / (1.0 + abs(t.b - center) * 8.0 / max(ao.params.x, 1e-3));
+            sum = sum + t.rg * w;
             weight = weight + w;
         }
     }
@@ -2639,6 +2641,7 @@ struct Renderer::Impl {
     WGPUPipelineLayout ssr_layout = nullptr;
     WGPURenderPipeline ssr_pipeline = nullptr;
     WGPUBuffer ssr_uniforms = nullptr;
+    std::uint64_t ssr_frame = 0;
     WGPUBindGroup ssr_bg = nullptr;
     WGPUTextureView ssr_bg_scene = nullptr, ssr_bg_depth = nullptr, ssr_bg_surface = nullptr;
     // Water (docs/design/water.md): this frame's bodies as the shader reads them, the pass that draws
@@ -4092,9 +4095,9 @@ struct Renderer::Impl {
         pld.bindGroupLayoutCount = 1;
         pld.bindGroupLayouts = &ao_bgl;
         ao_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
-        auto make = [&](const char* label, const char* entry) -> WGPURenderPipeline {
+        auto make = [&](const char* label, const char* entry, WGPUTextureFormat format) -> WGPURenderPipeline {
             WGPUColorTargetState ct{};
-            ct.format = WGPUTextureFormat_RG8Unorm;
+            ct.format = format;
             ct.writeMask = WGPUColorWriteMask_All;
             WGPUFragmentState fs{};
             fs.module = ao_shader;
@@ -4114,8 +4117,8 @@ struct Renderer::Impl {
             rpd.fragment = &fs;
             return wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         };
-        ao_pipeline = make("pocket.ao", "fs_ao");
-        ao_blur_pipeline = make("pocket.ao.blur", "fs_ao_blur");
+        ao_pipeline = make("pocket.ao", "fs_ao", kAoRawFormat);
+        ao_blur_pipeline = make("pocket.ao.blur", "fs_ao_blur", WGPUTextureFormat_RG8Unorm);
         if (!ao_pipeline || !ao_blur_pipeline) return fail("gpu_pipeline_failed", "ambient occlusion pipelines could not be created");
         ao_uniforms = device->create_buffer("pocket.ao", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(AoUniforms));
         auto [wt, wv] = make_target("pocket.ao.white", 1, 1, WGPUTextureFormat_RG8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
@@ -4891,7 +4894,12 @@ struct Renderer::Impl {
             ssr_bg_depth = prepass_view;
             ssr_bg_surface = surface_view;
         }
-        const float u[8] = {ssr.max_distance, ssr.max_roughness, static_cast<float>(ssr.steps), ssr.thickness, ssr.intensity, 0, 0, 0};
+        // With TAA blending the frames, each frame marches half the steps from an offset that moves
+        // by the golden ratio, and the frames together sample between each other's steps.
+        const bool spread = taa.enabled;
+        const int steps = spread ? std::max(8, ssr.steps / 2) : ssr.steps;
+        const float offset = spread ? std::fmod(static_cast<float>(ssr_frame++ % 64) * 0.618034f, 1.0f) : 0.0f;
+        const float u[8] = {ssr.max_distance, ssr.max_roughness, static_cast<float>(steps), ssr.thickness, ssr.intensity, offset, 0, 0};
         device->write_buffer(ssr_uniforms, 0, u, sizeof u);
         WGPURenderPassColorAttachment ca{};
         ca.view = fx_view;
@@ -5554,7 +5562,7 @@ struct Renderer::Impl {
         if (ao_tex[0] && ao_w == aw && ao_h == ah) return {};
         release_ao_targets();
         for (int i = 0; i < 2; ++i) {
-            auto [t, v] = make_target(i == 0 ? "pocket.ao.a" : "pocket.ao.b", aw, ah, WGPUTextureFormat_RG8Unorm, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+            auto [t, v] = make_target(i == 0 ? "pocket.ao.a" : "pocket.ao.b", aw, ah, i == 0 ? kAoRawFormat : WGPUTextureFormat_RG8Unorm, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
             if (!t) return fail("gpu_texture_failed", "cannot create the AO target {}x{}", aw, ah);
             ao_tex[i] = t;
             ao_view[i] = v;

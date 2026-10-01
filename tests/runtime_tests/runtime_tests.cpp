@@ -2870,6 +2870,16 @@ TEST_CASE("the control server answers over HTTP, runs past 3600 frames and fails
     INFO(reply.dump());
     REQUIRE(reply["result"]["frames"] == 3601);
     REQUIRE_FALSE(s.finished());
+    // The tools' shape for several calls, sent to the server as it is: each answered in order.
+    Json many;
+    std::thread tc([&] { many = post(R"({"id":3,"calls":[{"method":"world.summary"},{"method":"no.such"},{"method":"state"}]})"); });
+    while (server->describe()["handled"].get<std::uint64_t>() < 4) server->pump(50);
+    tc.join();
+    INFO(many.dump());
+    REQUIRE(many["result"].size() == 3);
+    REQUIRE(many["result"][0]["result"]["entities"].get<int>() > 0);
+    REQUIRE(many["result"][1].contains("error"));
+    REQUIRE(many["result"][2]["result"]["frames"] == 3601);
     // A request queued after the last pump: shutting the server down answers it with an error
     // instead of hanging the client (and the shutdown, which joins the handler threads).
     Json late;

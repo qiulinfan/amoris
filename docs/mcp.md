@@ -26,7 +26,7 @@ pi, oh-my-pi and other agents:
 
 - **oh-my-pi** (`omp`) reads `.mcp.json`: run it at the repository root and the `pocket` tools are there (it calls them through its `write` tool on `xd://mcp__pocket_<tool>`).
 - **pi** has no MCP by design; `integrations/pi/pocket.ts` is a pi extension with the same reach: a `pocket` tool (a command and its params) and `pocket_look` (the frame as an image, with what is visible; `around: true` or an entity's name for the six-sided sheet of `render.views`). Load it with `pi -e integrations/pi/pocket.ts` or copy it into `~/.pi/agent/extensions/`; it drives `$POCKET_RPC_URL`, or the url `/pocket-attach <url>` sets.
-- **Any agent with a shell**: `pocket rpc <method> '<params>'` sends one command to `$POCKET_RPC_URL` (or `--url`) and prints the result: JSON, or the text of a text result such as `world.tree`. `pocket rpc help '{"command": "world.set"}'` says how to call a command.
+- **Any agent with a shell**: `pocket rpc <method> '<params>'` sends one command to `$POCKET_RPC_URL` (or `--url`) and prints the result: JSON, or the text of a text result such as `world.tree`. `pocket rpc help '{"command": "world.set"}'` says how to call a command. The server takes a JSON-RPC batch (an array of requests) and also the agent tools' shape, `{"calls": [{"method", "params"}, ...]}`, answered with each call's method and its result or error in order: an agent scripting its own checks in a shell or a Python cell sent exactly that.
 
 ## Attaching to a running runtime
 

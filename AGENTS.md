@@ -92,7 +92,7 @@ A running runtime is the engine's interface: every feature is a command on its c
 `tools/scripts/dev/` holds the scripts a working session reuses (standard library only):
 
 - `runtime.py`: `Runtime(sample, port, size, release=False)` starts a headless runtime serving a sample (bundle it first with `pocket ts`) and `rpc(method, params)` calls it; as a script, `runtime.py <sample> <method> '<json>' ...` runs calls in order and prints the answers. Run anything that talks to a runtime outside the sandbox (loopback connections are blocked inside it).
-- `gpu_probe.py <sample> [--size WxH] [--frames N] [--rpc method '<json>']`: the release runtime's GPU time per frame, in all and per pass (`render.stats.gpu`), beside `perf`; for measuring a renderer change before and after.
+- `gpu_probe.py <sample> [--size WxH] [--frames N] [--rpc method '<json>']`: the release runtime's GPU time per frame, in all and per pass (`render.stats.gpu`), beside `perf`; for measuring a renderer change before and after. Close any browser page drawing a pack first (and do not measure while an agent benchmark runs): another workload on the GPU doubles every number.
 - `suite.sh [name]`: the whole `pocket test --json` in the background into `build/test-reports/<name>.json`, with `<name>.done` when it ends; `test_summary.py <report>` prints the verdict and each failure. Run the module or tag a change touches directly (`./build/debug/bin/<module> "[tag]"`) while working, and the whole suite before a commit that changes shared code.
 - `edits.py`: `patch(path, [(old, new), ...])`, exact replacements that fail unless each old text occurs once.
 

@@ -107,6 +107,22 @@ struct ControlServer::Impl {
                 res.set_content(rpc_error(nullptr, -32700, "parse error"), "application/json");
                 return;
             }
+            // {"calls": [{method, params}, ...]}, the shape the agent tools take, is answered like
+            // the tools answer it: each call's method with its result or its error, in order.
+            if (body.is_object() && !body.contains("method") && body.contains("calls") && body["calls"].is_array()) {
+                Json out = Json::array();
+                for (const Json& call : body["calls"]) {
+                    const std::string method = call.is_object() ? call.value("method", "") : "";
+                    auto r = enqueue(method, call.is_object() ? call.value("params", Json::object()) : Json::object());
+                    out.push_back(r ? Json{{"method", method}, {"result", *r}} : Json{{"method", method}, {"error", r.error().message}});
+                }
+                Json resp;
+                resp["jsonrpc"] = "2.0";
+                resp["id"] = body.value("id", Json(nullptr));
+                resp["result"] = std::move(out);
+                res.set_content(resp.dump(), "application/json");
+                return;
+            }
             bool batch = body.is_array();
             Json responses = Json::array();
             for (const Json& call : batch ? body : Json::array({body})) {
