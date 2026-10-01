@@ -1,0 +1,65 @@
+{
+  "url": "http://localhost:4718/dungeon/",
+  "chrome": "Chrome/154.0.8037.92",
+  "online": {
+    "scope": "http://localhost:4718/dungeon/",
+    "caches": [
+      "pocket:http://localhost:4718/dungeon/:fc7a30251045"
+    ],
+    "kept": [
+      "./",
+      "index.html",
+      "dungeon.data",
+      "dungeon.data.js",
+      "icon-192.png",
+      "icon-512.png",
+      "manifest.webmanifest",
+      "pocket_runtime.js",
+      "pocket_runtime.wasm"
+    ],
+    "manifest": {
+      "background_color": "#101014",
+      "display": "fullscreen",
+      "icons": [
+        {
+          "purpose": "any",
+          "sizes": "192x192",
+          "src": "icon-192.png",
+          "type": "image/png"
+        },
+        {
+          "purpose": "any",
+          "sizes": "512x512",
+          "src": "icon-512.png",
+          "type": "image/png"
+        }
+      ],
+      "name": "Pocket: dungeon",
+      "orientation": "landscape",
+      "scope": "./",
+      "short_name": "dungeon",
+      "start_url": "./",
+      "theme_color": "#101014"
+    }
+  },
+  "offline": {
+    "controlled": true,
+    "online": false,
+    "state": {
+      "player.x": 5.5,
+      "player.y": -5.5,
+      "visible": 118,
+      "explored": 118,
+      "torches": 8
+    },
+    "from_cache": [
+      "dungeon.data.js",
+      "pocket_runtime.js",
+      "dungeon.data",
+      "manifest.webmanifest",
+      "pocket_runtime.wasm",
+      "icon-192.png",
+      "icon-192.png"
+    ]
+  }
+}

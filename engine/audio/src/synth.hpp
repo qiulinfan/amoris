@@ -16,4 +16,9 @@ Result<std::vector<float>> synthesize(const Json& recipe, int rate);
 // The preset names a recipe can start from.
 std::vector<std::string> synth_presets();
 
+// A song (docs/design/audio.md, Music from a score): instruments as recipes and tracks of notes
+// on a grid of steps, rendered to mono samples at `rate`; a looping song's tails wrap round to
+// its start, so it plays on without a seam.
+Result<std::vector<float>> synthesize_song(const Json& song, int rate);
+
 }  // namespace pocket::audio

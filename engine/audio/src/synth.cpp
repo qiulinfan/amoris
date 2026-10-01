@@ -70,6 +70,15 @@ Result<std::vector<Json>> preset(const std::string& name, std::uint64_t seed) {
 }
 
 Result<Voice> read_voice(const Json& j) {
+    // A field the synthesizer does not have is refused, not passed over: what it was meant to do
+    // would not happen.
+    static const std::vector<std::string> kFields = {"wave", "frequency", "to", "duty", "attack", "hold", "decay", "volume", "lowpass", "delay", "vibrato", "steps", "preset", "seed"};
+    for (const auto& [key, value] : j.items()) {
+        if (std::find(kFields.begin(), kFields.end(), key) != kFields.end()) continue;
+        std::string list;
+        for (std::size_t i = 0; i + 2 < kFields.size(); ++i) list += (list.empty() ? "" : ", ") + kFields[i];
+        return fail("bad_audio", "'{}' is not a field of a voice ({}){}", key, list, key == "reverb" || key == "echo" || key == "pan" ? "; reverb, echo and pan belong to the bus, the room or audio.play" : "");
+    }
     Voice v;
     auto num = [&](const char* key, double& out, double lo, double hi) -> Status {
         if (!j.contains(key)) return {};
@@ -149,6 +158,114 @@ void render(const Voice& v, int rate, std::uint64_t seed, std::vector<float>& ou
 }  // namespace
 
 std::vector<std::string> synth_presets() { return kPresets; }
+
+namespace {
+
+// "C4" (middle C), "F#5", "Bb2", "A4" (440 Hz): the frequency, or below 0 when it is not a note.
+double note_frequency(std::string_view n) {
+    if (n.size() < 2) return -1;
+    static constexpr int kSemis[7] = {9, 11, 0, 2, 4, 5, 7};   // A B C D E F G from C
+    const char letter = static_cast<char>(std::toupper(static_cast<unsigned char>(n[0])));
+    if (letter < 'A' || letter > 'G') return -1;
+    int semi = kSemis[letter - 'A'];
+    std::size_t i = 1;
+    while (i < n.size() && (n[i] == '#' || n[i] == 'b')) semi += n[i++] == '#' ? 1 : -1;
+    if (i >= n.size()) return -1;
+    int octave = 0;
+    bool neg = false;
+    if (n[i] == '-') { neg = true; ++i; }
+    if (i >= n.size()) return -1;
+    for (; i < n.size(); ++i) {
+        if (n[i] < '0' || n[i] > '9') return -1;
+        octave = octave * 10 + (n[i] - '0');
+    }
+    if (neg) octave = -octave;
+    const int midi = (octave + 1) * 12 + semi;
+    return 440.0 * std::pow(2.0, (midi - 69) / 12.0);
+}
+
+}  // namespace
+
+Result<std::vector<float>> synthesize_song(const Json& song, int rate) {
+    if (!song.is_object()) return fail("bad_audio", "a song is a JSON object: {{bpm, instruments, tracks}}");
+    const double bpm = song.value("bpm", 120.0);
+    const double per_beat = song.value("steps_per_beat", 2.0);
+    if (!(bpm >= 20 && bpm <= 400)) return fail("bad_audio", "'bpm' is {}, not between 20 and 400", bpm);
+    if (!(per_beat >= 1 && per_beat <= 16)) return fail("bad_audio", "'steps_per_beat' is {}, not between 1 and 16", per_beat);
+    const double step = 60.0 / bpm / per_beat;
+    if (!song.contains("instruments") || !song["instruments"].is_object()) return fail("bad_audio", "a song needs instruments: {{name: recipe, ...}}");
+    if (!song.contains("tracks") || !song["tracks"].is_array() || song["tracks"].empty()) return fail("bad_audio", "a song needs tracks: [{{instrument, notes}}, ...]");
+    // Every track's notes as tokens; the song is as long as its longest track (or `steps`).
+    struct Track { std::string instrument; std::vector<std::string> notes; double volume = 1; };
+    std::vector<Track> tracks;
+    std::size_t steps = 0;
+    for (const Json& t : song["tracks"]) {
+        Track tr;
+        tr.instrument = t.value("instrument", std::string());
+        if (!song["instruments"].contains(tr.instrument)) return fail("bad_audio", "a track plays '{}', which is not one of the instruments", tr.instrument);
+        tr.volume = t.value("volume", 1.0);
+        std::string text = t.value("notes", std::string());
+        for (std::size_t s = 0; s < text.size();) {
+            while (s < text.size() && (std::isspace(static_cast<unsigned char>(text[s])) || text[s] == '|')) ++s;
+            std::size_t e = s;
+            while (e < text.size() && !std::isspace(static_cast<unsigned char>(text[e])) && text[e] != '|') ++e;
+            if (e > s) tr.notes.push_back(text.substr(s, e - s));
+            s = e;
+        }
+        steps = std::max(steps, tr.notes.size());
+        tracks.push_back(std::move(tr));
+    }
+    if (song.contains("steps") && song["steps"].is_number()) steps = static_cast<std::size_t>(std::max(0.0, song["steps"].get<double>()));
+    if (steps == 0) return fail("bad_audio", "the song has no notes");
+    const bool loop = song.value("loop", true);
+    const auto length = static_cast<std::size_t>(std::llround(static_cast<double>(steps) * step * rate));
+    std::vector<float> out(length, 0.0f);
+    std::uint64_t k = 0;
+    for (const Track& tr : tracks) {
+        const Json& recipe = song["instruments"][tr.instrument];
+        // An instrument is a recipe: its first voice (or its preset's) is what each note plays.
+        Json voice = recipe;
+        if (recipe.contains("preset")) {
+            POCKET_TRY(base, preset(recipe["preset"].get<std::string>(), static_cast<std::uint64_t>(recipe.value("seed", 0))));
+            voice = base[0];
+            for (const auto& [kk, val] : recipe.items()) if (kk != "preset" && kk != "seed") voice[kk] = val;
+        }
+        auto parsed = read_voice(voice);
+        if (!parsed) return fail("bad_audio", "instrument '{}': {}", tr.instrument, parsed.error().message);
+        // A track shorter than the song repeats.
+        for (std::size_t i = 0; i < steps && !tr.notes.empty(); ++i) {
+            const std::string& n = tr.notes[i % tr.notes.size()];
+            if (n == "." || n == "-") continue;
+            Voice v = *parsed;
+            if (n != "x" && n != "X") {
+                const double f = note_frequency(n);
+                if (f <= 0) return fail("bad_audio", "track of '{}': '{}' is not a note (C4, F#5, Bb2), a rest (.), a hold (-) or a hit (x)", tr.instrument, n);
+                if (v.to > 0) v.to *= f / v.frequency;   // the instrument's slide, kept in proportion
+                v.frequency = f;
+            }
+            // Held through the steps of "-" after it.
+            std::size_t held = 1;
+            while (i + held < steps && tr.notes[(i + held) % tr.notes.size()] == "-") ++held;
+            v.hold = std::max(v.hold, static_cast<double>(held) * step - v.attack - v.decay * 0.5);
+            v.volume *= tr.volume;
+            std::vector<float> note;
+            render(v, rate, 0x5eed + k++, note);
+            const auto at = static_cast<std::size_t>(std::llround(static_cast<double>(i) * step * rate));
+            for (std::size_t j = 0; j < note.size(); ++j) {
+                std::size_t p = at + j;
+                if (p >= length) {
+                    if (!loop) break;
+                    p %= length;   // the tail of the last notes rings into the first
+                }
+                out[p] += note[j];
+            }
+        }
+    }
+    float peak = 0;
+    for (float s : out) peak = std::max(peak, std::fabs(s));
+    if (peak > 1.0f) for (float& s : out) s /= peak;
+    return out;
+}
 
 Result<std::vector<float>> synthesize(const Json& recipe, int rate) {
     if (!recipe.is_object()) return fail("bad_audio", "a recipe is a JSON object: {{wave, frequency, to, attack, hold, decay, ...}}, {{preset, seed}} or {{layers: [...]}}");

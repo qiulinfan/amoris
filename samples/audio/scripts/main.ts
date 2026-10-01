@@ -1,10 +1,12 @@
 // Sound: a looping hum from the scene (AudioSource with autoplay, on the ambience bus, which
 // project.toml ducks under the effects bus), a beep every second and a click when the crate lands, all driven by the simulation tick so a headless run reports the
 // same voices, positions and finish events as a window with a sound card. C plays a coin and B
-// a blast, both made from recipes (assets/coin.sfx, assets/blast.sfx: docs/design/audio.md).
+// a blast, both made from recipes (assets/coin.sfx, assets/blast.sfx: docs/design/audio.md), and
+// M starts or stops a theme written as a score (assets/theme.song).
 import { audio, events, expose, input, log, onStart, onTick, world } from "pocket";
 
 let beeps = 0;
+let music = 0;
 let finished = 0;
 let crate = 0;
 let y = 3;
@@ -31,6 +33,10 @@ onTick((t) => {
     for (const e of events.recent(5)) if (e.type === "audio.finished" && e.tick === t.tick) finished++;
     if (input.pressed("coin")) audio.play("assets/coin.sfx", { bus: "fx" });
     if (input.pressed("blast")) audio.play("assets/blast.sfx", { bus: "fx", entity: crate });
+    if (input.pressed("music")) {
+        if (music) { audio.stop(music); music = 0; }
+        else music = audio.play("assets/theme.song", { loop: true, volume: 0.6, bus: "music" });
+    }
 });
 
 expose("beeps", () => beeps);

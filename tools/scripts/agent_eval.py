@@ -388,6 +388,60 @@ def coin_chime_check(env, answer):
     return True, f"{heard[0]} ({secs[0]:.2f} s) plays when a coin is collected, not before"
 
 
+THEME_SONG = """{
+  "bpm": 120,
+  "instruments": {
+    "lead": {"wave": "square", "duty": 0.25, "hold": 0.1, "decay": 0.1, "volume": 0.25},
+    "bass": {"wave": "triangle", "hold": 0.15, "decay": 0.08, "volume": 0.4}
+  },
+  "tracks": [
+    {"instrument": "lead", "notes": "C5 E5 G5 E5 F5 A5 G5 C6"},
+    {"instrument": "bass", "notes": "C3 . G2 . F2 . G2 ."}
+  ]
+}
+"""
+
+
+def theme_song_solve(env, project_dir):
+    os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
+    with open(os.path.join(project_dir, "assets", "theme.song"), "w") as f:
+        f.write(THEME_SONG)
+
+    def transform(t):
+        head = "import { Label, events,"
+        start = "onStart(() => {\n"
+        if head not in t or start not in t:
+            raise RuntimeError("the sprites script changed shape")
+        t = t.replace(head, "import { Label, audio, events,", 1)
+        return t.replace(start, start + '    audio.play("assets/theme.song", { loop: true, volume: 0.5 });\n', 1)
+    edit_main(project_dir, transform)
+
+
+def theme_song_check(env, answer):
+    songs = [f["path"] for f in env.command("assets.list", {}) if f["path"].endswith(".song")]
+    if not songs:
+        return False, "no score (.song) under assets/"
+    playing = [v for v in env.command("audio.list", {}) if v["clip"] in songs]
+    if not playing:
+        return False, f"nothing from {songs} plays from the start"
+    if not playing[0].get("loop"):
+        return False, f"{playing[0]['clip']} plays once, not in a loop"
+    song = json.loads(env.command("project.read", {"path": playing[0]["clip"]})["text"])
+    tracks = song.get("tracks", [])
+    notes = lambda tr: [n for n in str(tr.get("notes", "")).replace("|", " ").split() if n not in (".", "-")]  # noqa: E731
+    if len(song.get("instruments", {})) < 2 or len(tracks) < 2:
+        return False, f"{playing[0]['clip']} has {len(song.get('instruments', {}))} instruments and {len(tracks)} tracks, not two of each"
+    if max(len(notes(t)) for t in tracks) < 8:
+        return False, "no track of at least eight notes"
+    secs = [c.get("seconds", 0) for c in env.command("audio.clips", {}) if c.get("path") == playing[0]["clip"]]
+    if not secs or secs[0] < 2:
+        return False, f"the score renders to {secs} seconds, under two"
+    env.command("step", {"ticks": int(secs[0] * 60) + 30})
+    if not [v for v in env.command("audio.list", {}) if v["clip"] == playing[0]["clip"]]:
+        return False, "the music stops after its first time through"
+    return True, f"{playing[0]['clip']}: {len(tracks)} tracks, {secs[0]:.1f} s, looping"
+
+
 def jump_sound_check(env, answer):
     # A sound file under assets/, silent until the player jumps, heard right after, and again on the next jump.
     st = lambda: env.command("state", {})["state"]  # noqa: E731
@@ -1690,6 +1744,8 @@ TASKS = [
      "task": "Give the jump a sound: write a short WAV file (mono 16-bit PCM, at least a tenth of a second, any tone) under assets/ in the project directory, and edit scripts/main.tsx so that it plays through the SDK's audio.play each time the player jumps from the ground, and at no other time."},
     {"name": "coin_chime", "project": "sprites", "ticks": 0, "script": True, "solve": coin_chime_solve, "check": coin_chime_check, "edits": "a new sound recipe",
      "task": "Give the sprites game a sound for picking up a coin, made as a sound recipe: a .sfx file of your own under assets/, a short bright chime that plays every time a coin is collected. Answer null."},
+    {"name": "theme_song", "project": "sprites", "ticks": 0, "script": True, "solve": theme_song_solve, "check": theme_song_check, "edits": "a new score",
+     "task": "Give the sprites game background music written as a score: a .song file of your own under assets/ with at least two instruments, a melody of at least eight notes and a bass line, playing in a loop from the start. Answer null."},
     {"name": "lamp_prefab", "project": "hello", "ticks": 0, "script": True, "solve": lamp_prefab_solve, "check": lamp_prefab_check,
      "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
     {"name": "hill_raise", "project": "hills", "ticks": 2, "before": hill_raise_before, "solve": hill_raise_solve, "check": hill_raise_check,

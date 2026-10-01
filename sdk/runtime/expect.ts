@@ -9,7 +9,7 @@ function format(v: unknown): string {
     }
 }
 
-export function expect<T>(actual: T) {
+function matchers<T>(actual: T) {
     return {
         toBe(expected: T): void {
             if (actual !== expected) throw new ExpectationError(`expected ${format(expected)}, got ${format(actual)}`);
@@ -25,15 +25,29 @@ export function expect<T>(actual: T) {
             const a = actual as unknown as number;
             if (!(a > expected)) throw new ExpectationError(`expected more than ${expected}, got ${format(a)}`);
         },
+        toBeGreaterThanOrEqual(expected: number): void {
+            const a = actual as unknown as number;
+            if (!(a >= expected)) throw new ExpectationError(`expected at least ${expected}, got ${format(a)}`);
+        },
         toBeLessThan(expected: number): void {
             const a = actual as unknown as number;
             if (!(a < expected)) throw new ExpectationError(`expected less than ${expected}, got ${format(a)}`);
         },
+        toBeLessThanOrEqual(expected: number): void {
+            const a = actual as unknown as number;
+            if (!(a <= expected)) throw new ExpectationError(`expected at most ${expected}, got ${format(a)}`);
+        },
         toBeTruthy(): void {
             if (!actual) throw new ExpectationError(`expected truthy, got ${format(actual)}`);
         },
+        toBeFalsy(): void {
+            if (actual) throw new ExpectationError(`expected falsy, got ${format(actual)}`);
+        },
         toBeUndefined(): void {
             if (actual !== undefined) throw new ExpectationError(`expected undefined, got ${format(actual)}`);
+        },
+        toBeDefined(): void {
+            if (actual === undefined) throw new ExpectationError("expected a value, got undefined");
         },
         toContain(item: unknown): void {
             const a = actual as unknown;
@@ -56,4 +70,25 @@ export function expect<T>(actual: T) {
             if (!threw) throw new ExpectationError("expected the function to throw");
         },
     };
+}
+
+type Matchers<T> = ReturnType<typeof matchers<T>>;
+
+/** expect(x).toBe(y), and expect(x).not.toBe(y) for the opposite of any matcher. */
+export function expect<T>(actual: T): Matchers<T> & { not: Matchers<T> } {
+    const m = matchers(actual);
+    const not = {} as Matchers<T>;
+    for (const [name, fn] of Object.entries(m) as Array<[keyof Matchers<T>, (...args: unknown[]) => void]>) {
+        (not as Record<string, unknown>)[name as string] = (...args: unknown[]) => {
+            let failed = false;
+            try {
+                fn(...args);
+            } catch (e) {
+                if (!(e instanceof ExpectationError)) throw e;
+                failed = true;
+            }
+            if (!failed) throw new ExpectationError(`expected not ${String(name)}(${args.map(format).join(", ")}), but it held for ${format(actual)}`);
+        };
+    }
+    return { ...m, not };
 }

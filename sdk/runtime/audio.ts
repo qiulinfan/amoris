@@ -109,6 +109,10 @@ export const audio = {
     clips(): Array<{ path: string; seconds: number }> {
         return cmd("audio.clips");
     },
+    /** What a clip sounds like, measured: its length, loudness, envelope, notes over time, brightness and a description in words (docs/design/audio.md, Listening without ears). */
+    analyze(clip: string): { clip: string; seconds: number; audible_seconds?: number; peak?: number; loudness_db?: number; attack_ms?: number; decay_ms?: number; onsets?: number; onsets_per_second?: number; pitch?: Array<{ from: number; to: number; hz: number; note: string }>; tonal?: number; brightness_hz?: number; character?: string } {
+        return cmd("audio.analyze", { clip });
+    },
     stats(): { device: string; sample_rate: number; voices: number; clips: number; plays: number; master_volume: number; muted: boolean } {
         return cmd("audio.stats");
     },

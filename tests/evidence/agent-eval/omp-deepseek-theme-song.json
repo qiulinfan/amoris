@@ -1,0 +1,48 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via extension --model deepseek/deepseek-flash --env-file /Users/qiulinfan/.omp/agent/.env",
+  "passed": 1,
+  "total": 1,
+  "seconds": 55.4,
+  "tasks": [
+    {
+      "name": "theme_song",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 55.4,
+      "detail": "assets/theme.song: 4 tracks, 7.0 s, looping",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 54.9,
+        "turns": 20,
+        "tool_calls": 26,
+        "tools": {
+          "read": 7,
+          "bash": 11,
+          "write": 1,
+          "edit": 3,
+          "pocket_apply (docs)": 1,
+          "pocket (docs)": 1,
+          "pocket_apply": 1,
+          "pocket": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 22626,
+          "output": 7486,
+          "cache_read": 463616,
+          "total": 493728
+        },
+        "cost_usd": 0.009276
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0093,
+    "tokens": 493728,
+    "tool_calls": 26
+  }
+}

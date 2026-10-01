@@ -112,6 +112,7 @@ constexpr CommandHelp kHelp[] = {
     {"audio.bus", "name, volume?, muted?, lowpass?, highpass?, echo?, echo_feedback?, echo_mix?, reverb?, duck_by?, duck_amount?, duck_seconds?", "A bus: its voices set as one (music, effects, dialogue): volume, mute, a low-pass and a high-pass over its mix, an echo (seconds apart, feedback, mix), its share of the room's reverb, and ducking to duck_amount while a voice plays on the duck_by bus. Answers the bus."},
     {"audio.buses", "", "Every bus with its settings, its ducking gain right now and its voices."},
     {"audio.list", "", "Every voice with its position, duration, volume, pan."},
+    {"audio.analyze", "clip", "What a clip sounds like, for an agent that cannot hear it: seconds, audible_seconds, peak, loudness_db, attack_ms, decay_ms, onsets and onsets_per_second, pitch over time as segments {from, to, hz, note}, tonal (the share of the sound with a pitch), brightness_hz (the spectral centroid) and character in words (\"short, bright, tonal, rising, sharp attack\"). Recipes (.sfx), scores (.song) and files alike."},
     {"audio.clips", "", "Loaded clips with lengths and sizes."},
     {"audio.stats", "", "The audio device, voices, clips, master volume."},
     {"audio.reverb", "room?, damping?, mix?", "The room every voice plays in: how long its reverb rings, how fast its high end dies, how loud it is (room 0 is dry)."},

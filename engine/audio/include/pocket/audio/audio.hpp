@@ -103,6 +103,10 @@ class Audio {
 
     // Decode (once) and cache a clip.
     Status load(const std::string& clip);
+    // Read a clip (all of them for "") again on its next play; voices playing it play on.
+    void forget(const std::string& clip);
+    // What a clip sounds like, measured (docs/design/audio.md, Listening without ears).
+    [[nodiscard]] Result<Json> analyze(const std::string& clip);
     Result<std::uint32_t> play(const std::string& clip, const PlayOptions& options = {});
     // Stop one voice, every voice of a clip/tag, or everything. Returns how many stopped.
     std::uint32_t stop(std::uint32_t voice);

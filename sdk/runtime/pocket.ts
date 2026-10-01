@@ -62,6 +62,8 @@ export { net } from "./net";
 export { input } from "./input";
 export { tween, ease } from "./tween";
 export { repro } from "./repro";
+export { rng, Rng, Noise, noise } from "./rng";
+export type { RandomSource, FbmOptions } from "./rng";
 export type { Easing, EaseName, TweenOptions, TweenHandle } from "./tween";
 export { timer, time, wait, nextTick, lastTick } from "./timer";
 export type { TimerHandle } from "./timer";

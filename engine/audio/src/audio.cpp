@@ -3,6 +3,7 @@
 #include <pocket/core/fs.hpp>
 #include <pocket/core/log.hpp>
 
+#include "analyze.hpp"
 #include "synth.hpp"
 
 #include <SDL3/SDL.h>
@@ -148,6 +149,7 @@ struct Audio::Impl {
     SDL_AudioStream* stream = nullptr;  // bound to the default playback device
     std::string device_name;
     std::map<std::string, std::unique_ptr<Clip>> clips;
+    std::vector<std::unique_ptr<Clip>> retired;   // forgotten clips that voices still play
     std::vector<Voice> voices;
     std::uint32_t next_id = 1;
     float master = 1.0f;
@@ -271,6 +273,17 @@ struct Audio::Impl {
             const auto* raw = reinterpret_cast<const std::uint8_t*>(out);
             pcm.assign(raw, raw + static_cast<std::size_t>(frames) * info.channels * sizeof(drmp3_int16));
             drmp3_free(out, nullptr);
+        } else if (ext == ".song") {
+            // A score (docs/design/audio.md, Music from a score): rendered at the mixer's rate.
+            Json song = Json::parse(std::string(bytes.begin(), bytes.end()), nullptr, false);
+            if (song.is_discarded()) return fail("bad_audio", "{}: not JSON", path);
+            auto made = synthesize_song(song, config.sample_rate);
+            if (!made) return fail("bad_audio", "{}: {}", path, made.error().message);
+            spec.format = SDL_AUDIO_F32;
+            spec.channels = 1;
+            spec.freq = config.sample_rate;
+            const auto* raw = reinterpret_cast<const std::uint8_t*>(made->data());
+            pcm.assign(raw, raw + made->size() * sizeof(float));
         } else if (ext == ".sfx") {
             // A recipe (docs/design/audio.md, Sounds from a recipe): rendered at the mixer's rate.
             Json recipe = Json::parse(std::string(bytes.begin(), bytes.end()), nullptr, false);
@@ -584,6 +597,24 @@ Status Audio::load(const std::string& clip) {
     return {};
 }
 
+void Audio::forget(const std::string& clip) {
+    // Read again on the next play; a voice playing the old one plays it to its end.
+    for (auto it = impl_->clips.begin(); it != impl_->clips.end();) {
+        if (!clip.empty() && it->first != clip) { ++it; continue; }
+        const Clip* c = it->second.get();
+        if (std::any_of(impl_->voices.begin(), impl_->voices.end(), [&](const Voice& v) { return v.clip == c; })) impl_->retired.push_back(std::move(it->second));
+        it = impl_->clips.erase(it);
+    }
+}
+
+Result<Json> Audio::analyze(const std::string& clip) {
+    POCKET_TRY(c, impl_->clip(clip));
+    if (c->streamed) return Json{{"clip", clip}, {"seconds", c->duration}, {"streamed", true}, {"note", "a long clip that streams: only its length is measured"}};
+    Json j = analyze_samples(c->samples, impl_->config.sample_rate);
+    j["clip"] = clip;
+    return j;
+}
+
 Result<std::uint32_t> Audio::play(const std::string& clip, const PlayOptions& options) {
     POCKET_TRY(c, impl_->clip(clip));
     Voice v;
@@ -696,6 +727,8 @@ Status Audio::set(std::uint32_t voice, const Json& params) {
 }
 
 std::vector<VoiceEvent> Audio::tick(double dt) {
+    // Forgotten clips go once nothing plays them.
+    std::erase_if(impl_->retired, [&](const std::unique_ptr<Clip>& c) { return std::none_of(impl_->voices.begin(), impl_->voices.end(), [&](const Voice& v) { return v.clip == c.get(); }); });
     std::vector<VoiceEvent> events;
     Impl& im = *impl_;
     for (Voice& v : im.voices) {

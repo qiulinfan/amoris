@@ -555,6 +555,7 @@ TEST_CASE("a recipe renders a sound: its pitch, its length, a preset and its see
     write("coin.sfx", R"({"preset": "coin"})");
     write("coin7.sfx", R"({"preset": "coin", "seed": 7})");
     write("bad.sfx", R"({"wave": "trumpet"})");
+    write("odd.sfx", R"({"wave": "sine", "reverb": 0.3})");
     auto make = [&]() {
         audio::Config c;
         c.project_dir = dir;
@@ -593,5 +594,94 @@ TEST_CASE("a recipe renders a sound: its pitch, its length, a preset and its see
     auto bad = a->load("assets/bad.sfx");
     REQUIRE_FALSE(bad.has_value());
     REQUIRE(bad.error().message.find("'wave' is sine, square, triangle, saw or noise") != std::string::npos);
+    auto odd = a->load("assets/odd.sfx");
+    REQUIRE_FALSE(odd.has_value());
+    REQUIRE(odd.error().message.find("'reverb' is not a field of a voice") != std::string::npos);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a score renders music: notes at their pitch and place, rests, holds, a seamless loop", "[audio][synth][song]") {
+    const auto dir = std::filesystem::temp_directory_path() / std::format("pocket-song-{}", std::rand());
+    std::filesystem::create_directories(dir / "assets");
+    auto write = [&](const char* name, const std::string& text) { std::ofstream(dir / "assets" / name) << text; };
+    const std::string sine = R"("instruments": {"s": {"wave": "sine", "attack": 0.001, "hold": 0.01, "decay": 0.01, "volume": 0.5}})";
+    // One step a second: A4 held for a second, then rests.
+    write("held.song", "{\"bpm\": 60, \"steps_per_beat\": 1, " + sine + R"(, "tracks": [{"instrument": "s", "notes": "A4 . . ."}]})");
+    // A note on the last of four quarter-second steps that rings half a second: its tail wraps.
+    const std::string ring = R"("instruments": {"s": {"wave": "sine", "attack": 0.001, "hold": 0.01, "decay": 0.5, "volume": 0.5}})";
+    write("wrap.song", "{\"bpm\": 240, \"steps_per_beat\": 1, " + ring + R"(, "tracks": [{"instrument": "s", "notes": ". . . A4"}]})");
+    write("once.song", "{\"bpm\": 240, \"steps_per_beat\": 1, \"loop\": false, " + ring + R"(, "tracks": [{"instrument": "s", "notes": ". . . A4"}]})");
+    write("bad.song", "{\"bpm\": 120, " + sine + R"(, "tracks": [{"instrument": "s", "notes": "H4"}]})");
+    audio::Config c;
+    c.project_dir = dir;
+    c.headless = true;
+    auto a = std::move(audio::Audio::create(c).value());
+    REQUIRE(a->load("assets/held.song").has_value());
+    const Json clip = a->clips()[0];
+    REQUIRE(clip["seconds"].get<double>() == Catch::Approx(4.0).margin(0.002));
+    const int rate = clip["source_rate"].get<int>();
+    REQUIRE(a->play("assets/held.song", audio::PlayOptions{}).has_value());
+    const auto mixed = a->render_frames(rate * 2);
+    int crossings = 0;
+    float late = 0;
+    for (std::size_t i = 2; i < mixed.size(); i += 2) {
+        if (i / 2 < static_cast<std::size_t>(rate) && (mixed[i - 2] < 0) != (mixed[i] < 0)) ++crossings;
+        if (i / 2 > static_cast<std::size_t>(rate * 1.1)) late = std::max(late, std::fabs(mixed[i]));
+    }
+    INFO("crossings " << crossings << " late " << late);
+    REQUIRE(crossings == Catch::Approx(880).margin(6));   // a second of 440 Hz
+    REQUIRE(late < 0.01f);                                 // then the rests
+    // The ringing tail of a looping song's last note is heard at its start; played once, it is not.
+    auto start = [&](const char* clip_path) {
+        auto b = std::move(audio::Audio::create(c).value());
+        REQUIRE(b->play(clip_path, audio::PlayOptions{}).has_value());
+        const auto& m = b->render_frames(rate / 8);
+        float peak = 0;
+        for (float v : m) peak = std::max(peak, std::fabs(v));
+        return peak;
+    };
+    REQUIRE(start("assets/wrap.song") > 0.05f);
+    REQUIRE(start("assets/once.song") < 0.001f);
+    auto bad = a->load("assets/bad.song");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("'H4' is not a note") != std::string::npos);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a clip is described for an agent that cannot hear it, and read again when forgotten", "[audio][synth][analyze]") {
+    const auto dir = std::filesystem::temp_directory_path() / std::format("pocket-analyze-{}", std::rand());
+    std::filesystem::create_directories(dir / "assets");
+    auto write = [&](const char* name, const char* text) { std::ofstream(dir / "assets" / name) << text; };
+    write("tone.sfx", R"({"wave": "sine", "frequency": 440, "attack": 0, "hold": 0.4, "decay": 0.1, "volume": 0.5})");
+    write("coin.sfx", R"({"preset": "coin"})");
+    write("hiss.sfx", R"({"wave": "noise", "frequency": 8000, "attack": 0, "hold": 0.3, "decay": 0.1, "volume": 0.5})");
+    audio::Config c;
+    c.project_dir = dir;
+    c.headless = true;
+    auto a = std::move(audio::Audio::create(c).value());
+    const Json tone = a->analyze("assets/tone.sfx").value();
+    INFO(tone.dump());
+    REQUIRE(tone["seconds"].get<double>() == Catch::Approx(0.5).margin(0.01));
+    REQUIRE(tone["pitch"].size() == 1);
+    REQUIRE(tone["pitch"][0]["note"] == "A4");
+    REQUIRE(tone["pitch"][0]["hz"].get<double>() == Catch::Approx(440).margin(3));
+    REQUIRE(tone["tonal"].get<double>() > 0.9);
+    REQUIRE(tone["character"].get<std::string>().find("tonal") != std::string::npos);
+    // The coin's two notes, a fourth apart, rising.
+    const Json coin = a->analyze("assets/coin.sfx").value();
+    INFO(coin.dump());
+    REQUIRE(coin["pitch"].size() == 2);
+    REQUIRE(coin["pitch"][0]["note"].get<std::string>().starts_with("B5"));
+    REQUIRE(coin["pitch"][1]["note"].get<std::string>().starts_with("E6"));
+    REQUIRE(coin["character"].get<std::string>().find("rising") != std::string::npos);
+    const Json hiss = a->analyze("assets/hiss.sfx").value();
+    INFO(hiss.dump());
+    REQUIRE(hiss["tonal"].get<double>() < 0.25);
+    REQUIRE(hiss["character"].get<std::string>().find("noisy") != std::string::npos);
+    // Edited and forgotten: read again, an octave up.
+    write("tone.sfx", R"({"wave": "sine", "frequency": 880, "attack": 0, "hold": 0.4, "decay": 0.1, "volume": 0.5})");
+    REQUIRE(a->analyze("assets/tone.sfx").value()["pitch"][0]["note"] == "A4");   // kept until forgotten
+    a->forget("assets/tone.sfx");
+    REQUIRE(a->analyze("assets/tone.sfx").value()["pitch"][0]["note"] == "A5");
     std::filesystem::remove_all(dir);
 }
