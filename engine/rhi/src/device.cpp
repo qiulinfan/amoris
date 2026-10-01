@@ -578,6 +578,14 @@ Result<WGPUShaderModule> Device::create_shader(const char* label, std::string_vi
     return m;
 }
 
+void Device::submit_so_far(Frame& frame) {
+    WGPUCommandBuffer cb = wgpuCommandEncoderFinish(frame.encoder, nullptr);
+    wgpuQueueSubmit(impl_->queue, 1, &cb);
+    wgpuCommandBufferRelease(cb);
+    wgpuCommandEncoderRelease(frame.encoder);
+    frame.encoder = wgpuDeviceCreateCommandEncoder(impl_->device, nullptr);
+}
+
 void Device::push_error_scope() { wgpuDevicePushErrorScope(impl_->device, WGPUErrorFilter_Validation); }
 
 std::string Device::pop_error_scope() {

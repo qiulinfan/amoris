@@ -519,6 +519,13 @@ class AssetStore {
     [[nodiscard]] std::string blender() const { return find_blender(blender_config_); }
     // Convert a Blender-read file now (again with force) and report it; the mesh reloads from the result.
     Result<Json> import(const std::string& path, bool force);
+    // Clips from another file onto a model (docs/design/animation.md, Clips from other files): every
+    // channel goes to the model's node of the same name (or the same name without a namespace:
+    // "mixamorig:Hips" to "Hips"), a channel with no such node is left out, and with
+    // `root_translation_only` only the skeleton's root keeps its moves (other bones keep the model's
+    // lengths). A file of one clip gives it the file's name; one of several keeps their names. A clip
+    // of the same name is replaced. Answers the clips added and the channels left out.
+    Result<Json> add_clips(const std::string& model, const std::string& source, bool root_translation_only);
 
    private:
     Result<std::filesystem::path> converted_glb(const std::string& path, const std::filesystem::path& full, bool force, Conversion* report = nullptr);
@@ -527,6 +534,7 @@ class AssetStore {
     Result<std::filesystem::path> resolve(const std::string& path) const;
     std::filesystem::path project_dir_;
     std::map<std::string, std::unique_ptr<Mesh>> meshes_;
+    std::map<std::string, std::unique_ptr<Mesh>> animation_files_;   // files of clips with nothing to draw (animation.library)
     std::map<std::string, std::unique_ptr<Image>> images_;
     std::map<std::string, std::unique_ptr<TileMap>> tilemaps_;
     std::map<std::string, std::string> failures_;

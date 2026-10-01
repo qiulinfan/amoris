@@ -477,10 +477,10 @@ def walker_sprint_solve(env, project_dir):
         f.write(text.replace(line, line + 'sprint = ["LShift", "pad:left_shoulder"]\n', 1))
 
     def transform(t):
-        a = 'world.set(player, "Character", { velocity: { x: input.axis("move_x") * SPEED, y: vy, z: input.axis("move_z") * SPEED } });'
+        a = 'const speed = crouching ? SPEED * 0.4 : SPEED;'
         if a not in t:
             raise RuntimeError("the walker script changed shape")
-        return t.replace(a, 'const speed = input.down("sprint") ? 9 : SPEED;\n    world.set(player, "Character", { velocity: { x: input.axis("move_x") * speed, y: vy, z: input.axis("move_z") * speed } });', 1)
+        return t.replace(a, 'const speed = crouching ? SPEED * 0.4 : input.down("sprint") ? 9 : SPEED;', 1)
     edit_main(project_dir, transform)
 
 
@@ -1325,6 +1325,66 @@ def key_door_check(env, answer):
     return True, f"the door held without the key; with it the Exit was reached at tick {r['until']['tick']}"
 
 
+def grey_flashback_solve(env):
+    code = "fn effect(uv: vec2f) -> vec4f { let c = sample_frame(uv); let g = dot(c.rgb, vec3f(0.299, 0.587, 0.114)); return vec4f(g, g, g, c.a); }"
+    env.command("render.post", {"effects": [{"code": code, "name": "grey"}]})
+    return None
+
+
+def frame_pixel(env, point):
+    env.command("step", {"ticks": 1})
+    r = env.command("render.project", {"point": point})
+    return env.command("capture", {"pixel": {"x": r["x"], "y": r["y"]}})["pixel"]
+
+
+def grey_flashback_check(env, answer):
+    running = env.command("render.post", {})["effects"]
+    if not running:
+        return False, "no post effect is running"
+    # A crate's brown and the car's red, grey now.
+    for name in ("Crate_0_0", "Car"):
+        e = env.command("world.find", {"path": name})
+        p = env.command("world.get", {"entity": e, "component": "Transform"})["position"]
+        px = frame_pixel(env, p)
+        if max(px[:3]) - min(px[:3]) > 6:
+            return False, f"{name} is drawn {px[:3]}, not grey"
+        if max(px[:3]) < 30:
+            return False, f"{name} is drawn black ({px[:3]})"
+    return True, f"{len(running)} effect(s); the crates and the car are grey"
+
+
+def orange_ball_solve(env, project_dir):
+    os.makedirs(os.path.join(project_dir, "materials"), exist_ok=True)
+    with open(os.path.join(project_dir, "materials", "orange.wgsl"), "w") as f:
+        f.write("fn material(lit: vec4f, s: Surface) -> vec4f { return vec4f(1.0, 0.133, 0.0, 1.0); }\n")
+    main = os.path.join(project_dir, "scripts", "main.ts")
+    with open(main) as f:
+        text = f.read()
+    text = text.replace('MeshRenderer: { mesh: "sphere", color:', 'MeshRenderer: { mesh: "sphere", material: "materials/orange.wgsl", color:', 1)
+    with open(main, "w") as f:
+        f.write(text)
+    return None
+
+
+def orange_ball_check(env, answer):
+    mr = env.command("world.get", {"entity": "Ball", "component": "MeshRenderer"})
+    path = mr.get("material", "")
+    if not path:
+        return False, "the Ball has no material"
+    for pr in env.command("world.lint", {})["problems"]:
+        if pr.get("component") == "MeshRenderer" and pr.get("severity") == "error":
+            return False, f"the lint says: {pr.get('problem', pr)}"
+    p = env.command("world.get", {"entity": "Ball", "component": "Transform"})["position"]
+    px = frame_pixel(env, p)
+    if not (px[0] > 200 and 30 < px[1] < 150 and px[2] < 50):
+        return False, f"the Ball is drawn {px[:3]}, not orange"
+    # Flat: the same orange at its edge as at its centre (no light falling off).
+    q = frame_pixel(env, {"x": p["x"] + 0.35, "y": p["y"], "z": p["z"]})
+    if abs(q[0] - px[0]) > 12 or abs(q[1] - px[1]) > 12:
+        return False, f"the Ball is {px[:3]} at its centre and {q[:3]} toward its edge, not flat"
+    return True, f"the Ball is drawn {px[:3]} through {path}"
+
+
 def brute_enemies_solve(env):
     rows = env.command("world.query", {"with": ["Enemy"]})["entities"]
     for row in rows:
@@ -1432,6 +1492,10 @@ TASKS = [
      "task": "Make a small game in this blank project, replacing its example. A dodge game in the XY plane (x across, y up), seen from the front: the player is an entity named Player that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 6 units a second. Every second a rock appears: an entity named Rock_1, Rock_2, ... at a random x between -8 and 8 and y = 6, falling at 4 units a second; rocks below y = -7 are removed. A rock within 0.6 units of the player ends the game: emit an event game.over with {time}, after which nothing moves the player and the clock stops. Expose alive (true until the game is over) and time_alive (seconds alive). The game must read where the player and the rocks are from their Transforms every tick, so that moving one with world.set moves it in the game. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
      "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
+    {"name": "grey_flashback", "project": "crates", "ticks": 30, "solve": grey_flashback_solve, "check": grey_flashback_check,
+     "task": "Make the whole picture of the crates game grey, as for a flashback: a post effect that turns every pixel of the frame to its grey (luminance), leaving the interface as it is. Do it through the running game (no file edits needed). Answer null."},
+    {"name": "orange_ball", "project": "hello", "ticks": 0, "script": True, "solve": orange_ball_solve, "check": orange_ball_check, "edits": "a new material file",
+     "task": "Draw the hello game's ball through a material of your own: a WGSL file in the project that makes the ball a flat orange, #ff6600, everywhere, ignoring the light. The game should draw its ball (the entity named Ball, which its script spawns) through that material from the start. Answer null."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]

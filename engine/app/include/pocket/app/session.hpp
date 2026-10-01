@@ -107,6 +107,7 @@ class Session {
     Result<Json> sprite_command(std::string_view op, const Json& p);
     Result<Json> particles_command(std::string_view op, const Json& p);
     Result<Json> animation_command(std::string_view op, const Json& p);
+    Result<Json> add_animation_library(const std::string& model, const Json& files, bool root_only);
     Result<Json> tilemap_command(std::string_view op, const Json& p);
     Result<Json> terrain_command(std::string_view op, const Json& p);
     Result<Json> water_command(std::string_view op, const Json& p);
@@ -142,10 +143,14 @@ class Session {
     Result<Json> physics2d_command(std::string_view op, const Json& p);
     Result<Json> make_mesh(const std::string& name, const Json& spec);
     Result<Json> set_post_effects(const Json& list);
+    void sync_sprite_materials();
+    std::map<std::string, std::string> sprite_material_errors_;   // Sprite.material files that did not compile: their message
     Json saved_maps(bool edited) const;
     Status restore_maps(const Json& maps);
     std::map<std::string, Json> made_meshes_;
-    std::map<std::string, Json> marks_;   // world.mark: the world's saved components by name, for world.diff
+    std::map<std::string, Json> marks_;
+    struct AnimLibrary { std::vector<std::string> files; bool root_only = false; };
+    std::map<std::string, AnimLibrary> anim_libraries_;   // animation.library: clips from other files, per model   // world.mark: the world's saved components by name, for world.diff
     std::vector<double> nums_;   // __pocket.__nums: a component's numbers for world.get/set without JSON   // mesh.create's requests by name, carried by saved scenes
     // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
     // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.

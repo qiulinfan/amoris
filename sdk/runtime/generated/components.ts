@@ -88,15 +88,23 @@ export interface AnimationLayer {
     time: number;
 }
 
+/** A clip mixed into an Animator's base clip at a weight, in step with it: its time is the base clip's phase of its own length. */
+export interface AnimationBlend {
+    /** Clip name from the asset. */
+    clip: string;
+    /** 0..1: its share of the pose; the base clip has what the blends leave. */
+    weight: number;
+}
+
 /** One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter. */
 export interface AnimationState {
     /** What transitions and AnimationGraph.state call it. */
     name: string;
     /** The clip it plays (when blend is empty). */
     clip: string;
-    /** A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). */
+    /** A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). Two parameters, comma separated, place the clips on a plane ("move_x, move_y": a strafing walk). */
     blend: string;
-    /** With blend: clips and the parameter's values where each plays alone, comma separated ("idle 0, walk 2, run 6"). */
+    /** With blend: clips and the parameter's values where each plays alone, comma separated ("idle 0, walk 2, run 6"); with two parameters, two values each ("idle 0 0, forward 0 1, left -1 0"). */
     clips: string;
     /** Playback rate in this state. */
     speed: number;
@@ -242,7 +250,7 @@ export interface Lifetime {
     seconds: number;
 }
 
-/** The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention). */
+/** A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention). */
 export interface Camera {
     /** Vertical field of view in degrees (perspective). */
     fov_degrees: number;
@@ -256,6 +264,10 @@ export interface Camera {
     far: number;
     /** Whether this camera renders. */
     active: boolean;
+    /** The part of the window it draws: x, y (from the top-left), width and height as fractions of the window. */
+    viewport: Vec4;
+    /** Cameras with viewports draw from the lowest order up: a minimap above the view it sits in. */
+    order: number;
 }
 
 /** Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's). */
@@ -454,6 +466,10 @@ export interface MeshRenderer {
     anisotropy: number;
     /** Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy). */
     anisotropy_rotation: number;
+    /** A material the project wrote: a WGSL file defining fn material(lit: vec4f, s: Surface) -> vec4f, the final colour from the engine's lit one and the surface (docs/design/rendering.md, Materials a project writes): toon steps, a rim, a hologram's lines. Opaque, unskinned meshes; empty: the engine's shading. */
+    material: string;
+    /** Four numbers for its material, per entity. */
+    material_params: Vec4;
     /** Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. */
     unlit: boolean;
     /** Whether the mesh is drawn. */
@@ -490,6 +506,10 @@ export interface Sprite {
     visible: boolean;
     /** Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer. */
     sort_y: boolean;
+    /** A material the project wrote: a WGSL file in the project defining fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f, the sprite's colour at a pixel (docs/design/sprites.md, Materials). Empty: the texture times the colour. */
+    material: string;
+    /** Four numbers for its material, per sprite (a flash's strength, a dissolve's progress, an outline's width). */
+    params: Vec4;
     /** Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing. */
     additive: boolean;
 }
@@ -580,10 +600,8 @@ export interface Animator {
     time: number;
     /** Set when a non-looping clip reached its end; cleared by play. */
     finished: boolean;
-    /** A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none. */
-    blend_clip: string;
-    /** 0..1: how much of blend_clip shows over clip. */
-    blend: number;
+    /** Other clips mixed with clip, each at its weight, kept in step with it; clip has the weight left (an AnimationGraph's blend space sets them; docs/design/animation.md, State machines). */
+    blends: AnimationBlend[];
     /** Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running. */
     fade: number;
     /** Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed. */
@@ -1449,7 +1467,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     Health: [["current", "n"], ["max", "n"], ["team", "n"], ["invulnerable", "n"], ["guard", "n"], ["dead", "b"]],
     Hitbox: [["damage", "n"], ["knockback", "n"], ["team", "n"], ["repeat", "n"], ["destroy", "b"], ["enabled", "b"], ["hits", "n"]],
     Lifetime: [["seconds", "n"]],
-    Camera: [["fov_degrees", "n"], ["orthographic", "b"], ["ortho_size", "n"], ["near", "n"], ["far", "n"], ["active", "b"]],
+    Camera: [["fov_degrees", "n"], ["orthographic", "b"], ["ortho_size", "n"], ["near", "n"], ["far", "n"], ["active", "b"], ["viewport", "v4"], ["order", "n"]],
     Light: [["kind", "n"], ["color", "c"], ["intensity", "n"], ["range", "n"], ["inner_angle", "n"], ["outer_angle", "n"], ["shadows", "b"]],
     ReflectionProbe: [["size", "v3"], ["intensity", "n"], ["box_projection", "b"], ["realtime", "b"], ["enabled", "b"]],
     Fog: [["color", "c"], ["density", "n"], ["height", "n"], ["falloff", "n"], ["start", "n"], ["max_opacity", "n"], ["enabled", "b"], ["volumetric", "b"], ["anisotropy", "n"], ["steps", "n"], ["distance", "n"]],
@@ -1471,20 +1489,20 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Hitbox: { damage: 10, knockback: 0, team: 0, repeat: 0, destroy: false, enabled: true, hits: 0 },
     Model: { path: "", hash: "", live: true },
     Lifetime: { seconds: 1 },
-    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true },
+    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0 },
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
-    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
-    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, additive: false },
+    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, material: "", material_params: { x: 0, y: 0, z: 0, w: 0 }, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
+    Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, material: "", params: { x: 0, y: 0, z: 0, w: 0 }, additive: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blend_clip: "", blend: 0, fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
     Attach: { target: "", joint: "", offset: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, found: false },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
@@ -1522,6 +1540,7 @@ export interface Records {
     Wheel: Wheel;
     AnimationCue: AnimationCue;
     AnimationLayer: AnimationLayer;
+    AnimationBlend: AnimationBlend;
     AnimationState: AnimationState;
     AnimationTransition: AnimationTransition;
     AnimationParam: AnimationParam;
@@ -1537,6 +1556,7 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     Wheel: { offset: { x: 0, y: 0, z: 0 }, radius: 0.35, rest: 0.3, steer: false, drive: false, visual: "", contact: false, compression: 0, spin: 0 },
     AnimationCue: { clip: "", time: 0, name: "" },
     AnimationLayer: { clip: "", weight: 1, mask: "", additive: false, playing: true, loop: true, speed: 1, time: 0 },
+    AnimationBlend: { clip: "", weight: 0 },
     AnimationState: { name: "", clip: "", blend: "", clips: "", speed: 1, loop: true },
     AnimationTransition: { from: "*", to: "", when: "", after: 0, fade: 0.2 },
     AnimationParam: { name: "", value: 0, trigger: false },

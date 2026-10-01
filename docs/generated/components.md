@@ -78,7 +78,7 @@ Seconds remaining before the entity is destroyed by the lifetime system.
 
 ## Camera
 
-The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
+A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -88,6 +88,8 @@ The renderer uses the first active camera. Perspective by default; orthographic 
 | `near` | f32 | 0.1 | Near clip distance. |
 | `far` | f32 | 1000.0 | Far clip distance. |
 | `active` | bool | true | Whether this camera renders. |
+| `viewport` | vec4 | [0.0, 0.0, 1.0, 1.0] | The part of the window it draws: x, y (from the top-left), width and height as fractions of the window. |
+| `order` | i32 | 0 | Cameras with viewports draw from the lowest order up: a minimap above the view it sits in. |
 
 ## CameraRig
 
@@ -222,6 +224,8 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `specular` | f32 | -1.0 | The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1). |
 | `anisotropy` | f32 | -1.0 | Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0). |
 | `anisotropy_rotation` | f32 | 0.0 | Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy). |
+| `material` | string | "" | A material the project wrote: a WGSL file defining fn material(lit: vec4f, s: Surface) -> vec4f, the final colour from the engine's lit one and the surface (docs/design/rendering.md, Materials a project writes): toon steps, a rim, a hologram's lines. Opaque, unskinned meshes; empty: the engine's shading. |
+| `material_params` | vec4 | [0.0, 0.0, 0.0, 0.0] | Four numbers for its material, per entity. |
 | `unlit` | bool | false | Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 | `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |
@@ -245,6 +249,8 @@ A 2D image: a textured unit square in the entity's XY plane, sized in world unit
 | `filter` | string | "linear" | Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles). |
 | `visible` | bool | true | Whether the sprite is drawn. |
 | `sort_y` | bool | false | Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer. |
+| `material` | string | "" | A material the project wrote: a WGSL file in the project defining fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f, the sprite's colour at a pixel (docs/design/sprites.md, Materials). Empty: the texture times the colour. |
+| `params` | vec4 | [0.0, 0.0, 0.0, 0.0] | Four numbers for its material, per sprite (a flash's strength, a dissolve's progress, an outline's width). |
 | `additive` | bool | false | Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing. |
 
 ## SpriteAnimation
@@ -315,8 +321,7 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `speed` | f32 | 1.0 | Playback rate multiplier. |
 | `time` | f32 | 0.0 | Seconds into the clip; advanced by the engine, writable to seek. |
 | `finished` | bool | false | Set when a non-looping clip reached its end; cleared by play. |
-| `blend_clip` | string | "" | A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none. |
-| `blend` | f32 | 0.0 | 0..1: how much of blend_clip shows over clip. |
+| `blends` | list:AnimationBlend | [] | Other clips mixed with clip, each at its weight, kept in step with it; clip has the weight left (an AnimationGraph's blend space sets them; docs/design/animation.md, State machines). |
 | `fade` | f32 | 0.0 | Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running. |
 | `fade_time` | f32 | 0.0 | Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed. |
 | `from_clip` | string | "" | The clip fading out (keeps playing at its own time until the fade ends); empty when none. |
@@ -900,6 +905,15 @@ One clip layered over an Animator's base clip (docs/design/animation.md): sample
 | `speed` | f32 | 1.0 | Playback rate multiplier. |
 | `time` | f32 | 0.0 | Seconds into the clip; advanced by the engine, writable to seek. |
 
+## AnimationBlend
+
+A clip mixed into an Animator's base clip at a weight, in step with it: its time is the base clip's phase of its own length.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `clip` | string | "" | Clip name from the asset. |
+| `weight` | f32 | 0.0 | 0..1: its share of the pose; the base clip has what the blends leave. |
+
 ## AnimationState
 
 One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter.
@@ -908,8 +922,8 @@ One state of an AnimationGraph (docs/design/animation.md, State machines): a cli
 |---|---|---|---|
 | `name` | string | "" | What transitions and AnimationGraph.state call it. |
 | `clip` | string | "" | The clip it plays (when blend is empty). |
-| `blend` | string | "" | A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). |
-| `clips` | string | "" | With blend: clips and the parameter's values where each plays alone, comma separated ("idle 0, walk 2, run 6"). |
+| `blend` | string | "" | A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). Two parameters, comma separated, place the clips on a plane ("move_x, move_y": a strafing walk). |
+| `clips` | string | "" | With blend: clips and the parameter's values where each plays alone, comma separated ("idle 0, walk 2, run 6"); with two parameters, two values each ("idle 0 0, forward 0 1, left -1 0"). |
 | `speed` | f32 | 1.0 | Playback rate in this state. |
 | `loop` | bool | true | Wrap at the clip's end (else hold its last frame). |
 

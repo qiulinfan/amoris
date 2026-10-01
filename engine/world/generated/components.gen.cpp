@@ -267,6 +267,28 @@ std::size_t numeric_span(AnimationLayer& v, std::string_view path, float** out) 
     return 0;
 }
 
+void to_json(Json& j, const AnimationBlend& v) {
+    j = Json::object();
+    j["clip"] = v.clip;
+    j["weight"] = v.weight;
+}
+
+void from_json(const Json& j, AnimationBlend& v) {
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "weight", v.weight);
+}
+
+void hash_record(StateHasherRef& h, const AnimationBlend& v) {
+    h.str(v.clip);
+    h.f32(v.weight);
+}
+
+std::size_t numeric_span(AnimationBlend& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "weight") { *out = &v.weight; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const AnimationState& v) {
     j = Json::object();
     j["name"] = v.name;
@@ -710,6 +732,8 @@ void to_json(Json& j, const Camera& v) {
     j["near"] = v.near;
     j["far"] = v.far;
     j["active"] = v.active;
+    vec_to_json(j["viewport"], v.viewport);
+    j["order"] = v.order;
 }
 
 void from_json(const Json& j, Camera& v) {
@@ -719,6 +743,8 @@ void from_json(const Json& j, Camera& v) {
     scalar_from_json(j, "near", v.near);
     scalar_from_json(j, "far", v.far);
     scalar_from_json(j, "active", v.active);
+    if (j.is_object() && j.contains("viewport")) vec_from_json(j["viewport"], v.viewport);
+    scalar_from_json(j, "order", v.order);
 }
 
 void hash_component(StateHasherRef& h, const Camera& v) {
@@ -728,6 +754,11 @@ void hash_component(StateHasherRef& h, const Camera& v) {
     h.f32(v.near);
     h.f32(v.far);
     h.u8(v.active ? 1 : 0);
+    h.f32(v.viewport.x);
+    h.f32(v.viewport.y);
+    h.f32(v.viewport.z);
+    h.f32(v.viewport.w);
+    h.i64(static_cast<std::int64_t>(v.order));
 }
 
 std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
@@ -736,6 +767,11 @@ std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
     if (path == "ortho_size") { *out = &v.ortho_size; return 1; }
     if (path == "near") { *out = &v.near; return 1; }
     if (path == "far") { *out = &v.far; return 1; }
+    if (path == "viewport") { *out = &v.viewport.x; return 4; }
+    if (path == "viewport.x") { *out = &v.viewport.x; return 1; }
+    if (path == "viewport.y") { *out = &v.viewport.y; return 1; }
+    if (path == "viewport.z") { *out = &v.viewport.z; return 1; }
+    if (path == "viewport.w") { *out = &v.viewport.w; return 1; }
     return 0;
 }
 
@@ -1151,6 +1187,8 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["specular"] = v.specular;
     j["anisotropy"] = v.anisotropy;
     j["anisotropy_rotation"] = v.anisotropy_rotation;
+    j["material"] = v.material;
+    vec_to_json(j["material_params"], v.material_params);
     j["unlit"] = v.unlit;
     j["visible"] = v.visible;
     j["cast_shadows"] = v.cast_shadows;
@@ -1179,6 +1217,8 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "specular", v.specular);
     scalar_from_json(j, "anisotropy", v.anisotropy);
     scalar_from_json(j, "anisotropy_rotation", v.anisotropy_rotation);
+    scalar_from_json(j, "material", v.material);
+    if (j.is_object() && j.contains("material_params")) vec_from_json(j["material_params"], v.material_params);
     scalar_from_json(j, "unlit", v.unlit);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "cast_shadows", v.cast_shadows);
@@ -1218,6 +1258,11 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.specular);
     h.f32(v.anisotropy);
     h.f32(v.anisotropy_rotation);
+    h.str(v.material);
+    h.f32(v.material_params.x);
+    h.f32(v.material_params.y);
+    h.f32(v.material_params.z);
+    h.f32(v.material_params.w);
     h.u8(v.unlit ? 1 : 0);
     h.u8(v.visible ? 1 : 0);
     h.u8(v.cast_shadows ? 1 : 0);
@@ -1255,6 +1300,11 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "specular") { *out = &v.specular; return 1; }
     if (path == "anisotropy") { *out = &v.anisotropy; return 1; }
     if (path == "anisotropy_rotation") { *out = &v.anisotropy_rotation; return 1; }
+    if (path == "material_params") { *out = &v.material_params.x; return 4; }
+    if (path == "material_params.x") { *out = &v.material_params.x; return 1; }
+    if (path == "material_params.y") { *out = &v.material_params.y; return 1; }
+    if (path == "material_params.z") { *out = &v.material_params.z; return 1; }
+    if (path == "material_params.w") { *out = &v.material_params.w; return 1; }
     if (path.starts_with("lods.")) {
         std::string_view rest = path.substr(5);
         std::size_t index = 0;
@@ -1277,6 +1327,8 @@ void to_json(Json& j, const Sprite& v) {
     j["filter"] = v.filter;
     j["visible"] = v.visible;
     j["sort_y"] = v.sort_y;
+    j["material"] = v.material;
+    vec_to_json(j["params"], v.params);
     j["additive"] = v.additive;
 }
 
@@ -1292,6 +1344,8 @@ void from_json(const Json& j, Sprite& v) {
     scalar_from_json(j, "filter", v.filter);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "sort_y", v.sort_y);
+    scalar_from_json(j, "material", v.material);
+    if (j.is_object() && j.contains("params")) vec_from_json(j["params"], v.params);
     scalar_from_json(j, "additive", v.additive);
 }
 
@@ -1315,6 +1369,11 @@ void hash_component(StateHasherRef& h, const Sprite& v) {
     h.str(v.filter);
     h.u8(v.visible ? 1 : 0);
     h.u8(v.sort_y ? 1 : 0);
+    h.str(v.material);
+    h.f32(v.params.x);
+    h.f32(v.params.y);
+    h.f32(v.params.z);
+    h.f32(v.params.w);
     h.u8(v.additive ? 1 : 0);
 }
 
@@ -1336,6 +1395,11 @@ std::size_t numeric_span(Sprite& v, std::string_view path, float** out) {
     if (path == "uv.y") { *out = &v.uv.y; return 1; }
     if (path == "uv.z") { *out = &v.uv.z; return 1; }
     if (path == "uv.w") { *out = &v.uv.w; return 1; }
+    if (path == "params") { *out = &v.params.x; return 4; }
+    if (path == "params.x") { *out = &v.params.x; return 1; }
+    if (path == "params.y") { *out = &v.params.y; return 1; }
+    if (path == "params.z") { *out = &v.params.z; return 1; }
+    if (path == "params.w") { *out = &v.params.w; return 1; }
     return 0;
 }
 
@@ -1536,8 +1600,8 @@ void to_json(Json& j, const Animator& v) {
     j["speed"] = v.speed;
     j["time"] = v.time;
     j["finished"] = v.finished;
-    j["blend_clip"] = v.blend_clip;
-    j["blend"] = v.blend;
+    j["blends"] = Json::array();
+    for (const auto& x : v.blends) { Json e; to_json(e, x); j["blends"].push_back(std::move(e)); }
     j["fade"] = v.fade;
     j["fade_time"] = v.fade_time;
     j["from_clip"] = v.from_clip;
@@ -1560,8 +1624,10 @@ void from_json(const Json& j, Animator& v) {
     scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "time", v.time);
     scalar_from_json(j, "finished", v.finished);
-    scalar_from_json(j, "blend_clip", v.blend_clip);
-    scalar_from_json(j, "blend", v.blend);
+    if (j.is_object() && j.contains("blends") && j["blends"].is_array()) {
+        v.blends.clear();
+        for (const Json& e : j["blends"]) { AnimationBlend x; from_json(e, x); v.blends.push_back(std::move(x)); }
+    }
     scalar_from_json(j, "fade", v.fade);
     scalar_from_json(j, "fade_time", v.fade_time);
     scalar_from_json(j, "from_clip", v.from_clip);
@@ -1588,8 +1654,8 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.speed);
     h.f32(v.time);
     h.u8(v.finished ? 1 : 0);
-    h.str(v.blend_clip);
-    h.f32(v.blend);
+    h.i64(static_cast<std::int64_t>(v.blends.size()));
+    for (const auto& x : v.blends) hash_record(h, x);
     h.f32(v.fade);
     h.f32(v.fade_time);
     h.str(v.from_clip);
@@ -1611,7 +1677,11 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
     (void)v;
     if (path == "speed") { *out = &v.speed; return 1; }
     if (path == "time") { *out = &v.time; return 1; }
-    if (path == "blend") { *out = &v.blend; return 1; }
+    if (path.starts_with("blends.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.blends.size()) return numeric_span(v.blends[index], rest, out);
+    }
     if (path == "fade") { *out = &v.fade; return 1; }
     if (path == "fade_time") { *out = &v.fade_time; return 1; }
     if (path == "from_time") { *out = &v.from_time; return 1; }
@@ -3577,16 +3647,26 @@ std::size_t read_numbers(const Camera& v, double* out) {
     out[3] = static_cast<double>(v.near);
     out[4] = static_cast<double>(v.far);
     out[5] = static_cast<double>(v.active);
-    return 6;
+    out[6] = static_cast<double>(v.viewport.x);
+    out[7] = static_cast<double>(v.viewport.y);
+    out[8] = static_cast<double>(v.viewport.z);
+    out[9] = static_cast<double>(v.viewport.w);
+    out[10] = static_cast<double>(v.order);
+    return 11;
 }
 bool write_numbers(Camera& v, const double* in, std::size_t n) {
-    if (n != 6) return false;
+    if (n != 11) return false;
     v.fov_degrees = static_cast<float>(in[0]);
     v.orthographic = in[1] != 0;
     v.ortho_size = static_cast<float>(in[2]);
     v.near = static_cast<float>(in[3]);
     v.far = static_cast<float>(in[4]);
     v.active = in[5] != 0;
+    v.viewport.x = static_cast<float>(in[6]);
+    v.viewport.y = static_cast<float>(in[7]);
+    v.viewport.z = static_cast<float>(in[8]);
+    v.viewport.w = static_cast<float>(in[9]);
+    v.order = static_cast<std::int32_t>(in[10]);
     return true;
 }
 
@@ -3947,11 +4027,15 @@ constexpr std::array<FieldInfo, 8> kAnimationLayerFields = {{
     FieldInfo{"speed", "f32", "Playback rate multiplier.", {}},
     FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek.", {}},
 }};
+constexpr std::array<FieldInfo, 2> kAnimationBlendFields = {{
+    FieldInfo{"clip", "string", "Clip name from the asset.", {}},
+    FieldInfo{"weight", "f32", "0..1: its share of the pose; the base clip has what the blends leave.", {}},
+}};
 constexpr std::array<FieldInfo, 6> kAnimationStateFields = {{
     FieldInfo{"name", "string", "What transitions and AnimationGraph.state call it.", {}},
     FieldInfo{"clip", "string", "The clip it plays (when blend is empty).", {}},
-    FieldInfo{"blend", "string", "A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed).", {}},
-    FieldInfo{"clips", "string", "With blend: clips and the parameter's values where each plays alone, comma separated (\"idle 0, walk 2, run 6\").", {}},
+    FieldInfo{"blend", "string", "A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). Two parameters, comma separated, place the clips on a plane (\"move_x, move_y\": a strafing walk).", {}},
+    FieldInfo{"clips", "string", "With blend: clips and the parameter's values where each plays alone, comma separated (\"idle 0, walk 2, run 6\"); with two parameters, two values each (\"idle 0 0, forward 0 1, left -1 0\").", {}},
     FieldInfo{"speed", "f32", "Playback rate in this state.", {}},
     FieldInfo{"loop", "bool", "Wrap at the clip's end (else hold its last frame).", {}},
 }};
@@ -4024,13 +4108,15 @@ constexpr std::array<FieldInfo, 3> kModelFields = {{
 constexpr std::array<FieldInfo, 1> kLifetimeFields = {{
     FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero.", {}},
 }};
-constexpr std::array<FieldInfo, 6> kCameraFields = {{
+constexpr std::array<FieldInfo, 8> kCameraFields = {{
     FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees (perspective).", {}},
     FieldInfo{"orthographic", "bool", "Parallel projection: no perspective, sizes do not shrink with distance.", {}},
     FieldInfo{"ortho_size", "f32", "Half of the visible height in world units when orthographic.", {}},
     FieldInfo{"near", "f32", "Near clip distance.", {}},
     FieldInfo{"far", "f32", "Far clip distance.", {}},
     FieldInfo{"active", "bool", "Whether this camera renders.", {}},
+    FieldInfo{"viewport", "vec4", "The part of the window it draws: x, y (from the top-left), width and height as fractions of the window.", {}},
+    FieldInfo{"order", "i32", "Cameras with viewports draw from the lowest order up: a minimap above the view it sits in.", {}},
 }};
 constexpr std::string_view kCameraRig_modeNames[] = {"chase", "orbit", "offset"};
 constexpr std::array<FieldInfo, 18> kCameraRigFields = {{
@@ -4113,7 +4199,7 @@ constexpr std::array<FieldInfo, 15> kSkyFields = {{
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units.", {}},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it.", {}},
 }};
-constexpr std::array<FieldInfo, 24> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 26> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials).", {}},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole.", {}},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent.", {}},
@@ -4133,13 +4219,15 @@ constexpr std::array<FieldInfo, 24> kMeshRendererFields = {{
     FieldInfo{"specular", "f32", "The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1).", {}},
     FieldInfo{"anisotropy", "f32", "Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0).", {}},
     FieldInfo{"anisotropy_rotation", "f32", "Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy).", {}},
+    FieldInfo{"material", "string", "A material the project wrote: a WGSL file defining fn material(lit: vec4f, s: Surface) -> vec4f, the final colour from the engine's lit one and the surface (docs/design/rendering.md, Materials a project writes): toon steps, a rim, a hologram's lines. Opaque, unskinned meshes; empty: the engine's shading.", {}},
+    FieldInfo{"material_params", "vec4", "Four numbers for its material, per entity.", {}},
     FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too.", {}},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn.", {}},
     FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass.", {}},
     FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own.", {}},
     FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small.", {}},
 }};
-constexpr std::array<FieldInfo, 12> kSpriteFields = {{
+constexpr std::array<FieldInfo, 14> kSpriteFields = {{
     FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color.", {}},
     FieldInfo{"size", "vec2", "Width and height in world units.", {}},
     FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture.", {}},
@@ -4151,6 +4239,8 @@ constexpr std::array<FieldInfo, 12> kSpriteFields = {{
     FieldInfo{"filter", "string", "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles).", {}},
     FieldInfo{"visible", "bool", "Whether the sprite is drawn.", {}},
     FieldInfo{"sort_y", "bool", "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer.", {}},
+    FieldInfo{"material", "string", "A material the project wrote: a WGSL file in the project defining fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f, the sprite's colour at a pixel (docs/design/sprites.md, Materials). Empty: the texture times the colour.", {}},
+    FieldInfo{"params", "vec4", "Four numbers for its material, per sprite (a flash's strength, a dissolve's progress, an outline's width).", {}},
     FieldInfo{"additive", "bool", "Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing.", {}},
 }};
 constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
@@ -4190,15 +4280,14 @@ constexpr std::array<FieldInfo, 7> kTimelineFields = {{
     FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine).", {}},
 }};
 constexpr std::string_view kAnimator_root_motionNames[] = {"off", "move", "report"};
-constexpr std::array<FieldInfo, 19> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose).", {}},
     FieldInfo{"playing", "bool", "Whether time advances.", {}},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished).", {}},
     FieldInfo{"speed", "f32", "Playback rate multiplier.", {}},
     FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek.", {}},
     FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play.", {}},
-    FieldInfo{"blend_clip", "string", "A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none.", {}},
-    FieldInfo{"blend", "f32", "0..1: how much of blend_clip shows over clip.", {}},
+    FieldInfo{"blends", "list:AnimationBlend", "Other clips mixed with clip, each at its weight, kept in step with it; clip has the weight left (an AnimationGraph's blend space sets them; docs/design/animation.md, State machines).", {}},
     FieldInfo{"fade", "f32", "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running.", {}},
     FieldInfo{"fade_time", "f32", "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed.", {}},
     FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none.", {}},
@@ -4583,13 +4672,14 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights.", {}},
 }};
 
-constexpr std::array<RecordInfo, 12> kRecords = {{
+constexpr std::array<RecordInfo, 13> kRecords = {{
     RecordInfo{"MeshLod", kMeshLodFields},
     RecordInfo{"MorphWeight", kMorphWeightFields},
     RecordInfo{"IKLimit", kIKLimitFields},
     RecordInfo{"Wheel", kWheelFields},
     RecordInfo{"AnimationCue", kAnimationCueFields},
     RecordInfo{"AnimationLayer", kAnimationLayerFields},
+    RecordInfo{"AnimationBlend", kAnimationBlendFields},
     RecordInfo{"AnimationState", kAnimationStateFields},
     RecordInfo{"AnimationTransition", kAnimationTransitionFields},
     RecordInfo{"AnimationParam", kAnimationParamFields},
@@ -4606,7 +4696,7 @@ constexpr std::array<ComponentInfo, 48> kComponents = {{
     ComponentInfo{"Hitbox", "Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage).", true, kHitboxFields},
     ComponentInfo{"Model", "An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).", true, kModelFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
-    ComponentInfo{"Camera", "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
+    ComponentInfo{"Camera", "A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"CameraRig", "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).", true, kCameraRigFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
     ComponentInfo{"ReflectionProbe", "The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},

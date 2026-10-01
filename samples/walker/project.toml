@@ -12,6 +12,12 @@ height = 540
 move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", "pad:dpad_right"], axis = ["pad:leftx"] }
 move_z = { negative = ["W", "Up", "pad:dpad_up"], positive = ["S", "Down", "pad:dpad_down"], axis = ["pad:lefty"] }
 jump = ["Space", "pad:a"]
+crouch = ["C", "pad:b"]
+
+# The hero's clips are files of their own, as Mixamo gives them (docs/design/animation.md, Clips from
+# other files); each is named by its file: walk, run, crouch and the rest.
+[animations]
+"assets/hero.glb" = ["assets/anims/walk.glb", "assets/anims/run.glb", "assets/anims/walk_back.glb", "assets/anims/strafe_left.glb", "assets/anims/strafe_right.glb", "assets/anims/crouch.glb", "assets/anims/crouch_walk.glb", "assets/anims/jump.glb"]
 
 [render]
 ao = true

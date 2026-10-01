@@ -37,6 +37,20 @@ sprites.play(coin, "coin", { speed: 1.3 });
 sprites.defineClip("pop", { texture: "assets/fx.png", columns: 4, rows: 1, fps: 24, loop: false });
 ```
 
+## Materials
+
+A sprite can be drawn through a material the project wrote: `Sprite.material` names a WGSL file in the project that defines one function, `fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f`, the colour at a pixel from the texture's texel there, the sprite's colour (linear), the uv on its sheet, the sprite's own four numbers (`Sprite.params`) and the simulation's seconds. `sprite_texture(uv)` reads the texture elsewhere (an outline's neighbours) and `texel_size()` says how far one texel is. A hit's white flash, a dissolve, an outline, a palette swap, a shimmer: each a few lines, with the numbers set per sprite by the game (`world.set(e, "Sprite", { params: { x: 1 } })`). The file is read and compiled the first time a sprite names it and again after `assets.reload`; it is compiled inside a GPU error scope, so one that does not compile leaves its sprites drawn plain and `world.lint` names them with the compiler's message. Each material is a variant of the sprite pipelines (plain and additive), made for the scene's sample count, and the sprites keep their order: a run of sprites breaks where the material changes. Picking and the id pass see the texture's own shape.
+
+```wgsl
+// materials/flash.wgsl: white by params.x, the shape kept.
+fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f {
+    let c = texel * tint;
+    return vec4f(mix(c.rgb, vec3f(1.0), clamp(params.x, 0.0, 1.0)), c.a);
+}
+```
+
+`samples/crates` draws its crates through `materials/flash.wgsl`, and a crate the wrecking ball strikes flashes white and fades. `runtime_tests` (`[sprites][material]`): a red sprite white at `params.x` 1 and red at 0, a material that does not compile and one that is not there named by the lint.
+
 ## Tile maps
 
 Levels come from Tiled maps drawn by the `TileMap` component and questioned through `tilemap.*`: [tile maps](tilemaps.md).

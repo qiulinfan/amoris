@@ -402,6 +402,42 @@ TEST_CASE("skeletal animation poses a skinned mesh and moves its vertices", "[ru
     REQUIRE(s.command("animation.play", Json{{"entity", "Crate"}, {"clip", "wave"}}).has_value() == false);
 }
 
+TEST_CASE("a clip from another file plays on a model, matched by joint name", "[runtime][animation][library]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // arm_bow.glb: the arm's joints as "mixamorig:root" and "mixamorig:tip", one clip "mixamo.com".
+    const Json lib = s.command("animation.library", Json{{"mesh", "assets/arm.glb"}, {"files", Json::array({"assets/arm_bow.glb"})}}).value();
+    INFO(lib.dump());
+    REQUIRE(lib["files"][0]["clips"][0]["name"] == "arm_bow");
+    REQUIRE(lib["files"][0]["channels_left_out"] == 0);
+    const Json clips = s.command("animation.clips", Json{{"entity", "Arm"}}).value();
+    REQUIRE(clips["clips"].size() == 6);
+    REQUIRE(s.command("animation.play", Json{{"entity", "Arm"}, {"clip", "arm_bow"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    // Half a second in: the tip bowed about X to 60 degrees (its up axis turned toward Z).
+    const Json pose = s.command("animation.pose", Json{{"entity", "Arm"}}).value();
+    INFO(pose.dump());
+    const Json tip = pose["joints"][1];
+    REQUIRE(tip["name"] == "tip");
+    REQUIRE(std::fabs(tip["axis_y"]["z"].get<double>()) == Catch::Approx(std::sin(60 * 3.14159265 / 180)).margin(0.05));
+    REQUIRE(std::fabs(tip["axis_y"]["x"].get<double>()) < 0.05);
+    // Read again, the model takes the clip again.
+    REQUIRE(s.command("assets.reload", Json::object()).has_value());
+    REQUIRE(s.command("animation.clips", Json{{"entity", "Arm"}}).value()["clips"].size() == 6);
+    REQUIRE_FALSE(s.command("animation.library", Json{{"mesh", "assets/arm.glb"}, {"files", Json::array({"assets/none.glb"})}}).has_value());
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("clips cross-fade and land on the new clip", "[runtime][animation]") {
     auto make = [] {
         app::Options o;
@@ -4221,6 +4257,121 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("several cameras each draw their part of the window: split screen and a minimap", "[runtime][cameras][views]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    // Two blocks far apart, a red and a blue, and a camera in front of each, the left half and the right.
+    auto block = [&](const std::string& name, float x, Json color) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 1}, {"z", -40}}}, {"scale", Json{{"x", 3}, {"y", 3}, {"z", 1}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", color}}}}}}).has_value());
+    };
+    block("RedBlock", -50, Json{{"r", 1}, {"g", 0.05}, {"b", 0.05}, {"a", 1}});
+    block("BlueBlock", 50, Json{{"r", 0.05}, {"g", 0.05}, {"b", 1}, {"a", 1}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"active", false}}}}).has_value());
+    auto camera = [&](const std::string& name, float x, Json viewport, int order) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 1}, {"z", -34}}}}}, {"Camera", Json{{"viewport", viewport}, {"order", order}}}}}}).has_value());
+    };
+    camera("Left", -50, Json{{"x", 0}, {"y", 0}, {"z", 0.5}, {"w", 1}}, 0);
+    camera("Right", 50, Json{{"x", 0.5}, {"y", 0}, {"z", 0.5}, {"w", 1}}, 0);
+    auto at = [&](int x, int y) {
+        return s.command("capture", Json{{"pixel", Json{{"x", x}, {"y", y}}}}).value()["pixel"];
+    };
+    REQUIRE(s.frame().has_value());
+    const Json w = s.command("window.info", Json::object()).value();
+    const int W = w["pixel_width"].get<int>(), H = w["pixel_height"].get<int>();
+    const Json left = at(W / 4, H / 2), right = at(3 * W / 4, H / 2);
+    INFO("left " << left.dump() << " right " << right.dump());
+    REQUIRE(left[0].get<int>() > left[2].get<int>() + 60);    // red in the left half
+    REQUIRE(right[2].get<int>() > right[0].get<int>() + 60);  // blue in the right half
+    // A minimap over the left half's corner, drawn after it by its order, sees the blue block.
+    camera("Minimap", 50, Json{{"x", 0.02}, {"y", 0.02}, {"z", 0.2}, {"w", 0.3}}, 1);
+    REQUIRE(s.frame().has_value());
+    const Json corner = at(static_cast<int>(W * 0.12), static_cast<int>(H * 0.17));
+    INFO("corner " << corner.dump());
+    REQUIRE(corner[2].get<int>() > corner[0].get<int>() + 60);
+    REQUIRE(at(W / 4, H / 2)[0].get<int>() > 150);   // the left half still red where the minimap is not
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a mesh drawn through a material the project wrote over the lit colour", "[runtime][material]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    // The sample's toon material, with params.x 1 laying a flat colour (params.yzw) over it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Toon"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 2}}}, {"scale", Json{{"x", 2}, {"y", 2}, {"z", 0.2}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"material", "materials/toon.wgsl"}, {"material_params", Json{{"x", 1}, {"y", 0}, {"z", 1}, {"w", 0}}}}}}}}).has_value());
+    auto pixel = [&]() {
+        REQUIRE(s.frame().has_value());
+        const Json r = s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", 1}, {"z", 2.1}}}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+    };
+    const Json green = pixel();
+    INFO("green " << green.dump());
+    REQUIRE(green[1].get<int>() > 150);
+    REQUIRE(green[0].get<int>() < 60);
+    REQUIRE(s.command("world.set", Json{{"entity", "Toon"}, {"component", "MeshRenderer"}, {"value", Json{{"material_params", Json{{"y", 1}, {"z", 0}}}}}}).has_value());
+    const Json red = pixel();
+    INFO("red " << red.dump());
+    REQUIRE(red[0].get<int>() > 150);
+    REQUIRE(red[1].get<int>() < 60);
+    // With params.x 0 the toon steps show: lit, not flat red.
+    REQUIRE(s.command("world.set", Json{{"entity", "Toon"}, {"component", "MeshRenderer"}, {"value", Json{{"material_params", Json{{"x", 0}}}}}}).has_value());
+    const Json toon = pixel();
+    REQUIRE(std::abs(toon[0].get<int>() - toon[1].get<int>()) < 40);   // the cube's grey, stepped
+    // One that is not there is drawn plain and named by the lint.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Plain"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"material", "materials/none.wgsl"}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    bool named = false;
+    for (const Json& pr : s.command("world.lint", Json::object()).value()["problems"]) named |= pr.value("component", std::string()) == "MeshRenderer" && pr.value("severity", std::string()) == "error";
+    REQUIRE(named);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a sprite drawn through a material the project wrote, its numbers per sprite", "[runtime][sprites][material]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "crates";
+    o.bundle = root() / "build" / "ts" / "crates.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 960;
+    o.height = 540;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("render.post", Json{{"effects", Json::array()}}).has_value());   // the sample's scanlines off
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Flash"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 8}, {"y", 9}, {"z", 1}}}}}, {"Sprite", Json{{"size", Json{{"x", 2}, {"y", 2}}}, {"color", Json{{"r", 1}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"material", "materials/flash.wgsl"}, {"params", Json{{"x", 1}, {"y", 0}, {"z", 0}, {"w", 0}}}}}}}}).has_value());
+    auto pixel = [&]() {
+        REQUIRE(s.frame().has_value());
+        const Json r = s.command("render.project", Json{{"point", Json{{"x", 8}, {"y", 9}, {"z", 1}}}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+    };
+    const Json white = pixel();
+    INFO("white " << white.dump());
+    REQUIRE(white[1].get<int>() > 230);
+    REQUIRE(white[2].get<int>() > 230);
+    REQUIRE(s.command("world.set", Json{{"entity", "Flash"}, {"component", "Sprite"}, {"value", Json{{"params", Json{{"x", 0}}}}}}).has_value());
+    const Json red = pixel();
+    INFO("red " << red.dump());
+    REQUIRE(red[0].get<int>() > 200);
+    REQUIRE(red[1].get<int>() < 40);
+    // A material that is not there, or does not compile, is drawn plain and named by the lint.
+    const auto broken = root() / "samples" / "crates" / "materials" / "broken.wgsl";
+    REQUIRE(fs::write_text(broken, "fn material(texel: vec4f) -> vec4f { return texel +; }\n").has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Broken"}, {"components", Json{{"Transform", Json::object()}, {"Sprite", Json{{"material", "materials/broken.wgsl"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Missing"}, {"components", Json{{"Transform", Json::object()}, {"Sprite", Json{{"material", "materials/none.wgsl"}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    std::filesystem::remove(broken);
+    const Json lint = s.command("world.lint", Json::object()).value();
+    INFO(lint.dump());
+    int named = 0;
+    for (const Json& pr : lint["problems"]) if (pr.value("component", std::string()) == "Sprite" && pr.value("severity", std::string()) == "error") ++named;
+    REQUIRE(named == 2);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a mark and a diff say what an edit and some ticks changed", "[runtime][world][diff]") {
     app::Session s(hello_options(100000));
     REQUIRE(s.start().has_value());
@@ -4295,7 +4446,7 @@ TEST_CASE("a project's post effects run after the tonemap, with parameters, and 
     INFO(bad.dump());
     REQUIRE(bad["ok"] == false);
     REQUIRE(bad["effects"][0]["ok"] == false);
-    REQUIRE_FALSE(bad["effects"][0]["error"].get<std::string>().empty());
+    REQUIRE(bad["effects"][0]["error"].get<std::string>().find("broken:1:") != std::string::npos);   // the line in the effect's own code
     REQUIRE(bad["effects"][1]["ok"] == true);
     REQUIRE(s.command("render.post", Json::object()).value()["effects"].size() == 1);
     // None: the frame as before.
@@ -5901,8 +6052,9 @@ TEST_CASE("an AnimationGraph moves between states on its parameters, blends alon
     INFO(a.dump());
     REQUIRE(g["state"] == "move");
     REQUIRE(a["clip"] == "wave");
-    REQUIRE(a["blend_clip"] == "walk");
-    REQUIRE(a["blend"].get<double>() == Catch::Approx(0.5));
+    REQUIRE(a["blends"].size() == 1);
+    REQUIRE(a["blends"][0]["clip"] == "walk");
+    REQUIRE(a["blends"][0]["weight"].get<double>() == Catch::Approx(0.5));
     REQUIRE(a["from_clip"] == "nod");
     REQUIRE(a["fade"].get<double>() == Catch::Approx(0.2));
     const Json moving = s.command("animation.pose", Json{{"entity", "Actor"}}).value();
@@ -5912,7 +6064,7 @@ TEST_CASE("an AnimationGraph moves between states on its parameters, blends alon
     frames(1);
     a = get("Animator");
     REQUIRE(a["clip"] == "walk");
-    REQUIRE(a["blend_clip"] == "");
+    REQUIRE(a["blends"].empty());
     REQUIRE(a["time"].get<double>() == Catch::Approx(phase + 1.0 / 60).margin(0.02));
     REQUIRE(s.command("animation.pose", Json{{"entity", "Actor"}}).value() != moving);
     // A trigger from any state: the hop, the trigger spent, then back to idle when it has played
@@ -5951,6 +6103,67 @@ TEST_CASE("an AnimationGraph moves between states on its parameters, blends alon
     REQUIRE(s.command("world.set", Json{{"entity", "Actor"}, {"component", "AnimationGraph"}, {"value", Json{{"transitions", broken["transitions"]}}}}).has_value());
     frames(1);
     REQUIRE(get("AnimationGraph")["error"].get<std::string>().find("'nowhere'") != std::string::npos);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a blend space on two parameters mixes the clips around the point", "[runtime][animation][animgraph][blend2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // A plane of the arm's clips: nod at the middle, wave to the right, walk ahead, turn to the left.
+    const Json graph = Json{
+        {"states", Json::array({Json{{"name", "strafe"}, {"blend", "mx, my"}, {"clips", "nod 0 0, wave 1 0, walk 0 1, turn -1 0"}}})},
+        {"params", Json::array({Json{{"name", "mx"}, {"value", 1}}, Json{{"name", "my"}, {"value", 0}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Actor"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "assets/arm.glb"}}}, {"Animator", Json::object()}, {"AnimationGraph", graph}}}}).has_value());
+    auto get = [&](const char* component) { return s.command("world.get", Json{{"entity", "Actor"}, {"component", component}}).value(); };
+    auto frames = [&](int n) { for (int i = 0; i < n; ++i) REQUIRE(s.frame().has_value()); };
+    frames(1);
+    Json a = get("Animator");
+    INFO(a.dump());
+    REQUIRE(get("AnimationGraph")["error"] == "");
+    // On a clip's own point it plays alone.
+    REQUIRE(a["clip"] == "wave");
+    REQUIRE(a["blends"].empty());
+    // Between the middle, the right and ahead: those three share it, the left has none.
+    REQUIRE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "mx"}, {"value", 0.5}}).has_value());
+    REQUIRE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "my"}, {"value", 0.5}}).has_value());
+    frames(1);
+    a = get("Animator");
+    REQUIRE(a["blends"].size() == 2);
+    double sum = 0;
+    for (const Json& b : a["blends"]) {
+        REQUIRE(b["clip"] != "turn");
+        REQUIRE(b["weight"].get<double>() == Catch::Approx(1.0 / 3).margin(1e-4));
+        sum += b["weight"].get<double>();
+    }
+    REQUIRE(sum == Catch::Approx(2.0 / 3).margin(1e-4));
+    REQUIRE(s.command("animation.pose", Json{{"entity", "Actor"}}).value()["blends"].size() == 2);
+    // Past the outer clips, the nearest plays.
+    REQUIRE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "mx"}, {"value", -3}}).has_value());
+    REQUIRE(s.command("animation.param", Json{{"entity", "Actor"}, {"name", "my"}, {"value", 0}}).has_value());
+    frames(1);
+    a = get("Animator");
+    REQUIRE(a["clip"] == "turn");
+    REQUIRE(a["blends"].empty());
+    // A parameter the graph does not have, and a clip with one value on a plane, are named.
+    Json bad = graph;
+    bad["states"][0]["blend"] = "mx, nope";
+    REQUIRE(s.command("world.set", Json{{"entity", "Actor"}, {"component", "AnimationGraph"}, {"value", bad}}).has_value());
+    frames(1);
+    REQUIRE(get("AnimationGraph")["error"].get<std::string>().find("'nope', which is not a parameter") != std::string::npos);
+    bad = graph;
+    bad["states"][0]["clips"] = "nod 0, wave 1 0";
+    REQUIRE(s.command("world.set", Json{{"entity", "Actor"}, {"component", "AnimationGraph"}, {"value", bad}}).has_value());
+    frames(1);
+    REQUIRE(get("AnimationGraph")["error"].get<std::string>().find("'nod 0' in the clips needs a clip and two values") != std::string::npos);
     REQUIRE(s.finish().has_value());
 }
 

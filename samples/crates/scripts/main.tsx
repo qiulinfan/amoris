@@ -3,7 +3,7 @@
 // wheels that the arrow keys drive. The HUD counts the crates knocked down in rich text.
 //   pocket run crates
 //   pocket scenario crates
-import { Label, expose, input, mount, onStart, onTick, setClearColor, signal, touch, world } from "pocket";
+import { Label, events, expose, input, mount, onStart, onTick, setClearColor, signal, touch, world } from "pocket";
 import type { Entity } from "pocket";
 
 const down = signal(0);
@@ -13,11 +13,14 @@ let rope = 0;
 let released = false;
 let car = 0;
 const wheels: Entity[] = [];
+const flashing = new Map<Entity, number>();   // crates the ball struck: how white they still are
+let seen = 0;
 
 const at = (x: number, y: number) => ({ position: { x, y, z: 0 } });
 
 function crate(name: string, x: number, y: number): Entity {
-    return world.spawn(name, { components: { Transform: at(x, y), Sprite: { texture: "assets/crate.png", size: { x: 0.8, y: 0.8 }, filter: "nearest" }, RigidBody2D: {}, Collider2D: { size: { x: 0.4, y: 0.4 }, friction: 0.7 } } });
+    // Drawn through the project's own material (materials/flash.wgsl): params.x whitens it.
+    return world.spawn(name, { components: { Transform: at(x, y), Sprite: { texture: "assets/crate.png", size: { x: 0.8, y: 0.8 }, filter: "nearest", material: "materials/flash.wgsl" }, RigidBody2D: {}, Collider2D: { size: { x: 0.4, y: 0.4 }, friction: 0.7 } } });
 }
 
 onStart(() => {
@@ -71,6 +74,21 @@ onTick(() => {
     // The wheels turn the way the arrows point (a negative speed turns clockwise: forward).
     const speed = -input.axis("move_x") * 18;
     for (const w of wheels) world.set(w, "Joint2D", { motor_speed: speed });
+    // A crate the ball strikes flashes white and fades in a quarter of a second.
+    for (const e of events.since(seen)) {
+        seen = e.seq;
+        if (e.type !== "collision.begin") continue;
+        const d = e.data as { a: string; b: string };
+        const other = d.a === "/Ball" ? d.b : d.b === "/Ball" ? d.a : "";
+        const id = other.startsWith("/Crate") ? world.find(other) : undefined;
+        if (id !== undefined) flashing.set(id, 1);
+    }
+    for (const [id, f] of flashing) {
+        const next = Math.max(0, f - 4 / 60);
+        world.set(id, "Sprite", { params: { x: next } });
+        if (next === 0) flashing.delete(id);
+        else flashing.set(id, next);
+    }
     // A crate is down once it has dropped half its height or tipped past 30 degrees.
     let n = 0;
     for (const c of crates) {

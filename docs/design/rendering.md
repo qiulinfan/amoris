@@ -170,6 +170,24 @@ A `Light` of kind 1 is a point light and kind 2 a spot: a cone along the entity'
 
 `renderer_tests` (`[lights]`) holds it to pixels: a spot 3 units over a white floor lights the floor under it as a point light at the same height would and leaves it dark 2 units aside, where the point light still lights it, and turned to shine sideways leaves the floor under it dark; four hundred colored lights 2 units apart are culled to the view (the rest counted), the floor under a red, a green and a blue one comes out in that color and so does one near the view's corner; and with a thousand more in view the 1024 nearest are kept, the rest counted as dropped. `[lightshadows]` puts a block between a light and the floor: with `shadows` on, the floor behind it darkens by more than 60 levels while open floor moves by less than 6, for a spot (one face) and a point light (six), the block with `cast_shadows: false` lets the light through, and `render.shadows {enabled: false}` draws no faces. The tighter per-cluster test changes no pixel: a hall of 75 lamps and three spots renders identically with the rectangle-only assignment, from about a fifth of the entries.
 
+## Materials a project writes
+
+A mesh can be shaded by a project's own WGSL over the engine's light: `MeshRenderer.material` names a file in the project that defines `fn material(lit: vec4f, s: Surface) -> vec4f`, the final colour (linear, before the tonemap) from `lit`, the engine's lit colour with every light, shadow and reflection, and `s`: the surface's colour (`base`, texture times colour), its `normal`, `position`, `view` (toward the eye), `uv`, the sun's direction (`sun_dir`) and light (`sun_color`), the entity's four numbers (`params`, from `MeshRenderer.material_params`) and the simulation's seconds (`time`). Toon steps over the sun's light, a rim where the surface turns from the eye, a hologram's moving lines, a hit's flash: the engine's light is there to keep or to replace. Opaque, unskinned meshes in the lit pass take it (a translucent, glass, cut-out or skinned one is shaded as usual), and the depth, id, shadow and reflection passes see the mesh as it is, so the material changes colour, not shape. Each material is a variant of the opaque lit pipeline, made for the scene's sample count, and the draws are sorted so a material's meshes are drawn together. The file is read the first time a mesh names it and again after `assets.reload`, compiled inside a GPU error scope: one that does not compile leaves its meshes shaded as usual, and `world.lint` names them with the compiler's message, its line numbers counted in the material's own file (`materials/toon.wgsl:3:12`), as for sprite materials and post effects.
+
+```wgsl
+// samples/hello/materials/toon.wgsl: three flat steps of the sun's light, a rim, and params.x
+// laying a flat colour (params.yzw) over it.
+fn material(lit: vec4f, s: Surface) -> vec4f {
+    let ndl = max(dot(s.normal, s.sun_dir), 0.0);
+    let steps = select(select(0.35, 0.7, ndl > 0.2), 1.0, ndl > 0.6);
+    let rim = pow(1.0 - max(dot(s.normal, s.view), 0.0), 3.0) * 0.4;
+    let c = s.base.rgb * s.sun_color * steps + s.base.rgb * 0.15 + vec3f(rim);
+    return vec4f(mix(c, s.params.yzw, clamp(s.params.x, 0.0, 1.0)), 1.0);
+}
+```
+
+`runtime_tests` (`[material]`): a block drawn through the toon material comes out green and then red as its params lay those colours over it, grey and stepped with none, and a material that is not there is named by the lint.
+
 ## Post effects
 
 A project's own look after the tonemap: an old screen's lines, a pixelated world, a hit's red flash, a grey for a flashback, a vignette that closes in. An effect is WGSL that defines one function, `fn effect(uv: vec2f) -> vec4f`, the colour at a point of the view (0..1 across and down), with four to call: `sample_frame(uv)` (the frame so far, colours as they will be shown, 0..1), `param(i)` (eight numbers the project gives), `resolution()` (the view's size in pixels) and `time()` (seconds since the effects were set). `[render] post = ["effects/crt.wgsl", {shader = "effects/flash.wgsl", params = [0.5]}]` in `project.toml` sets them when the game starts and on `project.reload`; `render.post {effects}` (`render.post(effects)` in scripts) sets them now, from files in the project or code given whole (`{code, name}`), and an empty list takes them away. They run in order, each reading what the one before drew, through two targets of the frame's size, the last into the frame; the interface is drawn after them, so the HUD stays sharp. Each compiles on its own inside a GPU error scope: the answer gives per effect `ok` or the compiler's message, and only those that compiled run, so a mistake costs the effect, not the frame. `render.stats.post_effects` counts what ran.

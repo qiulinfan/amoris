@@ -1528,7 +1528,8 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
     for (int r : roots) POCKET_TRY_VOID(visit(r, identity, 0));
     for (auto& mt : mesh.morph_targets) { mt.positions.resize(mesh.vertices.size()); mt.normals.resize(mesh.vertices.size()); }
     if (!mesh.morph_targets.empty()) mesh.default_weights.resize(mesh.morph_targets.size(), 0.0f);
-    if (!any_geometry) return fail("bad_gltf", "{}: no triangle geometry", display_path);
+    // A file of clips alone (an animation library's) is read for them; it is not a model to draw.
+    if (!any_geometry && mesh.animations.empty()) return fail("bad_gltf", "{}: no triangle geometry", display_path);
     if (!mesh.skin_vertices.empty()) mesh.skin_vertices.resize(mesh.vertices.size());
     for (const Skin& s : mesh.skins) {
         for (const SkinVertex& sv : mesh.skin_vertices) {
@@ -1677,6 +1678,12 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
         failures_["mesh:" + path] = parsed.error().message;
         return fail(parsed.error());
     }
+    if (parsed->vertices.empty()) {
+        // Clips and a skeleton, nothing to draw: kept for animation.library, refused as a model.
+        animation_files_[path] = std::make_unique<Mesh>(std::move(*parsed));
+        failures_["mesh:" + path] = path + ": no triangle geometry (a file of clips: animation.library puts them on a model)";
+        return fail("bad_gltf", "{}", failures_["mesh:" + path]);
+    }
     fill_tangents(*parsed);
     auto owned = std::make_unique<Mesh>(std::move(*parsed));
     const Mesh* raw = owned.get();
@@ -1815,6 +1822,53 @@ Result<std::filesystem::path> AssetStore::converted_glb(const std::string& path,
     return out;
 }
 
+Result<Json> AssetStore::add_clips(const std::string& model, const std::string& source, bool root_translation_only) {
+    const Mesh* src = nullptr;
+    if (auto m = mesh(source)) src = *m;
+    else if (auto it = animation_files_.find(source); it != animation_files_.end()) src = it->second.get();
+    else return fail(m.error());
+    POCKET_TRY(target_const, mesh(model));
+    (void)target_const;
+    Mesh* dst = meshes_[model].get();
+    if (!dst) return fail("bad_asset", "{} is not loaded", model);
+    auto bare = [](std::string_view n) {
+        const std::size_t c = n.rfind(':');
+        return std::string(c == std::string_view::npos ? n : n.substr(c + 1));
+    };
+    std::map<std::string, int> by_name;
+    for (std::size_t i = 0; i < dst->nodes.size(); ++i) by_name.try_emplace(dst->nodes[i].name, static_cast<int>(i));
+    for (std::size_t i = 0; i < dst->nodes.size(); ++i) by_name.try_emplace(bare(dst->nodes[i].name), static_cast<int>(i));
+    // The skeleton's root: the first skin's first joint, else the first node without a parent.
+    int root = -1;
+    if (!dst->skins.empty() && !dst->skins[0].joints.empty()) root = dst->skins[0].joints[0];
+    for (std::size_t i = 0; root < 0 && i < dst->nodes.size(); ++i) if (dst->nodes[i].parent < 0) root = static_cast<int>(i);
+    Json added = Json::array();
+    std::size_t dropped = 0;
+    for (const AnimationClip& c : src->animations) {
+        AnimationClip out;
+        out.name = src->animations.size() == 1 ? std::filesystem::path(source).stem().string() : c.name;
+        out.duration = c.duration;
+        for (const AnimationChannel& ch : c.channels) {
+            if (ch.node < 0 || ch.node >= static_cast<int>(src->nodes.size()) || ch.path == 3) { ++dropped; continue; }
+            const std::string& name = src->nodes[static_cast<std::size_t>(ch.node)].name;
+            auto it = by_name.find(name);
+            if (it == by_name.end()) it = by_name.find(bare(name));
+            if (it == by_name.end()) { ++dropped; continue; }
+            if (root_translation_only && ch.path == 0 && it->second != root) { ++dropped; continue; }
+            AnimationChannel mapped = ch;
+            mapped.node = it->second;
+            out.channels.push_back(std::move(mapped));
+        }
+        if (out.channels.empty()) continue;
+        auto same = std::find_if(dst->animations.begin(), dst->animations.end(), [&](const AnimationClip& a) { return a.name == out.name; });
+        added.push_back(Json{{"name", out.name}, {"duration", out.duration}, {"channels", out.channels.size()}});
+        if (same != dst->animations.end()) *same = std::move(out);
+        else dst->animations.push_back(std::move(out));
+    }
+    version_++;
+    return Json{{"model", model}, {"source", source}, {"clips", added}, {"channels_left_out", dropped}};
+}
+
 Result<Json> AssetStore::import(const std::string& path, bool force) {
     POCKET_TRY(full, resolve(path));
     std::string ext = full.extension().string();
@@ -1840,6 +1894,7 @@ Result<Json> AssetStore::import(const std::string& path, bool force) {
 
 void AssetStore::invalidate(const std::string& path) {
     meshes_.erase(path);
+    animation_files_.erase(path);
     images_.erase(path);
     tilemaps_.erase(path);
     failures_.erase("mesh:" + path);
@@ -1850,6 +1905,7 @@ void AssetStore::invalidate(const std::string& path) {
 
 void AssetStore::invalidate_all() {
     meshes_.clear();
+    animation_files_.clear();
     images_.clear();
     for (auto it = tilemaps_.begin(); it != tilemaps_.end();) it = it->second->file ? tilemaps_.erase(it) : std::next(it);   // copies have no file to reload from
     failures_.clear();

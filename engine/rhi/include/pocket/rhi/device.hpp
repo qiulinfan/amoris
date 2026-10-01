@@ -86,6 +86,10 @@ class Device {
     // Validation errors of what is made between the two caught rather than reported as the device's:
     // pop answers the first one's message (empty when there was none), waiting for it. For code a
     // user wrote (a post effect's WGSL), whose mistakes are theirs to read and fix.
+    // Submit what the frame recorded so far and go on in a new encoder: what is written to buffers
+    // with the queue after this reaches only what is recorded after it (one camera's uniforms, then
+    // the next's).
+    void submit_so_far(Frame& frame);
     void push_error_scope();
     std::string pop_error_scope();
     WGPUBuffer create_buffer(const char* label, WGPUBufferUsage usage, std::uint64_t size, const void* initial = nullptr);

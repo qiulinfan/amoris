@@ -415,6 +415,324 @@ def skinned_arm():
     return doc, buf
 
 
+def arm_bow():
+    """An animation with no mesh, as an animation library holds (docs/design/animation.md, Clips from
+    other files): the arm's two joints under Mixamo-style names ("mixamorig:root", "mixamorig:tip"),
+    in another order and under a parent of their own, and one clip named "mixamo.com", as Mixamo
+    names every clip, that bows the tip forward about X to 60 degrees and back over a second."""
+    import math
+    def quat_x(deg):
+        h = math.radians(deg) / 2
+        return (math.sin(h), 0.0, 0.0, math.cos(h))
+    t = [0.0, 0.5, 1.0]
+    q = [quat_x(0), quat_x(60), quat_x(0)]
+    data_t = b"".join(struct.pack("<f", v) for v in t)
+    data_q = b"".join(struct.pack("<ffff", *v) for v in q)
+    buf = data_t + data_q
+    doc = {
+        "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"name": "Armature", "children": [2]},
+            {"name": "mixamorig:tip", "translation": [0, 1, 0]},
+            {"name": "mixamorig:root", "translation": [0, 0, 0], "children": [1]},
+        ],
+        "animations": [{"name": "mixamo.com", "samplers": [{"input": 0, "output": 1, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]}],
+        "buffers": [{"byteLength": len(buf)}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": len(data_t)}, {"buffer": 0, "byteOffset": len(data_t), "byteLength": len(data_q)}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": len(t), "type": "SCALAR", "min": [t[0]], "max": [t[-1]]},
+            {"bufferView": 1, "componentType": 5126, "count": len(q), "type": "VEC4"},
+        ],
+    }
+    return doc, buf
+
+
+# A blocky humanoid (samples/walker, docs/design/animation.md): a skeleton named as Mixamo names
+# one, without its "mixamorig:" prefix, standing two metres tall and facing +Z; each body part a box
+# held by one joint.
+HUMANOID = [  # joint, parent, place in the parent (no joint is turned at rest)
+    ("Hips", None, (0.0, 1.0, 0.0)),
+    ("Spine", "Hips", (0.0, 0.15, 0.0)),
+    ("Head", "Spine", (0.0, 0.6, 0.0)),
+    ("LeftUpLeg", "Hips", (0.12, -0.05, 0.0)),
+    ("LeftLeg", "LeftUpLeg", (0.0, -0.45, 0.0)),
+    ("RightUpLeg", "Hips", (-0.12, -0.05, 0.0)),
+    ("RightLeg", "RightUpLeg", (0.0, -0.45, 0.0)),
+    ("LeftArm", "Spine", (0.25, 0.5, 0.0)),
+    ("LeftForeArm", "LeftArm", (0.0, -0.3, 0.0)),
+    ("RightArm", "Spine", (-0.25, 0.5, 0.0)),
+    ("RightForeArm", "RightArm", (0.0, -0.3, 0.0)),
+]
+
+
+def humanoid_world():
+    names = [j[0] for j in HUMANOID]
+    world = {}
+    for name, parent, t in HUMANOID:
+        base = world[parent] if parent else (0.0, 0.0, 0.0)
+        world[name] = (base[0] + t[0], base[1] + t[1], base[2] + t[2])
+    return names, world
+
+
+def quat_mul(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz)
+
+
+def quat_xz(x_deg, z_deg=0.0):
+    """A turn about X, then about Z (degrees)."""
+    import math
+    hx, hz = math.radians(x_deg) / 2, math.radians(z_deg) / 2
+    return quat_mul((0.0, 0.0, math.sin(hz), math.cos(hz)), (math.sin(hx), 0.0, 0.0, math.cos(hx)))
+
+
+def humanoid_model():
+    """The model: boxes on joints in four materials (skin, shirt, trousers, shoes), skinned rigidly,
+    with an 'idle' clip of its own; the other clips come from files of their own."""
+    names, world = humanoid_world()
+    j = {n: i for i, n in enumerate(names)}
+    parts = [  # joint, center (in the world at rest), half extents, material
+        ("Hips", (0.0, 1.0, 0.0), (0.17, 0.1, 0.1), 2),
+        ("Spine", (0.0, 1.42, 0.0), (0.2, 0.27, 0.11), 1),
+        ("Head", (0.0, 1.87, 0.0), (0.12, 0.13, 0.12), 0),
+        ("Head", (0.0, 1.86, 0.13), (0.03, 0.03, 0.02), 0),   # a nose: which way it faces
+        ("LeftUpLeg", (0.12, 0.73, 0.0), (0.075, 0.22, 0.075), 2),
+        ("LeftLeg", (0.12, 0.28, 0.0), (0.065, 0.22, 0.065), 2),
+        ("LeftLeg", (0.12, 0.04, 0.04), (0.07, 0.04, 0.12), 3),
+        ("RightUpLeg", (-0.12, 0.73, 0.0), (0.075, 0.22, 0.075), 2),
+        ("RightLeg", (-0.12, 0.28, 0.0), (0.065, 0.22, 0.065), 2),
+        ("RightLeg", (-0.12, 0.04, 0.04), (0.07, 0.04, 0.12), 3),
+        ("LeftArm", (0.27, 1.5, 0.0), (0.055, 0.15, 0.055), 1),
+        ("LeftForeArm", (0.27, 1.2, 0.0), (0.045, 0.15, 0.045), 0),
+        ("RightArm", (-0.27, 1.5, 0.0), (0.055, 0.15, 0.055), 1),
+        ("RightForeArm", (-0.27, 1.2, 0.0), (0.045, 0.15, 0.045), 0),
+    ]
+    faces = [((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((-1, 0, 0), (0, 0, 1), (0, 1, 0)), ((0, 1, 0), (0, 0, 1), (1, 0, 0)),
+             ((0, -1, 0), (1, 0, 0), (0, 0, 1)), ((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (0, 1, 0), (1, 0, 0))]
+    prims = {m: {"pos": [], "nrm": [], "jnt": [], "wgt": [], "idx": []} for m in range(4)}
+    for joint, c, h, m in parts:
+        P = prims[m]
+        for n, u, v in faces:
+            base = len(P["pos"])
+            for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                P["pos"].append(tuple(c[k] + h[k] * (n[k] + su * u[k] + sv * v[k]) for k in range(3)))
+                P["nrm"].append(n)
+                P["jnt"].append((j[joint], 0, 0, 0))
+                P["wgt"].append((1.0, 0.0, 0.0, 0.0))
+            # u x v points along n for these faces: counter-clockwise seen from outside.
+            P["idx"] += [base, base + 1, base + 2, base, base + 2, base + 3]
+    idle = humanoid_clip("idle", 2.0, 17, idle_pose)
+    accessors, views, buf = [], [], b""
+    def add(data, target=None):
+        nonlocal buf
+        while len(buf) % 4:
+            buf += b"\x00"
+        v = {"buffer": 0, "byteOffset": len(buf), "byteLength": len(data)}
+        if target:
+            v["target"] = target
+        views.append(v)
+        buf += data
+        return len(views) - 1
+    def accessor(view, ctype, count, typ, **extra):
+        accessors.append({"bufferView": view, "componentType": ctype, "count": count, "type": typ, **extra})
+        return len(accessors) - 1
+    primitives = []
+    for m in range(4):
+        P = prims[m]
+        pos = accessor(add(b"".join(struct.pack("<fff", *x) for x in P["pos"]), 34962), 5126, len(P["pos"]), "VEC3",
+                       min=[min(x[k] for x in P["pos"]) for k in range(3)], max=[max(x[k] for x in P["pos"]) for k in range(3)])
+        nrm = accessor(add(b"".join(struct.pack("<fff", *x) for x in P["nrm"]), 34962), 5126, len(P["nrm"]), "VEC3")
+        jnt = accessor(add(b"".join(struct.pack("<HHHH", *x) for x in P["jnt"]), 34962), 5123, len(P["jnt"]), "VEC4")
+        wgt = accessor(add(b"".join(struct.pack("<ffff", *x) for x in P["wgt"]), 34962), 5126, len(P["wgt"]), "VEC4")
+        idx = accessor(add(b"".join(struct.pack("<H", x) for x in P["idx"]), 34963), 5123, len(P["idx"]), "SCALAR")
+        primitives.append({"attributes": {"POSITION": pos, "NORMAL": nrm, "JOINTS_0": jnt, "WEIGHTS_0": wgt}, "indices": idx, "material": m})
+    ibm = []
+    for n in names:
+        w = world[n]
+        ibm.append((1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -w[0], -w[1], -w[2], 1))
+    ibm_acc = accessor(add(b"".join(struct.pack("<16f", *x) for x in ibm)), 5126, len(ibm), "MAT4")
+    nodes = [{"name": "Hero", "mesh": 0, "skin": 0}]
+    for name, parent, tr in HUMANOID:
+        nodes.append({"name": name, "translation": list(tr)})
+    for i, (name, parent, tr) in enumerate(HUMANOID):
+        kids = [k + 1 for k, (_, p, _) in enumerate(HUMANOID) if p == name]
+        if kids:
+            nodes[i + 1]["children"] = kids
+    animation = clip_animation(idle, lambda name: j[name] + 1, add, accessor)
+    doc = {
+        "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0, 1]}],
+        "nodes": nodes,
+        "meshes": [{"name": "hero", "primitives": primitives}],
+        "materials": [
+            {"name": "skin", "pbrMetallicRoughness": {"baseColorFactor": [0.93, 0.74, 0.6, 1], "metallicFactor": 0, "roughnessFactor": 0.7}},
+            {"name": "shirt", "pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.45, 0.85, 1], "metallicFactor": 0, "roughnessFactor": 0.8}},
+            {"name": "trousers", "pbrMetallicRoughness": {"baseColorFactor": [0.25, 0.25, 0.3, 1], "metallicFactor": 0, "roughnessFactor": 0.9}},
+            {"name": "shoes", "pbrMetallicRoughness": {"baseColorFactor": [0.35, 0.2, 0.12, 1], "metallicFactor": 0, "roughnessFactor": 0.6}},
+        ],
+        "skins": [{"name": "hero", "joints": [j[n] + 1 for n in names], "inverseBindMatrices": ibm_acc}],
+        "animations": [animation],
+        "buffers": [{"byteLength": len(buf)}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    return doc, buf
+
+
+def humanoid_clip(name, duration, keys, pose):
+    """A clip sampled from pose(phase in 0..1) -> ({joint: (x_deg, z_deg)}, hips_y): `keys` keys over
+    `duration` seconds, linear between them."""
+    times = [duration * i / (keys - 1) for i in range(keys)]
+    samples = [pose(i / (keys - 1)) for i in range(keys)]
+    joints = sorted({k for s in samples for k in s[0]})
+    rot = {jn: [quat_xz(*s[0].get(jn, (0.0, 0.0))) for s in samples] for jn in joints}
+    hips = [(0.0, s[1], 0.0) for s in samples]
+    return {"name": name, "times": times, "rotations": rot, "hips": hips}
+
+
+def clip_animation(clip, node_of, add, accessor):
+    times = accessor(add(b"".join(struct.pack("<f", x) for x in clip["times"])), 5126, len(clip["times"]), "SCALAR", min=[clip["times"][0]], max=[clip["times"][-1]])
+    samplers, channels = [], []
+    hips = accessor(add(b"".join(struct.pack("<fff", *x) for x in clip["hips"])), 5126, len(clip["hips"]), "VEC3")
+    samplers.append({"input": times, "output": hips, "interpolation": "LINEAR"})
+    channels.append({"sampler": 0, "target": {"node": node_of("Hips"), "path": "translation"}})
+    for jn, qs in clip["rotations"].items():
+        out = accessor(add(b"".join(struct.pack("<ffff", *q) for q in qs)), 5126, len(qs), "VEC4")
+        samplers.append({"input": times, "output": out, "interpolation": "LINEAR"})
+        channels.append({"sampler": len(samplers) - 1, "target": {"node": node_of(jn), "path": "rotation"}})
+    return {"name": clip["name"], "samplers": samplers, "channels": channels}
+
+
+def humanoid_clip_file(clip):
+    """A file of one clip and no mesh, as Mixamo exports an animation "without skin": the joints
+    under "mixamorig:" names beneath an Armature, the clip called "mixamo.com"."""
+    nodes = [{"name": "Armature", "children": [1]}]
+    index = {}
+    for i, (name, parent, tr) in enumerate(HUMANOID):
+        index[name] = i + 1
+        nodes.append({"name": "mixamorig:" + name, "translation": list(tr)})
+    for name, parent, tr in HUMANOID:
+        if parent:
+            nodes[index[parent]].setdefault("children", []).append(index[name])
+    views, accessors, buf = [], [], b""
+    def add(data, target=None):
+        nonlocal buf
+        while len(buf) % 4:
+            buf += b"\x00"
+        views.append({"buffer": 0, "byteOffset": len(buf), "byteLength": len(data)})
+        buf += data
+        return len(views) - 1
+    def accessor(view, ctype, count, typ, **extra):
+        accessors.append({"bufferView": view, "componentType": ctype, "count": count, "type": typ, **extra})
+        return len(accessors) - 1
+    animation = clip_animation(dict(clip, name="mixamo.com"), lambda name: index[name], add, accessor)
+    while len(buf) % 4:
+        buf += b"\x00"
+    doc = {
+        "asset": {"version": "2.0", "generator": "pocket make_sample_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": nodes,
+        "animations": [animation],
+        "buffers": [{"byteLength": len(buf)}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    return doc, buf
+
+
+# The poses, by phase (0..1 over the clip). Angles in degrees: a leg or an arm turned about +X by a
+# positive angle swings back, about +Z swings toward +X (the character's left).
+def idle_pose(u):
+    import math
+    p = 2 * math.pi * u
+    return ({"Spine": (2 * math.sin(p), 0), "LeftArm": (0, 6 + math.sin(p)), "RightArm": (0, -6 - math.sin(p)),
+             "LeftForeArm": (-10, 0), "RightForeArm": (-10, 0), "Head": (-2 * math.sin(p), 0)}, 0.99 + 0.01 * math.cos(p))
+
+
+def stride_pose(u, legs, knees, arms, elbows, lean, bob, height=1.0):
+    import math
+    p = 2 * math.pi * u
+    s, c = math.sin(p), math.cos(p)
+    return ({"LeftUpLeg": (-legs * s, 0), "RightUpLeg": (legs * s, 0),
+             "LeftLeg": (5 + knees * max(0.0, c), 0), "RightLeg": (5 + knees * max(0.0, -c), 0),
+             "LeftArm": (arms * s, 5), "RightArm": (-arms * s, -5),
+             "LeftForeArm": (-elbows, 0), "RightForeArm": (-elbows, 0), "Spine": (lean, 0)},
+            height - bob + bob * math.cos(2 * p))
+
+
+def strafe_pose(u):
+    import math
+    p = 2 * math.pi * u
+    s, c = math.sin(p), math.cos(p)
+    return ({"LeftUpLeg": (0, 5 + 15 * s), "RightUpLeg": (0, -5 + 15 * s),
+             "LeftLeg": (25 * max(0.0, c), 0), "RightLeg": (25 * max(0.0, -c), 0),
+             "LeftArm": (0, 8 - 4 * s), "RightArm": (0, -8 - 4 * s), "LeftForeArm": (-15, 0), "RightForeArm": (-15, 0),
+             "Spine": (2, -3 * s)}, 0.98 + 0.02 * math.cos(2 * p))
+
+
+def crouch_pose(u, step=0.0):
+    import math
+    p = 2 * math.pi * u
+    s, c = math.sin(p), math.cos(p)
+    return ({"LeftUpLeg": (-75 - step * s, 0), "RightUpLeg": (-75 + step * s, 0),
+             "LeftLeg": (115 + step * 0.6 * max(0.0, c), 0), "RightLeg": (115 + step * 0.6 * max(0.0, -c), 0),
+             "Spine": (25 + 1.5 * math.sin(p if not step else 2 * p), 0), "Head": (-15, 0),
+             "LeftArm": (-30 + step * 0.5 * s, 8), "RightArm": (-30 - step * 0.5 * s, -8), "LeftForeArm": (-45, 0), "RightForeArm": (-45, 0)},
+            0.56 + 0.01 * math.cos(2 * p if step else p))
+
+
+def jump_pose(u):
+    """Down, up with the arms raised, then tucked: held at the end until the landing."""
+    keys = [  # u, hips y, thighs, knees, arms (x, z out), elbows
+        (0.0, 1.0, 0, 5, (0, 6), -10),
+        (0.25, 0.82, -45, 80, (35, 10), -20),
+        (0.5, 1.0, 5, 5, (-20, 150), -10),
+        (1.0, 0.95, -55, 85, (-20, 60), -40),
+    ]
+    for k in range(len(keys) - 1):
+        a, b = keys[k], keys[k + 1]
+        if a[0] <= u <= b[0]:
+            f = (u - a[0]) / (b[0] - a[0])
+            break
+    lerp = lambda x, y: x + (y - x) * f   # noqa: E731
+    hips, thigh, knee, elbow = lerp(a[1], b[1]), lerp(a[2], b[2]), lerp(a[3], b[3]), lerp(a[5], b[5])
+    ax, az = lerp(a[4][0], b[4][0]), lerp(a[4][1], b[4][1])
+    return ({"LeftUpLeg": (thigh, 0), "RightUpLeg": (thigh, 0), "LeftLeg": (knee, 0), "RightLeg": (knee, 0),
+             "LeftArm": (ax, az), "RightArm": (ax, -az), "LeftForeArm": (elbow, 0), "RightForeArm": (elbow, 0)}, hips)
+
+
+def humanoid_clips():
+    """The library: walking, running, backing off, sidestepping, crouching and jumping."""
+    return [
+        humanoid_clip("walk", 1.0, 17, lambda u: stride_pose(u, 25, 35, 20, 15, 3, 0.03)),
+        humanoid_clip("run", 0.7, 17, lambda u: stride_pose(u, 45, 70, 35, 70, 12, 0.05, 0.97)),
+        humanoid_clip("walk_back", 1.0, 17, lambda u: stride_pose(1 - u, 22, 30, 15, 15, -2, 0.03)),
+        humanoid_clip("strafe_left", 1.0, 17, strafe_pose),
+        humanoid_clip("strafe_right", 1.0, 17, lambda u: strafe_pose(1 - u)),
+        humanoid_clip("crouch", 2.0, 17, crouch_pose),
+        humanoid_clip("crouch_walk", 1.2, 17, lambda u: crouch_pose(u, 15)),
+        humanoid_clip("jump", 0.5, 21, jump_pose),
+    ]
+
+
+def make_walker(out):
+    os.makedirs(os.path.join(out, "anims"), exist_ok=True)
+    doc, buf = humanoid_model()
+    write_glb(os.path.join(out, "hero.glb"), doc, buf)
+    print("hero.glb", os.path.getsize(os.path.join(out, "hero.glb")), "bytes")
+    for clip in humanoid_clips():
+        doc, buf = humanoid_clip_file(clip)
+        path = os.path.join(out, "anims", clip["name"] + ".glb")
+        write_glb(path, doc, buf)
+        print("anims/" + clip["name"] + ".glb", os.path.getsize(path), "bytes")
+
+
 def spinning_fan():
     """A hub with a blade: two unskinned boxes on two nodes, the blade a child of the hub half a
     unit up, and a 'spin' clip that turns the blade about Y once every two seconds. The blade is a
@@ -889,6 +1207,15 @@ def main():
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--sprites":
         make_sprites(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "sprites", "assets"))
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--anims":
+        out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "assets", "assets")
+        doc, buf = arm_bow()
+        write_glb(os.path.join(out, "arm_bow.glb"), doc, buf)
+        print("arm_bow.glb", os.path.getsize(os.path.join(out, "arm_bow.glb")), "bytes")
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--walker":
+        make_walker(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "walker", "assets"))
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--crates":
         make_crates(sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "..", "samples", "crates", "assets"))

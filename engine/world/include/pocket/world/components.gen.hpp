@@ -108,6 +108,18 @@ void from_json(const Json& j, AnimationLayer& v);
 std::size_t numeric_span(AnimationLayer& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const AnimationLayer& v);
 
+/// A clip mixed into an Animator's base clip at a weight, in step with it: its time is the base clip's phase of its own length.
+struct AnimationBlend {
+    std::string clip = "";
+    float weight = 0.0f;
+    constexpr bool operator==(const AnimationBlend&) const = default;
+};
+void to_json(Json& j, const AnimationBlend& v);
+void from_json(const Json& j, AnimationBlend& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(AnimationBlend& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const AnimationBlend& v);
+
 /// One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter.
 struct AnimationState {
     std::string name = "";
@@ -282,7 +294,7 @@ void from_json(const Json& j, Lifetime& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Lifetime& v, std::string_view path, float** out);
 
-/// The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
+/// A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
 struct Camera {
     float fov_degrees = 60.0f;
     bool orthographic = false;
@@ -290,6 +302,8 @@ struct Camera {
     float near = 0.1f;
     float far = 1000.0f;
     bool active = true;
+    Vec4 viewport{0.0f, 0.0f, 1.0f, 1.0f};
+    std::int32_t order = 0;
     constexpr bool operator==(const Camera&) const = default;
 };
 void to_json(Json& j, const Camera& v);
@@ -438,6 +452,8 @@ struct MeshRenderer {
     float specular = -1.0f;
     float anisotropy = -1.0f;
     float anisotropy_rotation = 0.0f;
+    std::string material = "";
+    Vec4 material_params{0.0f, 0.0f, 0.0f, 0.0f};
     bool unlit = false;
     bool visible = true;
     bool cast_shadows = true;
@@ -463,6 +479,8 @@ struct Sprite {
     std::string filter = "linear";
     bool visible = true;
     bool sort_y = false;
+    std::string material = "";
+    Vec4 params{0.0f, 0.0f, 0.0f, 0.0f};
     bool additive = false;
     constexpr bool operator==(const Sprite&) const = default;
 };
@@ -543,8 +561,7 @@ struct Animator {
     float speed = 1.0f;
     float time = 0.0f;
     bool finished = false;
-    std::string blend_clip = "";
-    float blend = 0.0f;
+    std::vector<AnimationBlend> blends = {};
     float fade = 0.0f;
     float fade_time = 0.0f;
     std::string from_clip = "";

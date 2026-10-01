@@ -322,6 +322,13 @@ void Session::apply_project_settings() {
             if (auto r = load_sprite_sheet(path.get<std::string>(), name); !r) log::warn("runtime", "sprite sheet '{}': {}", name, r.error().to_string());
         }
     }
+    if (project_.contains("animations") && project_["animations"].is_object() && assets_) {
+        // [animations] "assets/hero.glb" = ["assets/anims/run.glb", ...]: clips from other files.
+        for (const auto& [model, files] : project_["animations"].items()) {
+            if (!files.is_array()) continue;
+            if (auto r = add_animation_library(model, files, false); !r) log::warn("runtime", "[animations] {}: {}", model, r.error().message);
+        }
+    }
     if (project_.contains("render") && project_["render"].is_object() && project_["render"].contains("post")) {
         // [render] post = ["effects/crt.wgsl", {shader = "...", params = [...]}]: the project's
         // post effects (docs/design/rendering.md, Post effects), read again on project.reload.
@@ -2062,13 +2069,75 @@ Result<Json> Session::terrain_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown terrain command '{}'", op);
 }
 
+// Sprite materials the sprites name, read and compiled the first time one is named (and again after
+// assets.reload); a material that does not compile keeps its message for world.lint and is drawn plain.
+void Session::sync_sprite_materials() {
+    if (!renderer_) return;
+    world_->ecs().each([&](const world::MeshRenderer& mr) {
+        if (mr.material.empty() || renderer_->has_mesh_material(mr.material) || sprite_material_errors_.contains(mr.material)) return;
+        auto full = inside_dir(options_.project_dir, mr.material);
+        auto text = full ? fs::read_text(*full) : Result<std::string>(fail("bad_path", "{}", full.error().message));
+        const std::string error = text ? renderer_->set_mesh_material(mr.material, *text) : text.error().message;
+        if (!error.empty()) {
+            sprite_material_errors_[mr.material] = error;
+            log::warn("runtime", "mesh material {}: {}", mr.material, error);
+        }
+    });
+    world_->ecs().each([&](const world::Sprite& sp) {
+        if (sp.material.empty() || renderer_->has_sprite_material(sp.material) || sprite_material_errors_.contains(sp.material)) return;
+        auto full = inside_dir(options_.project_dir, sp.material);
+        if (!full) {
+            sprite_material_errors_[sp.material] = full.error().message;
+            return;
+        }
+        auto text = fs::read_text(*full);
+        if (!text) {
+            sprite_material_errors_[sp.material] = text.error().message;
+            return;
+        }
+        const std::string error = renderer_->set_sprite_material(sp.material, *text);
+        if (!error.empty()) {
+            sprite_material_errors_[sp.material] = error;
+            log::warn("runtime", "sprite material {}: {}", sp.material, error);
+        }
+    });
+}
+
 Status Session::render_frame() {
+    sync_sprite_materials();
     if (audio_) audio_->pump();
     update_terrains();   // a terrain spawned or changed since the last tick shows in this frame
     auto frame = device_->begin_frame();
     if (!frame) return fail(frame.error());
     build_debug_draw();
-    if (auto r = renderer_->render(*frame, *world_, clear_, particles_.get(), animation_.get(), debug_draw_.lines() ? &debug_draw_ : nullptr); !r) {
+    // Several cameras (docs/design/cameras.md, Several cameras): active cameras with a viewport of
+    // their own each draw their part of the window, lowest order first; otherwise the one camera.
+    struct View { int order; world::EntityId id; Vec4 viewport; };
+    std::vector<View> views;
+    world_->ecs().each([&](flecs::entity e, const world::Camera& c) {
+        if (c.active) views.push_back({c.order, e.id(), c.viewport});
+    });
+    const bool split = views.size() > 1 && std::any_of(views.begin(), views.end(), [](const View& v) { return v.viewport.x != 0 || v.viewport.y != 0 || v.viewport.z != 1 || v.viewport.w != 1; });
+    if (split) {
+        std::sort(views.begin(), views.end(), [](const View& a, const View& b) { return a.order != b.order ? a.order < b.order : a.id < b.id; });
+        const auto fw = static_cast<float>(frame->width), fh = static_cast<float>(frame->height);
+        for (std::size_t i = 0; i < views.size(); ++i) {
+            const Vec4 v = views[i].viewport;
+            renderer::Renderer::RenderView rv;
+            rv.camera = views[i].id;
+            rv.secondary = i > 0;
+            const int x0 = static_cast<int>(std::round(std::clamp(v.x, 0.0f, 1.0f) * fw)), y0 = static_cast<int>(std::round(std::clamp(v.y, 0.0f, 1.0f) * fh));
+            const int x1 = static_cast<int>(std::round(std::clamp(v.x + v.z, 0.0f, 1.0f) * fw)), y1 = static_cast<int>(std::round(std::clamp(v.y + v.w, 0.0f, 1.0f) * fh));
+            if (x1 <= x0 || y1 <= y0) continue;
+            rv.viewport = renderer::Viewport{x0, y0, static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)};
+            // Each view's uniforms are written before its passes run: what the last one recorded goes first.
+            if (i > 0) device_->submit_so_far(*frame);
+            if (auto r = renderer_->render(*frame, *world_, clear_, particles_.get(), animation_.get(), debug_draw_.lines() ? &debug_draw_ : nullptr, &rv); !r) {
+                (void)device_->end_frame(*frame);
+                return fail(r.error());
+            }
+        }
+    } else if (auto r = renderer_->render(*frame, *world_, clear_, particles_.get(), animation_.get(), debug_draw_.lines() ? &debug_draw_ : nullptr); !r) {
         // Still submit the encoder so the device stays consistent, then report.
         (void)device_->end_frame(*frame);
         return fail(r.error());
@@ -3182,6 +3251,23 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
     return fail("unknown_command", "unknown tilemap command '{}'", op);
 }
 
+// Clips from other files onto a model, kept for the session so a reload of the model takes them again.
+Result<Json> Session::add_animation_library(const std::string& model, const Json& files, bool root_only) {
+    if (!assets_) return fail("no_assets", "no asset store");
+    if (model.empty()) return fail("bad_args", "library needs mesh: the model the clips go onto");
+    if (!files.is_array()) return fail("bad_args", "library needs files: [\"assets/anims/run.glb\", ...]");
+    Json results = Json::array();
+    for (const Json& f : files) {
+        if (!f.is_string()) continue;
+        POCKET_TRY(r, assets_->add_clips(model, f.get<std::string>(), root_only));
+        results.push_back(r);
+        auto& lib = anim_libraries_[model];
+        if (std::find(lib.files.begin(), lib.files.end(), f.get<std::string>()) == lib.files.end()) lib.files.push_back(f.get<std::string>());
+        lib.root_only = root_only;
+    }
+    return Json{{"mesh", model}, {"files", results}};
+}
+
 Result<Json> Session::animation_command(std::string_view op, const Json& p) {
     // Skeletal animation of glTF assets (docs/design/animation.md).
     auto& w = *world_;
@@ -3192,6 +3278,11 @@ Result<Json> Session::animation_command(std::string_view op, const Json& p) {
         POCKET_TRY(m, assets_->mesh(mr->mesh));
         return m;
     };
+    if (op == "library") {
+        // Clips from other files onto a model (docs/design/animation.md, Clips from other files):
+        // matched by joint name, kept for the session so a reload of the model takes them again.
+        return add_animation_library(opt<std::string>(p, "mesh", ""), p.contains("files") ? p["files"] : Json(), opt<std::string>(p, "translations", "all") == "root");
+    }
     if (op == "clips") {
         std::string path = opt<std::string>(p, "mesh", "");
         const assets::Mesh* mesh = nullptr;
@@ -3220,25 +3311,35 @@ Result<Json> Session::animation_command(std::string_view op, const Json& p) {
     }
     if (op == "param" || op == "trigger") {
         // A parameter of the entity's AnimationGraph (docs/design/animation.md, State machines).
-        if (!p.contains("entity") || !p.contains("name")) return fail("bad_args", "animation.{} needs 'entity' and 'name'", op);
-        if (op == "param" && !p.contains("value")) return fail("bad_args", "animation.param needs a 'value'");
+        // `values` sets several parameters at once ({speed: 2, grounded: true}): all or none.
+        const bool many = op == "param" && p.contains("values") && p["values"].is_object();
+        if (!p.contains("entity") || (!many && !p.contains("name"))) return fail("bad_args", "animation.{} needs 'entity' and 'name'{}", op, op == "param" ? " (or 'values': {name: value})" : "");
+        if (op == "param" && !many && !p.contains("value")) return fail("bad_args", "animation.param needs a 'value'");
         world::EntityId id = resolve_entity(p["entity"]);
         if (!w.alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
         const auto* current = w.try_get<world::AnimationGraph>(id);
         if (!current) return fail("no_graph", "{} has no AnimationGraph", w.path(id));
         world::AnimationGraph g = *current;
-        const std::string name = opt<std::string>(p, "name", "");
-        auto it = std::find_if(g.params.begin(), g.params.end(), [&](const world::AnimationParam& a) { return a.name == name; });
-        if (it == g.params.end()) {
-            std::string names;
-            for (const auto& a : g.params) names += (names.empty() ? "" : ", ") + a.name;
-            return fail("no_param", "{} has no parameter '{}' (it has: {})", w.path(id), name, names.empty() ? "none" : names);
-        }
-        if (op == "trigger") {
-            it->value = 1;
-            it->trigger = true;
+        auto number = [](const Json& v) { return v.is_boolean() ? (v.get<bool>() ? 1.0f : 0.0f) : v.is_number() ? v.get<float>() : 0.0f; };
+        auto set_one = [&](const std::string& name, const Json* value) -> Result<void> {
+            auto it = std::find_if(g.params.begin(), g.params.end(), [&](const world::AnimationParam& a) { return a.name == name; });
+            if (it == g.params.end()) {
+                std::string names;
+                for (const auto& a : g.params) names += (names.empty() ? "" : ", ") + a.name;
+                return fail("no_param", "{} has no parameter '{}' (it has: {})", w.path(id), name, names.empty() ? "none" : names);
+            }
+            if (!value) {
+                it->value = 1;
+                it->trigger = true;
+            } else {
+                it->value = number(*value);
+            }
+            return {};
+        };
+        if (many) {
+            for (const auto& [name, value] : p["values"].items()) POCKET_TRY_VOID(set_one(name, &value));
         } else {
-            it->value = opt<float>(p, "value", 0.0f);
+            POCKET_TRY_VOID(set_one(opt<std::string>(p, "name", ""), op == "trigger" ? nullptr : &p["value"]));
         }
         w.ecs().entity(id).set<world::AnimationGraph>(g);
         Json params = Json::object();
@@ -3947,6 +4048,14 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
         if (path.empty()) assets_->invalidate_all();
         else assets_->invalidate(path);
         renderer_->drop_asset_cache();
+        renderer_->forget_sprite_materials();   // read and compiled again when next drawn
+        sprite_material_errors_.clear();
+        // Meshes made by code were let go with everything else: made again.
+        if (path.empty())
+            for (const auto& [mname, spec] : Json(made_meshes_).items()) if (auto r = make_mesh(mname, spec); !r) log::warn("runtime", "made mesh {}: {}", mname, r.error().message);
+        // Models read again lost the clips added from other files: added again.
+        for (const auto& [model, lib] : anim_libraries_)
+            for (const std::string& f : lib.files) if (auto r = assets_->add_clips(model, f, lib.root_only); !r) log::warn("runtime", "animation library {} on {}: {}", f, model, r.error().message);
         if (physics_) physics_->drop_mesh_cache();
         // Terrains are made again: their heightmaps may have changed, and their meshes were forgotten.
         for (auto& [id, st] : terrains_) { st.shape_key.clear(); st.look_key.clear(); }
@@ -5344,6 +5453,14 @@ Result<Json> Session::world_lint(const Json& p) {
     });
     ecs.each([&](flecs::entity e, const world::Area2D& a) {
         if (a.size.x <= 0 || a.size.y <= 0) add("warning", e.id(), "Area2D", "an area with no size notices nothing", "give Area2D.size half extents above 0");
+    });
+    ecs.each([&](flecs::entity e, const world::MeshRenderer& mr) {
+        if (auto it = sprite_material_errors_.find(mr.material); !mr.material.empty() && it != sprite_material_errors_.end())
+            add("error", e.id(), "MeshRenderer", std::format("its material {} is drawn plain: {}", mr.material, it->second), "fix the WGSL (it defines fn material(lit: vec4f, s: Surface) -> vec4f), then assets.reload");
+    });
+    ecs.each([&](flecs::entity e, const world::Sprite& sp) {
+        if (auto it = sprite_material_errors_.find(sp.material); !sp.material.empty() && it != sprite_material_errors_.end())
+            add("error", e.id(), "Sprite", std::format("its material {} is drawn plain: {}", sp.material, it->second), "fix the WGSL (it defines fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f), then assets.reload");
     });
     // 2D rigid bodies (docs/design/physics2d.md).
     ecs.each([&](flecs::entity e, const world::RigidBody2D&) {
@@ -6998,7 +7115,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

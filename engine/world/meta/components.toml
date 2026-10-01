@@ -75,7 +75,7 @@ fields = [
 
 [[component]]
 name = "Camera"
-doc = "The renderer uses the first active camera. Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention)."
+doc = "A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention)."
 fields = [
     { name = "fov_degrees", type = "f32", default = 60.0, doc = "Vertical field of view in degrees (perspective)." },
     { name = "orthographic", type = "bool", default = false, doc = "Parallel projection: no perspective, sizes do not shrink with distance." },
@@ -83,6 +83,8 @@ fields = [
     { name = "near", type = "f32", default = 0.1, doc = "Near clip distance." },
     { name = "far", type = "f32", default = 1000.0, doc = "Far clip distance." },
     { name = "active", type = "bool", default = true, doc = "Whether this camera renders." },
+    { name = "viewport", type = "vec4", default = [0.0, 0.0, 1.0, 1.0], doc = "The part of the window it draws: x, y (from the top-left), width and height as fractions of the window." },
+    { name = "order", type = "i32", default = 0, doc = "Cameras with viewports draw from the lowest order up: a minimap above the view it sits in." },
 ]
 
 [[component]]
@@ -219,6 +221,8 @@ fields = [
     { name = "specular", type = "f32", default = -1.0, doc = "The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1)." },
     { name = "anisotropy", type = "f32", default = -1.0, doc = "Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0)." },
     { name = "anisotropy_rotation", type = "f32", default = 0.0, doc = "Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy)." },
+    { name = "material", type = "string", default = "", doc = "A material the project wrote: a WGSL file defining fn material(lit: vec4f, s: Surface) -> vec4f, the final colour from the engine's lit one and the surface (docs/design/rendering.md, Materials a project writes): toon steps, a rim, a hologram's lines. Opaque, unskinned meshes; empty: the engine's shading." },
+    { name = "material_params", type = "vec4", default = [0.0, 0.0, 0.0, 0.0], doc = "Four numbers for its material, per entity." },
     { name = "unlit", type = "bool", default = false, doc = "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too." },
     { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
     { name = "cast_shadows", type = "bool", default = true, doc = "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass." },
@@ -241,6 +245,8 @@ fields = [
     { name = "filter", type = "string", default = "linear", doc = "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles)." },
     { name = "visible", type = "bool", default = true, doc = "Whether the sprite is drawn." },
     { name = "sort_y", type = "bool", default = false, doc = "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer." },
+    { name = "material", type = "string", default = "", doc = "A material the project wrote: a WGSL file in the project defining fn material(texel: vec4f, tint: vec4f, uv: vec2f, params: vec4f, time: f32) -> vec4f, the sprite's colour at a pixel (docs/design/sprites.md, Materials). Empty: the texture times the colour." },
+    { name = "params", type = "vec4", default = [0.0, 0.0, 0.0, 0.0], doc = "Four numbers for its material, per sprite (a flash's strength, a dissolve's progress, an outline's width)." },
     { name = "additive", type = "bool", default = false, doc = "Add its light to what is behind instead of covering it (glows, flames, magic): the color times its alpha is added, so overlapping ones brighten each other and black adds nothing." },
 ]
 
@@ -327,13 +333,21 @@ fields = [
 ]
 
 [[record]]
+name = "AnimationBlend"
+doc = "A clip mixed into an Animator's base clip at a weight, in step with it: its time is the base clip's phase of its own length."
+fields = [
+    { name = "clip", type = "string", default = "", doc = "Clip name from the asset." },
+    { name = "weight", type = "f32", default = 0.0, doc = "0..1: its share of the pose; the base clip has what the blends leave." },
+]
+
+[[record]]
 name = "AnimationState"
 doc = "One state of an AnimationGraph (docs/design/animation.md, State machines): a clip, or clips blended along a parameter."
 fields = [
     { name = "name", type = "string", default = "", doc = "What transitions and AnimationGraph.state call it." },
     { name = "clip", type = "string", default = "", doc = "The clip it plays (when blend is empty)." },
-    { name = "blend", type = "string", default = "", doc = "A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed)." },
-    { name = "clips", type = "string", default = "", doc = "With blend: clips and the parameter's values where each plays alone, comma separated (\"idle 0, walk 2, run 6\")." },
+    { name = "blend", type = "string", default = "", doc = "A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed). Two parameters, comma separated, place the clips on a plane (\"move_x, move_y\": a strafing walk)." },
+    { name = "clips", type = "string", default = "", doc = "With blend: clips and the parameter's values where each plays alone, comma separated (\"idle 0, walk 2, run 6\"); with two parameters, two values each (\"idle 0 0, forward 0 1, left -1 0\")." },
     { name = "speed", type = "f32", default = 1.0, doc = "Playback rate in this state." },
     { name = "loop", type = "bool", default = true, doc = "Wrap at the clip's end (else hold its last frame)." },
 ]
@@ -394,8 +408,7 @@ fields = [
     { name = "speed", type = "f32", default = 1.0, doc = "Playback rate multiplier." },
     { name = "time", type = "f32", default = 0.0, doc = "Seconds into the clip; advanced by the engine, writable to seek." },
     { name = "finished", type = "bool", default = false, doc = "Set when a non-looping clip reached its end; cleared by play." },
-    { name = "blend_clip", type = "string", default = "", doc = "A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none." },
-    { name = "blend", type = "f32", default = 0.0, doc = "0..1: how much of blend_clip shows over clip." },
+    { name = "blends", type = "list:AnimationBlend", doc = "Other clips mixed with clip, each at its weight, kept in step with it; clip has the weight left (an AnimationGraph's blend space sets them; docs/design/animation.md, State machines)." },
     { name = "fade", type = "f32", default = 0.0, doc = "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running." },
     { name = "fade_time", type = "f32", default = 0.0, doc = "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed." },
     { name = "from_clip", type = "string", default = "", doc = "The clip fading out (keeps playing at its own time until the fade ends); empty when none." },

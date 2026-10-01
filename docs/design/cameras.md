@@ -31,6 +31,16 @@ onTick(() => { if (input.pressed("hit")) camera.shake("Camera", 0.4); });
 
 `samples/walker` and `samples/hills` have orbit rigs behind their characters (pitch about -27 degrees, easing over a quarter and a third of a second; the walker's comes in front of the tower and the deck), and `samples/drive` a chase rig behind the car that swings round with it over a third of a second; their scripts no longer place the camera. `runtime_tests` (`[camerarig]`) put an orbit rig 2.5 up and 4.33 back from its pivot looking down at 30 degrees, ease it after a target that jumped ten units (1 - e^(-1/30) of the way in a tick at 0.5 s), turn it 60 degrees with an action held half a second, stand a chase rig behind a target turned to face -x and swing it back over its turn time, bring it in front of a wall, hold it at a fixed offset, and shake it: the view moves, the trauma drains at 1.5 a second, and the view is still again.
 
+## Several cameras
+
+With one active camera the renderer draws the window through it (the first, if several have the whole window, as before). Give active cameras a `viewport` (x, y from the top-left, width and height, as fractions of the window) and each draws its part, from the lowest `order` up: two halves for two players on one screen, a minimap in a corner over the main view, a rear-view mirror. Each view is the whole renderer through its own camera, its shadows and lights included, clipped to its part, and what earlier views drew is kept. The first view keeps the frame-to-frame state (TAA's history, the motion vectors, the auto exposure's meter, the volumetric fog's history, the reflection probes' captures); the others are drawn without TAA and with the fog marched afresh, their exposure the first view's, so a minimap does not smear the main view's history. The project's post effects run in the first view only, and the interface is drawn once over all of them. Each view's uniforms reach the GPU with its own passes (the frame is submitted between views). `render.stats` describes the last view drawn.
+
+```ts
+world.spawn("Minimap", { components: { Transform: { position: { x: 0, y: 30, z: 0 }, rotation: { x: -0.7071, y: 0, z: 0, w: 0.7071 } }, Camera: { orthographic: true, ortho_size: 20, viewport: { x: 0.74, y: 0.04, z: 0.24, w: 0.32 }, order: 1 } } });
+```
+
+`runtime_tests` (`[cameras][views]`): two cameras on the left and right halves, each in front of its own block, draw red on the left and blue on the right, and a minimap camera over the left half's corner draws the blue block there while the rest of the left half stays red.
+
 ## Not yet
 
 Rails and dolly paths (a timeline can key a camera's Transform instead, `docs/design/timelines.md`), several targets framed at once, a look-ahead in the direction of travel, and blends between two rigs.

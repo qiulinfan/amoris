@@ -228,7 +228,16 @@ class Renderer {
 
     // Draw the world into the frame (color + depth from the frame, ids into the renderer's own
     // target). Must be called between Device::begin_frame and Device::end_frame.
-    Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr, const DebugDraw* debug = nullptr);
+    // One view of several (docs/design/cameras.md, Several cameras): drawn through `camera` into
+    // `viewport`, keeping what earlier views drew. A secondary view leaves the frame-to-frame state
+    // (TAA's history, motion, the meter, the volume's history, probe captures) to the first one, and
+    // the project's post effects run in the first view only.
+    struct RenderView {
+        world::EntityId camera = 0;
+        Viewport viewport{};
+        bool secondary = false;
+    };
+    Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr, const DebugDraw* debug = nullptr, const RenderView* view = nullptr);
     // Read back the id buffer of the last rendered frame.
     Result<IdImage> read_ids();
     // Entity under a pixel (0 when background). Reads back the whole id buffer.
@@ -297,6 +306,16 @@ class Renderer {
         bool enabled = true;
     };
     std::vector<std::string> set_post_effects(const std::vector<PostEffect>& effects);
+    // A sprite material a project wrote (docs/design/sprites.md, Materials), by the name Sprite.material
+    // gives (its file): WGSL defining fn material(texel, tint, uv, params, time) -> vec4f. Answers the
+    // compiler's message, empty when it compiled; a sprite whose material did not compile is drawn plain.
+    std::string set_sprite_material(const std::string& name, const std::string& wgsl);
+    [[nodiscard]] bool has_sprite_material(const std::string& name) const;
+    // The same for meshes (MeshRenderer.material; docs/design/rendering.md, Materials a project writes): WGSL defining fn material(lit: vec4f, s: Surface) ->
+    // vec4f over the engine's lit colour; opaque, unskinned meshes in the lit pass.
+    std::string set_mesh_material(const std::string& name, const std::string& wgsl);
+    [[nodiscard]] bool has_mesh_material(const std::string& name) const;
+    void forget_sprite_materials();
     [[nodiscard]] std::vector<PostEffect> post_effects() const;
     [[nodiscard]] TonemapSettings tonemap() const;
     // Seconds between rendered frames, for the auto exposure's adaptation (a tick by default).

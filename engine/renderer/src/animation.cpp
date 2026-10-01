@@ -244,9 +244,14 @@ class Condition {
     std::string error_;
 };
 
-// A blend space's clips along its parameter ("idle 0, walk 2, run 6"), in order of value.
-std::vector<std::pair<std::string, float>> blend_points(const std::string& text, std::string& error) {
-    std::vector<std::pair<std::string, float>> out;
+// A blend space's clips and where each plays alone: "idle 0, walk 2, run 6" along one parameter,
+// "idle 0 0, forward 0 1, left -1 0" on two (`dims` values after each clip's name).
+struct BlendPoint {
+    std::string clip;
+    float at[2] = {0, 0};
+};
+std::vector<BlendPoint> blend_points(const std::string& text, int dims, std::string& error) {
+    std::vector<BlendPoint> out;
     std::size_t start = 0;
     while (start <= text.size()) {
         std::size_t comma = text.find(',', start);
@@ -256,19 +261,68 @@ std::vector<std::pair<std::string, float>> blend_points(const std::string& text,
         while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
         while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
         if (item.empty()) continue;
-        const std::size_t space = item.find_last_of(" \t");
-        char* end = nullptr;
-        const std::string number = space == std::string::npos ? std::string() : item.substr(space + 1);
-        const float at = std::strtof(number.c_str(), &end);
-        if (space == std::string::npos || end == number.c_str()) {
-            error = std::format("'{}' in the clips needs a clip and a value", item);
+        const std::string whole = item;
+        BlendPoint b;
+        bool ok = true;
+        for (int d = dims - 1; d >= 0 && ok; --d) {
+            const std::size_t space = item.find_last_of(" \t");
+            const std::string number = space == std::string::npos ? std::string() : item.substr(space + 1);
+            char* end = nullptr;
+            b.at[d] = std::strtof(number.c_str(), &end);
+            ok = space != std::string::npos && end != number.c_str() && *end == 0;
+            if (ok) {
+                item.resize(space);
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+            }
+        }
+        if (!ok || item.empty()) {
+            error = std::format("'{}' in the clips needs a clip and {}", whole, dims == 1 ? "a value" : "two values");
             continue;
         }
-        std::string clip = item.substr(0, space);
-        while (!clip.empty() && std::isspace(static_cast<unsigned char>(clip.back()))) clip.pop_back();
-        out.emplace_back(clip, at);
+        b.clip = item;
+        out.push_back(std::move(b));
     }
-    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    if (dims == 1) std::stable_sort(out.begin(), out.end(), [](const BlendPoint& a, const BlendPoint& b) { return a.at[0] < b.at[0]; });
+    return out;
+}
+
+// The weights of a blend space's clips at a point, summing to 1, heaviest first. Along one
+// parameter the two clips either side share it by where it lies between them (the lower first);
+// on two, gradient band interpolation: each clip's weight falls from 1 at its own point to 0 at
+// every other's, measured along the line to that point, the least of those taken, and all
+// normalised. It needs no triangulation, is 1 on a clip's point, and past the outer clips gives
+// the nearest ones.
+std::vector<std::pair<std::string, float>> blend_weights(const std::vector<BlendPoint>& pts, int dims, const float v[2]) {
+    std::vector<std::pair<std::string, float>> out;
+    if (pts.empty()) return out;
+    if (dims == 1) {
+        std::size_t i = 0;
+        while (i + 1 < pts.size() && v[0] >= pts[i + 1].at[0]) ++i;
+        float w = 0;
+        if (i + 1 < pts.size() && v[0] > pts[i].at[0]) {
+            const float span = pts[i + 1].at[0] - pts[i].at[0];
+            w = span > 0 ? std::clamp((v[0] - pts[i].at[0]) / span, 0.0f, 1.0f) : 0.0f;
+        }
+        out.emplace_back(pts[i].clip, 1.0f - w);
+        if (w > 0) out.emplace_back(pts[i + 1].clip, w);
+        return out;
+    }
+    float total = 0;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        float h = 1.0f;
+        for (std::size_t j = 0; j < pts.size(); ++j) {
+            if (j == i) continue;
+            const float ex = pts[j].at[0] - pts[i].at[0], ey = pts[j].at[1] - pts[i].at[1];
+            const float len2 = ex * ex + ey * ey;
+            if (len2 <= 1e-12f) continue;   // the same point twice
+            h = std::min(h, 1.0f - ((v[0] - pts[i].at[0]) * ex + (v[1] - pts[i].at[1]) * ey) / len2);
+        }
+        h = std::max(h, 0.0f);
+        if (h > 1e-4f) { out.emplace_back(pts[i].clip, h); total += h; }
+    }
+    if (total <= 0) return {{pts.front().clip, 1.0f}};
+    for (auto& [clip, w] : out) w /= total;
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
     return out;
 }
 
@@ -297,30 +351,49 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
             const assets::AnimationClip* c = clip.empty() ? nullptr : mesh.clip(clip);
             return c ? c->duration : 0.0f;
         };
-        // The clip a state plays now: its own, or the blend space's lower clip for the value.
-        auto blend_now = [&](const world::AnimationState& st, std::string& lower, std::string& upper, float& w) {
-            std::string perr;
-            const auto points = blend_points(st.clips, perr);
-            if (!perr.empty()) note(std::format("state '{}': {}", st.name, perr));
-            lower.clear(); upper.clear(); w = 0;
-            if (points.empty()) { note(std::format("state '{}' blends by '{}' but lists no clips", st.name, st.blend)); return; }
-            const world::AnimationParam* p = param(st.blend);
-            if (!p) note(std::format("state '{}' blends by '{}', which is not a parameter", st.name, st.blend));
-            const float v = p ? p->value : points.front().second;
-            std::size_t i = 0;
-            while (i + 1 < points.size() && v >= points[i + 1].second) ++i;
-            lower = points[i].first;
-            if (i + 1 < points.size() && v > points[i].second) {
-                upper = points[i + 1].first;
-                const float span = points[i + 1].second - points[i].second;
-                w = span > 0 ? std::clamp((v - points[i].second) / span, 0.0f, 1.0f) : 0.0f;
+        // A blend space's clips and weights now, the clip that keeps the time first (along one
+        // parameter the lower of the two, on two the heaviest).
+        auto blend_now = [&](const world::AnimationState& st) {
+            std::vector<std::string> names;
+            for (std::size_t s = 0; s <= st.blend.size();) {
+                std::size_t c = st.blend.find(',', s);
+                if (c == std::string::npos) c = st.blend.size();
+                std::string n = st.blend.substr(s, c - s);
+                while (!n.empty() && std::isspace(static_cast<unsigned char>(n.back()))) n.pop_back();
+                while (!n.empty() && std::isspace(static_cast<unsigned char>(n.front()))) n.erase(n.begin());
+                if (!n.empty()) names.push_back(n);
+                s = c + 1;
             }
+            const int dims = names.size() >= 2 ? 2 : 1;
+            if (names.size() > 2) note(std::format("state '{}' blends by '{}': one parameter or two", st.name, st.blend));
+            std::string perr;
+            const auto points = blend_points(st.clips, dims, perr);
+            if (!perr.empty()) note(std::format("state '{}': {}", st.name, perr));
+            if (points.empty()) {
+                note(std::format("state '{}' blends by '{}' but lists no clips", st.name, st.blend));
+                return std::vector<std::pair<std::string, float>>{};
+            }
+            float v[2] = {points.front().at[0], points.front().at[1]};
+            for (int d = 0; d < dims && d < static_cast<int>(names.size()); ++d) {
+                if (const world::AnimationParam* p = param(names[static_cast<std::size_t>(d)])) v[d] = p->value;
+                else note(std::format("state '{}' blends by '{}', which is not a parameter", st.name, names[static_cast<std::size_t>(d)]));
+            }
+            for (const BlendPoint& b : points) if (!mesh.clip(b.clip)) note(std::format("state '{}' blends '{}', which the mesh has no clip of", st.name, b.clip));
+            return blend_weights(points, dims, v);
+        };
+        auto set_blends = [&](const std::vector<std::pair<std::string, float>>& mix) {
+            std::vector<world::AnimationBlend> blends;
+            for (std::size_t k = 1; k < mix.size(); ++k) blends.push_back(world::AnimationBlend{mix[k].first, mix[k].second});
+            if (!(blends == a.blends)) a.blends = std::move(blends);
         };
         auto enter = [&](int index, float fade) {
             const world::AnimationState& st = g.states[static_cast<std::size_t>(index)];
-            std::string clip = st.clip, upper;
-            float w = 0;
-            if (!st.blend.empty()) blend_now(st, clip, upper, w);
+            std::string clip = st.clip;
+            std::vector<std::pair<std::string, float>> mix;
+            if (!st.blend.empty()) {
+                mix = blend_now(st);
+                clip = mix.empty() ? std::string() : mix.front().first;
+            }
             if (fade > 0 && !a.clip.empty() && a.clip != clip) {
                 a.from_clip = a.clip;
                 a.from_time = a.time;
@@ -338,8 +411,7 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
             a.loop = st.loop;
             a.playing = true;
             a.finished = false;
-            a.blend_clip = w > 0 ? upper : std::string();
-            a.blend = w > 0 ? w : 0.0f;
+            set_blends(mix);
             changes.push_back({e.id(), g.state, st.name});
             g.state = st.name;
             g.state_time = 0;
@@ -391,20 +463,16 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
         // A blend space follows its parameter every tick, the lower clip keeping its phase when it changes.
         const world::AnimationState& st = g.states[static_cast<std::size_t>(cur)];
         if (!st.blend.empty()) {
-            std::string lower, upper;
-            float w = 0;
-            blend_now(st, lower, upper, w);
-            if (!lower.empty() && lower != a.clip) {
-                const float before = duration(a.clip), after = duration(lower);
+            const auto mix = blend_now(st);
+            if (!mix.empty() && mix.front().first != a.clip) {
+                const float before = duration(a.clip), after = duration(mix.front().first);
                 const float phase = before > 0 ? a.time / before : 0.0f;
-                a.clip = lower;
+                a.clip = mix.front().first;
                 a.time = phase * after;
             }
-            a.blend_clip = w > 0 ? upper : std::string();
-            a.blend = w;
-        } else if (!a.blend_clip.empty() || a.blend != 0) {
-            a.blend_clip.clear();
-            a.blend = 0;
+            set_blends(mix);
+        } else if (!a.blends.empty()) {
+            a.blends.clear();
         }
         g.state_time += dt;
         g.error = error;
@@ -920,11 +988,31 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         const assets::Mesh& mesh = **m;
         if (!mesh.skinned() && mesh.nodes.empty()) return;
         const assets::AnimationClip* clip = a.clip.empty() ? nullptr : mesh.clip(a.clip);
-        // A second clip mixed in (a blend space): kept in step with the first, the pair's cycle
-        // as long as the two blended, so a walk turning into a run speeds up smoothly.
-        const assets::AnimationClip* mix = a.blend_clip.empty() || a.blend <= 0 || !clip ? nullptr : mesh.clip(a.blend_clip);
+        // Clips mixed in (a blend space): kept in step with the base clip, the cycle as long as
+        // the clips' lengths weighed together, so a walk turning into a run speeds up smoothly.
+        std::vector<std::pair<const assets::AnimationClip*, float>> mixed;
+        float base_weight = 1.0f;
+        if (clip) {
+            for (const world::AnimationBlend& b : a.blends) {
+                const assets::AnimationClip* c = b.weight > 0 ? mesh.clip(b.clip) : nullptr;
+                if (!c) continue;
+                mixed.emplace_back(c, b.weight);
+                base_weight -= b.weight;
+            }
+            base_weight = std::max(base_weight, 0.0f);
+            float sum = base_weight;
+            for (const auto& m2 : mixed) sum += m2.second;
+            if (sum > 0) {
+                base_weight /= sum;
+                for (auto& m2 : mixed) m2.second /= sum;
+            }
+        }
         float rate = 1.0f;
-        if (mix && clip->duration > 0 && mix->duration > 0) rate = clip->duration / (clip->duration + (mix->duration - clip->duration) * std::clamp(a.blend, 0.0f, 1.0f));
+        if (!mixed.empty() && clip->duration > 0) {
+            float cycle = clip->duration * base_weight;
+            for (const auto& [c, w] : mixed) cycle += (c->duration > 0 ? c->duration : clip->duration) * w;
+            if (cycle > 0) rate = clip->duration / cycle;
+        }
         const float old_time = a.time;
         bool wrapped = false;
         if (clip && a.playing && !a.finished) {
@@ -1004,7 +1092,16 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
                 L.time = 0;
             }
         }
-        Locals locals = mix ? blend_locals(mesh, clip, a.time, mix, clip->duration > 0 ? a.time / clip->duration * mix->duration : a.time, a.blend) : sample_locals(mesh, clip, a.time);
+        Locals locals = sample_locals(mesh, clip, a.time);
+        if (!mixed.empty()) {
+            // Folded in one by one, each at its share of the weight so far: a weighted mean.
+            const float phase = clip->duration > 0 ? a.time / clip->duration : 0.0f;
+            float so_far = base_weight;
+            for (const auto& [c, w] : mixed) {
+                so_far += w;
+                locals = mix_locals(std::move(locals), sample_locals(mesh, c, c->duration > 0 ? phase * c->duration : a.time), so_far > 0 ? w / so_far : 1.0f);
+            }
+        }
         if (from) locals = mix_locals(sample_locals(mesh, from, a.from_time), locals, weight);
         for (const world::AnimationLayer& L : a.layers) apply_layer(mesh, locals, L.clip.empty() ? nullptr : mesh.clip(L.clip), L);
         // Root motion: the root's translation stays at the clip's first frame in the pose, and its
@@ -1156,6 +1253,11 @@ Json Animation::describe_pose(const world::World& world, world::EntityId id, con
             if (root >= 0) j["root"] = mesh.nodes[static_cast<std::size_t>(root)].name;
             j["root_delta"] = Json{{"x", a->root_delta.x}, {"y", a->root_delta.y}, {"z", a->root_delta.z}};
             if (a->root_rotation) j["root_delta_yaw"] = a->root_delta_yaw;
+        }
+        if (!a->blends.empty()) {
+            Json blends = Json::array();
+            for (const world::AnimationBlend& b : a->blends) blends.push_back(Json{{"clip", b.clip}, {"weight", b.weight}});
+            j["blends"] = blends;
         }
         if (a->fade > 0 && !a->from_clip.empty()) {
             float t = std::clamp(a->fade_time / a->fade, 0.0f, 1.0f);

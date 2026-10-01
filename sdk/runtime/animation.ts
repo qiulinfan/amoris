@@ -109,9 +109,15 @@ export const animation = {
         const params = typeof target === "object" && target !== null && "mesh" in target ? target : { entity: target };
         return command("animation.clips", params) as { mesh: string; clips: ClipInfo[]; skins: Array<{ name: string; joints: string[] }>; skinned: boolean; targets: string[] };
     },
+    /** Put the clips of other files onto a model (docs/design/animation.md, Clips from other files): channels matched by joint name, so a Mixamo "mixamorig:Hips" finds "Hips"; a file of one clip names it after the file. `translations: "root"` keeps only the root's moves, so the model keeps its own bone lengths. */
+    library(mesh: string, files: string[], options: { translations?: "all" | "root" } = {}): { mesh: string; files: Array<{ model: string; source: string; clips: Array<{ name: string; duration: number; channels: number }>; channels_left_out: number }> } {
+        return command("animation.library", { mesh, files, ...options }) as { mesh: string; files: Array<{ model: string; source: string; clips: Array<{ name: string; duration: number; channels: number }>; channels_left_out: number }> };
+    },
     /** Set a parameter of the entity's AnimationGraph (docs/design/animation.md, State machines): what its conditions and blend spaces read. */
-    param(entity: EntityRef, name: string, value: number | boolean): { state: string; params: Record<string, number> } {
-        return command("animation.param", { entity, name, value: typeof value === "boolean" ? (value ? 1 : 0) : value }) as { state: string; params: Record<string, number> };
+    param(entity: EntityRef, name: string | Record<string, number | boolean>, value?: number | boolean): { state: string; params: Record<string, number> } {
+        // Several at once: animation.param(hero, { x: 0.5, y: 1, grounded: true }), one command.
+        if (typeof name === "object") return command("animation.param", { entity, values: name }) as { state: string; params: Record<string, number> };
+        return command("animation.param", { entity, name, value: typeof value === "boolean" ? (value ? 1 : 0) : (value ?? 0) }) as { state: string; params: Record<string, number> };
     },
     /** Fire a trigger parameter of the entity's AnimationGraph: it holds until a transition that reads it is taken. */
     trigger(entity: EntityRef, name: string): { state: string; params: Record<string, number> } {

@@ -79,3 +79,31 @@ scenario("a jump leaves the ground and lands back on it", (g) => {
         expect(g.count("character.landed")).toBe(2);
     });
 });
+
+scenario("the body runs, crouches and jumps with the character", (g) => {
+    g.wait(0.2);
+    g.check(() => expect(g.state("hero.clip")).toBe("idle"), "standing still: idle");
+    // Full speed ahead is the run's corner of the blend space.
+    g.holdWhile("move_z", 0.8, -1);
+    g.wait(0.5);
+    g.check(() => {
+        expect(g.state("hero.state")).toBe("move");
+        expect(g.state("hero.clip")).toBe("run");
+    }, "running");
+    g.wait(0.5);
+    // Crouched, it creeps: the crouch state's blend space, at the walk's end.
+    g.holdWhile("crouch", 1.0);
+    g.holdWhile("move_z", 1.0, -1);
+    g.wait(0.6);
+    g.check(() => {
+        expect(g.state("hero.state")).toBe("crouch");
+        expect(g.state("hero.clip")).toBe("crouch_walk");
+    }, "crouch-walking");
+    g.wait(0.6);
+    g.until(() => g.state("hero.state") === "move", { timeout: 0.5, label: "up again" });
+    // A jump plays the jump clip, held until the feet are down, then back to the blend space.
+    g.press("jump");
+    g.until(() => g.state("hero.state") === "jump", { timeout: 0.2, label: "jumping" });
+    g.until(() => g.state<boolean>("player.grounded"), { timeout: 1.5, label: "landed" });
+    g.until(() => g.state("hero.state") === "move", { timeout: 0.5, label: "back to moving" });
+});

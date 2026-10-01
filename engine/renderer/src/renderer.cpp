@@ -167,7 +167,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 448;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 464;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -259,6 +259,7 @@ struct alignas(16) ObjectUniforms {
     float sheen[4];           // cloth: the sheen's colour (linear RGB) and roughness
     float spec[4];            // the dielectric reflection's tint less 1 (linear RGB) and 1 less its strength: all 0 for a plain surface
     float aniso[4];           // brushed metal: strength, and the cosine and sine of its turn from the uv's u
+    float user[4];            // a material the project wrote: its four numbers (MeshRenderer.material_params)
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -498,6 +499,7 @@ struct Object {
     sheen: vec4f,
     spec: vec4f,
     aniso: vec4f,
+    user: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
@@ -2612,6 +2614,18 @@ struct Renderer::Impl {
         WGPUTextureView bg_view[2] = {nullptr, nullptr};
     };
     std::vector<UserEffect> user_effects;
+    // Sprite materials a project wrote: the scene shader with the user's material and two fragment
+    // stages around it, and the sprite pipelines over it (plain and additive), made for the sample
+    // count and target layout the scene pipelines have now.
+    struct SpriteMaterial {
+        WGPUShaderModule module = nullptr;
+        WGPURenderPipeline pipe = nullptr, add = nullptr;
+        int samples = 0;
+        bool split = false;
+        std::string error;
+    };
+    std::map<std::string, SpriteMaterial> sprite_materials;
+    std::map<std::string, SpriteMaterial> mesh_materials;   // the same for meshes: the lit pass's opaque pipeline over the user's material
     WGPUBindGroupLayout user_fx_bgl = nullptr;
     WGPUPipelineLayout user_fx_layout = nullptr;
     WGPUSampler user_fx_sampler = nullptr;
@@ -2635,6 +2649,8 @@ struct Renderer::Impl {
     // is off, the pass (the mesh module's vs_volume/fs_volume over the scene group and its own).
     WGPUTexture volume_tex[2]{}, volume_none_tex = nullptr;            // this frame's and last frame's, in turn
     WGPUTextureView volume_view[2]{}, volume_none_view = nullptr;
+    bool secondary = false;                  // drawing a secondary view (Renderer::RenderView)
+    world::EntityId camera_pick = 0;         // the view's camera, when one was named
     int volume_cur = 0;                                                  // the one written this frame
     bool volume_valid = false;                                           // the other holds last frame's
     std::uint64_t volume_frame = 0;
@@ -3075,6 +3091,7 @@ struct Renderer::Impl {
         if (no_depth_view) wgpuTextureViewRelease(no_depth_view);
         if (no_depth_tex) wgpuTextureRelease(no_depth_tex);
         release_user_effects();
+        release_sprite_materials();
         for (int k = 0; k < 2; ++k) {
             if (user_fx_view[k]) wgpuTextureViewRelease(user_fx_view[k]);
             if (user_fx_tex[k]) wgpuTextureRelease(user_fx_tex[k]);
@@ -3607,6 +3624,242 @@ struct Renderer::Impl {
 
     // Meter the viewport of the HDR target (auto exposure only), then draw the frame from it:
     // everything outside the viewport is the clear color, as the scene pass left it before.
+    // A compiler message about a shader made from the engine's code and a user's: its line numbers
+    // ("wgsl:1469:52") turned into the user's own ("flash.wgsl:1:52") where they fall in the user's part.
+    static std::string user_lines(const std::string& message, std::size_t prefix_lines, const std::string& name) {
+        std::string out;
+        std::size_t i = 0;
+        while (i < message.size()) {
+            const std::size_t at = message.find("wgsl:", i);
+            if (at == std::string::npos) { out += message.substr(i); break; }
+            out += message.substr(i, at - i);
+            std::size_t j = at + 5, line = 0;
+            while (j < message.size() && std::isdigit(static_cast<unsigned char>(message[j]))) line = line * 10 + static_cast<std::size_t>(message[j++] - '0');
+            if (j > at + 5 && line > prefix_lines) out += std::format("{}:{}", name, line - prefix_lines);
+            else out += message.substr(at, j - at);
+            i = j;
+        }
+        return out;
+    }
+
+    void release_sprite_materials() {
+        for (auto* table : {&sprite_materials, &mesh_materials}) {
+            for (auto& [name, m] : *table) {
+                if (m.pipe) wgpuRenderPipelineRelease(m.pipe);
+                if (m.add) wgpuRenderPipelineRelease(m.add);
+                if (m.module) wgpuShaderModuleRelease(m.module);
+            }
+            table->clear();
+        }
+    }
+
+    std::string set_mesh_material(const std::string& name, const std::string& body) {
+        if (auto it = mesh_materials.find(name); it != mesh_materials.end()) {
+            if (it->second.pipe) wgpuRenderPipelineRelease(it->second.pipe);
+            if (it->second.module) wgpuShaderModuleRelease(it->second.module);
+            mesh_materials.erase(it);
+        }
+        const std::string head = std::string(kMeshWgsl) + R"WGSL(
+// What a mesh material is given beside the engine's lit colour (docs/design/rendering.md, Materials a project writes).
+struct Surface {
+    base: vec4f,        // the surface's colour: texture times colour (linear), alpha
+    normal: vec3f,      // the geometry's normal in the world, unit length
+    position: vec3f,    // the point in the world
+    view: vec3f,        // toward the eye, unit length
+    uv: vec2f,
+    sun_dir: vec3f,     // toward the sun, unit length
+    sun_color: vec3f,   // the sun's light (linear)
+    params: vec4f,      // MeshRenderer.material_params
+    time: f32,          // the simulation's seconds
+};
+)WGSL";
+        const std::string source = head + body + R"WGSL(
+fn pocket_mesh_material(in: VsOut) -> vec4f {
+    var s: Surface;
+    s.base = textureSample(base_tex, base_samp, in.uv) * in.color;
+    s.normal = normalize(in.normal);
+    s.position = in.world_pos;
+    s.view = normalize(frame.camera_pos.xyz - in.world_pos);
+    s.uv = in.uv;
+    s.sun_dir = normalize(frame.sun_dir.xyz);
+    s.sun_color = frame.sun_color.rgb;
+    s.params = objects[in.instance].user;
+    s.time = frame.clock.x;
+    let lit = shade(in, false);
+    return material(lit, s);
+}
+@fragment fn fs_mesh_material(in: VsOut) -> FsOut {
+    var out: FsOut;
+    out.color = pocket_mesh_material(in);
+    out.id = in.id;
+    return out;
+}
+@fragment fn fs_mesh_material_color(in: VsOut) -> @location(0) vec4f {
+    return pocket_mesh_material(in);
+}
+)WGSL";
+        SpriteMaterial m;
+        device->push_error_scope();
+        auto module = device->create_shader("pocket.mesh.material", source);
+        m.error = user_lines(device->pop_error_scope(), static_cast<std::size_t>(std::count(head.begin(), head.end(), '\n')), name);
+        if (!module && m.error.empty()) m.error = "the material did not compile";
+        if (module && m.error.empty()) m.module = *module;
+        else if (module) wgpuShaderModuleRelease(*module);
+        const std::string error = m.error;
+        mesh_materials[name] = std::move(m);
+        return error;
+    }
+
+    // A mesh material's pipeline: the opaque lit pipeline's state over its module, made again when
+    // the sample count or the target layout changed.
+    WGPURenderPipeline mesh_material_pipeline(SpriteMaterial& m) {
+        if (!m.module) return nullptr;
+        if (m.pipe && (m.samples != msaa_applied || m.split != split_applied)) {
+            wgpuRenderPipelineRelease(m.pipe);
+            m.pipe = nullptr;
+        }
+        if (!m.pipe) {
+            const bool split = split_applied;
+            WGPUColorTargetState targets[2]{};
+            targets[0].format = kHdrFormat;
+            targets[0].writeMask = WGPUColorWriteMask_All;
+            targets[1].format = WGPUTextureFormat_R32Uint;
+            targets[1].writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState fs{};
+            fs.module = m.module;
+            fs.entryPoint = rhi::str(split ? "fs_mesh_material_color" : "fs_mesh_material");
+            fs.targetCount = split ? 1 : 2;
+            fs.targets = targets;
+            WGPUDepthStencilState ds{};
+            ds.format = device->depth_format();
+            ds.depthWriteEnabled = WGPUOptionalBool_True;
+            ds.depthCompare = WGPUCompareFunction_Less;
+            ds.stencilFront.compare = WGPUCompareFunction_Always;
+            ds.stencilBack.compare = WGPUCompareFunction_Always;
+            ds.stencilReadMask = 0xFFFFFFFF;
+            ds.stencilWriteMask = 0xFFFFFFFF;
+            WGPURenderPipelineDescriptor rpd{};
+            rpd.label = rhi::str("pocket.mesh.material");
+            rpd.layout = layout;
+            rpd.vertex.module = m.module;
+            rpd.vertex.entryPoint = rhi::str("vs");
+            rpd.vertex.bufferCount = 1;
+            rpd.vertex.buffers = &vbl;
+            rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            rpd.primitive.frontFace = WGPUFrontFace_CCW;
+            rpd.primitive.cullMode = WGPUCullMode_Back;
+            rpd.depthStencil = &ds;
+            rpd.multisample.count = static_cast<std::uint32_t>(msaa_applied);
+            rpd.multisample.mask = 0xFFFFFFFFu;
+            rpd.fragment = &fs;
+            m.pipe = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            m.samples = msaa_applied;
+            m.split = split;
+        }
+        return m.pipe;
+    }
+
+    std::string set_sprite_material(const std::string& name, const std::string& body) {
+        if (auto it = sprite_materials.find(name); it != sprite_materials.end()) {
+            if (it->second.pipe) wgpuRenderPipelineRelease(it->second.pipe);
+            if (it->second.add) wgpuRenderPipelineRelease(it->second.add);
+            if (it->second.module) wgpuShaderModuleRelease(it->second.module);
+            sprite_materials.erase(it);
+        }
+        const std::string head = std::string(kMeshWgsl) + "\n";
+        const std::string source = head + body + R"WGSL(
+// The sprite's texture at another point (its own sheet's uv), and the size of one of its texels.
+fn sprite_texture(uv: vec2f) -> vec4f { return textureSampleLevel(base_tex, base_samp, uv, 0.0); }
+fn texel_size() -> vec2f { return 1.0 / vec2f(textureDimensions(base_tex, 0)); }
+fn pocket_sprite_material(in: VsOut) -> vec4f {
+    let texel = textureSample(base_tex, base_samp, in.uv);
+    return material(texel, in.color, in.uv, objects[in.instance].optics, frame.clock.x);
+}
+@fragment fn fs_sprite_material(in: VsOut) -> FsOut {
+    let c = pocket_sprite_material(in);
+    if (c.a < 0.02) { discard; }
+    var out: FsOut;
+    out.color = c;
+    out.id = in.id;
+    return out;
+}
+@fragment fn fs_sprite_material_color(in: VsOut) -> @location(0) vec4f {
+    let c = pocket_sprite_material(in);
+    if (c.a < 0.02) { discard; }
+    return c;
+}
+)WGSL";
+        SpriteMaterial m;
+        device->push_error_scope();
+        auto module = device->create_shader("pocket.sprite.material", source);
+        m.error = user_lines(device->pop_error_scope(), static_cast<std::size_t>(std::count(head.begin(), head.end(), '\n')), name);
+        if (!module && m.error.empty()) m.error = "the material did not compile";
+        if (module && m.error.empty()) m.module = *module;
+        else if (module) wgpuShaderModuleRelease(*module);
+        const std::string error = m.error;
+        sprite_materials[name] = std::move(m);
+        return error;
+    }
+
+    // A material's sprite pipeline for the scene pipelines as they are now (made again when the
+    // sample count or the target layout changed): the sprite pipeline's state over its module.
+    WGPURenderPipeline sprite_material_pipeline(SpriteMaterial& m, bool additive) {
+        if (!m.module) return nullptr;
+        if (m.pipe && (m.samples != msaa_applied || m.split != split_applied)) {
+            wgpuRenderPipelineRelease(m.pipe);
+            if (m.add) wgpuRenderPipelineRelease(m.add);
+            m.pipe = m.add = nullptr;
+        }
+        if (!m.pipe) {
+            const bool split = split_applied;
+            WGPUColorTargetState targets[2]{};
+            targets[0].format = kHdrFormat;
+            targets[0].writeMask = WGPUColorWriteMask_All;
+            targets[1].format = WGPUTextureFormat_R32Uint;
+            targets[1].writeMask = WGPUColorWriteMask_All;
+            WGPUBlendState blend{};
+            blend.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+            blend.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+            targets[0].blend = &blend;
+            WGPUFragmentState fs{};
+            fs.module = m.module;
+            fs.entryPoint = rhi::str(split ? "fs_sprite_material_color" : "fs_sprite_material");
+            fs.targetCount = split ? 1 : 2;
+            fs.targets = targets;
+            WGPUDepthStencilState ds{};
+            ds.format = device->depth_format();
+            ds.depthWriteEnabled = WGPUOptionalBool_False;
+            ds.depthCompare = WGPUCompareFunction_LessEqual;
+            ds.stencilFront.compare = WGPUCompareFunction_Always;
+            ds.stencilBack.compare = WGPUCompareFunction_Always;
+            ds.stencilReadMask = 0xFFFFFFFF;
+            ds.stencilWriteMask = 0xFFFFFFFF;
+            WGPURenderPipelineDescriptor rpd{};
+            rpd.label = rhi::str("pocket.sprite.material");
+            rpd.layout = layout;
+            rpd.vertex.module = m.module;
+            rpd.vertex.entryPoint = rhi::str("vs");
+            rpd.vertex.bufferCount = 1;
+            rpd.vertex.buffers = &vbl;
+            rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            rpd.primitive.frontFace = WGPUFrontFace_CCW;
+            rpd.primitive.cullMode = WGPUCullMode_None;
+            rpd.depthStencil = &ds;
+            rpd.multisample.count = static_cast<std::uint32_t>(msaa_applied);
+            rpd.multisample.mask = 0xFFFFFFFFu;
+            rpd.fragment = &fs;
+            m.pipe = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            WGPUBlendState add{};
+            add.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_One};
+            add.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+            targets[0].blend = &add;
+            m.add = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            m.samples = msaa_applied;
+            m.split = split;
+        }
+        return additive ? m.add : m.pipe;
+    }
+
     void release_user_effects() {
         for (UserEffect& e : user_effects) {
             for (WGPUBindGroup& g : e.bg) if (g) { wgpuBindGroupRelease(g); g = nullptr; }
@@ -3688,6 +3941,8 @@ fn time() -> f32 { return fx.time.x; }
         }
         for (std::size_t i = 0; i < defs.size(); ++i) {
             const std::string source = user_effect_source(defs[i].wgsl);
+            const std::string head = user_effect_source("");
+            const std::size_t prefix = static_cast<std::size_t>(std::count(head.begin(), head.begin() + static_cast<std::ptrdiff_t>(head.find("@fragment fn pocket_fx_fs")), '\n')) - 1;
             device->push_error_scope();
             auto module = device->create_shader("pocket.user_fx", source);
             WGPURenderPipeline pipeline = nullptr;
@@ -3711,7 +3966,7 @@ fn time() -> f32 { return fx.time.x; }
                 rpd.fragment = &fs;
                 pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
             }
-            const std::string message = device->pop_error_scope();
+            const std::string message = user_lines(device->pop_error_scope(), prefix, defs[i].name.empty() ? "effect" : defs[i].name);
             if (module) wgpuShaderModuleRelease(*module);
             if (!message.empty() || !pipeline) {
                 errors[i] = message.empty() ? "the effect did not compile" : message;
@@ -3871,7 +4126,7 @@ fn time() -> f32 { return fx.time.x; }
             post_depth = depth_view;
         }
         const bool metered = tonemap.auto_exposure;
-        if (metered) {
+        if (metered && !secondary) {
             MeterUniforms mu{};
             mu.viewport[0] = static_cast<float>(applied.x);
             mu.viewport[1] = static_cast<float>(applied.y);
@@ -3939,13 +4194,13 @@ fn time() -> f32 { return fx.time.x; }
         u.lut[1] = std::clamp(grade.lut_strength, 0.0f, 1.0f);
         stats.lut = lut_on;
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
-        const bool effects = std::any_of(user_effects.begin(), user_effects.end(), [](const UserEffect& e) { return e.def.enabled; });
+        const bool effects = !secondary && std::any_of(user_effects.begin(), user_effects.end(), [](const UserEffect& e) { return e.def.enabled; });
         if (effects) ensure_user_fx_targets(frame.width, frame.height);
         stats.post_effects = 0;
         WGPURenderPassColorAttachment ca{};
         ca.view = effects ? user_fx_view[0] : frame.color;
         ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-        ca.loadOp = WGPULoadOp_Clear;
+        ca.loadOp = secondary ? WGPULoadOp_Load : WGPULoadOp_Clear;   // a secondary view keeps what the others drew
         ca.storeOp = WGPUStoreOp_Store;
         ca.clearValue = {clear.r, clear.g, clear.b, clear.a};
         WGPURenderPassDescriptor rp{};
@@ -7341,7 +7596,7 @@ fn time() -> f32 { return fx.time.x; }
         world::Camera cam;
         world::WorldTransform ct;
         w.ecs().each([&](flecs::entity e, const world::Camera& c, const world::WorldTransform& t) {
-            if (cam_id == 0 && c.active) {
+            if (cam_id == 0 && (camera_pick ? e.id() == camera_pick : c.active)) {
                 cam_id = e.id();
                 cam = c;
                 ct = t;
@@ -7619,8 +7874,38 @@ Renderer::ImageView Renderer::image_view(const std::string& path) {
     return {im.view_for(path, im.white), (*img)->width, (*img)->height};
 }
 
-Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug) {
+Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug, const RenderView* view) {
     Impl& im = *impl_;
+    // A secondary view: the first view's frame-to-frame state kept aside and put back after, TAA and
+    // the volume's history off for this one.
+    im.secondary = view && view->secondary;
+    im.camera_pick = view ? view->camera : 0;
+    struct Kept {
+        Impl& im;
+        bool on;
+        TaaSettings taa;
+        bool taa_valid, motion_prev_set, clock_valid, volume_valid;
+        Mat4 taa_prev_vp;
+        float last_clock;
+        int volume_cur;
+        ~Kept() {
+            if (!on) return;
+            im.taa = taa;
+            im.taa_valid = taa_valid;
+            im.motion_prev_set = motion_prev_set;
+            im.clock_valid = clock_valid;
+            im.volume_valid = volume_valid;
+            im.taa_prev_vp = taa_prev_vp;
+            im.last_clock = last_clock;
+            im.volume_cur = volume_cur;
+            im.secondary = false;
+            im.camera_pick = 0;
+        }
+    } kept{im, im.secondary, im.taa, im.taa_valid, im.motion_prev_set, im.clock_valid, im.volume_valid, im.taa_prev_vp, im.last_clock, im.volume_cur};
+    if (im.secondary) {
+        im.taa.enabled = false;
+        im.volume_valid = false;
+    }
     im.timer_begin_frame();
     // Fog and ambient occlusion read the depth of a prepass: the id pass at one sample with a depth
     // target of its own (with MSAA that pass is there anyway).
@@ -7648,7 +7933,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.last_width = frame.width;
     im.last_height = frame.height;
     // Clamp the requested viewport to the frame; an empty request means the whole frame.
-    Viewport vp = im.viewport;
+    Viewport vp = view ? view->viewport : im.viewport;
     if (vp.w == 0 || vp.h == 0) vp = Viewport{0, 0, frame.width, frame.height};
     std::int32_t x0 = std::clamp(vp.x, 0, static_cast<std::int32_t>(frame.width));
     std::int32_t y0 = std::clamp(vp.y, 0, static_cast<std::int32_t>(frame.height));
@@ -7912,7 +8197,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.ao[1] = 1.0f / static_cast<float>(std::max(1u, frame.width));
     fu.ao[2] = 1.0f / static_cast<float>(std::max(1u, frame.height));
     if (has_sky) fu.ambient[0] = fu.ambient[1] = fu.ambient[2] = 0.0f;   // the sky's light replaces the flat ambient, even at zero
-    const int probe_capture = im.gather_probes(world, fu);
+    int probe_capture = im.gather_probes(world, fu);   // the probes light every view; the first view captures
+    if (im.secondary) probe_capture = -1;
     im.gather_decals(world, fu);
     ++im.frame_number;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
@@ -7945,6 +8231,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         float cull = 0;       // not drawn below this fraction of the view's height
         Vec3 center{0, 0, 0}; // the entity's bounding sphere in the world (radius < 0: unknown, always drawn)
         float radius = -1;
+        Impl::SpriteMaterial* user = nullptr;   // a material the project wrote (MeshRenderer.material)
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
@@ -8062,9 +8349,15 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             if (mr.unlit || (mat && mat->unlit)) ou.id[1] |= 4u;
             const bool glass = transmission > 0.001f;
             const bool blend = !glass && (color.w < 0.999f || (mat && mat->blend));
+            Impl::SpriteMaterial* user = nullptr;
+            if (!mr.material.empty() && !skinned && !blend && !glass) {
+                if (auto it = im.mesh_materials.find(mr.material); it != im.mesh_materials.end() && it->second.module) user = &it->second;
+                ou.user[0] = mr.material_params.x; ou.user[1] = mr.material_params.y; ou.user[2] = mr.material_params.z; ou.user[3] = mr.material_params.w;
+            }
             const Vec3 to_cam = t.position - im.camera.position;
             const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
             draws.push_back({material_key, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f, glass});
+            draws.back().user = draws.back().cutout ? nullptr : user;
             if (glass) ++glass_instances;
             draws.back().lods = pending_lods;
             draws.back().cull = mr.cull_screen;
@@ -8284,6 +8577,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         if (a.in_view != b.in_view) return a.in_view;       // what the camera sees together, so its runs stay whole
         if (a.cutout != b.cutout) return !a.cutout;         // cut-outs after the solid meshes they may stand behind
         if (a.skinned != b.skinned) return !a.skinned;
+        if (a.user != b.user) return std::less<const void*>()(a.user, b.user);   // a project's materials together
         if (a.texture != b.texture) return a.texture < b.texture;
         if (a.mesh != b.mesh) return a.mesh < b.mesh;
         return a.first < b.first;
@@ -8318,6 +8612,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         std::uint32_t first = 0, count = 0;
         std::int32_t sub = 0;            // file order of the layer within its map
         bool additive = false;           // adds its light to what is behind (Sprite.additive, ParticleEmitter.additive)
+        Impl::SpriteMaterial* user = nullptr;   // a material the project wrote (Sprite.material)
     };
     std::vector<SpriteDraw> sprites;
     std::uint32_t tile_layers = 0, image_layers = 0, image_quads = 0;
@@ -8411,7 +8706,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         Vec3 d = t.position - im.camera.position;
         float depth = d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z;
         // Y-sorted sprites take their Y as the depth: the higher on the screen, the earlier drawn.
-        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, sp.sort_y ? t.position.y : depth, ou, nullptr, 0, 0, 0, sp.additive});
+        Impl::SpriteMaterial* user = nullptr;
+        if (!sp.material.empty()) {
+            // Its material's numbers ride in a field sprites do not use.
+            if (auto it = im.sprite_materials.find(sp.material); it != im.sprite_materials.end() && it->second.module) user = &it->second;
+            ou.optics[0] = sp.params.x; ou.optics[1] = sp.params.y; ou.optics[2] = sp.params.z; ou.optics[3] = sp.params.w;
+        }
+        sprites.push_back({sp.texture, im.texture_for(sp.texture, sp.filter == "nearest"), sp.layer, sp.sort_y ? t.position.y : depth, ou, nullptr, 0, 0, 0, sp.additive, user});
     });
     // Particles: one unlit quad each, facing the camera (or flat in XY), sized and tinted by age.
     std::uint32_t particle_count = 0;
@@ -8546,7 +8847,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // (a solid mesh keeps the GPU's early depth test). The shadow passes have no material group:
     // their unskinned cut-outs bind theirs at group 3, so the texture's holes let the light through.
     // `keep` (a light's shadow faces): draws it turns down are skipped, splitting their runs.
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr, WGPURenderPipeline cut_skinned = nullptr) {
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr, WGPURenderPipeline cut_skinned = nullptr, bool user_materials = false) {
+        Impl::SpriteMaterial* current_user = nullptr;   // a project's material on the lit pass's opaque draws
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
         bool current_skinned = false, current_blend = false, current_cut = false;
@@ -8562,11 +8864,16 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 if (keep && !(*keep)(i + run)) break;
                 const Draw& n = draws[i + run];
                 if (n.gpu != d.gpu || n.first != d.first || n.count != d.count || n.material != d.material || n.skinned != d.skinned || n.blend != d.blend || n.cutout != d.cutout) break;
+                if (user_materials && n.user != d.user) break;
                 if (blend && n.depth != d.depth) break;   // translucent instances keep their far-to-near order
                 ++run;
             }
-            if (d.skinned != current_skinned || blend != current_blend || cutting != current_cut) {
-                wgpuRenderPassEncoderSetPipeline(pass, blend ? (d.skinned ? blend_skinned : blend_plain) : cutting ? (d.skinned ? cut_skinned : cut) : (d.skinned ? skinned : plain));
+            Impl::SpriteMaterial* user = user_materials && !blend && !cutting && !d.skinned ? d.user : nullptr;
+            WGPURenderPipeline user_pipe = user ? im.mesh_material_pipeline(*user) : nullptr;
+            if (!user_pipe) user = nullptr;
+            if (d.skinned != current_skinned || blend != current_blend || cutting != current_cut || user != current_user) {
+                wgpuRenderPassEncoderSetPipeline(pass, user_pipe ? user_pipe : blend ? (d.skinned ? blend_skinned : blend_plain) : cutting ? (d.skinned ? cut_skinned : cut) : (d.skinned ? skinned : plain));
+                current_user = user;
                 current_skinned = d.skinned;
                 current_blend = blend;
                 current_cut = cutting;
@@ -8857,7 +9164,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     // Sprites and tile layers in draw order; the same loop serves the color pass and the id pass.
     // `add`: the pipeline additive sprites draw with (the id pass gives the same one for both).
-    auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, WGPURenderPipeline add, std::uint32_t& counter) {
+    auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, WGPURenderPipeline add, std::uint32_t& counter, bool materials = false) {
+        Impl::SpriteMaterial* current_user = nullptr;
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
         wgpuRenderPassEncoderSetPipeline(pass, pipe);
         bool adding = false;
@@ -8871,7 +9179,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             const SpriteDraw& s = sprites[i];
             if (s.mesh) {
                 // A tile layer: its own buffers, one draw, then back to the quad for sprites.
-                if (adding) { wgpuRenderPassEncoderSetPipeline(pass, pipe); adding = false; }
+                if (adding || current_user) { wgpuRenderPassEncoderSetPipeline(pass, pipe); adding = false; current_user = nullptr; }
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s.mesh->vertices, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, s.mesh->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = s.mesh;
@@ -8886,12 +9194,19 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = &quad;
             }
-            if (s.additive != adding) {
-                wgpuRenderPassEncoderSetPipeline(pass, s.additive ? add : pipe);
+            Impl::SpriteMaterial* user = materials ? s.user : nullptr;
+            if (s.additive != adding || user != current_user) {
+                WGPURenderPipeline chosen = user ? im.sprite_material_pipeline(*user, s.additive) : nullptr;
+                if (!chosen) {
+                    chosen = s.additive ? add : pipe;
+                    user = nullptr;
+                }
+                wgpuRenderPassEncoderSetPipeline(pass, chosen);
                 adding = s.additive;
+                current_user = user;
             }
             std::size_t run = 1;
-            while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material && sprites[i + run].additive == s.additive) ++run;
+            while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material && sprites[i + run].additive == s.additive && (!materials || sprites[i + run].user == s.user)) ++run;
             wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
             wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
             counter++;
@@ -8976,7 +9291,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, im.cut_pipeline, (oit || glassy) ? &solid_only : &in_view_only, nullptr, im.cut_skinned_pipeline);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, im.cut_pipeline, (oit || glassy) ? &solid_only : &in_view_only, nullptr, im.cut_skinned_pipeline, true);
     }
     if (glassy) {
         // The scene so far copied for the glass to show through, then the glass over it, and the
@@ -9084,7 +9399,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         pass = im.begin_pass(frame.encoder, wrp);
         set_viewport(pass);
     }
-    if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.sprite_add_pipeline, im.stats.draw_calls);
+    if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.sprite_add_pipeline, im.stats.draw_calls, true);
     if (debug && !debug->vertices().empty()) {
         const auto& verts = debug->vertices();
         if (verts.size() > im.line_capacity) {
@@ -9335,6 +9650,12 @@ TonemapSettings Renderer::tonemap() const { return impl_->tonemap; }
 void Renderer::set_time_step(float seconds) { impl_->time_step = seconds; }
 
 std::vector<std::string> Renderer::set_post_effects(const std::vector<PostEffect>& effects) { return impl_->set_user_effects(effects); }
+
+std::string Renderer::set_sprite_material(const std::string& name, const std::string& wgsl) { return impl_->set_sprite_material(name, wgsl); }
+std::string Renderer::set_mesh_material(const std::string& name, const std::string& wgsl) { return impl_->set_mesh_material(name, wgsl); }
+bool Renderer::has_mesh_material(const std::string& name) const { return impl_->mesh_materials.contains(name); }
+bool Renderer::has_sprite_material(const std::string& name) const { return impl_->sprite_materials.contains(name); }
+void Renderer::forget_sprite_materials() { impl_->release_sprite_materials(); }
 
 std::vector<Renderer::PostEffect> Renderer::post_effects() const {
     std::vector<PostEffect> out;
