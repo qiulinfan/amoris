@@ -10,3 +10,8 @@ ambience = { duck_by = "fx", duck_amount = 0.5, duck_seconds = 0.1 }
 width = 800
 height = 450
 title = "Pocket audio sample"
+
+# Sounds from recipes, on keys (docs/design/audio.md, Sounds from a recipe).
+[input.actions]
+coin = ["C"]
+blast = ["B"]

@@ -558,6 +558,8 @@ export interface TileMap {
     visible: boolean;
     /** Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient. */
     lit: boolean;
+    /** Its solid cells cast shadows (docs/design/sprites.md, Shadows): a point or spot light does not reach a lit sprite or map cell behind them. One map at a time casts them (the first that asks). */
+    shadows: boolean;
 }
 
 /** A state machine that plays the entity's Animator (docs/design/animation.md, State machines): states play a clip or blend clips along a parameter, transitions move between them on conditions over parameters the script sets, each with a cross-fade. The engine writes the state it is in; animation.param and animation.trigger set parameters. */
@@ -1508,7 +1510,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, material: "", material_params: { x: 0, y: 0, z: 0, w: 0 }, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, material: "", params: { x: 0, y: 0, z: 0, w: 0 }, additive: false, lit: false, normal_map: "" },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
-    TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true, lit: false },
+    TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true, lit: false, shadows: false },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
     Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },

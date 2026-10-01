@@ -285,6 +285,7 @@ Draws a Tiled map (a .tmj file in the project) with the entity at the map's top-
 | `order` | i32 | -10 | Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this. |
 | `visible` | bool | true | Whether the map is drawn. |
 | `lit` | bool | false | Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient. |
+| `shadows` | bool | false | Its solid cells cast shadows (docs/design/sprites.md, Shadows): a point or spot light does not reach a lit sprite or map cell behind them. One map at a time casts them (the first that asks). |
 
 ## AnimationGraph
 

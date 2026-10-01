@@ -3,6 +3,8 @@
 #include <pocket/core/fs.hpp>
 #include <pocket/core/log.hpp>
 
+#include "synth.hpp"
+
 #include <SDL3/SDL.h>
 
 #define STB_VORBIS_HEADER_ONLY
@@ -269,6 +271,17 @@ struct Audio::Impl {
             const auto* raw = reinterpret_cast<const std::uint8_t*>(out);
             pcm.assign(raw, raw + static_cast<std::size_t>(frames) * info.channels * sizeof(drmp3_int16));
             drmp3_free(out, nullptr);
+        } else if (ext == ".sfx") {
+            // A recipe (docs/design/audio.md, Sounds from a recipe): rendered at the mixer's rate.
+            Json recipe = Json::parse(std::string(bytes.begin(), bytes.end()), nullptr, false);
+            if (recipe.is_discarded()) return fail("bad_audio", "{}: not JSON", path);
+            auto made = synthesize(recipe, config.sample_rate);
+            if (!made) return fail("bad_audio", "{}: {}", path, made.error().message);
+            spec.format = SDL_AUDIO_F32;
+            spec.channels = 1;
+            spec.freq = config.sample_rate;
+            const auto* raw = reinterpret_cast<const std::uint8_t*>(made->data());
+            pcm.assign(raw, raw + made->size() * sizeof(float));
         } else {
             SDL_IOStream* io = SDL_IOFromConstMem(bytes.data(), bytes.size());
             if (!io) return fail("bad_audio", "{}: {}", path, SDL_GetError());

@@ -13,6 +13,7 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | Catch2 | 3.16.0 | BSL-1.0 | vendored amalgamation |
 | Yoga | 3.2.1 | MIT | vendored sources |
 | Box2D | 3.1.1 | MIT | vendored sources (`third_party/box2d`, the `src` and `include` directories of github.com/erincatto/box2d at tag v3.1.1); 2D rigid bodies, shapes and joints for the physics module (`docs/design/physics2d.md`) |
+| nanosvg | master 239e102 (2026-07-09) | zlib | vendored headers (`third_party/stb/include/nanosvg.h`, `nanosvgrast.h`, from github.com/memononen/nanosvg, compiled in `stb_impl.c`); parses and rasterizes SVG images for the assets module |
 | meshoptimizer | 1.3 | MIT | vendored sources (`third_party/meshoptimizer/src`, from github.com/zeux/meshoptimizer); simplifies meshes for levels of detail in the assets module |
 | SDL3 | 3.4.16 | Zlib | fetched source, built with CMake by `pocket setup` |
 | wgpu-native | 29.0.1.1 | MIT or Apache-2.0 | fetched prebuilt archive |

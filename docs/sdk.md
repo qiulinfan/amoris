@@ -15,7 +15,7 @@ onStop(() => {});
 expose("score", () => score);   // observable state: hashed, reported, in transcripts
 ```
 
-Gameplay reads only `t.dt` and never the wall clock, which is what makes runs reproducible and replays exact.
+Gameplay reads only `t.dt` and never the wall clock, which is what makes runs reproducible and replays exact. The tick is 60 a second unless the runtime is started with `--tick-rate` (`runtime().tickRate` says which), so `t.dt` is 1/60 and something that happens every 0.15 seconds happens every 9 ticks; a paused runtime advances only when an agent or a test calls `step {ticks}`.
 
 ## World
 

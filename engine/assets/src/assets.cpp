@@ -5,6 +5,8 @@
 #include <pocket/core/tangents.hpp>
 
 #include <stb_image.h>
+#include <nanosvg.h>
+#include <nanosvgrast.h>
 
 #include <algorithm>
 #include <cmath>
@@ -1580,6 +1582,48 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
     return mesh;
 }
 
+// An SVG drawn into pixels (nanosvg): at twice its size (its width and height, or its viewBox),
+// or at `?size=N` (the longer side N pixels) or `?scale=S`, the longer side at most 4096.
+Result<Image> decode_svg(const std::string& bytes, const std::string& display_path, std::string_view query) {
+    std::string text = bytes;   // the parser writes into its input
+    NSVGimage* svg = nsvgParse(text.data(), "px", 96.0f);
+    if (!svg) return fail("bad_image", "{}: not an SVG the reader understands", display_path);
+    const float w0 = svg->width, h0 = svg->height;
+    if (!(w0 > 0) || !(h0 > 0)) {
+        nsvgDelete(svg);
+        return fail("bad_image", "{}: the SVG has no size (give it width and height, or a viewBox)", display_path);
+    }
+    float scale = 2.0f;
+    for (std::size_t start = 0; start < query.size();) {
+        std::size_t amp = query.find('&', start);
+        if (amp == std::string_view::npos) amp = query.size();
+        const std::string_view kv = query.substr(start, amp - start);
+        start = amp + 1;
+        const std::size_t eq = kv.find('=');
+        if (eq == std::string_view::npos) continue;
+        const std::string key(kv.substr(0, eq)), value(kv.substr(eq + 1));
+        const float v = std::strtof(value.c_str(), nullptr);
+        if (key == "size" && v > 0) scale = v / std::max(w0, h0);
+        else if (key == "scale" && v > 0) scale = v;
+    }
+    scale = std::min(scale, 4096.0f / std::max(w0, h0));
+    const auto w = static_cast<int>(std::max(1.0f, std::round(w0 * scale))), h = static_cast<int>(std::max(1.0f, std::round(h0 * scale)));
+    Image img;
+    img.path = display_path;
+    img.width = static_cast<std::uint32_t>(w);
+    img.height = static_cast<std::uint32_t>(h);
+    img.rgba.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    NSVGrasterizer* rast = nsvgCreateRasterizer();
+    if (!rast) {
+        nsvgDelete(svg);
+        return fail("bad_image", "{}: no rasterizer", display_path);
+    }
+    nsvgRasterize(rast, svg, 0, 0, scale, img.rgba.data(), w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(svg);
+    return img;
+}
+
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path) {
     int w = 0, h = 0, channels = 0;
     const auto* data = reinterpret_cast<const stbi_uc*>(bytes.data());
@@ -1796,9 +1840,15 @@ Result<const Image*> AssetStore::image(const std::string& path) {
             }
         }
     } else {
-        POCKET_TRY(full, resolve(path));
+        // A query after the file is for the reader ("assets/coin.svg?size=128").
+        const std::size_t q = path.find('?');
+        const std::string file = path.substr(0, q);
+        POCKET_TRY(full, resolve(file));
         POCKET_TRY(bytes, fs::read_bytes(full));
-        decoded = decode_image(std::string(bytes.begin(), bytes.end()), path);
+        std::string ext = std::filesystem::path(file).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext == ".svg") decoded = decode_svg(std::string(bytes.begin(), bytes.end()), path, q == std::string::npos ? std::string_view() : std::string_view(path).substr(q + 1));
+        else decoded = decode_image(std::string(bytes.begin(), bytes.end()), path);
     }
     if (!decoded) {
         failures_["image:" + path] = decoded.error().message;
@@ -1896,6 +1946,9 @@ void AssetStore::invalidate(const std::string& path) {
     meshes_.erase(path);
     animation_files_.erase(path);
     images_.erase(path);
+    // The same file read at other sizes ("assets/coin.svg?size=64").
+    for (auto it = images_.begin(); it != images_.end();) it = it->first.starts_with(path + "?") ? images_.erase(it) : std::next(it);
+    for (auto it = failures_.begin(); it != failures_.end();) it = it->first.starts_with("image:" + path + "?") ? failures_.erase(it) : std::next(it);
     tilemaps_.erase(path);
     failures_.erase("mesh:" + path);
     failures_.erase("image:" + path);
@@ -1923,7 +1976,7 @@ Json AssetStore::list() const {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             const bool model = ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".stl" || ext == ".ply" || blender_format(ext);
-            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" ? "audio" : ext == ".mtl" ? "material" : "other";
+            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".sfx" ? "audio" : ext == ".mtl" ? "material" : "other";
 
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();

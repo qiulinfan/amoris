@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <fstream>
 
 using namespace pocket;
@@ -544,4 +545,53 @@ TEST_CASE("a bus thins with a high-pass, echoes with feedback and rings on, and 
     INFO("tails " << open_tail << " and " << closed_tail);
     REQUIRE(open_tail > 1e-3f);
     REQUIRE(closed_tail == 0.0f);
+}
+
+TEST_CASE("a recipe renders a sound: its pitch, its length, a preset and its seed, the same every time", "[audio][synth]") {
+    const auto dir = std::filesystem::temp_directory_path() / std::format("pocket-synth-{}", std::rand());
+    std::filesystem::create_directories(dir / "assets");
+    auto write = [&](const char* name, const char* text) { std::ofstream(dir / "assets" / name) << text; };
+    write("a440.sfx", R"({"wave": "sine", "frequency": 440, "attack": 0, "hold": 0.5, "decay": 0, "volume": 0.5})");
+    write("coin.sfx", R"({"preset": "coin"})");
+    write("coin7.sfx", R"({"preset": "coin", "seed": 7})");
+    write("bad.sfx", R"({"wave": "trumpet"})");
+    auto make = [&]() {
+        audio::Config c;
+        c.project_dir = dir;
+        c.headless = true;
+        return std::move(audio::Audio::create(c).value());
+    };
+    auto a = make();
+    // Half a second of a 440 Hz sine: as long as its envelope, crossing zero 440 times.
+    REQUIRE(a->load("assets/a440.sfx").has_value());
+    REQUIRE(a->clips()[0]["seconds"].get<double>() == Catch::Approx(0.5).margin(0.002));
+    REQUIRE(a->play("assets/a440.sfx", audio::PlayOptions{}).has_value());
+    const int rate = a->clips()[0]["source_rate"].get<int>();
+    std::vector<float> left;
+    const auto& mixed = a->render_frames(rate / 2);
+    for (std::size_t i = 0; i + 1 < mixed.size(); i += 2) left.push_back(mixed[i]);
+    int crossings = 0;
+    float peak = 0;
+    for (std::size_t i = 1; i < left.size(); ++i) {
+        if ((left[i - 1] < 0) != (left[i] < 0)) ++crossings;
+        peak = std::max(peak, std::fabs(left[i]));
+    }
+    INFO("crossings " << crossings << " peak " << peak);
+    REQUIRE(crossings == Catch::Approx(440).margin(4));
+    REQUIRE(peak > 0.2f);
+    // A preset: as long as its parts, and the same samples in another session; a seed varies it.
+    auto rendered = [&](const char* clip) {
+        auto b = make();
+        REQUIRE(b->play(clip, audio::PlayOptions{}).has_value());
+        return b->render_frames(rate / 2);
+    };
+    REQUIRE(a->load("assets/coin.sfx").has_value());
+    const auto first = rendered("assets/coin.sfx");
+    REQUIRE(first == rendered("assets/coin.sfx"));
+    REQUIRE(first != rendered("assets/coin7.sfx"));
+    // What is wrong in a recipe is said.
+    auto bad = a->load("assets/bad.sfx");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("'wave' is sine, square, triangle, saw or noise") != std::string::npos);
+    std::filesystem::remove_all(dir);
 }

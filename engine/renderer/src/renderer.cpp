@@ -205,6 +205,8 @@ struct alignas(16) FrameUniforms {
     float water_info[4];         // how many, the time
     float cascade_depth[4];      // the world distance each cascade's depth range spans (0..1 in its map)
     float shadow_soft[4];        // soft shadows: tan of the sun's radius (0: off), contact shadows on, the blocker search's reach
+    float occluders[4];          // 2D shadows: the casting map's top-left x and y, its tile size, on
+    float occluder_size[4];      // its cells across and down
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -322,8 +324,12 @@ struct Frame {
     water_info: vec4f,
     cascade_depth: vec4f,
     shadow_soft: vec4f,
+    occluders: vec4f,
+    occluder_size: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
+// 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
+@group(0) @binding(18) var occ_tex: texture_2d<f32>;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
 // The sky's light: the panorama with GGX-prefiltered mips (roughness 0 to 1), and its diffuse
 // irradiance as nine spherical-harmonic coefficients (already divided by pi).
@@ -892,6 +898,30 @@ fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
 
 // `cut`: whether this pipeline draws cut-outs. Only the cut-out pipelines are compiled with the
 // discard, so the solid ones keep the GPU's early depth test and hidden-surface removal.
+// 2D shadows (TileMap.shadows): whether the line from a point to a light, in the casting map's
+// plane, crosses a solid cell between the two (the point's own cell and the light's left out, so a
+// wall is lit on the face it shows the light). Cell by cell, Amanatides and Woo.
+fn shadow_2d(p: vec3f, l: vec3f) -> f32 {
+    let ts = frame.occluders.z;
+    let a = vec2f((p.x - frame.occluders.x) / ts, (frame.occluders.y - p.y) / ts);
+    let b = vec2f((l.x - frame.occluders.x) / ts, (frame.occluders.y - l.y) / ts);
+    let size = vec2i(frame.occluder_size.xy);
+    var cell = vec2i(floor(a));
+    let last = vec2i(floor(b));
+    let d = b - a;
+    let stepv = vec2i(select(-1, 1, d.x > 0.0), select(-1, 1, d.y > 0.0));
+    let inv = vec2f(select(1e30, abs(1.0 / d.x), d.x != 0.0), select(1e30, abs(1.0 / d.y), d.y != 0.0));
+    var t = vec2f(select(1e30, select(a.x - floor(a.x), floor(a.x) + 1.0 - a.x, d.x > 0.0) * inv.x, d.x != 0.0),
+                  select(1e30, select(a.y - floor(a.y), floor(a.y) + 1.0 - a.y, d.y > 0.0) * inv.y, d.y != 0.0));
+    for (var i = 0; i < 96; i = i + 1) {
+        if (cell.x == last.x && cell.y == last.y) { return 1.0; }
+        if (t.x < t.y) { cell.x = cell.x + stepv.x; t.x = t.x + inv.x; } else { cell.y = cell.y + stepv.y; t.y = t.y + inv.y; }
+        if (cell.x == last.x && cell.y == last.y) { return 1.0; }
+        if (cell.x >= 0 && cell.y >= 0 && cell.x < size.x && cell.y < size.y && textureLoad(occ_tex, cell, 0).r > 0.5) { return 0.0; }
+    }
+    return 1.0;
+}
+
 fn shade(in: VsOut, cut: bool) -> vec4f {
     let object = objects[in.instance];
     // Derivatives and samples first: both must stay in uniform control flow.
@@ -1040,7 +1070,9 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
                 }
                 lit = face_lit(face, in.world_pos, normalize(in.normal), pl, li.cone.z * dist);
             }
-            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness, aniso_t) * (att * att * cone * lit);
+            var blocked = 1.0;
+            if (frame.occluders.w > 0.5 && (object.id.y & 1u) != 0u && att * cone > 0.0) { blocked = shadow_2d(in.world_pos, li.pos_range.xyz); }
+            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness, aniso_t) * (att * att * cone * lit * blocked);
         }
     }
     if (object.optics.x > 0.0) { color += transmitted(object, in.world_pos, n, v, paint.albedo, roughness); }
@@ -2780,10 +2812,63 @@ struct Renderer::Impl {
     WGPUTexture ao_white_tex = nullptr;
     WGPUTextureView ao_white_view = nullptr;
     WGPUTextureView scene_ao = nullptr;           // the AO view the scene group was made with
-    WGPUBindGroupEntry scene_entries[18]{};       // the scene group's entries, to make it again when the AO target, the atlas or the glass copy changes
+    WGPUBindGroupEntry scene_entries[19]{};       // the scene group's entries, to make it again when the AO target, the atlas or the glass copy changes
     WGPUTextureView scene_glass = nullptr;        // the glass copy the scene group was made with
     WGPUTexture glass_tex = nullptr, glass_stub = nullptr;   // the scene before the glass (frame-sized), and a black texel before there is one
     WGPUTextureView glass_view = nullptr, glass_stub_view = nullptr;
+    // 2D shadows (TileMap.shadows): the casting map's solid cells, one R8 texel each, uploaded when
+    // they change; a 1x1 empty stand-in without one.
+    WGPUTexture occ_texture = nullptr, occ_stub = nullptr;
+    WGPUTextureView occ_view = nullptr, occ_stub_view = nullptr, scene_occ = nullptr;
+    std::uint32_t occ_w = 0, occ_h = 0;
+    std::vector<std::uint8_t> occ_cells;
+    float occ_uniform[8] = {};   // FrameUniforms.occluders and occluder_size for this frame
+
+    // The first visible orthogonal TileMap with `shadows`: its solid cells into the texture.
+    void gather_occluders(const world::World& world) {
+        for (float& v : occ_uniform) v = 0;
+        if (!assets) return;
+        bool found = false;
+        world.ecs().each([&](const world::TileMap& tmc, const world::WorldTransform& t) {
+            if (found || !tmc.shadows || !tmc.visible || tmc.map.empty()) return;
+            auto map = assets->tilemap(tmc.map);
+            if (!map || !(*map)->orthogonal() || (*map)->width <= 0 || (*map)->height <= 0) return;
+            found = true;
+            const auto w = static_cast<std::uint32_t>((*map)->width), h = static_cast<std::uint32_t>((*map)->height);
+            std::vector<std::uint8_t> cells(static_cast<std::size_t>(w) * h);
+            for (std::uint32_t y = 0; y < h; ++y)
+                for (std::uint32_t x = 0; x < w; ++x) cells[static_cast<std::size_t>(y) * w + x] = (*map)->solidity_at(static_cast<int>(x), static_cast<int>(y)) == 1 ? 255 : 0;
+            if (w != occ_w || h != occ_h || !occ_texture) {
+                if (occ_view) wgpuTextureViewRelease(occ_view);
+                if (occ_texture) wgpuTextureRelease(occ_texture);
+                auto [tex, view] = make_target("pocket.occluders", w, h, WGPUTextureFormat_R8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+                occ_texture = tex;
+                occ_view = view;
+                occ_w = w;
+                occ_h = h;
+                occ_cells.clear();
+            }
+            if (!occ_texture) return;
+            if (cells != occ_cells) {
+                WGPUTexelCopyTextureInfo dst{};
+                dst.texture = occ_texture;
+                dst.aspect = WGPUTextureAspect_All;
+                WGPUTexelCopyBufferLayout layout{};
+                layout.bytesPerRow = w;
+                layout.rowsPerImage = h;
+                const WGPUExtent3D size{w, h, 1};
+                wgpuQueueWriteTexture(device->queue(), &dst, cells.data(), cells.size(), &layout, &size);
+                occ_cells = std::move(cells);
+            }
+            const float ts = tmc.tile_size > 0 ? tmc.tile_size : 1.0f;
+            occ_uniform[0] = t.position.x;
+            occ_uniform[1] = t.position.y;
+            occ_uniform[2] = ts;
+            occ_uniform[3] = 1;
+            occ_uniform[4] = static_cast<float>(w);
+            occ_uniform[5] = static_cast<float>(h);
+        });
+    }
     std::uint32_t glass_w = 0, glass_h = 0;
     bool glass_last = false;                      // glass was drawn last frame (the depth prepass stays on for it)
     Vec3 sun_toward{0, 1, 0};                     // toward this frame's sun (contact shadows march along it)
@@ -3028,6 +3113,8 @@ struct Renderer::Impl {
             if (r.state == 3) wgpuBufferUnmap(r.buffer);
             if (r.buffer) wgpuBufferRelease(r.buffer);
         }
+        for (WGPUTextureView v : {occ_view, occ_stub_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {occ_texture, occ_stub}) if (t) wgpuTextureRelease(t);
         for (auto& [name, vt] : view_targets) {
             for (WGPUTextureView v : {vt.tex.view, vt.tex.srgb_view, vt.render_view}) if (v) wgpuTextureViewRelease(v);
             if (vt.tex.texture) wgpuTextureRelease(vt.tex.texture);
@@ -6110,8 +6197,12 @@ fn time() -> f32 { return fx.time.x; }
     void make_scene_group(WGPUTextureView ao_view_now) {
         WGPUTextureView atlas_now = atlas_view ? atlas_view : atlas_stub_view;
         WGPUTextureView glass_now = glass_view ? glass_view : glass_stub_view;
-        if (scene_bg && scene_ao == ao_view_now && scene_atlas == atlas_now && scene_glass == glass_now) return;
+        WGPUTextureView occ_now = occ_view ? occ_view : occ_stub_view;
+        if (scene_bg && scene_ao == ao_view_now && scene_atlas == atlas_now && scene_glass == glass_now && scene_occ == occ_now) return;
         if (scene_bg) wgpuBindGroupRelease(scene_bg);
+        scene_entries[18].binding = 18;
+        scene_entries[18].textureView = occ_now;
+        scene_occ = occ_now;
         scene_entries[17].binding = 17;
         scene_entries[17].textureView = glass_now;
         scene_glass = glass_now;
@@ -6125,7 +6216,7 @@ fn time() -> f32 { return fx.time.x; }
         WGPUBindGroupDescriptor sbd{};
         sbd.label = rhi::str("pocket.scene");
         sbd.layout = scene_bgl;
-        sbd.entryCount = 18;
+        sbd.entryCount = 19;
         sbd.entries = scene_entries;
         scene_bg = wgpuDeviceCreateBindGroup(device->device(), &sbd);
         scene_ao = ao_view_now;
@@ -6471,7 +6562,7 @@ fn time() -> f32 { return fx.time.x; }
         fd.entryCount = 1;
         fd.entries = &fe;
         frame_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &fd);
-        WGPUBindGroupLayoutEntry se[18]{};
+        WGPUBindGroupLayoutEntry se[19]{};
         se[0] = fe;
         se[1].binding = 1;
         se[1].visibility = WGPUShaderStage_Fragment;
@@ -6534,9 +6625,13 @@ fn time() -> f32 { return fx.time.x; }
         se[16].sampler.type = WGPUSamplerBindingType_Filtering;
         se[17] = se[3];
         se[17].binding = 17;
+        se[18].binding = 18;
+        se[18].visibility = WGPUShaderStage_Fragment;
+        se[18].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        se[18].texture.viewDimension = WGPUTextureViewDimension_2D;
         WGPUBindGroupLayoutDescriptor scene_ld{};
         scene_ld.label = rhi::str("pocket.scene");
-        scene_ld.entryCount = 18;
+        scene_ld.entryCount = 19;
         scene_ld.entries = se;
         scene_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &scene_ld);
 
@@ -6870,6 +6965,14 @@ fn time() -> f32 { return fx.time.x; }
         }
         sbe[17].binding = 17;
         sbe[17].textureView = glass_stub_view;
+        {
+            auto [t, v] = make_target("pocket.occluders.stub", 1, 1, WGPUTextureFormat_R8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+            if (!t) return fail("gpu_texture_failed", "cannot create the 2D shadows' stand-in");
+            occ_stub = t;
+            occ_stub_view = v;
+        }
+        sbe[18].binding = 18;
+        sbe[18].textureView = occ_stub_view;
         face_slots = device->create_buffer("pocket.shadow.face_slots", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 256ull * kMaxFaces);
         {
             WGPUBindGroupEntry fse{};
@@ -8013,6 +8116,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
     if (ao_pass) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
+    im.gather_occluders(world);
     im.make_scene_group(ao_pass ? im.ao_view[1] : im.ao_white_view);
     POCKET_TRY_VOID(im.ensure_id_target(frame.width, frame.height));
     POCKET_TRY_VOID(im.ensure_hdr_target(frame.width, frame.height));
@@ -8289,6 +8393,10 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     int probe_capture = im.gather_probes(world, fu);   // the probes light every view; the first view captures
     if (im.secondary) probe_capture = -1;
     im.gather_decals(world, fu);
+    for (int k = 0; k < 4; ++k) {
+        fu.occluders[k] = im.occ_uniform[k];
+        fu.occluder_size[k] = im.occ_uniform[4 + k];
+    }
     ++im.frame_number;
     im.device->write_buffer(im.frame_buffer, 0, &fu, sizeof fu);
 
@@ -9089,7 +9197,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             }
             pu.viewport[0] = 0; pu.viewport[1] = 0; pu.viewport[2] = kProbeFace; pu.viewport[3] = kProbeFace;
             im.device->write_buffer(im.probe_frame_buf[f], 0, &pu, sizeof pu);
-            WGPUBindGroupEntry pe[18];
+            WGPUBindGroupEntry pe[19];
             std::memcpy(pe, im.scene_entries, sizeof pe);
             pe[17].textureView = im.glass_stub_view;   // glass in a probe's capture shows nothing through
             pe[0].buffer = im.probe_frame_buf[f];
@@ -9098,7 +9206,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             WGPUBindGroupDescriptor pd{};
             pd.label = rhi::str("pocket.probe.scene");
             pd.layout = im.scene_bgl;
-            pd.entryCount = 18;
+            pd.entryCount = 19;
             pd.entries = pe;
             WGPUBindGroup group = wgpuDeviceCreateBindGroup(im.device->device(), &pd);
             im.probe_groups.push_back(group);

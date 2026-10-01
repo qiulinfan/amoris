@@ -205,11 +205,16 @@ fn main() {
         std::process::exit(mcp::rpc_cli(method, params.as_deref(), url.as_deref()));
     }
     let json = cli.json;
+    // `pocket run x -- --json`: the runtime's report is the output (a file or a pipe reads it as one
+    // JSON document), so the tool's own summary goes to stderr.
+    let runtime_json = matches!(&cli.command, Command::Run { args, .. } if args.iter().any(|a| a == "--json"));
     let result = run(cli);
     match result {
         Ok(rep) => {
             if json {
                 println!("{}", serde_json::to_string_pretty(&rep).unwrap());
+            } else if runtime_json {
+                eprint!("{}", rep.human());
             } else {
                 print!("{}", rep.human());
             }

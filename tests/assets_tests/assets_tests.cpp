@@ -1033,3 +1033,38 @@ TEST_CASE("levels of detail: a mesh simplified to a share of its triangles, part
     // A ratio of 1 keeps them all.
     REQUIRE(assets::simplify(m, 1.0f).indices == m.indices);
 }
+
+TEST_CASE("an SVG is read as an image drawn at twice its size, or at the size asked", "[assets][svg]") {
+    assets::AssetStore store(project());
+    auto img = store.image("assets/star.svg");
+    REQUIRE(img.has_value());
+    REQUIRE((*img)->width == 96);
+    REQUIRE((*img)->height == 96);
+    auto at = [&](const assets::Image* i, std::uint32_t x, std::uint32_t y) {
+        const std::size_t k = (static_cast<std::size_t>(y) * i->width + x) * 4;
+        return std::array<int, 4>{i->rgba[k], i->rgba[k + 1], i->rgba[k + 2], i->rgba[k + 3]};
+    };
+    // The star's gold at the middle, the disc's blue between the star's points, nothing in a corner.
+    const auto mid = at(*img, 48, 50);
+    INFO(mid[0] << " " << mid[1] << " " << mid[2] << " " << mid[3]);
+    REQUIRE(mid[0] > 230);
+    REQUIRE(mid[1] > 180);
+    REQUIRE(mid[2] < 90);
+    REQUIRE(mid[3] == 255);
+    const auto disc = at(*img, 48, 84);
+    REQUIRE(disc[2] > 150);
+    REQUIRE(disc[0] < 80);
+    REQUIRE(at(*img, 1, 1)[3] == 0);
+    // Asked for a size, the longer side is that many pixels; a scale, that factor.
+    auto big = store.image("assets/star.svg?size=200");
+    REQUIRE(big.has_value());
+    REQUIRE((*big)->width == 200);
+    REQUIRE(store.image("assets/star.svg?scale=0.5").value()->width == 24);
+    // Read again, every size goes.
+    store.invalidate("assets/star.svg");
+    REQUIRE(store.image("assets/star.svg?size=200").value() != nullptr);
+    Json listed = store.list();
+    bool found = false;
+    for (const Json& a : listed.is_array() ? listed : listed["files"]) if (a.value("path", std::string()) == "assets/star.svg") { found = true; REQUIRE(a["kind"] == "image"); }
+    REQUIRE(found);
+}

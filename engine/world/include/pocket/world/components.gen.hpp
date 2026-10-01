@@ -522,6 +522,7 @@ struct TileMap {
     std::int32_t order = -10;
     bool visible = true;
     bool lit = false;
+    bool shadows = false;
     constexpr bool operator==(const TileMap&) const = default;
 };
 void to_json(Json& j, const TileMap& v);

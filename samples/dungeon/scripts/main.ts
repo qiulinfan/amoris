@@ -21,7 +21,7 @@ let t = 0;
 
 onStart(() => {
     setClearColor(0, 0, 0, 1);
-    world.spawn("Level", { components: { Transform: {}, TileMap: { map: "assets/dungeon.tmj", lit: true } } });
+    world.spawn("Level", { components: { Transform: {}, TileMap: { map: "assets/dungeon.tmj", lit: true, shadows: true } } });
     for (const o of tilemap.objects("Level", "things")) {
         const at = { x: o.x, y: o.y, z: 0 };
         if (o.type === "start") {

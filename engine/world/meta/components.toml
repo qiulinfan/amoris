@@ -279,6 +279,7 @@ fields = [
     { name = "order", type = "i32", default = -10, doc = "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this." },
     { name = "visible", type = "bool", default = true, doc = "Whether the map is drawn." },
     { name = "lit", type = "bool", default = false, doc = "Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient." },
+    { name = "shadows", type = "bool", default = false, doc = "Its solid cells cast shadows (docs/design/sprites.md, Shadows): a point or spot light does not reach a lit sprite or map cell behind them. One map at a time casts them (the first that asks)." },
 ]
 
 [[record]]

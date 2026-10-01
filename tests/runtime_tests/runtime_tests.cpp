@@ -4819,6 +4819,8 @@ TEST_CASE("lit sprites and maps take the scene's lights and ambient, normal maps
     // Held still (a hit-stop: frames draw, no tick runs): the script's ticks would move the camera
     // back to the player and flicker the torches.
     REQUIRE(s.command("time.scale", Json{{"scale", 0}}).has_value());
+    // Light alone here: the map's shadows (its own test below) off.
+    REQUIRE(s.command("world.set", Json{{"entity", "Level"}, {"component", "TileMap"}, {"value", Json{{"shadows", false}}}}).has_value());
     // Every light out, the camera close over the first crate (at 9.5, -7.5; 0.9 across).
     for (const Json& e : s.command("world.query", Json{{"with", Json::array({"Light"})}}).value()["entities"]) {
         REQUIRE(s.command("world.set", Json{{"entity", e["id"]}, {"component", "Light"}, {"value", Json{{"intensity", 0}}}}).has_value());
@@ -4868,6 +4870,54 @@ TEST_CASE("lit sprites and maps take the scene's lights and ambient, normal maps
     REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1.5}, {"y", -1.2}, {"z", 10}}}}}}).has_value());
     const Json flame = s.command("world.get", Json{{"entity", "Torch_1/Flame"}, {"component", "WorldTransform"}}).value();
     REQUIRE(pixel(flame["position"]["x"].get<double>(), flame["position"]["y"].get<double>()) > 300);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a tile map's solid cells cast 2D shadows from the lights onto lit sprites and maps", "[runtime][sprites][lit2d][shadows2d]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "dungeon";
+    o.bundle = root() / "build" / "ts" / "dungeon.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.command("render.bloom", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.command("time.scale", Json{{"scale", 0}}).has_value());
+    for (const Json& e : s.command("world.query", Json{{"with", Json::array({"Light"})}}).value()["entities"]) {
+        REQUIRE(s.command("world.set", Json{{"entity", e["id"]}, {"component", "Light"}, {"value", Json{{"intensity", 0}}}}).has_value());
+    }
+    REQUIRE(s.command("render.ambient", Json{{"intensity", 0}}).has_value());
+    // Fog off, the camera over the wall between the first room (x 1 to 10) and the second (15 to 30).
+    REQUIRE(s.command("tilemap.fill", Json{{"entity", "Level"}, {"tile_x", 0}, {"tile_y", 0}, {"width", 32}, {"height", 20}, {"layer", "fog"}, {"id", nullptr}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 13}, {"y", -2.5}, {"z", 10}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"ortho_size", 4}}}}).has_value());
+    // A lamp by the first room's east wall, reaching well into the second room.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 10.5}, {"y", -2.5}, {"z", 0.6}}}}}, {"Light", Json{{"kind", "point"}, {"color", "#ffffff"}, {"intensity", 3}, {"range", 9}}}}}}).has_value());
+    auto pixel = [&](double x, double y) {
+        REQUIRE(s.command("world.update_transforms", Json::object()).has_value());
+        REQUIRE(s.frame().has_value());
+        const Json r = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", 0}}}}).value();
+        const Json px = s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+        return px[0].get<int>() + px[1].get<int>() + px[2].get<int>();
+    };
+    // The sample's map casts: the second room's floor behind four cells of wall gets nothing; the
+    // first room's floor by the lamp and the wall's face toward it are lit.
+    const int behind = pixel(15.25, -2.3), near_floor = pixel(9.25, -2.3), face = pixel(11.1, -2.3);
+    INFO("behind " << behind << " near " << near_floor << " face " << face);
+    REQUIRE(behind < 10);
+    REQUIRE(near_floor > 60);
+    REQUIRE(face > 30);
+    // Without shadows the light goes through the wall.
+    REQUIRE(s.command("world.set", Json{{"entity", "Level"}, {"component", "TileMap"}, {"value", Json{{"shadows", false}}}}).has_value());
+    const int through = pixel(15.25, -2.3);
+    INFO("through " << through);
+    REQUIRE(through > 30);
     REQUIRE(s.finish().has_value());
 }
 

@@ -1470,6 +1470,7 @@ void to_json(Json& j, const TileMap& v) {
     j["order"] = v.order;
     j["visible"] = v.visible;
     j["lit"] = v.lit;
+    j["shadows"] = v.shadows;
 }
 
 void from_json(const Json& j, TileMap& v) {
@@ -1480,6 +1481,7 @@ void from_json(const Json& j, TileMap& v) {
     scalar_from_json(j, "order", v.order);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "lit", v.lit);
+    scalar_from_json(j, "shadows", v.shadows);
 }
 
 void hash_component(StateHasherRef& h, const TileMap& v) {
@@ -1493,6 +1495,7 @@ void hash_component(StateHasherRef& h, const TileMap& v) {
     h.i64(static_cast<std::int64_t>(v.order));
     h.u8(v.visible ? 1 : 0);
     h.u8(v.lit ? 1 : 0);
+    h.u8(v.shadows ? 1 : 0);
 }
 
 std::size_t numeric_span(TileMap& v, std::string_view path, float** out) {
@@ -4249,7 +4252,7 @@ constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
     FieldInfo{"time", "f32", "Seconds into the current frame; advanced by the engine.", {}},
     FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play.", {}},
 }};
-constexpr std::array<FieldInfo, 7> kTileMapFields = {{
+constexpr std::array<FieldInfo, 8> kTileMapFields = {{
     FieldInfo{"map", "string", "Project-relative Tiled JSON map (.tmj).", {}},
     FieldInfo{"layer", "string", "Draw only this tile layer; empty draws every visible one.", {}},
     FieldInfo{"tile_size", "f32", "World units per tile.", {}},
@@ -4257,6 +4260,7 @@ constexpr std::array<FieldInfo, 7> kTileMapFields = {{
     FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this.", {}},
     FieldInfo{"visible", "bool", "Whether the map is drawn.", {}},
     FieldInfo{"lit", "bool", "Lit by the scene's lights, as a lit Sprite is (docs/design/sprites.md, Light): dark where no light reaches but the ambient.", {}},
+    FieldInfo{"shadows", "bool", "Its solid cells cast shadows (docs/design/sprites.md, Shadows): a point or spot light does not reach a lit sprite or map cell behind them. One map at a time casts them (the first that asks).", {}},
 }};
 constexpr std::array<FieldInfo, 7> kAnimationGraphFields = {{
     FieldInfo{"states", "list:AnimationState", "The states; the first is where it starts.", {}},

@@ -97,7 +97,16 @@ export default function (pi: ExtensionAPI) {
                     params = { ...(typeof raw[named] === "object" ? (raw[named] as Record<string, unknown>) : {}), ...rest, ...params };
                 }
             }
-            if (!method) throw new Error("give a method (and params), or calls: [{method, params}, ...]");
+            if (!method) {
+                // Only a step's parameters ({"ticks": 40}, {"until": ...}, {"watch": [...]}): a step.
+                const raw = p as unknown as Record<string, unknown>;
+                const keys = Object.keys(raw).filter((k) => k !== "params");
+                if (keys.length > 0 && keys.every((k) => ["ticks", "until", "watch", "every", "keys", "render"].includes(k))) {
+                    method = "step";
+                    params = { ...Object.fromEntries(keys.map((k) => [k, raw[k]])), ...params };
+                }
+            }
+            if (!method) throw new Error("give a method (and params), or calls: [{method, params}, ...]; a step alone is {method: \"step\", params: {ticks: 40}}");
             const result = await call(method, params);
             return { content: [{ type: "text", text: text(result) }], details: undefined };
         },

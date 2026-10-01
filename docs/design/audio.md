@@ -33,6 +33,16 @@ A bus has effects over its whole mix, after its low-pass: a **high-pass** (`high
 
 A bus can duck under another: with `duck_by: "dialogue"`, `duck_amount: 0.3` and `duck_seconds: 0.25`, the music falls to three tenths over a quarter of a second while any voice plays on the dialogue bus and comes back the same way after the last one ends. The ducking moves on the tick clock, so a headless run ducks at the same ticks as a window; `audio.ducked {bus, ducked, by}` is emitted each way, and `audio.buses` lists every bus with its settings, its ducking gain right now (`duck`), whether it is `ducked` and its voices. `[audio.buses]` in `project.toml` sets a project's (`music = { volume = 0.8, duck_by = "dialogue" }`), the editor's Audio tab sets them live and saves them to `audio.json` beside it (applied over the TOML's, `docs/editor.md`), and `audio.stop {bus}` stops a bus's voices. The audio sample puts its hum on an `ambience` bus that ducks to half under the `fx` bus its beeps and clicks play on; `audio_tests` (`[buses]`) holds a bus at half volume to half the peak, a muted one silent while its voice plays on, a low-passed one smoother, and music under a line of dialogue half way down a quarter second in, at a quarter after half a second and back in full half a second after the line stops.
 
+## Sounds from a recipe
+
+A `.sfx` file is a sound written as JSON, which the engine renders to samples (at the mixer's rate) the first time it is played or loaded, and which `audio.play`, `AudioSource.clip` and everything else then treat as a clip. A model that cannot record a sound can write one:
+
+```json
+{ "wave": "square", "frequency": 260, "to": 640, "attack": 0.004, "hold": 0.06, "decay": 0.16, "volume": 0.4 }
+```
+
+A voice is a `wave` (`sine`, `square` with a `duty`, `triangle`, `saw`, or `noise`, held for one period of the pitch so a high pitch hisses and a low one rumbles) whose pitch slides exponentially from `frequency` to `to` over the sound and changes by `steps` (`[{at: 0.06, times: 1.335}]`: from 0.06 s on, a fourth higher; arpeggios and the two notes of a coin), with `vibrato` (`{depth, rate}`), under an envelope that rises over `attack`, stays for `hold` and falls away over `decay` (seconds), at `volume`, through a one-pole `lowpass` (Hz), starting after `delay`. `layers` mixes several voices (an explosion's noise, its low thud and a crack), each taking the recipe's other fields as defaults. `preset` starts from a common game sound, `coin`, `jump`, `hit`, `explosion`, `laser`, `powerup`, `blip`, `hurt` or `select`, with the recipe's other fields over its first voice (`{"preset": "jump", "volume": 0.2}`); `seed` varies a preset's pitches and times a little, so ten coins need not sound alike. The same recipe renders the same samples everywhere (the noise comes from a generator of its own), and a sound that would pass full scale is brought down to it. A recipe that cannot be read is refused with what is wrong in it. `samples/audio` plays `assets/coin.sfx` (`{"preset": "coin"}`) on C and `assets/blast.sfx` (three layers) on B. `audio_tests` (`[synth]`): half a second of a 440 Hz sine lasts half a second and crosses zero 440 times, a preset renders the same samples in two sessions and other ones with a seed, and a wave that does not exist is named.
+
 ## Commands and SDK
 
 | Command | SDK | Purpose |

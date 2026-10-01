@@ -350,6 +350,44 @@ def jump_sound_solve(env, project_dir):
     edit_main(project_dir, transform)
 
 
+def coin_chime_solve(env, project_dir):
+    os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
+    with open(os.path.join(project_dir, "assets", "chime.sfx"), "w") as f:
+        f.write('{"preset": "coin"}\n')
+
+    def transform(t):
+        head = "import { Label, events,"
+        coin = '            events.emit("coin.collected", { score: score() }, { subject: player });'
+        if head not in t or coin not in t:
+            raise RuntimeError("the sprites script changed shape")
+        t = t.replace(head, "import { Label, audio, events,", 1)
+        return t.replace(coin, coin + '\n            audio.play("assets/chime.sfx");', 1)
+    edit_main(project_dir, transform)
+
+
+def coin_chime_check(env, answer):
+    recipes = {f["path"] for f in env.command("assets.list", {}) if f.get("kind") == "audio" and f["path"].endswith(".sfx")}
+    if not recipes:
+        return False, "no sound recipe (.sfx) under assets/"
+    chimes = lambda: [v["clip"] for v in env.command("audio.list", {}) if v["clip"] in recipes]  # noqa: E731
+    env.command("step", {"ticks": 10})
+    if chimes():
+        return False, "the chime plays before any coin"
+    env.command("input.hold", {"action": "move_x", "ticks": 600})
+    r = env.command("step", {"ticks": 600, "until": {"event": "coin.collected"}})
+    if not r["until"]["met"]:
+        return False, "walking right collected no coin"
+    env.command("step", {"ticks": 1})
+    heard = chimes()
+    if not heard:
+        return False, f"nothing from {sorted(recipes)} plays after a coin ({len(env.command('audio.list', {}))} voices)"
+    clips = {c["path"]: c for c in env.command("audio.clips", {}) if c.get("path") in recipes}
+    secs = [c.get("seconds", 0) for c in clips.values()]
+    if not secs or not all(0.03 < x < 1.5 for x in secs):
+        return False, f"the recipes render to {secs} seconds: not a short chime"
+    return True, f"{heard[0]} ({secs[0]:.2f} s) plays when a coin is collected, not before"
+
+
 def jump_sound_check(env, answer):
     # A sound file under assets/, silent until the player jumps, heard right after, and again on the next jump.
     st = lambda: env.command("state", {})["state"]  # noqa: E731
@@ -1469,6 +1507,44 @@ def grey_flashback_check(env, answer):
     return True, f"{len(running)} effect(s); the crates and the car are grey"
 
 
+COIN_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <circle cx="16" cy="16" r="14" fill="#f5c542" stroke="#b8860b" stroke-width="4"/>
+</svg>
+"""
+
+
+def svg_coin_solve(env, project_dir):
+    os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
+    with open(os.path.join(project_dir, "assets", "coin.svg"), "w") as f:
+        f.write(COIN_SVG)
+    edit_main(project_dir, lambda t: t.replace("onStart(() => {\n", 'onStart(() => {\n    world.spawn("CoinBadge", { components: { Transform: { position: { x: 2, y: 2.5, z: 0 } }, Sprite: { texture: "assets/coin.svg", size: { x: 1, y: 1 } } } });\n', 1))
+    return None
+
+
+def svg_coin_check(env, answer):
+    sp = env.command("world.get", {"entity": "CoinBadge", "component": "Sprite"})
+    if not sp:
+        return False, "no entity CoinBadge with a Sprite after the game starts again"
+    tex = sp["texture"]
+    if not tex.split("?")[0].endswith(".svg"):
+        return False, f"CoinBadge's texture is {tex!r}, not an SVG of the project's"
+    if not (near(sp["size"]["x"], 1, 0.05) and near(sp["size"]["y"], 1, 0.05)):
+        return False, f"CoinBadge is {sp['size']} across, not 1 by 1"
+    d = env.command("assets.describe", {"path": tex})
+    if not d or d.get("kind") not in (None, "image") or d.get("error"):
+        return False, f"the engine cannot read {tex}: {d}"
+    p = env.command("world.get", {"entity": "CoinBadge", "component": "Transform"})["position"]
+    if not (near(p["x"], 2, 0.05) and near(p["y"], 2.5, 0.05) and near(p["z"], 0, 0.05)):
+        return False, f"CoinBadge is at {p}, not (2, 2.5, 0)"
+    mid = frame_pixel(env, {"x": 2, "y": 2.5, "z": 0.01})
+    rim = frame_pixel(env, {"x": 2.42, "y": 2.5, "z": 0.01})
+    gold = mid[0] > 190 and mid[1] > 140 and mid[2] < 120
+    darker = rim[0] + rim[1] + rim[2] < mid[0] + mid[1] + mid[2] - 40
+    if not gold or not darker:
+        return False, f"the coin's middle draws {mid} and its rim {rim}: not a gold disc with a darker rim"
+    return True, f"an SVG coin, gold {mid[:3]} with a darker rim {rim[:3]}"
+
+
 def orange_ball_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "materials"), exist_ok=True)
     with open(os.path.join(project_dir, "materials", "orange.wgsl"), "w") as f:
@@ -1612,6 +1688,8 @@ TASKS = [
      "task": "Edit scripts/main.tsx in the project directory so that a collected coin comes back where it was three seconds of game time after it was collected (drawn and collectable again, counted in the exposed \"coins\" state), and not before."},
     {"name": "jump_sound", "project": "sprites", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "solve": jump_sound_solve, "check": jump_sound_check,
      "task": "Give the jump a sound: write a short WAV file (mono 16-bit PCM, at least a tenth of a second, any tone) under assets/ in the project directory, and edit scripts/main.tsx so that it plays through the SDK's audio.play each time the player jumps from the ground, and at no other time."},
+    {"name": "coin_chime", "project": "sprites", "ticks": 0, "script": True, "solve": coin_chime_solve, "check": coin_chime_check, "edits": "a new sound recipe",
+     "task": "Give the sprites game a sound for picking up a coin, made as a sound recipe: a .sfx file of your own under assets/, a short bright chime that plays every time a coin is collected. Answer null."},
     {"name": "lamp_prefab", "project": "hello", "ticks": 0, "script": True, "solve": lamp_prefab_solve, "check": lamp_prefab_check,
      "task": "Write a prefab file prefabs/lamp.json in the project directory: a pocket-scene fragment (format \"pocket-scene\", version 1, an \"entities\" list) whose one root entity named Lamp draws a yellow sphere (a MeshRenderer with mesh \"sphere\" and color r 1, g 0.9, b 0.2) and has a child named Glow with a Light of kind 1 (a point light) and intensity 2. Then edit scripts/main.ts so that on start the project instantiates that prefab three times through the SDK's world.instantiate with the file's path, named Lamp0, Lamp1 and Lamp2, at x -2, 0 and 2, y 1, z 0."},
     {"name": "hill_raise", "project": "hills", "ticks": 2, "before": hill_raise_before, "solve": hill_raise_solve, "check": hill_raise_check,
@@ -1658,6 +1736,8 @@ TASKS = [
      "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "grey_flashback", "project": "crates", "ticks": 30, "solve": grey_flashback_solve, "check": grey_flashback_check,
      "task": "Make the whole picture of the crates game grey, as for a flashback: a post effect that turns every pixel of the frame to its grey (luminance), leaving the interface as it is. Do it through the running game (no file edits needed). Answer null."},
+    {"name": "svg_coin", "project": "hello", "ticks": 0, "script": True, "solve": svg_coin_solve, "check": svg_coin_check, "edits": "a new SVG file",
+     "task": "Draw a coin for the hello game as an SVG file of your own in the project: a gold disc (#f5c542) with a darker rim (#b8860b), 32 by 32. Show it in the game from the start as a sprite: an entity named CoinBadge at x 2, y 2.5, z 0, 1 unit wide and high, its texture your SVG. Answer null."},
     {"name": "orange_ball", "project": "hello", "ticks": 0, "script": True, "solve": orange_ball_solve, "check": orange_ball_check, "edits": "a new material file",
      "task": "Draw the hello game's ball through a material of your own: a WGSL file in the project that makes the ball a flat orange, #ff6600, everywhere, ignoring the light. The game should draw its ball (the entity named Ball, which its script spawns) through that material from the start. Answer null."},
     {"name": "night_level", "project": "sprites", "ticks": 0, "solve": night_level_solve, "check": night_level_check,

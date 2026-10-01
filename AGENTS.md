@@ -36,7 +36,7 @@ Lua is not used. CMake is not used for our own code (it may be invoked by `pocke
 export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself is unusable
 ./scripts/bootstrap.sh                 # once: build tools/pocket, fetch dependencies
 ./.pocket/pocket build [--config release] [--json]
-./.pocket/pocket run hello -- --headless --frames 120 --json --capture out.png
+./.pocket/pocket run hello -- --headless --frames 120 --json --capture out.png   # stdout: the runtime's report alone (the tool's summary goes to stderr)
 ./.pocket/pocket test [--filter core] --json
 ./.pocket/pocket ts samples/hello      # bundle only
 ./.pocket/pocket check [samples/hello] # TypeScript types against the SDK (TypeScript 7; docs/sdk.md, Types)

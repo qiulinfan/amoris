@@ -1,6 +1,6 @@
 name = "stb"
 kind = "static_library"
-description = "stb_image, stb_image_write, stb_vorbis and dr_mp3 (public domain / MIT, MIT-0)."
+description = "stb_image, stb_image_write, stb_vorbis, dr_mp3 (public domain / MIT, MIT-0) and nanosvg (zlib)."
 sources = ["src/stb_impl.c"]
 public_include = ["include"]
 third_party = true
