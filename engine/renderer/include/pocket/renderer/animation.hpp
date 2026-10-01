@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,9 @@ class Animation {
 
    private:
     std::map<world::EntityId, Pose> poses_;
+    struct Kept;                    // what a tick reuses from the last (animation.cpp)
+    std::shared_ptr<Kept> kept_;
+    std::uint64_t ticks_ = 0;
 };
 
 }  // namespace pocket::renderer

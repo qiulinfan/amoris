@@ -138,6 +138,16 @@ fields = [
 ]
 
 [[component]]
+name = "IrradianceVolume"
+doc = "Light probes in a grid through a box (docs/design/rendering.md, Irradiance volumes): each probe sees the scene around it, and every surface in the box takes its diffuse light from the probes nearest it, weighed by how near they are and whether they face it. Light that bounces off a red wall then reddens the floor beside the wall and not the far side of the room, and a corner away from the lamp is darker than the middle. Its diffuse light takes the place of the sky's and a reflection probe's; reflections stay theirs. Up to four at once, the first by id where boxes overlap."
+fields = [
+    { name = "size", type = "vec3", default = [10.0, 4.0, 10.0], doc = "The box it covers, centred on the entity, in world units (not turned with it)." },
+    { name = "probes", type = "vec3", default = [4.0, 2.0, 4.0], doc = "Probes along x, y and z (each rounded and held to 2..16), spread evenly from one wall of the box to the other; at most 1024 across all volumes, later volumes by id left out past that." },
+    { name = "intensity", type = "f32", default = 1.0, doc = "Multiplies the light it gives." },
+    { name = "enabled", type = "bool", default = true, doc = "false stops it being used, without removing it." },
+]
+
+[[component]]
 name = "Decal"
 doc = "An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection."
 fields = [

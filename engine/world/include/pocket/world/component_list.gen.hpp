@@ -13,6 +13,7 @@
     X(CameraRig) \
     X(Light) \
     X(ReflectionProbe) \
+    X(IrradianceVolume) \
     X(Decal) \
     X(Fog) \
     X(Sky) \

@@ -957,6 +957,46 @@ std::size_t numeric_span(ReflectionProbe& v, std::string_view path, float** out)
     return 0;
 }
 
+void to_json(Json& j, const IrradianceVolume& v) {
+    j = Json::object();
+    vec_to_json(j["size"], v.size);
+    vec_to_json(j["probes"], v.probes);
+    j["intensity"] = v.intensity;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, IrradianceVolume& v) {
+    if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
+    if (j.is_object() && j.contains("probes")) vec_from_json(j["probes"], v.probes);
+    scalar_from_json(j, "intensity", v.intensity);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const IrradianceVolume& v) {
+    h.f32(v.size.x);
+    h.f32(v.size.y);
+    h.f32(v.size.z);
+    h.f32(v.probes.x);
+    h.f32(v.probes.y);
+    h.f32(v.probes.z);
+    h.f32(v.intensity);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(IrradianceVolume& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "size") { *out = &v.size.x; return 3; }
+    if (path == "size.x") { *out = &v.size.x; return 1; }
+    if (path == "size.y") { *out = &v.size.y; return 1; }
+    if (path == "size.z") { *out = &v.size.z; return 1; }
+    if (path == "probes") { *out = &v.probes.x; return 3; }
+    if (path == "probes.x") { *out = &v.probes.x; return 1; }
+    if (path == "probes.y") { *out = &v.probes.y; return 1; }
+    if (path == "probes.z") { *out = &v.probes.z; return 1; }
+    if (path == "intensity") { *out = &v.intensity; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Decal& v) {
     j = Json::object();
     j["texture"] = v.texture;
@@ -3718,6 +3758,30 @@ bool write_numbers(ReflectionProbe& v, const double* in, std::size_t n) {
     return true;
 }
 
+std::size_t read_numbers(const IrradianceVolume& v, double* out) {
+    out[0] = static_cast<double>(v.size.x);
+    out[1] = static_cast<double>(v.size.y);
+    out[2] = static_cast<double>(v.size.z);
+    out[3] = static_cast<double>(v.probes.x);
+    out[4] = static_cast<double>(v.probes.y);
+    out[5] = static_cast<double>(v.probes.z);
+    out[6] = static_cast<double>(v.intensity);
+    out[7] = static_cast<double>(v.enabled);
+    return 8;
+}
+bool write_numbers(IrradianceVolume& v, const double* in, std::size_t n) {
+    if (n != 8) return false;
+    v.size.x = static_cast<float>(in[0]);
+    v.size.y = static_cast<float>(in[1]);
+    v.size.z = static_cast<float>(in[2]);
+    v.probes.x = static_cast<float>(in[3]);
+    v.probes.y = static_cast<float>(in[4]);
+    v.probes.z = static_cast<float>(in[5]);
+    v.intensity = static_cast<float>(in[6]);
+    v.enabled = in[7] != 0;
+    return true;
+}
+
 std::size_t read_numbers(const Decal&, double*) { return kNotNumeric; }
 bool write_numbers(Decal&, const double*, std::size_t) { return false; }
 
@@ -4151,6 +4215,12 @@ constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
     FieldInfo{"intensity", "f32", "Multiplies what it reflects and the light it gives.", {}},
     FieldInfo{"box_projection", "bool", "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky.", {}},
     FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}.", {}},
+    FieldInfo{"enabled", "bool", "false stops it being used, without removing it.", {}},
+}};
+constexpr std::array<FieldInfo, 4> kIrradianceVolumeFields = {{
+    FieldInfo{"size", "vec3", "The box it covers, centred on the entity, in world units (not turned with it).", {}},
+    FieldInfo{"probes", "vec3", "Probes along x, y and z (each rounded and held to 2..16), spread evenly from one wall of the box to the other; at most 1024 across all volumes, later volumes by id left out past that.", {}},
+    FieldInfo{"intensity", "f32", "Multiplies the light it gives.", {}},
     FieldInfo{"enabled", "bool", "false stops it being used, without removing it.", {}},
 }};
 constexpr std::array<FieldInfo, 10> kDecalFields = {{
@@ -4689,7 +4759,7 @@ constexpr std::array<RecordInfo, 13> kRecords = {{
     RecordInfo{"Point2D", kPoint2DFields},
 }};
 
-constexpr std::array<ComponentInfo, 48> kComponents = {{
+constexpr std::array<ComponentInfo, 49> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -4701,6 +4771,7 @@ constexpr std::array<ComponentInfo, 48> kComponents = {{
     ComponentInfo{"CameraRig", "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).", true, kCameraRigFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
     ComponentInfo{"ReflectionProbe", "The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},
+    ComponentInfo{"IrradianceVolume", "Light probes in a grid through a box (docs/design/rendering.md, Irradiance volumes): each probe sees the scene around it, and every surface in the box takes its diffuse light from the probes nearest it, weighed by how near they are and whether they face it. Light that bounces off a red wall then reddens the floor beside the wall and not the far side of the room, and a corner away from the lamp is darker than the middle. Its diffuse light takes the place of the sky's and a reflection probe's; reflections stay theirs. Up to four at once, the first by id where boxes overlap.", true, kIrradianceVolumeFields},
     ComponentInfo{"Decal", "An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.", true, kDecalFields},
     ComponentInfo{"Fog", "Air that thickens with distance and thins with height (docs/design/rendering.md, Fog): what is far fades toward the fog's color, a valley fills with it while the hilltops stay clear, and the sky's horizon melts into it. The first enabled one counts.", true, kFogFields},
     ComponentInfo{"Sky", "The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out.", true, kSkyFields},

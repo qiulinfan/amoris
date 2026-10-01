@@ -2001,6 +2001,72 @@ TEST_CASE("a reflection probe lights a closed room from what it saw: its lamps, 
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("an irradiance volume's probes light each part of a room by what is near it", "[renderer][probes][irradiance]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto box = [&](const char* name, double x, double y, double z, double sx, double sy, double sz, Json mr) {
+        mr["mesh"] = "cube";
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}, {"scale", Json{{"x", sx}, {"y", sy}, {"z", sz}}}}}, {"MeshRenderer", mr}}}}).has_value());
+    };
+    const Json gray{{"color", Json{{"r", 0.7}, {"g", 0.7}, {"b", 0.7}, {"a", 1}}}, {"roughness", 1.0}};
+    box("Floor", 0, -0.1, 0, 10, 0.2, 10, gray);
+    box("Far", 0, 1.5, -5.1, 10, 3, 0.2, gray);
+    box("Left", -5.1, 1.5, 0, 0.2, 3, 10, gray);
+    box("Right", 5.1, 1.5, 0, 0.2, 3, 10, gray);
+    box("Back", 0, 1.5, 5.1, 10, 3, 0.2, gray);
+    box("Ceiling", 0, 3.1, 0, 10.4, 0.2, 10.4, gray);
+    // A red glowing panel along the left wall and a white one in the ceiling: the only light inside.
+    box("RedPanel", -4.95, 1.4, 0, 0.1, 2.2, 7, Json{{"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 3}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"roughness", 1.0}});
+    box("Light", 0, 2.95, 0, 3, 0.1, 3, Json{{"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 2}, {"g", 2}, {"b", 2}, {"a", 1}}}, {"roughness", 1.0}});
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 1}, {"intensity", 1.5}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.5}, {"y", 0.3}, {"z", 0.1}, {"w", 0.8}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 2.0}}}}}}).has_value());
+    REQUIRE(s.command("render.shadows", Json{{"strength", 1.0}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 2.6}, {"z", 4.6}}}, {"rotation", Json{{"x", -0.26}, {"y", 0}, {"z", 0}, {"w", 0.966}}}}}, {"Camera", Json{{"fov_degrees", 80}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto pixel_at = [&](double x, double y, double z) {
+        Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    auto redness = [](std::array<int, 3> c) { return static_cast<double>(c[0] + 1) / static_cast<double>(c[1] + c[2] + 2); };
+    // One reflection probe for the room: its light is the same everywhere in it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "RoomProbe"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}}}, {"ReflectionProbe", Json{{"size", Json{{"x", 10}, {"y", 3}, {"z", 10}}}}}}}}).has_value());
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    const auto probe_left = pixel_at(-3.8, 0, 1), probe_right = pixel_at(3.8, 0, 1);
+    // A volume of probes, six across, two up, six deep: two captured a frame, three passes.
+    REQUIRE(s.command("world.spawn", Json{{"name", "RoomLight"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.5}, {"z", 0}}}}}, {"IrradianceVolume", Json{{"size", Json{{"x", 9.6}, {"y", 2.6}, {"z", 9.6}}}, {"probes", Json{{"x", 6}, {"y", 2}, {"z", 6}}}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json listed = s.command("render.probes", Json::object()).value();
+    REQUIRE(listed["volumes"].size() == 1);
+    REQUIRE(listed["volumes"][0]["ready"] == false);
+    REQUIRE(s.command("render.stats", Json::object()).value()["probes"]["volume_captures"] == 2);
+    for (int i = 0; i < 36; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.probes", Json::object()).value()["volumes"][0]["ready"] == true);
+    for (int i = 0; i < 80; ++i) REQUIRE(s.frame().has_value());
+    listed = s.command("render.probes", Json::object()).value();
+    REQUIRE(listed["volumes"][0]["passes"] == 0);
+    REQUIRE(s.command("render.stats", Json::object()).value()["probes"]["volumes"] == 1);
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["probes"]["volume_captures"] == 0);   // done: nothing captured
+    const auto grid_left = pixel_at(-3.8, 0, 1), grid_right = pixel_at(3.8, 0, 1);
+    INFO("floor by the red panel / across the room: one probe " << probe_left[0] << "," << probe_left[1] << "," << probe_left[2] << " / " << probe_right[0] << "," << probe_right[1] << "," << probe_right[2]
+         << "; the volume " << grid_left[0] << "," << grid_left[1] << "," << grid_left[2] << " / " << grid_right[0] << "," << grid_right[1] << "," << grid_right[2]);
+    // One probe tints the floor alike on both sides; the volume reddens the side by the panel.
+    REQUIRE(std::abs(redness(probe_left) - redness(probe_right)) < 0.15);
+    REQUIRE(redness(grid_left) > redness(grid_right) + 0.1);
+    REQUIRE(grid_left[0] > grid_right[0] + 20);
+    // Switched off, the reflection probe's light again.
+    REQUIRE(s.command("world.set", Json{{"entity", "RoomLight"}, {"component", "IrradianceVolume"}, {"value", Json{{"enabled", false}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto off_left = pixel_at(-3.8, 0, 1);
+    REQUIRE(std::abs(off_left[0] - probe_left[0]) <= 3);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("water shows the bed through it, deep water its colour, the sky at a glance, and is picked", "[renderer][water]") {
     app::Options o = playground_options();
     o.width = 256;

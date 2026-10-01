@@ -144,6 +144,17 @@ The light inside a box (docs/design/rendering.md, Reflection probes): the scene 
 | `realtime` | bool | false | Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}. |
 | `enabled` | bool | true | false stops it being used, without removing it. |
 
+## IrradianceVolume
+
+Light probes in a grid through a box (docs/design/rendering.md, Irradiance volumes): each probe sees the scene around it, and every surface in the box takes its diffuse light from the probes nearest it, weighed by how near they are and whether they face it. Light that bounces off a red wall then reddens the floor beside the wall and not the far side of the room, and a corner away from the lamp is darker than the middle. Its diffuse light takes the place of the sky's and a reflection probe's; reflections stay theirs. Up to four at once, the first by id where boxes overlap.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `size` | vec3 | [10.0, 4.0, 10.0] | The box it covers, centred on the entity, in world units (not turned with it). |
+| `probes` | vec3 | [4.0, 2.0, 4.0] | Probes along x, y and z (each rounded and held to 2..16), spread evenly from one wall of the box to the other; at most 1024 across all volumes, later volumes by id left out past that. |
+| `intensity` | f32 | 1.0 | Multiplies the light it gives. |
+| `enabled` | bool | true | false stops it being used, without removing it. |
+
 ## Decal
 
 An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.

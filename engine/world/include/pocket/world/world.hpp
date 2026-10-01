@@ -96,6 +96,18 @@ class World {
     void component_hashes(EntityId id, const std::function<void(std::string_view name, std::uint64_t hash)>& fn) const;
     // Every entity in tree order (parents before children, siblings in creation order).
     void visit_all(const std::function<void(EntityId id, EntityId parent, int depth)>& fn) const;
+    // One serialized component's hash, by its index among the world's components (component_name).
+    struct ComponentHash {
+        std::uint32_t component = 0;
+        std::uint64_t hash = 0;
+        bool operator==(const ComponentHash&) const = default;
+    };
+    // Every entity in tree order with its parent, its name and the hashes of the serialized
+    // components it carries (ascending component index), in one walk: what a recorder compares
+    // tick to tick. Which components an entity carries is asked once per flecs table.
+    void scan_hashes(const std::function<void(EntityId id, EntityId parent, std::string_view name, const ComponentHash* hashes, std::size_t count)>& fn) const;
+    [[nodiscard]] std::string_view component_name(std::uint32_t component) const;
+    [[nodiscard]] std::size_t component_count() const;
     [[nodiscard]] bool known_component(std::string_view component) const;
     // The project's own components (its components.toml, as the tool hands it over: [{name, doc,
     // fields: [{name, type, default?, doc?, names?}]}]), beside the engine's; declaring again

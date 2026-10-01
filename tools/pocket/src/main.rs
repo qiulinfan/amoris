@@ -234,11 +234,32 @@ fn main() {
     }
 }
 
+// The engine's workspace: --root, else the nearest pocket.toml above the current directory, else,
+// for a game kept outside the engine (an agent's copy, a project of its own), POCKET_ROOT or the
+// workspace this tool was built in or installed into (.pocket/pocket sits in it).
+fn workspace_root(given: Option<std::path::PathBuf>) -> Result<std::path::PathBuf> {
+    if let Some(r) = given {
+        return Ok(r);
+    }
+    let cwd = std::env::current_dir()?;
+    let found = manifest::find_root(&cwd);
+    if found.is_ok() {
+        return found;
+    }
+    if let Ok(env) = std::env::var("POCKET_ROOT") {
+        let p = std::path::PathBuf::from(env);
+        if p.join("pocket.toml").exists() {
+            return Ok(p);
+        }
+    }
+    if let Some(r) = std::env::current_exe().ok().and_then(|exe| exe.parent().and_then(|d| manifest::find_root(d).ok())) {
+        return Ok(r);
+    }
+    found
+}
+
 fn run(cli: Cli) -> Result<report::Report> {
-    let root = match cli.root {
-        Some(r) => r,
-        None => manifest::find_root(&std::env::current_dir()?)?,
-    };
+    let root = workspace_root(cli.root)?;
     let ws = manifest::Workspace::load(&root)?;
     match cli.command {
         Command::Setup { force, target } => commands::setup(&ws, force, &target),

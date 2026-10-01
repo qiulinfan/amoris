@@ -15,6 +15,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace pocket::world {
@@ -75,9 +76,14 @@ class Recorder {
     struct Seen {               // what was hashed last time, so unchanged components cost no JSON
         std::string name;
         EntityId parent = 0;
-        std::map<std::string_view, std::uint64_t> hashes;  // keys are the static component names
+        std::vector<World::ComponentHash> hashes;   // ascending component index
+        bool hashes_valid = false;                  // false after the world's components changed
+        std::uint64_t stamp = 0;                    // the record that last saw it
+        EntityState* state = nullptr;               // its entry in last_ (map nodes stay put)
     };
-    std::map<EntityId, Seen> seen_;
+    std::unordered_map<EntityId, Seen> seen_;
+    std::uint64_t stamp_ = 0;
+    std::vector<std::string> names_;   // the world's component names by index, as last recorded
     std::deque<Delta> deltas_;
 };
 

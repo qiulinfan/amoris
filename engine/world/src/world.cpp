@@ -1417,6 +1417,49 @@ void World::component_hashes(EntityId id, const std::function<void(std::string_v
     }
 }
 
+void World::scan_hashes(const std::function<void(EntityId, EntityId, std::string_view, const ComponentHash*, std::size_t)>& fn) const {
+    Impl& m = *impl_;
+    StateHasherRef proto;
+    proto.key_of = [this](std::uint64_t id) {   // an entity a component refers to: by its path
+        StateHasherRef p;
+        p.str(path(id));
+        return p.digest();
+    };
+    std::unordered_map<const ecs_table_t*, std::vector<std::uint32_t>> carried;
+    std::vector<ComponentHash> hashes;
+    std::vector<std::pair<EntityId, EntityId>> stack;   // (entity, parent), children pushed in reverse
+    const std::vector<EntityId> top = roots();
+    for (auto it = top.rbegin(); it != top.rend(); ++it) stack.emplace_back(*it, 0);
+    while (!stack.empty()) {
+        const auto [id, parent] = stack.back();
+        stack.pop_back();
+        flecs::entity e = m.ecs.entity(id);
+        if (!live(e)) continue;
+        auto [cit, fresh] = carried.try_emplace(ecs_get_table(m.ecs.c_ptr(), id));
+        if (fresh) {
+            for (std::size_t i = 0; i < m.ops.size(); ++i) if (m.ops[i].serialized && m.ops[i].has(e)) cit->second.push_back(static_cast<std::uint32_t>(i));
+        }
+        hashes.clear();
+        for (std::uint32_t i : cit->second) {
+            StateHasherRef h = proto;
+            m.ops[i].hash(h, e);
+            hashes.push_back(ComponentHash{i, h.digest()});
+        }
+        const char* n = e.name().c_str();
+        fn(id, parent, n ? std::string_view(n) : std::string_view(), hashes.data(), hashes.size());
+        if (e.has(flecs::OrderedChildren)) {
+            const ecs_entities_t kids = ecs_get_ordered_children(m.ecs.c_ptr(), id);
+            for (int32_t i = kids.count - 1; i >= 0; --i) stack.emplace_back(kids.ids[i], id);
+        }
+    }
+}
+
+std::string_view World::component_name(std::uint32_t component) const {
+    return component < impl_->ops.size() ? impl_->ops[component].name : std::string_view();
+}
+
+std::size_t World::component_count() const { return impl_->ops.size(); }
+
 void World::visit_all(const std::function<void(EntityId, EntityId, int)>& fn) const {
     std::function<void(EntityId, EntityId, int)> rec = [&](EntityId id, EntityId parent, int depth) {
         fn(id, parent, depth);

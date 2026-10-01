@@ -207,6 +207,10 @@ struct alignas(16) FrameUniforms {
     float shadow_soft[4];        // soft shadows: tan of the sun's radius (0: off), contact shadows on, the blocker search's reach
     float occluders[4];          // 2D shadows: the casting map's top-left x and y, its tile size, on
     float occluder_size[4];      // its cells across and down
+    float grid_box[4][4];        // irradiance volumes in use: center, the harmonics slot of the first probe
+    float grid_ext[4][4];        // half size, intensity
+    float grid_cells[4][4];      // probes along x, y and z; 1 once every probe has been captured
+    float grid_info[4];          // how many
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -228,6 +232,11 @@ constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
 constexpr std::uint32_t kMaxProbes = 8;
 constexpr std::uint32_t kProbeFace = 128;
 constexpr std::uint32_t kProbeWidth = 256, kProbeHeight = 128, kProbeLevels = 5;
+// Irradiance volumes: probes in grids, each captured as a reflection probe is and kept only as nine
+// harmonics, in slots after the reflection probes' in the same buffer; a few captured a frame.
+constexpr std::uint32_t kMaxGrids = 4;
+constexpr std::uint32_t kMaxGridProbes = 1024;
+constexpr std::uint32_t kGridPerFrame = 2;
 // Captures a probe makes when it appears or is refreshed: each is lit by the one before, so a
 // closed room's light bounces off its walls this many times (the first sees only the lights).
 constexpr int kProbeBounces = 3;
@@ -326,6 +335,10 @@ struct Frame {
     shadow_soft: vec4f,
     occluders: vec4f,
     occluder_size: vec4f,
+    grid_box: array<vec4f, 4>,
+    grid_ext: array<vec4f, 4>,
+    grid_cells: array<vec4f, 4>,
+    grid_info: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -350,8 +363,55 @@ struct ShadowFace { view_proj: mat4x4f, rect: vec4f };
 @group(0) @binding(11) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(12) var probe_env: texture_2d_array<f32>;
 // Each probe's diffuse light: nine spherical harmonics of its capture (divided by pi), sixteen
-// vec4s a probe apart (the layer's slot).
-@group(0) @binding(13) var<storage, read> probe_sh: array<vec4f, 128>;
+// vec4s a probe apart: the reflection probes' (their layers' slots), then the irradiance volumes'.
+@group(0) @binding(13) var<storage, read> probe_sh: array<vec4f>;
+// The harmonics at slot `b` (its first vec4) evaluated at the normal.
+fn sh_at(b: u32, n: vec3f) -> vec3f {
+    return probe_sh[b].rgb * 0.282095
+        + probe_sh[b + 1u].rgb * (0.488603 * n.y) + probe_sh[b + 2u].rgb * (0.488603 * n.z) + probe_sh[b + 3u].rgb * (0.488603 * n.x)
+        + probe_sh[b + 4u].rgb * (1.092548 * n.x * n.y) + probe_sh[b + 5u].rgb * (1.092548 * n.y * n.z)
+        + probe_sh[b + 6u].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + probe_sh[b + 7u].rgb * (1.092548 * n.x * n.z)
+        + probe_sh[b + 8u].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+}
+// The diffuse light of the irradiance volume a point is in (the first whose box, grown by half a
+// unit, holds it, once all its probes are captured): the eight probes around it, each weighed by
+// how near it is along each axis and by whether it lies in front of the surface (one behind, seeing
+// the other side of a wall, counts for little), their harmonics at the normal. w as for probes.
+fn grid_diffuse(p: vec3f, n: vec3f) -> vec4f {
+    let count = u32(frame.grid_info.x);
+    for (var i = 0u; i < count; i = i + 1u) {
+        if (frame.grid_cells[i].w < 0.5) { continue; }
+        let c = frame.grid_box[i].xyz;
+        let e = frame.grid_ext[i].xyz;
+        let local = p - c;
+        let outside = length(max(abs(local) - e, vec3f(0.0)));
+        if (outside > 0.5) { continue; }
+        let cells = frame.grid_cells[i].xyz;
+        let g = clamp((local + e) / (2.0 * e) * (cells - 1.0), vec3f(0.0), cells - 1.0);
+        let g0 = min(floor(g), cells - 2.0);
+        let f = g - g0;
+        var light = vec3f(0.0);
+        var total = 0.0;
+        for (var k = 0u; k < 8u; k = k + 1u) {
+            let o = vec3f(f32(k & 1u), f32((k >> 1u) & 1u), f32((k >> 2u) & 1u));
+            let at = g0 + o;
+            let along = mix(1.0 - f, f, o);
+            var w = along.x * along.y * along.z;
+            let to = c - e + at / (cells - 1.0) * (2.0 * e) - p;
+            let d = length(to);
+            if (d > 1e-4) {
+                let facing = (dot(to / d, n) + 1.0) * 0.5;
+                w = w * (facing * facing + 0.2);
+            }
+            let slot = u32(frame.grid_box[i].w) + u32(at.x + at.y * cells.x + at.z * cells.x * cells.y);
+            light = light + sh_at(slot * 16u, n) * w;
+            total = total + w;
+        }
+        if (total <= 0.0) { continue; }
+        return vec4f(max(light / total, vec3f(0.0)) * frame.grid_ext[i].w, 1.0 - outside / 0.5);
+    }
+    return vec4f(0.0);
+}
 // The reflection probe a point is in (the first whose box holds it, a room's own walls and floor
 // included): what arrives along the mirror direction from its capture, box-projected; w is how much
 // it counts, 1 in the box and fading over half a unit outside it, 0 away from every probe.
@@ -383,12 +443,7 @@ fn probe_diffuse(p: vec3f, n: vec3f) -> vec4f {
         let local = p - frame.probe_box[i].xyz;
         let outside = length(max(abs(local) - frame.probe_ext[i].xyz, vec3f(0.0)));
         if (outside > 0.5) { continue; }
-        let b = u32(frame.probe_box[i].w) * 16u;
-        let c = probe_sh[b].rgb * 0.282095
-            + probe_sh[b + 1u].rgb * (0.488603 * n.y) + probe_sh[b + 2u].rgb * (0.488603 * n.z) + probe_sh[b + 3u].rgb * (0.488603 * n.x)
-            + probe_sh[b + 4u].rgb * (1.092548 * n.x * n.y) + probe_sh[b + 5u].rgb * (1.092548 * n.y * n.z)
-            + probe_sh[b + 6u].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + probe_sh[b + 7u].rgb * (1.092548 * n.x * n.z)
-            + probe_sh[b + 8u].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+        let c = sh_at(u32(frame.probe_box[i].w) * 16u, n);
         return vec4f(max(c, vec3f(0.0)) * abs(frame.probe_ext[i].w), 1.0 - outside / 0.5);
     }
     return vec4f(0.0);
@@ -972,16 +1027,25 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
     // reflection, and its diffuse light from all around (a room lit by its lamps and walls, not the sky).
     let probe = probe_specular(in.world_pos, n, v, roughness);
     let probe_d = probe_diffuse(in.world_pos, n);
+    // Inside an irradiance volume its probes give the diffuse light, over the sky's and a probe's.
+    let grid_d = grid_diffuse(in.world_pos, n);
     if (frame.env.x > 0.5) {
         // The sky's light instead of the flat ambient: diffuse from its harmonics, specular from the
         // prefiltered level matching the roughness, in the mirror direction.
         let ndv = max(dot(n, v), 1e-4);
         let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, rn)), roughness * frame.env.w).rgb * frame.env.z;
-        let diffuse = mix(sh_irradiance(n) * frame.env.y, probe_d.rgb, probe_d.w);
+        let diffuse = mix(mix(sh_irradiance(n) * frame.env.y, probe_d.rgb, probe_d.w), grid_d.rgb, grid_d.w);
         color = albedo * (1.0 - metallic) * diffuse + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv) * spec_strength;
-    } else if (probe.w > 0.0) {
-        let ndv = max(dot(n, v), 1e-4);
-        color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv) * spec_strength, probe.w);
+    } else {
+        if (probe.w > 0.0) {
+            let ndv = max(dot(n, v), 1e-4);
+            color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv) * spec_strength, probe.w);
+        }
+        if (grid_d.w > 0.0) {
+            // The diffuse part so far (the flat ambient's, or the probe's over it) given way to the volume's.
+            let had = mix(frame.ambient.rgb, probe_d.rgb, max(probe.w, 0.0)) * albedo * (1.0 - metallic);
+            color = color + (grid_d.rgb * albedo * (1.0 - metallic) - had) * grid_d.w;
+        }
     }
     // A clear coat reflects the sky over the rest, by its own Fresnel on the geometric normal.
     if (object.optics.z > 0.0 && frame.env.x > 0.5) {
@@ -1657,6 +1721,8 @@ fn water_scatter(b: WaterBody, p: vec3f) -> vec3f {
     if (frame.env.x > 0.5) { sky_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * frame.env.y; }
     let probe = probe_diffuse(p, vec3f(0.0, 1.0, 0.0));
     sky_light = mix(sky_light, probe.rgb, probe.w);
+    let grid = grid_diffuse(p, vec3f(0.0, 1.0, 0.0));
+    sky_light = mix(sky_light, grid.rgb, grid.w);
     let l = normalize(-frame.sun_dir.xyz);
     let sun = frame.sun_color.rgb * max(l.y, 0.0) * water_sun(p, max(l.y, 0.0));
     return b.color.rgb * (sky_light + sun * 0.5);
@@ -2205,6 +2271,63 @@ const PI = 3.14159265;
     if (li == 0u) {
         // Convolved with the cosine lobe and divided by pi (the engine's diffuse has no 1/pi):
         // A0 = pi, A1 = 2 pi / 3, A2 = pi / 4.
+        var a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
+        for (var k = 0; k < 9; k = k + 1) { sh[k] = vec4f(part[0][k] * a[k], 0.0); }
+    }
+}
+)WGSL";
+
+// An irradiance volume's probe: its six views (as a reflection probe's capture draws them) looked
+// up along 64 by 32 directions over the sphere and projected onto nine harmonics, convolved with
+// the cosine lobe as the sky's are, into the probe's slot.
+constexpr const char* kGridShWgsl = R"WGSL(
+struct GridFill { faces: array<mat4x4f, 6>, center: vec4f, misc: vec4f };
+@group(0) @binding(0) var<uniform> pf: GridFill;
+@group(0) @binding(1) var views: texture_2d_array<f32>;
+@group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var<storage, read_write> sh: array<vec4f, 9>;
+var<workgroup> part: array<array<vec3f, 9>, 64>;
+const PI = 3.14159265;
+fn look(d: vec3f) -> vec3f {
+    let a = abs(d);
+    var face = 0;
+    if (a.x >= a.y && a.x >= a.z) { face = select(1, 0, d.x > 0.0); }
+    else if (a.y >= a.z) { face = select(3, 2, d.y > 0.0); }
+    else { face = select(5, 4, d.z > 0.0); }
+    let p = pf.faces[face] * vec4f(pf.center.xyz + d, 1.0);
+    let fuv = clamp(vec2f(p.x / p.w * 0.5 + 0.5, 0.5 - p.y / p.w * 0.5), vec2f(0.0), vec2f(1.0));
+    return textureSampleLevel(views, samp, fuv, face, 0.0).rgb;
+}
+@compute @workgroup_size(64) fn grid_sh(@builtin(local_invocation_index) li: u32) {
+    let w = 64u;
+    let h = 32u;
+    var c: array<vec3f, 9>;
+    for (var t = li; t < w * h; t = t + 64u) {
+        let uv = (vec2f(f32(t % w), f32(t / w)) + 0.5) / vec2f(f32(w), f32(h));
+        let phi = (uv.x - 0.5) * 2.0 * PI;
+        let theta = uv.y * PI;
+        let d = vec3f(sin(theta) * sin(phi), cos(theta), -sin(theta) * cos(phi));
+        let dw = (2.0 * PI / f32(w)) * (PI / f32(h)) * sin(theta);
+        let l = look(d) * dw;
+        c[0] = c[0] + l * 0.282095;
+        c[1] = c[1] + l * (0.488603 * d.y);
+        c[2] = c[2] + l * (0.488603 * d.z);
+        c[3] = c[3] + l * (0.488603 * d.x);
+        c[4] = c[4] + l * (1.092548 * d.x * d.y);
+        c[5] = c[5] + l * (1.092548 * d.y * d.z);
+        c[6] = c[6] + l * (0.315392 * (3.0 * d.z * d.z - 1.0));
+        c[7] = c[7] + l * (1.092548 * d.x * d.z);
+        c[8] = c[8] + l * (0.546274 * (d.x * d.x - d.y * d.y));
+    }
+    for (var k = 0; k < 9; k = k + 1) { part[li][k] = c[k]; }
+    workgroupBarrier();
+    for (var stride = 32u; stride > 0u; stride = stride / 2u) {
+        if (li < stride) {
+            for (var k = 0; k < 9; k = k + 1) { part[li][k] = part[li][k] + part[li + stride][k]; }
+        }
+        workgroupBarrier();
+    }
+    if (li == 0u) {
         var a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
         for (var k = 0; k < 9; k = k + 1) { sh[k] = vec4f(part[0][k] * a[k], 0.0); }
     }
@@ -2900,6 +3023,34 @@ struct Renderer::Impl {
     WGPUComputePipeline probe_fill_pipeline = nullptr;
     WGPUBuffer probe_fill_params = nullptr, probe_prefilter_params = nullptr;
     WGPUBuffer probe_frame_buf[6]{};
+    // Irradiance volumes: each a grid of probes whose harmonics follow the reflection probes' in
+    // probe_sh_buffer, captured kGridPerFrame probes a frame, kProbeBounces passes over the grid.
+    struct GridVolume {
+        std::uint64_t entity = 0;
+        Vec3 center{0, 0, 0}, size{0, 0, 0};
+        std::uint32_t nx = 0, ny = 0, nz = 0;
+        std::uint32_t first = 0;   // its first probe among all the volumes' probes
+        float intensity = 1;
+        int passes = 0;            // passes over its probes still to make
+        std::uint32_t next = 0;    // the next probe of this pass
+        bool ready = false;        // every probe captured at least once
+        std::uint64_t frame = 0;   // the frame a probe of it was last captured in
+        [[nodiscard]] std::uint32_t count() const { return nx * ny * nz; }
+        [[nodiscard]] Vec3 probe_at(std::uint32_t i) const {
+            const std::uint32_t x = i % nx, y = (i / nx) % ny, z = i / (nx * ny);
+            const Vec3 lo = center - size * 0.5f;
+            return Vec3{lo.x + size.x * static_cast<float>(x) / static_cast<float>(nx - 1), lo.y + size.y * static_cast<float>(y) / static_cast<float>(ny - 1), lo.z + size.z * static_cast<float>(z) / static_cast<float>(nz - 1)};
+        }
+    };
+    std::vector<GridVolume> grids;
+    WGPUBuffer grid_frame_buf[kGridPerFrame][6]{};
+    WGPUBuffer grid_params[kGridPerFrame]{};
+    WGPUBuffer grid_cluster_buffer = nullptr;   // the lights reaching the volume being captured
+    WGPUShaderModule grid_shader = nullptr;
+    WGPUBindGroupLayout grid_bgl = nullptr;
+    WGPUPipelineLayout grid_layout = nullptr;
+    WGPUComputePipeline grid_pipeline = nullptr;
+    std::vector<WGPUBindGroup> grid_groups;
     WGPURenderPipeline probe_pipeline = nullptr, probe_skinned_pipeline = nullptr, probe_sky_pipeline = nullptr;
     std::vector<WGPUBindGroup> probe_groups;   // the last capture's groups, released at the next
     // The sky: its pipelines, the environment map (level views for the compute passes, one view of
@@ -3277,6 +3428,14 @@ struct Renderer::Impl {
         if (probe_fill_shader) wgpuShaderModuleRelease(probe_fill_shader);
         for (WGPUBuffer b : {probe_fill_params, probe_prefilter_params, probe_sh_buffer, probe_cluster_buffer}) if (b) wgpuBufferRelease(b);
         for (WGPUBuffer b : probe_frame_buf) if (b) wgpuBufferRelease(b);
+        for (auto& bufs : grid_frame_buf) for (WGPUBuffer b : bufs) if (b) wgpuBufferRelease(b);
+        for (WGPUBuffer b : grid_params) if (b) wgpuBufferRelease(b);
+        if (grid_cluster_buffer) wgpuBufferRelease(grid_cluster_buffer);
+        for (WGPUBindGroup g : grid_groups) wgpuBindGroupRelease(g);
+        if (grid_pipeline) wgpuComputePipelineRelease(grid_pipeline);
+        if (grid_layout) wgpuPipelineLayoutRelease(grid_layout);
+        if (grid_bgl) wgpuBindGroupLayoutRelease(grid_bgl);
+        if (grid_shader) wgpuShaderModuleRelease(grid_shader);
         for (auto& layer : probe_level) for (WGPUTextureView v : layer) if (v) wgpuTextureViewRelease(v);
         for (WGPUTextureView v : probe_view) if (v) wgpuTextureViewRelease(v);
         for (WGPUTextureView v : {probe_env_view, probe_views_array, probe_depth_view}) if (v) wgpuTextureViewRelease(v);
@@ -4897,6 +5056,44 @@ fn time() -> f32 { return fx.time.x; }
         probe_fill_params = device->create_buffer("pocket.probe.fill", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * (16 * 6 + 8));
         probe_prefilter_params = device->create_buffer("pocket.probe.prefilter", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kSkySlot) * kProbeLevels);
         for (auto& b : probe_frame_buf) b = device->create_buffer("pocket.probe.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
+        // Irradiance volumes: the harmonics of a probe straight from its six views.
+        POCKET_TRY(gmodule, device->create_shader("pocket.grid.harmonics", kGridShWgsl));
+        grid_shader = gmodule;
+        WGPUBindGroupLayoutEntry ge[4]{};
+        ge[0].binding = 0;
+        ge[0].visibility = WGPUShaderStage_Compute;
+        ge[0].buffer.type = WGPUBufferBindingType_Uniform;
+        ge[0].buffer.minBindingSize = sizeof(float) * (16 * 6 + 8);
+        ge[1].binding = 1;
+        ge[1].visibility = WGPUShaderStage_Compute;
+        ge[1].texture.sampleType = WGPUTextureSampleType_Float;
+        ge[1].texture.viewDimension = WGPUTextureViewDimension_2DArray;
+        ge[2].binding = 2;
+        ge[2].visibility = WGPUShaderStage_Compute;
+        ge[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        ge[3].binding = 3;
+        ge[3].visibility = WGPUShaderStage_Compute;
+        ge[3].buffer.type = WGPUBufferBindingType_Storage;
+        ge[3].buffer.minBindingSize = sizeof(float) * 36;
+        WGPUBindGroupLayoutDescriptor gbd{};
+        gbd.label = rhi::str("pocket.grid.harmonics");
+        gbd.entryCount = 4;
+        gbd.entries = ge;
+        grid_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &gbd);
+        WGPUPipelineLayoutDescriptor gpl{};
+        gpl.label = rhi::str("pocket.grid.harmonics");
+        gpl.bindGroupLayoutCount = 1;
+        gpl.bindGroupLayouts = &grid_bgl;
+        grid_layout = wgpuDeviceCreatePipelineLayout(device->device(), &gpl);
+        WGPUComputePipelineDescriptor gcp{};
+        gcp.label = rhi::str("pocket.grid.harmonics");
+        gcp.layout = grid_layout;
+        gcp.compute.module = grid_shader;
+        gcp.compute.entryPoint = rhi::str("grid_sh");
+        grid_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &gcp);
+        if (!grid_pipeline) return fail("gpu_pipeline_failed", "the irradiance volumes' harmonics pass could not be created");
+        for (auto& bufs : grid_frame_buf) for (auto& b : bufs) b = device->create_buffer("pocket.grid.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
+        for (auto& b : grid_params) b = device->create_buffer("pocket.grid.fill", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * (16 * 6 + 8));
         return {};
     }
 
@@ -4947,6 +5144,78 @@ fn time() -> f32 { return fx.time.x; }
         fu.probe_info[3] = static_cast<float>(used);
         stats.probes = used;
         return capture;
+    }
+
+    // The irradiance volumes in use (the first four enabled by id, their probes counted in order,
+    // none past kMaxGridProbes), what the lit pass is told of the ready ones, and which probes are
+    // captured this frame: up to kGridPerFrame of the first volume with passes still to make. A
+    // volume starts its passes again when it is new, moved, resized or given other probe counts,
+    // or on render.probes {refresh: true}.
+    struct GridCapture { std::size_t volume = 0; std::uint32_t probe = 0; };
+    std::vector<GridCapture> gather_grids(const world::World& w, FrameUniforms& fu, bool refresh, bool capture) {
+        std::vector<std::pair<std::uint64_t, std::pair<world::IrradianceVolume, Vec3>>> found;
+        w.ecs().each([&](flecs::entity e, const world::IrradianceVolume& v, const world::WorldTransform& t) {
+            if (v.enabled) found.push_back({e.id(), {v, t.position}});
+        });
+        std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<GridVolume> next;
+        std::uint32_t used = 0;
+        for (const auto& [id, vv] : found) {
+            if (next.size() >= kMaxGrids) break;
+            const auto& [v, at] = vv;
+            auto axis = [](float f) { return static_cast<std::uint32_t>(std::clamp(std::lround(f), 2l, 16l)); };
+            GridVolume g;
+            g.entity = id;
+            g.center = at;
+            g.size = Vec3{std::max(v.size.x, 0.01f), std::max(v.size.y, 0.01f), std::max(v.size.z, 0.01f)};
+            g.nx = axis(v.probes.x);
+            g.ny = axis(v.probes.y);
+            g.nz = axis(v.probes.z);
+            if (used + g.count() > kMaxGridProbes) continue;
+            g.first = used;
+            g.intensity = std::max(v.intensity, 0.0f);
+            used += g.count();
+            auto was = std::find_if(grids.begin(), grids.end(), [&](const GridVolume& o) { return o.entity == id; });
+            const bool same = was != grids.end() && was->first == g.first && was->nx == g.nx && was->ny == g.ny && was->nz == g.nz && length(was->center - g.center) <= 1e-4f && length(was->size - g.size) <= 1e-4f;
+            if (same && !refresh) {
+                g.passes = was->passes;
+                g.next = was->next;
+                g.ready = was->ready;
+                g.frame = was->frame;
+            } else if (same) {
+                g.passes = kProbeBounces;   // again from the light it has, as a refreshed probe does
+                g.ready = was->ready;
+                g.frame = was->frame;
+            } else {
+                g.passes = kProbeBounces;
+            }
+            next.push_back(g);
+        }
+        grids = std::move(next);
+        std::uint32_t shown = 0;
+        for (const GridVolume& g : grids) {
+            fu.grid_box[shown][0] = g.center.x; fu.grid_box[shown][1] = g.center.y; fu.grid_box[shown][2] = g.center.z;
+            fu.grid_box[shown][3] = static_cast<float>(kMaxProbes + g.first);
+            fu.grid_ext[shown][0] = g.size.x * 0.5f; fu.grid_ext[shown][1] = g.size.y * 0.5f; fu.grid_ext[shown][2] = g.size.z * 0.5f;
+            fu.grid_ext[shown][3] = g.intensity;
+            fu.grid_cells[shown][0] = static_cast<float>(g.nx); fu.grid_cells[shown][1] = static_cast<float>(g.ny); fu.grid_cells[shown][2] = static_cast<float>(g.nz);
+            fu.grid_cells[shown][3] = g.ready ? 1.0f : 0.0f;
+            ++shown;
+        }
+        fu.grid_info[0] = static_cast<float>(shown);
+        stats.grids = static_cast<std::uint32_t>(std::count_if(grids.begin(), grids.end(), [](const GridVolume& g) { return g.ready; }));
+        std::vector<GridCapture> out;
+        for (std::size_t v = 0; capture && v < grids.size() && out.empty(); ++v) {
+            GridVolume& g = grids[v];
+            while (g.passes > 0 && out.size() < kGridPerFrame) {
+                out.push_back({v, g.next});
+                if (++g.next >= g.count()) {
+                    g.next = 0;
+                    --g.passes;
+                }
+            }
+        }
+        return out;
     }
 
     // The six views of a probe at `center`: along +X, -X, +Y, -Y, +Z and -Z, each 90 degrees.
@@ -6905,14 +7174,15 @@ fn time() -> f32 { return fx.time.x; }
         sbe[12].binding = 12;
         sbe[12].textureView = probe_env_view;
         {
-            const std::vector<float> zero(4 * 16 * kMaxProbes, 0.0f);
+            const std::vector<float> zero(4 * 16 * (kMaxProbes + kMaxGridProbes), 0.0f);
             probe_sh_buffer = device->create_buffer("pocket.probes.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, zero.size() * sizeof(float), zero.data());
             const std::vector<std::uint32_t> none(2 * kClusters + kMaxLights, 0u);
             probe_cluster_buffer = device->create_buffer("pocket.probes.lights", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, none.size() * sizeof(std::uint32_t), none.data());
+            grid_cluster_buffer = device->create_buffer("pocket.grids.lights", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, none.size() * sizeof(std::uint32_t), none.data());
         }
         sbe[13].binding = 13;
         sbe[13].buffer = probe_sh_buffer;
-        sbe[13].size = sizeof(float) * 4 * 16 * kMaxProbes;
+        sbe[13].size = sizeof(float) * 4 * 16 * (kMaxProbes + kMaxGridProbes);
         POCKET_TRY_VOID(create_decals());
         POCKET_TRY_VOID(create_timer());
         sbe[14].binding = 14;
@@ -8390,7 +8660,9 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     fu.ao[1] = 1.0f / static_cast<float>(std::max(1u, frame.width));
     fu.ao[2] = 1.0f / static_cast<float>(std::max(1u, frame.height));
     if (has_sky) fu.ambient[0] = fu.ambient[1] = fu.ambient[2] = 0.0f;   // the sky's light replaces the flat ambient, even at zero
-    int probe_capture = im.gather_probes(world, fu);   // the probes light every view; the first view captures
+    // The probes and volumes light every view; the first view captures.
+    std::vector<Impl::GridCapture> grid_captures = im.gather_grids(world, fu, im.probe_refresh, !im.secondary);
+    int probe_capture = im.gather_probes(world, fu);
     if (im.secondary) probe_capture = -1;
     im.gather_decals(world, fu);
     for (int k = 0; k < 4; ++k) {
@@ -9149,59 +9421,48 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // box without their shadows, what glows, and the probes' light: this one's from its capture
     // before, none the first time), then turned into its panorama, prefiltered, and its diffuse
     // light taken from it.
-    if (probe_capture >= 0) {
-        Impl::ProbeSlot& slot = im.probe_slots[static_cast<std::size_t>(probe_capture)];
-        if (!slot.captured) {
-            const std::array<float, 64> none{};
-            im.device->write_buffer(im.probe_sh_buffer, 256ull * static_cast<std::uint64_t>(probe_capture), none.data(), sizeof none);
-        }
-        for (WGPUBindGroup g : im.probe_groups) wgpuBindGroupRelease(g);
-        im.probe_groups.clear();
-        const std::array<Mat4, 6> views = im.probe_views(slot.center);
-        const rhi::Color bg{decode(clear.r), decode(clear.g), decode(clear.b), 1.0f};
-        // The point and spot lights whose reach touches the probe's box, as the one cluster its
-        // views look up (every pixel of a capture lists them all; no shadows, drawn after it).
+    // The point and spot lights whose reach touches a box, as the one cluster a capture's views look
+    // up (every pixel of a capture lists them all; no shadows, drawn after it), into `buffer`.
+    auto lights_reaching = [&](Vec3 center, Vec3 size, WGPUBuffer buffer) {
         std::vector<std::uint32_t> reach(2 * kClusters, 0u);
         for (std::uint32_t li = 0; li < im.light_packed.size() && reach.size() < 2 * kClusters + kMaxLights; ++li) {
             const GpuLight& g = im.light_packed[li];
             const Vec3 at{g.pos_range[0], g.pos_range[1], g.pos_range[2]};
-            const Vec3 half = slot.size * 0.5f;
-            const Vec3 d{std::max(std::fabs(at.x - slot.center.x) - half.x, 0.0f), std::max(std::fabs(at.y - slot.center.y) - half.y, 0.0f), std::max(std::fabs(at.z - slot.center.z) - half.z, 0.0f)};
+            const Vec3 half = size * 0.5f;
+            const Vec3 d{std::max(std::fabs(at.x - center.x) - half.x, 0.0f), std::max(std::fabs(at.y - center.y) - half.y, 0.0f), std::max(std::fabs(at.z - center.z) - half.z, 0.0f)};
             if (length(d) < g.pos_range[3]) reach.push_back(li);
         }
-        const auto probe_lights = static_cast<std::uint32_t>(reach.size() - 2 * kClusters);
+        const auto count = static_cast<std::uint32_t>(reach.size() - 2 * kClusters);
         reach[0] = 2 * kClusters;
-        reach[1] = probe_lights;
-        im.device->write_buffer(im.probe_cluster_buffer, 0, reach.data(), reach.size() * sizeof(std::uint32_t));
+        reach[1] = count;
+        im.device->write_buffer(buffer, 0, reach.data(), reach.size() * sizeof(std::uint32_t));
+        return count;
+    };
+    // A capture's six views of the scene from `center` into the probe views, each drawn with the
+    // frame's shading as a capture sees it, its uniforms (changed by `tweak`) in its own buffer.
+    auto draw_six = [&](const std::array<Mat4, 6>& views, Vec3 center, WGPUBuffer* bufs, WGPUBuffer cluster, std::uint32_t lights, std::vector<WGPUBindGroup>& groups, const std::function<void(FrameUniforms&)>& tweak) {
+        const rhi::Color bg{decode(clear.r), decode(clear.g), decode(clear.b), 1.0f};
         for (int f = 0; f < 6; ++f) {
             FrameUniforms pu = fu;
             to_array(views[static_cast<std::size_t>(f)], pu.view_proj);
             to_array(views[static_cast<std::size_t>(f)], pu.cur_view_proj);
             to_array(views[static_cast<std::size_t>(f)], pu.prev_view_proj);
             to_array(views[static_cast<std::size_t>(f)].inverse(), pu.inv_view_proj);
-            pu.camera_pos[0] = slot.center.x; pu.camera_pos[1] = slot.center.y; pu.camera_pos[2] = slot.center.z;
+            pu.camera_pos[0] = center.x; pu.camera_pos[1] = center.y; pu.camera_pos[2] = center.z;
             pu.clusters[0] = 1; pu.clusters[1] = 1; pu.clusters[2] = 1;
-            pu.clusters[3] = probe_lights;
+            pu.clusters[3] = lights;
             pu.probe_info[2] = 1;   // a capture: no local lights' shadows, the sun's by the cascade holding the point
             pu.ao[0] = 0;
             pu.shadow_soft[1] = 0;   // the camera's contact shadows are not the capture's
             pu.taa[0] = 0;
-            if (!slot.captured) {
-                // Its own light, dark so far, for what is in its box (reflections only from the captured).
-                const auto k = static_cast<std::size_t>(fu.probe_info[0]);
-                pu.probe_box[k][0] = slot.center.x; pu.probe_box[k][1] = slot.center.y; pu.probe_box[k][2] = slot.center.z;
-                pu.probe_box[k][3] = static_cast<float>(probe_capture);
-                pu.probe_ext[k][0] = slot.size.x * 0.5f; pu.probe_ext[k][1] = slot.size.y * 0.5f; pu.probe_ext[k][2] = slot.size.z * 0.5f;
-                pu.probe_ext[k][3] = 1;
-                pu.probe_info[0] = static_cast<float>(k + 1);
-            }
+            if (tweak) tweak(pu);
             pu.viewport[0] = 0; pu.viewport[1] = 0; pu.viewport[2] = kProbeFace; pu.viewport[3] = kProbeFace;
-            im.device->write_buffer(im.probe_frame_buf[f], 0, &pu, sizeof pu);
+            im.device->write_buffer(bufs[f], 0, &pu, sizeof pu);
             WGPUBindGroupEntry pe[19];
             std::memcpy(pe, im.scene_entries, sizeof pe);
             pe[17].textureView = im.glass_stub_view;   // glass in a probe's capture shows nothing through
-            pe[0].buffer = im.probe_frame_buf[f];
-            pe[9].buffer = im.probe_cluster_buffer;
+            pe[0].buffer = bufs[f];
+            pe[9].buffer = cluster;
             pe[9].size = sizeof(std::uint32_t) * (2ull * kClusters + kMaxLights);
             WGPUBindGroupDescriptor pd{};
             pd.label = rhi::str("pocket.probe.scene");
@@ -9209,7 +9470,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             pd.entryCount = 19;
             pd.entries = pe;
             WGPUBindGroup group = wgpuDeviceCreateBindGroup(im.device->device(), &pd);
-            im.probe_groups.push_back(group);
+            groups.push_back(group);
             WGPURenderPassColorAttachment pca{};
             pca.view = im.probe_view[f];
             pca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
@@ -9244,6 +9505,28 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderEnd(ppass);
             wgpuRenderPassEncoderRelease(ppass);
         }
+    };
+    if (probe_capture >= 0) {
+        Impl::ProbeSlot& slot = im.probe_slots[static_cast<std::size_t>(probe_capture)];
+        if (!slot.captured) {
+            const std::array<float, 64> none{};
+            im.device->write_buffer(im.probe_sh_buffer, 256ull * static_cast<std::uint64_t>(probe_capture), none.data(), sizeof none);
+        }
+        for (WGPUBindGroup g : im.probe_groups) wgpuBindGroupRelease(g);
+        im.probe_groups.clear();
+        const std::array<Mat4, 6> views = im.probe_views(slot.center);
+        const std::uint32_t probe_lights = lights_reaching(slot.center, slot.size, im.probe_cluster_buffer);
+        draw_six(views, slot.center, im.probe_frame_buf, im.probe_cluster_buffer, probe_lights, im.probe_groups, [&](FrameUniforms& pu) {
+            if (!slot.captured) {
+                // Its own light, dark so far, for what is in its box (reflections only from the captured).
+                const auto k = static_cast<std::size_t>(fu.probe_info[0]);
+                pu.probe_box[k][0] = slot.center.x; pu.probe_box[k][1] = slot.center.y; pu.probe_box[k][2] = slot.center.z;
+                pu.probe_box[k][3] = static_cast<float>(probe_capture);
+                pu.probe_ext[k][0] = slot.size.x * 0.5f; pu.probe_ext[k][1] = slot.size.y * 0.5f; pu.probe_ext[k][2] = slot.size.z * 0.5f;
+                pu.probe_ext[k][3] = 1;
+                pu.probe_info[0] = static_cast<float>(k + 1);
+            }
+        });
         // The views into level 0 of the probe's layer, then each next level prefiltered from the one above.
         const auto layer = static_cast<std::size_t>(probe_capture);
         std::vector<float> fill(16 * 6 + 8, 0.0f);
@@ -9336,6 +9619,56 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         slot.bounces = std::max(slot.bounces - 1, 0);
         slot.frame = im.frame_number;
         im.stats.probe_captures = 1;
+    }
+    // Irradiance volumes' probes: each drawn six ways as a reflection probe is (lit by the volume as
+    // its probes so far give it, so each pass bounces the light once more), and its harmonics taken
+    // from the views straight into its slot.
+    if (!grid_captures.empty()) {
+        for (WGPUBindGroup g : im.grid_groups) wgpuBindGroupRelease(g);
+        im.grid_groups.clear();
+        const Impl::GridVolume& volume = im.grids[grid_captures.front().volume];
+        const std::uint32_t grid_lights = lights_reaching(volume.center, volume.size, im.grid_cluster_buffer);
+        for (std::size_t k = 0; k < grid_captures.size(); ++k) {
+            Impl::GridVolume& g = im.grids[grid_captures[k].volume];
+            const std::uint32_t probe = grid_captures[k].probe;
+            const Vec3 at = g.probe_at(probe);
+            const std::array<Mat4, 6> views = im.probe_views(at);
+            draw_six(views, at, im.grid_frame_buf[k], im.grid_cluster_buffer, grid_lights, im.grid_groups, nullptr);
+            std::vector<float> fill(16 * 6 + 8, 0.0f);
+            for (int f = 0; f < 6; ++f) to_array(views[static_cast<std::size_t>(f)], fill.data() + 16 * f);
+            fill[96] = at.x; fill[97] = at.y; fill[98] = at.z;
+            im.device->write_buffer(im.grid_params[k], 0, fill.data(), fill.size() * sizeof(float));
+            WGPUBindGroupEntry ge[4]{};
+            ge[0].binding = 0;
+            ge[0].buffer = im.grid_params[k];
+            ge[0].size = sizeof(float) * (16 * 6 + 8);
+            ge[1].binding = 1;
+            ge[1].textureView = im.probe_views_array;
+            ge[2].binding = 2;
+            ge[2].sampler = im.env_sampler;
+            ge[3].binding = 3;
+            ge[3].buffer = im.probe_sh_buffer;
+            ge[3].offset = 256ull * (kMaxProbes + g.first + probe);
+            ge[3].size = sizeof(float) * 36;
+            WGPUBindGroupDescriptor gd{};
+            gd.label = rhi::str("pocket.grid.harmonics");
+            gd.layout = im.grid_bgl;
+            gd.entryCount = 4;
+            gd.entries = ge;
+            WGPUBindGroup gg = wgpuDeviceCreateBindGroup(im.device->device(), &gd);
+            im.grid_groups.push_back(gg);
+            WGPUComputePassDescriptor gcd{};
+            gcd.label = rhi::str("pocket.grid");
+            WGPUComputePassEncoder gp = im.begin_compute(frame.encoder, gcd);
+            wgpuComputePassEncoderSetPipeline(gp, im.grid_pipeline);
+            wgpuComputePassEncoderSetBindGroup(gp, 0, gg, 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(gp, 1, 1, 1);
+            wgpuComputePassEncoderEnd(gp);
+            wgpuComputePassEncoderRelease(gp);
+            if (probe + 1 == g.count()) g.ready = true;
+            g.frame = im.frame_number;
+        }
+        im.stats.grid_captures = static_cast<std::uint32_t>(grid_captures.size());
     }
     // The local lights' shadow faces: one pass over the atlas, each face drawn into its own square.
     if (!im.faces.empty() && im.atlas_view && !draws.empty()) {
@@ -9839,7 +10172,12 @@ Json Renderer::probes() const {
         list.push_back(Json{{"entity", s.entity}, {"layer", i}, {"center", Json{{"x", s.center.x}, {"y", s.center.y}, {"z", s.center.z}}}, {"size", Json{{"x", s.size.x}, {"y", s.size.y}, {"z", s.size.z}}},
                             {"captured", s.captured}, {"bounces", s.bounces}, {"frame", s.frame}, {"realtime", s.realtime}});
     }
-    return Json{{"probes", list}, {"frame", impl_->frame_number}, {"max", kMaxProbes}};
+    Json grids = Json::array();
+    for (const Impl::GridVolume& g : impl_->grids) {
+        grids.push_back(Json{{"entity", g.entity}, {"center", Json{{"x", g.center.x}, {"y", g.center.y}, {"z", g.center.z}}}, {"size", Json{{"x", g.size.x}, {"y", g.size.y}, {"z", g.size.z}}},
+                             {"probes", Json{{"x", g.nx}, {"y", g.ny}, {"z", g.nz}}}, {"ready", g.ready}, {"passes", g.passes}, {"next", g.next}, {"frame", g.frame}});
+    }
+    return Json{{"probes", list}, {"volumes", grids}, {"frame", impl_->frame_number}, {"max", kMaxProbes}, {"max_volume_probes", kMaxGridProbes}};
 }
 void Renderer::refresh_probes() { impl_->probe_refresh = true; }
 void Renderer::set_motion_blur(MotionBlurSettings s) {
@@ -9990,7 +10328,7 @@ Json Renderer::describe() const {
     j["oit"] = s.oit;
     j["lut"] = s.lut;
     j["ssr"] = s.ssr;
-    j["probes"] = Json{{"in_use", s.probes}, {"captured", s.probe_captures}};
+    j["probes"] = Json{{"in_use", s.probes}, {"captured", s.probe_captures}, {"volumes", s.grids}, {"volume_captures", s.grid_captures}};
     j["water"] = Json{{"bodies", s.water}, {"underwater", s.underwater}};
     j["decals"] = Json{{"drawn", s.decals}, {"images", s.decal_images}};
     j["dof"] = s.dof;

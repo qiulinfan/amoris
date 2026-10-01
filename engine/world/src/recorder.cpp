@@ -29,66 +29,108 @@ void Recorder::record(const World& w, std::int64_t tick) {
     Delta d;
     d.tick = tick;
     if (deltas_.empty() && base_tick_ < 0) base_tick_ = tick - 1;  // the first frame spawns everything
-    std::map<EntityId, Seen> seen_now;
-    w.visit_all([&](EntityId id, EntityId parent, int) {
-        Seen& sn = seen_now[id];
-        sn.name = w.name(id);
-        sn.parent = parent;
-        auto old = seen_.find(id);
-        auto lit = last_.find(id);
-        if (old == seen_.end() || lit == last_.end()) {
+    // The world's components by index; when they change (a project's own declared again), the
+    // hashes kept by index mean nothing and every component is compared by value once.
+    bool names_changed = names_.size() != w.component_count();
+    for (std::size_t i = 0; !names_changed && i < names_.size(); ++i) names_changed = names_[i] != w.component_name(static_cast<std::uint32_t>(i));
+    if (names_changed) {
+        names_.clear();
+        for (std::size_t i = 0; i < w.component_count(); ++i) names_.emplace_back(w.component_name(static_cast<std::uint32_t>(i)));
+        for (auto& [id, sn] : seen_) sn.hashes_valid = false;
+    }
+    ++stamp_;
+    // A component whose hash moved: its value as JSON against the one kept, the changed fields stored.
+    auto changed = [&](EntityId id, EntityState& prev, const std::string& key) {
+        Json value = w.get(id, key).value_or(Json(nullptr));
+        auto pit = prev.components.find(key);
+        if (pit == prev.components.end()) {
+            prev.components[key] = value;
+            d.changed.emplace_back(id, key, value);
+            return;
+        }
+        Json& before = pit->second;
+        if (before == value) return;  // same value, different bits (e.g. -0.0): nothing to store
+        if (before.is_object() && value.is_object()) {
+            Json partial = Json::object();
+            for (auto& [k, v] : value.items()) {
+                auto bit = before.find(k);
+                if (bit == before.end() || *bit != v) partial[k] = v;
+            }
+            d.changed.emplace_back(id, key, partial);
+        } else {
+            d.changed.emplace_back(id, key, value);
+        }
+        before = std::move(value);
+    };
+    auto removed = [&](EntityId id, EntityState& prev, const std::string& key) {
+        if (prev.components.erase(key) == 0) return;
+        d.removed.emplace_back(id, key);
+    };
+    w.scan_hashes([&](EntityId id, EntityId parent, std::string_view name, const World::ComponentHash* hashes, std::size_t count) {
+        auto [it, fresh] = seen_.try_emplace(id);
+        Seen& sn = it->second;
+        sn.stamp = stamp_;
+        if (fresh || !sn.state) {
             EntityState es;
             es.path = w.path(id);
             Json comps = w.components_json(id);
-            for (auto& [name, value] : comps.items()) es.components[name] = value;
-            w.component_hashes(id, [&](std::string_view name, std::uint64_t h) { sn.hashes[name] = h; });
-            last_[id] = es;
+            for (auto& [cname, value] : comps.items()) es.components[cname] = value;
+            sn.name = std::string(name);
+            sn.parent = parent;
+            sn.hashes.assign(hashes, hashes + count);
+            sn.hashes_valid = true;
+            auto [lit, added] = last_.insert_or_assign(id, es);
+            sn.state = &lit->second;
             d.spawned.emplace_back(id, std::move(es));
             return;
         }
-        EntityState& prev = lit->second;
-        if (old->second.name != sn.name || old->second.parent != parent) {
+        EntityState& prev = *sn.state;
+        if (sn.name != name || sn.parent != parent) {
+            sn.name = std::string(name);
+            sn.parent = parent;
             prev.path = w.path(id);
             d.renamed.emplace_back(id, prev.path);
         }
-        w.component_hashes(id, [&](std::string_view name, std::uint64_t h) {
-            sn.hashes[name] = h;
-            auto hit = old->second.hashes.find(name);
-            if (hit != old->second.hashes.end() && hit->second == h) return;  // unchanged: no JSON
-            Json value = w.get(id, name).value_or(Json(nullptr));
-            std::string key(name);
-            auto pit = prev.components.find(key);
-            if (pit == prev.components.end()) {
-                prev.components[key] = value;
-                d.changed.emplace_back(id, key, value);
-                return;
+        if (!sn.hashes_valid) {
+            for (std::size_t j = 0; j < count; ++j) changed(id, prev, names_[hashes[j].component]);
+            std::vector<std::string> gone;
+            for (const auto& [key, value] : prev.components) {
+                bool kept = false;
+                for (std::size_t j = 0; j < count && !kept; ++j) kept = names_[hashes[j].component] == key;
+                if (!kept) gone.push_back(key);
             }
-            Json& before = pit->second;
-            if (before == value) return;  // same value, different bits (e.g. -0.0): nothing to store
-            if (before.is_object() && value.is_object()) {
-                Json partial = Json::object();
-                for (auto& [k, v] : value.items()) {
-                    auto bit = before.find(k);
-                    if (bit == before.end() || *bit != v) partial[k] = v;
+            for (const std::string& key : gone) removed(id, prev, key);
+        } else {
+            // Both lists ascend by component index: walk them together.
+            const std::vector<World::ComponentHash>& old = sn.hashes;
+            std::size_t i = 0, j = 0;
+            while (i < old.size() || j < count) {
+                if (j < count && (i >= old.size() || hashes[j].component < old[i].component)) {
+                    changed(id, prev, names_[hashes[j].component]);   // added
+                    ++j;
+                } else if (i < old.size() && (j >= count || old[i].component < hashes[j].component)) {
+                    removed(id, prev, names_[old[i].component]);
+                    ++i;
+                } else {
+                    if (old[i].hash != hashes[j].hash) changed(id, prev, names_[hashes[j].component]);
+                    ++i;
+                    ++j;
                 }
-                d.changed.emplace_back(id, key, partial);
-            } else {
-                d.changed.emplace_back(id, key, value);
-            }
-            before = std::move(value);
-        });
-        for (const auto& [name, h] : old->second.hashes) {
-            if (!sn.hashes.contains(name)) {
-                std::string key(name);
-                prev.components.erase(key);
-                d.removed.emplace_back(id, key);
             }
         }
+        sn.hashes.assign(hashes, hashes + count);
+        sn.hashes_valid = true;
     });
-    for (const auto& [id, es] : last_) {
-        if (!seen_now.contains(id)) d.destroyed.push_back(id);
+    for (auto it = seen_.begin(); it != seen_.end();) {
+        if (it->second.stamp == stamp_) {
+            ++it;
+            continue;
+        }
+        d.destroyed.push_back(it->first);
+        last_.erase(it->first);
+        it = seen_.erase(it);
     }
-    for (EntityId id : d.destroyed) last_.erase(id);
+    std::sort(d.destroyed.begin(), d.destroyed.end());   // by id, whatever order the table kept them in
     // Children paths change when an ancestor is renamed or moved: refresh every path under one.
     if (!d.renamed.empty()) {
         for (auto& [id, es] : last_) {
@@ -99,7 +141,6 @@ void Recorder::record(const World& w, std::int64_t tick) {
             }
         }
     }
-    seen_ = std::move(seen_now);
     deltas_.push_back(std::move(d));
     while (deltas_.size() > capacity_) {
         apply(base_, deltas_.front());

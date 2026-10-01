@@ -373,6 +373,19 @@ void from_json(const Json& j, ReflectionProbe& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(ReflectionProbe& v, std::string_view path, float** out);
 
+/// Light probes in a grid through a box (docs/design/rendering.md, Irradiance volumes): each probe sees the scene around it, and every surface in the box takes its diffuse light from the probes nearest it, weighed by how near they are and whether they face it. Light that bounces off a red wall then reddens the floor beside the wall and not the far side of the room, and a corner away from the lamp is darker than the middle. Its diffuse light takes the place of the sky's and a reflection probe's; reflections stay theirs. Up to four at once, the first by id where boxes overlap.
+struct IrradianceVolume {
+    Vec3 size{10.0f, 4.0f, 10.0f};
+    Vec3 probes{4.0f, 2.0f, 4.0f};
+    float intensity = 1.0f;
+    bool enabled = true;
+    constexpr bool operator==(const IrradianceVolume&) const = default;
+};
+void to_json(Json& j, const IrradianceVolume& v);
+void from_json(const Json& j, IrradianceVolume& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(IrradianceVolume& v, std::string_view path, float** out);
+
 /// An image laid onto whatever surfaces lie in a box (docs/design/rendering.md, Decals): a puddle, a stain, a painted marking, a sign's glow. The box is size across (x, y, z) centred on the entity and turned and scaled with it; the image spans its x and z and is projected along its -y, so an unturned decal paints the floor under it. It changes the surfaces' colour (and, when set, their roughness) before they are lit, fading where a surface turns away from the projection.
 struct Decal {
     std::string texture = "";
@@ -1175,6 +1188,7 @@ void hash_component(struct StateHasherRef& h, const Camera& v);
 void hash_component(struct StateHasherRef& h, const CameraRig& v);
 void hash_component(struct StateHasherRef& h, const Light& v);
 void hash_component(struct StateHasherRef& h, const ReflectionProbe& v);
+void hash_component(struct StateHasherRef& h, const IrradianceVolume& v);
 void hash_component(struct StateHasherRef& h, const Decal& v);
 void hash_component(struct StateHasherRef& h, const Fog& v);
 void hash_component(struct StateHasherRef& h, const Sky& v);
@@ -1239,6 +1253,8 @@ std::size_t read_numbers(const Light& v, double* out);
 bool write_numbers(Light& v, const double* in, std::size_t n);
 std::size_t read_numbers(const ReflectionProbe& v, double* out);
 bool write_numbers(ReflectionProbe& v, const double* in, std::size_t n);
+std::size_t read_numbers(const IrradianceVolume& v, double* out);
+bool write_numbers(IrradianceVolume& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Decal& v, double* out);
 bool write_numbers(Decal& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Fog& v, double* out);

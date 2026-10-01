@@ -52,7 +52,7 @@ Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and Type
 
 ### 4.1 Domain model (declarative)
 
-- `pocket.toml` at the repository root: workspace, targets, platforms, toolchain pins, dependency manifest (name, version, URL, content hash, license).
+- `pocket.toml` at the repository root: workspace, targets, platforms, toolchain pins, dependency manifest (name, version, URL, content hash, license). The tool finds it above the current directory; a game kept outside the repository (an agent's copy, a project of its own) uses the workspace named by `--root`, else `POCKET_ROOT`, else the one the tool itself sits in (`.pocket/pocket`), so `pocket check .` and `pocket scenario .` work from the game's own directory, the project path made absolute for the runtimes it starts.
 - `module.toml` in every C++ module directory: name, kind (static library, executable, test), sources (globs), `public_deps`, `private_deps`, public and private include directories, definitions, per-platform sections written as structured conditions, optional codegen inputs.
 - `[targets]` in `pocket.toml`: runtime, editor, tests, tools; each is a set of root modules plus a platform and configuration matrix.
 - Everything is TOML validated by a JSON schema shipped with `pocket`. No logic in descriptions; if a need for logic appears, it becomes a first-class field or a Rust plugin in `pocket`, never inline scripting.

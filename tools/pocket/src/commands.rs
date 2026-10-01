@@ -127,7 +127,8 @@ pub fn exe_path(ws: &Workspace, config: &str, module: &str) -> Result<PathBuf> {
 pub fn find_project(ws: &Workspace, name: &str) -> Option<PathBuf> {
     let direct = PathBuf::from(name);
     if direct.join("project.toml").exists() {
-        return Some(direct);
+        // Absolute: runtimes and tools started for it run in the workspace's root, not here.
+        return Some(std::fs::canonicalize(&direct).unwrap_or(direct));
     }
     for base in ["samples", "projects", "benchmarks"] {
         let p = ws.root.join(base).join(name);

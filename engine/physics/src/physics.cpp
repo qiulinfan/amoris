@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <format>
 #include <map>
 #include <numbers>
@@ -874,12 +875,12 @@ struct Physics::Impl {
     std::vector<Body> bodies;
     std::vector<Contact> contacts;
     std::vector<JointInfo> joint_infos;
-    std::set<std::pair<EntityId, EntityId>> touching;  // pairs in contact last step
+    std::vector<std::pair<EntityId, EntityId>> touching;   // pairs in contact last step, ascending
     std::set<std::pair<EntityId, EntityId>> wet;       // bodies in water last step (body, water)
     std::set<std::pair<EntityId, EntityId>> character_wet;   // characters in water after their last move
     std::set<std::pair<EntityId, EntityId>> ignored;   // exceptions: pairs that never collide (ordered ids)
     std::set<std::pair<EntityId, EntityId>> joined;    // pairs a joint with collide_connected = false keeps apart, this step
-    std::map<EntityId, float> sleep_timers;             // persists across steps (bodies are regathered)
+    std::vector<std::pair<EntityId, float>> sleep_timers;   // by id, ascending: persists across steps (bodies are regathered)
     std::map<EntityId, int> limit_states;               // hinge limit state per joint, for joint.limit events
     std::map<EntityId, std::set<EntityId>> character_triggers;  // the triggers each character overlapped after its last move
     std::map<std::pair<EntityId, EntityId>, std::uint64_t> pair_cause;  // begin event seq per pair
@@ -1087,7 +1088,8 @@ struct Physics::Impl {
                 b.velocity = v->linear;
                 b.angular = v->angular;
             }
-            if (auto it = sleep_timers.find(b.id); it != sleep_timers.end()) b.sleep_timer = it->second;
+            auto st = std::lower_bound(sleep_timers.begin(), sleep_timers.end(), b.id, [](const auto& x, EntityId id) { return x.first < id; });
+            if (st != sleep_timers.end() && st->first == b.id) b.sleep_timer = st->second;
             bodies.push_back(b);
         });
         each_scattered(w, [&](const Body& b, const world::RigidBody&, const world::Collider&) { bodies.push_back(b); });
@@ -1099,18 +1101,23 @@ struct Physics::Impl {
     }
 
     void write_back(world::World& w, float dt) {
+        // Written only where a bit changed: a body at rest leaves its components (and what is kept
+        // while nothing moves, the query tree and the world transforms) alone.
+        static_assert(sizeof(world::Transform) == 10 * sizeof(float) && sizeof(world::Velocity) == 6 * sizeof(float));
         for (Body& b : bodies) {
             flecs::entity e = w.entity(b.id);
             if (b.kind == 1) continue;
-            world::Transform t = e.get<world::Transform>();
+            const world::Transform& now = e.get<world::Transform>();
+            world::Transform t = now;
             const world::Collider& col = e.get<world::Collider>();
             t.position = b.position - b.rotation.rotate(col.offset);
             t.rotation = b.rotation;
-            e.set<world::Transform>(t);
+            if (std::memcmp(&t, &now, sizeof t) != 0) e.set<world::Transform>(t);
             world::Velocity v;
             v.linear = b.velocity;
             v.angular = b.angular;
-            e.set<world::Velocity>(v);
+            const world::Velocity* had = e.try_get<world::Velocity>();
+            if (!had || std::memcmp(&v, had, sizeof v) != 0) e.set<world::Velocity>(v);
             world::RigidBody rb = e.get<world::RigidBody>();
             if (rb.sleeping != b.sleeping) {
                 rb.sleeping = b.sleeping;
@@ -2428,8 +2435,19 @@ void Physics::step(world::World& w, double dt_d) {
             }
         }
     }
-    // 5. Contacts and events.
-    std::set<std::pair<EntityId, EntityId>> now;
+    // 5. Contacts and events. Pairs are kept as sorted lists; a body's parts are found by its id
+    //    (the bodies are in id order).
+    struct ById {
+        bool operator()(const Body& x, EntityId id) const { return x.id < id; }
+        bool operator()(EntityId id, const Body& x) const { return id < x.id; }
+    };
+    auto any_part = [&](EntityId id, auto&& test) {
+        const auto [lo, hi] = std::equal_range(im.bodies.begin(), im.bodies.end(), id, ById{});
+        for (auto it = lo; it != hi; ++it) if (test(*it)) return true;
+        return false;
+    };
+    std::vector<std::pair<EntityId, EntityId>> now;
+    now.reserve(manifolds.size() + im.touching.size());
     for (const Manifold& m : manifolds) {
         const Body& a = im.bodies[m.a];
         const Body& b = im.bodies[m.b];
@@ -2441,9 +2459,9 @@ void Physics::step(world::World& w, double dt_d) {
         c.depth = m.depths.empty() ? 0 : m.depths[0];
         c.trigger = m.trigger;
         im.contacts.push_back(c);
-        now.insert({a.id, b.id});
+        now.emplace_back(a.id, b.id);
         std::pair<EntityId, EntityId> key{a.id, b.id};
-        if (!im.touching.contains(key)) {
+        if (!std::binary_search(im.touching.begin(), im.touching.end(), key)) {
             Json data;
             data["a"] = w.path(a.id);
             data["b"] = w.path(b.id);
@@ -2455,30 +2473,38 @@ void Physics::step(world::World& w, double dt_d) {
             im.stats.begins++;
         }
     }
+    std::sort(now.begin(), now.end());
+    now.erase(std::unique(now.begin(), now.end()), now.end());
+    const std::size_t tested = now.size();
     for (const auto& key : im.touching) {
-        if (!now.contains(key)) {
+        if (!std::binary_search(now.begin(), now.begin() + static_cast<std::ptrdiff_t>(tested), key)) {
             // A pair that stopped being tested because a body fell asleep is still in contact.
-            bool asleep = false;
-            for (const Body& b : im.bodies) if ((b.id == key.first || b.id == key.second) && b.kind == 0 && b.sleeping) asleep = true;
+            auto asleep_body = [](const Body& b) { return b.kind == 0 && b.sleeping; };
+            const bool asleep = any_part(key.first, asleep_body) || any_part(key.second, asleep_body);
             if (asleep && w.alive(key.first) && w.alive(key.second)) {
-                now.insert(key);
+                now.push_back(key);
                 continue;
             }
             Json data;
             data["a"] = w.alive(key.first) ? w.path(key.first) : "";
             data["b"] = w.alive(key.second) ? w.path(key.second) : "";
-            bool trig = false;
-            for (const Body& b : im.bodies) if ((b.id == key.first || b.id == key.second) && b.trigger) trig = true;
+            auto trigger_body = [](const Body& b) { return b.trigger; };
+            const bool trig = any_part(key.first, trigger_body) || any_part(key.second, trigger_body);
             w.events().emit(w.tick_index(), trig ? "trigger.exit" : "collision.end", key.first, data, im.pair_cause[key]);
             im.pair_cause.erase(key);
             im.stats.ends++;
         }
     }
+    std::inplace_merge(now.begin(), now.begin() + static_cast<std::ptrdiff_t>(tested), now.end());   // both halves ascend
     im.touching = std::move(now);
     im.stats.contacts = static_cast<std::uint32_t>(im.contacts.size());
     for (const Body& b : im.bodies) if (b.kind == 0 && !b.sleeping) im.stats.awake++;
     im.sleep_timers.clear();
-    for (const Body& b : im.bodies) if (b.kind == 0) im.sleep_timers[b.id] = b.sleep_timer;
+    for (const Body& b : im.bodies) {
+        if (b.kind != 0) continue;
+        if (!im.sleep_timers.empty() && im.sleep_timers.back().first == b.id) im.sleep_timers.back().second = b.sleep_timer;   // the last part, as a map would keep
+        else im.sleep_timers.emplace_back(b.id, b.sleep_timer);
+    }
     im.write_back(w, dt);
     // The vehicles' wheels as the step left them, and their visuals placed under the body: hanging
     // `rest - compression` below the mount, turned by the steering, rolled by the ground.
@@ -2685,6 +2711,10 @@ void Physics::move_characters(world::World& w, double dt_d) {
     Impl& im = *impl_;
     const float dt = static_cast<float>(dt_d);
     constexpr float kSkin = 0.01f;
+    std::vector<std::pair<EntityId, world::Character>> movers;
+    w.ecs().each([&](flecs::entity e, const world::Character& c) { if (e.has<world::Transform>()) movers.emplace_back(e.id(), c); });
+    // No characters, and none last time whose water or triggers they would now leave: nothing to do.
+    if (movers.empty() && im.character_wet.empty() && im.character_triggers.empty()) return;
     // The colliders as they stand after the rigid bodies' step (triggers apart: they stop nothing).
     std::vector<Body> solids, triggers;
     w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
@@ -2713,8 +2743,6 @@ void Physics::move_characters(world::World& w, double dt_d) {
     each_scattered(w, [&](const Body& b, const world::RigidBody&, const world::Collider&) { solids.push_back(b); });
     std::sort(solids.begin(), solids.end(), body_order);
     std::sort(triggers.begin(), triggers.end(), [](const Body& x, const Body& y) { return x.id < y.id; });
-    std::vector<std::pair<EntityId, world::Character>> movers;
-    w.ecs().each([&](flecs::entity e, const world::Character& c) { if (e.has<world::Transform>()) movers.emplace_back(e.id(), c); });
     // The water they may swim in (docs/design/water.md), the first by id where bodies overlap.
     std::vector<std::tuple<EntityId, world::Water, Vec3>> pools;
     w.ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {

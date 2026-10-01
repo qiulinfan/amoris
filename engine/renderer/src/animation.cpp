@@ -7,6 +7,7 @@
 #include <format>
 #include <functional>
 #include <optional>
+#include <unordered_map>
 
 namespace pocket::renderer {
 
@@ -42,10 +43,10 @@ struct Locals {
     bool weights_animated = false;
 };
 
-// A clip's node transforms at `time`; nodes the clip leaves alone keep their rest values.
-Locals sample_locals(const assets::Mesh& mesh, const assets::AnimationClip* clip, float time) {
+// A clip's node transforms at `time` into `l` (its storage reused); nodes the clip leaves alone
+// keep their rest values.
+void sample_into(Locals& l, const assets::Mesh& mesh, const assets::AnimationClip* clip, float time) {
     const std::size_t n = mesh.nodes.size();
-    Locals l;
     l.tr.resize(n);
     l.sc.resize(n);
     l.rot.resize(n);
@@ -55,9 +56,10 @@ Locals sample_locals(const assets::Mesh& mesh, const assets::AnimationClip* clip
         l.rot[i] = mesh.nodes[i].rotation;
         l.sc[i] = mesh.nodes[i].scale;
     }
-    l.weights = mesh.default_weights;
+    l.weights.assign(mesh.default_weights.begin(), mesh.default_weights.end());
     l.weights.resize(mesh.morph_targets.size(), 0.0f);
-    if (!clip) return l;
+    l.weights_animated = false;
+    if (!clip) return;
     for (const assets::AnimationChannel& c : clip->channels) {
         if (c.node < 0 || c.node >= static_cast<int>(n) || c.times.empty()) continue;
         std::size_t i0, i1;
@@ -82,33 +84,50 @@ Locals sample_locals(const assets::Mesh& mesh, const assets::AnimationClip* clip
             (c.path == 0 ? l.tr[ni] : l.sc[ni]) = lerp(a, b, t);
         }
     }
+}
+
+Locals sample_locals(const assets::Mesh& mesh, const assets::AnimationClip* clip, float time) {
+    Locals l;
+    sample_into(l, mesh, clip, time);
     return l;
 }
 
-void compose(const assets::Mesh& mesh, const Locals& l, Pose& out) {
-    const std::size_t n = mesh.nodes.size();
-    out.globals.assign(n, Mat4::identity());
-    std::vector<bool> done(n, false);
-    std::function<const Mat4&(std::size_t)> global = [&](std::size_t i) -> const Mat4& {
-        if (done[i]) return out.globals[i];
-        done[i] = true;  // guards against cycles in malformed files
+// Node globals, parents first whatever order the file lists them in.
+struct Composer {
+    const assets::Mesh& mesh;
+    const Locals& l;
+    std::vector<Mat4>& globals;
+    std::vector<char>& done;
+    const Mat4& global(std::size_t i) {
+        if (done[i]) return globals[i];
+        done[i] = 1;  // guards against cycles in malformed files
         const Mat4 local = l.animated[i] ? Mat4::trs(l.tr[i], l.rot[i], l.sc[i]) : mesh.nodes[i].rest;
         const int p = mesh.nodes[i].parent;
-        out.globals[i] = (p >= 0 && static_cast<std::size_t>(p) < n) ? global(static_cast<std::size_t>(p)) * local : local;
-        return out.globals[i];
-    };
-    for (std::size_t i = 0; i < n; ++i) global(i);
-    out.joints.clear();
-    for (const assets::Skin& skin : mesh.skins) {
-        std::vector<Mat4> jm;
-        jm.reserve(skin.joints.size());
-        for (std::size_t j = 0; j < skin.joints.size(); ++j) {
-            auto ni = static_cast<std::size_t>(skin.joints[j]);
-            jm.push_back(out.globals[ni] * skin.inverse_bind[j]);
-        }
-        out.joints.push_back(std::move(jm));
+        globals[i] = (p >= 0 && static_cast<std::size_t>(p) < globals.size()) ? global(static_cast<std::size_t>(p)) * local : local;
+        return globals[i];
+    }
+};
+
+// A pose from locals, into `out`'s storage (kept from the last time where it can be).
+void compose(const assets::Mesh& mesh, const Locals& l, Pose& out, std::vector<char>& done) {
+    const std::size_t n = mesh.nodes.size();
+    out.globals.assign(n, Mat4::identity());
+    done.assign(n, 0);
+    Composer c{mesh, l, out.globals, done};
+    for (std::size_t i = 0; i < n; ++i) c.global(i);
+    out.joints.resize(mesh.skins.size());
+    for (std::size_t s = 0; s < mesh.skins.size(); ++s) {
+        const assets::Skin& skin = mesh.skins[s];
+        std::vector<Mat4>& jm = out.joints[s];
+        jm.resize(skin.joints.size());
+        for (std::size_t j = 0; j < skin.joints.size(); ++j) jm[j] = out.globals[static_cast<std::size_t>(skin.joints[j])] * skin.inverse_bind[j];
     }
     out.weights = l.weights;
+}
+
+void compose(const assets::Mesh& mesh, const Locals& l, Pose& out) {
+    std::vector<char> done;
+    compose(mesh, l, out, done);
 }
 
 }  // namespace
@@ -123,7 +142,7 @@ Quat conj(Quat q) { return {-q.x, -q.y, -q.z, q.w}; }
 
 // Two sampled poses blended per node (weight 0 = a, 1 = b); a node only one of them animates
 // blends between it and the rest pose.
-Locals mix_locals(Locals la, const Locals& lb, float weight) {
+void mix_into(Locals& la, const Locals& lb, float weight) {
     const float w = std::clamp(weight, 0.0f, 1.0f);
     for (std::size_t i = 0; i < la.tr.size(); ++i) {
         if (!la.animated[i] && !lb.animated[i]) continue;  // rest in both: the baked rest matrix
@@ -136,6 +155,10 @@ Locals mix_locals(Locals la, const Locals& lb, float weight) {
         for (std::size_t i = 0; i < la.weights.size() && i < lb.weights.size(); ++i) la.weights[i] += (lb.weights[i] - la.weights[i]) * w;
         la.weights_animated = true;
     }
+}
+
+Locals mix_locals(Locals la, const Locals& lb, float weight) {
+    mix_into(la, lb, weight);
     return la;
 }
 
@@ -147,22 +170,71 @@ Locals blend_locals(const assets::Mesh& mesh, const assets::AnimationClip* a, fl
 // ---- State machines (docs/design/animation.md, State machines) ----------------------------
 
 // A transition's condition over the graph's parameters: comparisons, and/or/not (or && || !),
-// parentheses, numbers, true and false; a bare name is its value (true when not 0). Read by
-// recursive descent every time it is asked (conditions are a few words); `names` collects the
-// parameters it read, `error` what it could not read.
-class Condition {
+// parentheses, numbers, true and false; a bare name is its value (true when not 0). Read once by
+// recursive descent into a little program over the parameters' indices, run every tick it is
+// asked; `reads` are the parameters it reads, `error` what it could not read (what depends only
+// on the text and the parameters' names, so it is found when the program is made).
+struct ConditionProgram {
+    enum class Op : std::uint8_t { Const, Param, Not, Neg, Le, Ge, Eq, Ne, Lt, Gt, And, Or };
+    struct Step {
+        Op op = Op::Const;
+        double value = 0;          // Const
+        std::size_t param = 0;     // Param
+    };
+    std::vector<Step> steps;
+    std::vector<std::size_t> reads;
+    std::string error;
+
+    double run(const std::vector<world::AnimationParam>& params) const {
+        double stack[64];
+        std::size_t top = 0;
+        for (const Step& s : steps) {
+            switch (s.op) {
+                case Op::Const: stack[top++] = s.value; break;
+                case Op::Param: stack[top++] = s.param < params.size() ? params[s.param].value : 0.0; break;
+                case Op::Not: stack[top - 1] = stack[top - 1] == 0 ? 1 : 0; break;
+                case Op::Neg: stack[top - 1] = -stack[top - 1]; break;
+                default: {
+                    const double r = stack[--top], l = stack[top - 1];
+                    double v = 0;
+                    switch (s.op) {
+                        case Op::Le: v = l <= r; break;
+                        case Op::Ge: v = l >= r; break;
+                        case Op::Eq: v = l == r; break;
+                        case Op::Ne: v = l != r; break;
+                        case Op::Lt: v = l < r; break;
+                        case Op::Gt: v = l > r; break;
+                        case Op::And: v = (l != 0 && r != 0) ? 1 : 0; break;
+                        default: v = (l != 0 || r != 0) ? 1 : 0; break;
+                    }
+                    stack[top - 1] = v;
+                }
+            }
+        }
+        return top > 0 ? stack[top - 1] : 0.0;
+    }
+};
+
+class ConditionReader {
    public:
-    Condition(std::string_view text, const std::vector<world::AnimationParam>& params) : s_(text), params_(params) {}
-    double eval(std::vector<std::string>& names, std::string& error) {
-        names_ = &names;
-        const double v = or_expr();
+    ConditionReader(std::string_view text, const std::vector<world::AnimationParam>& params) : s_(text), params_(params) {}
+    ConditionProgram read() {
+        or_expr();
         skip();
-        if (error_.empty() && i_ < s_.size()) error_ = std::format("unexpected '{}'", s_.substr(i_, 12));
-        error = error_;
-        return error_.empty() ? v : 0.0;
+        if (out_.error.empty() && i_ < s_.size()) out_.error = std::format("unexpected '{}'", s_.substr(i_, 12));
+        // A program deeper than the evaluator's stack is not one a graph needs.
+        if (out_.error.empty() && depth_max_ > 60) out_.error = "too deeply nested";
+        return std::move(out_);
     }
 
    private:
+    using Op = ConditionProgram::Op;
+    void emit(Op op, double value = 0, std::size_t param = 0) {
+        out_.steps.push_back({op, value, param});
+        if (op == Op::Const || op == Op::Param) depth_max_ = std::max(depth_max_, ++depth_);
+        else if (op != Op::Not && op != Op::Neg) --depth_;
+    }
+    void fail(std::string why) { if (out_.error.empty()) out_.error = std::move(why); }
     void skip() { while (i_ < s_.size() && std::isspace(static_cast<unsigned char>(s_[i_]))) ++i_; }
     bool take(std::string_view tok) {
         skip();
@@ -172,76 +244,73 @@ class Condition {
         i_ += tok.size();
         return true;
     }
-    double or_expr() {
-        double v = and_expr();
-        while (take("||") || take("or")) { const double r = and_expr(); v = (v != 0 || r != 0) ? 1 : 0; }
-        return v;
+    void or_expr() {
+        and_expr();
+        while (take("||") || take("or")) { and_expr(); emit(Op::Or); }
     }
-    double and_expr() {
-        double v = not_expr();
-        while (take("&&") || take("and")) { const double r = not_expr(); v = (v != 0 && r != 0) ? 1 : 0; }
-        return v;
+    void and_expr() {
+        not_expr();
+        while (take("&&") || take("and")) { not_expr(); emit(Op::And); }
     }
-    double not_expr() {
+    void not_expr() {
         skip();
-        if (i_ + 1 < s_.size() && s_[i_] == '!' && s_[i_ + 1] != '=') { ++i_; return not_expr() == 0 ? 1 : 0; }
-        if (take("not")) return not_expr() == 0 ? 1 : 0;
-        return compare();
+        if (i_ + 1 < s_.size() && s_[i_] == '!' && s_[i_ + 1] != '=') { ++i_; not_expr(); emit(Op::Not); return; }
+        if (take("not")) { not_expr(); emit(Op::Not); return; }
+        compare();
     }
-    double compare() {
-        const double a = unary();
-        for (std::string_view op : {"<=", ">=", "==", "!=", "<", ">"}) {
-            if (!take(op)) continue;
-            const double b = unary();
-            if (op == "<=") return a <= b;
-            if (op == ">=") return a >= b;
-            if (op == "==") return a == b;
-            if (op == "!=") return a != b;
-            if (op == "<") return a < b;
-            return a > b;
+    void compare() {
+        unary();
+        static constexpr std::pair<std::string_view, Op> kOps[] = {{"<=", Op::Le}, {">=", Op::Ge}, {"==", Op::Eq}, {"!=", Op::Ne}, {"<", Op::Lt}, {">", Op::Gt}};
+        for (const auto& [tok, op] : kOps) {
+            if (!take(tok)) continue;
+            unary();
+            emit(op);
+            return;
         }
-        return a;
     }
-    double unary() {
-        if (take("-")) return -unary();
-        return primary();
+    void unary() {
+        if (take("-")) { unary(); emit(Op::Neg); return; }
+        primary();
     }
-    double primary() {
+    void primary() {
         skip();
         if (take("(")) {
-            const double v = or_expr();
-            if (!take(")") && error_.empty()) error_ = "a '(' without its ')'";
-            return v;
+            or_expr();
+            if (!take(")")) fail("a '(' without its ')'");
+            return;
         }
         if (i_ < s_.size() && (std::isdigit(static_cast<unsigned char>(s_[i_])) || s_[i_] == '.')) {
             const std::string rest(s_.substr(i_));
             char* end = nullptr;
             const double v = std::strtod(rest.c_str(), &end);
             i_ += static_cast<std::size_t>(end - rest.c_str());
-            return v;
+            emit(Op::Const, v);
+            return;
         }
         const std::size_t start = i_;
         while (i_ < s_.size() && (std::isalnum(static_cast<unsigned char>(s_[i_])) || s_[i_] == '_' || s_[i_] == '.')) ++i_;
-        const std::string name(s_.substr(start, i_ - start));
+        const std::string_view name = s_.substr(start, i_ - start);
         if (name.empty()) {
-            if (error_.empty()) error_ = i_ < s_.size() ? std::format("unexpected '{}'", s_.substr(i_, 12)) : std::string("it ends too soon");
-            return 0;
+            fail(i_ < s_.size() ? std::format("unexpected '{}'", s_.substr(i_, 12)) : std::string("it ends too soon"));
+            emit(Op::Const, 0);
+            return;
         }
-        if (name == "true") return 1;
-        if (name == "false") return 0;
-        for (const world::AnimationParam& p : params_) {
-            if (p.name != name) continue;
-            names_->push_back(name);
-            return p.value;
+        if (name == "true") { emit(Op::Const, 1); return; }
+        if (name == "false") { emit(Op::Const, 0); return; }
+        for (std::size_t k = 0; k < params_.size(); ++k) {
+            if (params_[k].name != name) continue;
+            out_.reads.push_back(k);
+            emit(Op::Param, 0, k);
+            return;
         }
-        if (error_.empty()) error_ = std::format("no parameter '{}'", name);
-        return 0;
+        fail(std::format("no parameter '{}'", name));
+        emit(Op::Const, 0);
     }
     std::string_view s_;
     const std::vector<world::AnimationParam>& params_;
     std::size_t i_ = 0;
-    std::vector<std::string>* names_ = nullptr;
-    std::string error_;
+    int depth_ = 0, depth_max_ = 0;
+    ConditionProgram out_;
 };
 
 // A blend space's clips and where each plays alone: "idle 0, walk 2, run 6" along one parameter,
@@ -326,10 +395,103 @@ std::vector<std::pair<std::string, float>> blend_weights(const std::vector<Blend
     return out;
 }
 
+// A graph as step_graphs reads it every tick, made once from the component and kept while the
+// states, transitions, parameter names and mesh stay what they were: every state's blend space
+// read, every transition's condition made into a program, and what is wrong with the graph
+// whatever state it is in (the first such thing, as a note).
+struct CompiledGraph {
+    std::vector<world::AnimationState> states;
+    std::vector<world::AnimationTransition> transitions;
+    std::vector<std::string> param_names;
+    const assets::Mesh* mesh = nullptr;
+    std::size_t clips = 0;
+    std::uint64_t stamp = 0;
+
+    std::string error;                      // the first thing wrong with the graph itself
+    struct Space {
+        int dims = 1;
+        std::vector<int> params;            // per dimension: the parameter's index, -1 for none
+        std::vector<BlendPoint> points;
+        std::string note;                   // the first thing wrong with this blend space
+    };
+    std::vector<Space> spaces;              // per state (empty points for a state without a blend)
+    std::vector<int> to, from;              // per transition: state indices (from -1 for "*")
+    std::vector<bool> usable;
+    std::vector<ConditionProgram> conditions;
+
+    bool same(const world::AnimationGraph& g, const assets::Mesh& m) const {
+        if (mesh != &m || clips != m.animations.size() || states != g.states || transitions != g.transitions || param_names.size() != g.params.size()) return false;
+        for (std::size_t i = 0; i < param_names.size(); ++i) if (param_names[i] != g.params[i].name) return false;
+        return true;
+    }
+};
+
+CompiledGraph compile_graph(const world::AnimationGraph& g, const assets::Mesh& mesh) {
+    CompiledGraph c;
+    c.states = g.states;
+    c.transitions = g.transitions;
+    for (const world::AnimationParam& p : g.params) c.param_names.push_back(p.name);
+    c.mesh = &mesh;
+    c.clips = mesh.animations.size();
+    auto note = [&](std::string why) { if (c.error.empty()) c.error = std::move(why); };
+    auto state_of = [&](std::string_view name) {
+        for (std::size_t i = 0; i < g.states.size(); ++i) if (g.states[i].name == name) return static_cast<int>(i);
+        return -1;
+    };
+    auto param_of = [&](std::string_view name) {
+        for (std::size_t i = 0; i < g.params.size(); ++i) if (g.params[i].name == name) return static_cast<int>(i);
+        return -1;
+    };
+    for (const world::AnimationState& st : g.states) {
+        if (st.blend.empty() && !st.clip.empty() && !mesh.clip(st.clip)) note(std::format("state '{}' plays '{}', which the mesh has no clip of", st.name, st.clip));
+        CompiledGraph::Space sp;
+        if (!st.blend.empty()) {
+            auto snote = [&](std::string why) { if (sp.note.empty()) sp.note = std::move(why); };
+            std::vector<std::string> names;
+            for (std::size_t s = 0; s <= st.blend.size();) {
+                std::size_t comma = st.blend.find(',', s);
+                if (comma == std::string::npos) comma = st.blend.size();
+                std::string n = st.blend.substr(s, comma - s);
+                while (!n.empty() && std::isspace(static_cast<unsigned char>(n.back()))) n.pop_back();
+                while (!n.empty() && std::isspace(static_cast<unsigned char>(n.front()))) n.erase(n.begin());
+                if (!n.empty()) names.push_back(n);
+                s = comma + 1;
+            }
+            sp.dims = names.size() >= 2 ? 2 : 1;
+            if (names.size() > 2) snote(std::format("state '{}' blends by '{}': one parameter or two", st.name, st.blend));
+            std::string perr;
+            sp.points = blend_points(st.clips, sp.dims, perr);
+            if (!perr.empty()) snote(std::format("state '{}': {}", st.name, perr));
+            if (sp.points.empty()) {
+                snote(std::format("state '{}' blends by '{}' but lists no clips", st.name, st.blend));
+            } else {
+                for (int d = 0; d < sp.dims && d < static_cast<int>(names.size()); ++d) {
+                    const int k = param_of(names[static_cast<std::size_t>(d)]);
+                    sp.params.push_back(k);
+                    if (k < 0) snote(std::format("state '{}' blends by '{}', which is not a parameter", st.name, names[static_cast<std::size_t>(d)]));
+                }
+                for (const BlendPoint& bp : sp.points) if (!mesh.clip(bp.clip)) snote(std::format("state '{}' blends '{}', which the mesh has no clip of", st.name, bp.clip));
+            }
+        }
+        c.spaces.push_back(std::move(sp));
+    }
+    for (const world::AnimationTransition& t : g.transitions) {
+        c.to.push_back(state_of(t.to));
+        c.from.push_back(t.from == "*" ? -1 : state_of(t.from));
+        c.conditions.push_back(t.when.empty() ? ConditionProgram{} : ConditionReader(t.when, g.params).read());
+        bool ok = true;
+        if (c.to.back() < 0) { note(std::format("a transition goes to '{}', which is not a state", t.to)); ok = false; }
+        else if (t.from != "*" && c.from.back() < 0) { note(std::format("a transition leaves '{}', which is not a state", t.from)); ok = false; }
+        else if (!c.conditions.back().error.empty()) { note(std::format("'{}': {}", t.when, c.conditions.back().error)); ok = false; }
+        c.usable.push_back(ok);
+    }
+    return c;
+}
+
 // Every graph, before its Animator advances: into the first state when it has none (or an
 // unknown one), then the first transition that holds (its triggers reset), then the blend
-// space's two clips and their weight for the parameter's value.
-void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
+// space's clips and their weights for the parameters' values.
+void step_graphs(world::World& world, assets::AssetStore& assets, float dt, std::unordered_map<world::EntityId, CompiledGraph>& kept, std::uint64_t stamp) {
     struct Change { world::EntityId id; std::string from, to; };
     std::vector<Change> changes;
     world.ecs().each([&](flecs::entity e, world::AnimationGraph& g, world::Animator& a, const world::MeshRenderer& mr) {
@@ -337,49 +499,28 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
         auto m = assets.mesh(mr.mesh);
         if (!m) return;
         const assets::Mesh& mesh = **m;
-        std::string error;
-        auto note = [&](std::string why) { if (error.empty()) error = std::move(why); };
+        CompiledGraph& c = kept[e.id()];
+        if (!c.same(g, mesh)) c = compile_graph(g, mesh);
+        c.stamp = stamp;
+        std::string error = c.error;
+        auto note = [&](const std::string& why) { if (error.empty()) error = why; };
         auto state_of = [&](std::string_view name) {
             for (std::size_t i = 0; i < g.states.size(); ++i) if (g.states[i].name == name) return static_cast<int>(i);
             return -1;
         };
-        auto param = [&](std::string_view name) -> world::AnimationParam* {
-            for (world::AnimationParam& p : g.params) if (p.name == name) return &p;
-            return nullptr;
-        };
         auto duration = [&](const std::string& clip) {
-            const assets::AnimationClip* c = clip.empty() ? nullptr : mesh.clip(clip);
-            return c ? c->duration : 0.0f;
+            const assets::AnimationClip* ac = clip.empty() ? nullptr : mesh.clip(clip);
+            return ac ? ac->duration : 0.0f;
         };
         // A blend space's clips and weights now, the clip that keeps the time first (along one
         // parameter the lower of the two, on two the heaviest).
-        auto blend_now = [&](const world::AnimationState& st) {
-            std::vector<std::string> names;
-            for (std::size_t s = 0; s <= st.blend.size();) {
-                std::size_t c = st.blend.find(',', s);
-                if (c == std::string::npos) c = st.blend.size();
-                std::string n = st.blend.substr(s, c - s);
-                while (!n.empty() && std::isspace(static_cast<unsigned char>(n.back()))) n.pop_back();
-                while (!n.empty() && std::isspace(static_cast<unsigned char>(n.front()))) n.erase(n.begin());
-                if (!n.empty()) names.push_back(n);
-                s = c + 1;
-            }
-            const int dims = names.size() >= 2 ? 2 : 1;
-            if (names.size() > 2) note(std::format("state '{}' blends by '{}': one parameter or two", st.name, st.blend));
-            std::string perr;
-            const auto points = blend_points(st.clips, dims, perr);
-            if (!perr.empty()) note(std::format("state '{}': {}", st.name, perr));
-            if (points.empty()) {
-                note(std::format("state '{}' blends by '{}' but lists no clips", st.name, st.blend));
-                return std::vector<std::pair<std::string, float>>{};
-            }
-            float v[2] = {points.front().at[0], points.front().at[1]};
-            for (int d = 0; d < dims && d < static_cast<int>(names.size()); ++d) {
-                if (const world::AnimationParam* p = param(names[static_cast<std::size_t>(d)])) v[d] = p->value;
-                else note(std::format("state '{}' blends by '{}', which is not a parameter", st.name, names[static_cast<std::size_t>(d)]));
-            }
-            for (const BlendPoint& b : points) if (!mesh.clip(b.clip)) note(std::format("state '{}' blends '{}', which the mesh has no clip of", st.name, b.clip));
-            return blend_weights(points, dims, v);
+        auto blend_now = [&](int index) {
+            const CompiledGraph::Space& sp = c.spaces[static_cast<std::size_t>(index)];
+            if (!sp.note.empty()) note(sp.note);
+            if (sp.points.empty()) return std::vector<std::pair<std::string, float>>{};
+            float v[2] = {sp.points.front().at[0], sp.points.front().at[1]};
+            for (std::size_t d = 0; d < sp.params.size(); ++d) if (sp.params[d] >= 0) v[d] = g.params[static_cast<std::size_t>(sp.params[d])].value;
+            return blend_weights(sp.points, sp.dims, v);
         };
         auto set_blends = [&](const std::vector<std::pair<std::string, float>>& mix) {
             std::vector<world::AnimationBlend> blends;
@@ -391,7 +532,7 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
             std::string clip = st.clip;
             std::vector<std::pair<std::string, float>> mix;
             if (!st.blend.empty()) {
-                mix = blend_now(st);
+                mix = blend_now(index);
                 clip = mix.empty() ? std::string() : mix.front().first;
             }
             if (fade > 0 && !a.clip.empty() && a.clip != clip) {
@@ -416,21 +557,6 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
             g.state = st.name;
             g.state_time = 0;
         };
-        // What is wrong anywhere in the graph, whichever state it is in.
-        for (const world::AnimationState& st : g.states) {
-            if (st.blend.empty() && !st.clip.empty() && !mesh.clip(st.clip)) note(std::format("state '{}' plays '{}', which the mesh has no clip of", st.name, st.clip));
-        }
-        std::vector<bool> usable(g.transitions.size(), false);
-        for (std::size_t k = 0; k < g.transitions.size(); ++k) {
-            const world::AnimationTransition& t = g.transitions[k];
-            if (state_of(t.to) < 0) { note(std::format("a transition goes to '{}', which is not a state", t.to)); continue; }
-            if (t.from != "*" && state_of(t.from) < 0) { note(std::format("a transition leaves '{}', which is not a state", t.from)); continue; }
-            std::vector<std::string> unused;
-            std::string cerr;
-            if (!t.when.empty()) Condition(t.when, g.params).eval(unused, cerr);
-            if (!cerr.empty()) { note(std::format("'{}': {}", t.when, cerr)); continue; }
-            usable[k] = true;
-        }
         int cur = state_of(g.state);
         if (cur < 0) {
             if (!g.state.empty()) note(std::format("no state '{}'", g.state));
@@ -441,20 +567,18 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
         const world::AnimationState& now = g.states[static_cast<std::size_t>(cur)];
         const float dur = duration(a.clip);
         const float played = a.finished ? 1.0f : dur > 0 ? g.state_time * std::fabs(now.speed) / dur : 1.0f;
-        std::vector<std::string> names;
         for (std::size_t k = 0; k < g.transitions.size(); ++k) {
+            if (!c.usable[k]) continue;
             const world::AnimationTransition& t = g.transitions[k];
-            if (!usable[k]) continue;
-            const int to = state_of(t.to);
+            const int to = c.to[k];
             if (t.from == "*" ? to == cur : t.from != now.name) continue;
             if (played < t.after) continue;
-            names.clear();
-            std::string cerr;
-            const double holds = t.when.empty() ? 1.0 : Condition(t.when, g.params).eval(names, cerr);
-            if (holds == 0 || !cerr.empty()) continue;
-            for (const std::string& n : names) {
-                world::AnimationParam* p = param(n);
-                if (p && p->trigger) p->value = 0;
+            const ConditionProgram& cond = c.conditions[k];
+            const double holds = t.when.empty() ? 1.0 : cond.run(g.params);
+            if (holds == 0) continue;
+            for (std::size_t r : cond.reads) {
+                world::AnimationParam& p = g.params[r];
+                if (p.trigger) p.value = 0;
             }
             enter(to, std::max(t.fade, 0.0f));
             cur = to;
@@ -463,7 +587,7 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
         // A blend space follows its parameter every tick, the lower clip keeping its phase when it changes.
         const world::AnimationState& st = g.states[static_cast<std::size_t>(cur)];
         if (!st.blend.empty()) {
-            const auto mix = blend_now(st);
+            const auto mix = blend_now(cur);
             if (!mix.empty() && mix.front().first != a.clip) {
                 const float before = duration(a.clip), after = duration(mix.front().first);
                 const float phase = before > 0 ? a.time / before : 0.0f;
@@ -475,9 +599,10 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt) {
             a.blends.clear();
         }
         g.state_time += dt;
-        g.error = error;
+        if (g.error != error) g.error = error;
     });
-    for (const Change& c : changes) world.events().emit(world.tick_index(), "animation.state", c.id, Json{{"path", world.path(c.id)}, {"from", c.from}, {"to", c.to}});
+    for (auto it = kept.begin(); it != kept.end();) it = it->second.stamp == stamp ? std::next(it) : kept.erase(it);
+    for (const Change& ch : changes) world.events().emit(world.tick_index(), "animation.state", ch.id, Json{{"path", world.path(ch.id)}, {"from", ch.from}, {"to", ch.to}});
 }
 
 // The nodes a layer may move: the subtrees of the named nodes, or every node for an empty mask.
@@ -969,9 +1094,30 @@ float Animation::yaw_of(Quat q) {
     return std::atan2(f.x, f.z);
 }
 
+// What a tick keeps for the next: each posed entity's locals (their storage), a second set of
+// locals to sample into, the flags compose marks nodes with, and the graphs as programs.
+namespace {
+struct Work {
+    std::string path;
+    const assets::Mesh* mesh = nullptr;
+    Locals locals;
+    std::uint64_t stamp = 0;
+};
+}  // namespace
+
+struct Animation::Kept {
+    std::map<world::EntityId, Work> work;
+    Locals scratch;
+    std::vector<char> done;
+    std::unordered_map<world::EntityId, CompiledGraph> graphs;
+    std::vector<world::EntityId> posed;
+};
+
 void Animation::step(world::World& world, assets::AssetStore& assets, float dt) {
-    step_graphs(world, assets, dt);
-    std::map<world::EntityId, Pose> next;
+    if (!kept_) kept_ = std::make_shared<Kept>();
+    Kept& kept = *kept_;
+    const std::uint64_t stamp = ++ticks_;
+    step_graphs(world, assets, dt, kept.graphs, stamp);
     struct Finish { world::EntityId id; std::string clip; int layer = -1; };
     std::vector<Finish> finished;
     struct Cue { world::EntityId id; std::string name, clip; float time; };
@@ -980,8 +1126,7 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
     std::vector<Move> moves;  // root motion to apply to transforms after the query
     // The locals of every posed entity: the clips land first, then IK and look-at turn joints,
     // then each is composed into its pose.
-    struct Work { std::string path; const assets::Mesh* mesh; Locals locals; };
-    std::map<world::EntityId, Work> work;
+    std::map<world::EntityId, Work>& work = kept.work;
     world.ecs().each([&](flecs::entity e, world::Animator& a, const world::MeshRenderer& mr) {
         auto m = assets.mesh(mr.mesh);
         if (!m) return;
@@ -1092,17 +1237,27 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
                 L.time = 0;
             }
         }
-        Locals locals = sample_locals(mesh, clip, a.time);
+        Work& slot = work[e.id()];
+        slot.stamp = stamp;
+        slot.path = mr.mesh;
+        slot.mesh = &mesh;
+        Locals& locals = slot.locals;
+        sample_into(locals, mesh, clip, a.time);
         if (!mixed.empty()) {
             // Folded in one by one, each at its share of the weight so far: a weighted mean.
             const float phase = clip->duration > 0 ? a.time / clip->duration : 0.0f;
             float so_far = base_weight;
             for (const auto& [c, w] : mixed) {
                 so_far += w;
-                locals = mix_locals(std::move(locals), sample_locals(mesh, c, c->duration > 0 ? phase * c->duration : a.time), so_far > 0 ? w / so_far : 1.0f);
+                sample_into(kept.scratch, mesh, c, c->duration > 0 ? phase * c->duration : a.time);
+                mix_into(locals, kept.scratch, so_far > 0 ? w / so_far : 1.0f);
             }
         }
-        if (from) locals = mix_locals(sample_locals(mesh, from, a.from_time), locals, weight);
+        if (from) {
+            sample_into(kept.scratch, mesh, from, a.from_time);
+            mix_into(kept.scratch, locals, weight);
+            std::swap(locals, kept.scratch);
+        }
         for (const world::AnimationLayer& L : a.layers) apply_layer(mesh, locals, L.clip.empty() ? nullptr : mesh.clip(L.clip), L);
         // Root motion: the root's translation stays at the clip's first frame in the pose, and its
         // change over this tick (across a loop's wrap too) goes to the entity, or to the script.
@@ -1144,16 +1299,20 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
                 if (a.root_motion == 1 && (a.root_delta.x != 0 || a.root_delta.y != 0 || a.root_delta.z != 0 || a.root_delta_yaw != 0)) moves.push_back({e.id(), a.root_delta, a.root_delta_yaw});
             }
         }
-        work.emplace(e.id(), Work{mr.mesh, &mesh, std::move(locals)});
     });
     // IK and look-at: over the clips' locals, or over the rest pose for an entity without an Animator.
     auto work_for = [&](flecs::entity e, const world::MeshRenderer& mr) -> Work* {
         auto it = work.find(e.id());
-        if (it != work.end()) return &it->second;
+        if (it != work.end() && it->second.stamp == stamp) return &it->second;
         auto m = assets.mesh(mr.mesh);
         if (!m || (*m)->nodes.empty()) return nullptr;
         const assets::Mesh& mesh = **m;
-        return &work.emplace(e.id(), Work{mr.mesh, &mesh, sample_locals(mesh, nullptr, 0.0f)}).first->second;
+        Work& slot = work[e.id()];
+        slot.stamp = stamp;
+        slot.path = mr.mesh;
+        slot.mesh = &mesh;
+        sample_into(slot.locals, mesh, nullptr, 0.0f);
+        return &slot;
     };
     world.ecs().each([&](flecs::entity e, world::IK& ik, const world::MeshRenderer& mr) {
         if (Work* w = work_for(e, mr)) solve_ik(world, e.id(), *w->mesh, w->locals, ik);
@@ -1161,31 +1320,40 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
     world.ecs().each([&](flecs::entity e, world::LookAt& la, const world::MeshRenderer& mr) {
         if (Work* w = work_for(e, mr)) solve_look_at(world, e.id(), *w->mesh, w->locals, la, dt);
     });
-    for (auto& [id, w] : work) {
-        Pose pose;
-        pose.mesh = w.path;
-        compose(*w.mesh, w.locals, pose);
-        next.emplace(id, std::move(pose));
+    // Poses composed into last tick's (their storage reused); those of entities posed no more go.
+    std::vector<world::EntityId>& posed = kept.posed;
+    posed.clear();
+    for (auto it = work.begin(); it != work.end();) {
+        if (it->second.stamp != stamp) {
+            it = work.erase(it);
+            continue;
+        }
+        Pose& pose = poses_[it->first];
+        pose.mesh = it->second.path;
+        compose(*it->second.mesh, it->second.locals, pose, kept.done);
+        posed.push_back(it->first);
+        ++it;
     }
     // Script-set morph weights: over the clip's, for entities with or without an Animator.
     world.ecs().each([&](flecs::entity e, const world::Morph& morph, const world::MeshRenderer& mr) {
         auto m = assets.mesh(mr.mesh);
         if (!m || (*m)->morph_targets.empty()) return;
         const assets::Mesh& mesh = **m;
-        auto it = next.find(e.id());
-        if (it == next.end()) {
-            Pose pose;
+        Pose& pose = poses_[e.id()];
+        if (!std::binary_search(posed.begin(), posed.end(), e.id())) {
             pose.mesh = mr.mesh;
-            pose.weights = mesh.default_weights;
+            pose.globals.clear();
+            pose.joints.clear();
+            pose.weights.assign(mesh.default_weights.begin(), mesh.default_weights.end());
             pose.weights.resize(mesh.morph_targets.size(), 0.0f);
-            it = next.emplace(e.id(), std::move(pose)).first;
+            posed.insert(std::upper_bound(posed.begin(), posed.end(), e.id()), e.id());
         }
         for (const world::MorphWeight& mw : morph.weights) {
             const int t = mesh.morph_target(mw.target);
-            if (t >= 0 && static_cast<std::size_t>(t) < it->second.weights.size()) it->second.weights[static_cast<std::size_t>(t)] = mw.weight;
+            if (t >= 0 && static_cast<std::size_t>(t) < pose.weights.size()) pose.weights[static_cast<std::size_t>(t)] = mw.weight;
         }
     });
-    poses_ = std::move(next);
+    for (auto it = poses_.begin(); it != poses_.end();) it = std::binary_search(posed.begin(), posed.end(), it->first) ? std::next(it) : poses_.erase(it);
     for (const Move& mv : moves) {
         const auto* t = world.try_get<world::Transform>(mv.id);
         if (!t) continue;

@@ -171,6 +171,8 @@ struct RenderStats {
     bool ssr = false;                 // whether screen-space reflections were traced this frame
     std::uint32_t probes = 0;         // reflection probes in use (captured)
     std::uint32_t probe_captures = 0; // probes captured this frame (at most one a frame)
+    std::uint32_t grids = 0;          // irradiance volumes ready (every probe captured)
+    std::uint32_t grid_captures = 0;  // irradiance volume probes captured this frame
     std::uint32_t water = 0;          // bodies of water drawn
     bool underwater = false;          // the camera is under a water surface
     std::uint32_t decals = 0;         // decals painted this frame (the nearest in view, at most 64)
