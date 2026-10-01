@@ -1,5 +1,6 @@
 // Cloth (docs/design/physics.md, Cloth).
 #include <pocket/physics/cloth.hpp>
+#include <pocket/core/parallel.hpp>
 #include <pocket/world/wind.hpp>
 
 #include <algorithm>
@@ -18,7 +19,7 @@ struct Solid {
     Vec3 center;
     Quat turn;
     Vec3 half;            // box half extents; radius in x; capsule half length in y
-    Vec3 lo, hi;          // a box around it
+    Vec3 lo, hi;          // the axis-aligned box around it
 };
 
 // `p` pushed out of the solid to `margin` beyond its surface (unchanged when outside).
@@ -182,12 +183,29 @@ void ClothRunner::step(world::World& w, assets::AssetStore& assets, float dt, Ve
             s.turn = t.rotation;
             s.center = t.position + t.rotation.rotate(col.offset);
             s.half = col.shape == 0 ? col.size : col.shape == 1 ? Vec3{col.size.x, 0, 0} : Vec3{col.size.x, col.size.y, 0};
-            const float r = col.shape == 0 ? length(col.size) : col.size.x + (col.shape == 2 ? col.size.y : 0.0f);
-            s.lo = s.center - Vec3{r, r, r};
-            s.hi = s.center + Vec3{r, r, r};
+            // The turned shape's own extent along each world axis (a wide floor is wide and thin,
+            // not a ball as wide as it is).
+            auto abs3 = [](Vec3 v) { return Vec3{std::fabs(v.x), std::fabs(v.y), std::fabs(v.z)}; };
+            const Vec3 ax = abs3(s.turn.rotate(Vec3{1, 0, 0})), ay = abs3(s.turn.rotate(Vec3{0, 1, 0})), az = abs3(s.turn.rotate(Vec3{0, 0, 1}));
+            const float r = col.size.x;
+            const Vec3 ext = col.shape == 0 ? ax * col.size.x + ay * col.size.y + az * col.size.z : col.shape == 1 ? Vec3{r, r, r} : ay * col.size.y + Vec3{r, r, r};
+            s.lo = s.center - ext;
+            s.hi = s.center + ext;
             solids.push_back(s);
         });
     };
+    // Made or remade where the Cloth changed, on this thread (the world and the assets are written);
+    // then every sheet moved on its own, on several threads (each touches only its own particles
+    // and reads what nothing writes meanwhile, so the result is the same whichever thread ran it);
+    // then drawn, on this thread again.
+    struct Job {
+        world::EntityId id;
+        const world::Cloth* c;
+        Mat4 placed;
+        Sheet* s;
+        bool move;
+    };
+    std::vector<Job> jobs;
     for (world::EntityId id : ids) {
         const world::Cloth* c = w.try_get<world::Cloth>(id);
         const world::WorldTransform* wt = w.try_get<world::WorldTransform>(id);
@@ -196,86 +214,100 @@ void ClothRunner::step(world::World& w, assets::AssetStore& assets, float dt, Ve
         Sheet& s = sheets_[id];
         const int across = std::clamp(static_cast<int>(std::lround(c->segments.x)), 1, 48), down = std::clamp(static_cast<int>(std::lround(c->segments.y)), 1, 48);
         if (s.nx == 0 || s.across != across || s.down != down || s.pin != c->pin || std::fabs(s.size.x - std::max(c->size.x, 0.01f)) > 1e-5f || std::fabs(s.size.y - std::max(c->size.y, 0.01f)) > 1e-5f) make(w, assets, id, *c, placed, s);
-        if (c->enabled && dt > 0) {
-            if (c->collide && !solids_made) gather();
-            const std::size_t n = s.at.size();
-            const float h = dt / static_cast<float>(kSubsteps);
-            const float mass = std::max(c->weight, 0.001f) / static_cast<float>(n);
-            const float area = s.size.x * s.size.y / static_cast<float>(n);
-            const float keep = 1.0f - std::clamp(c->damping, 0.0f, 1.0f) / static_cast<float>(kSubsteps);
-            const float stiff = std::clamp(c->stiffness, 0.0f, 1.0f);
-            // The solids near it this tick.
-            Vec3 lo = s.at[0], hi = s.at[0];
-            for (const Vec3& p : s.at) {
-                lo = Vec3{std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
-                hi = Vec3{std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+        const bool move = c->enabled && dt > 0;
+        if (move && c->collide && !solids_made) gather();
+        jobs.push_back(Job{id, c, placed, &s, move});
+    }
+    parallel_for(jobs.size(), [&](std::size_t j) {
+        const Job& job = jobs[j];
+        if (!job.move) return;
+        const world::Cloth* c = job.c;
+        const Mat4& placed = job.placed;
+        Sheet& s = *job.s;
+        const std::size_t n = s.at.size();
+        const float h = dt / static_cast<float>(kSubsteps);
+        const float mass = std::max(c->weight, 0.001f) / static_cast<float>(n);
+        const float area = s.size.x * s.size.y / static_cast<float>(n);
+        const float keep = 1.0f - std::clamp(c->damping, 0.0f, 1.0f) / static_cast<float>(kSubsteps);
+        const float stiff = std::clamp(c->stiffness, 0.0f, 1.0f);
+        // The solids near it this tick.
+        Vec3 lo = s.at[0], hi = s.at[0];
+        for (const Vec3& p : s.at) {
+            lo = Vec3{std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+            hi = Vec3{std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+        }
+        const float pad = std::max(s.size.x, s.size.y) * 0.5f + c->thickness;
+        std::vector<const Solid*> near;
+        if (c->collide) {
+            for (const Solid& so : solids) {
+                if (so.hi.x < lo.x - pad || so.lo.x > hi.x + pad || so.hi.y < lo.y - pad || so.lo.y > hi.y + pad || so.hi.z < lo.z - pad || so.lo.z > hi.z + pad) continue;
+                near.push_back(&so);
             }
-            const float pad = std::max(s.size.x, s.size.y) * 0.5f + c->thickness;
-            std::vector<const Solid*> near;
-            if (c->collide) {
-                for (const Solid& so : solids) {
-                    if (so.hi.x < lo.x - pad || so.lo.x > hi.x + pad || so.hi.y < lo.y - pad || so.lo.y > hi.y + pad || so.hi.z < lo.z - pad || so.lo.z > hi.z + pad) continue;
-                    near.push_back(&so);
+        }
+        // A particle further than this outside a solid's box is outside the solid and its margin,
+        // turned as it may be (twice the margin covers a turned box's corners).
+        const float reach = 2.0f * c->thickness;
+        std::vector<Vec3> normal(n);
+        for (int sub = 0; sub < kSubsteps; ++sub) {
+            // Normals for the wind: the sheet's surface at each particle.
+            std::fill(normal.begin(), normal.end(), Vec3{0, 0, 0});
+            for (int j = 0; j < s.down; ++j) {
+                for (int i = 0; i < s.across; ++i) {
+                    const std::size_t a = static_cast<std::size_t>(j * s.nx + i), b = a + 1, cc = a + static_cast<std::size_t>(s.nx), d = cc + 1;
+                    const Vec3 f1 = cross(s.at[cc] - s.at[a], s.at[b] - s.at[a]), f2 = cross(s.at[cc] - s.at[b], s.at[d] - s.at[b]);
+                    normal[a] = normal[a] + f1;
+                    normal[b] = normal[b] + f1 + f2;
+                    normal[cc] = normal[cc] + f1 + f2;
+                    normal[d] = normal[d] + f2;
                 }
             }
-            std::vector<Vec3> normal(n);
-            for (int sub = 0; sub < kSubsteps; ++sub) {
-                // Normals for the wind: the sheet's surface at each particle.
-                std::fill(normal.begin(), normal.end(), Vec3{0, 0, 0});
-                for (int j = 0; j < s.down; ++j) {
-                    for (int i = 0; i < s.across; ++i) {
-                        const std::size_t a = static_cast<std::size_t>(j * s.nx + i), b = a + 1, cc = a + static_cast<std::size_t>(s.nx), d = cc + 1;
-                        const Vec3 f1 = cross(s.at[cc] - s.at[a], s.at[b] - s.at[a]), f2 = cross(s.at[cc] - s.at[b], s.at[d] - s.at[b]);
-                        normal[a] = normal[a] + f1;
-                        normal[b] = normal[b] + f1 + f2;
-                        normal[cc] = normal[cc] + f1 + f2;
-                        normal[d] = normal[d] + f2;
-                    }
-                }
-                for (std::size_t k = 0; k < n; ++k) {
-                    if (s.pinned[k]) {
-                        s.was[k] = s.at[k];
-                        s.at[k] = placed.transform_point(s.rest[k]);
-                        continue;
-                    }
-                    const Vec3 v = (s.at[k] - s.was[k]) * (1.0f / h);
-                    Vec3 a = gravity;
-                    if (wind.on && c->wind > 0) {
-                        // The air pushes on the face it meets, by how squarely it meets it (a sail), and
-                        // drags along the face it slides over (what makes a flag stream out from its pole).
-                        const Vec3 air = world::wind_velocity(wind, s.at[k].x, s.at[k].z, now) - v;
-                        const Vec3 nk = length(normal[k]) > 1e-12f ? normalize(normal[k]) : Vec3{0, 0, 1};
-                        const float across_face = dot(air, nk);
-                        const Vec3 along_face = air - nk * across_face;
-                        a = a + (nk * (across_face * std::fabs(across_face)) * 0.6f + along_face * (length(along_face) * 0.03f)) * (area * c->wind / mass);
-                    }
-                    const Vec3 next = s.at[k] + (s.at[k] - s.was[k]) * keep + a * (h * h);
+            for (std::size_t k = 0; k < n; ++k) {
+                if (s.pinned[k]) {
                     s.was[k] = s.at[k];
-                    s.at[k] = next;
+                    s.at[k] = placed.transform_point(s.rest[k]);
+                    continue;
                 }
-                for (int pass = 0; pass < kPasses; ++pass) {
-                    for (const Link& l : s.links) {
-                        const Vec3 d = s.at[l.b] - s.at[l.a];
-                        const float len = length(d);
-                        if (len < 1e-9f) continue;
-                        const Vec3 fix = d * ((len - l.rest) / len * stiff * l.give);
-                        const bool pa = s.pinned[l.a] != 0, pb = s.pinned[l.b] != 0;
-                        if (pa && pb) continue;
-                        if (pa) s.at[l.b] = s.at[l.b] - fix;
-                        else if (pb) s.at[l.a] = s.at[l.a] + fix;
-                        else {
-                            s.at[l.a] = s.at[l.a] + fix * 0.5f;
-                            s.at[l.b] = s.at[l.b] - fix * 0.5f;
-                        }
+                const Vec3 v = (s.at[k] - s.was[k]) * (1.0f / h);
+                Vec3 a = gravity;
+                if (wind.on && c->wind > 0) {
+                    // The air pushes on the face it meets, by how squarely it meets it (a sail), and
+                    // drags along the face it slides over (what makes a flag stream out from its pole).
+                    const Vec3 air = world::wind_velocity(wind, s.at[k].x, s.at[k].z, now) - v;
+                    const Vec3 nk = length(normal[k]) > 1e-12f ? normalize(normal[k]) : Vec3{0, 0, 1};
+                    const float across_face = dot(air, nk);
+                    const Vec3 along_face = air - nk * across_face;
+                    a = a + (nk * (across_face * std::fabs(across_face)) * 0.6f + along_face * (length(along_face) * 0.03f)) * (area * c->wind / mass);
+                }
+                const Vec3 next = s.at[k] + (s.at[k] - s.was[k]) * keep + a * (h * h);
+                s.was[k] = s.at[k];
+                s.at[k] = next;
+            }
+            for (int pass = 0; pass < kPasses; ++pass) {
+                for (const Link& l : s.links) {
+                    const Vec3 d = s.at[l.b] - s.at[l.a];
+                    const float len = length(d);
+                    if (len < 1e-9f) continue;
+                    const Vec3 fix = d * ((len - l.rest) / len * stiff * l.give);
+                    const bool pa = s.pinned[l.a] != 0, pb = s.pinned[l.b] != 0;
+                    if (pa && pb) continue;
+                    if (pa) s.at[l.b] = s.at[l.b] - fix;
+                    else if (pb) s.at[l.a] = s.at[l.a] + fix;
+                    else {
+                        s.at[l.a] = s.at[l.a] + fix * 0.5f;
+                        s.at[l.b] = s.at[l.b] - fix * 0.5f;
                     }
-                    for (const Solid* so : near) {
-                        for (std::size_t k = 0; k < n; ++k) if (!s.pinned[k]) s.at[k] = push_out(*so, s.at[k], c->thickness);
+                }
+                for (const Solid* so : near) {
+                    for (std::size_t k = 0; k < n; ++k) {
+                        const Vec3& q = s.at[k];
+                        if (s.pinned[k] || q.x < so->lo.x - reach || q.x > so->hi.x + reach || q.y < so->lo.y - reach || q.y > so->hi.y + reach || q.z < so->lo.z - reach || q.z > so->hi.z + reach) continue;
+                        s.at[k] = push_out(*so, q, c->thickness);
                     }
                 }
             }
         }
-        draw(w, assets, id, placed, s);
-    }
+    });
+    for (const Job& job : jobs) draw(w, assets, job.id, job.placed, *job.s);
 }
 
 std::vector<Vec3> ClothRunner::particles(world::EntityId id) const {

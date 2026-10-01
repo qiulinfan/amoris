@@ -93,7 +93,7 @@ fn tools_list() -> Value {
             "params": { "type": "object" },
             "calls": { "type": "array", "items": { "type": "object" }, "description": "several commands run in order: [{method, params}, ...]" }
         }), &[])),
-        tool("runtime_commands", "List the commands the running runtime understands, one line each with its parameters and what it does; family (world, render, physics, ...) or search (a word) narrows the list.", obj_schema(json!({
+        tool("runtime_commands", "List the commands the running runtime understands: without arguments their names by family; with a family (world, render, physics, ...) or a search word, one line each with its parameters and what it does.", obj_schema(json!({
             "family": { "type": "string", "description": "e.g. world, render, physics, input, ui" },
             "search": { "type": "string", "description": "a word in a command's name, parameters or summary" }
         }), &[])),

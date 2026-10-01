@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub fn setup(ws: &Workspace, force: bool, target: &str) -> Result<Report> {
+    let ws = &ws.for_target(target)?;
     let t0 = Instant::now();
     let mut log = vec![];
     let mut statuses = vec![];
@@ -60,6 +61,7 @@ pub struct BuildOutcome {
 
 pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_only: bool) -> Result<BuildOutcome> {
     let target = ws.target_of(config)?;
+    let ws = &ws.for_target(&target)?;
     ensure_deps(ws, &target)?;
     crate::gen::generate(ws, false)?;
     let tc = toolchain::detect_for(&target)?;
@@ -111,7 +113,7 @@ pub fn build(ws: &Workspace, config: &str, targets: &[String], generate_only: bo
     Ok(rep)
 }
 
-fn tail(s: &str, n: usize) -> String {
+pub fn tail(s: &str, n: usize) -> String {
     let lines: Vec<&str> = s.lines().collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
@@ -373,10 +375,15 @@ fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()>
     let by_name = find_project(ws, name).and_then(|p| std::fs::canonicalize(p).ok()).is_some_and(|p| p == here);
     let name = if by_name { name.to_string() } else { here.display().to_string() };
     let name = name.as_str();
+    // The two longest references, by size, so an agent searches them rather than reading them whole
+    // (what it reads stays in its context for the rest of the task).
+    let kb = |p: PathBuf| std::fs::metadata(p).map(|m| m.len() / 1024).unwrap_or(0);
+    let sdk_kb = kb(docs.join("generated").join("sdk.md"));
+    let rendering_kb = kb(docs.join("design").join("rendering.md"));
     let guide = format!(
         r#"# {title}
 
-A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's documentation is under `{docs}`: `mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part (input, physics, sprites, combat, ...). The engine's sources are not needed to make a game.
+A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's documentation is under `{docs}`: `mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part (input, physics, sprites, combat, ...). Some of it is long (`design/rendering.md` is {rendering_kb} KB): search it for what you need before reading a whole file. The engine's sources are not needed to make a game.
 
 ## The loop
 
@@ -389,7 +396,7 @@ A game made with Pocket, an engine meant to be driven by agents as much as by pe
 
 - `project.toml`: the name, the window, the input actions (`[input.actions]`), render and physics settings.
 - `scene.json`: the entities the game starts with.
-- `scripts/`: the game's logic in TypeScript (`import ... from "pocket"`; `{docs}/generated/sdk.md` lists every export on a line, and `help {{"sdk": "timer.after"}}` answers one); `{tool} check {name}` reads its types.
+- `scripts/`: the game's logic in TypeScript (`import ... from "pocket"`; `{docs}/generated/sdk.md` lists every export on a line, {sdk_kb} KB of them, so search it for a name, and `help {{"sdk": "timer.after"}}` answers one); `{tool} check {name}` reads its types.
 - `components.toml`, when there is one: the game's own components, so its state lives on entities.
 - `prefabs/` and `assets/`: what the scripts instantiate and draw.
 - `scenarios/*.ts`, when there are some: plays of the game with checks, run with `{tool} scenario {name}`.

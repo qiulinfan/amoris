@@ -73,7 +73,7 @@ impl Graph {
         let mut modules = IndexMap::new();
         for name in &order {
             let m = &ws.modules[name];
-            if m.file.exclude_targets.iter().any(|t| t == target) || (target == "wasm" && m.file.kind == "test") {
+            if m.file.exclude_targets.iter().any(|t| t == target) || (target != "native" && m.file.kind == "test") {
                 continue;
             }
             // Own public surface = own public includes/defines + surfaces of public deps (transitively).

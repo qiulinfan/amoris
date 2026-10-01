@@ -2,5 +2,5 @@ name = "pocket_runtime"
 kind = "executable"
 description = "Runs a project bundle. `pocket run <project>` builds and invokes this binary."
 sources = ["src/main.cpp"]
-private_deps = ["pocket_app"]
+private_deps = ["pocket_app", "sdl3"]
 output = "pocket_runtime"

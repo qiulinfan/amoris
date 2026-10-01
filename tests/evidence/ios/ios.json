@@ -1,0 +1,81 @@
+{
+  "device": "iPhone 18 Pro",
+  "samples": {
+    "hello": {
+      "window": {
+        "width": 874,
+        "height": 402,
+        "fullscreen": false,
+        "title": "Pocket: hello",
+        "pixel_width": 2622,
+        "pixel_height": 1206,
+        "pixel_density": 3.0,
+        "headless": false
+      },
+      "state": {
+        "hue": 0.1,
+        "ball.y": 0.3913,
+        "ball.grounded": false,
+        "bounces": 2
+      },
+      "gpu": {
+        "api": "webgpu",
+        "implementation": "wgpu-native",
+        "adapter": "Apple iOS simulator GPU",
+        "driver": "",
+        "backend": "metal",
+        "width": 2622,
+        "height": 1206,
+        "surface": true,
+        "frames": 124,
+        "presented": 124,
+        "skipped_presents": 0
+      }
+    },
+    "crates": {
+      "window": {
+        "width": 874,
+        "height": 402,
+        "fullscreen": false,
+        "title": "Pocket: crates",
+        "pixel_width": 2622,
+        "pixel_height": 1206,
+        "pixel_density": 3.0,
+        "headless": false
+      },
+      "before": {
+        "crates_down": 0,
+        "released": false,
+        "car_x": -2.5,
+        "car_tilt": 0
+      },
+      "after": {
+        "crates_down": 8,
+        "released": true,
+        "car_x": 4.701,
+        "car_tilt": -0.008
+      }
+    },
+    "walker": {
+      "window": {
+        "width": 874,
+        "height": 402,
+        "fullscreen": false,
+        "title": "Pocket: walker",
+        "pixel_width": 2622,
+        "pixel_height": 1206,
+        "pixel_density": 3.0,
+        "headless": false
+      },
+      "before": {
+        "player.x": 0,
+        "player.z": 5
+      },
+      "after": {
+        "player.x": 0,
+        "player.z": 0,
+        "hero.clip": "idle"
+      }
+    }
+  }
+}

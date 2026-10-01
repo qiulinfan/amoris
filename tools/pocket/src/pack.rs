@@ -103,35 +103,7 @@ pub fn pack(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make
     std::fs::copy(&exe, &exe_dst)?;
     set_executable(&exe_dst)?;
     total += std::fs::metadata(&exe_dst)?.len();
-    // Scripts (bundled) and config.
-    std::fs::copy(&bundle.out, dist.join("project.js"))?;
-    total += std::fs::metadata(dist.join("project.js"))?.len();
-    let config_path = PathBuf::from(format!("{}.project.json", bundle.out.display()));
-    let mut settings: Value = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
-    let settings_fallbacks = settings.get("font_fallbacks").cloned().unwrap_or(Value::Null);
-    if let Value::Object(map) = &mut settings {
-        map.remove("dir");
-        map.remove("font");
-        map.remove("font_fallbacks");
-        if let Some(font) = ui_font(ws) {
-            let file_name = font.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "font.otf".into());
-            std::fs::create_dir_all(dist.join("fonts"))?;
-            std::fs::copy(&font, dist.join("fonts").join(&file_name))?;
-            total += std::fs::metadata(dist.join("fonts").join(&file_name))?.len();
-            map.insert("font".into(), Value::String(format!("fonts/{file_name}")));
-            let mut packed_fallbacks = vec![];
-            for (fb, name) in fallback_paths(&project, &settings_fallbacks, &file_name)? {
-                std::fs::copy(&fb, dist.join("fonts").join(&name))?;
-                total += std::fs::metadata(dist.join("fonts").join(&name))?.len();
-                packed_fallbacks.push(Value::String(format!("fonts/{name}")));
-            }
-            map.insert("font_fallbacks".into(), Value::Array(packed_fallbacks));
-        }
-        map.insert("packed".into(), Value::String(chrono_free_timestamp()));
-    }
-    std::fs::write(dist.join("project.json"), serde_json::to_string_pretty(&settings)?)?;
-    // The project's data: scene, assets, project.toml; not the TypeScript sources.
-    total += copy_tree(&project, &dist.join("project"), &["scripts", "node_modules", "build"])?;
+    total += write_game_data(ws, &project, &bundle.out, &dist)?;
     // Launcher.
     let launcher = dist.join(&name);
     std::fs::write(&launcher, format!("#!/bin/sh\n# Runs {name}. Extra arguments go to the runtime (--headless, --frames N, --json, --size WxH, --serve PORT ...).\nDIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexec \"$DIR/bin/pocket_runtime\" --project \"$DIR/project\" --bundle \"$DIR/project.js\" --project-config \"$DIR/project.json\" \"$@\"\n"))?;
@@ -148,6 +120,42 @@ pub fn pack(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make
     rep.data = data;
     rep.elapsed_ms = t0.elapsed().as_millis();
     Ok(rep)
+}
+
+/// What a packed game reads beside the runtime, written into `dist`: the bundled scripts
+/// (project.js), the settings with the UI fonts made relative (project.json, fonts/), and the
+/// project's data (project/: the scene, the assets, project.toml; not the TypeScript sources).
+fn write_game_data(ws: &Workspace, project: &Path, bundle: &Path, dist: &Path) -> Result<u64> {
+    let mut total = 0u64;
+    std::fs::copy(bundle, dist.join("project.js"))?;
+    total += std::fs::metadata(dist.join("project.js"))?.len();
+    let config_path = PathBuf::from(format!("{}.project.json", bundle.display()));
+    let mut settings: Value = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
+    let settings_fallbacks = settings.get("font_fallbacks").cloned().unwrap_or(Value::Null);
+    if let Value::Object(map) = &mut settings {
+        map.remove("dir");
+        map.remove("font");
+        map.remove("font_fallbacks");
+        if let Some(font) = ui_font(ws) {
+            let file_name = font.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "font.otf".into());
+            std::fs::create_dir_all(dist.join("fonts"))?;
+            std::fs::copy(&font, dist.join("fonts").join(&file_name))?;
+            total += std::fs::metadata(dist.join("fonts").join(&file_name))?.len();
+            map.insert("font".into(), Value::String(format!("fonts/{file_name}")));
+            let mut packed_fallbacks = vec![];
+            for (fb, name) in fallback_paths(project, &settings_fallbacks, &file_name)? {
+                std::fs::copy(&fb, dist.join("fonts").join(&name))?;
+                total += std::fs::metadata(dist.join("fonts").join(&name))?.len();
+                packed_fallbacks.push(Value::String(format!("fonts/{name}")));
+            }
+            map.insert("font_fallbacks".into(), Value::Array(packed_fallbacks));
+        }
+        map.insert("packed".into(), Value::String(chrono_free_timestamp()));
+    }
+    std::fs::write(dist.join("project.json"), serde_json::to_string_pretty(&settings)?)?;
+    // The project's data: scene, assets, project.toml; not the TypeScript sources.
+    total += copy_tree(project, &dist.join("project"), &["scripts", "node_modules", "build"])?;
+    Ok(total)
 }
 
 /// The fallback font files a project config names, each with the name it is packed under in
@@ -703,4 +711,91 @@ mod tests {
         assert_eq!(text, again, "deterministic");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// `pocket pack <project> --ios`: the project as an app for the iOS Simulator (docs/build-system.md,
+/// iOS): `<name>.app` with the runtime as its executable, the game under `game/` as `pack` lays it
+/// out beside the runtime, and an Info.plist; signed ad hoc, as the simulator asks of an arm64
+/// app. The runtime finds `game/` in its bundle when it is started without a project.
+pub fn pack_ios(ws: &Workspace, config: &str, target: &str, out: Option<&Path>) -> Result<Report> {
+    let t0 = Instant::now();
+    if ws.target_of(config)? != "ios-sim" {
+        return Ok(Report::failure("pack", format!("--ios needs an ios-sim configuration; '{config}' targets {}", ws.target_of(config)?)));
+    }
+    let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is not a project with project.toml"))?;
+    let outcome = build_targets(ws, config, &["pocket_runtime".to_string()], false)?;
+    if !outcome.ok {
+        let mut rep = Report::failure("pack", "iOS runtime build failed");
+        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
+        if rep.diagnostics.is_empty() {
+            rep.summary = format!("iOS runtime build failed:\n{}", crate::commands::tail(&outcome.output, 40));
+        }
+        return Ok(rep);
+    }
+    let bundle = bundle_project(ws, &project, None)?;
+    let name = project.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "game".into());
+    let ident: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    let exe_name: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    let exe_name = if exe_name.is_empty() { "Game".to_string() } else { exe_name };
+    let bundle_id = format!("dev.pocket.{ident}");
+    let app = out.map(|p| p.to_path_buf()).unwrap_or_else(|| ws.root.join("dist").join("ios").join(format!("{name}.app")));
+    if app.exists() {
+        std::fs::remove_dir_all(&app).with_context(|| format!("clearing {}", app.display()))?;
+    }
+    std::fs::create_dir_all(app.join("game"))?;
+    let exe_dst = app.join(&exe_name);
+    std::fs::copy(exe_path(ws, config, "pocket_runtime")?, &exe_dst)?;
+    set_executable(&exe_dst)?;
+    let mut total = std::fs::metadata(&exe_dst)?.len();
+    total += write_game_data(ws, &project, &bundle.out, &app.join("game"))?;
+    // Held the way the window is shaped: wider than tall plays in landscape.
+    let settings: Value = serde_json::from_str(&std::fs::read_to_string(app.join("game").join("project.json"))?)?;
+    let window = settings.get("window").cloned().unwrap_or(Value::Null);
+    let (w, h) = (window.get("width").and_then(|v| v.as_i64()).unwrap_or(960), window.get("height").and_then(|v| v.as_i64()).unwrap_or(540));
+    let orientations = if w >= h {
+        "<string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>"
+    } else {
+        "<string>UIInterfaceOrientationPortrait</string>"
+    };
+    let title = window.get("title").and_then(|v| v.as_str()).unwrap_or(&name).replace('&', "&amp;").replace('<', "&lt;");
+    let sdk = toolchain::xcrun(&["--sdk", "iphonesimulator", "--show-sdk-version"]).unwrap_or_default();
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>{bundle_id}</string>
+  <key>CFBundleExecutable</key><string>{exe_name}</string>
+  <key>CFBundleName</key><string>{exe_name}</string>
+  <key>CFBundleDisplayName</key><string>{title}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>{version}</string>
+  <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+  <key>DTPlatformName</key><string>iphonesimulator</string>
+  <key>DTSDKName</key><string>iphonesimulator{sdk}</string>
+  <key>MinimumOSVersion</key><string>17.0</string>
+  <key>LSRequiresIPhoneOS</key><true/>
+  <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+  <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>metal</string></array>
+  <key>UISupportedInterfaceOrientations</key><array>{orientations}</array>
+  <key>UISupportedInterfaceOrientations~ipad</key><array>{orientations}</array>
+  <key>UILaunchScreen</key><dict/>
+  <key>UIRequiresFullScreen</key><true/>
+  <key>UIStatusBarHidden</key><true/>
+  <key>UIApplicationSupportsIndirectInputEvents</key><true/>
+</dict>
+</plist>
+"#,
+        version = ws.file.workspace.version
+    );
+    std::fs::write(app.join("Info.plist"), plist)?;
+    let sign = std::process::Command::new("codesign").env("DEVELOPER_DIR", toolchain::xcode_dir()?).args(["--force", "--sign", "-", "--timestamp=none"]).arg(&app).output().context("running codesign")?;
+    if !sign.status.success() {
+        bail!("codesign failed: {}", String::from_utf8_lossy(&sign.stderr).trim());
+    }
+    let mut rep = Report::success("pack", format!("packed {name} as {} for the iOS Simulator ({} MB)", app.display(), total / (1024 * 1024)));
+    rep.data = json!({ "project": project, "app": app, "bundle_id": bundle_id, "config": config, "bytes": total });
+    rep.elapsed_ms = t0.elapsed().as_millis();
+    Ok(rep)
 }

@@ -46,7 +46,7 @@ What UBT does well: explicit module graph, target types, platform abstraction, c
 
 ## 4. `pocket`: the design
 
-Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and TypeScript nodes, foreign CMake builds, prebuilt fetch), 4.5 (`--json`, `compile_commands.json`) and the commands `setup`, `doctor`, `build`, `run`, `test`, `ts`, `graph`, `clean` exist in `tools/pocket`. The executor is Ninja invoked as a subprocess; n2 embedding, codegen nodes, `check`, `fmt`, `mcp` and the other platforms are future tool milestones (4.11). Since then `gen`, `mcp` and `check` have come (2026-09-29: `check` runs TypeScript 7's native compiler, the `tsgo` line below released as `tsc`, as a prebuilt dependency; `docs/sdk.md`, Types).
+Implementation status (2026-09-18): sections 4.1, 4.2 (macOS), 4.3 (C++ and TypeScript nodes, foreign CMake builds, prebuilt fetch), 4.5 (`--json`, `compile_commands.json`) and the commands `setup`, `doctor`, `build`, `run`, `test`, `ts`, `graph`, `clean` exist in `tools/pocket`. The executor is Ninja invoked as a subprocess; n2 embedding, codegen nodes, `check`, `fmt`, `mcp` and the other platforms are future tool milestones (4.12). Since then `gen`, `mcp` and `check` have come (2026-09-29: `check` runs TypeScript 7's native compiler, the `tsgo` line below released as `tsc`, as a prebuilt dependency; `docs/sdk.md`, Types).
 
 `pocket` is a single static Rust binary. It is the only tool a fresh checkout needs. It is a generator, an executor, a toolchain manager, a package fetcher and an agent interface at once, but each part is a separate crate with a narrow job.
 
@@ -133,11 +133,26 @@ What differs from macOS is in `pocket.toml` and the tool, not in the engine's co
 
 On 2026-10-01 the release configuration passed 23 of the 24 test modules, and the one failure was a test that expected the Metal backend (it now expects Vulkan off Apple). The debug configuration's sanitizers over the CPU renderer need more memory than the container's 20 GB for `runtime_tests`. That run also found the renderer leaving pipelines and textures behind when it went: `rhi::Device::held_when_last_destroyed()` lists what is still held as a device goes, `POCKET_GPU_REPORT=1` prints it for every device, and `renderer_tests` (`[teardown]`) keeps it at nothing.
 
-### 4.10 Deliberate non-goals for v0
+### 4.10 iOS
+
+Games run in the iOS Simulator on Apple silicon, built by the same tool from the same sources. The `ios-sim` configuration targets `arm64-apple-ios17.0-simulator` with Xcode's clang and the simulator SDK (`POCKET_XCODE` names another Xcode's `Contents/Developer`); its dependencies resolve again with their `[dependencies.platforms.ios-sim]` or `[dependencies.platforms.ios]` tables (wgpu-native's simulator archive, SDL3's iOS build without OpenGL, UIKit in place of AppKit, and `kind = "skip"` for the TypeScript compiler, a tool of the host), and the CMake ones build with CMake's own iOS support into their own prefixes:
+
+```
+pocket setup --target ios-sim                         # once: SDL3, FreeType, HarfBuzz and wgpu-native for the simulator
+pocket pack hello --ios                               # dist/ios/hello.app
+pocket run hello --ios -- --serve 4711 --paused       # booted, installed and started in a simulator
+pocket rpc state --url http://127.0.0.1:4711          # from the Mac: the simulator shares its network
+```
+
+`pocket pack --ios` makes `<name>.app`: the runtime as its executable, the game under `game/` laid out as a desktop pack's (the bundled scripts, the settings, the scene and assets, the fonts), an `Info.plist` (landscape for a window wider than tall, full screen, iOS 17 and later) and an ad hoc signature, which is what the simulator asks of an arm64 app. `pocket run --ios [--device <name or UDID>]` packs it, boots the device named (else one already booted, else the first iPhone), shows it in Simulator, installs the app and launches it with what follows `--`. On iOS UIKit starts the program (SDL's `SDL_main.h` in `engine/runtime/src/main.cpp`), and a runtime started without `--bundle` reads the game from its own bundle. Nothing else in the engine is iOS-specific: SDL3 gives the window, touch and audio, a `CAMetalLayer` takes the frames as on macOS, and the scripts run on the system's JavaScriptCore.
+
+The simulator's GPU lets a fragment stage read only four storage buffers (macOS, Linux's Vulkan and the browsers give eight or more), so the scene's small fixed arrays (the sky's harmonics, the shadow faces, the decals) are uniform buffers on every platform, leaving the lights, the clusters, the probes and the objects as storage. `tools/scripts/ios_evidence.py` runs three samples in a simulator, steps and drives them from the Mac through their control servers and photographs them (`tests/evidence/ios/`). A device needs a developer account's signing, which this machine does not have; the simulator is the target until then.
+
+### 4.11 Deliberate non-goals for v0
 
 Distributed builds, remote caches, C++ modules, unity builds, precompiled headers by default, a GUI, cross-compilation to mobile or consoles. Each returns as a milestone when a concrete need appears.
 
-### 4.11 Tool milestones
+### 4.12 Tool milestones
 
 - v0 (M0): macOS, static libraries and executables, tests, prebuilt fetch, TypeScript transform, `--json`.
 - v1 (M1): codegen nodes, in-engine TypeScript test runner, Linux CI, foreign builds.

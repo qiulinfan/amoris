@@ -1012,13 +1012,21 @@ void Session::run_tick() {
     for (InputMap& m : player_maps_) m.consume_edges();
     in_tick_ = false;
     sw = Stopwatch{};
+    // Each system's time on its own as well (perf's systems): the lap since the last mark.
+    Stopwatch lap;
+    auto mark = [&](System s) { perf_systems_[static_cast<int>(s)].add(lap.ms()); lap = Stopwatch{}; };
     update_terrains();
     timelines_->step(*world_, static_cast<float>(clock_.tick_seconds));   // before physics: a moved platform is where the bodies meet it (docs/design/timelines.md)
+    mark(System::Timelines);
     paths_.step(*world_, static_cast<float>(clock_.tick_seconds));        // the same for what follows a path (docs/design/paths.md)
+    mark(System::Paths);
     const std::uint64_t before_physics = world_->events().last_seq();
     physics_->step(*world_, clock_.tick_seconds);
+    mark(System::Bodies);
     physics_->move_characters(*world_, clock_.tick_seconds);   // after the bodies: platforms have moved (docs/design/physics.md, Characters)
+    mark(System::Characters);
     splash_water(before_physics);
+    mark(System::Water);
     // Contacts become JSON for the scripts only when one of them listens (onContacts): a pile of
     // resting bodies touches every tick, and nothing need be made of it otherwise.
     if (!physics_->contacts().empty() && dispatch("wants", "contacts") == Json(true)) {
@@ -1035,30 +1043,45 @@ void Session::run_tick() {
         }
         dispatch("contacts", contacts);
     }
+    mark(System::Contacts);
     if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    mark(System::Tiles2D);
     if (rigid2d_ && assets_) {
         const Vec3 g = physics_->settings().gravity;
         rigid2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds), Vec2{g.x, g.y});
     }
+    mark(System::Bodies2D);
     update_hits(before_physics);   // the touches the 3D and 2D steps just reported
+    mark(System::Hits);
     nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
+    mark(System::Navigation);
     update_camera_rigs(static_cast<float>(clock_.tick_seconds));   // after everything that moves what they follow
+    mark(System::Cameras);
     perf_physics_.add(sw.ms());
     sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
+    mark(System::World);
     particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
+    mark(System::Particles);
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    mark(System::Animation);
     if (assets_ && physics_) {
         if (!ragdolls_) ragdolls_ = std::make_unique<Ragdolls>();
         ragdolls_->step(*world_, *assets_, *animation_, *physics_);   // after the clips: a limp body's pose is its bodies'
     }
+    mark(System::Ragdolls);
     update_attachments();   // after the poses: what is held follows the joint as it is now
+    mark(System::Attachments);
     // Cloth after everything that places its entity: the world transforms, the poses and what is
     // attached to a joint (a cape on a character's back moves with the spine).
     if (assets_ && physics_) cloth_.step(*world_, *assets_, static_cast<float>(clock_.tick_seconds), physics_->settings().gravity);
+    mark(System::Cloth);
     if (audio_) tick_audio(clock_.tick_seconds);
+    mark(System::Audio);
     if (ui_) ui_->advance(static_cast<float>(clock_.tick_seconds));   // the interface's transitions run on the simulation clock
+    mark(System::Interface);
     if (recorder_.recording()) recorder_.record(*world_, tick);
+    mark(System::Recorder);
     perf_world_.add(sw.ms());
     sw = Stopwatch{};
     Json s = dispatch("state", nullptr);
@@ -1104,6 +1127,18 @@ Json Session::perf() const {
     j["physics"] = perf_physics_.json();
     j["world"] = perf_world_.json();
     j["state"] = perf_state_.json();
+    // The tick's systems, the costliest first (what physics and world above are made of).
+    static constexpr const char* kSystemNames[] = {"timelines", "paths", "bodies", "characters", "water", "contacts", "tiles_2d", "bodies_2d", "hits", "navigation", "cameras", "world", "particles", "animation", "ragdolls", "attachments", "cloth", "audio", "interface", "recorder"};
+    static_assert(std::size(kSystemNames) == static_cast<std::size_t>(System::Count));
+    std::vector<std::pair<double, int>> order;
+    for (int i = 0; i < static_cast<int>(System::Count); ++i) {
+        const PhaseStats& s = perf_systems_[i];
+        if (s.samples) order.emplace_back(s.total_ms / static_cast<double>(s.samples), i);
+    }
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    Json systems = Json::array();
+    for (const auto& [avg, i] : order) systems.push_back(Json{{"system", kSystemNames[i]}, {"avg_ms", std::round(avg * 1e4) / 1e4}, {"max_ms", std::round(perf_systems_[i].max_ms * 1e4) / 1e4}});
+    j["systems"] = std::move(systems);
     return j;
 }
 
@@ -3344,7 +3379,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
                 POCKET_TRY(made, command("world.instantiate", args, "tilemap.spawn"));
                 Json row{{"object", o.name}, {"type", o.type}, {"layer", ol.name}, {"x", cxw}, {"y", cyw}};
                 if (made.is_object() && made.contains("roots") && made["roots"].is_array() && !made["roots"].empty()) row["entity"] = made["roots"][0];
-                spawned.push_back(row);
+                spawned.push_back(std::move(row));
             }
         }
         return Json{{"spawned", spawned}, {"count", spawned.size()}};
@@ -4865,7 +4900,7 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
                         if (save.contains("data")) j["data"] = save["data"];
                     }
                 }
-                out.push_back(j);
+                out.push_back(std::move(j));
             }
         }
         return out;
@@ -6665,7 +6700,7 @@ Result<Json> Session::events_command(std::string_view op, const Json& p, std::st
         Json arr = Json::array();
         for (auto& e : list) arr.push_back(world::event_to_json(e));
         Json j;
-        j["events"] = arr;
+        j["events"] = std::move(arr);
         j["last_seq"] = ev.last_seq();
         return j;
     }
@@ -6703,7 +6738,7 @@ Result<Json> Session::events_command(std::string_view op, const Json& p, std::st
             story += " at tick " + std::to_string(e.tick);
         }
         Json j;
-        j["chain"] = arr;
+        j["chain"] = std::move(arr);
         j["story"] = story;
         j["root"] = chain.back().seq;
         j["complete"] = chain.back().cause == 0;  // false when the chain stops at an evicted event
@@ -7246,7 +7281,15 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
-    if (name == "perf") return perf();
+    if (name == "perf") {
+        Json j = perf();
+        if (opt<bool>(p, "reset", false)) {
+            // The averages start over: what a stretch of play costs, measured from here.
+            for (PhaseStats* s : {&perf_frame_, &perf_poll_, &perf_tick_, &perf_script_, &perf_physics_, &perf_world_, &perf_state_, &perf_render_}) *s = PhaseStats{};
+            for (PhaseStats& s : perf_systems_) s = PhaseStats{};
+        }
+        return j;
+    }
     if (name == "state") {
         if (p.contains("keys") && !p["keys"].is_null()) {
             // Only the exposed values asked for (and where the run is), for one who watches a few.
@@ -7601,6 +7644,27 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         }
         if (const CommandHelp* h = command_help(which)) return command_help_json(*h);
         return fail("unknown_command", "no command named '{}'{}", which, command_suggestions(which).empty() ? std::string() : "; did you mean " + Json(command_suggestions(which)).dump() + "?");
+    }
+    if (name == "commands" && opt<bool>(p, "text", false) && family.empty() && search.empty()) {
+        // Without a family or a search: the names by family, an index a fifth the size of every
+        // usage line (an agent's context carries what it reads for the rest of its task).
+        std::vector<std::pair<std::string, std::vector<std::string>>> families;
+        for (const CommandHelp& h : command_helps()) {
+            const std::string n(h.name);
+            const std::size_t dot = n.find('.');
+            const std::string fam = dot == std::string::npos ? "session" : n.substr(0, dot);
+            auto it = std::find_if(families.begin(), families.end(), [&](const auto& f) { return f.first == fam; });
+            if (it == families.end()) it = families.insert(families.end(), {fam, {}});
+            it->second.push_back(dot == std::string::npos ? n : n.substr(dot + 1));
+        }
+        std::string text;
+        for (const auto& [fam, names] : families) {
+            text += fam == "session" ? std::string("(no family)") : fam;
+            text += ": ";
+            for (std::size_t i = 0; i < names.size(); ++i) text += (i ? " " : "") + names[i];
+            text += "\n";
+        }
+        return Json{{"text", text + "(family {name} or search {word} lists those with their parameters and use; help {command} has a command's full description)\n"}};
     }
     if (name == "commands" && opt<bool>(p, "text", false)) {
         // One line a command, the compact form for an agent's context: its usage and the first

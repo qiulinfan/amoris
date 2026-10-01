@@ -329,6 +329,9 @@ class Session {
         [[nodiscard]] Json json() const;
     };
     PhaseStats perf_frame_, perf_poll_, perf_tick_, perf_script_, perf_physics_, perf_world_, perf_state_, perf_render_;
+    // Each of the tick's systems on its own (perf's systems), in the order the tick runs them.
+    enum class System { Timelines, Paths, Bodies, Characters, Water, Contacts, Tiles2D, Bodies2D, Hits, Navigation, Cameras, World, Particles, Animation, Ragdolls, Attachments, Cloth, Audio, Interface, Recorder, Count };
+    PhaseStats perf_systems_[static_cast<int>(System::Count)];
     Stopwatch pace_timer_;
     Json capture_info_;
 };

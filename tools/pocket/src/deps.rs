@@ -22,11 +22,15 @@ pub fn prefix(ws: &Workspace, dep: &Dependency) -> PathBuf {
     prefix_for(ws, dep, "native")
 }
 
-/// Where a dependency is installed for a target; cmake sources get their own wasm build.
+/// Where a dependency is installed for a target; cmake sources get their own wasm build, and the
+/// iOS Simulator its own of everything built or prebuilt for it.
 pub fn prefix_for(ws: &Workspace, dep: &Dependency, target: &str) -> PathBuf {
     let v = if dep.version.is_empty() { "system".to_string() } else { dep.version.clone() };
     if target == "wasm" && dep.kind == "cmake" {
         return ws.deps_dir().join(format!("{}-{}-wasm", dep.name, v));
+    }
+    if target == "ios-sim" && matches!(dep.kind.as_str(), "cmake" | "prebuilt") {
+        return ws.deps_dir().join(format!("{}-{}-ios-sim", dep.name, v));
     }
     ws.deps_dir().join(format!("{}-{}", dep.name, v))
 }
@@ -34,6 +38,9 @@ pub fn prefix_for(ws: &Workspace, dep: &Dependency, target: &str) -> PathBuf {
 /// Whether a dependency contributes headers and libraries on a target. On wasm, Emscripten
 /// ports and prebuilt native archives do not; cmake sources are rebuilt and files are shared.
 pub fn applies(dep: &Dependency, target: &str) -> bool {
+    if dep.kind == "skip" {
+        return false;
+    }
     if target != "wasm" {
         return true;
     }
@@ -52,7 +59,7 @@ fn stamp_key(dep: &Dependency, target: &str) -> String {
     }
     // Only cmake dependencies are built per target (into their own prefix); files and prebuilt
     // archives are shared, so their stamp must not depend on the target.
-    if target != "native" && dep.kind == "cmake" {
+    if target != "native" && (dep.kind == "cmake" || (target == "ios-sim" && dep.kind == "prebuilt")) {
         h.update(target.as_bytes());
     }
     hex(&h.finalize())
@@ -221,7 +228,7 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             extract(&cache, &src, dep.strip_components)?;
             let cmake = toolchain::detect()?.cmake.context("cmake not found on PATH; needed for foreign builds")?;
             let sdk = if target == "wasm" { Some(toolchain::emsdk()?) } else { None };
-            let bld = if target == "wasm" { bld.with_file_name(format!("{}-{}-wasm", dep.name, dep.version)) } else { bld };
+            let bld = if target != "native" { bld.with_file_name(format!("{}-{}-{target}", dep.name, dep.version)) } else { bld };
             if bld.exists() {
                 // A stale CMake cache would keep the previous configuration's flags.
                 std::fs::remove_dir_all(&bld)?;
@@ -233,6 +240,13 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
                 cfg.arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", sdk.cmake_toolchain.display()));
                 toolchain::em_env(&mut cfg, sdk);
             }
+            let ios = if target == "ios-sim" { Some(toolchain::detect_for("ios-sim")?) } else { None };
+            if let Some(tc) = &ios {
+                // CMake's own iOS support, pointed at the simulator SDK with Xcode's compilers.
+                cfg.env("DEVELOPER_DIR", tc.developer_dir.clone().unwrap_or_default());
+                cfg.arg("-DCMAKE_SYSTEM_NAME=iOS").arg(format!("-DCMAKE_OSX_SYSROOT={}", tc.sysroot.clone().unwrap_or_default())).arg("-DCMAKE_OSX_ARCHITECTURES=arm64").arg("-DCMAKE_OSX_DEPLOYMENT_TARGET=17.0");
+                cfg.arg(format!("-DCMAKE_C_COMPILER={}", tc.cc)).arg(format!("-DCMAKE_CXX_COMPILER={}", tc.cxx));
+            }
             for a in &dep.cmake_args {
                 cfg.arg(a);
             }
@@ -242,11 +256,17 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             if let Some(sdk) = &sdk {
                 toolchain::em_env(&mut b, sdk);
             }
+            if let Some(tc) = &ios {
+                b.env("DEVELOPER_DIR", tc.developer_dir.clone().unwrap_or_default());
+            }
             b.arg("--build").arg(&bld).arg("-j").arg(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).to_string());
             run_logged(b, &format!("cmake build {}", dep.name))?;
             let mut i = toolchain::command(&cmake);
             if let Some(sdk) = &sdk {
                 toolchain::em_env(&mut i, sdk);
+            }
+            if let Some(tc) = &ios {
+                i.env("DEVELOPER_DIR", tc.developer_dir.clone().unwrap_or_default());
             }
             i.arg("--install").arg(&bld);
             run_logged(i, &format!("cmake install {}", dep.name))?;

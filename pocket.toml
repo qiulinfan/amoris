@@ -60,6 +60,16 @@ c_flags = ["-Oz", "-flto", "-msimd128", "-msse2", "--use-port=sdl3"]
 defines = ["NDEBUG=1", "POCKET_WEB=1"]
 link_flags = ["-Oz", "-flto", "--use-port=sdl3", "--use-port=emdawnwebgpu", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=134217728", "-sSTACK_SIZE=4194304", "-sJSPI=1", "-sJSPI_EXPORTS=main,pocket_command_async", "-sFORCE_FILESYSTEM=1", "-lidbfs.js", "-lwebsocket.js", "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,FS,FS_createPath,FS_createDataFile,FS_createPreloadedFile,addRunDependency,removeRunDependency,HEAPF32,HEAPF64,HEAPU32,HEAPU8", "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_pocket_command,_pocket_command_async", "-sENVIRONMENT=web", "-sNO_EXIT_RUNTIME=1"]
 
+# The iOS Simulator (docs/build-system.md, iOS): Xcode's clang and the simulator SDK, arm64, iOS 17
+# and later. `pocket setup --target ios-sim`, then `pocket pack <name> --ios` makes the app and
+# `pocket run <name> --ios` runs it in a simulator.
+[configs.ios-sim]
+target = "ios-sim"
+cxx_flags = ["-O2", "-g"]
+c_flags = ["-O2", "-g"]
+defines = ["NDEBUG=1", "POCKET_IOS=1"]
+link_flags = []
+
 [[dependencies]]
 name = "sdl3"
 version = "3.4.16"
@@ -75,6 +85,10 @@ weak_frameworks = ["UniformTypeIdentifiers", "CoreHaptics"]
 link_flags = ["-lpthread", "-lm"]
 license = "Zlib"
 
+[dependencies.platforms.ios]
+cmake_args = ["-DSDL_STATIC=ON", "-DSDL_SHARED=OFF", "-DSDL_TESTS=OFF", "-DSDL_EXAMPLES=OFF", "-DSDL_TEST_LIBRARY=OFF", "-DSDL_INSTALL_DOCS=OFF", "-DSDL_OPENGLES=OFF", "-DSDL_OPENGL=OFF"]
+frameworks = ["UIKit", "CoreMedia", "CoreVideo", "CoreAudio", "AudioToolbox", "AVFoundation", "Foundation", "GameController", "Metal", "QuartzCore", "CoreGraphics", "CoreMotion", "CoreBluetooth"]
+
 [[dependencies]]
 name = "wgpu"
 version = "29.0.1.1"
@@ -87,6 +101,11 @@ libs = ["lib/libwgpu_native.a"]
 wasm = "port"
 frameworks = ["Metal", "QuartzCore", "CoreFoundation", "Foundation", "CoreGraphics", "IOKit", "IOSurface", "AppKit"]
 license = "MIT OR Apache-2.0"
+
+[dependencies.platforms.ios-sim]
+url = "https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.1.1/wgpu-ios-aarch64-simulator-release.zip"
+sha256 = "750e706765bef3744313745194774d095c916fc21d2a0e7d4d7b0bc4d0c92789"
+frameworks = ["Metal", "QuartzCore", "CoreFoundation", "Foundation", "CoreGraphics", "IOSurface", "UIKit"]
 
 [dependencies.platforms.linux-aarch64]
 url = "https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.1.1/wgpu-linux-aarch64-release.zip"
@@ -136,6 +155,10 @@ sha256 = "c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea"
 [dependencies.platforms.linux-x86_64]
 url = "https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz"
 sha256 = "7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3"
+
+# A tool on the host, not part of a game.
+[dependencies.platforms.ios]
+kind = "skip"
 
 [[dependencies]]
 name = "noto-sans-arabic"

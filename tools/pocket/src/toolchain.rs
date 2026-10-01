@@ -15,8 +15,34 @@ pub struct Toolchain {
     pub developer_dir: Option<String>,
     pub cxx_version: String,
     pub host_os: String,
-    /// "native" or "wasm".
+    /// "native", "wasm" or "ios-sim".
     pub target: String,
+    /// A cross target's clang target triple and SDK (the iOS Simulator's), passed to every compile
+    /// and link.
+    pub triple: Option<String>,
+    pub sysroot: Option<String>,
+}
+
+/// The iOS Simulator target: arm64, iOS 17 and later.
+pub const IOS_SIM_TRIPLE: &str = "arm64-apple-ios17.0-simulator";
+
+/// Xcode's developer directory (the iOS SDKs live there, not in the Command Line Tools):
+/// POCKET_XCODE, else /Applications/Xcode.app.
+pub fn xcode_dir() -> Result<String> {
+    let dir = std::env::var("POCKET_XCODE").unwrap_or_else(|_| "/Applications/Xcode.app/Contents/Developer".into());
+    if !Path::new(&dir).join("Platforms").join("iPhoneSimulator.platform").is_dir() {
+        bail!("Xcode with the iOS Simulator platform not found at {dir} (install Xcode, or set POCKET_XCODE to its Contents/Developer)");
+    }
+    Ok(dir)
+}
+
+/// `xcrun` with Xcode's developer directory, for the iOS Simulator SDK.
+pub fn xcrun(args: &[&str]) -> Result<String> {
+    let out = Command::new("xcrun").env("DEVELOPER_DIR", xcode_dir()?).args(args).output().context("running xcrun")?;
+    if !out.status.success() {
+        bail!("xcrun {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// The Emscripten SDK: POCKET_EMSDK, then EMSDK, then ~/.pocket-tools/emsdk.
@@ -116,6 +142,28 @@ pub fn detect_for(target: &str) -> Result<Toolchain> {
             cxx_version,
             host_os: std::env::consts::OS.to_string(),
             target: "wasm".into(),
+            triple: None,
+            sysroot: None,
+        });
+    }
+    if target == "ios-sim" {
+        let cxx = xcrun(&["--sdk", "iphonesimulator", "--find", "clang++"])?;
+        let cc = xcrun(&["--sdk", "iphonesimulator", "--find", "clang"])?;
+        let ar = xcrun(&["--sdk", "iphonesimulator", "--find", "ar"])?;
+        let sysroot = xcrun(&["--sdk", "iphonesimulator", "--show-sdk-path"])?;
+        let out = Command::new(&cxx).arg("--version").output().context("running clang++ --version")?;
+        return Ok(Toolchain {
+            cxx,
+            cc,
+            ar,
+            ninja: which("ninja"),
+            cmake: which("cmake"),
+            developer_dir: Some(xcode_dir()?),
+            cxx_version: String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").to_string(),
+            host_os: std::env::consts::OS.to_string(),
+            target: "ios-sim".into(),
+            triple: Some(IOS_SIM_TRIPLE.into()),
+            sysroot: Some(sysroot),
         });
     }
     detect()
@@ -140,6 +188,8 @@ pub fn detect() -> Result<Toolchain> {
         cxx_version,
         host_os: std::env::consts::OS.to_string(),
         target: "native".into(),
+        triple: None,
+        sysroot: None,
     })
 }
 

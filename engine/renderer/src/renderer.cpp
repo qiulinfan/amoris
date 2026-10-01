@@ -51,7 +51,7 @@ struct GpuDecal {
 constexpr std::uint32_t kFaceSize = 512;
 constexpr std::uint32_t kFaceTiles = 8;   // across and down
 constexpr std::uint32_t kAtlasSize = kFaceSize * kFaceTiles;
-constexpr std::uint32_t kMaxFaces = kFaceTiles * kFaceTiles;
+constexpr std::uint32_t kMaxFaces = kFaceTiles * kFaceTiles;   // the shaders' shadow_faces array is this long
 struct GpuFace {
     float view_proj[16];
     float rect[4];         // the face's corner in the atlas (u, v), its size in uv, a texel in uv
@@ -243,7 +243,7 @@ constexpr int kProbeBounces = 3;
 // Bodies of water drawn at once (the first by id).
 constexpr std::uint32_t kMaxWater = 8;
 // Decals: the nearest in view, and their images (layers of one array, 0 the built-in spot).
-constexpr std::uint32_t kMaxDecals = 64;
+constexpr std::uint32_t kMaxDecals = 64;   // the shaders' decals array is this long
 constexpr std::uint32_t kDecalSize = 256, kDecalLayers = 16, kDecalLevels = 9;
 // The built-in soft spot particles are drawn with when their emitter names no image.
 constexpr const char* kDotTexture = "pocket:dot";
@@ -348,7 +348,7 @@ struct Frame {
 // irradiance as nine spherical-harmonic coefficients (already divided by pi).
 @group(0) @binding(3) var env_tex: texture_2d<f32>;
 @group(0) @binding(4) var env_samp: sampler;
-@group(0) @binding(5) var<storage, read> sh: array<vec4f, 9>;
+@group(0) @binding(5) var<uniform> sh: array<vec4f, 9>;
 // Ambient occlusion at half resolution (white when it is off), and a clamping sampler for it.
 @group(0) @binding(6) var ao_tex: texture_2d<f32>;
 @group(0) @binding(7) var ao_samp: sampler;
@@ -359,7 +359,7 @@ struct LocalLight { pos_range: vec4f, color_kind: vec4f, dir_cos: vec4f, cone: v
 @group(0) @binding(9) var<storage, read> cluster_data: array<u32>;
 // Their shadows: per face the view it was drawn from and where it sits in the atlas.
 struct ShadowFace { view_proj: mat4x4f, rect: vec4f };
-@group(0) @binding(10) var<storage, read> shadow_faces: array<ShadowFace>;
+@group(0) @binding(10) var<uniform> shadow_faces: array<ShadowFace, 64>;   // kMaxFaces
 @group(0) @binding(11) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(12) var probe_env: texture_2d_array<f32>;
 // Each probe's diffuse light: nine spherical harmonics of its capture (divided by pi), sixteen
@@ -459,7 +459,7 @@ struct Decal {
     sphere: vec4f,     // around the box: centre, radius squared
     extra: vec4f,      // bumpiness
 };
-@group(0) @binding(14) var<storage, read> decals: array<Decal>;
+@group(0) @binding(14) var<uniform> decals: array<Decal, 64>;   // kMaxDecals
 @group(0) @binding(15) var decal_tex: texture_2d_array<f32>;
 @group(0) @binding(16) var decal_samp: sampler;
 struct Painted {
@@ -4682,7 +4682,7 @@ fn time() -> f32 { return fx.time.x; }
         env_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
         env_params = device->create_buffer("pocket.sky", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kSkySlot) * kEnvLevels);
         std::vector<float> zero_sh(36, 0.0f);
-        sh_buffer = device->create_buffer("pocket.sky.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, zero_sh.size() * sizeof(float), zero_sh.data());
+        sh_buffer = device->create_buffer("pocket.sky.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, zero_sh.size() * sizeof(float), zero_sh.data());
         POCKET_TRY(black, upload_half("pocket.sky.none", 1, 1, std::vector<float>{0, 0, 0, 1}));
         sky_source = black;
         make_fill_group();
@@ -5344,7 +5344,7 @@ fn time() -> f32 { return fx.time.x; }
     // The decals' buffer, image array (sRGB: the images are colours), sampler, and the built-in
     // soft round spot in layer 0.
     Status create_decals() {
-        decal_buffer = device->create_buffer("pocket.decals", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, sizeof(GpuDecal) * kMaxDecals);
+        decal_buffer = device->create_buffer("pocket.decals", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(GpuDecal) * kMaxDecals);
         WGPUTextureDescriptor td{};
         td.label = rhi::str("pocket.decals");
         td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
@@ -6851,9 +6851,12 @@ fn time() -> f32 { return fx.time.x; }
         se[4].binding = 4;
         se[4].visibility = WGPUShaderStage_Fragment;
         se[4].sampler.type = WGPUSamplerBindingType_Filtering;
+        // The small fixed arrays (the sky's harmonics, the shadow faces, the decals) are uniforms:
+        // a fragment stage may read only four storage buffers on some GPUs (the iOS Simulator's),
+        // and lights, clusters, probes and objects take them.
         se[5].binding = 5;
         se[5].visibility = WGPUShaderStage_Fragment;
-        se[5].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+        se[5].buffer.type = WGPUBufferBindingType_Uniform;
         se[5].buffer.minBindingSize = sizeof(float) * 36;
         se[6].binding = 6;
         se[6].visibility = WGPUShaderStage_Fragment;
@@ -6871,8 +6874,8 @@ fn time() -> f32 { return fx.time.x; }
         se[9].buffer.minBindingSize = sizeof(std::uint32_t) * 2 * kClusters;
         se[10].binding = 10;
         se[10].visibility = WGPUShaderStage_Fragment;
-        se[10].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
-        se[10].buffer.minBindingSize = sizeof(GpuFace);
+        se[10].buffer.type = WGPUBufferBindingType_Uniform;
+        se[10].buffer.minBindingSize = sizeof(GpuFace) * kMaxFaces;
         se[11].binding = 11;
         se[11].visibility = WGPUShaderStage_Fragment;
         se[11].texture.sampleType = WGPUTextureSampleType_Depth;
@@ -6887,8 +6890,8 @@ fn time() -> f32 { return fx.time.x; }
         se[13].buffer.minBindingSize = sizeof(float) * 4 * 16 * kMaxProbes;
         se[14].binding = 14;
         se[14].visibility = WGPUShaderStage_Fragment;
-        se[14].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
-        se[14].buffer.minBindingSize = sizeof(GpuDecal);
+        se[14].buffer.type = WGPUBufferBindingType_Uniform;
+        se[14].buffer.minBindingSize = sizeof(GpuDecal) * kMaxDecals;
         se[15].binding = 15;
         se[15].visibility = WGPUShaderStage_Fragment;
         se[15].texture.sampleType = WGPUTextureSampleType_Float;
@@ -7214,7 +7217,7 @@ fn time() -> f32 { return fx.time.x; }
         sbe[9].binding = 9;
         sbe[9].buffer = cluster_buffer;
         sbe[9].size = sizeof(std::uint32_t) * (2ull * kClusters + kMaxClusterEntries);
-        face_buffer = device->create_buffer("pocket.shadow.faces", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, sizeof(GpuFace) * kMaxFaces);
+        face_buffer = device->create_buffer("pocket.shadow.faces", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(GpuFace) * kMaxFaces);
         sbe[10].binding = 10;
         sbe[10].buffer = face_buffer;
         sbe[10].size = sizeof(GpuFace) * kMaxFaces;

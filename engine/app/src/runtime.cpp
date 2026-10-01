@@ -253,6 +253,14 @@ Result<Json> run(const Options& options) {
 
 int main(int argc, char** argv) {
     std::vector<std::string> args(argv + 1, argv + argc);
+#ifdef POCKET_IOS
+    // An app (`pocket pack --ios`) carries its game in game/ beside the executable, laid out as a
+    // desktop pack's; what it is launched with (simctl launch ... --serve 4711) comes after.
+    if (std::find(args.begin(), args.end(), "--bundle") == args.end() && argc > 0) {
+        const std::filesystem::path game = std::filesystem::path(argv[0]).parent_path() / "game";
+        args.insert(args.begin(), {"--project", (game / "project").string(), "--bundle", (game / "project.js").string(), "--project-config", (game / "project.json").string()});
+    }
+#endif
     auto opts = parse_args(args);
     if (!opts) {
         if (opts.error().code == "help") {

@@ -986,7 +986,7 @@ Json World::query(const QueryOptions& options) const {
             for (auto* op : fields) {
                 if (op->has(e)) row[std::string(op->name)] = op->get(e);
             }
-            results.push_back(row);
+            results.push_back(std::move(row));
             ++count;
             return true;
         });
@@ -994,7 +994,7 @@ Json World::query(const QueryOptions& options) const {
     Json j;
     j["count"] = count;
     j["truncated"] = truncated;
-    j["entities"] = results;
+    j["entities"] = std::move(results);
     return j;
 }
 
@@ -1479,12 +1479,12 @@ Json World::save_entity_json(EntityId id) const {
         for (const auto& op : impl_->ops) {
             if (op.serialized && op.has(e)) comps[std::string(op.name)] = op.get(e);
         }
-        if (!comps.empty()) j["components"] = comps;
+        if (!comps.empty()) j["components"] = std::move(comps);
         std::vector<EntityId> kids = children(id);
         if (!kids.empty()) {
             Json arr = Json::array();
             for (EntityId c : kids) arr.push_back(save_entity(c));
-            j["children"] = arr;
+            j["children"] = std::move(arr);
         }
         return j;
     };
@@ -1497,11 +1497,11 @@ Json World::save() const {
     scene["version"] = 1;
     Json entities = Json::array();
     for (EntityId r : roots()) entities.push_back(save_entity_json(r));
-    scene["entities"] = entities;
+    scene["entities"] = std::move(entities);
     if (!impl_->clips.empty()) {
         Json clips = Json::object();
         for (const auto& [name, clip] : impl_->clips) clips[name] = clip.to_json();
-        scene["sprite_clips"] = clips;
+        scene["sprite_clips"] = std::move(clips);
     }
     return scene;
 }

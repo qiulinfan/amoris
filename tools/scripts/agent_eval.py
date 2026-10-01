@@ -2295,6 +2295,182 @@ def sinking_check(env, answer):
     return True, f"BlueCrate rests at y {blue['y']:.3f}, the Ghost still sinks; answered {answer!r}"
 
 
+
+# Coins in a row: the player walks right and takes them; the next coin glows when one is taken, and
+# the last one taken ends the level. Taking the last throws (there is no next coin to light), which
+# stops the game: a player sees it freeze.
+COINS_TS = """import { events, expose, input, onStart, onTick, world } from "pocket";
+import type { Entity } from "pocket";
+
+const coins: Entity[] = [];
+let player = 0;
+let taken = 0;
+let done = false;
+
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 5, y: 0, z: 10 } }, Camera: { orthographic: true, ortho_size: 5 } } });
+    player = world.spawn("Player", { components: { Transform: { position: { x: 0, y: 0, z: 0 } }, Sprite: { color: { r: 0.3, g: 0.7, b: 1, a: 1 } } } });
+    for (let i = 1; i <= 4; i++) {
+        coins.push(world.spawn(`Coin_${i}`, { components: { Transform: { position: { x: i * 2, y: 0, z: 0 }, scale: { x: 0.5, y: 0.5, z: 0.5 } }, Sprite: { color: { r: 0.6, g: 0.5, b: 0.1, a: 1 } } } }));
+    }
+    glow(coins[0]);
+});
+
+// The coin to go for next shines brighter.
+function glow(coin: Entity): void {
+    world.set(coin, "Sprite", { color: { r: 1, g: 0.85, b: 0.2, a: 1 } });
+}
+
+onTick(({ dt }) => {
+    if (done) return;
+    const p = world.get(player, "Transform")!.position;
+    world.set(player, "Transform", { position: { x: p.x + input.axis("move_x") * 4 * dt, y: p.y, z: 0 } });
+    const coin = coins[taken];
+    const c = world.get(coin, "Transform")!.position;
+    if (Math.abs(c.x - p.x) < 0.5) {
+        world.destroy(coin);
+        taken += 1;
+        events.emit("coin.taken", { taken });
+        glow(coins[taken]);
+        if (taken === coins.length) {
+            done = true;
+            events.emit("level.complete", { coins: taken });
+        }
+    }
+});
+
+expose("taken", () => taken);
+expose("done", () => done);
+"""
+
+COINS_FIXED_TS = COINS_TS.replace("""        glow(coins[taken]);
+        if (taken === coins.length) {""", """        if (taken < coins.length) glow(coins[taken]);
+        if (taken === coins.length) {""")
+
+
+def coins_setup(project_dir):
+    write_project(project_dir, COINS_TS)
+
+
+def coins_solve(env, project_dir):
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+        f.write(COINS_FIXED_TS)
+    return None
+
+
+def coins_check(env, answer):
+    env.command("project.reload", {})
+    seq = env.command("events.last_seq", {})["seq"]
+    colors = []
+    env.command("input.hold", {"action": "move_x", "ticks": 420})
+    for _ in range(14):
+        env.command("step", {"ticks": 30})
+        st = env.command("state", {})
+        if not st.get("ok", True):
+            return False, f"the game stopped with a script error: {st.get('errors')}"
+        colors.append({r["path"]: r["Sprite"]["color"] for r in env.command("world.query", {"name": "Coin_*", "with": ["Sprite"]})["entities"]})
+    taken = env.command("events.since", {"seq": seq, "type": "coin.taken"})["events"]
+    done = env.command("events.since", {"seq": seq, "type": "level.complete"})["events"]
+    if [e["data"]["taken"] for e in taken] != [1, 2, 3, 4]:
+        return False, f"coin.taken came as {[e['data'] for e in taken]}, not once for each of the four coins"
+    if len(done) != 1 or done[0]["data"].get("coins") != 4:
+        return False, f"level.complete came {len(done)} times ({[e['data'] for e in done]}), not once with coins 4"
+    # The next coin still glows: each time, the first coin left is the bright one and the rest are dim.
+    for c in colors:
+        left = sorted(c, key=lambda k: int(k.split("_")[1]))
+        for i, k in enumerate(left):
+            bright = c[k]["r"] > 0.9 if isinstance(c[k], dict) else c[k][0] > 0.9
+            if bright != (i == 0):
+                return False, f"the glow is wrong: with {left} left, {k} is {'bright' if bright else 'dim'}"
+    if env.command("state", {})["state"].get("done") is not True:
+        return False, "done is not true after the last coin"
+    return True, "four coins taken, the next one glowing each time, level.complete once, no script error"
+
+
+# A festival: two rows of poles, each with a cloth flag woven far finer than a flag that size needs,
+# so the cloth is where each tick goes. A fix keeps every flag where it is, its size, pin and colour,
+# still flying in the wind, at a weave of 8 by 5 or more.
+def festival_scene():
+    ents = [
+        {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 4, "z": 16}, "rotation": {"x": -0.1, "y": 0, "z": 0, "w": 0.995}}, "Camera": {"fov_degrees": 60}}},
+        {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.42, "y": 0.28, "z": 0.12, "w": 0.85}}, "Light": {"kind": 0, "intensity": 2.4}}},
+        {"name": "Square", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 20}}, "MeshRenderer": {"mesh": "cube", "color": [0.55, 0.5, 0.45]}, "RigidBody": {"kind": "static"}, "Collider": {"size": {"x": 20, "y": 0.5, "z": 10}}}},
+        {"name": "Wind", "components": {"Wind": {"direction": 10, "speed": 7, "gusts": 0.3}}},
+    ]
+    colors = [[0.85, 0.15, 0.15], [0.15, 0.45, 0.85], [0.95, 0.8, 0.1], [0.2, 0.7, 0.3]]
+    for i in range(24):
+        x, z = -11.5 + (i % 12) * 2.0, -2.0 if i < 12 else 2.0
+        ents.append({"name": f"Pole_{i}", "components": {"Transform": {"position": {"x": x, "y": 1.6, "z": z}, "scale": {"x": 0.08, "y": 3.2, "z": 0.08}}, "MeshRenderer": {"mesh": "cube", "color": [0.35, 0.35, 0.35]}}})
+        ents.append({"name": f"Flag_{i}", "components": {"Transform": {"position": {"x": x + 0.8, "y": 2.9, "z": z}}, "MeshRenderer": {"mesh": "cube", "color": colors[i % 4]},
+                                                          "Cloth": {"size": {"x": 1.6, "y": 1.0}, "segments": {"x": 48, "y": 30}, "pin": "left", "weight": 0.15}}})
+    return json.dumps({"format": "pocket-scene", "entities": ents}, indent=1) + "\n"
+
+
+def festival_setup(project_dir):
+    write_project(project_dir, "export {};\n", scene=festival_scene())
+
+
+def festival_look(env):
+    env.command("project.reload", {})
+    env.command("step", {"ticks": 60})
+    env.command("perf", {"reset": True})
+    env.command("step", {"ticks": 60})
+    perf = env.command("perf", {})
+    flags = {}
+    for r in env.command("world.query", {"name": "Flag_*", "with": ["Cloth"], "fields": ["Transform", "Cloth", "MeshRenderer"]})["entities"]:
+        pole_x = r["Transform"]["position"]["x"] - 0.8
+        reach = env.command("physics.cloth", {"entity": r["path"]})["bounds"]["max"]["x"] - pole_x
+        flags[r["path"]] = {"at": r["Transform"]["position"], "cloth": r["Cloth"], "color": r["MeshRenderer"]["color"], "reach": reach}
+    return {"tick_ms": perf["tick"]["avg_ms"], "systems": perf.get("systems", [])[:3], "flags": flags}
+
+
+def festival_before(env):
+    env.task_state = festival_look(env)
+    env.command("project.reload", {})
+    s = env.task_state
+    if len(s["flags"]) != 24 or not s["systems"] or s["systems"][0]["system"] != "cloth":
+        return False, f"the festival did not come up as meant: {len(s['flags'])} flags, costliest systems {s['systems']}"
+    return True, ""
+
+
+def festival_solve(env, project_dir):
+    path = os.path.join(project_dir, "scene.json")
+    with open(path) as f:
+        scene = json.load(f)
+    for e in scene["entities"]:
+        if e["name"].startswith("Flag_"):
+            e["components"]["Cloth"]["segments"] = {"x": 16, "y": 10}
+    with open(path, "w") as f:
+        json.dump(scene, f, indent=1)
+    return None
+
+
+def festival_check(env, answer):
+    was = getattr(env, "task_state", None)
+    if not was:
+        return False, "no measurement of the level before the fix"
+    now = festival_look(env)
+    if set(now["flags"]) != set(was["flags"]):
+        return False, f"the flags are not the same: {sorted(set(now['flags']) ^ set(was['flags']))[:4]}"
+    for k, f in now["flags"].items():
+        w = was["flags"][k]
+        if any(abs(f["at"][c] - w["at"][c]) > 1e-3 for c in ("x", "y", "z")):
+            return False, f"{k} moved from {w['at']} to {f['at']}"
+        for field in ("size", "pin", "weight"):
+            if f["cloth"].get(field) != w["cloth"].get(field):
+                return False, f"{k}'s Cloth {field} changed from {w['cloth'].get(field)} to {f['cloth'].get(field)}"
+        if f["color"] != w["color"]:
+            return False, f"{k}'s colour changed"
+        seg = f["cloth"].get("segments", {})
+        if seg.get("x", 0) < 8 or seg.get("y", 0) < 5:
+            return False, f"{k} is woven {seg.get('x')} by {seg.get('y')}, coarser than 8 by 5"
+        if f["reach"] < 1.2:
+            return False, f"{k} no longer flies: it reaches {f['reach']:.2f} past its pole"
+    if now["tick_ms"] > was["tick_ms"] * 0.25:
+        return False, f"a tick takes {now['tick_ms']:.2f} ms, not under a quarter of the {was['tick_ms']:.2f} ms it took"
+    return True, f"the same 24 flags flying, a tick {was['tick_ms']:.2f} -> {now['tick_ms']:.2f} ms"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -2398,6 +2574,10 @@ TASKS = [
      "task": "Players say this game gets slower the longer it runs. A cannon fires pellets that arc up and land. Find what is wrong and fix it, without changing how many pellets are fired or how they fly and where they land. Answer null."},
     {"name": "sinking_crate", "project": "blank", "ticks": 0, "script": True, "edits": "scene.json", "setup": sinking_setup, "solve": sinking_solve, "check": sinking_check,
      "task": "In this level three crates drop onto the floor, but the blue one (BlueCrate) falls straight through it. Find why and fix the level's scene so that BlueCrate lands on the floor like the other crates, leaving the rest as it is (the Ghost drifts through the floor on purpose). Answer the name of the component field that was wrong."},
+    {"name": "frozen_coins", "project": "blank", "ticks": 0, "script": True, "setup": coins_setup, "solve": coins_solve, "check": coins_check,
+     "task": "Players say this game freezes when they take the last coin: they walk right (the move_x action) and take the coins one by one, the next coin glowing each time, and taking the last should complete the level. Find what is wrong and fix it, leaving the rest of the game as it is. Answer null."},
+    {"name": "festival_flags", "project": "blank", "ticks": 0, "script": True, "edits": "scene.json", "setup": festival_setup, "before": festival_before, "solve": festival_solve, "check": festival_check,
+     "task": "Players say this festival level runs slowly: each tick takes far too long. Find what makes it slow and make a tick take under a quarter of the time it takes now, changing the level's scene and not how it looks to a player: the same flags on the same poles, the same sizes and colours, still flying in the wind. Answer null."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]

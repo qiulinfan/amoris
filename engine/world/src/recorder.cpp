@@ -215,7 +215,7 @@ Result<Json> Recorder::at(std::int64_t tick, EntityId entity) const {
     }
     Json arr = Json::array();
     for (const auto& [id, es] : s) arr.push_back(entity_json(id, es));
-    j["entities"] = arr;
+    j["entities"] = std::move(arr);
     return j;
 }
 

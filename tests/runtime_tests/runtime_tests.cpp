@@ -5560,9 +5560,15 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
     REQUIRE(world_family.size() > 20);
     for (const Json& c : world_family) REQUIRE(c.get<std::string>().starts_with("world."));
     REQUIRE(s.command("commands", Json{{"search", "raycast"}}).value() == Json::array({"physics.raycast", "physics2d.raycast"}));
+    // Without a family or a word, the text is an index of the names by family; with one, a line a command.
     const std::string text = s.command("commands", Json{{"text", true}}).value()["text"].get<std::string>();
-    REQUIRE(std::count(text.begin(), text.end(), '\n') == static_cast<long>(listed.size()) + 1);
-    REQUIRE(text.size() < 20000);   // inside the pi extension's 24,000 characters
+    REQUIRE(text.size() < 4000);
+    for (const Json& c : listed) {
+        const std::string n = c.get<std::string>();
+        REQUIRE(text.find(n.substr(n.find('.') + 1)) != std::string::npos);
+    }
+    const std::string world_text = s.command("commands", Json{{"text", true}, {"family", "world"}}).value()["text"].get<std::string>();
+    REQUIRE(std::count(world_text.begin(), world_text.end(), '\n') == static_cast<long>(world_family.size()) + 1);
     const Json light = s.command("world.schema", Json{{"component", "Light"}}).value();
     REQUIRE(light["components"].size() == 1);
     REQUIRE(light.dump().size() < 4000);

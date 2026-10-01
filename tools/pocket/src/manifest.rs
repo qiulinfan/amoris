@@ -52,7 +52,8 @@ fn default_std() -> String { "c++26".into() }
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigSection {
-    /// "native" (default) or "wasm" (Emscripten: the web build).
+    /// "native" (default), "wasm" (Emscripten: the web build) or "ios-sim" (the iOS Simulator on
+    /// Apple silicon, with Xcode's clang and SDK).
     #[serde(default)]
     pub target: String,
     /// Replaces [toolchain] warnings for this config (Emscripten's driver turns -Werror on its own notes).
@@ -108,8 +109,10 @@ pub struct Dependency {
     /// "system" dependency on Linux.
     #[serde(default)]
     pub pkg_config: Vec<String>,
-    /// What changes on another host: keyed "linux-aarch64", "linux-x86_64" or "linux" (the more
-    /// specific first), each field given replacing the one above. The fields above describe macOS.
+    /// What changes on another host or target: keyed "linux-aarch64", "linux-x86_64" or "linux"
+    /// (the more specific first) for the host, "ios-sim" then "ios" for the iOS Simulator target,
+    /// each field given replacing the one above. The fields above describe macOS. A kind of "skip"
+    /// leaves the dependency out there (a host tool on a device target).
     #[serde(default)]
     pub platforms: IndexMap<String, DependencyOverride>,
 }
@@ -135,10 +138,15 @@ pub struct DependencyOverride {
 impl Dependency {
     /// The dependency as this host has it: its platform's fields over the shared ones, and its
     /// pkg-config packages' include directories and libraries added.
-    fn for_host(mut self, os: &str, arch: &str) -> Result<Self> {
-        let keys = [format!("{os}-{arch}"), os.to_string()];
+    fn for_host(self, os: &str, arch: &str) -> Result<Self> {
+        self.resolved(&[format!("{os}-{arch}"), os.to_string()], os == "macos")
+    }
+
+    /// The dependency with the first of `keys` it has an override for laid over it; frameworks
+    /// only where Apple's are (`apple`).
+    fn resolved(mut self, keys: &[String], apple: bool) -> Result<Self> {
         let mut chosen = None;
-        for k in &keys {
+        for k in keys {
             if let Some(o) = self.platforms.get(k) {
                 chosen = Some(o.clone());
                 break;
@@ -158,7 +166,7 @@ impl Dependency {
             if let Some(v) = o.defines { self.defines = v; }
             if let Some(v) = o.pkg_config { self.pkg_config = v; }
         }
-        if os != "macos" {
+        if !apple {
             // Frameworks are Apple's.
             self.frameworks.clear();
             self.weak_frameworks.clear();
@@ -246,15 +254,18 @@ pub struct Workspace {
     pub root: PathBuf,
     pub file: WorkspaceFile,
     pub modules: IndexMap<String, Module>,
+    /// The dependencies as pocket.toml gives them, before the host's overrides: what another
+    /// target resolves its own from.
+    pub raw_dependencies: Vec<Dependency>,
 }
 
 impl Workspace {
     pub fn load(root: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(root.join("pocket.toml")).context("reading pocket.toml")?;
         let mut file: WorkspaceFile = toml::from_str(&text).context("parsing pocket.toml")?;
-        let deps = std::mem::take(&mut file.dependencies);
-        for d in deps {
-            file.dependencies.push(d.for_host(std::env::consts::OS, std::env::consts::ARCH)?);
+        let raw_dependencies = std::mem::take(&mut file.dependencies);
+        for d in &raw_dependencies {
+            file.dependencies.push(d.clone().for_host(std::env::consts::OS, std::env::consts::ARCH)?);
         }
         let mut modules = IndexMap::new();
         for dir in &file.workspace.module_dirs {
@@ -277,7 +288,21 @@ impl Workspace {
                 }
             }
         }
-        Ok(Workspace { root: root.to_path_buf(), file, modules })
+        Ok(Workspace { root: root.to_path_buf(), file, modules, raw_dependencies })
+    }
+
+    /// The workspace as a target sees it: for the iOS Simulator its dependencies resolved again
+    /// with their "ios-sim" and "ios" overrides; any other target builds on the host's.
+    pub fn for_target(&self, target: &str) -> Result<Workspace> {
+        if target != "ios-sim" {
+            return Ok(self.clone());
+        }
+        let mut ws = self.clone();
+        ws.file.dependencies.clear();
+        for d in &self.raw_dependencies {
+            ws.file.dependencies.push(d.clone().resolved(&["ios-sim".to_string(), "ios".to_string()], true)?);
+        }
+        Ok(ws)
     }
 
     pub fn dependency(&self, name: &str) -> Option<&Dependency> {

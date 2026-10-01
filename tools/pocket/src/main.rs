@@ -17,6 +17,7 @@ mod report;
 mod sdkdoc;
 mod toolchain;
 mod pack;
+mod ios;
 mod ts;
 mod watch;
 
@@ -44,7 +45,7 @@ enum Command {
         /// Re-fetch and rebuild even when the stamp matches.
         #[arg(long)]
         force: bool,
-        /// Target to set dependencies up for: native (default) or wasm (Emscripten).
+        /// Target to set dependencies up for: native (default), wasm (Emscripten) or ios-sim (the iOS Simulator).
         #[arg(long, default_value = "native")]
         target: String,
     },
@@ -68,6 +69,12 @@ enum Command {
         /// Keep running; rebundle and hot reload the project when its sources change.
         #[arg(long)]
         watch: bool,
+        /// Run it in the iOS Simulator: packed as an app (the ios-sim configuration), installed and started there.
+        #[arg(long)]
+        ios: bool,
+        /// With --ios: the simulated device, by name or UDID (default: one booted, else the first iPhone).
+        #[arg(long)]
+        device: Option<String>,
         /// Arguments passed to the executable after `--`.
         #[arg(last = true)]
         args: Vec<String>,
@@ -178,6 +185,9 @@ enum Command {
         /// With --web: ship the editor too; the page opens the project in the editor, paused.
         #[arg(long)]
         editor: bool,
+        /// Pack as an app for the iOS Simulator (dist/ios/<name>.app; the ios-sim configuration).
+        #[arg(long)]
+        ios: bool,
     },
     /// Open a project in the Pocket editor (a window with the scene, hierarchy, inspector and console).
     Editor {
@@ -265,7 +275,17 @@ fn run(cli: Cli) -> Result<report::Report> {
         Command::Setup { force, target } => commands::setup(&ws, force, &target),
         Command::Doctor => commands::doctor(&ws),
         Command::Build { targets, config, generate_only } => commands::build(&ws, &config, &targets, generate_only),
-        Command::Run { target, config, watch, args } => if watch { watch::watch(&ws, &config, &target, &args, false) } else { commands::run(&ws, &config, &target, &args) },
+        Command::Run { target, config, watch, ios, device, args } => {
+            if ios {
+                // The simulator's configuration unless one for it was named.
+                let config = if ws.target_of(&config).ok().as_deref() == Some("ios-sim") { config } else { "ios-sim".to_string() };
+                ios::run_ios(&ws, &config, &target, device.as_deref(), &args)
+            } else if watch {
+                watch::watch(&ws, &config, &target, &args, false)
+            } else {
+                commands::run(&ws, &config, &target, &args)
+            }
+        }
         Command::Test { config, filter } => commands::test(&ws, &config, filter.as_deref()),
         Command::Scenario { target, config, file, seeds, frames, only } => commands::scenario(&ws, &config, &target, file.as_deref(), seeds, frames, only.as_deref()),
         Command::Bench { target, config, file, frames, only } => commands::bench(&ws, &config, &target, file.as_deref(), frames, only.as_deref()),
@@ -286,8 +306,10 @@ fn run(cli: Cli) -> Result<report::Report> {
                 Ok(report::Report::failure("new", "give the project's name, or --list to see the samples to start from"))
             }
         }
-        Command::Pack { target, config, out, zip, web, editor } => {
-            if web {
+        Command::Pack { target, config, out, zip, web, editor, ios } => {
+            if ios {
+                pack::pack_ios(&ws, config.as_deref().unwrap_or("ios-sim"), &target, out.as_deref())
+            } else if web {
                 pack::pack_web(&ws, config.as_deref().unwrap_or("wasm"), &target, out.as_deref(), zip, editor)
             } else if editor {
                 Ok(report::Report::failure("pack", "--editor needs --web (native packs run the editor with `pocket editor`)"))
