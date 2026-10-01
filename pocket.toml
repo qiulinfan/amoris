@@ -116,6 +116,30 @@ url = "https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.1.1/wgpu-li
 sha256 = "95a4d90c071005a98d03eab348beaa6b07e16eb00d1dcdb9f8348f75eb97ec5a"
 
 [[dependencies]]
+name = "libwebp"
+version = "1.6.0"
+kind = "cmake"
+url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz"
+sha256 = "93a852c2b3efafee3723efd4636de855b46f9fe1efddd607e1f42f60fc8f2136"
+# The decoder alone (WebP images and glTF's EXT_texture_webp), without the tools or threads.
+cmake_args = ["-DBUILD_SHARED_LIBS=OFF", "-DWEBP_BUILD_ANIM_UTILS=OFF", "-DWEBP_BUILD_CWEBP=OFF", "-DWEBP_BUILD_DWEBP=OFF", "-DWEBP_BUILD_GIF2WEBP=OFF", "-DWEBP_BUILD_IMG2WEBP=OFF", "-DWEBP_BUILD_VWEBP=OFF", "-DWEBP_BUILD_WEBPINFO=OFF", "-DWEBP_BUILD_LIBWEBPMUX=OFF", "-DWEBP_BUILD_WEBPMUX=OFF", "-DWEBP_BUILD_EXTRAS=OFF", "-DWEBP_USE_THREAD=OFF"]
+include_dirs = ["include"]
+libs = ["lib/libwebpdecoder.a"]
+license = "BSD-3-Clause"
+
+[[dependencies]]
+name = "draco"
+version = "1.5.7"
+kind = "cmake"
+url = "https://github.com/google/draco/archive/refs/tags/1.5.7.tar.gz"
+sha256 = "bf6b105b79223eab2b86795363dfe5e5356050006a96521477973aba8f036fe1"
+# Draco-compressed glTF meshes (KHR_draco_mesh_compression): the bitstream glTF uses, no tools.
+cmake_args = ["-DBUILD_SHARED_LIBS=OFF", "-DDRACO_GLTF_BITSTREAM=ON", "-DDRACO_TESTS=OFF", "-DDRACO_JS_GLUE=OFF", "-DDRACO_TRANSCODER_SUPPORTED=OFF"]
+include_dirs = ["include"]
+libs = ["lib/libdraco.a"]
+license = "Apache-2.0"
+
+[[dependencies]]
 name = "freetype"
 version = "2.14.3"
 kind = "cmake"

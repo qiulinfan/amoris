@@ -106,7 +106,7 @@ POCKET_EVAL_RUNTIME=build/eval-runtime/pocket_runtime python3 tools/scripts/agen
     --runner "python3 tools/scripts/runners/opencode_agent.py --via mcp"
 ```
 
-With `POCKET_AGENT_TRACES=<dir>` the runners keep each task's event stream there, and `tools/scripts/trace_report.py <dir>` says what the agents spent their context on: per task the turns, tokens and calls and the largest output, and over the run the tools' output by tool and command, the files read and how much of them, and the calls that failed (`--task <name>` lists one task's calls in order). Most of what this file's Results report about reading and about where an agent got stuck came from it.
+With `POCKET_AGENT_TRACES=<dir>` the runners keep each task's event stream there, and `tools/scripts/trace_report.py <dir>` says what the agents spent their context on: per task the turns, tokens and calls and the largest output, and over the run the tools' output by tool and command, the files read and how much of them, and the calls that failed (`--task <name>` lists one task's calls in order). Most of what this file's Results report about reading and about where an agent got stuck came from it. The harness keeps the same summary in each task's row (`trace`: turns, tokens, calls, KB read, failed calls, and the calls before and after the first edit) and marks it `stuck` when the agent made at least fifteen calls after its first edit and more than twice as many as before it: the shape of a fix that did not take for a reason the agent had to dig for, as `frozen_coins` had before a reload dropped the old handlers.
 
 ## Results
 

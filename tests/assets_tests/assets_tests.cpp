@@ -1,6 +1,8 @@
 #include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
 
+#include <meshoptimizer.h>
+
 #include <catch_amalgamated.hpp>
 
 #include <algorithm>
@@ -1203,4 +1205,139 @@ TEST_CASE("voxel models: text layers and MagicaVoxel files meshed greedily, colo
     // green side by side hide the face between them (5 quads each), the floating one shows 6.
     REQUIRE((*x)->aabb_max.y == Catch::Approx(0.3f));
     REQUIRE((*x)->indices.size() == static_cast<std::size_t>(6 * (5 + 5 + 6)));
+}
+
+TEST_CASE("glTF compressed with EXT_meshopt_compression reads as the plain file would", "[assets][meshopt]") {
+    // A quad, its vertices (position and normal, 24 bytes apart) and its indices compressed by
+    // meshoptimizer's own encoders, the way gltfpack writes them, into a data URI.
+    const float verts[4][6] = {{0, 0, 0, 0, 0, 1}, {2, 0, 0, 0, 0, 1}, {2, 1, 0, 0, 0, 1}, {0, 1, 0, 0, 0, 1}};
+    const unsigned int idx[6] = {0, 1, 2, 0, 2, 3};
+    std::vector<unsigned char> v(meshopt_encodeVertexBufferBound(4, 24)), i(meshopt_encodeIndexBufferBound(6, 4));
+    v.resize(meshopt_encodeVertexBuffer(v.data(), v.size(), verts, 4, 24));
+    i.resize(meshopt_encodeIndexBuffer(i.data(), i.size(), idx, 6));
+    std::string raw(v.begin(), v.end());
+    raw.append(i.begin(), i.end());
+    static const char* kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string b64;
+    for (std::size_t k = 0; k < raw.size(); k += 3) {
+        const std::uint32_t b0 = static_cast<unsigned char>(raw[k]);
+        const std::uint32_t b1 = k + 1 < raw.size() ? static_cast<unsigned char>(raw[k + 1]) : 0u;
+        const std::uint32_t b2 = k + 2 < raw.size() ? static_cast<unsigned char>(raw[k + 2]) : 0u;
+        const std::uint32_t n = (b0 << 16) | (b1 << 8) | b2;
+        b64 += kAlphabet[(n >> 18) & 63];
+        b64 += kAlphabet[(n >> 12) & 63];
+        b64 += k + 1 < raw.size() ? kAlphabet[(n >> 6) & 63] : '=';
+        b64 += k + 2 < raw.size() ? kAlphabet[n & 63] : '=';
+    }
+    const Json ext_v{{"buffer", 0}, {"byteOffset", 0}, {"byteLength", v.size()}, {"byteStride", 24}, {"count", 4}, {"mode", "ATTRIBUTES"}};
+    const Json ext_i{{"buffer", 0}, {"byteOffset", v.size()}, {"byteLength", i.size()}, {"byteStride", 2}, {"count", 6}, {"mode", "TRIANGLES"}};
+    const Json doc{
+        {"asset", {{"version", "2.0"}}},
+        {"extensionsUsed", {"EXT_meshopt_compression"}},
+        {"extensionsRequired", {"EXT_meshopt_compression"}},
+        {"buffers", {Json{{"byteLength", raw.size()}, {"uri", "data:application/octet-stream;base64," + b64}}, Json{{"byteLength", 108}, {"extensions", {{"EXT_meshopt_compression", {{"fallback", true}}}}}}}},
+        {"bufferViews", {Json{{"buffer", 1}, {"byteOffset", 0}, {"byteLength", 96}, {"byteStride", 24}, {"extensions", {{"EXT_meshopt_compression", ext_v}}}},
+                         Json{{"buffer", 1}, {"byteOffset", 96}, {"byteLength", 12}, {"extensions", {{"EXT_meshopt_compression", ext_i}}}}}},
+        {"accessors", {Json{{"bufferView", 0}, {"componentType", 5126}, {"count", 4}, {"type", "VEC3"}, {"min", {0, 0, 0}}, {"max", {2, 1, 0}}},
+                       Json{{"bufferView", 0}, {"byteOffset", 12}, {"componentType", 5126}, {"count", 4}, {"type", "VEC3"}},
+                       Json{{"bufferView", 1}, {"componentType", 5123}, {"count", 6}, {"type", "SCALAR"}}}},
+        {"meshes", {Json{{"primitives", {Json{{"attributes", {{"POSITION", 0}, {"NORMAL", 1}}}, {"indices", 2}}}}}}},
+        {"nodes", {Json{{"mesh", 0}}}},
+        {"scenes", {Json{{"nodes", {0}}}}},
+        {"scene", 0}};
+    const std::filesystem::path dir = project() / "assets" / "meshopt-test";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "quad.gltf") << doc.dump();
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/meshopt-test/quad.gltf");
+    INFO((m ? std::string() : m.error().to_string()));
+    REQUIRE(m.has_value());
+    REQUIRE((*m)->vertices.size() == 4);
+    REQUIRE((*m)->indices.size() == 6);
+    REQUIRE((*m)->aabb_max.x == Catch::Approx(2.0f));
+    REQUIRE((*m)->aabb_max.y == Catch::Approx(1.0f));
+    REQUIRE((*m)->vertices[0].normal.z == Catch::Approx(1.0f));
+    REQUIRE((*m)->indices[5] == 3);
+}
+
+TEST_CASE("models gltf-transform compressed (meshopt, quantized) read as their originals", "[assets][meshopt]") {
+    // samples/assets/assets/meshopt/: arm, crate and fan from the sample run through
+    // `gltf-transform meshopt` (4.x): EXT_meshopt_compression and KHR_mesh_quantization, the arm's
+    // skin given the dequantization in its inverse bind matrices.
+    assets::AssetStore store(project());
+    for (const char* name : {"arm", "crate", "fan"}) {
+        INFO(name);
+        auto a = store.mesh(std::string("assets/") + name + ".glb");
+        auto b = store.mesh(std::string("assets/meshopt/") + name + ".glb");
+        REQUIRE(a.has_value());
+        REQUIRE(b.has_value());
+        REQUIRE((*b)->vertices.size() == (*a)->vertices.size());
+        REQUIRE((*b)->indices.size() == (*a)->indices.size());
+        for (int k = 0; k < 3; ++k) {
+            REQUIRE((&(*b)->aabb_min.x)[k] == Catch::Approx((&(*a)->aabb_min.x)[k]).margin(1e-3));
+            REQUIRE((&(*b)->aabb_max.x)[k] == Catch::Approx((&(*a)->aabb_max.x)[k]).margin(1e-3));
+        }
+    }
+}
+
+TEST_CASE("WebP images, alone and inside glTF (EXT_texture_webp)", "[assets][webp]") {
+    assets::AssetStore store(project());
+    // samples/assets/assets/webp/halves.webp (lossless, made with Pillow): 8 by 4, its left half
+    // opaque red, its right half half-transparent blue.
+    auto img = store.image("assets/webp/halves.webp");
+    REQUIRE(img.has_value());
+    REQUIRE((*img)->width == 8);
+    REQUIRE((*img)->height == 4);
+    const auto& px = (*img)->rgba;
+    REQUIRE((px[0] == 255 && px[1] == 0 && px[2] == 0 && px[3] == 255));
+    const std::size_t right = (1 * 8 + 6) * 4;
+    REQUIRE((px[right] == 0 && px[right + 2] == 255 && px[right + 3] == 128));
+    // The sample's plate through `gltf-transform webp`: its three textures only WebP now, embedded,
+    // read as the PNG originals within a lossy encoder's error.
+    auto a = store.mesh("assets/plate.glb");
+    auto b = store.mesh("assets/webp/plate.glb");
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    REQUIRE((*b)->materials.size() == (*a)->materials.size());
+    for (std::size_t m = 0; m < (*a)->materials.size(); ++m) {
+        for (auto field : {&assets::Material::texture, &assets::Material::normal_texture, &assets::Material::metallic_roughness_texture}) {
+            const std::string& ta = (*a)->materials[m].*field;
+            const std::string& tb = (*b)->materials[m].*field;
+            REQUIRE(ta.empty() == tb.empty());
+            if (ta.empty()) continue;
+            auto ia = store.image(ta);
+            auto ib = store.image(tb);
+            INFO(ta << " against " << tb);
+            REQUIRE(ia.has_value());
+            REQUIRE(ib.has_value());
+            REQUIRE((*ib)->width == (*ia)->width);
+            REQUIRE((*ib)->height == (*ia)->height);
+            double diff = 0;
+            for (std::size_t k = 0; k < (*ia)->rgba.size(); ++k) diff += std::abs(static_cast<int>((*ia)->rgba[k]) - static_cast<int>((*ib)->rgba[k]));
+            REQUIRE(diff / static_cast<double>((*ia)->rgba.size()) < 8.0);
+        }
+    }
+}
+
+TEST_CASE("models compressed with Draco (KHR_draco_mesh_compression) read as their originals", "[assets][draco]") {
+    // samples/assets/assets/draco/: the sample's arm, crate, fan and plate through
+    // `gltf-transform draco` (4.x, Draco 1.5). Draco keeps its own order of points and quantizes the
+    // positions (14 bits), so the triangles and the bounds are what must agree.
+    assets::AssetStore store(project());
+    for (const char* name : {"arm", "crate", "fan", "plate"}) {
+        INFO(name);
+        auto a = store.mesh(std::string("assets/") + name + ".glb");
+        auto b = store.mesh(std::string("assets/draco/") + name + ".glb");
+        REQUIRE(a.has_value());
+        INFO((b ? std::string() : b.error().to_string()));
+        REQUIRE(b.has_value());
+        REQUIRE((*b)->indices.size() == (*a)->indices.size());
+        REQUIRE((*b)->materials.size() == (*a)->materials.size());
+        for (int k = 0; k < 3; ++k) {
+            REQUIRE((&(*b)->aabb_min.x)[k] == Catch::Approx((&(*a)->aabb_min.x)[k]).margin(2e-3));
+            REQUIRE((&(*b)->aabb_max.x)[k] == Catch::Approx((&(*a)->aabb_max.x)[k]).margin(2e-3));
+        }
+        // Every triangle's corners face the way the file's normals say: the decoded normals are unit.
+        for (const assets::MeshVertex& v : (*b)->vertices) REQUIRE(length(v.normal) == Catch::Approx(1.0f).margin(1e-2));
+    }
 }

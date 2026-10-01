@@ -80,6 +80,8 @@ pub fn em_env(cmd: &mut Command, sdk: &Emsdk) {
     }
     cmd.env("EMSDK", &sdk.root);
     cmd.env("EMSDK_QUIET", "1");
+    // Some CMake projects (Draco) look for Emscripten by this variable, as emsdk_env.sh sets it.
+    cmd.env("EMSCRIPTEN", &sdk.emscripten);
     let path = std::env::var_os("PATH").unwrap_or_default();
     let mut paths = vec![sdk.emscripten.clone()];
     paths.extend(std::env::split_paths(&path));

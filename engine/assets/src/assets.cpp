@@ -4,7 +4,13 @@
 #include <pocket/core/log.hpp>
 #include <pocket/core/tangents.hpp>
 
+#include <meshoptimizer.h>
 #include <stb_image.h>
+#include <webp/decode.h>
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#include <draco/compression/decode.h>
+#pragma clang diagnostic pop
 #include <nanosvg.h>
 #include <nanosvgrast.h>
 
@@ -1238,7 +1244,9 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
     // Buffers: the GLB chunk, data URIs, or files next to the .gltf.
     for (const Json& b : g.doc.value("buffers", Json::array())) {
         if (!b.contains("uri")) {
-            g.buffers.push_back(bin_chunk);
+            // A compressed file's fallback buffer has no bytes at all: its views are decoded below.
+            const bool fallback = b.contains("extensions") && b["extensions"].contains("EXT_meshopt_compression");
+            g.buffers.push_back(fallback ? std::string() : bin_chunk);
             continue;
         }
         std::string uri = b["uri"].get<std::string>();
@@ -1270,6 +1278,98 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             g.buffers.push_back(std::string(file.begin(), file.end()));
         }
     }
+    // EXT_meshopt_compression (what gltfpack and gltf-transform's meshopt write): each compressed
+    // view decoded, with its filter, into a buffer of its own that the view then reads plainly.
+    if (g.doc.contains("bufferViews") && g.doc["bufferViews"].is_array()) {
+        for (Json& bv : g.doc["bufferViews"]) {
+            if (!bv.contains("extensions") || !bv["extensions"].contains("EXT_meshopt_compression")) continue;
+            const Json& m = bv["extensions"]["EXT_meshopt_compression"];
+            const int from = m.value("buffer", -1);
+            const std::size_t offset = m.value("byteOffset", std::size_t{0}), length = m.value("byteLength", std::size_t{0});
+            const std::size_t stride = m.value("byteStride", std::size_t{0}), count = m.value("count", std::size_t{0});
+            const std::string mode = m.value("mode", std::string("ATTRIBUTES")), filter = m.value("filter", std::string("NONE"));
+            if (from < 0 || from >= static_cast<int>(g.buffers.size()) || offset + length > g.buffers[static_cast<std::size_t>(from)].size() || stride == 0)
+                return fail("bad_gltf", "{}: a compressed bufferView points outside its buffer", display_path);
+            std::string out(count * stride, '\0');
+            const auto* in = reinterpret_cast<const unsigned char*>(g.buffers[static_cast<std::size_t>(from)].data()) + offset;
+            const int rc = mode == "ATTRIBUTES" ? meshopt_decodeVertexBuffer(out.data(), count, stride, in, length)
+                         : mode == "TRIANGLES" ? meshopt_decodeIndexBuffer(out.data(), count, stride, in, length)
+                         : mode == "INDICES" ? meshopt_decodeIndexSequence(out.data(), count, stride, in, length) : -100;
+            if (rc != 0) return fail("bad_gltf", "{}: a compressed bufferView ({}) did not decode ({})", display_path, mode, rc);
+            if (filter == "OCTAHEDRAL") meshopt_decodeFilterOct(out.data(), count, stride);
+            else if (filter == "QUATERNION") meshopt_decodeFilterQuat(out.data(), count, stride);
+            else if (filter == "EXPONENTIAL") meshopt_decodeFilterExp(out.data(), count, stride);
+            g.buffers.push_back(std::move(out));
+            bv["buffer"] = g.buffers.size() - 1;
+            bv["byteOffset"] = 0;
+            bv["byteLength"] = count * stride;
+            if (mode == "ATTRIBUTES") bv["byteStride"] = stride;
+            else bv.erase("byteStride");
+            bv["extensions"].erase("EXT_meshopt_compression");
+        }
+    }
+    // KHR_draco_mesh_compression: a primitive's attributes and indices decoded by Draco from the view
+    // it names, into buffers of their own read through new accessors (floats; joints as 16-bit; the
+    // indices as 32-bit), the primitive pointed at them.
+    if (g.doc.contains("meshes") && g.doc["meshes"].is_array()) {
+        for (Json& gm : g.doc["meshes"]) {
+            if (!gm.contains("primitives") || !gm["primitives"].is_array()) continue;
+            for (Json& prim : gm["primitives"]) {
+                if (!prim.contains("extensions") || !prim["extensions"].contains("KHR_draco_mesh_compression")) continue;
+                const Json& dx = prim["extensions"]["KHR_draco_mesh_compression"];
+                const int view = dx.value("bufferView", -1);
+                if (view < 0 || view >= static_cast<int>(g.doc.value("bufferViews", Json::array()).size())) return fail("bad_gltf", "{}: a Draco primitive names no bufferView", display_path);
+                const Json& bv = g.doc["bufferViews"][static_cast<std::size_t>(view)];
+                const int buffer = bv.value("buffer", -1);
+                const std::size_t offset = bv.value("byteOffset", std::size_t{0}), length = bv.value("byteLength", std::size_t{0});
+                if (buffer < 0 || buffer >= static_cast<int>(g.buffers.size()) || offset + length > g.buffers[static_cast<std::size_t>(buffer)].size()) return fail("bad_gltf", "{}: a Draco primitive's view is outside its buffer", display_path);
+                draco::DecoderBuffer in;
+                in.Init(g.buffers[static_cast<std::size_t>(buffer)].data() + offset, length);
+                draco::Decoder decoder;
+                auto decoded = decoder.DecodeMeshFromBuffer(&in);
+                if (!decoded.ok()) return fail("bad_gltf", "{}: a Draco primitive did not decode: {}", display_path, decoded.status().error_msg_string());
+                const std::unique_ptr<draco::Mesh> dm = std::move(decoded).value();
+                const std::size_t points = dm->num_points();
+                // One accessor over a new buffer of `bytes`, `components` wide.
+                auto add_accessor = [&](std::string bytes, int component_type, int components, std::size_t count) {
+                    g.buffers.push_back(std::move(bytes));
+                    Json view_j{{"buffer", g.buffers.size() - 1}, {"byteOffset", 0}, {"byteLength", g.buffers.back().size()}};
+                    g.doc["bufferViews"].push_back(view_j);
+                    static const char* kTypes[] = {"", "SCALAR", "VEC2", "VEC3", "VEC4"};
+                    Json acc{{"bufferView", g.doc["bufferViews"].size() - 1}, {"componentType", component_type}, {"count", count}, {"type", kTypes[std::clamp(components, 1, 4)]}};
+                    if (!g.doc.contains("accessors")) g.doc["accessors"] = Json::array();
+                    g.doc["accessors"].push_back(acc);
+                    return static_cast<int>(g.doc["accessors"].size()) - 1;
+                };
+                for (auto& [name, id] : dx.value("attributes", Json::object()).items()) {
+                    const draco::PointAttribute* pa = dm->GetAttributeByUniqueId(id.get<std::uint32_t>());
+                    if (!pa) return fail("bad_gltf", "{}: a Draco primitive has no attribute {} for {}", display_path, id.dump(), name);
+                    const int n = pa->num_components();
+                    std::string bytes;
+                    if (name.starts_with("JOINTS_")) {
+                        bytes.resize(points * static_cast<std::size_t>(n) * 2);
+                        auto* out = reinterpret_cast<std::uint16_t*>(bytes.data());
+                        for (std::size_t p = 0; p < points; ++p) pa->ConvertValue<std::uint16_t>(pa->mapped_index(draco::PointIndex(static_cast<std::uint32_t>(p))), static_cast<std::int8_t>(n), out + p * static_cast<std::size_t>(n));
+                        prim["attributes"][name] = add_accessor(std::move(bytes), 5123, n, points);
+                    } else {
+                        bytes.resize(points * static_cast<std::size_t>(n) * 4);
+                        auto* out = reinterpret_cast<float*>(bytes.data());
+                        // Normalized integers (colours, weights) come out as their 0..1 floats.
+                        for (std::size_t p = 0; p < points; ++p) pa->ConvertValue<float>(pa->mapped_index(draco::PointIndex(static_cast<std::uint32_t>(p))), static_cast<std::int8_t>(n), out + p * static_cast<std::size_t>(n));
+                        prim["attributes"][name] = add_accessor(std::move(bytes), 5126, n, points);
+                    }
+                }
+                std::string idx(static_cast<std::size_t>(dm->num_faces()) * 12, '\0');
+                auto* out = reinterpret_cast<std::uint32_t*>(idx.data());
+                for (std::uint32_t fi = 0; fi < dm->num_faces(); ++fi) {
+                    const auto& face = dm->face(draco::FaceIndex(fi));
+                    for (int c = 0; c < 3; ++c) out[fi * 3 + static_cast<std::uint32_t>(c)] = face[c].value();
+                }
+                prim["indices"] = add_accessor(std::move(idx), 5125, 1, static_cast<std::size_t>(dm->num_faces()) * 3);
+                prim["extensions"].erase("KHR_draco_mesh_compression");
+            }
+        }
+    }
     Mesh mesh;
     mesh.path = display_path;
     // Materials.
@@ -1278,8 +1378,12 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         if (!info.is_object() || !info.contains("index")) return "";
         int ti = info["index"].get<int>();
         const Json& textures = g.doc.value("textures", Json::array());
-        if (ti < 0 || ti >= static_cast<int>(textures.size()) || !textures[static_cast<std::size_t>(ti)].contains("source")) return "";
-        int si = textures[static_cast<std::size_t>(ti)]["source"].get<int>();
+        if (ti < 0 || ti >= static_cast<int>(textures.size())) return "";
+        // EXT_texture_webp names its WebP image beside (or instead of) the plain source.
+        const Json& tex = textures[static_cast<std::size_t>(ti)];
+        const Json* webp = tex.contains("extensions") && tex["extensions"].contains("EXT_texture_webp") ? &tex["extensions"]["EXT_texture_webp"] : nullptr;
+        if (!(webp && webp->contains("source")) && !tex.contains("source")) return "";
+        int si = webp && webp->contains("source") ? (*webp)["source"].get<int>() : tex["source"].get<int>();
         const Json& images = g.doc.value("images", Json::array());
         if (si < 0 || si >= static_cast<int>(images.size())) return "";
         const Json& img = images[static_cast<std::size_t>(si)];
@@ -1702,6 +1806,50 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             }
         }
     }
+    // A skin whose every joint at rest, times its inverse bind matrix, comes to one transform other
+    // than identity was written with that transform taken out of its vertices: the tools that apply
+    // KHR_mesh_quantization store the positions small and make the inverse bind matrices undo it.
+    // Put back into the vertices and out of the matrices, the mesh drawn without a pose is where the
+    // file means it, and posed exactly as before (the same product reaches every vertex).
+    for (std::size_t si = 0; si < mesh.skins.size(); ++si) {
+        Skin& skin = mesh.skins[si];
+        const Mat4 t = mesh.rest_global(skin.joints[0]) * skin.inverse_bind[0];
+        bool same = true, identity = true;
+        const Mat4 id = Mat4::identity();
+        for (std::size_t j = 0; j < skin.joints.size() && same; ++j) {
+            const Mat4 m = mesh.rest_global(skin.joints[j]) * skin.inverse_bind[j];
+            for (int k = 0; k < 16; ++k) {
+                const float scale = std::max(1.0f, std::fabs(t.m[k]));
+                if (std::fabs(m.m[k] - t.m[k]) > 1e-4f * scale) same = false;
+            }
+        }
+        for (int k = 0; k < 16; ++k) identity = identity && std::fabs(t.m[k] - id.m[k]) < 1e-5f;
+        if (!same || identity) continue;
+        std::vector<char> moved(mesh.vertices.size(), 0);
+        Mat4 normal_m;   // normals turn by the inverse transpose
+        const Mat4 inv = t.inverse();
+        for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) normal_m.m[r * 4 + c] = inv.m[c * 4 + r];
+        for (const Submesh& sm : mesh.submeshes) {
+            if (sm.skin != static_cast<int>(si)) continue;
+            for (std::uint32_t i = sm.first_index; i < sm.first_index + sm.index_count && i < mesh.indices.size(); ++i) {
+                const std::uint32_t v = mesh.indices[i];
+                if (v >= moved.size() || moved[v]) continue;
+                moved[v] = 1;
+                MeshVertex& mv = mesh.vertices[v];
+                mv.position = t.transform_point(mv.position);
+                const Vec3 n = normal_m.transform_dir(mv.normal);
+                if (length(n) > 1e-12f) mv.normal = normalize(n);
+                const Vec3 tg = t.transform_dir(Vec3{mv.tangent.x, mv.tangent.y, mv.tangent.z});
+                if (length(tg) > 1e-12f) mv.tangent = Vec4{normalize(tg).x, normalize(tg).y, normalize(tg).z, mv.tangent.w};
+                for (MorphTarget& mt : mesh.morph_targets) {
+                    if (v < mt.positions.size()) mt.positions[v] = t.transform_dir(mt.positions[v]);
+                    if (v < mt.normals.size()) mt.normals[v] = normal_m.transform_dir(mt.normals[v]);
+                }
+            }
+        }
+        const Mat4 undo = t.inverse();
+        for (Mat4& ibm : skin.inverse_bind) ibm = ibm * undo;
+    }
     add_back_faces(mesh);
     // The bounds, with the moving parts where their nodes rest.
     bool first = true;
@@ -1789,6 +1937,18 @@ Result<Image> decode_svg(const std::string& bytes, const std::string& display_pa
 
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path) {
     int w = 0, h = 0, channels = 0;
+    if (bytes.size() >= 12 && bytes.compare(0, 4, "RIFF") == 0 && bytes.compare(8, 4, "WEBP") == 0) {
+        // WebP (lossy or lossless, with or without alpha), through libwebp's decoder.
+        std::uint8_t* rgba = WebPDecodeRGBA(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), &w, &h);
+        if (!rgba) return fail("bad_image", "{}: not a WebP image libwebp can read", display_path);
+        Image img;
+        img.path = display_path;
+        img.width = static_cast<std::uint32_t>(w);
+        img.height = static_cast<std::uint32_t>(h);
+        img.rgba.assign(rgba, rgba + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
+        WebPFree(rgba);
+        return img;
+    }
     const auto* data = reinterpret_cast<const stbi_uc*>(bytes.data());
     if (stbi_is_hdr_from_memory(data, static_cast<int>(bytes.size()))) {
         // Light levels beyond white (a sky, a panorama): kept as floats, and an 8-bit view beside them.
@@ -2162,7 +2322,7 @@ Json AssetStore::list() const {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             const bool model = !model_importer(ext).empty();
-            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".sfx" || ext == ".song" ? "audio" : ext == ".mtl" ? "material" : "other";
+            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" || ext == ".webp" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".sfx" || ext == ".song" ? "audio" : ext == ".mtl" ? "material" : "other";
 
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();

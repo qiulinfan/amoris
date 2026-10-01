@@ -2726,6 +2726,29 @@ def run_external(cmd, env, task, timeout, project_dir):
     return answer, proc.returncode, proc.stderr[-2000:], metrics
 
 
+def trace_summary(name):
+    """What the task's trace says (POCKET_AGENT_TRACES, tools/scripts/trace_report.py): turns,
+    tokens, calls, what was read, and the calls before and after the first edit; `stuck` when the
+    agent made many more calls after its first edit than before it, the shape of a fix that did not
+    take for a reason the agent had to dig for."""
+    traces = os.environ.get("POCKET_AGENT_TRACES")
+    path = os.path.join(traces, f"{name}.jsonl") if traces else ""
+    if not path or not os.path.exists(path):
+        return None
+    import trace_report  # noqa: E402 - beside this file
+    r = trace_report.task_report(path)
+    calls = r["calls"]
+    first_edit = next((i for i, c in enumerate(calls) if c["tool"] in ("edit", "write") or c["tool"].endswith("project_apply")), None)
+    s = {"turns": r["turns"], "tokens": r["total_tokens"], "calls": len(calls),
+         "read_kb": round(sum(c["bytes"] for c in calls if c["tool"] in ("read", "grep")) / 1024, 1),
+         "failed_calls": sum(1 for c in calls if c["error"])}
+    if first_edit is not None:
+        s["calls_before_edit"] = first_edit
+        s["calls_after_edit"] = len(calls) - first_edit - 1
+        s["stuck"] = s["calls_after_edit"] >= 15 and s["calls_after_edit"] > 2 * max(first_edit, 1)
+    return s
+
+
 def run(runner="reference", tasks=None, timeout=300, log=print, project_root=None, rows_to=None):
     chosen = [t for t in TASKS if not tasks or t["name"] in tasks]
     results = []
@@ -2784,6 +2807,9 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         row = {"name": t["name"], "project": t["project"], "ok": bool(ok), "seconds": seconds, "detail": detail, "answer": answer, "error": error}
         if metrics:
             row["metrics"] = metrics
+        trace = trace_summary(t["name"])
+        if trace:
+            row["trace"] = trace
         results.append(row)
         if rows_to:
             # Each task's row as it is done, so a long run that is cut short keeps what it did.
@@ -2792,6 +2818,8 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         spent = f"  {metrics.get('tool_calls', '?')} calls, {metrics.get('tokens', {}).get('total', '?')} tokens, ${metrics.get('cost_usd', 0):.4f}" if metrics else ""
         if metrics.get("peeked"):
             spent += f"  PEEKED at the harness: {metrics['peeked'][:3]}"
+        if row.get("trace", {}).get("stuck"):
+            spent += f"  STUCK after its first edit: {row['trace']['calls_after_edit']} calls after against {row['trace']['calls_before_edit']} before"
         log(f"{'pass' if ok else 'FAIL'}  {t['name']:<14} {t['project']:<11} {seconds:5.1f} s  {detail}{spent}{('  [' + error + ']') if error else ''}")
     passed = sum(1 for r in results if r["ok"])
     if EVAL_DIR:

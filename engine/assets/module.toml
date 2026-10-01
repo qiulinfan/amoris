@@ -4,4 +4,4 @@ description = "Project assets: a minimal glTF 2.0 reader (.glb and .gltf; positi
 sources = ["src/**/*.cpp"]
 public_include = ["include"]
 public_deps = ["pocket_core"]
-private_deps = ["stb", "meshoptimizer"]
+private_deps = ["stb", "meshoptimizer", "libwebp", "draco"]
