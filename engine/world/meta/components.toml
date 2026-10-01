@@ -715,6 +715,39 @@ fields = [
 ]
 
 [[record]]
+name = "PathPoint"
+doc = "A point of a Path, in its entity's own space (docs/design/paths.md)."
+fields = [
+    { name = "x", type = "f32", default = 0.0, doc = "Across." },
+    { name = "y", type = "f32", default = 0.0, doc = "Up." },
+    { name = "z", type = "f32", default = 0.0, doc = "Toward the viewer." },
+]
+
+[[component]]
+name = "Path"
+doc = "A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies."
+fields = [
+    { name = "points", type = "list:PathPoint", doc = "Its points in order; two at least." },
+    { name = "closed", type = "bool", default = false, doc = "The last point runs back to the first: a loop." },
+    { name = "smooth", type = "bool", default = true, doc = "A curve through every point (Catmull-Rom); false runs straight from point to point." },
+    { name = "length", type = "f32", default = 0.0, doc = "Its length in world units (written by the engine)." },
+]
+
+[[component]]
+name = "PathFollower"
+doc = "Moves its entity along a Path at a speed (docs/design/paths.md): a patrol, a car on a racing line, a platform on its run, a creep down a lane. Every tick before physics the engine moves `distance` on by `speed`, puts the Transform there (plus `offset`) and, with `orient`, turns it along the path; path.arrived and path.looped say when it comes to an end."
+fields = [
+    { name = "path", type = "string", default = "", doc = "The entity with the Path, by name or path." },
+    { name = "speed", type = "f32", default = 1.0, doc = "World units a second along the path (negative goes back)." },
+    { name = "distance", type = "f32", default = 0.0, doc = "How far along it is (written by the engine; write it to put it elsewhere)." },
+    { name = "mode", type = "i32", default = 0, enum = ["once", "loop", "pingpong"], doc = "0 once (stops at the end, finished), 1 loop (round again; a closed path goes on round), 2 pingpong (back and forth)." },
+    { name = "orient", type = "i32", default = 0, enum = ["none", "forward", "flat"], doc = "0 leaves its rotation alone, 1 turns its -Z (forward) along the path with Y up, 2 turns it about Z so its +X points along (2D)." },
+    { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Added to the point on the path (in world units, not turned)." },
+    { name = "playing", type = "bool", default = true, doc = "false holds it where it is." },
+    { name = "finished", type = "bool", default = false, doc = "It came to the end of a path it runs once (written by the engine)." },
+]
+
+[[record]]
 name = "Point2D"
 doc = "A point in a 2D shape's own space (docs/design/physics2d.md)."
 fields = [

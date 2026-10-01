@@ -322,6 +322,13 @@ void Session::apply_project_settings() {
             if (auto r = load_sprite_sheet(path.get<std::string>(), name); !r) log::warn("runtime", "sprite sheet '{}': {}", name, r.error().to_string());
         }
     }
+    if (project_.contains("render") && project_["render"].is_object() && project_["render"].contains("post")) {
+        // [render] post = ["effects/crt.wgsl", {shader = "...", params = [...]}]: the project's
+        // post effects (docs/design/rendering.md, Post effects), read again on project.reload.
+        auto r = set_post_effects(project_["render"]["post"]);
+        if (!r) log::warn("runtime", "[render] post: {}", r.error().message);
+        else for (const Json& e : (*r)["effects"]) if (!e.value("ok", false)) log::warn("runtime", "post effect {}: {}", e.value("name", std::string()), e.value("error", std::string()));
+    }
     if (project_.contains("render") && project_["render"].is_object()) {
         renderer::ShadowSettings s = renderer_->shadows();
         const Json& r = project_["render"];
@@ -494,6 +501,7 @@ Status Session::start() {
     pc.height = height;
     pc.headless = options_.headless;
     pc.visible = options_.visible;
+    pc.fullscreen = window.value("fullscreen", false);
     POCKET_TRY(platform, platform::Platform::create(pc));
     platform_ = std::move(platform);
 
@@ -858,6 +866,11 @@ void Session::run_tick() {
         pending_holds_.clear();
         if (!downs.empty()) inject_events(std::move(downs));
     }
+    if (!pending_events_.empty()) {
+        std::vector<platform::Event> due;
+        due.swap(pending_events_);
+        inject_events(std::move(due));
+    }
     in_tick_ = true;
     if (assets_) assets_->set_tile_time(static_cast<std::uint64_t>(clock_.sim_seconds() * 1000.0));   // the animated tiles' clock
     Json t;
@@ -882,6 +895,7 @@ void Session::run_tick() {
     sw = Stopwatch{};
     update_terrains();
     timelines_->step(*world_, static_cast<float>(clock_.tick_seconds));   // before physics: a moved platform is where the bodies meet it (docs/design/timelines.md)
+    paths_.step(*world_, static_cast<float>(clock_.tick_seconds));        // the same for what follows a path (docs/design/paths.md)
     const std::uint64_t before_physics = world_->events().last_seq();
     physics_->step(*world_, clock_.tick_seconds);
     physics_->move_characters(*world_, clock_.tick_seconds);   // after the bodies: platforms have moved (docs/design/physics.md, Characters)
@@ -1303,6 +1317,50 @@ Status Session::restore_maps(const Json& maps) {
         assets_->put_tilemap(std::move(map));
     }
     return {};
+}
+
+// A project's post effects from a list (render.post, [render] post): each a shader file in the
+// project or code given whole, with its parameters; answered per effect, with the compiler's message
+// for one that did not compile (it is left out; the rest run).
+Result<Json> Session::set_post_effects(const Json& list) {
+    if (!list.is_array()) return fail("bad_args", "effects is a list: [\"effects/crt.wgsl\", {{shader, params}}, {{code, name}}]");
+    std::vector<renderer::Renderer::PostEffect> defs;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const Json& e = list[i];
+        renderer::Renderer::PostEffect d;
+        std::string shader = e.is_string() ? e.get<std::string>() : e.value("shader", std::string());
+        if (!shader.empty()) {
+            POCKET_TRY(full, inside_dir(options_.project_dir, shader));
+            POCKET_TRY(text, fs::read_text(full));
+            d.wgsl = text;
+            d.name = std::filesystem::path(shader).stem().string();
+        } else if (e.is_object() && e.contains("code") && e["code"].is_string()) {
+            d.wgsl = e["code"].get<std::string>();
+            d.name = std::format("effect{}", i + 1);
+        } else {
+            return fail("bad_args", "effect {} has neither a shader file nor code", i + 1);
+        }
+        if (e.is_object()) {
+            d.name = e.value("name", d.name);
+            d.enabled = e.value("enabled", true);
+            if (e.contains("params") && e["params"].is_array())
+                for (std::size_t k = 0; k < std::min<std::size_t>(8, e["params"].size()); ++k) d.params[k] = e["params"][k].is_number() ? e["params"][k].get<float>() : 0.0f;
+        }
+        defs.push_back(std::move(d));
+    }
+    const std::vector<std::string> errors = renderer_->set_post_effects(defs);
+    Json out = Json::array();
+    bool all = true;
+    for (std::size_t i = 0; i < defs.size(); ++i) {
+        Json r{{"name", defs[i].name}, {"ok", errors[i].empty()}};
+        if (!errors[i].empty()) {
+            r["error"] = errors[i];
+            all = false;
+        }
+        out.push_back(r);
+    }
+    world_->events().emit(clock_.tick, "render.post", 0, Json{{"effects", defs.size()}, {"ok", all}}, 0, "engine");
+    return Json{{"effects", out}, {"ok", all}};
 }
 
 // Meshes made by code (docs/design/assets.md, Meshes made by code): vertices and triangles given as
@@ -2840,6 +2898,30 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         }
         return Json{{"spawned", spawned}, {"count", spawned.size()}};
     }
+    if (op == "paths") {
+        // Tiled's polylines and polygons (of one layer, or all) as Paths a PathFollower can run
+        // along (docs/design/paths.md): one entity each, named after the object, its points in the
+        // world where the map draws them; a polygon closed. Straight from point to point unless smooth.
+        const std::string layer_name = opt<std::string>(p, "layer", "");
+        const bool smooth = opt<bool>(p, "smooth", false);
+        Json made = Json::array();
+        int n = 0;
+        for (const assets::ObjectLayer& ol : map->object_layers) {
+            if (!layer_name.empty() && ol.name != layer_name) continue;
+            for (const assets::MapObject& o : ol.objects) {
+                if (o.points.size() < 2) continue;
+                Json pts = Json::array();
+                for (const Vec2& q : o.points) {
+                    const Vec2 qp = map->object_pixel(o.x + q.x, o.y + q.y);
+                    pts.push_back(Json{{"x", origin.x + qp.x * sx}, {"y", origin.y - qp.y * sy}, {"z", origin.z}});
+                }
+                const std::string name = o.name.empty() ? std::format("Path_{}", ++n) : o.name;
+                POCKET_TRY(spawned, command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json::object()}, {"Path", Json{{"points", pts}, {"closed", o.closed}, {"smooth", smooth}}}}}}, "tilemap"));
+                made.push_back(Json{{"object", o.name}, {"layer", ol.name}, {"entity", spawned["id"]}, {"path", spawned["path"]}, {"points", pts.size()}, {"closed", o.closed}});
+            }
+        }
+        return Json{{"paths", made}};
+    }
     if (op == "objects") {
         std::string layer_name = opt<std::string>(p, "layer", "");
         Json out = Json::array();
@@ -2859,6 +2941,16 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
                 oj["height"] = wh;
                 oj["center"] = Json{{"x", wx + ww / 2}, {"y", o.gid ? wy + wh / 2 : wy - wh / 2}};
                 if (o.gid) oj["gid"] = o.gid & assets::TileMap::kIdMask;
+                if (!o.points.empty()) {
+                    // A polyline's or polygon's points in the world.
+                    Json pts = Json::array();
+                    for (const Vec2& q : o.points) {
+                        const Vec2 qp = map->object_pixel(o.x + q.x, o.y + q.y);
+                        pts.push_back(Json{{"x", origin.x + qp.x * sx}, {"y", origin.y - qp.y * sy}});
+                    }
+                    oj["points"] = pts;
+                    oj[o.closed ? "polygon" : "polyline"] = true;
+                }
                 out.push_back(oj);
             }
         }
@@ -3692,13 +3784,14 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
     }
     if (op == "debug") {
         if (p.contains("colliders") && p["colliders"].is_boolean()) debug_flags_.colliders = p["colliders"].get<bool>();
+        if (p.contains("paths") && p["paths"].is_boolean()) debug_flags_.paths = p["paths"].get<bool>();
         if (p.contains("joints") && p["joints"].is_boolean()) debug_flags_.joints = p["joints"].get<bool>();
         if (p.contains("lights") && p["lights"].is_boolean()) debug_flags_.lights = p["lights"].get<bool>();
         if (p.contains("nav") && p["nav"].is_boolean()) debug_flags_.nav = p["nav"].get<bool>();
         if (p.contains("bounds") && p["bounds"].is_boolean()) debug_flags_.bounds = p["bounds"].get<bool>();
         if (p.contains("axes") && p["axes"].is_boolean()) debug_flags_.axes = p["axes"].get<bool>();
-        if (p.contains("all") && p["all"].is_boolean()) debug_flags_.colliders = debug_flags_.joints = debug_flags_.bounds = debug_flags_.axes = debug_flags_.nav = debug_flags_.lights = p["all"].get<bool>();
-        return Json{{"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lights", debug_flags_.lights}, {"lines", renderer_->stats().debug_lines}};
+        if (p.contains("all") && p["all"].is_boolean()) debug_flags_.colliders = debug_flags_.joints = debug_flags_.bounds = debug_flags_.axes = debug_flags_.nav = debug_flags_.lights = debug_flags_.paths = p["all"].get<bool>();
+        return Json{{"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lights", debug_flags_.lights}, {"paths", debug_flags_.paths}, {"lines", renderer_->stats().debug_lines}};
     }
     if (op == "msaa") {
         // 1 or 4 samples per pixel; anything above one means four.
@@ -4384,6 +4477,25 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         j["finger"] = finger;
         j["phase"] = phase;
         return j;
+    }
+    if (op == "axis") {
+        // An action's value set directly, -1..1, until set again (0 lets go): an on-screen stick's
+        // tilt, or an agent pushing a stick halfway. Past 0.5 either way the action is down.
+        const std::string action = opt<std::string>(p, "action", "");
+        if (!input_map_.has_action(action)) return fail("no_such_action", "no action named '{}' (input.actions lists them)", action);
+        if (!p.contains("value") || !p["value"].is_number()) return fail("bad_args", "input.axis needs value, -1 to 1");
+        platform::Event e;
+        e.type = platform::EventType::PadAxis;
+        e.pad = -1;
+        e.key_name = "@" + action;
+        e.value = std::clamp(p["value"].get<float>(), -1.0f, 1.0f);
+        if (in_tick_) {
+            // From a script mid-tick: from the next tick, as a hold would.
+            pending_events_.push_back(e);
+            return Json{{"action", action}, {"value", e.value}, {"from_tick", clock_.tick + 1}};
+        }
+        inject_events({e});
+        return Json{{"action", action}, {"value", e.value}, {"from_tick", clock_.tick}};
     }
     if (op == "hold" || op == "press") {
         // Press a key (or every key bound to an action) now and release it after `ticks` ticks
@@ -5722,6 +5834,56 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         }
         return scene;
     }
+    if (op == "mark") {
+        // The world as it is now, kept under a name, for world.diff to compare with later.
+        const std::string mark = opt<std::string>(p, "name", "default");
+        Json snap = w.snapshot();
+        const std::size_t n = snap.size();
+        marks_[mark] = Json{{"tick", clock_.tick}, {"entities", std::move(snap)}};
+        return Json{{"mark", mark}, {"tick", clock_.tick}, {"entities", n}};
+    }
+    if (op == "diff") {
+        // What changed since a mark: entities spawned and destroyed, and for the others the
+        // components added, removed, and each changed field's value then and now.
+        const std::string mark = opt<std::string>(p, "since", "default");
+        auto it = marks_.find(mark);
+        if (it == marks_.end()) return fail("no_such_mark", "no mark named '{}' (world.mark {{name}} makes one)", mark);
+        const std::size_t limit = static_cast<std::size_t>(std::clamp(opt<int>(p, "limit", 50), 1, 100000));
+        const Json& then = it->second["entities"];
+        const Json now = w.snapshot();
+        Json spawned = Json::array(), destroyed = Json::array(), changed = Json::array();
+        std::size_t n_spawned = 0, n_destroyed = 0, n_changed = 0;
+        for (const auto& [id, e] : now.items()) {
+            if (!then.contains(id)) {
+                if (++n_spawned <= limit) spawned.push_back(Json{{"id", std::stoull(id)}, {"path", e["path"]}, {"components", [&] { Json c = Json::array(); for (const auto& [k, v] : e["components"].items()) c.push_back(k); return c; }()}});
+                continue;
+            }
+            const Json& before = then[id]["components"];
+            const Json& after = e["components"];
+            Json comps = Json::object();
+            for (const auto& [name, value] : after.items()) {
+                if (!before.contains(name)) { comps[name] = Json{{"added", value}}; continue; }
+                if (before[name] == value) continue;
+                Json fields = Json::object();
+                if (value.is_object() && before[name].is_object()) {
+                    for (const auto& [f, v] : value.items()) if (!before[name].contains(f) || before[name][f] != v) fields[f] = Json::array({before[name].value(f, Json()), v});
+                }
+                comps[name] = Json{{"fields", fields}};
+            }
+            for (const auto& [name, value] : before.items()) if (!after.contains(name)) comps[name] = Json{{"removed", true}};
+            if (then[id]["path"] != e["path"]) comps["path"] = Json::array({then[id]["path"], e["path"]});
+            if (comps.empty()) continue;
+            if (++n_changed <= limit) changed.push_back(Json{{"id", std::stoull(id)}, {"path", e["path"]}, {"changes", comps}});
+        }
+        for (const auto& [id, e] : then.items()) {
+            if (now.contains(id)) continue;
+            if (++n_destroyed <= limit) destroyed.push_back(Json{{"id", std::stoull(id)}, {"path", e["path"]}});
+        }
+        Json out{{"since", mark}, {"since_tick", it->second["tick"]}, {"tick", clock_.tick}, {"spawned", spawned}, {"destroyed", destroyed}, {"changed", changed},
+                 {"counts", Json{{"spawned", n_spawned}, {"destroyed", n_destroyed}, {"changed", n_changed}}}};
+        if (n_spawned > limit || n_destroyed > limit || n_changed > limit) out["note"] = std::format("lists cut at {} (limit)", limit);
+        return out;
+    }
     if (op == "load") {
         // An inline scene object, or a scene file by project-relative path.
         Json scene = p.value("scene", Json::object());
@@ -6032,6 +6194,18 @@ void Session::build_debug_draw() {
             }
         });
     }
+    if (debug_flags_.paths) {
+        // Paths as their curves, a dot at each of their points (docs/design/paths.md).
+        std::vector<world::EntityId> ids;
+        w.ecs().each([&](flecs::entity e, const world::Path&) { ids.push_back(e.id()); });
+        for (world::EntityId id : ids) {
+            const world::PathCurve* c = paths_.curve(*world_, id);
+            if (!c) continue;
+            const rhi::Color color{0.9f, 0.5f, 1.0f, 1};
+            for (std::size_t i = 0; i + 1 < c->points.size(); ++i) debug_draw_.line(c->points[i], c->points[i + 1], color);
+            if (c->closed && c->points.size() > 1) debug_draw_.line(c->points.back(), c->points.front(), color);
+        }
+    }
     if (debug_flags_.nav && nav_.baked()) {
         // Walkable cells as small crosses on the ground (or squares in a tile map's plane), then
         // the last paths asked for.
@@ -6184,7 +6358,7 @@ Result<Json> Session::debug_command(std::string_view op, const Json& p) {
         return Json{{"cleared", n}};
     }
     if (op == "stats") {
-        return Json{{"shapes", debug_shapes_.size()}, {"lines", renderer_->stats().debug_lines}, {"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lights", debug_flags_.lights}};
+        return Json{{"shapes", debug_shapes_.size()}, {"lines", renderer_->stats().debug_lines}, {"colliders", debug_flags_.colliders}, {"joints", debug_flags_.joints}, {"bounds", debug_flags_.bounds}, {"axes", debug_flags_.axes}, {"nav", debug_flags_.nav}, {"lights", debug_flags_.lights}, {"paths", debug_flags_.paths}};
     }
     return fail("unknown_command", "unknown debug command '{}'", op);
 }
@@ -6267,6 +6441,12 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("events.")) return events_command(name.substr(7), p, source);
     if (name.starts_with("recorder.")) return recorder_command(name.substr(9), p);
     if (name.starts_with("debug.")) return debug_command(name.substr(6), p);
+    if (name == "render.post") {
+        if (p.contains("effects")) return set_post_effects(p["effects"]);
+        Json list = Json::array();
+        for (const auto& e : renderer_->post_effects()) list.push_back(Json{{"name", e.name}, {"enabled", e.enabled}, {"params", Json(std::vector<float>(e.params.begin(), e.params.end()))}});
+        return Json{{"effects", list}};
+    }
     if (name == "render.views") {
         // The scene (or one entity and what is under it) seen from standard views at once, without
         // moving anything: a contact sheet an agent reads to check what it built from every side.
@@ -6405,6 +6585,45 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     if (name.starts_with("input.")) return input_command(name.substr(6), p);
     if (name.starts_with("save.")) return save_command(name.substr(5), p);
     if (name.starts_with("mesh.")) return mesh_command(name.substr(5), p);
+    if (name.starts_with("path.")) {
+        // Where on a Path a distance is, and how far along it a point lies (docs/design/paths.md).
+        const world::EntityId id = resolve_entity(p.value("entity", Json()));
+        if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p.value("entity", Json()).dump());
+        const world::PathCurve* c = paths_.curve(*world_, id);
+        if (!c) return fail("no_path", "{} has no Path of two points or more", world_->path(id));
+        auto v3 = [](Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; };
+        if (name == "path.info") return Json{{"length", c->length}, {"closed", c->closed}, {"start", v3(c->sample(0))}, {"end", v3(c->sample(c->length))}};
+        if (name == "path.sample") {
+            float d = static_cast<float>(opt<double>(p, "distance", 0.0));
+            if (p.contains("fraction")) d = static_cast<float>(opt<double>(p, "fraction", 0.0)) * c->length;
+            Vec3 dir;
+            const Vec3 at = c->sample(d, &dir);
+            return Json{{"point", v3(at)}, {"direction", v3(dir)}, {"distance", d}, {"length", c->length}};
+        }
+        if (name == "path.nearest") {
+            const Vec3 q = vec3_of(p.value("point", Json()), Vec3{0, 0, 0});
+            Vec3 on;
+            const float d = c->nearest(q, &on);
+            return Json{{"distance", d}, {"point", v3(on)}, {"away", length(q - on)}, {"length", c->length}};
+        }
+        return fail("unknown_command", "{} is not a command (path.info, path.sample, path.nearest)", name);
+    }
+    if (name == "window.info" || name == "window.set") {
+        // The game's window (docs/design/input.md, The window): fullscreen, size, title.
+        if (!platform_) return fail("no_window", "no platform");
+        if (name == "window.set") {
+            if (p.contains("fullscreen")) platform_->set_fullscreen(opt<bool>(p, "fullscreen", false));
+            if (p.contains("width") || p.contains("height")) {
+                const auto now = platform_->window_state();
+                const int w = opt<int>(p, "width", now.width), h = opt<int>(p, "height", now.height);
+                if (w < 64 || h < 64 || w > 16384 || h > 16384) return fail("bad_args", "width and height are points, 64 to 16384");
+                platform_->set_window_size(w, h);
+            }
+            if (p.contains("title")) platform_->set_title(opt<std::string>(p, "title", ""));
+        }
+        const auto s = platform_->window_state();
+        return Json{{"width", s.width}, {"height", s.height}, {"fullscreen", s.fullscreen}, {"title", s.title}, {"pixel_width", platform_->pixel_width()}, {"pixel_height", platform_->pixel_height()}, {"pixel_density", platform_->pixel_density()}, {"headless", platform_->headless()}};
+    }
     if (name.starts_with("ui.")) return ui_command(name.substr(3), p);
     if (name.starts_with("script.")) return script_command(name.substr(7), p);
     if (name.starts_with("project.")) return project_command(name.substr(8), p);
@@ -6779,7 +6998,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

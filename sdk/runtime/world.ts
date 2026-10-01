@@ -207,6 +207,14 @@ export const world = {
     query(options: QueryOptions): QueryRow[] {
         return command<{ entities: QueryRow[] }>("world.query", options).entities;
     },
+    /** Keep the world as it is now under a name, for diff. */
+    mark(name = "default"): { mark: string; tick: number; entities: number } {
+        return command("world.mark", { name });
+    },
+    /** What changed since a mark: entities spawned and destroyed, components added or removed, each changed field then and now. */
+    diff(since = "default", limit = 50): { since: string; since_tick: number; tick: number; spawned: Array<{ id: Entity; path: string; components: string[] }>; destroyed: Array<{ id: Entity; path: string }>; changed: Array<{ id: Entity; path: string; changes: Record<string, unknown> }>; counts: { spawned: number; destroyed: number; changed: number } } {
+        return command("world.diff", { since, limit });
+    },
     summary(): { tick: number; entities: number; roots: number; components: Record<string, number>; events: number; hash: string } {
         return command("world.summary");
     },
@@ -306,7 +314,13 @@ export interface FrameComparison {
     diff?: string;
 }
 
+export type PostEffectSpec = string | { shader?: string; code?: string; name?: string; params?: number[]; enabled?: boolean };
+
 export const render = {
+    /** The project's post effects, in order after the tonemap (docs/design/rendering.md, Post effects): shader files in the project or WGSL code, each defining `fn effect(uv: vec2f) -> vec4f`. Answers per effect ok or the compiler's message. */
+    post(effects: PostEffectSpec[]): { ok: boolean; effects: Array<{ name: string; ok: boolean; error?: string }> } {
+        return command("render.post", { effects });
+    },
     /** The scene, or an entity and what is under it, from standard views at once into one PNG sheet (nothing moves). */
     views(path: string, options: { entity?: EntityRef; views?: Array<"front" | "back" | "right" | "left" | "top" | "bottom" | "perspective"> } = {}): { path: string; views: Array<{ view: string; eye: Vec3 }>; columns: number; rows: number; width: number; height: number; center: Vec3; radius: number; entity: string | null } {
         return command("render.views", { path, ...options });

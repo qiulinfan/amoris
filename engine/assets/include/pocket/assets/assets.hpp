@@ -253,6 +253,9 @@ struct MapObject {
     float x = 0, y = 0, width = 0, height = 0;  // pixels, Tiled's top-left origin (y down)
     std::uint32_t gid = 0;
     bool point = false;
+    // A polyline's or a polygon's points, in pixels from the object's x, y (Tiled's), the polygon closed.
+    std::vector<Vec2> points;
+    bool closed = false;
     Json properties;
 };
 

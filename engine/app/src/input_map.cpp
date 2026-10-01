@@ -95,10 +95,15 @@ Status InputMap::configure(const Json& actions) {
 void InputMap::recompute(Action& a) {
     float value = 0;
     for (auto& [src, v] : a.active) value += v;
-    float axis = 0;
-    for (auto& [src, v] : a.axis_values) if (std::fabs(v) > std::fabs(axis)) axis = v;
+    float axis = 0, direct = 0;
+    for (auto& [src, v] : a.axis_values) {
+        // "@": set on the action itself (input.axis, an on-screen stick), its own dead zone applied already.
+        if (!src.empty() && src[0] == '@') { if (std::fabs(v) > std::fabs(direct)) direct = v; }
+        else if (std::fabs(v) > std::fabs(axis)) axis = v;
+    }
     if (std::fabs(axis) < a.deadzone) axis = 0;
     else axis = (axis - std::copysign(a.deadzone, axis)) / (1.0f - a.deadzone);
+    if (std::fabs(direct) > std::fabs(axis)) axis = direct;
     if (std::fabs(axis) > std::fabs(value)) value = axis;
     value = std::clamp(value, -1.0f, 1.0f);
     bool down = !a.active.empty() || std::fabs(axis) > 0.5f;
@@ -118,7 +123,17 @@ void InputMap::apply(const platform::Event& event) {
         case EventType::KeyDown: if (event.repeat) return; source = event.key_name; button = true; is_down = true; break;
         case EventType::KeyUp: source = event.key_name; button = true; is_down = false; break;
         case EventType::PadButton: source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; button = true; is_down = event.pressed; break;
-        case EventType::PadAxis: source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; axis = true; axis_value = event.value; break;
+        case EventType::PadAxis:
+            if (!event.key_name.empty() && event.key_name[0] == '@') {
+                // A value for one action by name (input.axis): no binding involved.
+                auto it = actions_.find(event.key_name.substr(1));
+                if (it == actions_.end()) return;
+                if (event.value == 0.0f) it->second.axis_values.erase("@");
+                else it->second.axis_values["@"] = std::clamp(event.value, -1.0f, 1.0f);
+                recompute(it->second);
+                return;
+            }
+            source = "pad:" + event.key_name; specific = "pad" + std::to_string(event.pad) + ":" + event.key_name; axis = true; axis_value = event.value; break;
         case EventType::MouseDown:
         case EventType::MouseUp: {
             const char* name = mouse_button_source(event.button);

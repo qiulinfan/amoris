@@ -38,6 +38,8 @@
     X(Scatter) \
     X(Vehicle) \
     X(Area2D) \
+    X(Path) \
+    X(PathFollower) \
     X(RigidBody2D) \
     X(Collider2D) \
     X(Joint2D) \

@@ -83,6 +83,11 @@ class Device {
 
     // Helpers shared by renderers.
     Result<WGPUShaderModule> create_shader(const char* label, std::string_view wgsl);
+    // Validation errors of what is made between the two caught rather than reported as the device's:
+    // pop answers the first one's message (empty when there was none), waiting for it. For code a
+    // user wrote (a post effect's WGSL), whose mistakes are theirs to read and fix.
+    void push_error_scope();
+    std::string pop_error_scope();
     WGPUBuffer create_buffer(const char* label, WGPUBufferUsage usage, std::uint64_t size, const void* initial = nullptr);
     void write_buffer(WGPUBuffer buffer, std::uint64_t offset, const void* data, std::uint64_t size);
 

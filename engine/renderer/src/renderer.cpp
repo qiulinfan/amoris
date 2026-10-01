@@ -2603,6 +2603,23 @@ struct Renderer::Impl {
     WGPURenderPipeline post_pipeline = nullptr;
     WGPUBuffer post_uniforms = nullptr;
     WGPUBindGroup post_bg = nullptr;
+    // Post effects a project wrote, run after the tonemap through two targets in turn.
+    struct UserEffect {
+        Renderer::PostEffect def;
+        WGPURenderPipeline pipeline = nullptr;
+        WGPUBuffer uniforms = nullptr;
+        WGPUBindGroup bg[2] = {nullptr, nullptr};
+        WGPUTextureView bg_view[2] = {nullptr, nullptr};
+    };
+    std::vector<UserEffect> user_effects;
+    WGPUBindGroupLayout user_fx_bgl = nullptr;
+    WGPUPipelineLayout user_fx_layout = nullptr;
+    WGPUSampler user_fx_sampler = nullptr;
+    WGPUTexture user_fx_tex[2] = {nullptr, nullptr};
+    WGPUTextureView user_fx_view[2] = {nullptr, nullptr};
+    std::uint32_t user_fx_w = 0, user_fx_h = 0;
+    double user_fx_time = 0;
+    std::uint64_t user_fx_frames = 0;
     WGPUShaderModule meter_shader = nullptr;
     WGPUBindGroupLayout meter_bgl = nullptr;
     WGPUPipelineLayout meter_layout = nullptr;
@@ -3057,6 +3074,14 @@ struct Renderer::Impl {
         if (fx_shader) wgpuShaderModuleRelease(fx_shader);
         if (no_depth_view) wgpuTextureViewRelease(no_depth_view);
         if (no_depth_tex) wgpuTextureRelease(no_depth_tex);
+        release_user_effects();
+        for (int k = 0; k < 2; ++k) {
+            if (user_fx_view[k]) wgpuTextureViewRelease(user_fx_view[k]);
+            if (user_fx_tex[k]) wgpuTextureRelease(user_fx_tex[k]);
+        }
+        if (user_fx_sampler) wgpuSamplerRelease(user_fx_sampler);
+        if (user_fx_layout) wgpuPipelineLayoutRelease(user_fx_layout);
+        if (user_fx_bgl) wgpuBindGroupLayoutRelease(user_fx_bgl);
         if (post_uniforms) wgpuBufferRelease(post_uniforms);
         if (post_pipeline) wgpuRenderPipelineRelease(post_pipeline);
         if (post_layout) wgpuPipelineLayoutRelease(post_layout);
@@ -3582,6 +3607,221 @@ struct Renderer::Impl {
 
     // Meter the viewport of the HDR target (auto exposure only), then draw the frame from it:
     // everything outside the viewport is the clear color, as the scene pass left it before.
+    void release_user_effects() {
+        for (UserEffect& e : user_effects) {
+            for (WGPUBindGroup& g : e.bg) if (g) { wgpuBindGroupRelease(g); g = nullptr; }
+            if (e.uniforms) wgpuBufferRelease(e.uniforms);
+            if (e.pipeline) wgpuRenderPipelineRelease(e.pipeline);
+        }
+        user_effects.clear();
+    }
+
+    // A project's effect as a whole shader: its uniforms (the frame's size, the view within it,
+    // the time, eight parameters), the frame so far to sample, the user's `effect`, and around it a
+    // fragment stage that keeps what lies outside the view as it was.
+    static std::string user_effect_source(const std::string& body) {
+        return std::string(R"WGSL(
+struct PocketFx { frame: vec4f, viewport: vec4f, time: vec4f, params: array<vec4f, 2> };
+@group(0) @binding(0) var<uniform> fx: PocketFx;
+@group(0) @binding(1) var frame_texture: texture_2d<f32>;
+@group(0) @binding(2) var frame_sampler: sampler;
+// The frame so far (as it will be shown: colours 0..1) at a point of the view, 0..1 across and down.
+fn sample_frame(uv: vec2f) -> vec4f {
+    let p = (fx.viewport.xy + clamp(uv, vec2f(0.0), vec2f(1.0)) * fx.viewport.zw) * fx.frame.zw;
+    return textureSampleLevel(frame_texture, frame_sampler, p, 0.0);
+}
+// One of the eight parameters render.post gave.
+fn param(i: u32) -> f32 { return fx.params[min(i, 7u) / 4u][min(i, 7u) % 4u]; }
+// The view's size in pixels, the seconds since the effects were set, the frame's number.
+fn resolution() -> vec2f { return fx.viewport.zw; }
+fn time() -> f32 { return fx.time.x; }
+@vertex fn pocket_fx_vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let x = f32(i32(i & 1u) * 4 - 1);
+    let y = f32(i32(i >> 1u) * 4 - 1);
+    return vec4f(x, y, 0.0, 1.0);
+}
+)WGSL") + body + R"WGSL(
+@fragment fn pocket_fx_fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    if (pos.x < fx.viewport.x || pos.y < fx.viewport.y || pos.x >= fx.viewport.x + fx.viewport.z || pos.y >= fx.viewport.y + fx.viewport.w) {
+        return textureLoad(frame_texture, vec2i(pos.xy), 0);
+    }
+    return effect((pos.xy - fx.viewport.xy) / fx.viewport.zw);
+}
+)WGSL";
+    }
+
+    std::vector<std::string> set_user_effects(const std::vector<Renderer::PostEffect>& defs) {
+        release_user_effects();
+        std::vector<std::string> errors(defs.size());
+        if (!user_fx_bgl) {
+            WGPUBindGroupLayoutEntry be[3]{};
+            be[0].binding = 0;
+            be[0].visibility = WGPUShaderStage_Fragment;
+            be[0].buffer.type = WGPUBufferBindingType_Uniform;
+            be[1].binding = 1;
+            be[1].visibility = WGPUShaderStage_Fragment;
+            be[1].texture.sampleType = WGPUTextureSampleType_Float;
+            be[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+            be[2].binding = 2;
+            be[2].visibility = WGPUShaderStage_Fragment;
+            be[2].sampler.type = WGPUSamplerBindingType_Filtering;
+            WGPUBindGroupLayoutDescriptor bd{};
+            bd.label = rhi::str("pocket.user_fx");
+            bd.entryCount = 3;
+            bd.entries = be;
+            user_fx_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+            WGPUPipelineLayoutDescriptor pld{};
+            pld.label = rhi::str("pocket.user_fx");
+            pld.bindGroupLayoutCount = 1;
+            pld.bindGroupLayouts = &user_fx_bgl;
+            user_fx_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+            WGPUSamplerDescriptor sd{};
+            sd.label = rhi::str("pocket.user_fx");
+            sd.magFilter = WGPUFilterMode_Linear;
+            sd.minFilter = WGPUFilterMode_Linear;
+            sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+            sd.addressModeU = WGPUAddressMode_ClampToEdge;
+            sd.addressModeV = WGPUAddressMode_ClampToEdge;
+            sd.addressModeW = WGPUAddressMode_ClampToEdge;
+            sd.maxAnisotropy = 1;
+            user_fx_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+        }
+        for (std::size_t i = 0; i < defs.size(); ++i) {
+            const std::string source = user_effect_source(defs[i].wgsl);
+            device->push_error_scope();
+            auto module = device->create_shader("pocket.user_fx", source);
+            WGPURenderPipeline pipeline = nullptr;
+            if (module) {
+                WGPUColorTargetState ct{};
+                ct.format = device->color_format();
+                ct.writeMask = WGPUColorWriteMask_All;
+                WGPUFragmentState fs{};
+                fs.module = *module;
+                fs.entryPoint = rhi::str("pocket_fx_fs");
+                fs.targetCount = 1;
+                fs.targets = &ct;
+                WGPURenderPipelineDescriptor rpd{};
+                rpd.label = rhi::str("pocket.user_fx");
+                rpd.layout = user_fx_layout;
+                rpd.vertex.module = *module;
+                rpd.vertex.entryPoint = rhi::str("pocket_fx_vs");
+                rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+                rpd.multisample.count = 1;
+                rpd.multisample.mask = 0xFFFFFFFFu;
+                rpd.fragment = &fs;
+                pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            }
+            const std::string message = device->pop_error_scope();
+            if (module) wgpuShaderModuleRelease(*module);
+            if (!message.empty() || !pipeline) {
+                errors[i] = message.empty() ? "the effect did not compile" : message;
+                if (pipeline) wgpuRenderPipelineRelease(pipeline);
+                continue;
+            }
+            UserEffect e;
+            e.def = defs[i];
+            e.pipeline = pipeline;
+            e.uniforms = device->create_buffer("pocket.user_fx", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 80);
+            user_effects.push_back(std::move(e));
+        }
+        user_fx_time = 0;
+        return errors;
+    }
+
+    // The frame's effects, after the post pass drew into the first of the two targets: each reads
+    // the one before and writes the other, the last the frame itself.
+    void draw_user_effects(rhi::Frame& frame, WGPUTextureView first_input) {
+        std::vector<UserEffect*> on;
+        for (UserEffect& e : user_effects) if (e.def.enabled) on.push_back(&e);
+        user_fx_time += time_step;
+        ++user_fx_frames;
+        WGPUTextureView input = first_input;
+        int target = 1;
+        for (std::size_t i = 0; i < on.size(); ++i) {
+            UserEffect& e = *on[i];
+            const bool last = i + 1 == on.size();
+            const int slot = input == user_fx_view[0] ? 0 : 1;
+            if (e.bg_view[slot] != input || !e.bg[slot]) {
+                if (e.bg[slot]) wgpuBindGroupRelease(e.bg[slot]);
+                WGPUBindGroupEntry be[3]{};
+                be[0].binding = 0;
+                be[0].buffer = e.uniforms;
+                be[0].size = 80;
+                be[1].binding = 1;
+                be[1].textureView = input;
+                be[2].binding = 2;
+                be[2].sampler = user_fx_sampler;
+                WGPUBindGroupDescriptor d{};
+                d.label = rhi::str("pocket.user_fx");
+                d.layout = user_fx_bgl;
+                d.entryCount = 3;
+                d.entries = be;
+                e.bg[slot] = wgpuDeviceCreateBindGroup(device->device(), &d);
+                e.bg_view[slot] = input;
+            }
+            float u[20] = {};
+            u[0] = static_cast<float>(frame.width);
+            u[1] = static_cast<float>(frame.height);
+            u[2] = 1.0f / static_cast<float>(std::max(frame.width, 1u));
+            u[3] = 1.0f / static_cast<float>(std::max(frame.height, 1u));
+            u[4] = static_cast<float>(applied.x);
+            u[5] = static_cast<float>(applied.y);
+            u[6] = static_cast<float>(applied.w);
+            u[7] = static_cast<float>(applied.h);
+            u[8] = static_cast<float>(user_fx_time);
+            u[9] = time_step;
+            u[10] = static_cast<float>(user_fx_frames);
+            for (int k = 0; k < 8; ++k) u[12 + k] = e.def.params[static_cast<std::size_t>(k)];
+            device->write_buffer(e.uniforms, 0, u, sizeof u);
+            WGPURenderPassColorAttachment ca{};
+            ca.view = last ? frame.color : user_fx_view[target];
+            ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            ca.loadOp = WGPULoadOp_Clear;
+            ca.storeOp = WGPUStoreOp_Store;
+            WGPURenderPassDescriptor rp{};
+            rp.label = rhi::str("pocket.user_fx");
+            rp.colorAttachmentCount = 1;
+            rp.colorAttachments = &ca;
+            WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
+            wgpuRenderPassEncoderSetPipeline(enc, e.pipeline);
+            wgpuRenderPassEncoderSetBindGroup(enc, 0, e.bg[slot], 0, nullptr);
+            wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(enc);
+            wgpuRenderPassEncoderRelease(enc);
+            input = user_fx_view[target];
+            target = 1 - target;
+        }
+        stats.post_effects = static_cast<int>(on.size());
+    }
+
+    // The two targets the effects pass the frame through, at the frame's size.
+    void ensure_user_fx_targets(std::uint32_t w, std::uint32_t h) {
+        if (user_fx_tex[0] && user_fx_w == w && user_fx_h == h) return;
+        for (int k = 0; k < 2; ++k) {
+            if (user_fx_view[k]) wgpuTextureViewRelease(user_fx_view[k]);
+            if (user_fx_tex[k]) wgpuTextureRelease(user_fx_tex[k]);
+            WGPUTextureDescriptor td{};
+            td.label = rhi::str("pocket.user_fx");
+            td.size = {w, h, 1};
+            td.mipLevelCount = 1;
+            td.sampleCount = 1;
+            td.dimension = WGPUTextureDimension_2D;
+            td.format = device->color_format();
+            td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+            user_fx_tex[k] = wgpuDeviceCreateTexture(device->device(), &td);
+            user_fx_view[k] = wgpuTextureCreateView(user_fx_tex[k], nullptr);
+        }
+        for (UserEffect& e : user_effects) {
+            for (int k = 0; k < 2; ++k) {
+                if (e.bg[k]) wgpuBindGroupRelease(e.bg[k]);
+                e.bg[k] = nullptr;
+                e.bg_view[k] = nullptr;
+            }
+        }
+        user_fx_w = w;
+        user_fx_h = h;
+    }
+
     Status draw_post(rhi::Frame& frame, rhi::Color clear, const world::Fog* fog_settings) {
         // The post group reads the prepass depth when there is one (for the fog).
         WGPUTextureView depth_view = prepass_view && split_applied ? prepass_view : no_depth_view;
@@ -3699,8 +3939,11 @@ struct Renderer::Impl {
         u.lut[1] = std::clamp(grade.lut_strength, 0.0f, 1.0f);
         stats.lut = lut_on;
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
+        const bool effects = std::any_of(user_effects.begin(), user_effects.end(), [](const UserEffect& e) { return e.def.enabled; });
+        if (effects) ensure_user_fx_targets(frame.width, frame.height);
+        stats.post_effects = 0;
         WGPURenderPassColorAttachment ca{};
-        ca.view = frame.color;
+        ca.view = effects ? user_fx_view[0] : frame.color;
         ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         ca.loadOp = WGPULoadOp_Clear;
         ca.storeOp = WGPUStoreOp_Store;
@@ -3718,6 +3961,7 @@ struct Renderer::Impl {
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(enc);
         wgpuRenderPassEncoderRelease(enc);
+        if (effects) draw_user_effects(frame, user_fx_view[0]);
         stats.grade = grade.enabled;
         stats.tonemap = static_cast<int>(op);
         stats.auto_exposure = metered;
@@ -9090,6 +9334,14 @@ void Renderer::set_tonemap(TonemapSettings s) {
 TonemapSettings Renderer::tonemap() const { return impl_->tonemap; }
 void Renderer::set_time_step(float seconds) { impl_->time_step = seconds; }
 
+std::vector<std::string> Renderer::set_post_effects(const std::vector<PostEffect>& effects) { return impl_->set_user_effects(effects); }
+
+std::vector<Renderer::PostEffect> Renderer::post_effects() const {
+    std::vector<PostEffect> out;
+    for (const auto& e : impl_->user_effects) out.push_back(e.def);
+    return out;
+}
+
 const char* tonemap_name(Tonemap t) {
     switch (t) {
         case Tonemap::Aces: return "aces";
@@ -9192,6 +9444,7 @@ Json Renderer::describe() const {
     j["grade"] = s.grade;
     j["hdr"] = true;
     j["tonemap"] = tonemap_name(static_cast<Tonemap>(s.tonemap));
+    if (s.post_effects > 0) j["post_effects"] = s.post_effects;
     j["auto_exposure"] = s.auto_exposure;
     j["sky"] = s.sky == 1 ? "procedural" : s.sky == 2 ? "image" : s.sky == 3 ? "atmosphere" : "none";
     j["env_updates"] = s.env_updates;

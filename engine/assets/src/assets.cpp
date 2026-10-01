@@ -870,6 +870,11 @@ Result<TileMap> parse_tilemap(const std::string& text, const std::string& displa
                 mo.height = o.value("height", 0.0f);
                 mo.gid = o.value("gid", 0u);
                 mo.point = o.value("point", false);
+                for (const char* key : {"polyline", "polygon"}) {
+                    if (!o.contains(key) || !o[key].is_array()) continue;
+                    for (const Json& p : o[key]) if (p.is_object()) mo.points.push_back(Vec2{p.value("x", 0.0f), p.value("y", 0.0f)});
+                    mo.closed = std::string_view(key) == "polygon";
+                }
                 mo.properties = properties_of(o);
                 ol.objects.push_back(std::move(mo));
             }

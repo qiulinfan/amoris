@@ -41,6 +41,10 @@ export const input = {
         cmd("input.map", { actions });
         registry.actions = cmd<Record<string, ActionState>>("input.actions");
     },
+    /** Set an action's value directly, -1..1, until set again (0 lets go): a stick tilted part way. Past 0.5 either way the action is down. From a script it takes effect at the next tick. */
+    setAxis(action: string, value: number): void {
+        cmd("input.axis", { action, value });
+    },
     /** An action's state; `player` picks whose in a lockstep game (docs/design/networking.md), 0 by default. */
     action(name: string, player = 0): ActionState {
         return snapshot(player)[name] ?? empty;

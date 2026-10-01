@@ -191,6 +191,7 @@ struct Platform::Impl {
         return static_cast<int>(fingers.size() - 1);
     }
     int pixel_w = 0, pixel_h = 0;
+    Platform::WindowState asked;   // what was asked of the window (all there is headless)
     bool text_input = false;
     bool cursor_locked = false, cursor_visible = true;
     bool cursor_let_go = false;   // Escape released a locked pointer; a click takes it again
@@ -218,6 +219,7 @@ Platform::~Platform() = default;
 Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
     std::unique_ptr<Platform> p(new Platform());
     p->impl_->config = config;
+    p->impl_->asked = WindowState{config.width, config.height, config.fullscreen, config.title};
     if (config.headless) {
         p->impl_->pixel_w = config.width;
         p->impl_->pixel_h = config.height;
@@ -242,6 +244,7 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
 #endif
     if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
     if (!config.visible) flags |= SDL_WINDOW_HIDDEN;
+    if (config.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
     SDL_Window* w = SDL_CreateWindow(config.title.c_str(), config.width, config.height, flags);
     if (!w) return fail("window_create_failed", "SDL_CreateWindow failed: {}", SDL_GetError());
     p->impl_->window = w;
@@ -492,6 +495,33 @@ std::string Platform::clipboard_text() const {
 void Platform::set_clipboard_text(const std::string& text) {
     if (impl_->config.headless) return;
     SDL_SetClipboardText(text.c_str());
+}
+
+void Platform::set_fullscreen(bool on) {
+    impl_->asked.fullscreen = on;
+    if (impl_->window) SDL_SetWindowFullscreen(impl_->window, on);
+}
+
+void Platform::set_window_size(int width, int height) {
+    impl_->asked.width = width;
+    impl_->asked.height = height;
+    if (impl_->window) SDL_SetWindowSize(impl_->window, width, height);
+}
+
+void Platform::set_title(const std::string& title) {
+    impl_->asked.title = title;
+    if (impl_->window) SDL_SetWindowTitle(impl_->window, title.c_str());
+}
+
+Platform::WindowState Platform::window_state() const {
+    WindowState s = impl_->asked;
+    if (impl_->window) {
+        SDL_GetWindowSize(impl_->window, &s.width, &s.height);
+        s.fullscreen = (SDL_GetWindowFlags(impl_->window) & SDL_WINDOW_FULLSCREEN) != 0;
+        const char* t = SDL_GetWindowTitle(impl_->window);
+        s.title = t ? t : "";
+    }
+    return s;
 }
 
 Json Platform::describe() const {

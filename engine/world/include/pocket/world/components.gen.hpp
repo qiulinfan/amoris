@@ -169,6 +169,19 @@ void from_json(const Json& j, TerrainLayer& v);
 std::size_t numeric_span(TerrainLayer& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const TerrainLayer& v);
 
+/// A point of a Path, in its entity's own space (docs/design/paths.md).
+struct PathPoint {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    constexpr bool operator==(const PathPoint&) const = default;
+};
+void to_json(Json& j, const PathPoint& v);
+void from_json(const Json& j, PathPoint& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(PathPoint& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const PathPoint& v);
+
 /// A point in a 2D shape's own space (docs/design/physics2d.md).
 struct Point2D {
     float x = 0.0f;
@@ -886,6 +899,36 @@ void from_json(const Json& j, Area2D& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Area2D& v, std::string_view path, float** out);
 
+/// A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies.
+struct Path {
+    std::vector<PathPoint> points = {};
+    bool closed = false;
+    bool smooth = true;
+    float length = 0.0f;
+    constexpr bool operator==(const Path&) const = default;
+};
+void to_json(Json& j, const Path& v);
+void from_json(const Json& j, Path& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Path& v, std::string_view path, float** out);
+
+/// Moves its entity along a Path at a speed (docs/design/paths.md): a patrol, a car on a racing line, a platform on its run, a creep down a lane. Every tick before physics the engine moves `distance` on by `speed`, puts the Transform there (plus `offset`) and, with `orient`, turns it along the path; path.arrived and path.looped say when it comes to an end.
+struct PathFollower {
+    std::string path = "";
+    float speed = 1.0f;
+    float distance = 0.0f;
+    std::int32_t mode = 0;
+    std::int32_t orient = 0;
+    Vec3 offset{0.0f, 0.0f, 0.0f};
+    bool playing = true;
+    bool finished = false;
+    constexpr bool operator==(const PathFollower&) const = default;
+};
+void to_json(Json& j, const PathFollower& v);
+void from_json(const Json& j, PathFollower& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(PathFollower& v, std::string_view path, float** out);
+
 /// A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way).
 struct RigidBody2D {
     std::int32_t kind = 0;
@@ -1131,6 +1174,8 @@ void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
 void hash_component(struct StateHasherRef& h, const Area2D& v);
+void hash_component(struct StateHasherRef& h, const Path& v);
+void hash_component(struct StateHasherRef& h, const PathFollower& v);
 void hash_component(struct StateHasherRef& h, const RigidBody2D& v);
 void hash_component(struct StateHasherRef& h, const Collider2D& v);
 void hash_component(struct StateHasherRef& h, const Joint2D& v);
@@ -1218,6 +1263,10 @@ std::size_t read_numbers(const Vehicle& v, double* out);
 bool write_numbers(Vehicle& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Area2D& v, double* out);
 bool write_numbers(Area2D& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Path& v, double* out);
+bool write_numbers(Path& v, const double* in, std::size_t n);
+std::size_t read_numbers(const PathFollower& v, double* out);
+bool write_numbers(PathFollower& v, const double* in, std::size_t n);
 std::size_t read_numbers(const RigidBody2D& v, double* out);
 bool write_numbers(RigidBody2D& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Collider2D& v, double* out);

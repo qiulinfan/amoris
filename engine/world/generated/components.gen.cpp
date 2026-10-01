@@ -412,6 +412,33 @@ std::size_t numeric_span(TerrainLayer& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const PathPoint& v) {
+    j = Json::object();
+    j["x"] = v.x;
+    j["y"] = v.y;
+    j["z"] = v.z;
+}
+
+void from_json(const Json& j, PathPoint& v) {
+    scalar_from_json(j, "x", v.x);
+    scalar_from_json(j, "y", v.y);
+    scalar_from_json(j, "z", v.z);
+}
+
+void hash_record(StateHasherRef& h, const PathPoint& v) {
+    h.f32(v.x);
+    h.f32(v.y);
+    h.f32(v.z);
+}
+
+std::size_t numeric_span(PathPoint& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "x") { *out = &v.x; return 1; }
+    if (path == "y") { *out = &v.y; return 1; }
+    if (path == "z") { *out = &v.z; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Point2D& v) {
     j = Json::object();
     j["x"] = v.x;
@@ -2776,6 +2803,91 @@ std::size_t numeric_span(Area2D& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Path& v) {
+    j = Json::object();
+    j["points"] = Json::array();
+    for (const auto& x : v.points) { Json e; to_json(e, x); j["points"].push_back(std::move(e)); }
+    j["closed"] = v.closed;
+    j["smooth"] = v.smooth;
+    j["length"] = v.length;
+}
+
+void from_json(const Json& j, Path& v) {
+    if (j.is_object() && j.contains("points") && j["points"].is_array()) {
+        v.points.clear();
+        for (const Json& e : j["points"]) { PathPoint x; from_json(e, x); v.points.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "closed", v.closed);
+    scalar_from_json(j, "smooth", v.smooth);
+    scalar_from_json(j, "length", v.length);
+}
+
+void hash_component(StateHasherRef& h, const Path& v) {
+    h.i64(static_cast<std::int64_t>(v.points.size()));
+    for (const auto& x : v.points) hash_record(h, x);
+    h.u8(v.closed ? 1 : 0);
+    h.u8(v.smooth ? 1 : 0);
+    h.f32(v.length);
+}
+
+std::size_t numeric_span(Path& v, std::string_view path, float** out) {
+    (void)v;
+    if (path.starts_with("points.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.points.size()) return numeric_span(v.points[index], rest, out);
+    }
+    if (path == "length") { *out = &v.length; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const PathFollower& v) {
+    j = Json::object();
+    j["path"] = v.path;
+    j["speed"] = v.speed;
+    j["distance"] = v.distance;
+    j["mode"] = v.mode;
+    j["orient"] = v.orient;
+    vec_to_json(j["offset"], v.offset);
+    j["playing"] = v.playing;
+    j["finished"] = v.finished;
+}
+
+void from_json(const Json& j, PathFollower& v) {
+    scalar_from_json(j, "path", v.path);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "distance", v.distance);
+    enum_from_json(j, "mode", v.mode, {"once", "loop", "pingpong"});
+    enum_from_json(j, "orient", v.orient, {"none", "forward", "flat"});
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "playing", v.playing);
+    scalar_from_json(j, "finished", v.finished);
+}
+
+void hash_component(StateHasherRef& h, const PathFollower& v) {
+    h.str(v.path);
+    h.f32(v.speed);
+    h.f32(v.distance);
+    h.i64(static_cast<std::int64_t>(v.mode));
+    h.i64(static_cast<std::int64_t>(v.orient));
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
+    h.u8(v.playing ? 1 : 0);
+    h.u8(v.finished ? 1 : 0);
+}
+
+std::size_t numeric_span(PathFollower& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "speed") { *out = &v.speed; return 1; }
+    if (path == "distance") { *out = &v.distance; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const RigidBody2D& v) {
     j = Json::object();
     j["kind"] = v.kind;
@@ -3713,6 +3825,12 @@ bool write_numbers(Area2D& v, const double* in, std::size_t n) {
     return true;
 }
 
+std::size_t read_numbers(const Path&, double*) { return kNotNumeric; }
+bool write_numbers(Path&, const double*, std::size_t) { return false; }
+
+std::size_t read_numbers(const PathFollower&, double*) { return kNotNumeric; }
+bool write_numbers(PathFollower&, const double*, std::size_t) { return false; }
+
 std::size_t read_numbers(const RigidBody2D& v, double* out) {
     out[0] = static_cast<double>(v.kind);
     out[1] = static_cast<double>(v.velocity.x);
@@ -3857,6 +3975,11 @@ constexpr std::array<FieldInfo, 7> kTerrainLayerFields = {{
     FieldInfo{"slope", "vec2", "The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit).", {}},
     FieldInfo{"height", "vec2", "The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit).", {}},
     FieldInfo{"cover", "f32", "How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything.", {}},
+}};
+constexpr std::array<FieldInfo, 3> kPathPointFields = {{
+    FieldInfo{"x", "f32", "Across.", {}},
+    FieldInfo{"y", "f32", "Up.", {}},
+    FieldInfo{"z", "f32", "Toward the viewer.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kPoint2DFields = {{
     FieldInfo{"x", "f32", "Across.", {}},
@@ -4321,6 +4444,24 @@ constexpr std::array<FieldInfo, 4> kArea2DFields = {{
     FieldInfo{"enabled", "bool", "false notices nothing: the bodies inside are let out (area.exited) and none come in.", {}},
     FieldInfo{"inside", "i32", "How many bodies are in it (written by the engine).", {}},
 }};
+constexpr std::array<FieldInfo, 4> kPathFields = {{
+    FieldInfo{"points", "list:PathPoint", "Its points in order; two at least.", {}},
+    FieldInfo{"closed", "bool", "The last point runs back to the first: a loop.", {}},
+    FieldInfo{"smooth", "bool", "A curve through every point (Catmull-Rom); false runs straight from point to point.", {}},
+    FieldInfo{"length", "f32", "Its length in world units (written by the engine).", {}},
+}};
+constexpr std::string_view kPathFollower_modeNames[] = {"once", "loop", "pingpong"};
+constexpr std::string_view kPathFollower_orientNames[] = {"none", "forward", "flat"};
+constexpr std::array<FieldInfo, 8> kPathFollowerFields = {{
+    FieldInfo{"path", "string", "The entity with the Path, by name or path.", {}},
+    FieldInfo{"speed", "f32", "World units a second along the path (negative goes back).", {}},
+    FieldInfo{"distance", "f32", "How far along it is (written by the engine; write it to put it elsewhere).", {}},
+    FieldInfo{"mode", "i32", "0 once (stops at the end, finished), 1 loop (round again; a closed path goes on round), 2 pingpong (back and forth).", kPathFollower_modeNames},
+    FieldInfo{"orient", "i32", "0 leaves its rotation alone, 1 turns its -Z (forward) along the path with Y up, 2 turns it about Z so its +X points along (2D).", kPathFollower_orientNames},
+    FieldInfo{"offset", "vec3", "Added to the point on the path (in world units, not turned).", {}},
+    FieldInfo{"playing", "bool", "false holds it where it is.", {}},
+    FieldInfo{"finished", "bool", "It came to the end of a path it runs once (written by the engine).", {}},
+}};
 constexpr std::string_view kRigidBody2D_kindNames[] = {"dynamic", "static", "kinematic"};
 constexpr std::array<FieldInfo, 10> kRigidBody2DFields = {{
     FieldInfo{"kind", "i32", "0 dynamic (falls, is pushed), 1 static (never moves), 2 kinematic (moves by its velocity alone, pushes dynamic bodies).", kRigidBody2D_kindNames},
@@ -4442,7 +4583,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights.", {}},
 }};
 
-constexpr std::array<RecordInfo, 11> kRecords = {{
+constexpr std::array<RecordInfo, 12> kRecords = {{
     RecordInfo{"MeshLod", kMeshLodFields},
     RecordInfo{"MorphWeight", kMorphWeightFields},
     RecordInfo{"IKLimit", kIKLimitFields},
@@ -4453,10 +4594,11 @@ constexpr std::array<RecordInfo, 11> kRecords = {{
     RecordInfo{"AnimationTransition", kAnimationTransitionFields},
     RecordInfo{"AnimationParam", kAnimationParamFields},
     RecordInfo{"TerrainLayer", kTerrainLayerFields},
+    RecordInfo{"PathPoint", kPathPointFields},
     RecordInfo{"Point2D", kPoint2DFields},
 }};
 
-constexpr std::array<ComponentInfo, 46> kComponents = {{
+constexpr std::array<ComponentInfo, 48> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -4493,6 +4635,8 @@ constexpr std::array<ComponentInfo, 46> kComponents = {{
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
     ComponentInfo{"Area2D", "A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.", true, kArea2DFields},
+    ComponentInfo{"Path", "A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies.", true, kPathFields},
+    ComponentInfo{"PathFollower", "Moves its entity along a Path at a speed (docs/design/paths.md): a patrol, a car on a racing line, a platform on its run, a creep down a lane. Every tick before physics the engine moves `distance` on by `speed`, puts the Transform there (plus `offset`) and, with `orient`, turns it along the path; path.arrived and path.looped say when it comes to an end.", true, kPathFollowerFields},
     ComponentInfo{"RigidBody2D", "A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way).", true, kRigidBody2DFields},
     ComponentInfo{"Collider2D", "A 2D shape for the entity's RigidBody2D (docs/design/physics2d.md), or, on an entity without one, a static body of its own (a wall, a ramp, a sensor in the level). Sizes are in the entity's own units, multiplied by its Transform's scale.", true, kCollider2DFields},
     ComponentInfo{"Joint2D", "Two 2D rigid bodies held together (docs/design/physics2d.md): this entity's RigidBody2D and `body` (or a point fixed in the world when it names none). A hinge for a door or a wheel, a rope's length, a slider, a weld; a motor drives a hinge or a slider, a spring softens a weld or a length, and a joint pulled past `break_force` breaks.", true, kJoint2DFields},

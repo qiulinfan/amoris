@@ -12,4 +12,8 @@ gravity = [0.0, -9.8, 0.0]
 # Actions instead of keys; agents hold them by name (docs/design/input.md).
 [input.actions]
 move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", "pad:dpad_right"], axis = ["pad:leftx"] }
-fire = ["Space", "pad:a", "mouse:left"]
+fire = ["Space", "pad:a"]
+
+# A post effect the project wrote (docs/design/rendering.md, Post effects): an old screen's lines.
+[render]
+post = [{ shader = "effects/scanlines.wgsl", params = [0.25, 0.08] }]

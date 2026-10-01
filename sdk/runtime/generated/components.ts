@@ -146,6 +146,16 @@ export interface TerrainLayer {
     cover: number;
 }
 
+/** A point of a Path, in its entity's own space (docs/design/paths.md). */
+export interface PathPoint {
+    /** Across. */
+    x: number;
+    /** Up. */
+    y: number;
+    /** Toward the viewer. */
+    z: number;
+}
+
 /** A point in a 2D shape's own space (docs/design/physics2d.md). */
 export interface Point2D {
     /** Across. */
@@ -1060,6 +1070,38 @@ export interface Area2D {
     inside: number;
 }
 
+/** A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies. */
+export interface Path {
+    /** Its points in order; two at least. */
+    points: PathPoint[];
+    /** The last point runs back to the first: a loop. */
+    closed: boolean;
+    /** A curve through every point (Catmull-Rom); false runs straight from point to point. */
+    smooth: boolean;
+    /** Its length in world units (written by the engine). */
+    length: number;
+}
+
+/** Moves its entity along a Path at a speed (docs/design/paths.md): a patrol, a car on a racing line, a platform on its run, a creep down a lane. Every tick before physics the engine moves `distance` on by `speed`, puts the Transform there (plus `offset`) and, with `orient`, turns it along the path; path.arrived and path.looped say when it comes to an end. */
+export interface PathFollower {
+    /** The entity with the Path, by name or path. */
+    path: string;
+    /** World units a second along the path (negative goes back). */
+    speed: number;
+    /** How far along it is (written by the engine; write it to put it elsewhere). */
+    distance: number;
+    /** 0 once (stops at the end, finished), 1 loop (round again; a closed path goes on round), 2 pingpong (back and forth). */
+    mode: number;
+    /** 0 leaves its rotation alone, 1 turns its -Z (forward) along the path with Y up, 2 turns it about Z so its +X points along (2D). */
+    orient: number;
+    /** Added to the point on the path (in world units, not turned). */
+    offset: Vec3;
+    /** false holds it where it is. */
+    playing: boolean;
+    /** It came to the end of a path it runs once (written by the engine). */
+    finished: boolean;
+}
+
 /** A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way). */
 export interface RigidBody2D {
     /** 0 dynamic (falls, is pushed), 1 static (never moves), 2 kinematic (moves by its velocity alone, pushes dynamic bodies). */
@@ -1325,6 +1367,8 @@ export interface Components {
     Scatter: Scatter;
     Vehicle: Vehicle;
     Area2D: Area2D;
+    Path: Path;
+    PathFollower: PathFollower;
     RigidBody2D: RigidBody2D;
     Collider2D: Collider2D;
     Joint2D: Joint2D;
@@ -1375,6 +1419,8 @@ export interface ComponentEnums {
     Scatter: {};
     Vehicle: {};
     Area2D: {};
+    Path: {};
+    PathFollower: { mode: "once" | "loop" | "pingpong"; orient: "none" | "forward" | "flat" };
     RigidBody2D: { kind: "dynamic" | "static" | "kinematic" };
     Collider2D: { shape: "box" | "circle" | "capsule" | "polygon" };
     Joint2D: { kind: "revolute" | "distance" | "prismatic" | "weld" | "wheel" };
@@ -1391,9 +1437,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1454,6 +1500,8 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     Area2D: { size: { x: 0.5, y: 0.5 }, offset: { x: 0, y: 0 }, enabled: true, inside: 0 },
+    Path: { points: [], closed: false, smooth: true, length: 0 },
+    PathFollower: { path: "", speed: 1, distance: 0, mode: 0, orient: 0, offset: { x: 0, y: 0, z: 0 }, playing: true, finished: false },
     RigidBody2D: { kind: 0, velocity: { x: 0, y: 0 }, angular_velocity: 0, gravity_scale: 1, linear_damping: 0, angular_damping: 0, fixed_rotation: false, bullet: false, awake: true, enabled: true },
     Collider2D: { shape: 0, size: { x: 0.5, y: 0.5 }, radius: 0.5, offset: { x: 0, y: 0 }, angle: 0, points: [], density: 1, friction: 0.6, restitution: 0, sensor: false, layer: 1, mask: 4294967295 },
     Joint2D: { kind: 0, body: 0, anchor: { x: 0, y: 0 }, other_anchor: { x: 0, y: 0 }, axis: { x: 1, y: 0 }, length: -1, min_length: 0, max_length: 100000, enable_limit: false, lower: 0, upper: 0, enable_motor: false, motor_speed: 0, max_motor_force: 10, enable_spring: false, hertz: 4, damping_ratio: 0.7, collide_connected: false, break_force: 0 },
@@ -1478,6 +1526,7 @@ export interface Records {
     AnimationTransition: AnimationTransition;
     AnimationParam: AnimationParam;
     TerrainLayer: TerrainLayer;
+    PathPoint: PathPoint;
     Point2D: Point2D;
 }
 
@@ -1492,6 +1541,7 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     AnimationTransition: { from: "*", to: "", when: "", after: 0, fade: 0.2 },
     AnimationParam: { name: "", value: 0, trigger: false },
     TerrainLayer: { name: "", texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, tile: 4, slope: { x: 0, y: 90 }, height: { x: 0, y: 1 }, cover: 1 },
+    PathPoint: { x: 0, y: 0, z: 0 },
     Point2D: { x: 0, y: 0 },
 };
 

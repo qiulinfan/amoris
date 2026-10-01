@@ -4221,6 +4221,214 @@ TEST_CASE("fingers make taps, double taps, long presses, swipes and pinches", "[
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a mark and a diff say what an edit and some ticks changed", "[runtime][world][diff]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.command("world.mark", Json::object()).value()["entities"].get<int>() >= 4);
+    // Nothing yet.
+    Json none = s.command("world.diff", Json::object()).value();
+    REQUIRE(none["counts"] == Json{{"spawned", 0}, {"destroyed", 0}, {"changed", 0}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"color", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Beacon"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json::object()}}}}).has_value());
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Sun"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    const Json d = s.command("world.diff", Json{{"since", "default"}}).value();
+    INFO(d.dump());
+    REQUIRE(d["spawned"][0]["path"] == "/Beacon");
+    REQUIRE(d["spawned"][0]["components"] == Json::array({"Transform", "Light"}));
+    REQUIRE(d["destroyed"][0]["path"] == "/Sun");
+    bool ball = false;
+    for (const Json& c : d["changed"]) {
+        if (c["path"] != "/Ball") continue;
+        ball = true;
+        REQUIRE(c["changes"]["MeshRenderer"]["fields"]["color"][1]["g"] == 1);
+        REQUIRE(c["changes"]["MeshRenderer"]["fields"].size() == 1);   // only what changed
+        REQUIRE(c["changes"].contains("Transform"));                    // the ball fell
+    }
+    REQUIRE(ball);
+    REQUIRE(d["since_tick"] == 2);
+    REQUIRE_FALSE(s.command("world.diff", Json{{"since", "nope"}}).has_value());
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a project's post effects run after the tonemap, with parameters, and say why they do not compile", "[runtime][post]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 5}}).has_value());
+    // A still, coloured block in the middle of the view (the sample's ball bounces).
+    REQUIRE(s.command("world.spawn", Json{{"name", "Block"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 2}}}, {"scale", Json{{"x", 2}, {"y", 2}, {"z", 0.2}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", Json{{"r", 0.9}, {"g", 0.4}, {"b", 0.1}, {"a", 1}}}}}}}}).has_value());
+    const Json ball = Json{{"x", 0}, {"y", 1}, {"z", 2.1}};
+    auto pixel = [&]() {
+        REQUIRE(s.frame().has_value());
+        const Json r = s.command("render.project", Json{{"point", ball}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+    };
+    REQUIRE(s.command("pause", Json::object()).has_value());
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).has_value());   // every frame the same: not jittered,
+    REQUIRE(s.command("render.tonemap", Json{{"auto_exposure", false}}).has_value());   // nor metered
+    REQUIRE(s.frame().has_value());
+    const Json before = pixel();
+    INFO("before " << before.dump());
+    REQUIRE(std::abs(before[0].get<int>() - before[2].get<int>()) > 20);   // the ball has a colour
+    // Grey, then grey turned over by a parameter.
+    const std::string grey = "fn effect(uv: vec2f) -> vec4f { let c = sample_frame(uv); let g = dot(c.rgb, vec3f(0.299, 0.587, 0.114)); return vec4f(mix(vec3f(g), vec3f(1.0 - g), param(0)), 1.0); }";
+    Json set = s.command("render.post", Json{{"effects", Json::array({Json{{"code", grey}, {"name", "grey"}}})}}).value();
+    INFO(set.dump());
+    REQUIRE(set["ok"] == true);
+    const Json g = pixel();
+    INFO("grey " << g.dump());
+    REQUIRE(std::abs(g[0].get<int>() - g[1].get<int>()) <= 1);
+    REQUIRE(std::abs(g[1].get<int>() - g[2].get<int>()) <= 1);
+    const double lum = 0.299 * before[0].get<double>() + 0.587 * before[1].get<double>() + 0.114 * before[2].get<double>();
+    REQUIRE(g[0].get<double>() == Catch::Approx(lum).margin(5));   // the tonemap dithers before it rounds to 8 bits
+    REQUIRE(s.command("render.stats", Json::object()).value()["post_effects"] == 1);
+    REQUIRE(s.command("render.post", Json{{"effects", Json::array({Json{{"code", grey}, {"params", Json::array({1})}}})}}).value()["ok"] == true);
+    const Json turned = pixel();
+    REQUIRE(turned[0].get<double>() == Catch::Approx(255 - g[0].get<double>()).margin(2));
+    // Two at once, in order: grey then turned over by the second.
+    const std::string invert = "fn effect(uv: vec2f) -> vec4f { let c = sample_frame(uv); return vec4f(1.0 - c.rgb, 1.0); }";
+    REQUIRE(s.command("render.post", Json{{"effects", Json::array({Json{{"code", grey}}, Json{{"code", invert}}})}}).value()["ok"] == true);
+    REQUIRE(pixel()[0].get<double>() == Catch::Approx(255 - g[0].get<double>()).margin(2));
+    // A mistake is answered with the compiler's words, and the others still run.
+    const Json bad = s.command("render.post", Json{{"effects", Json::array({Json{{"code", "fn effect(uv: vec2f) -> vec4f { return sample_frame(uv) +; }"}, {"name", "broken"}}, Json{{"code", grey}}})}}).value();
+    INFO(bad.dump());
+    REQUIRE(bad["ok"] == false);
+    REQUIRE(bad["effects"][0]["ok"] == false);
+    REQUIRE_FALSE(bad["effects"][0]["error"].get<std::string>().empty());
+    REQUIRE(bad["effects"][1]["ok"] == true);
+    REQUIRE(s.command("render.post", Json::object()).value()["effects"].size() == 1);
+    // None: the frame as before.
+    REQUIRE(s.command("render.post", Json{{"effects", Json::array()}}).has_value());
+    const Json after = pixel();
+    REQUIRE(std::abs(after[0].get<int>() - before[0].get<int>()) <= 2);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("followers run along paths once, round and back and forth, and paths answer where", "[runtime][paths]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    auto spawn = [&](const std::string& name, Json comps) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", comps}}).has_value()); };
+    auto pt = [](float x, float y, float z) { return Json{{"x", x}, {"y", y}, {"z", z}}; };
+    // A straight track ten units long, lifted one unit by its Transform.
+    spawn("Track", Json{{"Transform", Json{{"position", pt(0, 1, 0)}}}, {"Path", Json{{"points", Json::array({pt(0, 0, 0), pt(10, 0, 0)})}, {"smooth", false}}}});
+    spawn("Once", Json{{"Transform", Json::object()}, {"PathFollower", Json{{"path", "Track"}, {"speed", 5}, {"orient", "flat"}}}});
+    spawn("Back", Json{{"Transform", Json::object()}, {"PathFollower", Json{{"path", "Track"}, {"speed", 4}, {"mode", "pingpong"}}}});
+    // A closed, smooth loop through the corners of a square: round and round.
+    spawn("Loop", Json{{"Transform", Json{{"position", pt(0, 0, 20)}}}, {"Path", Json{{"points", Json::array({pt(-2, 0, -2), pt(2, 0, -2), pt(2, 0, 2), pt(-2, 0, 2)})}, {"closed", true}}}});
+    spawn("Lapper", Json{{"Transform", Json::object()}, {"PathFollower", Json{{"path", "Loop"}, {"speed", 6}, {"orient", "forward"}}}});
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    auto pos = [&](const std::string& e) { return s.command("world.get", Json{{"entity", e}, {"component", "Transform"}}).value()["position"]; };
+    auto fol = [&](const std::string& e) { return s.command("world.get", Json{{"entity", e}, {"component", "PathFollower"}}).value(); };
+    REQUIRE(pos("Once")["x"].get<double>() == Catch::Approx(5).margin(0.01));
+    REQUIRE(pos("Once")["y"].get<double>() == Catch::Approx(1).margin(0.01));
+    REQUIRE(s.command("world.get", Json{{"entity", "Track"}, {"component", "Path"}}).value()["length"].get<double>() == Catch::Approx(10));
+    REQUIRE(s.command("step", Json{{"ticks", 120}, {"until", Json{{"event", "path.arrived"}}}}).value()["until"]["met"] == true);
+    // Once: at the end, finished; ping-pong came back (12 units of travel in the three seconds: out and 2 back).
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    REQUIRE(pos("Once")["x"].get<double>() == Catch::Approx(10).margin(0.01));
+    REQUIRE(fol("Once")["finished"] == true);
+    REQUIRE(fol("Back")["speed"].get<double>() < 0);
+    REQUIRE(pos("Back")["x"].get<double>() == Catch::Approx(8).margin(0.15));
+    // Round the loop: still on it; the curve through the square's corners swells a little past its 16.
+    const double loop_len = s.command("path.info", Json{{"entity", "Loop"}}).value()["length"].get<double>();
+    REQUIRE(loop_len > 16);
+    REQUIRE(loop_len < 18);
+    const Json near = s.command("path.nearest", Json{{"entity", "Loop"}, {"point", pos("Lapper")}}).value();
+    REQUIRE(near["away"].get<double>() < 0.01);
+    // Questions: a point along the track, and how far along a point beside it lies.
+    const Json at = s.command("path.sample", Json{{"entity", "Track"}, {"fraction", 0.25}}).value();
+    REQUIRE(at["point"]["x"].get<double>() == Catch::Approx(2.5));
+    REQUIRE(at["direction"]["x"].get<double>() == Catch::Approx(1));
+    REQUIRE(s.command("path.nearest", Json{{"entity", "Track"}, {"point", pt(3, 5, 0)}}).value()["distance"].get<double>() == Catch::Approx(3));
+    REQUIRE_FALSE(s.command("path.info", Json{{"entity", "Once"}}).has_value());
+    REQUIRE(s.command("render.debug", Json{{"paths", true}}).value()["paths"] == true);
+    REQUIRE(s.command("events.since", Json{{"seq", 0}, {"type", "path.looped"}}).value()["events"].size() == 0);   // a closed path goes round without a jump
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a Tiled polyline becomes a Path a follower runs along", "[runtime][paths][tiled]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    const Json objs = s.command("tilemap.objects", Json{{"entity", "Level"}, {"layer", "routes"}}).value();
+    INFO(objs.dump());
+    REQUIRE(objs[0]["polyline"] == true);
+    REQUIRE(objs[0]["points"].size() == 3);
+    const Json made = s.command("tilemap.paths", Json{{"entity", "Level"}, {"layer", "routes"}}).value();
+    REQUIRE(made["paths"][0]["path"] == "/patrol");
+    // The level's top-left is at (-10, 4.5), a tile a unit: the route starts at (-7, -3), runs 4
+    // right and 2 up.
+    const Json info = s.command("path.info", Json{{"entity", "patrol"}}).value();
+    REQUIRE(info["length"].get<double>() == Catch::Approx(6));
+    REQUIRE(info["start"]["x"].get<double>() == Catch::Approx(-7));
+    REQUIRE(info["start"]["y"].get<double>() == Catch::Approx(-3));
+    REQUIRE(info["end"]["y"].get<double>() == Catch::Approx(-1));
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", Json::object()}, {"Sprite", Json::object()}, {"PathFollower", Json{{"path", "patrol"}, {"speed", 3}, {"mode", "pingpong"}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    const Json at = s.command("world.get", Json{{"entity", "Guard"}, {"component", "Transform"}}).value()["position"];
+    REQUIRE(at["x"].get<double>() == Catch::Approx(-4).margin(0.05));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("an action's value set directly, and an on-screen stick and button that set it from fingers", "[runtime][input][touchcontrols]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "crates";
+    o.bundle = root() / "build" / "ts" / "crates.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 960;
+    o.height = 540;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    auto action = [&](const std::string& name) { return s.command("input.actions", Json::object()).value()[name]; };
+    // input.axis: part way is a value without a press; past 0.5 it is down; 0 lets go.
+    REQUIRE(s.command("input.axis", Json{{"action", "move_x"}, {"value", 0.4}}).has_value());
+    REQUIRE(action("move_x")["value"].get<double>() == Catch::Approx(0.4));
+    REQUIRE(action("move_x")["down"] == false);
+    REQUIRE(s.command("input.axis", Json{{"action", "move_x"}, {"value", -0.8}}).has_value());
+    REQUIRE(action("move_x")["down"] == true);
+    REQUIRE(s.command("input.axis", Json{{"action", "move_x"}, {"value", 0}}).has_value());
+    REQUIRE(action("move_x")["value"].get<double>() == 0);
+    REQUIRE_FALSE(s.command("input.axis", Json{{"action", "nope"}, {"value", 1}}).has_value());
+    // The sample's stick (100 points from the left and the bottom): a finger down on it and moved
+    // 50 points right tilts move_x most of the way; lifted, it lets go.
+    REQUIRE(s.command("input.touch", Json{{"x", 100}, {"y", 440}, {"phase", "down"}}).has_value());
+    REQUIRE(s.command("input.touch", Json{{"x", 150}, {"y", 440}, {"phase", "move"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    const double tilt = action("move_x")["value"].get<double>();
+    REQUIRE(tilt == Catch::Approx((50.0 / 60.0 - 0.15) / 0.85).margin(0.01));
+    REQUIRE(s.command("ui.query", Json{{"name", "touch-controls"}}).value().size() == 1);   // drawn since the first touch
+    // A second finger on the button holds fire while the first still tilts the stick.
+    REQUIRE(s.command("input.touch", Json{{"x", 870}, {"y", 450}, {"phase", "down"}, {"finger", 1}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(action("fire")["down"] == true);
+    REQUIRE(action("move_x")["value"].get<double>() == Catch::Approx(tilt));
+    REQUIRE(s.command("input.touch", Json{{"x", 870}, {"y", 450}, {"phase", "up"}, {"finger", 1}}).has_value());
+    REQUIRE(s.command("input.touch", Json{{"x", 150}, {"y", 440}, {"phase", "up"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(action("fire")["down"] == false);
+    REQUIRE(action("move_x")["value"].get<double>() == 0);
+    REQUIRE(s.command("state", Json::object()).value()["state"]["released"] == true);   // the button let the ball go
+    // The window as it is, and a request remembered headless.
+    REQUIRE(s.command("window.info", Json::object()).value()["width"] == 960);
+    REQUIRE(s.command("window.set", Json{{"fullscreen", true}}).value()["fullscreen"] == true);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("2D rigid bodies stack, swing on joints, hit through sensors, land on tiles and repeat exactly", "[runtime][physics2d]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";

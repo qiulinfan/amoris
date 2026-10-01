@@ -175,8 +175,12 @@ TEST_CASE("a Tiled map parses layers, tilesets, flips, properties and objects", 
     REQUIRE_FALSE(map.solid_at(5, 6));
     REQUIRE(map.solidity_at(3, 8) == 1);
     REQUIRE(map.solidity_at(5, 5) == 0);
-    REQUIRE(map.object_layers.size() == 1);
+    REQUIRE(map.object_layers.size() == 2);
     REQUIRE(map.object_layers[0].objects.size() == 7);
+    // The routes layer's patrol is a polyline: its points from the object's place, open.
+    REQUIRE(map.object_layers[1].objects[0].points.size() == 3);
+    REQUIRE(map.object_layers[1].objects[0].points[2].y == -32);
+    REQUIRE_FALSE(map.object_layers[1].objects[0].closed);
     REQUIRE(map.object_layers[0].objects[0].name == "player");
     REQUIRE(map.object_layers[0].objects[1].properties["bob"] == 0.3);
     REQUIRE(map.properties["title"] == "coins");

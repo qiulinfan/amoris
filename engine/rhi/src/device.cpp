@@ -578,6 +578,26 @@ Result<WGPUShaderModule> Device::create_shader(const char* label, std::string_vi
     return m;
 }
 
+void Device::push_error_scope() { wgpuDevicePushErrorScope(impl_->device, WGPUErrorFilter_Validation); }
+
+std::string Device::pop_error_scope() {
+    struct Answer {
+        bool done = false;
+        std::string message;
+    } answer;
+    WGPUPopErrorScopeCallbackInfo ci{};
+    ci.mode = WGPUCallbackMode_AllowSpontaneous;
+    ci.callback = [](WGPUPopErrorScopeStatus status, WGPUErrorType type, WGPUStringView message, void* u1, void*) {
+        auto* a = static_cast<Answer*>(u1);
+        if (status == WGPUPopErrorScopeStatus_Success && type != WGPUErrorType_NoError) a->message = to_string(message);
+        a->done = true;
+    };
+    ci.userdata1 = &answer;
+    wgpuDevicePopErrorScope(impl_->device, ci);
+    for (int i = 0; i < 2000 && !answer.done; ++i) device_progress(impl_->instance, impl_->device, true);
+    return answer.message;
+}
+
 WGPUBuffer Device::create_buffer(const char* label, WGPUBufferUsage usage, std::uint64_t size, const void* initial) {
     WGPUBufferDescriptor bd{};
     bd.label = str(label);

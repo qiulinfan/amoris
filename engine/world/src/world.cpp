@@ -685,6 +685,22 @@ long World::get_numbers(EntityId id, std::string_view component, double* out) co
     return n == kNotNumeric ? -2 : static_cast<long>(n);
 }
 
+Json World::snapshot() const {
+    Json out = Json::object();
+    for (EntityId r : roots()) {
+        impl_->visit(r, 0, [&](EntityId x, int) {
+            flecs::entity e = impl_->ecs.entity(x);
+            Json comps = Json::object();
+            for (const auto& op : impl_->ops) {
+                if (op.serialized && op.has(e)) comps[std::string(op.name)] = op.get(e);
+            }
+            out[std::to_string(x)] = Json{{"path", path(x)}, {"components", std::move(comps)}};
+            return true;
+        });
+    }
+    return out;
+}
+
 long World::set_numbers(EntityId id, std::string_view component, const double* in, std::size_t n) {
     const ComponentOps* op = impl_->find(component);
     if (!op || !op->write_numbers) return -2;

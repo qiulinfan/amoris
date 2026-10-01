@@ -170,6 +170,21 @@ A `Light` of kind 1 is a point light and kind 2 a spot: a cone along the entity'
 
 `renderer_tests` (`[lights]`) holds it to pixels: a spot 3 units over a white floor lights the floor under it as a point light at the same height would and leaves it dark 2 units aside, where the point light still lights it, and turned to shine sideways leaves the floor under it dark; four hundred colored lights 2 units apart are culled to the view (the rest counted), the floor under a red, a green and a blue one comes out in that color and so does one near the view's corner; and with a thousand more in view the 1024 nearest are kept, the rest counted as dropped. `[lightshadows]` puts a block between a light and the floor: with `shadows` on, the floor behind it darkens by more than 60 levels while open floor moves by less than 6, for a spot (one face) and a point light (six), the block with `cast_shadows: false` lets the light through, and `render.shadows {enabled: false}` draws no faces. The tighter per-cluster test changes no pixel: a hall of 75 lamps and three spots renders identically with the rectangle-only assignment, from about a fifth of the entries.
 
+## Post effects
+
+A project's own look after the tonemap: an old screen's lines, a pixelated world, a hit's red flash, a grey for a flashback, a vignette that closes in. An effect is WGSL that defines one function, `fn effect(uv: vec2f) -> vec4f`, the colour at a point of the view (0..1 across and down), with four to call: `sample_frame(uv)` (the frame so far, colours as they will be shown, 0..1), `param(i)` (eight numbers the project gives), `resolution()` (the view's size in pixels) and `time()` (seconds since the effects were set). `[render] post = ["effects/crt.wgsl", {shader = "effects/flash.wgsl", params = [0.5]}]` in `project.toml` sets them when the game starts and on `project.reload`; `render.post {effects}` (`render.post(effects)` in scripts) sets them now, from files in the project or code given whole (`{code, name}`), and an empty list takes them away. They run in order, each reading what the one before drew, through two targets of the frame's size, the last into the frame; the interface is drawn after them, so the HUD stays sharp. Each compiles on its own inside a GPU error scope: the answer gives per effect `ok` or the compiler's message, and only those that compiled run, so a mistake costs the effect, not the frame. `render.stats.post_effects` counts what ran.
+
+```wgsl
+// Grey, turned over by param(0).
+fn effect(uv: vec2f) -> vec4f {
+    let c = sample_frame(uv);
+    let g = dot(c.rgb, vec3f(0.299, 0.587, 0.114));
+    return vec4f(mix(vec3f(g), vec3f(1.0 - g), param(0)), 1.0);
+}
+```
+
+`samples/crates` draws through `effects/scanlines.wgsl`. `runtime_tests` (`[post]`): a block's colour turned grey to its luminance, turned over by a parameter, two effects in order, a broken one answered with the compiler's words while the other runs, and none giving the frame back as it was.
+
 ## Not yet
 
 Heights on decals (a decal's normal map bends the light, but nothing it covers is displaced or occludes itself), glass behind glass and light through glass (a glass shows the scene without the other glass, and casts a whole shadow; caustics come only from water), dispersion and textures for transmission and the clear coat (their factors only), shadows of point and spot lights in a reflection probe's capture, holes in a skinned cut-out's shadow (a skinned mesh casts whole), and output to HDR displays (the frame is encoded for an sRGB screen). Each is a renderer-internal change: the commands and components stay.

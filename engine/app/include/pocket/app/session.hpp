@@ -23,6 +23,7 @@
 #include <pocket/ui/painter.hpp>
 #include <pocket/world/recorder.hpp>
 #include <pocket/world/transcript.hpp>
+#include <pocket/world/paths.hpp>
 #include <pocket/world/world.hpp>
 
 #include <deque>
@@ -140,9 +141,11 @@ class Session {
     Result<Json> mesh_command(std::string_view op, const Json& p);
     Result<Json> physics2d_command(std::string_view op, const Json& p);
     Result<Json> make_mesh(const std::string& name, const Json& spec);
+    Result<Json> set_post_effects(const Json& list);
     Json saved_maps(bool edited) const;
     Status restore_maps(const Json& maps);
     std::map<std::string, Json> made_meshes_;
+    std::map<std::string, Json> marks_;   // world.mark: the world's saved components by name, for world.diff
     std::vector<double> nums_;   // __pocket.__nums: a component's numbers for world.get/set without JSON   // mesh.create's requests by name, carried by saved scenes
     // Terrains (docs/design/terrain.md): heights made from a heightmap or noise when an entity's
     // Terrain settings change, meshed into the asset store under `terrain:<entity>@<revision>`.
@@ -195,7 +198,7 @@ class Session {
     std::vector<std::string> physics_layers_;  // [physics] layers names, bit 0 first
     std::vector<std::vector<Vec3>> nav_paths_;  // the last paths asked for, drawn by the nav overlay
     world::Recorder recorder_;
-    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false, nav = false, lights = false; } debug_flags_;
+    struct DebugFlags { bool colliders = false, joints = false, bounds = false, axes = false, nav = false, lights = false, paths = false; } debug_flags_;
     struct DebugShape {
         int kind = 0;  // 0 line, 1 box, 2 sphere
         Vec3 a, b;     // line ends; box center + half; sphere center (radius in b.x)
@@ -231,7 +234,9 @@ class Session {
     struct RumbleStep { float low = 0, high = 0; int ms = 0; };
     struct RumblePattern { std::vector<RumbleStep> steps; std::size_t next = 0; std::int64_t next_tick = 0; int repeat = 1; };
     std::map<int, RumblePattern> rumble_;
-    std::vector<std::pair<std::string, int>> pending_holds_;  // holds asked for during a tick: pressed at the next tick's start
+    std::vector<std::pair<std::string, int>> pending_holds_;
+    std::vector<platform::Event> pending_events_;
+    world::PathRunner paths_;   // Paths and their followers (docs/design/paths.md)   // input a script made during a tick (input.axis): applied at the next tick's start  // holds asked for during a tick: pressed at the next tick's start
     bool in_tick_ = false;
     // Hitboxes (docs/design/combat.md): who stands in which, and when it hits again.
     struct Touch { world::EntityId box = 0, target = 0; double next = 0; };

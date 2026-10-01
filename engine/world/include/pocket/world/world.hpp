@@ -80,6 +80,9 @@ class World {
     // path without JSON): the count, or -1 when the entity lacks it, -2 when it is not all numbers
     // (or unknown), -3 when the entity is gone, and for set -4 when the count is not the component's.
     long get_numbers(EntityId id, std::string_view component, double* out) const;
+    // Every entity's saved components (the derived ones, WorldTransform and Bounds, left out) by
+    // id, with its path: what world.mark keeps and world.diff compares.
+    [[nodiscard]] Json snapshot() const;
     long set_numbers(EntityId id, std::string_view component, const double* in, std::size_t n);
     [[nodiscard]] std::vector<std::string> components_of(EntityId id) const;
     // Every serialized component of an entity as {name: value} (what scenes and the recorder store).

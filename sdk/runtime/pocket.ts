@@ -14,6 +14,7 @@ declare const __pocket: {
 };
 
 export { world, render, command, transcript } from "./world";
+export type { PostEffectSpec } from "./world";
 export type { Entity, EntityRef, ComponentPatch, DeepPartial, TreeOptions, QueryOptions, QueryRow, Described, Scene, SceneEntity, Packed, VisibleEntity } from "./world";
 export type { ComponentName, Components, Records, AnimationLayer, Vec2, Vec3, Vec4, Quat, Color, Transform } from "./generated/components";
 export { componentNames, componentDefaults, recordDefaults, derivedComponents } from "./generated/components";
@@ -41,6 +42,11 @@ export { animation } from "./animation";
 export { tilemap } from "./tilemap";
 export type { TileInfo, MapObjectInfo, TileSpec, TileEdit, TileFill, NewMap } from "./tilemap";
 export { meshes } from "./mesh";
+export { display } from "./display";
+export { paths } from "./paths";
+export { touch } from "./touch";
+export type { StickOptions, ButtonOptions, Anchor } from "./touch";
+export type { WindowInfo } from "./display";
 export type { MeshData, MadeMesh } from "./mesh";
 export type { ClipInfo, PoseJoint, PlayAnimationOptions } from "./animation";
 export type { ParticleStats } from "./particles";

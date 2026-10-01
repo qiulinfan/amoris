@@ -16,8 +16,9 @@ How the agent reaches the engine (--via):
 The agent starts in the project copy for a task that edits files and in an empty directory for the
 rest, never in the repository, so nothing it writes can land in the engine's sources. The harness
 puts the copies and the documentation outside the repository; a call that still reaches into the
-harness or the evidence (where the checks and earlier answers are) is reported under `peeked`, and
-such a run's pass says nothing about the engine.
+harness or its evidence (tools/scripts, where the checks are, and tests/evidence/agent-eval, where
+earlier answers are) is reported under `peeked`, and such a run's pass says nothing about the engine.
+The agent's other reading in the repository (the SDK's or the tool's sources) is not counted.
 """
 import argparse
 import json
@@ -131,7 +132,10 @@ def main():
     cost = 0.0
     tools = {}
     peeked = []
-    harness = [os.path.join(ROOT, "tools"), os.path.join(ROOT, "tests"), "agent_eval"]
+    # The harness and the evidence (where the checks and earlier answers are), by absolute path or
+    # relative to a `cd` into the repository in the same call.
+    harness = [os.path.join(ROOT, "tools", "scripts"), os.path.join(ROOT, "tests", "evidence", "agent-eval"), "agent_eval"]
+    relative = ["tools/scripts", "tests/evidence/agent-eval", "evidence/agent-eval"]
     turns = 0
     final_text = ""
     errors = []
@@ -153,7 +157,8 @@ def main():
                 name = path[5:] + ("" if name == "write" else " (docs)")
             tools[name] = tools.get(name, 0) + 1
             args = json.dumps(e.get("args") or {})
-            if any(h in args for h in harness) and len(peeked) < 10:
+            reached = any(h in args for h in harness) or (ROOT in args and any(r in args.split(ROOT, 1)[1] for r in relative))
+            if reached and len(peeked) < 10:
                 peeked.append(f"{e.get('toolName', '?')}: {args[:160]}")
         elif kind == "tool_execution_end" and e.get("isError"):
             errors.append(e.get("toolName", "?"))

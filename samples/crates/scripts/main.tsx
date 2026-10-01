@@ -3,7 +3,7 @@
 // wheels that the arrow keys drive. The HUD counts the crates knocked down in rich text.
 //   pocket run crates
 //   pocket scenario crates
-import { Label, expose, input, mount, onStart, onTick, setClearColor, signal, world } from "pocket";
+import { Label, expose, input, mount, onStart, onTick, setClearColor, signal, touch, world } from "pocket";
 import type { Entity } from "pocket";
 
 const down = signal(0);
@@ -46,6 +46,9 @@ onStart(() => {
     for (const [name, dx] of [["WheelBack", -0.7], ["WheelFront", 0.7]] as const) {
         wheels.push(world.spawn(name, { components: { Transform: at(-2.5 + dx, 0.7), Sprite: { texture: "assets/ball.png", size: { x: 0.7, y: 0.7 }, color: { r: 0.3, g: 0.3, b: 0.3, a: 1 } }, RigidBody2D: {}, Collider2D: { shape: "circle", radius: 0.35, friction: 0.9 }, Joint2D: { kind: "wheel", body: car, other_anchor: { x: dx, y: -0.5 }, axis: { x: 0, y: 1 }, enable_spring: true, hertz: 5, damping_ratio: 0.7, enable_motor: true, max_motor_force: 30 } } }));
     }
+    // On a touch screen: a stick for the car and a button for the ball (drawn from the first touch).
+    touch.stick({ x: "move_x", left: 100, bottom: 100 });
+    touch.button({ action: "fire", right: 90, bottom: 90, label: "Go" });
     mount(() => (
         <box position="absolute" left={12} top={12} padding={[6, 10]} radius={6} background="#00000080" name="hud">
             <Label text={`[b]Crates down[/b]: [color=#ffcc44]${down()}[/color] of ${crates.length}`} markup outline="1 #000000" color="#ffffff" size={16} name="score" />

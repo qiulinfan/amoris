@@ -598,6 +598,10 @@ def sprites_level():
             {"id": 4, "type": "tilelayer", "name": "platforms", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": platforms},
             {"id": 5, "type": "tilelayer", "name": "water", "width": w, "height": h, "x": 0, "y": 0, "opacity": 1, "visible": True, "data": water},
             {"id": 3, "type": "objectgroup", "name": "spawns", "objects": objects, "opacity": 1, "visible": True, "x": 0, "y": 0},
+            # A patrol route drawn as a polyline (docs/design/paths.md): tilemap.paths makes it a Path.
+            {"id": 7, "type": "objectgroup", "name": "routes", "opacity": 1, "visible": True, "x": 0, "y": 0,
+             "objects": [{"id": 40, "name": "patrol", "type": "route", "x": 48, "y": 120, "width": 0, "height": 0, "rotation": 0, "visible": True,
+                          "polyline": [{"x": 0, "y": 0}, {"x": 64, "y": 0}, {"x": 64, "y": -32}]}]},
         ],
     }
 

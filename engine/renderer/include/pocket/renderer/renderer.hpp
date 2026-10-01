@@ -150,6 +150,7 @@ struct RenderStats {
     bool bloom = false;               // whether the bloom passes ran this frame
     bool grade = false;               // whether grading was applied in the final pass this frame
     int tonemap = 0;                  // the operator of the final pass (Tonemap)
+    int post_effects = 0;             // a project's post effects run this frame
     int sky = 0;                      // the Sky drawn (0 none, 1 procedural, 2 image)
     bool depth_prepass = false;       // whether the ids and depth were drawn in a pass of their own first (MSAA, AO or fog)
     bool ao = false;                  // whether ambient occlusion was computed this frame
@@ -285,6 +286,18 @@ class Renderer {
     [[nodiscard]] MotionBlurSettings motion_blur() const;
     [[nodiscard]] AoSettings ao() const;
     void set_tonemap(TonemapSettings s);
+    // Post effects a project wrote (docs/design/rendering.md, Post effects): WGSL that defines
+    // `fn effect(uv: vec2f) -> vec4f`, run in order after the tonemap over the frame as shown (the
+    // interface is drawn after them). Each compiles on its own: the answer has, per effect, the
+    // compiler's message, empty when it compiled; only those that compiled run.
+    struct PostEffect {
+        std::string name;
+        std::string wgsl;
+        std::array<float, 8> params{};
+        bool enabled = true;
+    };
+    std::vector<std::string> set_post_effects(const std::vector<PostEffect>& effects);
+    [[nodiscard]] std::vector<PostEffect> post_effects() const;
     [[nodiscard]] TonemapSettings tonemap() const;
     // Seconds between rendered frames, for the auto exposure's adaptation (a tick by default).
     void set_time_step(float seconds);

@@ -28,7 +28,7 @@ from pocket_env import PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/localization.md", "docs/design/networking.md"]
+DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/paths.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/localization.md", "docs/design/networking.md"]
 # Where a run's copies live: outside the repository, so an agent finds the game and the docs there
 # and nothing of the harness (whose checks are the answers) beside them. Made by run().
 EVAL_DIR = None
@@ -1126,6 +1126,205 @@ def plank_bridge_check(env, answer):
     return True, f"five planks hang between the points, lowest at {low:.3f}"
 
 
+# ---- whole games from a brief (docs/agent-eval.md, Whole games): a blank project, a contract of
+# names, actions, exposed values and events, and a check that plays the game through it.
+GAME_TOML = """name = "{name}"
+entry = "scripts/main.ts"
+scene = "scene.json"
+
+[window]
+width = 960
+height = 540
+
+[input.actions]
+move_x = {{ negative = ["A", "Left"], positive = ["D", "Right"] }}
+move_y = {{ negative = ["S", "Down"], positive = ["W", "Up"] }}
+"""
+EMPTY_SCENE = '{"format": "pocket-scene", "entities": []}\n'
+
+DODGE_TS = """import { events, expose, input, onStart, onTick, random, world } from "pocket";
+let player = 0;
+let alive = true;
+let time = 0;
+let next = 0;
+let count = 0;
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 0, z: 10 } }, Camera: { orthographic: true, ortho_size: 8 } } });
+    player = world.spawn("Player", { components: { Transform: { position: { x: 0, y: -5, z: 0 } }, Sprite: { color: { r: 0.3, g: 0.7, b: 1, a: 1 } } } });
+});
+onTick((t) => {
+    if (!alive) return;
+    time += t.dt;
+    const p = world.get(player, "Transform")!.position;
+    world.set(player, "Transform", { position: { x: p.x + input.axis("move_x") * 6 * t.dt, y: p.y + input.axis("move_y") * 6 * t.dt } });
+    next -= t.dt;
+    if (next <= 0) {
+        next += 1;
+        count++;
+        world.spawn(`Rock_${count}`, { components: { Transform: { position: { x: random() * 16 - 8, y: 6, z: 0 } }, Sprite: { color: { r: 0.5, g: 0.4, b: 0.3, a: 1 } } } });
+    }
+    const me = world.get(player, "Transform")!.position;
+    for (const row of world.query({ name: "Rock_*", with: ["Transform"] })) {
+        const r = row.Transform!.position;
+        const y = r.y - 4 * t.dt;
+        if (y < -7) { world.destroy(row.id); continue; }
+        world.set(row.id, "Transform", { position: { y } });
+        if (alive && Math.hypot(r.x - me.x, y - me.y) < 0.6) {
+            alive = false;
+            events.emit("game.over", { time: Number(time.toFixed(3)) });
+        }
+    }
+});
+expose("alive", () => alive);
+expose("time_alive", () => Number(time.toFixed(3)));
+"""
+
+KEY_DOOR_TS = """import { events, expose, input, onStart, onTick, world } from "pocket";
+let player = 0;
+let hasKey = false;
+let done = false;
+let time = 0;
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 6, y: 0, z: 10 } }, Camera: { orthographic: true, ortho_size: 6 } } });
+    player = world.spawn("Player", { components: { Transform: { position: { x: 0, y: 0, z: 0 } }, Sprite: { color: { r: 0.3, g: 0.7, b: 1, a: 1 } } } });
+    world.spawn("Key", { components: { Transform: { position: { x: 4, y: 0, z: 0 } }, Sprite: { size: { x: 0.5, y: 0.5 }, color: { r: 1, g: 0.85, b: 0.2, a: 1 } } } });
+    world.spawn("Door", { components: { Transform: { position: { x: 8, y: 0, z: 0 } }, Sprite: { size: { x: 0.4, y: 3 }, color: { r: 0.5, g: 0.3, b: 0.2, a: 1 } } } });
+    world.spawn("Exit", { components: { Transform: { position: { x: 12, y: 0, z: 0 } }, Sprite: { color: { r: 0.3, g: 1, b: 0.4, a: 1 } } } });
+});
+onTick((t) => {
+    time += t.dt;
+    const p = world.get(player, "Transform")!.position;
+    let x = p.x + input.axis("move_x") * 5 * t.dt;
+    const y = p.y + input.axis("move_y") * 5 * t.dt;
+    if (!hasKey && x > 7.5) x = Math.min(x, Math.max(p.x, 7.5));
+    world.set(player, "Transform", { position: { x, y } });
+    const key = world.find("Key");
+    if (key !== undefined && !hasKey) {
+        const k = world.get(key, "Transform")!.position;
+        if (Math.hypot(k.x - x, k.y - y) < 0.7) {
+            hasKey = true;
+            world.destroy(key);
+            events.emit("key.taken", {});
+            const door = world.find("Door");
+            if (door !== undefined) world.destroy(door);
+        }
+    }
+    if (!done && Math.hypot(12 - x, 0 - y) < 0.7) {
+        done = true;
+        events.emit("level.complete", { seconds: Number(time.toFixed(3)) });
+    }
+});
+expose("has_key", () => hasKey);
+"""
+
+
+def write_game(project_dir, name, script):
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(GAME_TOML.format(name=os.path.basename(project_dir)))
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write(EMPTY_SCENE)
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+        f.write(script)
+
+
+def dodge_solve(env, project_dir):
+    write_game(project_dir, "dodge", DODGE_TS)
+    return None
+
+
+def entity_pos(env, name):
+    e = env.command("world.find", {"path": name})
+    if not isinstance(e, int):
+        return None
+    t = env.command("world.get", {"entity": e, "component": "Transform"})
+    return t["position"] if t else None
+
+
+def dodge_check(env, answer):
+    actions = env.command("input.actions", {})
+    for a in ("move_x", "move_y"):
+        if a not in actions:
+            return False, f"no {a} action (actions: {sorted(actions)[:8]})"
+    p0 = entity_pos(env, "Player")
+    if p0 is None:
+        return False, "no entity named Player with a Transform"
+    env.command("input.hold", {"action": "move_x", "ticks": 60})
+    env.command("step", {"ticks": 60})
+    p1 = entity_pos(env, "Player")
+    if not (near(p1["x"] - p0["x"], 6, 0.45) and near(p1["y"], p0["y"], 0.15)):
+        return False, f"holding move_x for a second moved the Player from {p0} to {p1}, not 6 along x"
+    env.command("step", {"ticks": 150})
+    rocks = env.command("world.query", {"name": "Rock*", "with": ["Transform"]})["entities"]
+    if len(rocks) < 3:
+        return False, f"{len(rocks)} rocks after 3.5 seconds, not one a second"
+    r0 = rocks[-1]
+    y0 = r0["Transform"]["position"]["y"]
+    env.command("step", {"ticks": 30})
+    r1 = env.command("world.get", {"entity": r0["id"], "component": "Transform"})
+    if not r1 or not near(y0 - r1["position"]["y"], 2, 0.2):
+        return False, f"a rock fell from {y0} to {r1 and r1['position']['y']} in half a second, not 4 a second"
+    st = env.command("state", {})["state"]
+    if st.get("alive") is not True or not isinstance(st.get("time_alive"), (int, float)) or st["time_alive"] < 3:
+        return False, f"before a hit the state is {st}"
+    seq = env.command("events.last_seq", {})["seq"]
+    me = entity_pos(env, "Player")
+    env.command("world.set", {"entity": r0["id"], "component": "Transform", "value": {"position": {"x": me["x"], "y": me["y"]}}})
+    env.command("step", {"ticks": 2})
+    over = env.command("events.since", {"seq": seq, "type": "game.over"})["events"]
+    if not over:
+        return False, "a rock put on the Player brought no game.over"
+    st = env.command("state", {})["state"]
+    if st.get("alive") is not False:
+        return False, f"after game.over the state is {st}"
+    t_end = st.get("time_alive")
+    before = entity_pos(env, "Player")
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    after = entity_pos(env, "Player")
+    if abs(after["x"] - before["x"]) > 0.01:
+        return False, "the Player still moves after the game is over"
+    if env.command("state", {})["state"].get("time_alive") != t_end:
+        return False, "time_alive goes on after the game is over"
+    return True, f"moves at 6, rocks fall at 4 one a second, a hit ends it at {t_end}"
+
+
+def key_door_solve(env, project_dir):
+    write_game(project_dir, "key_door", KEY_DOOR_TS)
+    return None
+
+
+def key_door_check(env, answer):
+    for name in ("Player", "Key", "Door", "Exit"):
+        if entity_pos(env, name) is None:
+            return False, f"no entity named {name}"
+    player = env.command("world.find", {"path": "Player"})
+    # Without the key the door holds: put the player between the key and the door and walk right.
+    env.command("world.set", {"entity": player, "component": "Transform", "value": {"position": {"x": 6, "y": 0}}})
+    env.command("input.hold", {"action": "move_x", "ticks": 90})
+    env.command("step", {"ticks": 90})
+    p = entity_pos(env, "Player")
+    if p["x"] > 7.9:
+        return False, f"without the key the Player walked through the door to x {p['x']:.2f}"
+    if p["x"] < 6.5:
+        return False, f"the Player did not walk up to the door (x {p['x']:.2f})"
+    seq = env.command("events.last_seq", {})["seq"]
+    # The key, taken where it lies.
+    env.command("world.set", {"entity": player, "component": "Transform", "value": {"position": {"x": 4, "y": 0}}})
+    env.command("step", {"ticks": 3})
+    if not env.command("events.since", {"seq": seq, "type": "key.taken"})["events"]:
+        return False, "standing on the Key brought no key.taken"
+    if env.command("state", {})["state"].get("has_key") is not True:
+        return False, "has_key is not true after the key was taken"
+    if entity_pos(env, "Key") is not None:
+        return False, "the Key is still there after it was taken"
+    env.command("input.hold", {"action": "move_x", "ticks": 150})
+    r = env.command("step", {"ticks": 240, "until": {"event": "level.complete"}})
+    if not r["until"]["met"]:
+        p = entity_pos(env, "Player")
+        return False, f"walking right with the key never reached the Exit (the Player is at {p})"
+    return True, f"the door held without the key; with it the Exit was reached at tick {r['until']['tick']}"
+
+
 def brute_enemies_solve(env):
     rows = env.command("world.query", {"with": ["Enemy"]})["entities"]
     for row in rows:
@@ -1229,6 +1428,10 @@ TASKS = [
      "task": "Make a tile map by code named maps/room.tmj: 10 tiles wide and 8 high, 16-pixel tiles, with assets/tiles.png as its tileset and one tile layer named walls whose tiles are all solid. Put the tileset's first tile in every cell of the map's border and leave the inside empty. Show it with an entity named Room at x 30, y 0. Then drop a 2D rigid body named Pebble, a circle of radius 0.25, from x 35, y -2 inside the room, run the game for two seconds, and answer with the Pebble's y, as the number \"answer\"."},
     {"name": "plank_bridge", "project": "crates", "ticks": 0, "solve": plank_bridge_solve, "check": plank_bridge_check,
      "task": "Hang a bridge in the crates game: five planks named Plank0 to Plank4, each a dynamic 2D rigid body with a box shape of half extents 0.5 by 0.1, laid end to end at height 4 with their centers at x -4, -3, -2, -1 and 0. Hinge each plank to the next where their ends meet, hinge Plank0's left end to a fixed point in the world at (-4.5, 4), and Plank4's right end to a fixed point at (0.5, 4). Run the game for two seconds and answer with the lowest plank center's y, as the number \"answer\"."},
+    {"name": "dodge", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": dodge_solve, "check": dodge_check,
+     "task": "Make a small game in this blank project, replacing its example. A dodge game in the XY plane (x across, y up), seen from the front: the player is an entity named Player that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 6 units a second. Every second a rock appears: an entity named Rock_1, Rock_2, ... at a random x between -8 and 8 and y = 6, falling at 4 units a second; rocks below y = -7 are removed. A rock within 0.6 units of the player ends the game: emit an event game.over with {time}, after which nothing moves the player and the clock stops. Expose alive (true until the game is over) and time_alive (seconds alive). The game must read where the player and the rocks are from their Transforms every tick, so that moving one with world.set moves it in the game. Answer null."},
+    {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
+     "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]
@@ -1277,7 +1480,8 @@ def scratch_copy(task):
     base = eval_dir()
     dst = os.path.join(base, name)
     shutil.rmtree(dst, ignore_errors=True)
-    proc = subprocess.run([POCKET, "new", name, "--from", task["project"], "--dir", base], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT})
+    source = [] if task["project"] == "blank" else ["--from", task["project"]]
+    proc = subprocess.run([POCKET, "new", name, *source, "--dir", base], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT})
     if proc.returncode != 0:
         raise RuntimeError(f"copying {task['project']} failed: {(proc.stderr or proc.stdout).strip()[-400:]}")
     guide = os.path.join(dst, "AGENTS.md")

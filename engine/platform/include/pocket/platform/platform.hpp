@@ -24,6 +24,7 @@ struct Config {
     bool headless = false;
     bool visible = true;
     bool resizable = true;
+    bool fullscreen = false;
 };
 
 enum class EventType : std::uint8_t { Quit, KeyDown, KeyUp, MouseMove, MouseDown, MouseUp, MouseWheel, Resize, Text, PadAdded, PadRemoved, PadButton, PadAxis, TouchDown, TouchUp, TouchMove };
@@ -104,6 +105,18 @@ class Platform {
         bool visible = true;
     };
     [[nodiscard]] Cursor cursor() const;
+    // The window: fullscreen (the desktop's resolution; in a browser the page's fullscreen, which
+    // the browser grants only during a click or a key press), its size in points when windowed,
+    // its title. Headless, the requests are only remembered.
+    void set_fullscreen(bool on);
+    void set_window_size(int width, int height);
+    void set_title(const std::string& title);
+    struct WindowState {
+        int width = 0, height = 0;   // points
+        bool fullscreen = false;
+        std::string title;
+    };
+    [[nodiscard]] WindowState window_state() const;
 
    private:
     Platform();

@@ -635,6 +635,32 @@ A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and g
 | `enabled` | bool | true | false notices nothing: the bodies inside are let out (area.exited) and none come in. |
 | `inside` | i32 | 0 | How many bodies are in it (written by the engine). |
 
+## Path
+
+A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `points` | list:PathPoint | [] | Its points in order; two at least. |
+| `closed` | bool | false | The last point runs back to the first: a loop. |
+| `smooth` | bool | true | A curve through every point (Catmull-Rom); false runs straight from point to point. |
+| `length` | f32 | 0.0 | Its length in world units (written by the engine). |
+
+## PathFollower
+
+Moves its entity along a Path at a speed (docs/design/paths.md): a patrol, a car on a racing line, a platform on its run, a creep down a lane. Every tick before physics the engine moves `distance` on by `speed`, puts the Transform there (plus `offset`) and, with `orient`, turns it along the path; path.arrived and path.looped say when it comes to an end.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `path` | string | "" | The entity with the Path, by name or path. |
+| `speed` | f32 | 1.0 | World units a second along the path (negative goes back). |
+| `distance` | f32 | 0.0 | How far along it is (written by the engine; write it to put it elsewhere). |
+| `mode` | i32: 0 `once`, 1 `loop`, 2 `pingpong` | 0 | 0 once (stops at the end, finished), 1 loop (round again; a closed path goes on round), 2 pingpong (back and forth). |
+| `orient` | i32: 0 `none`, 1 `forward`, 2 `flat` | 0 | 0 leaves its rotation alone, 1 turns its -Z (forward) along the path with Y up, 2 turns it about Z so its +X points along (2D). |
+| `offset` | vec3 | [0.0, 0.0, 0.0] | Added to the point on the path (in world units, not turned). |
+| `playing` | bool | true | false holds it where it is. |
+| `finished` | bool | false | It came to the end of a path it runs once (written by the engine). |
+
 ## RigidBody2D
 
 A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way).
@@ -922,6 +948,16 @@ One textured layer of a Terrain's ground (docs/design/terrain.md, Layers): an im
 | `slope` | vec2 | [0.0, 90.0] | The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit). |
 | `height` | vec2 | [0.0, 1.0] | The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit). |
 | `cover` | f32 | 1.0 | How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything. |
+
+## PathPoint
+
+A point of a Path, in its entity's own space (docs/design/paths.md).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `x` | f32 | 0.0 | Across. |
+| `y` | f32 | 0.0 | Up. |
+| `z` | f32 | 0.0 | Toward the viewer. |
 
 ## Point2D
 

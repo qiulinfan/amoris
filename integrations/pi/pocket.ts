@@ -70,7 +70,7 @@ export default function (pi: ExtensionAPI) {
             "Send one command to the running Pocket game engine and get its JSON result. Every engine feature is a command: " +
             "world.tree {depth} (the scene as text), world.query {with, name}, world.describe {entity}, world.spawn {name, components}, " +
             "world.set {entity, component, value}, world.destroy {entity}, step {ticks, until?, watch?} (until stops early: {event: \"coin.\"} or {state: \"score\", at_least: 3}; watch: [\"score\", \"Player:Transform.position.y\"] answers each value's first, last, min and max with their ticks, instead of stepping a tick at a time), state {keys?}, events.since {seq}, events.why {seq}, " +
-            "transcript, render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
+            "transcript, world.mark then world.diff (what an edit or some ticks changed), render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
             "project.brief first: the project's files, scene, components, actions, state and problems as one text. " +
             "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one, help {sdk: \"timer.after\"} a script function's signature; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it. " +
             "Several commands at once: `calls: [{method, params}, ...]` runs them in order in one request and answers each (its result or its error).",
@@ -84,8 +84,21 @@ export default function (pi: ExtensionAPI) {
                 const results = await batch(p.calls);
                 return { content: [{ type: "text", text: batchText(results) }], details: undefined };
             }
-            if (!p.method) throw new Error("give a method (and params), or calls: [{method, params}, ...]");
-            const result = await call(p.method, p.params ?? {});
+            let method = p.method;
+            let params: Record<string, unknown> = p.params ?? {};
+            if (!method) {
+                // A command's name given as a key ({"help": true}, {"commands": true, "search": "x"}):
+                // that command, with the other keys (or the key's own object) as its parameters.
+                const raw = p as unknown as Record<string, unknown>;
+                const named = Object.keys(raw).find((k) => k !== "params" && /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)?$/.test(k) && (raw[k] === true || (typeof raw[k] === "object" && raw[k] !== null && !Array.isArray(raw[k]))));
+                if (named) {
+                    method = named;
+                    const rest = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== named && k !== "params"));
+                    params = { ...(typeof raw[named] === "object" ? (raw[named] as Record<string, unknown>) : {}), ...rest, ...params };
+                }
+            }
+            if (!method) throw new Error("give a method (and params), or calls: [{method, params}, ...]");
+            const result = await call(method, params);
             return { content: [{ type: "text", text: text(result) }], details: undefined };
         },
     });
