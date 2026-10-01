@@ -1218,6 +1218,57 @@ expose("has_key", () => hasKey);
 """
 
 
+SNAKE_TS = """import { events, expose, input, onStart, onTick, random, world } from "pocket";
+const W = 20, H = 15, STEP = 0.15;
+const segs: number[] = [];
+const cells: Array<[number, number]> = [[5, 7], [4, 7], [3, 7]];
+let dir: [number, number] = [1, 0];
+let want: [number, number] = [1, 0];
+let food = 0;
+let alive = true;
+let acc = 0;
+const place = (e: number, x: number, y: number) => world.set(e, "Transform", { position: { x, y, z: 0 } });
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 9.5, y: 7, z: 10 } }, Camera: { orthographic: true, ortho_size: 8.5 } } });
+    cells.forEach(([x, y], i) => segs.push(world.spawn(`Segment_${i}`, { components: { Transform: { position: { x, y, z: 0 } }, Sprite: { size: { x: 0.9, y: 0.9 }, color: i === 0 ? "#80ff80" : "#30c030" } } })));
+    food = world.spawn("Food", { components: { Transform: { position: { x: 12, y: 3, z: 0 } }, Sprite: { size: { x: 0.7, y: 0.7 }, color: "#ff5050" } } });
+});
+onTick((t) => {
+    if (!alive) return;
+    const ax = input.axis("move_x"), ay = input.axis("move_y");
+    if (ax !== 0 && dir[0] === 0) want = [Math.sign(ax), 0];
+    else if (ay !== 0 && dir[1] === 0) want = [0, Math.sign(ay)];
+    acc += t.dt;
+    if (acc < STEP - 1e-9) return;
+    acc -= STEP;
+    dir = want;
+    const nx = cells[0][0] + dir[0], ny = cells[0][1] + dir[1];
+    const f = world.get(food, "Transform")!.position;
+    const eat = Math.round(f.x) === nx && Math.round(f.y) === ny;
+    const body = eat ? cells : cells.slice(0, -1);
+    if (nx < 0 || ny < 0 || nx >= W || ny >= H || body.some(([x, y]) => x === nx && y === ny)) {
+        alive = false;
+        events.emit("game.over", { length: cells.length });
+        return;
+    }
+    cells.unshift([nx, ny]);
+    if (eat) {
+        segs.push(world.spawn(`Segment_${segs.length}`, { components: { Transform: {}, Sprite: { size: { x: 0.9, y: 0.9 }, color: "#30c030" } } }));
+        events.emit("food.eaten", { length: cells.length });
+        for (let k = 0; k < 1000; k++) {
+            const x = Math.floor(random() * W), y = Math.floor(random() * H);
+            if (!cells.some(([cx, cy]) => cx === x && cy === y)) { place(food, x, y); break; }
+        }
+    } else {
+        cells.pop();
+    }
+    cells.forEach(([x, y], i) => place(segs[i], x, y));
+});
+expose("length", () => cells.length);
+expose("alive", () => alive);
+"""
+
+
 def write_game(project_dir, name, script):
     with open(os.path.join(project_dir, "project.toml"), "w") as f:
         f.write(GAME_TOML.format(name=os.path.basename(project_dir)))
@@ -1328,6 +1379,68 @@ def key_door_check(env, answer):
     return True, f"the door held without the key; with it the Exit was reached at tick {r['until']['tick']}"
 
 
+def snake_solve(env, project_dir):
+    write_game(project_dir, "snake", SNAKE_TS)
+    return None
+
+
+def snake_check(env, answer):
+    head = lambda: entity_pos(env, "Segment_0")  # noqa: E731
+    segs = [entity_pos(env, f"Segment_{i}") for i in range(3)]
+    if any(s is None for s in segs):
+        return False, f"no Segment_0, Segment_1 and Segment_2 with Transforms ({segs})"
+    h = segs[0]
+    head_ok = near(h["y"], 7, 0.05) and (near(h["x"], 5, 0.05) or near(h["x"], 6, 0.05))   # at most one move made
+    if not head_ok or not all(near(s["y"], 7, 0.05) for s in segs) or not (segs[0]["x"] > segs[1]["x"] > segs[2]["x"]):
+        return False, f"the snake does not start as three cells at (5, 7), (4, 7), (3, 7) heading +x: {segs}"
+    st = env.command("state", {})["state"]
+    if st.get("length") != 3 or st.get("alive") is not True:
+        return False, f"at the start the state is {st}"
+    if entity_pos(env, "Food") is None:
+        return False, "no entity named Food"
+    # The Food put in front of the head is eaten on the next move.
+    env.command("world.set", {"entity": "Food", "component": "Transform", "value": {"position": {"x": round(h["x"]) + 1, "y": 7}}})
+    seq = env.command("events.last_seq", {})["seq"]
+    r = env.command("step", {"ticks": 30, "until": {"event": "food.eaten"}})
+    if not r["until"]["met"]:
+        return False, f"the Food put in front of the head was not eaten (the head is at {head()})"
+    eaten = env.command("events.since", {"seq": seq, "type": "food.eaten"})["events"][0]["data"]
+    if eaten.get("length") != 4 or env.command("state", {})["state"].get("length") != 4 or entity_pos(env, "Segment_3") is None:
+        return False, f"after eating: food.eaten {eaten}, length {env.command('state', {})['state'].get('length')}, Segment_3 {entity_pos(env, 'Segment_3')}"
+    env.command("world.set", {"entity": "Food", "component": "Transform", "value": {"position": {"x": 0, "y": 0}}})
+    # A cell every 0.15 s: five in 45 ticks.
+    a = head()
+    env.command("step", {"ticks": 45})
+    b = head()
+    if not (abs(b["x"] - a["x"] - 5) <= 1 and near(b["y"], a["y"], 0.05)):
+        return False, f"in 0.75 s the head went from {a} to {b}, not 5 cells along +x"
+    # Never straight back.
+    env.command("input.hold", {"action": "move_x", "value": -1, "ticks": 18})
+    env.command("step", {"ticks": 18})
+    c = head()
+    if c["x"] <= b["x"]:
+        return False, f"holding move_x back turned the snake around (head from {b} to {c})"
+    # Up, then out through the top edge.
+    env.command("input.hold", {"action": "move_y", "ticks": 300})
+    env.command("step", {"ticks": 20})
+    d = head()
+    if not (d["y"] > c["y"] + 0.5 and abs(d["x"] - c["x"]) <= 1.05):
+        return False, f"holding move_y did not turn the head up (from {c} to {d})"
+    seq = env.command("events.last_seq", {})["seq"]
+    r = env.command("step", {"ticks": 240, "until": {"event": "game.over"}})
+    if not r["until"]["met"]:
+        return False, f"leaving the grid at the top brought no game.over (head at {head()})"
+    over = env.command("events.since", {"seq": seq, "type": "game.over"})["events"][0]["data"]
+    st = env.command("state", {})["state"]
+    if over.get("length") != 4 or st.get("alive") is not False:
+        return False, f"game.over {over}, state {st}"
+    e = head()
+    env.command("step", {"ticks": 30})
+    if head() != e:
+        return False, "the snake still moves after the game is over"
+    return True, f"starts right, eats and grows to 4, a cell every 0.15 s, no reversing, turns, ends at the top edge"
+
+
 def grey_flashback_solve(env):
     code = "fn effect(uv: vec2f) -> vec4f { let c = sample_frame(uv); let g = dot(c.rgb, vec3f(0.299, 0.587, 0.114)); return vec4f(g, g, g, c.a); }"
     env.command("render.post", {"effects": [{"code": code, "name": "grey"}]})
@@ -1422,6 +1535,52 @@ def wait_for_coin_check(env, answer):
     return True, f"the first coin went at tick {answer}"
 
 
+def night_level_solve(env):
+    env.command("world.set", {"entity": "Level", "component": "TileMap", "value": {"lit": True}})
+    env.command("world.set", {"entity": "Player", "component": "Sprite", "value": {"lit": True}})
+    env.command("render.ambient", {"color": "#202840", "intensity": 0.3})
+    env.command("world.spawn", {"name": "Torchlight", "parent": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0, "z": 0.5}}, "Light": {"kind": "point", "color": "#ffb060", "range": 5, "intensity": 2}}})
+
+
+def night_level_check(env, answer):
+    tm = env.command("world.get", {"entity": "Level", "component": "TileMap"})
+    sp = env.command("world.get", {"entity": "Player", "component": "Sprite"})
+    if not (tm and tm.get("lit")) or not (sp and sp.get("lit")):
+        return False, f"the map lit {tm and tm.get('lit')}, the player's sprite lit {sp and sp.get('lit')}"
+    amb = env.command("render.ambient", {})
+    want = (0x20 / 255, 0x28 / 255, 0x40 / 255)
+    if not (near(amb["intensity"], 0.3, 0.02) and all(near(amb["color"][k], w, 0.02) for k, w in zip("rgb", want))):
+        return False, f"the ambient is {amb}, not #202840 at 0.3"
+    env.command("input.hold", {"action": "move_x", "ticks": 60})
+    env.command("step", {"ticks": 60})
+    p = entity_pos(env, "Player")
+    lights = env.command("world.query", {"with": ["Light", "WorldTransform"], "fields": ["Light", "WorldTransform"]})["entities"]
+    for e in lights:
+        l, w = e["Light"], e["WorldTransform"]["position"]
+        if l["kind"] != 1 or not color_is(l["color"], 1.0, 0xb0 / 255, 0x60 / 255) or not near(l["range"], 5, 0.01):
+            continue
+        if abs(w["x"] - p["x"]) < 1.0 and abs(w["y"] - p["y"]) < 1.0 and w["z"] > p["z"]:
+            return True, f"a warm light at {w} by the player at {p} after it walked"
+    return False, f"no warm point light of range 5 in front of the player at {p} after it walked: {[(e['Light']['kind'], e['WorldTransform']['position']) for e in lights][:6]}"
+
+
+def guard_view_solve(env):
+    p = entity_pos(env, "Player")
+    t = entity_pos(env, "Torch_6")
+    cells = env.command("tilemap.fov", {"entity": "Level", "from": {"x": p["x"], "y": p["y"]}, "radius": 6})["count"]
+    sees = env.command("tilemap.sight", {"entity": "Level", "from": {"x": t["x"], "y": t["y"]}, "to": {"x": p["x"], "y": p["y"]}})["visible"]
+    return {"cells": cells, "sees": sees}
+
+
+def guard_view_check(env, answer):
+    want = guard_view_solve(env)
+    if not isinstance(answer, dict):
+        return False, f"answered {answer!r}, not an object with cells and sees"
+    if answer.get("cells") != want["cells"] or answer.get("sees") is not want["sees"]:
+        return False, f"answered {answer}, the map says {want}"
+    return True, f"{want['cells']} cells in view, the torch {'sees' if want['sees'] else 'does not see'} the player"
+
+
 TASKS = [
     {"name": "spawn_named", "project": "hello", "ticks": 0, "solve": spawn_named_solve, "check": spawn_named_check,
      "task": "Spawn an entity named Beacon at x 2, y 1, z -3 that draws a red cube: a MeshRenderer with mesh \"cube\" and color r 1, g 0, b 0."},
@@ -1493,12 +1652,18 @@ TASKS = [
      "task": "Hang a bridge in the crates game: five planks named Plank0 to Plank4, each a dynamic 2D rigid body with a box shape of half extents 0.5 by 0.1, laid end to end at height 4 with their centers at x -4, -3, -2, -1 and 0. Hinge each plank to the next where their ends meet, hinge Plank0's left end to a fixed point in the world at (-4.5, 4), and Plank4's right end to a fixed point at (0.5, 4). Run the game for two seconds and answer with the lowest plank center's y, as the number \"answer\"."},
     {"name": "dodge", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": dodge_solve, "check": dodge_check,
      "task": "Make a small game in this blank project, replacing its example. A dodge game in the XY plane (x across, y up), seen from the front: the player is an entity named Player that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 6 units a second. Every second a rock appears: an entity named Rock_1, Rock_2, ... at a random x between -8 and 8 and y = 6, falling at 4 units a second; rocks below y = -7 are removed. A rock within 0.6 units of the player ends the game: emit an event game.over with {time}, after which nothing moves the player and the clock stops. Expose alive (true until the game is over) and time_alive (seconds alive). The game must read where the player and the rocks are from their Transforms every tick, so that moving one with world.set moves it in the game. Answer null."},
+    {"name": "snake", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": snake_solve, "check": snake_check,
+     "task": "Make a snake game in this blank project, replacing its example. On a grid of cells one unit wide, x from 0 to 19 and y from 0 to 14: the snake is a row of entities named Segment_0 (the head), Segment_1, and so on, starting as three at (5, 7), (4, 7) and (3, 7), heading +x, moving one cell every 0.15 seconds. The actions move_x and move_y (A/D, S/W and the arrow keys) turn it, never straight back. An entity named Food sits on a cell: when the head moves onto it the snake grows by one segment, the game emits food.eaten with {length}, and the Food moves to a random free cell. Leaving the grid or running into itself ends the game: emit game.over with {length}, after which nothing moves. Expose length and alive. The game must read where the Food is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
      "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "grey_flashback", "project": "crates", "ticks": 30, "solve": grey_flashback_solve, "check": grey_flashback_check,
      "task": "Make the whole picture of the crates game grey, as for a flashback: a post effect that turns every pixel of the frame to its grey (luminance), leaving the interface as it is. Do it through the running game (no file edits needed). Answer null."},
     {"name": "orange_ball", "project": "hello", "ticks": 0, "script": True, "solve": orange_ball_solve, "check": orange_ball_check, "edits": "a new material file",
      "task": "Draw the hello game's ball through a material of your own: a WGSL file in the project that makes the ball a flat orange, #ff6600, everywhere, ignoring the light. The game should draw its ball (the entity named Ball, which its script spawns) through that material from the start. Answer null."},
+    {"name": "night_level", "project": "sprites", "ticks": 0, "solve": night_level_solve, "check": night_level_check,
+     "task": "Make the sprites game night, through the running game: its tile map (the entity Level) and the Player's sprite lit by the scene's lights, the ambient light #202840 at intensity 0.3, and a warm point light (colour #ffb060, range 5) that goes wherever the Player goes, half a unit in front of it toward the camera. Answer null."},
+    {"name": "guard_view", "project": "dungeon", "ticks": 5, "solve": guard_view_solve, "check": guard_view_check,
+     "task": "In the dungeon game, about where the Player stands now: how many map cells can it see within 6 cells, as the map's field of view counts them, and does the torch Torch_6 have a clear line of sight from where it is to the Player? Answer with an object {\"cells\": number, \"sees\": boolean}."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]

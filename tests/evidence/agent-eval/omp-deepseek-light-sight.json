@@ -1,0 +1,78 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via extension --model deepseek/deepseek-flash --env-file /Users/qiulinfan/.omp/agent/.env",
+  "passed": 2,
+  "total": 2,
+  "seconds": 104.7,
+  "tasks": [
+    {
+      "name": "night_level",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 67.7,
+      "detail": "a warm light at {'x': 5.999996662139893, 'y': -2.999000072479248, 'z': 0.5} by the player at {'x': 5.999996662139893, 'y': -2.999000072479248, 'z': 0.0} after it walked",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 63.9,
+        "turns": 19,
+        "tool_calls": 21,
+        "tools": {
+          "pocket (docs)": 1,
+          "read": 6,
+          "pocket": 10,
+          "eval": 3,
+          "bash": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 40261,
+          "output": 9855,
+          "cache_read": 735616,
+          "total": 785732
+        },
+        "cost_usd": 0.014159
+      }
+    },
+    {
+      "name": "guard_view",
+      "project": "dungeon",
+      "ok": true,
+      "seconds": 37.1,
+      "detail": "105 cells in view, the torch does not see the player",
+      "answer": {
+        "cells": 105,
+        "sees": false
+      },
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 36.9,
+        "turns": 8,
+        "tool_calls": 10,
+        "tools": {
+          "pocket (docs)": 1,
+          "read": 3,
+          "pocket": 6
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 17377,
+          "output": 6622,
+          "cache_read": 143872,
+          "total": 167871
+        },
+        "cost_usd": 0.007011
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0212,
+    "tokens": 953603,
+    "tool_calls": 31
+  }
+}

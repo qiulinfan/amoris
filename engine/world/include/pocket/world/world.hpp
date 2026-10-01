@@ -185,6 +185,10 @@ class World {
     void clear_derived_instances(EntityId id);                                   // back to the entity's own draw
     [[nodiscard]] const std::vector<Instance>* derived_instances(EntityId id) const;
     [[nodiscard]] std::int64_t tick_index() const;
+    // Changes whenever a body may have moved or changed shape through the world's writes (a
+    // Transform, RigidBody or Collider set, added or removed; the tree changed): the key of a
+    // cache of where the colliders are, with tick_index for what systems move in a tick.
+    [[nodiscard]] std::uint64_t placement_version() const;
     void set_tick_index(std::int64_t tick);
     // Simulated time: the tick index times the length of the last tick (what waves move by).
     [[nodiscard]] double seconds() const;

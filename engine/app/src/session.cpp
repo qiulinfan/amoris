@@ -2153,9 +2153,35 @@ Status Session::render_frame() {
     // their own each draw their part of the window, lowest order first; otherwise the one camera.
     struct View { int order; world::EntityId id; Vec4 viewport; };
     std::vector<View> views;
+    // Cameras that draw into a texture (Camera.target) go first, so what shows their pictures in
+    // the window's views sees this frame's (docs/design/cameras.md, Into a texture).
+    struct Target { int order; world::EntityId id; std::string name; Vec2 size; };
+    std::vector<Target> targets;
     world_->ecs().each([&](flecs::entity e, const world::Camera& c) {
-        if (c.active) views.push_back({c.order, e.id(), c.viewport});
+        if (!c.active) return;
+        if (!c.target.empty()) targets.push_back({c.order, e.id(), c.target, c.target_size});
+        else views.push_back({c.order, e.id(), c.viewport});
     });
+    std::sort(targets.begin(), targets.end(), [](const Target& a, const Target& b) { return a.order != b.order ? a.order < b.order : a.id < b.id; });
+    for (const Target& t : targets) {
+        const auto w = static_cast<std::uint32_t>(std::clamp(std::round(t.size.x), 1.0f, static_cast<float>(frame->width)));
+        const auto h = static_cast<std::uint32_t>(std::clamp(std::round(t.size.y), 1.0f, static_cast<float>(frame->height)));
+        auto tex = renderer_->view_texture(t.name, w, h);
+        if (!tex) { record_error(tex.error()); continue; }
+        rhi::Frame into = *frame;
+        into.color = tex->view;
+        into.color_texture = tex->texture;
+        renderer::Renderer::RenderView rv;
+        rv.camera = t.id;
+        rv.secondary = true;
+        rv.target = t.name;
+        rv.viewport = renderer::Viewport{0, 0, w, h};
+        if (auto r = renderer_->render(into, *world_, clear_, particles_.get(), animation_.get(), nullptr, &rv); !r) {
+            (void)device_->end_frame(*frame);
+            return fail(r.error());
+        }
+        device_->submit_so_far(*frame);
+    }
     const bool split = views.size() > 1 && std::any_of(views.begin(), views.end(), [](const View& v) { return v.viewport.x != 0 || v.viewport.y != 0 || v.viewport.z != 1 || v.viewport.w != 1; });
     if (split) {
         std::sort(views.begin(), views.end(), [](const View& a, const View& b) { return a.order != b.order ? a.order < b.order : a.id < b.id; });

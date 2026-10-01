@@ -90,6 +90,8 @@ A view of the world. With one active camera the renderer draws the window throug
 | `active` | bool | true | Whether this camera renders. |
 | `viewport` | vec4 | [0.0, 0.0, 1.0, 1.0] | The part of the window it draws: x, y (from the top-left), width and height as fractions of the window. |
 | `order` | i32 | 0 | Cameras with viewports draw from the lowest order up: a minimap above the view it sits in. |
+| `target` | string | "" | Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): "view:<target>" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world. |
+| `target_size` | vec2 | [256.0, 256.0] | The texture's size in pixels, at most the window's. |
 
 ## CameraRig
 

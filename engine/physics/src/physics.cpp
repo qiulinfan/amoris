@@ -539,6 +539,10 @@ void update_aabb(Body& b) {
     b.aabb_max = b.position + ex;
 }
 
+bool aabb_overlap(Vec3 amin, Vec3 amax, Vec3 bmin, Vec3 bmax) {
+    return amin.x <= bmax.x && amax.x >= bmin.x && amin.y <= bmax.y && amax.y >= bmin.y && amin.z <= bmax.z && amax.z >= bmin.z;
+}
+
 bool aabb_overlap(const Body& a, const Body& b) {
     return a.aabb_min.x <= b.aabb_max.x && a.aabb_max.x >= b.aabb_min.x && a.aabb_min.y <= b.aabb_max.y && a.aabb_max.y >= b.aabb_min.y && a.aabb_min.z <= b.aabb_max.z && a.aabb_max.z >= b.aabb_min.z;
 }
@@ -884,6 +888,145 @@ struct Physics::Impl {
     mutable std::map<EntityId, MeshShape> mesh_shapes;  // per mesh collider, rebuilt when its key changes
     mutable std::set<std::string> warned;               // mesh files reported missing or broken
 
+    // Where the colliders are, for queries (raycast, sweep, overlap): their bodies as placed and a
+    // tree of their boxes, kept while nothing has moved (World::placement_version and the tick) and
+    // made on the second query of such a state, so a lone query costs what it did and a batch of
+    // them costs a walk down the tree each.
+    struct QueryEntry {
+        Body body;
+        world::RigidBody rb;
+        world::Collider col;
+    };
+    struct QueryNode {
+        Vec3 min, max;
+        std::uint32_t left = 0, right = 0, first = 0, count = 0;   // count 0: an inner node
+    };
+    struct QueryTree {
+        const world::World* world = nullptr;
+        std::int64_t tick = -1;
+        std::uint64_t version = ~0ull;
+        int asked = 0;
+        bool built = false;
+        std::vector<QueryEntry> entries;
+        std::vector<QueryNode> nodes;
+        std::vector<std::uint32_t> order;
+    };
+    mutable QueryTree query_tree_;
+
+    const QueryTree* query_tree(const world::World& w) const {
+        QueryTree& q = query_tree_;
+        const std::int64_t tick = w.tick_index();
+        const std::uint64_t version = w.placement_version();
+        if (q.world != &w || q.tick != tick || q.version != version) {
+            q.world = &w;
+            q.tick = tick;
+            q.version = version;
+            q.asked = 0;
+            q.built = false;
+        }
+        if (q.built) return &q;
+        if (++q.asked < 2) return nullptr;
+        q.entries.clear();
+        w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
+            const world::Transform t = placed(e, rb, authored);
+            QueryEntry qe;
+            Body& b = qe.body;
+            b.id = e.id();
+            b.position = t.position + t.rotation.rotate(col.offset);
+            b.rotation = t.rotation;
+            b.shape = col.shape;
+            b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+            if (b.shape == 3) b.mesh = mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
+            update_aabb(b);
+            qe.rb = rb;
+            qe.col = col;
+            q.entries.push_back(std::move(qe));
+        });
+        // A tree of boxes: each node split at the middle of its widest spread of centers, at most
+        // four entries a leaf.
+        q.order.resize(q.entries.size());
+        for (std::uint32_t i = 0; i < q.order.size(); ++i) q.order[i] = i;
+        q.nodes.clear();
+        std::function<std::uint32_t(std::uint32_t, std::uint32_t)> build = [&](std::uint32_t first, std::uint32_t count) -> std::uint32_t {
+            QueryNode n;
+            n.min = Vec3{1e30f, 1e30f, 1e30f};
+            n.max = Vec3{-1e30f, -1e30f, -1e30f};
+            Vec3 cmin = n.min, cmax = n.max;
+            for (std::uint32_t k = first; k < first + count; ++k) {
+                const Body& b = q.entries[q.order[k]].body;
+                n.min = Vec3{std::min(n.min.x, b.aabb_min.x), std::min(n.min.y, b.aabb_min.y), std::min(n.min.z, b.aabb_min.z)};
+                n.max = Vec3{std::max(n.max.x, b.aabb_max.x), std::max(n.max.y, b.aabb_max.y), std::max(n.max.z, b.aabb_max.z)};
+                const Vec3 c = (b.aabb_min + b.aabb_max) * 0.5f;
+                cmin = Vec3{std::min(cmin.x, c.x), std::min(cmin.y, c.y), std::min(cmin.z, c.z)};
+                cmax = Vec3{std::max(cmax.x, c.x), std::max(cmax.y, c.y), std::max(cmax.z, c.z)};
+            }
+            const auto index = static_cast<std::uint32_t>(q.nodes.size());
+            q.nodes.push_back(n);
+            if (count <= 4) {
+                q.nodes[index].first = first;
+                q.nodes[index].count = count;
+                return index;
+            }
+            const Vec3 spread = cmax - cmin;
+            const int axis = spread.x >= spread.y && spread.x >= spread.z ? 0 : spread.y >= spread.z ? 1 : 2;
+            const std::uint32_t mid = first + count / 2;
+            std::nth_element(q.order.begin() + first, q.order.begin() + mid, q.order.begin() + first + count, [&](std::uint32_t a, std::uint32_t b) {
+                const Body& x = q.entries[a].body;
+                const Body& y = q.entries[b].body;
+                const float cx = (&x.aabb_min.x)[axis] + (&x.aabb_max.x)[axis], cy = (&y.aabb_min.x)[axis] + (&y.aabb_max.x)[axis];
+                return cx < cy || (cx == cy && x.id < y.id);
+            });
+            const std::uint32_t left = build(first, mid - first);
+            const std::uint32_t right = build(mid, first + count - mid);
+            q.nodes[index].left = left;
+            q.nodes[index].right = right;
+            return index;
+        };
+        if (!q.entries.empty()) build(0, static_cast<std::uint32_t>(q.entries.size()));
+        q.built = true;
+        return &q;
+    }
+
+    // Every collider a query may meet: down the tree through the nodes `near` keeps, or, without
+    // a tree, all of them; `visit` sees each accepted body as placed (its mesh shape for shape 3).
+    template <class Near, class Visit>
+    void each_query_body(const world::World& w, const Filter& accept, Near&& near, Visit&& visit) const {
+        if (const QueryTree* q = query_tree(w)) {
+            if (q->nodes.empty()) return;
+            std::uint32_t stack[64];
+            int top = 0;
+            stack[top++] = 0;
+            while (top > 0) {
+                const QueryNode& n = q->nodes[stack[--top]];
+                if (!near(n.min, n.max)) continue;
+                if (n.count == 0) {
+                    if (top + 2 > 64) continue;   // deeper than a tree of these sizes gets
+                    stack[top++] = n.right;
+                    stack[top++] = n.left;
+                    continue;
+                }
+                for (std::uint32_t k = n.first; k < n.first + n.count; ++k) {
+                    const QueryEntry& e = q->entries[q->order[k]];
+                    if (accept(e.body.id, e.rb, e.col)) visit(e.body);
+                }
+            }
+            return;
+        }
+        w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
+            if (!accept(e.id(), rb, col)) return;
+            const world::Transform t = placed(e, rb, authored);
+            Body b;
+            b.id = e.id();
+            b.position = t.position + t.rotation.rotate(col.offset);
+            b.rotation = t.rotation;
+            b.shape = col.shape;
+            b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+            if (b.shape == 3) b.mesh = mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
+            update_aabb(b);
+            visit(b);
+        });
+    }
+
     // The triangles of a shape 3 collider, built for the entity's transform (and rebuilt when it
     // or the file changes); null when there is no store, no path, or no usable triangles.
     const MeshShape* mesh_for(EntityId id, const world::Collider& col, const world::Transform& t, const world::MeshRenderer* mr, const std::string* derived) const {
@@ -1216,6 +1359,7 @@ void Physics::set_assets(assets::AssetStore* assets) {
 void Physics::drop_mesh_cache() {
     impl_->mesh_shapes.clear();
     impl_->warned.clear();
+    impl_->query_tree_ = {};   // its mesh shapes went with the cache
 }
 const std::vector<Contact>& Physics::contacts() const { return impl_->contacts; }
 const std::vector<JointInfo>& Physics::joints() const { return impl_->joint_infos; }
@@ -2369,21 +2513,15 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
     RayHit best;
     best.distance = max_distance;
     bool found = false;
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
-        if (!accept(e.id(), rb, col)) return;
-        const world::Transform t = placed(e, rb, authored);
-        Body b;
-        b.position = t.position + t.rotation.rotate(col.offset);
-        b.rotation = t.rotation;
-        b.shape = col.shape;
-        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+    // The nearest hit; at an equal distance the lower entity id, whichever is met first.
+    impl_->each_query_body(w, accept, [&](Vec3 mn, Vec3 mx) { return ray_aabb(origin, dir, mn, mx, best.distance); }, [&](const Body& b) {
         float tt = 0;
         Vec3 n;
         bool hit = false;
         if (b.shape == 3) {
             // Down the tree, nearest triangle first found by shrinking the reach; both faces hit,
             // the normal facing the ray.
-            const MeshShape* ms = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
+            const MeshShape* ms = b.mesh;
             if (!ms) return;
             float reach = best.distance;
             std::vector<std::uint32_t> stack{0};
@@ -2415,9 +2553,9 @@ Result<RayHit> Physics::raycast(const world::World& w, Vec3 origin, Vec3 directi
         } else {
             hit = ray_box(origin, dir, b, tt, n);
         }
-        if (hit && tt < best.distance && (!found || tt < best.distance || e.id() < best.entity)) {
+        if (hit && (tt < best.distance || (found && tt == best.distance && b.id < best.entity))) {
             found = true;
-            best.entity = e.id();
+            best.entity = b.id;
             best.distance = tt;
             best.point = origin + dir * tt;
             best.normal = n;
@@ -2445,24 +2583,15 @@ Result<RayHit> Physics::sweep(const world::World& w, Vec3 origin, Vec3 direction
     RayHit best;
     best.distance = max_distance;
     bool found = false;
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
-        if (!accept(e.id(), rb, col)) return;
-        const world::Transform t = placed(e, rb, authored);
-        Body b;
-        b.position = t.position + t.rotation.rotate(col.offset);
-        b.rotation = t.rotation;
-        b.shape = col.shape;
-        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
-        if (b.shape == 3) {
-            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
-            if (!b.mesh) return;
-        }
+    const Vec3 grow{radius, radius, radius};
+    impl_->each_query_body(w, accept, [&](Vec3 mn, Vec3 mx) { return ray_aabb(origin, dir, mn - grow, mx + grow, best.distance); }, [&](const Body& b) {
+        if (b.shape == 3 && !b.mesh) return;
         float tt = 0;
         Vec3 n;
         if (!sphere_cast_body(origin, dir, radius, b, best.distance, tt, n)) return;
-        if (tt < best.distance || (tt == best.distance && (!found || e.id() < best.entity))) {
+        if (tt < best.distance || (tt == best.distance && (!found || b.id < best.entity))) {
             found = true;
-            best.entity = e.id();
+            best.entity = b.id;
             best.distance = tt;
             best.point = origin + dir * tt - n * radius;   // where the sphere touches
             best.normal = n;
@@ -2493,24 +2622,14 @@ std::vector<world::EntityId> Physics::overlap_sphere(const world::World& w, Vec3
     probe.shape = 1;
     probe.position = center;
     probe.half = {radius, radius, radius};
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
-        if (!accept(e.id(), rb, col)) return;
-        const world::Transform t = placed(e, rb, authored);
-        Body b;
-        b.position = t.position + t.rotation.rotate(col.offset);
-        b.rotation = t.rotation;
-        b.shape = col.shape;
-        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
+    update_aabb(probe);
+    impl_->each_query_body(w, accept, [&](Vec3 mn, Vec3 mx) { return aabb_overlap(probe.aabb_min, probe.aabb_max, mn, mx); }, [&](const Body& body) {
+        Body b = body;
         Manifold m;
         bool hit = false;
-        if (b.shape == 3) {
-            b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
-            update_aabb(probe);
-            hit = collide_mesh(probe, b, m, false);
-        } else {
-            hit = b.shape == 1 ? collide_ss(probe, b, m) : b.shape == 2 ? collide_cs(b, probe, m, true) : collide_sb(probe, b, m, false);
-        }
-        if (hit) out.push_back(e.id());
+        if (b.shape == 3) hit = collide_mesh(probe, b, m, false);
+        else hit = b.shape == 1 ? collide_ss(probe, b, m) : b.shape == 2 ? collide_cs(b, probe, m, true) : collide_sb(probe, b, m, false);
+        if (hit) out.push_back(b.id);
     });
     each_scattered(w, [&](const Body& b, const world::RigidBody& rb, const world::Collider& col) {
         Manifold m;
@@ -2529,19 +2648,9 @@ std::vector<world::EntityId> Physics::overlap(const world::World& w, const Probe
     probe.rotation = normalize(shape.rotation);
     probe.half = probe.shape == 1 ? Vec3{shape.half.x, shape.half.x, shape.half.x} : shape.half;
     update_aabb(probe);
-    w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::Collider& col, const world::Transform& authored) {
-        if (!accept(e.id(), rb, col)) return;
-        const world::Transform t = placed(e, rb, authored);
-        Body b;
-        b.id = e.id();
-        b.position = t.position + t.rotation.rotate(col.offset);
-        b.rotation = t.rotation;
-        b.shape = col.shape;
-        b.half = col.shape == 1 ? Vec3{col.size.x, col.size.x, col.size.x} : col.shape == 2 ? Vec3{col.size.x, col.size.y, col.size.x} : col.size;
-        if (b.shape == 3) b.mesh = impl_->mesh_for(e.id(), col, t, e.try_get<world::MeshRenderer>(), w.derived_mesh(e.id()));
-        update_aabb(b);
+    impl_->each_query_body(w, accept, [&](Vec3 mn, Vec3 mx) { return aabb_overlap(probe.aabb_min, probe.aabb_max, mn, mx); }, [&](const Body& b) {
         Vec3 n;
-        if (overlap_pair(probe, b, n)) out.push_back(e.id());
+        if (overlap_pair(probe, b, n)) out.push_back(b.id);
     });
     each_scattered(w, [&](const Body& b, const world::RigidBody& rb, const world::Collider& col) {
         Vec3 n;

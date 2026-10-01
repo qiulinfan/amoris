@@ -268,6 +268,10 @@ export interface Camera {
     viewport: Vec4;
     /** Cameras with viewports draw from the lowest order up: a minimap above the view it sits in. */
     order: number;
+    /** Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): "view:<target>" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world. */
+    target: string;
+    /** The texture's size in pixels, at most the window's. */
+    target_size: Vec2;
 }
 
 /** Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's). */
@@ -1473,7 +1477,6 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     Health: [["current", "n"], ["max", "n"], ["team", "n"], ["invulnerable", "n"], ["guard", "n"], ["dead", "b"]],
     Hitbox: [["damage", "n"], ["knockback", "n"], ["team", "n"], ["repeat", "n"], ["destroy", "b"], ["enabled", "b"], ["hits", "n"]],
     Lifetime: [["seconds", "n"]],
-    Camera: [["fov_degrees", "n"], ["orthographic", "b"], ["ortho_size", "n"], ["near", "n"], ["far", "n"], ["active", "b"], ["viewport", "v4"], ["order", "n"]],
     Light: [["kind", "n"], ["color", "c"], ["intensity", "n"], ["range", "n"], ["inner_angle", "n"], ["outer_angle", "n"], ["shadows", "b"]],
     ReflectionProbe: [["size", "v3"], ["intensity", "n"], ["box_projection", "b"], ["realtime", "b"], ["enabled", "b"]],
     Fog: [["color", "c"], ["density", "n"], ["height", "n"], ["falloff", "n"], ["start", "n"], ["max_opacity", "n"], ["enabled", "b"], ["volumetric", "b"], ["anisotropy", "n"], ["steps", "n"], ["distance", "n"]],
@@ -1495,7 +1498,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Hitbox: { damage: 10, knockback: 0, team: 0, repeat: 0, destroy: false, enabled: true, hits: 0 },
     Model: { path: "", hash: "", live: true },
     Lifetime: { seconds: 1 },
-    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0 },
+    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0, target: "", target_size: { x: 256, y: 256 } },
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },

@@ -2902,6 +2902,14 @@ struct Renderer::Impl {
         WGPUTextureView srgb_view = nullptr;   // decoded to linear when sampled (base color and emissive maps)
     };
     GpuTexture white;
+    // Cameras' textures (Camera.target), by name: what "view:<name>" samples.
+    struct ViewTarget {
+        GpuTexture tex;
+        WGPUTextureView render_view = nullptr;
+        std::uint32_t w = 0, h = 0;
+    };
+    std::map<std::string, ViewTarget> view_targets;
+    std::string drawing_target;   // the view texture being drawn now: what it draws does not sample it
     GpuTexture flat_normal;   // (0.5, 0.5, 1): no bend
     GpuTexture soft_spot;     // a soft round white spot: particles without an image of their own
     GpuTexture sky_source;    // the sky's panorama (half floats); 1x1 black without one
@@ -3019,6 +3027,10 @@ struct Renderer::Impl {
         for (auto& r : timer_reads) {
             if (r.state == 3) wgpuBufferUnmap(r.buffer);
             if (r.buffer) wgpuBufferRelease(r.buffer);
+        }
+        for (auto& [name, vt] : view_targets) {
+            for (WGPUTextureView v : {vt.tex.view, vt.tex.srgb_view, vt.render_view}) if (v) wgpuTextureViewRelease(v);
+            if (vt.tex.texture) wgpuTextureRelease(vt.tex.texture);
         }
         if (timer_resolve) wgpuBufferRelease(timer_resolve);
         if (timer_set) wgpuQuerySetRelease(timer_set);
@@ -4206,7 +4218,7 @@ fn time() -> f32 { return fx.time.x; }
         WGPURenderPassColorAttachment ca{};
         ca.view = effects ? user_fx_view[0] : frame.color;
         ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-        ca.loadOp = secondary ? WGPULoadOp_Load : WGPULoadOp_Clear;   // a secondary view keeps what the others drew
+        ca.loadOp = secondary && drawing_target.empty() ? WGPULoadOp_Load : WGPULoadOp_Clear;   // a secondary view keeps what the others drew; a view texture is its own
         ca.storeOp = WGPUStoreOp_Store;
         ca.clearValue = {clear.r, clear.g, clear.b, clear.a};
         WGPURenderPassDescriptor rp{};
@@ -7219,6 +7231,10 @@ fn time() -> f32 { return fx.time.x; }
     WGPUTextureView view_for(const std::string& path, const GpuTexture& fallback, bool srgb = false) {
         auto pick = [srgb](const GpuTexture& t) { return srgb && t.srgb_view ? t.srgb_view : t.view; };
         if (path.empty()) return pick(fallback);
+        if (path.starts_with("view:")) {
+            const auto it = view_targets.find(path.substr(5));
+            return it != view_targets.end() ? pick(it->second.tex) : pick(fallback);
+        }
         if (path == kDotTexture) return pick(soft_spot);
         if (auto it = textures.find(path); it != textures.end()) return pick(it->second);
         if (!assets) { report_missing(path, "no asset store"); return pick(fallback); }
@@ -7608,7 +7624,7 @@ fn time() -> f32 { return fx.time.x; }
         world::Camera cam;
         world::WorldTransform ct;
         w.ecs().each([&](flecs::entity e, const world::Camera& c, const world::WorldTransform& t) {
-            if (cam_id == 0 && (camera_pick ? e.id() == camera_pick : c.active)) {
+            if (cam_id == 0 && (camera_pick ? e.id() == camera_pick : c.active && c.target.empty())) {
                 cam_id = e.id();
                 cam = c;
                 ct = t;
@@ -7874,8 +7890,65 @@ std::uint32_t tile_layers_parts(const Draws& sprites) {
 }
 }  // namespace
 
+Result<Renderer::ViewTexture> Renderer::view_texture(const std::string& name, std::uint32_t width, std::uint32_t height) {
+    Impl& im = *impl_;
+    width = std::max(width, 1u);
+    height = std::max(height, 1u);
+    auto it = im.view_targets.find(name);
+    if (it != im.view_targets.end() && it->second.w == width && it->second.h == height) return ViewTexture{it->second.tex.texture, it->second.render_view};
+    if (it != im.view_targets.end()) {
+        // A new size: the bind groups that sampled the old texture go with it.
+        const std::string key = "view:" + name;
+        for (auto g = im.material_groups.begin(); g != im.material_groups.end();) {
+            if (g->first.find(key) != std::string::npos) { wgpuBindGroupRelease(g->second); g = im.material_groups.erase(g); }
+            else ++g;
+        }
+        Impl::ViewTarget& old = it->second;
+        for (WGPUTextureView v : {old.tex.view, old.tex.srgb_view, old.render_view}) if (v) wgpuTextureViewRelease(v);
+        if (old.tex.texture) wgpuTextureRelease(old.tex.texture);
+        im.view_targets.erase(it);
+    }
+    Impl::ViewTarget t;
+    WGPUTextureDescriptor td{};
+    td.label = rhi::str("pocket.view_texture");
+    td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size = {width, height, 1};
+    td.format = WGPUTextureFormat_RGBA8Unorm;
+    td.mipLevelCount = 1;
+    td.sampleCount = 1;
+    const WGPUTextureFormat srgb = WGPUTextureFormat_RGBA8UnormSrgb;
+    td.viewFormatCount = 1;
+    td.viewFormats = &srgb;
+    t.tex.texture = wgpuDeviceCreateTexture(im.device->device(), &td);
+    if (!t.tex.texture) return fail("gpu_texture_failed", "cannot create the view texture '{}' ({}x{})", name, width, height);
+    WGPUTextureViewDescriptor vd{};
+    vd.format = td.format;
+    vd.dimension = WGPUTextureViewDimension_2D;
+    vd.mipLevelCount = 1;
+    vd.arrayLayerCount = 1;
+    vd.aspect = WGPUTextureAspect_All;
+    vd.usage = WGPUTextureUsage_TextureBinding;
+    t.tex.view = wgpuTextureCreateView(t.tex.texture, &vd);
+    vd.format = srgb;
+    t.tex.srgb_view = wgpuTextureCreateView(t.tex.texture, &vd);
+    vd.format = td.format;
+    vd.usage = WGPUTextureUsage_RenderAttachment;
+    t.render_view = wgpuTextureCreateView(t.tex.texture, &vd);
+    t.w = width;
+    t.h = height;
+    const ViewTexture out{t.tex.texture, t.render_view};
+    im.view_targets[name] = t;
+    return out;
+}
+
 Renderer::ImageView Renderer::image_view(const std::string& path) {
     Impl& im = *impl_;
+    if (path.starts_with("view:")) {
+        const auto it = im.view_targets.find(path.substr(5));
+        if (it == im.view_targets.end()) return {};
+        return {it->second.tex.view, it->second.w, it->second.h};
+    }
     if (path.empty() || !im.assets) return {};
     if (im.failed.contains(path)) { im.note_missing(path); return {}; }
     auto img = im.assets->image(path);
@@ -7892,6 +7965,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // the volume's history off for this one.
     im.secondary = view && view->secondary;
     im.camera_pick = view ? view->camera : 0;
+    im.drawing_target = view ? view->target : std::string();
     struct Kept {
         Impl& im;
         bool on;
@@ -7912,6 +7986,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             im.volume_cur = volume_cur;
             im.secondary = false;
             im.camera_pick = 0;
+            im.drawing_target.clear();
         }
     } kept{im, im.secondary, im.taa, im.taa_valid, im.motion_prev_set, im.clock_valid, im.volume_valid, im.taa_prev_vp, im.last_clock, im.volume_cur};
     if (im.secondary) {
@@ -8299,6 +8374,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         // Material inputs: the asset's material, overridden per entity by the MeshRenderer.
         auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, const assets::Material* mat, bool skinned = false) {
             if (count >= kMaxObjects) return;
+            if (!im.drawing_target.empty() && tex.starts_with("view:") && tex.substr(5) == im.drawing_target) return;   // a screen is not drawn into its own picture
             ou.color[0] = color.x; ou.color[1] = color.y; ou.color[2] = color.z; ou.color[3] = color.w;
             float metallic = mr.metallic >= 0 ? mr.metallic : (mat ? mat->metallic : 0.0f);
             float roughness = mr.roughness >= 0 ? mr.roughness : (mat ? mat->roughness : 1.0f);
@@ -8708,6 +8784,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     });
     world.ecs().each([&](flecs::entity e, const world::Sprite& sp, const world::WorldTransform& t) {
         if (!sp.visible || count + sprites.size() >= kMaxObjects) return;
+        if (!im.drawing_target.empty() && sp.texture.starts_with("view:") && sp.texture.substr(5) == im.drawing_target) return;   // not into itself
         Mat4 model = Mat4::trs(t.position, t.rotation, t.scale) * Mat4::translation({(0.5f - sp.anchor.x) * sp.size.x, (0.5f - sp.anchor.y) * sp.size.y, 0}) * Mat4::scale({sp.size.x, sp.size.y, 1});
         ObjectUniforms ou{};
         to_array(model, ou.model);

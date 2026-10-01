@@ -129,6 +129,71 @@ TEST_CASE("raycast and overlap find colliders", "[physics]") {
     REQUIRE(near == std::vector<EntityId>{ball});
 }
 
+TEST_CASE("queries down the tree of colliders answer what a walk over all of them does", "[physics][querytree]") {
+    World w;
+    physics::Physics p;
+    const EntityId floor = ground(w);
+    // Six hundred still bodies of the three shapes over a field, some turned.
+    std::uint32_t seed = 12345;
+    auto rnd = [&]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / 16777216.0f;
+    };
+    for (int i = 0; i < 600; ++i) {
+        const EntityId e = body(w, "Q", i % 3, {rnd() * 40 - 20, rnd() * 4, rnd() * 40 - 20}, 0.2f + rnd() * 0.6f, Json{{"kind", 1}});
+        if (i % 4 == 0) {
+            Transform t = *w.try_get<Transform>(e);
+            const float a = rnd() * 3.0f;
+            t.rotation = Quat{0, std::sin(a * 0.5f), 0, std::cos(a * 0.5f)};
+            w.set_typed<Transform>(e, t);
+        }
+    }
+    struct Ray { Vec3 from, dir; };
+    std::vector<Ray> rays;
+    for (int i = 0; i < 150; ++i) rays.push_back({{rnd() * 50 - 25, 1 + rnd() * 6, rnd() * 50 - 25}, normalize(Vec3{rnd() - 0.5f, -rnd() * 0.6f, rnd() - 0.5f})});
+    const physics::Physics::Filter all = [](EntityId, const RigidBody&, const Collider&) { return true; };
+    struct Answers {
+        std::vector<std::tuple<EntityId, float, float, float, float>> rays, sweeps;
+        std::vector<std::vector<EntityId>> boxes, spheres;
+    };
+    // `walk`: a write before every query, so each one goes over every collider.
+    auto ask = [&](bool walk) {
+        Answers a;
+        auto touch = [&]() { if (walk) w.set_typed<Transform>(floor, *w.try_get<Transform>(floor)); };
+        for (const Ray& r : rays) {
+            touch();
+            auto h = p.raycast(w, r.from, r.dir, 60.0f, all);
+            a.rays.emplace_back(h ? h->entity : 0, h ? h->distance : -1, h ? h->normal.x : 0, h ? h->normal.y : 0, h ? h->normal.z : 0);
+            touch();
+            auto s = p.sweep(w, r.from, r.dir, 0.3f, 60.0f, all);
+            a.sweeps.emplace_back(s ? s->entity : 0, s ? s->distance : -1, s ? s->point.x : 0, s ? s->point.y : 0, s ? s->point.z : 0);
+            touch();
+            physics::Physics::Probe box;
+            box.shape = 0;
+            box.position = r.from - Vec3{0, 1.5f, 0};
+            box.half = {1.5f, 1.0f, 1.0f};
+            a.boxes.push_back(p.overlap(w, box, all, false));
+            touch();
+            a.spheres.push_back(p.overlap_sphere(w, r.from - Vec3{0, 2, 0}, 1.2f, all));
+        }
+        return a;
+    };
+    const Answers walked = ask(true);
+    const Answers treed = ask(false);
+    int hits = 0, met = 0;
+    for (std::size_t i = 0; i < rays.size(); ++i) {
+        INFO("ray " << i);
+        REQUIRE(walked.rays[i] == treed.rays[i]);
+        REQUIRE(walked.sweeps[i] == treed.sweeps[i]);
+        REQUIRE(walked.boxes[i] == treed.boxes[i]);
+        REQUIRE(walked.spheres[i] == treed.spheres[i]);
+        hits += std::get<0>(walked.rays[i]) != 0;
+        met += !walked.boxes[i].empty();
+    }
+    REQUIRE(hits > 100);   // the rays meet things, and the boxes too: the comparison is not of misses
+    REQUIRE(met > 20);
+}
+
 TEST_CASE("simulation is deterministic", "[physics]") {
     auto scenario = [](World& w, physics::Physics& p) {
         ground(w);

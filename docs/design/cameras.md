@@ -41,6 +41,18 @@ world.spawn("Minimap", { components: { Transform: { position: { x: 0, y: 30, z: 
 
 `runtime_tests` (`[cameras][views]`): two cameras on the left and right halves, each in front of its own block, draw red on the left and blue on the right, and a minimap camera over the left half's corner draws the blue block there while the rest of the left half stays red.
 
+## Into a texture
+
+A camera with a `target` draws into a texture of that name instead of the window, at `target_size` pixels (256 by 256 by default, at most the window's size), and `"view:<target>"` names its picture wherever an image goes: a `Sprite.texture` (a security monitor on a wall, a portal, a picture-in-picture in a 2D game), a `MeshRenderer` texture (a television), and an interface element's `image` (a minimap or a portrait in the HUD, which the layout sizes and clips like any picture).
+
+```ts
+world.spawn("Overhead", { components: { Transform: { position: { x: 0, y: 30, z: 0 }, rotation: { x: -0.7071, y: 0, z: 0, w: 0.7071 } }, Camera: { orthographic: true, ortho_size: 20, target: "map", target_size: { x: 256, y: 256 } } } });
+world.spawn("Monitor", { components: { Transform: { position: { x: -3, y: 2, z: -2 } }, Sprite: { texture: "view:map", size: { x: 2, y: 2 } } } });
+// <box image="view:map" fit="cover" width={160} height={160} />   in the HUD
+```
+
+Every frame the target cameras draw first, lowest `order` first, each through the whole renderer into its own texture (cleared to the clear colour, tone mapped like the window, without TAA and the other frame-to-frame state, which stays the window's), and then the window's views draw and sample this frame's pictures. A camera with a target is never the window's camera. What a camera draws does not show its own picture (a monitor the camera can see is left out of that camera's picture, as a texture cannot be drawn into and read in one pass); two cameras can show each other's. Changing `target_size` makes the texture again. `runtime_tests` (`[cameras][texture]`): a camera in front of a red block draws into `spy`, a sprite in front of the window's camera shows red, a sprite in front of the spy's own camera is left out of its picture without an error, the window's camera stays the window's, and a new size shows the same. `tests/evidence/rendering/view-texture.png` is the hello sample with a camera fourteen units over the ground drawing into `overhead`, shown by a sprite standing in the scene (left) and by an interface box in the corner (right; the overhead picture's background is the clear colour, so the ground plane reads as a square).
+
 ## Not yet
 
 Rails and dolly paths (a timeline can key a camera's Transform instead, `docs/design/timelines.md`), several targets framed at once, a look-ahead in the direction of travel, and blends between two rigs.

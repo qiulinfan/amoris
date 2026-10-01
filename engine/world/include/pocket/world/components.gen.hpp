@@ -307,6 +307,8 @@ struct Camera {
     bool active = true;
     Vec4 viewport{0.0f, 0.0f, 1.0f, 1.0f};
     std::int32_t order = 0;
+    std::string target = "";
+    Vec2 target_size{256.0f, 256.0f};
     constexpr bool operator==(const Camera&) const = default;
 };
 void to_json(Json& j, const Camera& v);

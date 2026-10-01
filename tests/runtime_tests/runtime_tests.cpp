@@ -4298,6 +4298,41 @@ TEST_CASE("several cameras each draw their part of the window: split screen and 
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a camera draws into a texture that a sprite in the world and the interface show", "[runtime][cameras][views][texture]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("render.taa", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    // Far off, a red block filling the view of a camera in front of it, which draws into "spy".
+    REQUIRE(s.command("world.spawn", Json{{"name", "Red"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 80}, {"y", 1}, {"z", -40}}}, {"scale", Json{{"x", 8}, {"y", 8}, {"z", 1}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", "#ff1010"}, {"unlit", true}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Spy"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 80}, {"y", 1}, {"z", -34}}}}}, {"Camera", Json{{"target", "spy"}, {"target_size", Json{{"x", 64}, {"y", 48}}}}}}}}).has_value());
+    // A screen in front of the window's camera shows it; another screen in front of the spy's own
+    // camera shows it too, which that camera must not draw into its own picture.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Screen"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 2}, {"z", 0}}}}}, {"Sprite", Json{{"texture", "view:spy"}, {"size", Json{{"x", 2}, {"y", 1.5}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mirror"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 80}, {"y", 1}, {"z", -36}}}}}, {"Sprite", Json{{"texture", "view:spy"}, {"size", Json{{"x", 0.5}, {"y", 0.5}}}}}}}}).has_value());
+    auto pixel = [&](const char* entity) {
+        REQUIRE(s.frame().has_value());
+        const Json at = s.command("world.get", Json{{"entity", entity}, {"component", "Transform"}}).value()["position"];
+        const Json r = s.command("render.project", Json{{"point", at}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", r["x"]}, {"y", r["y"]}}}}).value()["pixel"];
+    };
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json seen = pixel("Screen");
+    INFO("screen " << seen.dump());
+    REQUIRE(seen[0].get<int>() > 180);
+    REQUIRE(seen[1].get<int>() < 80);
+    REQUIRE(seen[2].get<int>() < 80);
+    // The window's camera is still the window's: the spy's camera draws only into its texture.
+    REQUIRE(s.command("render.stats", Json::object()).value()["camera"] != s.command("world.find", Json{{"path", "Spy"}}).value());
+    // A new size makes the texture again; the screen shows it as before.
+    REQUIRE(s.command("world.set", Json{{"entity", "Spy"}, {"component", "Camera"}, {"value", Json{{"target_size", Json{{"x", 32}, {"y", 32}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json again = pixel("Screen");
+    INFO("again " << again.dump());
+    REQUIRE(again[0].get<int>() > 180);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a mesh drawn through a material the project wrote over the lit colour", "[runtime][material]") {
     app::Session s(hello_options(100000));
     REQUIRE(s.start().has_value());

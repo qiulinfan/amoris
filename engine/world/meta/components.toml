@@ -85,6 +85,8 @@ fields = [
     { name = "active", type = "bool", default = true, doc = "Whether this camera renders." },
     { name = "viewport", type = "vec4", default = [0.0, 0.0, 1.0, 1.0], doc = "The part of the window it draws: x, y (from the top-left), width and height as fractions of the window." },
     { name = "order", type = "i32", default = 0, doc = "Cameras with viewports draw from the lowest order up: a minimap above the view it sits in." },
+    { name = "target", type = "string", default = "", doc = "Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): \"view:<target>\" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world." },
+    { name = "target_size", type = "vec2", default = [256.0, 256.0], doc = "The texture's size in pixels, at most the window's." },
 ]
 
 [[component]]

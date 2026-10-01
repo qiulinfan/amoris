@@ -268,6 +268,10 @@ struct World::Impl {
     // Bumped by everything that changes a name or the tree (spawn, destroy, rename, reparent,
     // clear): bare-name lookups that had to walk the tree are kept until it moves.
     std::uint64_t structure = 0;
+    // Bumped by every write that can move a body or change its shape (a Transform, RigidBody or
+    // Collider set, added or removed, and the tree changing), through observers: what a cache of
+    // where the colliders are is valid for.
+    std::uint64_t placement = 0;
     mutable std::unordered_map<std::string, EntityId> by_bare_name;
     mutable std::uint64_t by_bare_name_at = ~0ull;
     std::int64_t tick = 0;
@@ -303,6 +307,9 @@ struct World::Impl {
         bounds = ecs.query<const MeshRenderer, const WorldTransform>();
         sprite_bounds = ecs.query<const Sprite, const WorldTransform>();
         sprite_anim = ecs.query<SpriteAnimation, Sprite>();
+        ecs.observer<Transform>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity, const Transform&) { ++placement; });
+        ecs.observer<RigidBody>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity, const RigidBody&) { ++placement; });
+        ecs.observer<Collider>().event(flecs::OnSet).event(flecs::OnRemove).each([this](flecs::entity, const Collider&) { ++placement; });
     }
 
     void forget_root(EntityId id) {
@@ -457,6 +464,8 @@ flecs::world& World::ecs() { return impl_->ecs; }
 const flecs::world& World::ecs() const { return impl_->ecs; }
 EventLog& World::events() { return impl_->events; }
 const EventLog& World::events() const { return impl_->events; }
+std::uint64_t World::placement_version() const { return impl_->placement + impl_->structure; }
+
 std::int64_t World::tick_index() const { return impl_->tick; }
 void World::set_tick_index(std::int64_t tick) { impl_->tick = tick; }
 double World::seconds() const { return static_cast<double>(impl_->tick) * impl_->tick_seconds; }
@@ -602,6 +611,7 @@ Status World::reparent(EntityId id, EntityId new_parent) {
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
     if (new_parent == id) return fail("bad_parent", "an entity cannot be its own parent");
     ++impl_->structure;
+    ++impl_->placement;
     if (new_parent != 0) {
         flecs::entity p = impl_->ecs.entity(new_parent);
         if (!live(p)) return fail("no_such_entity", "parent {} is not alive", new_parent);

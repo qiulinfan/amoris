@@ -243,7 +243,15 @@ class Renderer {
         world::EntityId camera = 0;
         Viewport viewport{};
         bool secondary = false;
+        std::string target;   // drawing into this view texture (Camera.target): cleared, and not sampled by what it draws
     };
+    // The texture a camera with Camera.target draws into, made (again, at a new size) when asked:
+    // "view:<name>" names it to sprites, meshes and the interface.
+    struct ViewTexture {
+        WGPUTexture texture = nullptr;
+        WGPUTextureView view = nullptr;
+    };
+    Result<ViewTexture> view_texture(const std::string& name, std::uint32_t width, std::uint32_t height);
     Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr, const DebugDraw* debug = nullptr, const RenderView* view = nullptr);
     // Read back the id buffer of the last rendered frame.
     Result<IdImage> read_ids();

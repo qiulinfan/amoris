@@ -734,6 +734,8 @@ void to_json(Json& j, const Camera& v) {
     j["active"] = v.active;
     vec_to_json(j["viewport"], v.viewport);
     j["order"] = v.order;
+    j["target"] = v.target;
+    vec_to_json(j["target_size"], v.target_size);
 }
 
 void from_json(const Json& j, Camera& v) {
@@ -745,6 +747,8 @@ void from_json(const Json& j, Camera& v) {
     scalar_from_json(j, "active", v.active);
     if (j.is_object() && j.contains("viewport")) vec_from_json(j["viewport"], v.viewport);
     scalar_from_json(j, "order", v.order);
+    scalar_from_json(j, "target", v.target);
+    if (j.is_object() && j.contains("target_size")) vec_from_json(j["target_size"], v.target_size);
 }
 
 void hash_component(StateHasherRef& h, const Camera& v) {
@@ -759,6 +763,9 @@ void hash_component(StateHasherRef& h, const Camera& v) {
     h.f32(v.viewport.z);
     h.f32(v.viewport.w);
     h.i64(static_cast<std::int64_t>(v.order));
+    h.str(v.target);
+    h.f32(v.target_size.x);
+    h.f32(v.target_size.y);
 }
 
 std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
@@ -772,6 +779,9 @@ std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
     if (path == "viewport.y") { *out = &v.viewport.y; return 1; }
     if (path == "viewport.z") { *out = &v.viewport.z; return 1; }
     if (path == "viewport.w") { *out = &v.viewport.w; return 1; }
+    if (path == "target_size") { *out = &v.target_size.x; return 2; }
+    if (path == "target_size.x") { *out = &v.target_size.x; return 1; }
+    if (path == "target_size.y") { *out = &v.target_size.y; return 1; }
     return 0;
 }
 
@@ -3649,35 +3659,8 @@ bool write_numbers(Lifetime& v, const double* in, std::size_t n) {
     return true;
 }
 
-std::size_t read_numbers(const Camera& v, double* out) {
-    out[0] = static_cast<double>(v.fov_degrees);
-    out[1] = static_cast<double>(v.orthographic);
-    out[2] = static_cast<double>(v.ortho_size);
-    out[3] = static_cast<double>(v.near);
-    out[4] = static_cast<double>(v.far);
-    out[5] = static_cast<double>(v.active);
-    out[6] = static_cast<double>(v.viewport.x);
-    out[7] = static_cast<double>(v.viewport.y);
-    out[8] = static_cast<double>(v.viewport.z);
-    out[9] = static_cast<double>(v.viewport.w);
-    out[10] = static_cast<double>(v.order);
-    return 11;
-}
-bool write_numbers(Camera& v, const double* in, std::size_t n) {
-    if (n != 11) return false;
-    v.fov_degrees = static_cast<float>(in[0]);
-    v.orthographic = in[1] != 0;
-    v.ortho_size = static_cast<float>(in[2]);
-    v.near = static_cast<float>(in[3]);
-    v.far = static_cast<float>(in[4]);
-    v.active = in[5] != 0;
-    v.viewport.x = static_cast<float>(in[6]);
-    v.viewport.y = static_cast<float>(in[7]);
-    v.viewport.z = static_cast<float>(in[8]);
-    v.viewport.w = static_cast<float>(in[9]);
-    v.order = static_cast<std::int32_t>(in[10]);
-    return true;
-}
+std::size_t read_numbers(const Camera&, double*) { return kNotNumeric; }
+bool write_numbers(Camera&, const double*, std::size_t) { return false; }
 
 std::size_t read_numbers(const CameraRig&, double*) { return kNotNumeric; }
 bool write_numbers(CameraRig&, const double*, std::size_t) { return false; }
@@ -4117,7 +4100,7 @@ constexpr std::array<FieldInfo, 3> kModelFields = {{
 constexpr std::array<FieldInfo, 1> kLifetimeFields = {{
     FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero.", {}},
 }};
-constexpr std::array<FieldInfo, 8> kCameraFields = {{
+constexpr std::array<FieldInfo, 10> kCameraFields = {{
     FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees (perspective).", {}},
     FieldInfo{"orthographic", "bool", "Parallel projection: no perspective, sizes do not shrink with distance.", {}},
     FieldInfo{"ortho_size", "f32", "Half of the visible height in world units when orthographic.", {}},
@@ -4126,6 +4109,8 @@ constexpr std::array<FieldInfo, 8> kCameraFields = {{
     FieldInfo{"active", "bool", "Whether this camera renders.", {}},
     FieldInfo{"viewport", "vec4", "The part of the window it draws: x, y (from the top-left), width and height as fractions of the window.", {}},
     FieldInfo{"order", "i32", "Cameras with viewports draw from the lowest order up: a minimap above the view it sits in.", {}},
+    FieldInfo{"target", "string", "Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): \"view:<target>\" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world.", {}},
+    FieldInfo{"target_size", "vec2", "The texture's size in pixels, at most the window's.", {}},
 }};
 constexpr std::string_view kCameraRig_modeNames[] = {"chase", "orbit", "offset"};
 constexpr std::array<FieldInfo, 18> kCameraRigFields = {{

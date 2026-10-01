@@ -73,6 +73,18 @@
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/patch_check.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/world/src/patch_check.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/patch_check.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/world/src/patch_check.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/patch_check.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/paths.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/world/src/paths.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/paths.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/world/src/paths.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/paths.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
     "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/recorder.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/world/src/recorder.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/recorder.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/world/src/recorder.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_world/src/recorder.cpp.o"
@@ -289,13 +301,229 @@
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
-    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/physics.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/physics/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/physics/src/physics.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/physics.cpp.o",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/aabb.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/aabb.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/aabb.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/aabb.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/aabb.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/arena_allocator.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/arena_allocator.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/arena_allocator.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/arena_allocator.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/arena_allocator.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/array.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/array.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/array.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/array.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/array.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/bitset.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/bitset.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/bitset.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/bitset.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/bitset.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/body.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/body.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/body.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/body.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/body.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/broad_phase.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/broad_phase.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/broad_phase.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/broad_phase.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/broad_phase.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/constraint_graph.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/constraint_graph.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/constraint_graph.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/constraint_graph.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/constraint_graph.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/contact.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/contact.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/contact.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/contact.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/contact.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/contact_solver.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/contact_solver.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/contact_solver.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/contact_solver.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/contact_solver.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/core.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/core.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/core.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/core.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/core.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/distance.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/distance.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/distance.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/distance.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/distance.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/distance_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/distance_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/distance_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/distance_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/distance_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/dynamic_tree.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/dynamic_tree.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/dynamic_tree.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/dynamic_tree.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/dynamic_tree.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/geometry.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/geometry.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/geometry.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/geometry.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/geometry.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/hull.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/hull.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/hull.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/hull.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/hull.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/id_pool.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/id_pool.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/id_pool.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/id_pool.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/id_pool.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/island.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/island.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/island.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/island.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/island.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/manifold.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/manifold.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/manifold.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/manifold.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/manifold.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/math_functions.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/math_functions.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/math_functions.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/math_functions.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/math_functions.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/motor_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/motor_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/motor_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/motor_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/motor_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/mouse_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/mouse_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/mouse_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/mouse_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/mouse_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/mover.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/mover.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/mover.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/mover.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/mover.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/prismatic_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/prismatic_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/prismatic_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/prismatic_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/prismatic_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/revolute_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/revolute_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/revolute_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/revolute_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/revolute_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/sensor.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/sensor.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/sensor.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/sensor.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/sensor.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/shape.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/shape.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/shape.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/shape.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/shape.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/solver.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/solver.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/solver.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/solver.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/solver.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/solver_set.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/solver_set.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/solver_set.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/solver_set.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/solver_set.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/table.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/table.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/table.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/table.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/table.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/timer.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/timer.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/timer.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/timer.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/timer.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/types.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/types.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/types.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/types.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/types.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/weld_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/weld_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/weld_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/weld_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/weld_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/wheel_joint.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/wheel_joint.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/wheel_joint.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/wheel_joint.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/wheel_joint.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/world.c.o.d -std=c17 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -w -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -std=gnu17 -c /Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/world.c -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/world.c.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/third_party/box2d/src/world.c",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/box2d/src/world.c.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/physics.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/physics/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/physics/src/physics.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/physics.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/physics/src/physics.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/physics.cpp.o"
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
-    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/tiles.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/physics/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/physics/src/tiles.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/tiles.cpp.o",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/rigid2d.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/physics/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/physics/src/rigid2d.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/rigid2d.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/physics/src/rigid2d.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/rigid2d.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/tiles.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/physics/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/third_party/box2d/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL  -c /Users/qiulinfan/Desktop/aipocket/engine/physics/src/tiles.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/tiles.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/physics/src/tiles.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_physics/src/tiles.cpp.o"
   },
@@ -454,6 +682,12 @@
     "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_audio/src/audio.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/audio/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/sdl3-3.4.16/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include  -c /Users/qiulinfan/Desktop/aipocket/engine/audio/src/audio.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_audio/src/audio.cpp.o",
     "file": "/Users/qiulinfan/Desktop/aipocket/engine/audio/src/audio.cpp",
     "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_audio/src/audio.cpp.o"
+  },
+  {
+    "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
+    "command": "/usr/bin/clang++ -MD -MF /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_app/generated/sdk_help.gen.cpp.o.d -std=c++26 -mmacosx-version-min=14.0 -fdiagnostics-absolute-paths -DPOCKET_VERSION_MAJOR=0 -DPOCKET_VERSION_MINOR=0 -DPOCKET_VERSION_PATCH=1 -DPOCKET_DEBUG=1 -fvisibility=hidden -ffp-contract=off -O0 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I/Users/qiulinfan/Desktop/aipocket/engine/app/include -I/Users/qiulinfan/Desktop/aipocket/engine/core/include -I/Users/qiulinfan/Desktop/aipocket/third_party/json/include -I/Users/qiulinfan/Desktop/aipocket/engine/platform/include -I/Users/qiulinfan/Desktop/aipocket/engine/rhi/include -I/Users/qiulinfan/Desktop/aipocket/.pocket/deps/wgpu-29.0.1.1/include -I/Users/qiulinfan/Desktop/aipocket/engine/script/include -I/Users/qiulinfan/Desktop/aipocket/engine/world/include -I/Users/qiulinfan/Desktop/aipocket/third_party/flecs/include -I/Users/qiulinfan/Desktop/aipocket/engine/renderer/include -I/Users/qiulinfan/Desktop/aipocket/engine/assets/include -I/Users/qiulinfan/Desktop/aipocket/engine/physics/include -I/Users/qiulinfan/Desktop/aipocket/engine/nav/include -I/Users/qiulinfan/Desktop/aipocket/engine/ui/include -I/Users/qiulinfan/Desktop/aipocket/engine/audio/include -I/Users/qiulinfan/Desktop/aipocket/third_party/stb/include -I/Users/qiulinfan/Desktop/aipocket/third_party/httplib/include -DFLECS_CUSTOM_BUILD -DFLECS_CPP -DFLECS_MODULE -DFLECS_SYSTEM -DFLECS_PIPELINE -DFLECS_TIMER -DFLECS_META -DFLECS_UNITS -DFLECS_JSON -DFLECS_DOC -DFLECS_LOG -DFLECS_SCRIPT -DFLECS_STATS -DFLECS_METRICS -DFLECS_ALERTS -DFLECS_OS_API_IMPL -DCPPHTTPLIB_NO_EXCEPTIONS=0  -c /Users/qiulinfan/Desktop/aipocket/engine/app/generated/sdk_help.gen.cpp -o /Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_app/generated/sdk_help.gen.cpp.o",
+    "file": "/Users/qiulinfan/Desktop/aipocket/engine/app/generated/sdk_help.gen.cpp",
+    "output": "/Users/qiulinfan/Desktop/aipocket/build/debug/obj/pocket_app/generated/sdk_help.gen.cpp.o"
   },
   {
     "directory": "/Users/qiulinfan/Desktop/aipocket/build/debug",
