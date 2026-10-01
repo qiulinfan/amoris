@@ -7,6 +7,10 @@
 //! Besides components, a metadata file may declare records: plain value types that components
 //! hold in `list:<Record>` fields (a JSON array, `std::vector` in C++, `Record[]` in TypeScript).
 //! A record's fields are scalar or vector types; records do not nest.
+//!
+//! An `i32` field may name its values (`enum = ["directional", "point", "spot"]`, the name at
+//! index i standing for i): JSON takes either the name or the number, the stored value and the
+//! scene files stay numbers, and the schema, docs and TypeScript show the names.
 
 use crate::manifest::Workspace;
 use anyhow::{bail, Context, Result};
@@ -54,6 +58,8 @@ pub struct Field {
     pub default: Option<toml::Value>,
     #[serde(default)]
     pub doc: String,
+    #[serde(default, rename = "enum")]
+    pub names: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -204,6 +210,7 @@ pub fn load_meta(ws: &Workspace) -> Result<(Vec<PathBuf>, Vec<Record>, Vec<Compo
             }
             for f in &r.fields {
                 type_info(&f.ty, &[]).with_context(|| format!("record {}.{} in {} (records hold scalar and vector fields only)", r.name, f.name, p.display()))?;
+                check_names(f).with_context(|| format!("record {}.{} in {}", r.name, f.name, p.display()))?;
             }
             records.push(r.clone());
         }
@@ -219,11 +226,30 @@ pub fn load_meta(ws: &Workspace) -> Result<(Vec<PathBuf>, Vec<Record>, Vec<Compo
             }
             for f in &c.fields {
                 type_info(&f.ty, &records).with_context(|| format!("{}.{} in {}", c.name, f.name, p.display()))?;
+                check_names(f).with_context(|| format!("{}.{} in {}", c.name, f.name, p.display()))?;
             }
             comps.push(c.clone());
         }
     }
     Ok((files, records, comps))
+}
+
+fn check_names(f: &Field) -> Result<()> {
+    if f.names.is_empty() {
+        return Ok(());
+    }
+    if f.ty != "i32" {
+        bail!("only i32 fields name their values (this one is {})", f.ty);
+    }
+    for (i, n) in f.names.iter().enumerate() {
+        if n.is_empty() || !n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+            bail!("value name '{n}' is not lowercase letters, digits and underscores");
+        }
+        if f.names[..i].contains(n) {
+            bail!("value name '{n}' appears twice");
+        }
+    }
+    Ok(())
 }
 
 fn cpp_escape(s: &str) -> String {
@@ -256,8 +282,8 @@ fn gen_hpp(records: &[Record], comps: &[Component]) -> Result<String> {
         emit_struct_hpp(&mut o, &c.name, &c.doc, &c.fields, records)?;
         o.push('\n');
     }
-    o.push_str("struct FieldInfo {\n    std::string_view name;\n    std::string_view type;\n    std::string_view doc;\n};\n\nstruct ComponentInfo {\n    std::string_view name;\n    std::string_view doc;\n    bool serialized;\n    std::span<const FieldInfo> fields;\n};\n\n");
-    o.push_str("/// Every component known to the engine, in metadata order.\nstd::span<const ComponentInfo> component_infos();\n\n");
+    o.push_str("struct FieldInfo {\n    std::string_view name;\n    std::string_view type;   // \"f32\", \"vec3\", \"list:AnimationLayer\", ...\n    std::string_view doc;\n    std::span<const std::string_view> names;   // an i32 field's value names (index = value); empty for most\n};\n\nstruct ComponentInfo {\n    std::string_view name;\n    std::string_view doc;\n    bool serialized;\n    std::span<const FieldInfo> fields;\n};\n\nstruct RecordInfo {\n    std::string_view name;\n    std::span<const FieldInfo> fields;\n};\n\n");
+    o.push_str("/// Every component known to the engine, in metadata order.\nstd::span<const ComponentInfo> component_infos();\n/// Every record (the values in list fields).\nstd::span<const RecordInfo> record_infos();\n\n");
     o.push_str("/// Hash a component value into a state hasher (all fields, in metadata order).\n");
     for c in comps {
         o.push_str(&format!("void hash_component(struct StateHasherRef& h, const {}& v);\n", c.name));
@@ -284,6 +310,8 @@ fn emit_struct_cpp(o: &mut String, name: &str, fields: &[Field], records: &[Reco
         let info = type_info(&f.ty, records)?;
         if let Some(rec) = &info.list {
             o.push_str(&format!("    if (j.is_object() && j.contains(\"{0}\") && j[\"{0}\"].is_array()) {{\n        v.{0}.clear();\n        for (const Json& e : j[\"{0}\"]) {{ {1} x; from_json(e, x); v.{0}.push_back(std::move(x)); }}\n    }}\n", f.name, rec));
+        } else if !f.names.is_empty() {
+            o.push_str(&format!("    enum_from_json(j, \"{0}\", v.{0}, {{{1}}});\n", f.name, f.names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
         } else if info.components.is_empty() {
             o.push_str(&format!("    scalar_from_json(j, \"{0}\", v.{0});\n", f.name));
         } else {
@@ -331,12 +359,13 @@ fn emit_struct_cpp(o: &mut String, name: &str, fields: &[Field], records: &[Reco
 
 fn gen_cpp(records: &[Record], comps: &[Component]) -> Result<String> {
     let mut o = String::new();
-    o.push_str("// generated by `pocket gen` from engine/*/meta/*.toml; do not edit\n#include <pocket/world/components.gen.hpp>\n#include <pocket/world/hashing.hpp>\n\n#include <array>\n\nnamespace pocket::world {\n\nnamespace {\n\n");
+    o.push_str("// generated by `pocket gen` from engine/*/meta/*.toml; do not edit\n#include <pocket/world/components.gen.hpp>\n#include <pocket/world/hashing.hpp>\n\n#include <array>\n#include <initializer_list>\n\nnamespace pocket::world {\n\nnamespace {\n\n");
     o.push_str("[[maybe_unused]] void vec_to_json(Json& j, const Vec2& v) { j = Json{{\"x\", v.x}, {\"y\", v.y}}; }\n[[maybe_unused]] void vec_to_json(Json& j, const Vec3& v) { j = Json{{\"x\", v.x}, {\"y\", v.y}, {\"z\", v.z}}; }\n[[maybe_unused]] void vec_to_json(Json& j, const Vec4& v) { j = Json{{\"x\", v.x}, {\"y\", v.y}, {\"z\", v.z}, {\"w\", v.w}}; }\n[[maybe_unused]] void vec_to_json(Json& j, const Quat& v) { j = Json{{\"x\", v.x}, {\"y\", v.y}, {\"z\", v.z}, {\"w\", v.w}}; }\n[[maybe_unused]] void vec_to_json(Json& j, const Color4& v) { j = Json{{\"r\", v.r}, {\"g\", v.g}, {\"b\", v.b}, {\"a\", v.a}}; }\n\n");
     o.push_str("float num(const Json& j, const char* key, float fallback) {\n    if (!j.is_object() || !j.contains(key) || !j[key].is_number()) return fallback;\n    return j[key].get<float>();\n}\n");
     o.push_str("float idx(const Json& j, std::size_t i, float fallback) {\n    if (!j.is_array() || j.size() <= i || !j[i].is_number()) return fallback;\n    return j[i].get<float>();\n}\n\n");
     o.push_str("[[maybe_unused]] void vec_from_json(const Json& j, Vec2& v) { v = {num(j, \"x\", idx(j, 0, v.x)), num(j, \"y\", idx(j, 1, v.y))}; }\n[[maybe_unused]] void vec_from_json(const Json& j, Vec3& v) { v = {num(j, \"x\", idx(j, 0, v.x)), num(j, \"y\", idx(j, 1, v.y)), num(j, \"z\", idx(j, 2, v.z))}; }\n[[maybe_unused]] void vec_from_json(const Json& j, Vec4& v) { v = {num(j, \"x\", idx(j, 0, v.x)), num(j, \"y\", idx(j, 1, v.y)), num(j, \"z\", idx(j, 2, v.z)), num(j, \"w\", idx(j, 3, v.w))}; }\n[[maybe_unused]] void vec_from_json(const Json& j, Quat& v) { v = {num(j, \"x\", idx(j, 0, v.x)), num(j, \"y\", idx(j, 1, v.y)), num(j, \"z\", idx(j, 2, v.z)), num(j, \"w\", idx(j, 3, v.w))}; }\n[[maybe_unused]] void vec_from_json(const Json& j, Color4& v) { v = {num(j, \"r\", idx(j, 0, v.r)), num(j, \"g\", idx(j, 1, v.g)), num(j, \"b\", idx(j, 2, v.b)), num(j, \"a\", idx(j, 3, v.a))}; }\n\n");
     o.push_str("template <class T>\nvoid scalar_from_json(const Json& j, const char* key, T& v) {\n    if (!j.is_object() || !j.contains(key)) return;\n    const Json& x = j[key];\n    if constexpr (std::is_same_v<T, bool>) { if (x.is_boolean()) v = x.get<bool>(); else if (x.is_number()) v = x.get<double>() != 0; }\n    else if constexpr (std::is_same_v<T, std::string>) { if (x.is_string()) v = x.get<std::string>(); else if (x.is_number()) v = std::to_string(x.get<long long>()); }\n    else { if (x.is_number()) v = x.get<T>(); else if (x.is_boolean()) v = static_cast<T>(x.get<bool>()); }\n}\n\n");
+    o.push_str("[[maybe_unused]] void enum_from_json(const Json& j, const char* key, std::int32_t& v, std::initializer_list<std::string_view> names) {\n    if (j.is_object() && j.contains(key) && j[key].is_string()) {\n        const std::string s = j[key].get<std::string>();\n        std::int32_t i = 0;\n        for (std::string_view n : names) { if (n == s) { v = i; return; } ++i; }\n        return;\n    }\n    scalar_from_json(j, key, v);\n}\n\n");
     o.push_str("// \"3.weight\" -> index 3 and the rest \"weight\"; false unless the path starts with digits and a dot.\n[[maybe_unused]] bool list_index(std::string_view& rest, std::size_t& index) {\n    std::size_t dot = rest.find('.');\n    if (dot == std::string_view::npos || dot == 0) return false;\n    index = 0;\n    for (std::size_t i = 0; i < dot; ++i) {\n        char c = rest[i];\n        if (c < '0' || c > '9') return false;\n        index = index * 10 + static_cast<std::size_t>(c - '0');\n    }\n    rest = rest.substr(dot + 1);\n    return true;\n}\n\n}  // namespace\n\n");
     for r in records {
         emit_struct_cpp(&mut o, &r.name, &r.fields, &[], "hash_record")?;
@@ -345,18 +374,28 @@ fn gen_cpp(records: &[Record], comps: &[Component]) -> Result<String> {
         emit_struct_cpp(&mut o, &c.name, &c.fields, records, "hash_component")?;
     }
     o.push_str("namespace {\n\n");
-    for c in comps {
-        o.push_str(&format!("constexpr std::array<FieldInfo, {}> k{}Fields = {{{{\n", c.fields.len(), c.name));
-        for f in &c.fields {
-            o.push_str(&format!("    FieldInfo{{\"{}\", \"{}\", \"{}\"}},\n", f.name, f.ty, cpp_escape(&f.doc)));
+    let tables: Vec<(&str, &[Field])> = records.iter().map(|r| (r.name.as_str(), r.fields.as_slice())).chain(comps.iter().map(|c| (c.name.as_str(), c.fields.as_slice()))).collect();
+    for (owner, fields) in &tables {
+        for f in fields.iter().filter(|f| !f.names.is_empty()) {
+            o.push_str(&format!("constexpr std::string_view k{}_{}Names[] = {{{}}};\n", owner, f.name, f.names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
+        }
+        o.push_str(&format!("constexpr std::array<FieldInfo, {}> k{}Fields = {{{{\n", fields.len(), owner));
+        for f in fields.iter() {
+            let names = if f.names.is_empty() { "{}".to_string() } else { format!("k{}_{}Names", owner, f.name) };
+            o.push_str(&format!("    FieldInfo{{\"{}\", \"{}\", \"{}\", {}}},\n", f.name, f.ty, cpp_escape(&f.doc), names));
         }
         o.push_str("}};\n");
     }
+    o.push_str(&format!("\nconstexpr std::array<RecordInfo, {}> kRecords = {{{{\n", records.len()));
+    for r in records {
+        o.push_str(&format!("    RecordInfo{{\"{}\", k{}Fields}},\n", r.name, r.name));
+    }
+    o.push_str("}};\n");
     o.push_str(&format!("\nconstexpr std::array<ComponentInfo, {}> kComponents = {{{{\n", comps.len()));
     for c in comps {
         o.push_str(&format!("    ComponentInfo{{\"{}\", \"{}\", {}, k{}Fields}},\n", c.name, cpp_escape(&c.doc), c.serialized, c.name));
     }
-    o.push_str("}};\n\n}  // namespace\n\nstd::span<const ComponentInfo> component_infos() { return kComponents; }\n\n}  // namespace pocket::world\n");
+    o.push_str("}};\n\n}  // namespace\n\nstd::span<const ComponentInfo> component_infos() { return kComponents; }\nstd::span<const RecordInfo> record_infos() { return kRecords; }\n\n}  // namespace pocket::world\n");
     Ok(o)
 }
 
@@ -393,11 +432,18 @@ fn gen_ts(records: &[Record], comps: &[Component]) -> Result<String> {
     for c in comps {
         o.push_str(&format!("    {0}: {0};\n", c.name));
     }
-    o.push_str("}\n\nexport type ComponentName = keyof Components;\n\n");
-    o.push_str("export const componentNames: readonly ComponentName[] = [");
+    o.push_str("}\n\n/** The names a field's numbers have, which a write may use instead (`world.set(e, \"Light\", {kind: \"point\"})`); reads give the numbers. */\nexport interface ComponentEnums {\n");
+    for c in comps {
+        let named: Vec<String> = c.fields.iter().filter(|f| !f.names.is_empty()).map(|f| format!("{}: {}", f.name, f.names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(" | "))).collect();
+        o.push_str(&format!("    {}: {{{}}};\n", c.name, if named.is_empty() { String::new() } else { format!(" {} ", named.join("; ")) }));
+    }
+    o.push_str("}\n\n/** Every component's name: the engine's, and a project's own where `pocket check` adds them (its components.toml). */\nexport type ComponentName = keyof Components;\n\n/** The engine's components. */\nexport type EngineComponentName = ");
+    o.push_str(&comps.iter().map(|c| format!("\"{}\"", c.name)).collect::<Vec<_>>().join(" | "));
+    o.push_str(";\n\n");
+    o.push_str("export const componentNames: readonly EngineComponentName[] = [");
     o.push_str(&comps.iter().map(|c| format!("\"{}\"", c.name)).collect::<Vec<_>>().join(", "));
     o.push_str("];\n\n");
-    o.push_str("/** Default value of every component, as the engine initializes it. */\nexport const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {\n");
+    o.push_str("/** Default value of every engine component, as the engine initializes it. */\nexport const componentDefaults: { readonly [K in EngineComponentName]: Components[K] } = {\n");
     for c in comps {
         o.push_str(&format!("    {}: {{ ", c.name));
         let parts: Result<Vec<String>> = c.fields.iter().map(|f| Ok(format!("{}: {}", f.name, ts_default(f, records)?))).collect();
@@ -415,10 +461,18 @@ fn gen_ts(records: &[Record], comps: &[Component]) -> Result<String> {
         o.push_str(&parts?.join(", "));
         o.push_str(" },\n");
     }
-    o.push_str("};\n\n/** Components that are computed by the engine and never written to scene files. */\nexport const derivedComponents: readonly ComponentName[] = [");
+    o.push_str("};\n\n/** Components that are computed by the engine and never written to scene files. */\nexport const derivedComponents: readonly EngineComponentName[] = [");
     o.push_str(&comps.iter().filter(|c| !c.serialized).map(|c| format!("\"{}\"", c.name)).collect::<Vec<_>>().join(", "));
     o.push_str("];\n");
     Ok(o)
+}
+
+/// A field's type for the docs: an i32 with value names lists them (`0 directional, 1 point`).
+fn type_text(f: &Field) -> String {
+    if f.names.is_empty() {
+        return f.ty.clone();
+    }
+    format!("{}: {}", f.ty, f.names.iter().enumerate().map(|(i, n)| format!("{i} `{n}`")).collect::<Vec<_>>().join(", "))
 }
 
 fn gen_md(records: &[Record], comps: &[Component]) -> String {
@@ -427,7 +481,7 @@ fn gen_md(records: &[Record], comps: &[Component]) -> String {
     for c in comps {
         o.push_str(&format!("## {}\n\n{}{}\n\n| Field | Type | Default | Meaning |\n|---|---|---|---|\n", c.name, c.doc, if c.serialized { "" } else { " Derived: computed by the engine, not stored in scenes." }));
         for f in &c.fields {
-            o.push_str(&format!("| `{}` | {} | {} | {} |\n", f.name, f.ty, default_text(f), f.doc));
+            o.push_str(&format!("| `{}` | {} | {} | {} |\n", f.name, type_text(f), default_text(f), f.doc));
         }
         o.push('\n');
     }
@@ -436,12 +490,93 @@ fn gen_md(records: &[Record], comps: &[Component]) -> String {
         for r in records {
             o.push_str(&format!("## {}\n\n{}\n\n| Field | Type | Default | Meaning |\n|---|---|---|---|\n", r.name, r.doc));
             for f in &r.fields {
-                o.push_str(&format!("| `{}` | {} | {} | {} |\n", f.name, f.ty, default_text(f), f.doc));
+                o.push_str(&format!("| `{}` | {} | {} | {} |\n", f.name, type_text(f), default_text(f), f.doc));
             }
             o.push('\n');
         }
     }
     o
+}
+
+/// A project's own components (`components.toml` beside its `project.toml`, docs/decisions/0007):
+/// the engine's metadata format without records, checked against the engine's names. Answers the
+/// list as the runtime takes it (`[{name, doc, fields: [{name, type, default?, doc, names?}]}]`),
+/// or None when the project declares none.
+pub fn project_components(ws: &Workspace, project_dir: &Path) -> Result<Option<Vec<Component>>> {
+    let path = project_dir.join("components.toml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path)?;
+    let mf: MetaFile = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    if !mf.record.is_empty() {
+        bail!("{}: a project's components hold scalar and vector fields; records are the engine's", path.display());
+    }
+    let (_, _, engine) = load_meta(ws)?;
+    let mut seen: Vec<&str> = vec![];
+    for c in &mf.component {
+        if engine.iter().any(|e| e.name == c.name) {
+            bail!("{}: {} is an engine component; a project's components need names of their own", path.display(), c.name);
+        }
+        if seen.contains(&c.name.as_str()) {
+            bail!("{}: {} is declared twice", path.display(), c.name);
+        }
+        if !c.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) || !c.name.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+            bail!("{}: a component name is letters and digits starting with a capital (not '{}')", path.display(), c.name);
+        }
+        seen.push(&c.name);
+        for f in &c.fields {
+            type_info(&f.ty, &[]).with_context(|| format!("{}.{} in {} (a project's fields are scalars and vectors)", c.name, f.name, path.display()))?;
+            check_names(f).with_context(|| format!("{}.{} in {}", c.name, f.name, path.display()))?;
+        }
+    }
+    Ok(Some(mf.component))
+}
+
+/// The list the runtime declares (project.json `components`).
+pub fn project_components_json(comps: &[Component]) -> serde_json::Value {
+    serde_json::Value::Array(
+        comps
+            .iter()
+            .map(|c| {
+                let fields: Vec<serde_json::Value> = c
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let mut j = serde_json::json!({"name": f.name, "type": f.ty, "doc": f.doc});
+                        if let Some(d) = &f.default {
+                            j["default"] = serde_json::to_value(d).unwrap_or(serde_json::Value::Null);
+                        }
+                        if !f.names.is_empty() {
+                            j["names"] = serde_json::json!(f.names);
+                        }
+                        j
+                    })
+                    .collect();
+                serde_json::json!({"name": c.name, "doc": c.doc, "fields": fields})
+            })
+            .collect(),
+    )
+}
+
+/// TypeScript for a project's components: an augmentation of the SDK's `Components` (and the
+/// value names of `ComponentEnums`), so `world.get(e, "Enemy").hp` type-checks.
+pub fn project_components_ts(comps: &[Component]) -> Result<String> {
+    let mut o = String::from("// generated by `pocket check` from the project's components.toml; do not edit\nimport type { Color, Quat, Vec2, Vec3, Vec4 } from \"pocket/generated/components\";\n\ndeclare module \"pocket/generated/components\" {\n    interface Components {\n");
+    for c in comps {
+        o.push_str(&format!("        /** {} */\n        {}: {{\n", c.doc, c.name));
+        for f in &c.fields {
+            o.push_str(&format!("            /** {} */\n            {}: {};\n", f.doc, f.name, type_info(&f.ty, &[])?.ts));
+        }
+        o.push_str("        };\n");
+    }
+    o.push_str("    }\n    interface ComponentEnums {\n");
+    for c in comps {
+        let named: Vec<String> = c.fields.iter().filter(|f| !f.names.is_empty()).map(|f| format!("{}: {}", f.name, f.names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(" | "))).collect();
+        o.push_str(&format!("        {}: {{{}}};\n", c.name, if named.is_empty() { String::new() } else { format!(" {} ", named.join("; ")) }));
+    }
+    o.push_str("    }\n}\n");
+    Ok(o)
 }
 
 fn write_if_changed(path: &Path, content: &str) -> Result<bool> {

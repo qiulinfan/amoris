@@ -217,7 +217,7 @@ TEST_CASE("Reproducible math is as close as libm and pinned to the bit", "[core]
     CHECK(std::isnan(repro::sin(std::numeric_limits<float>::infinity())));
     CHECK(std::isnan(repro::asin(1.5f)));
     INFO("sweep hash " << hex64(h.digest()));
-    CHECK(hex64(h.digest()) == "62265331655f6ff2");
+    CHECK(hex64(h.digest()) == "a184ba96958d7adb");   // StateHasher's per-value digest (2026-10-01); the sweep is unchanged
 }
 
 TEST_CASE("tangents run along the uv's u, their bitangent toward the texture's up", "[core][tangents]") {

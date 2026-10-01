@@ -50,10 +50,13 @@ fn includes(ws: &Workspace, project: Option<&Path>) -> Result<(String, Vec<PathB
 
 /// The compiler's options: the SDK as the `pocket` module, JSX through its runtime, the language
 /// the script host runs (no DOM, no Node), and strict checks.
-fn tsconfig(ws: &Workspace, dirs: &[PathBuf]) -> serde_json::Value {
+fn tsconfig(ws: &Workspace, dirs: &[PathBuf], extra: &[PathBuf]) -> serde_json::Value {
     let sdk = std::fs::canonicalize(ws.root.join("sdk").join("runtime")).unwrap_or(ws.root.join("sdk").join("runtime"));
     let mut include = vec![];
     let mut exclude = vec![];
+    for f in extra {
+        include.push(f.display().to_string());
+    }
     for d in dirs {
         include.push(format!("{}/**/*.ts", d.display()));
         include.push(format!("{}/**/*.tsx", d.display()));
@@ -129,7 +132,17 @@ pub fn check(ws: &Workspace, project: Option<&Path>) -> Result<Report> {
     let dir = ws.root.join("build").join("check").join(&name);
     toolchain::ensure_dir(&dir)?;
     let config = dir.join("tsconfig.json");
-    std::fs::write(&config, serde_json::to_string_pretty(&tsconfig(ws, &dirs))?)?;
+    // A project's own components (components.toml) as types beside the SDK's.
+    let mut extra = vec![];
+    for d in &dirs {
+        if let Some(comps) = crate::gen::project_components(ws, d)? {
+            let stem = d.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
+            let file = dir.join(format!("{stem}.components.d.ts"));
+            std::fs::write(&file, crate::gen::project_components_ts(&comps)?)?;
+            extra.push(file);
+        }
+    }
+    std::fs::write(&config, serde_json::to_string_pretty(&tsconfig(ws, &dirs, &extra))?)?;
     let out = toolchain::command(exe.to_str().unwrap()).arg("-p").arg(&config).arg("--pretty").arg("false").current_dir(&ws.root).output().context("running tsc")?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     let diagnostics = parse_tsc(&text, &ws.root);

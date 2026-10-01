@@ -78,7 +78,7 @@ Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `target` | string | "" | The entity followed, by name or path; empty leaves the camera alone. |
-| `mode` | i32 | 0 | 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. |
+| `mode` | i32: 0 `chase`, 1 `orbit`, 2 `offset` | 0 | 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. |
 | `distance` | f32 | 6.0 | Chase and orbit: how far from the pivot. |
 | `height` | f32 | 1.0 | The pivot, the point it looks at, this high above the target's origin. |
 | `pitch` | f32 | -20.0 | Chase and orbit: degrees the view looks down (negative) or up at the pivot. |
@@ -102,7 +102,7 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point,
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `kind` | i32 | 0 | 0 directional, 1 point, 2 spot. |
+| `kind` | i32: 0 `directional`, 1 `point`, 2 `spot` | 0 | 0 directional, 1 point, 2 spot. |
 | `color` | color | [1.0, 1.0, 1.0, 1.0] | Color as a color picker shows it (sRGB), decoded to linear light; alpha unused. |
 | `intensity` | f32 | 1.0 | Multiplier applied to color. |
 | `range` | f32 | 10.0 | Point and spot light range in meters: the light fades to nothing there. |
@@ -163,7 +163,7 @@ The sky around the scene (docs/design/rendering.md, Sky and environment light): 
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mode` | i32 | 1 | 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off. |
+| `mode` | i32: 0 `off`, 1 `procedural`, 2 `image`, 3 `atmosphere` | 1 | 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off. |
 | `image` | string | "" | For mode 2: project-relative path of the panorama (2:1, the horizon across the middle). |
 | `zenith` | color | [0.25, 0.45, 0.8, 1.0] | Procedural: the color straight up. |
 | `horizon` | color | [0.75, 0.82, 0.9, 1.0] | Procedural: the color at the horizon. |
@@ -303,7 +303,7 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `from_clip` | string | "" | The clip fading out (keeps playing at its own time until the fade ends); empty when none. |
 | `from_time` | f32 | 0.0 | Seconds into from_clip, advanced by the engine. |
 | `layers` | list:AnimationLayer | [] | Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them). |
-| `root_motion` | i32 | 0 | 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). |
+| `root_motion` | i32: 0 `off`, 1 `move`, 2 `report` | 0 | 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). |
 | `root` | string | "" | The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. |
 | `root_delta` | vec3 | [0.0, 0.0, 0.0] | The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine). |
 | `root_rotation` | bool | false | With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion). |
@@ -392,7 +392,7 @@ Physics body. Dynamic bodies fall and collide; static bodies never move; kinemat
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `kind` | i32 | 0 | 0 dynamic, 1 static, 2 kinematic. |
+| `kind` | i32: 0 `dynamic`, 1 `static`, 2 `kinematic` | 0 | 0 dynamic, 1 static, 2 kinematic. |
 | `mass` | f32 | 1.0 | Kilograms; ignored for static bodies. |
 | `restitution` | f32 | 0.2 | Bounciness 0..1. |
 | `friction` | f32 | 0.5 | Coulomb friction coefficient. |
@@ -409,7 +409,7 @@ Connects this body to another body, to any entity as a fixed point, or to a poin
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `kind` | i32 | 0 | 0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target). |
+| `kind` | i32: 0 `distance`, 1 `ball`, 2 `hinge`, 3 `slider` | 0 | 0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target). |
 | `target` | string | "" | Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. |
 | `anchor` | vec3 | [0.0, 0.0, 0.0] | Attachment point on this body, in its local frame. |
 | `target_anchor` | vec3 | [0.0, 0.0, 0.0] | Attachment point on the target in its local frame, or a world point when there is no target. |
@@ -611,7 +611,7 @@ Collision shape centered on the entity (plus offset). Box half extents come from
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `shape` | i32 | 0 | 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other). |
+| `shape` | i32: 0 `box`, 1 `sphere`, 2 `capsule`, 3 `mesh` | 0 | 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other). |
 | `size` | vec3 | [0.5, 0.5, 0.5] | Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules. |
 | `offset` | vec3 | [0.0, 0.0, 0.0] | Local offset of the shape center. |
 | `is_trigger` | bool | false | Overlap events only, no collision response. |
@@ -667,7 +667,7 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mode` | i32 | 0 | 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations). |
+| `mode` | i32: 0 `idle`, 1 `walk`, 2 `follow`, 3 `formation` | 0 | 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations). |
 | `goal` | vec3 | [0.0, 0.0, 0.0] | The point to reach in mode 1. |
 | `target` | entity | 0 | The entity to follow in mode 2, or the leader whose slot to keep in mode 3. |
 | `offset` | vec3 | [0.0, 0.0, 0.0] | In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes. |
@@ -678,7 +678,7 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 | `avoidance` | f32 | 1.0 | Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. |
 | `queue` | f32 | 0.0 | How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning. |
 | `priority` | i32 | 0 | Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it. |
-| `state` | i32 | 0 | 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). |
+| `state` | i32: 0 `idle`, 1 `moving`, 2 `arrived`, 3 `stuck` | 0 | 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). |
 | `velocity` | vec3 | [0.0, 0.0, 0.0] | The velocity chosen this tick (written by the engine). |
 | `corner` | vec3 | [0.0, 0.0, 0.0] | The point the agent is heading for: the next corner of its path, or the goal (written by the engine). |
 | `distance` | f32 | 0.0 | Length of the remaining path (written by the engine). |

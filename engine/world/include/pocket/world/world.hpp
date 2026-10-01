@@ -15,12 +15,20 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <span>
 #include <string_view>
 #include <vector>
 
 namespace pocket::world {
 
 using EntityId = std::uint64_t;
+
+// What a command was given for a component, checked against the metadata (docs/generated/
+// components.md) before it is applied: every key a field, every value of the field's type, a
+// named value one of the field's names. bad_args names the field, and the nearest one when a key
+// is misspelt. Scene, prefab and model loads are not held to it.
+Status check_component_patch(std::span<const ComponentInfo> known, std::string_view component, const Json& patch);
+Status check_components(std::span<const ComponentInfo> known, const Json& components);   // {Name: fields, ...}
 
 struct TreeOptions {
     EntityId root = 0;          // 0: all roots
@@ -75,7 +83,17 @@ class World {
     void component_hashes(EntityId id, const std::function<void(std::string_view name, std::uint64_t hash)>& fn) const;
     // Every entity in tree order (parents before children, siblings in creation order).
     void visit_all(const std::function<void(EntityId id, EntityId parent, int depth)>& fn) const;
-    [[nodiscard]] static bool known_component(std::string_view component);
+    [[nodiscard]] bool known_component(std::string_view component) const;
+    // The project's own components (its components.toml, as the tool hands it over: [{name, doc,
+    // fields: [{name, type, default?, doc?, names?}]}]), beside the engine's; declaring again
+    // replaces the list. Their values are JSON objects kept to the declared types (docs/decisions/0007).
+    Status declare_components(const Json& list);
+    [[nodiscard]] bool project_component(std::string_view component) const;
+    // Every component this world knows, the engine's then the project's.
+    [[nodiscard]] std::span<const ComponentInfo> component_infos_all() const;
+    // A command's component values checked against them (see check_component_patch below).
+    Status check_patch(std::string_view component, const Json& patch) const;
+    Status check_components(const Json& components) const;
 
     // Components (typed, for engine systems) -------------------------------------------------
     template <class T>
@@ -96,7 +114,7 @@ class World {
     [[nodiscard]] std::string tree(const TreeOptions& options) const;
     [[nodiscard]] Json query(const QueryOptions& options) const;
     [[nodiscard]] Json summary() const;
-    [[nodiscard]] static Json schema();  // component metadata as JSON
+    [[nodiscard]] Json schema() const;  // component metadata as JSON
 
     // Sprite clips ---------------------------------------------------------------------------
     // A run of frames on a sheet laid out as a grid: frame i is cell frames[i] (column-major
@@ -179,5 +197,6 @@ class World {
 
 // Compact human/agent-readable form of a component value: "pos=(0,1,0) rot=(0,0,0,1)".
 std::string format_component_compact(std::string_view component, const Json& value, bool only_non_default);
+std::string format_component_compact(std::string_view component, const Json& value, bool only_non_default, const Json& defaults);
 
 }  // namespace pocket::world

@@ -23,7 +23,7 @@ constexpr CommandHelp kHelp[] = {
     {"world.spawn", "name?, parent?, components?, cause?", "Create an entity with components ({Transform: {...}, MeshRenderer: {...}}); answers its id and path."},
     {"world.destroy", "entity, cause?", "Remove an entity and its children."},
     {"world.get", "entity, component", "One component's values of an entity."},
-    {"world.set", "entity, component, value, cause?", "Change a component: value holds the fields to change ({color: {r, g, b, a}}); the component is added when missing."},
+    {"world.set", "entity, component, value, cause?", "Change a component: value holds the fields to change ({color: {r, g, b, a}}; a named code by its name, {kind: \"point\"}); the component is added when missing. Answers {ok, value}, the component as it now is; a field it does not have or a value of the wrong type is refused and nothing is applied."},
     {"world.remove", "entity, component, cause?", "Take a component off an entity."},
     {"world.has", "entity, component", "Whether an entity has a component."},
     {"world.describe", "entity", "Everything about one entity: name, path, parent, children and every component's values."},

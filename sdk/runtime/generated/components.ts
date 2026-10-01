@@ -1161,12 +1161,60 @@ export interface Components {
     Morph: Morph;
 }
 
+/** The names a field's numbers have, which a write may use instead (`world.set(e, "Light", {kind: "point"})`); reads give the numbers. */
+export interface ComponentEnums {
+    Transform: {};
+    WorldTransform: {};
+    Velocity: {};
+    Health: {};
+    Model: {};
+    Lifetime: {};
+    Camera: {};
+    CameraRig: { mode: "chase" | "orbit" | "offset" };
+    Light: { kind: "directional" | "point" | "spot" };
+    ReflectionProbe: {};
+    Decal: {};
+    Fog: {};
+    Sky: { mode: "off" | "procedural" | "image" | "atmosphere" };
+    MeshRenderer: {};
+    Sprite: {};
+    SpriteAnimation: {};
+    TileMap: {};
+    AnimationGraph: {};
+    Timeline: {};
+    Animator: { root_motion: "off" | "move" | "report" };
+    IK: {};
+    LookAt: {};
+    ParticleEmitter: {};
+    Bounds: {};
+    RigidBody: { kind: "dynamic" | "static" | "kinematic" };
+    Joint: { kind: "distance" | "ball" | "hinge" | "slider" };
+    Body2D: {};
+    Character: {};
+    Terrain: {};
+    Wind: {};
+    Water: {};
+    Scatter: {};
+    Vehicle: {};
+    TopDown2D: {};
+    Collider: { shape: "box" | "sphere" | "capsule" | "mesh" };
+    AudioSource: {};
+    AudioListener: {};
+    NavObstacle: {};
+    NavAgent: { mode: "idle" | "walk" | "follow" | "formation"; state: "idle" | "moving" | "arrived" | "stuck" };
+    Morph: {};
+}
+
+/** Every component's name: the engine's, and a project's own where `pocket check` adds them (its components.toml). */
 export type ComponentName = keyof Components;
 
-export const componentNames: readonly ComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+/** The engine's components. */
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Wind" | "Water" | "Scatter" | "Vehicle" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
 
-/** Default value of every component, as the engine initializes it. */
-export const componentDefaults: { readonly [K in ComponentName]: Components[K] } = {
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Wind", "Water", "Scatter", "Vehicle", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+
+/** Default value of every engine component, as the engine initializes it. */
+export const componentDefaults: { readonly [K in EngineComponentName]: Components[K] } = {
     Transform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
     WorldTransform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
     Velocity: { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } },
@@ -1235,4 +1283,4 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
 };
 
 /** Components that are computed by the engine and never written to scene files. */
-export const derivedComponents: readonly ComponentName[] = ["WorldTransform", "Bounds"];
+export const derivedComponents: readonly EngineComponentName[] = ["WorldTransform", "Bounds"];

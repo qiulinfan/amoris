@@ -929,8 +929,9 @@ std::size_t numeric_span(Morph& v, std::string_view path, float** out);
 
 struct FieldInfo {
     std::string_view name;
-    std::string_view type;
+    std::string_view type;   // "f32", "vec3", "list:AnimationLayer", ...
     std::string_view doc;
+    std::span<const std::string_view> names;   // an i32 field's value names (index = value); empty for most
 };
 
 struct ComponentInfo {
@@ -940,8 +941,15 @@ struct ComponentInfo {
     std::span<const FieldInfo> fields;
 };
 
+struct RecordInfo {
+    std::string_view name;
+    std::span<const FieldInfo> fields;
+};
+
 /// Every component known to the engine, in metadata order.
 std::span<const ComponentInfo> component_infos();
+/// Every record (the values in list fields).
+std::span<const RecordInfo> record_infos();
 
 /// Hash a component value into a state hasher (all fields, in metadata order).
 void hash_component(struct StateHasherRef& h, const Transform& v);

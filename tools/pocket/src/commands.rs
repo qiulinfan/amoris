@@ -465,6 +465,12 @@ pub fn bundle_project(ws: &Workspace, project: &Path, out: Option<&Path>) -> Res
             let fallbacks: Vec<serde_json::Value> = ui_fallback_fonts(ws).iter().map(|p| serde_json::Value::String(p.to_string_lossy().into_owned())).collect();
             map.insert("font_fallbacks".into(), serde_json::Value::Array(fallbacks));
         }
+        // The project's own components, declared by the runtime before the scene loads.
+        if project.is_dir() {
+            if let Some(comps) = crate::gen::project_components(ws, project)? {
+                map.insert("components".into(), crate::gen::project_components_json(&comps));
+            }
+        }
     }
     let settings_path = PathBuf::from(format!("{}.project.json", out.display()));
     std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;

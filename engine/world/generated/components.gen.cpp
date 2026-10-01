@@ -3,6 +3,7 @@
 #include <pocket/world/hashing.hpp>
 
 #include <array>
+#include <initializer_list>
 
 namespace pocket::world {
 
@@ -36,6 +37,16 @@ void scalar_from_json(const Json& j, const char* key, T& v) {
     if constexpr (std::is_same_v<T, bool>) { if (x.is_boolean()) v = x.get<bool>(); else if (x.is_number()) v = x.get<double>() != 0; }
     else if constexpr (std::is_same_v<T, std::string>) { if (x.is_string()) v = x.get<std::string>(); else if (x.is_number()) v = std::to_string(x.get<long long>()); }
     else { if (x.is_number()) v = x.get<T>(); else if (x.is_boolean()) v = static_cast<T>(x.get<bool>()); }
+}
+
+[[maybe_unused]] void enum_from_json(const Json& j, const char* key, std::int32_t& v, std::initializer_list<std::string_view> names) {
+    if (j.is_object() && j.contains(key) && j[key].is_string()) {
+        const std::string s = j[key].get<std::string>();
+        std::int32_t i = 0;
+        for (std::string_view n : names) { if (n == s) { v = i; return; } ++i; }
+        return;
+    }
+    scalar_from_json(j, key, v);
 }
 
 // "3.weight" -> index 3 and the rest "weight"; false unless the path starts with digits and a dot.
@@ -624,7 +635,7 @@ void to_json(Json& j, const CameraRig& v) {
 
 void from_json(const Json& j, CameraRig& v) {
     scalar_from_json(j, "target", v.target);
-    scalar_from_json(j, "mode", v.mode);
+    enum_from_json(j, "mode", v.mode, {"chase", "orbit", "offset"});
     scalar_from_json(j, "distance", v.distance);
     scalar_from_json(j, "height", v.height);
     scalar_from_json(j, "pitch", v.pitch);
@@ -699,7 +710,7 @@ void to_json(Json& j, const Light& v) {
 }
 
 void from_json(const Json& j, Light& v) {
-    scalar_from_json(j, "kind", v.kind);
+    enum_from_json(j, "kind", v.kind, {"directional", "point", "spot"});
     if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
     scalar_from_json(j, "intensity", v.intensity);
     scalar_from_json(j, "range", v.range);
@@ -918,7 +929,7 @@ void to_json(Json& j, const Sky& v) {
 }
 
 void from_json(const Json& j, Sky& v) {
-    scalar_from_json(j, "mode", v.mode);
+    enum_from_json(j, "mode", v.mode, {"off", "procedural", "image", "atmosphere"});
     scalar_from_json(j, "image", v.image);
     if (j.is_object() && j.contains("zenith")) vec_from_json(j["zenith"], v.zenith);
     if (j.is_object() && j.contains("horizon")) vec_from_json(j["horizon"], v.horizon);
@@ -1426,7 +1437,7 @@ void from_json(const Json& j, Animator& v) {
         v.layers.clear();
         for (const Json& e : j["layers"]) { AnimationLayer x; from_json(e, x); v.layers.push_back(std::move(x)); }
     }
-    scalar_from_json(j, "root_motion", v.root_motion);
+    enum_from_json(j, "root_motion", v.root_motion, {"off", "move", "report"});
     scalar_from_json(j, "root", v.root);
     if (j.is_object() && j.contains("root_delta")) vec_from_json(j["root_delta"], v.root_delta);
     scalar_from_json(j, "root_rotation", v.root_rotation);
@@ -1808,7 +1819,7 @@ void to_json(Json& j, const RigidBody& v) {
 }
 
 void from_json(const Json& j, RigidBody& v) {
-    scalar_from_json(j, "kind", v.kind);
+    enum_from_json(j, "kind", v.kind, {"dynamic", "static", "kinematic"});
     scalar_from_json(j, "mass", v.mass);
     scalar_from_json(j, "restitution", v.restitution);
     scalar_from_json(j, "friction", v.friction);
@@ -1872,7 +1883,7 @@ void to_json(Json& j, const Joint& v) {
 }
 
 void from_json(const Json& j, Joint& v) {
-    scalar_from_json(j, "kind", v.kind);
+    enum_from_json(j, "kind", v.kind, {"distance", "ball", "hinge", "slider"});
     scalar_from_json(j, "target", v.target);
     if (j.is_object() && j.contains("anchor")) vec_from_json(j["anchor"], v.anchor);
     if (j.is_object() && j.contains("target_anchor")) vec_from_json(j["target_anchor"], v.target_anchor);
@@ -2621,7 +2632,7 @@ void to_json(Json& j, const Collider& v) {
 }
 
 void from_json(const Json& j, Collider& v) {
-    scalar_from_json(j, "shape", v.shape);
+    enum_from_json(j, "shape", v.shape, {"box", "sphere", "capsule", "mesh"});
     if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
     if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
     scalar_from_json(j, "is_trigger", v.is_trigger);
@@ -2794,7 +2805,7 @@ void to_json(Json& j, const NavAgent& v) {
 }
 
 void from_json(const Json& j, NavAgent& v) {
-    scalar_from_json(j, "mode", v.mode);
+    enum_from_json(j, "mode", v.mode, {"idle", "walk", "follow", "formation"});
     if (j.is_object() && j.contains("goal")) vec_from_json(j["goal"], v.goal);
     scalar_from_json(j, "target", v.target);
     if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
@@ -2805,7 +2816,7 @@ void from_json(const Json& j, NavAgent& v) {
     scalar_from_json(j, "avoidance", v.avoidance);
     scalar_from_json(j, "queue", v.queue);
     scalar_from_json(j, "priority", v.priority);
-    scalar_from_json(j, "state", v.state);
+    enum_from_json(j, "state", v.state, {"idle", "moving", "arrived", "stuck"});
     if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
     if (j.is_object() && j.contains("corner")) vec_from_json(j["corner"], v.corner);
     scalar_from_json(j, "distance", v.distance);
@@ -2898,496 +2909,582 @@ std::size_t numeric_span(Morph& v, std::string_view path, float** out) {
 
 namespace {
 
+constexpr std::array<FieldInfo, 3> kMeshLodFields = {{
+    FieldInfo{"screen", "f32", "Drawn at this level when the entity's bounds cover less than this fraction of the view's height (0.25: a quarter of it).", {}},
+    FieldInfo{"ratio", "f32", "The share of the mesh's triangles this level keeps when it simplifies the entity's own mesh, 0.01 to 1.", {}},
+    FieldInfo{"mesh", "string", "A mesh to draw at this level instead (a project path, or a primitive); empty simplifies the entity's own mesh.", {}},
+}};
+constexpr std::array<FieldInfo, 2> kMorphWeightFields = {{
+    FieldInfo{"target", "string", "Target name from the asset (animation.clips lists them), or its index as a string.", {}},
+    FieldInfo{"weight", "f32", "0 leaves the vertices where the mesh has them, 1 moves them fully to the target.", {}},
+}};
+constexpr std::array<FieldInfo, 4> kIKLimitFields = {{
+    FieldInfo{"joint", "string", "The joint's node name.", {}},
+    FieldInfo{"min_bend", "f32", "The least the joint bends: a knee kept from locking straight. A hinge's may be negative, a few degrees back past straight.", {}},
+    FieldInfo{"max_bend", "f32", "The most the joint bends.", {}},
+    FieldInfo{"side", "vec3", "Set, the joint is a hinge: its bone turns about one axis only, across `side` and the bone above it, and bends toward `side` alone, between min_bend and max_bend; `side` is a direction in the entity's space with the mesh at rest, carried along as the bone above turns. Zero for a joint that bends any way within its cone.", {}},
+}};
+constexpr std::array<FieldInfo, 9> kWheelFields = {{
+    FieldInfo{"offset", "vec3", "Where the suspension hangs from, in the body's frame (the top of its travel).", {}},
+    FieldInfo{"radius", "f32", "The wheel's radius.", {}},
+    FieldInfo{"rest", "f32", "The suspension's length: how far below `offset` the wheel's centre hangs with nothing under it.", {}},
+    FieldInfo{"steer", "bool", "Turned by the vehicle's steer.", {}},
+    FieldInfo{"drive", "bool", "Pushed by the vehicle's throttle.", {}},
+    FieldInfo{"visual", "string", "The name of an entity under the vehicle that the engine places where the wheel is (its local position), turned with the steering and rolled with the ground (its local rotation): a pivot whose children draw the tyre. Empty for none.", {}},
+    FieldInfo{"contact", "bool", "On the ground this step (written by the engine).", {}},
+    FieldInfo{"compression", "f32", "How far the suspension is pushed in, 0..rest (written by the engine).", {}},
+    FieldInfo{"spin", "f32", "How far the wheel has rolled, in radians (written by the engine).", {}},
+}};
+constexpr std::array<FieldInfo, 8> kAnimationLayerFields = {{
+    FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them).", {}},
+    FieldInfo{"weight", "f32", "0..1: how much of the layer shows (the blend factor, or the scale of an additive change).", {}},
+    FieldInfo{"mask", "string", "Node names, comma separated, whose subtrees the layer may move; empty means every node the clip animates.", {}},
+    FieldInfo{"additive", "bool", "Add the clip's change since its first frame onto the pose so far instead of blending toward the clip.", {}},
+    FieldInfo{"playing", "bool", "Whether the layer's time advances; animation.stop clears it with the base clip's.", {}},
+    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished with the layer index).", {}},
+    FieldInfo{"speed", "f32", "Playback rate multiplier.", {}},
+    FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek.", {}},
+}};
+constexpr std::array<FieldInfo, 6> kAnimationStateFields = {{
+    FieldInfo{"name", "string", "What transitions and AnimationGraph.state call it.", {}},
+    FieldInfo{"clip", "string", "The clip it plays (when blend is empty).", {}},
+    FieldInfo{"blend", "string", "A parameter to blend by (a blend space): `clips` places clips along it, and the two either side of its value play mixed, in step (idle to walk to run by speed).", {}},
+    FieldInfo{"clips", "string", "With blend: clips and the parameter's values where each plays alone, comma separated (\"idle 0, walk 2, run 6\").", {}},
+    FieldInfo{"speed", "f32", "Playback rate in this state.", {}},
+    FieldInfo{"loop", "bool", "Wrap at the clip's end (else hold its last frame).", {}},
+}};
+constexpr std::array<FieldInfo, 5> kAnimationTransitionFields = {{
+    FieldInfo{"from", "string", "The state it leaves; * any state (but not the one it goes to).", {}},
+    FieldInfo{"to", "string", "The state it goes to.", {}},
+    FieldInfo{"when", "string", "A condition on the parameters: comparisons (speed > 0.1, grounded == 1), and, or, not and parentheses; a bare name is true when it is not 0; empty is always true. A trigger it reads is reset when it is taken.", {}},
+    FieldInfo{"after", "f32", "How much of the state's clip must have played first, 0..1 (1: to its end, as a one-shot finishes).", {}},
+    FieldInfo{"fade", "f32", "Seconds of cross-fade into the new state.", {}},
+}};
+constexpr std::array<FieldInfo, 3> kAnimationParamFields = {{
+    FieldInfo{"name", "string", "What conditions call it.", {}},
+    FieldInfo{"value", "f32", "The value (a flag is 0 or 1).", {}},
+    FieldInfo{"trigger", "bool", "A trigger: set to 1 by animation.trigger, back to 0 when a transition that reads it is taken.", {}},
+}};
+constexpr std::array<FieldInfo, 7> kTerrainLayerFields = {{
+    FieldInfo{"name", "string", "What terrain.paint {layer} and terrain.height call it (grass, rock, sand).", {}},
+    FieldInfo{"texture", "string", "A project-relative image tiled over the ground where the layer lies; empty is plain white under its colour.", {}},
+    FieldInfo{"color", "color", "Multiplies the texture.", {}},
+    FieldInfo{"tile", "f32", "Units per repeat of the texture.", {}},
+    FieldInfo{"slope", "vec2", "The steepness in degrees, least and most, where the layer lies by itself, softened over 4 degrees at each end (0 and 90 are no limit).", {}},
+    FieldInfo{"height", "vec2", "The height as a fraction of the terrain's `height`, least and most, where the layer lies by itself, softened over 0.03 at each end (0 and 1 are no limit).", {}},
+    FieldInfo{"cover", "f32", "How much the layer covers the layers before it where its slope and height allow, 0 to 1; 0 lays it only where it is painted. The first layer lies under everything.", {}},
+}};
 constexpr std::array<FieldInfo, 3> kTransformFields = {{
-    FieldInfo{"position", "vec3", "Local position in meters."},
-    FieldInfo{"rotation", "quat", "Local rotation as a unit quaternion (x, y, z, w)."},
-    FieldInfo{"scale", "vec3", "Local scale."},
+    FieldInfo{"position", "vec3", "Local position in meters.", {}},
+    FieldInfo{"rotation", "quat", "Local rotation as a unit quaternion (x, y, z, w).", {}},
+    FieldInfo{"scale", "vec3", "Local scale.", {}},
 }};
 constexpr std::array<FieldInfo, 3> kWorldTransformFields = {{
-    FieldInfo{"position", "vec3", "World position."},
-    FieldInfo{"rotation", "quat", "World rotation."},
-    FieldInfo{"scale", "vec3", "World scale."},
+    FieldInfo{"position", "vec3", "World position.", {}},
+    FieldInfo{"rotation", "quat", "World rotation.", {}},
+    FieldInfo{"scale", "vec3", "World scale.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kVelocityFields = {{
-    FieldInfo{"linear", "vec3", "Meters per second, in the parent's space."},
-    FieldInfo{"angular", "vec3", "Radians per second around local X, Y, Z."},
+    FieldInfo{"linear", "vec3", "Meters per second, in the parent's space.", {}},
+    FieldInfo{"angular", "vec3", "Radians per second around local X, Y, Z.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kHealthFields = {{
-    FieldInfo{"current", "f32", "Current hit points."},
-    FieldInfo{"max", "f32", "Maximum hit points."},
+    FieldInfo{"current", "f32", "Current hit points.", {}},
+    FieldInfo{"max", "f32", "Maximum hit points.", {}},
 }};
 constexpr std::array<FieldInfo, 3> kModelFields = {{
-    FieldInfo{"path", "string", "The model file, relative to the project."},
-    FieldInfo{"hash", "string", "The file's content hash when the children were made from it."},
-    FieldInfo{"live", "bool", "Made again when the file changes; false keeps the children as they are."},
+    FieldInfo{"path", "string", "The model file, relative to the project.", {}},
+    FieldInfo{"hash", "string", "The file's content hash when the children were made from it.", {}},
+    FieldInfo{"live", "bool", "Made again when the file changes; false keeps the children as they are.", {}},
 }};
 constexpr std::array<FieldInfo, 1> kLifetimeFields = {{
-    FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero."},
+    FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero.", {}},
 }};
 constexpr std::array<FieldInfo, 6> kCameraFields = {{
-    FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees (perspective)."},
-    FieldInfo{"orthographic", "bool", "Parallel projection: no perspective, sizes do not shrink with distance."},
-    FieldInfo{"ortho_size", "f32", "Half of the visible height in world units when orthographic."},
-    FieldInfo{"near", "f32", "Near clip distance."},
-    FieldInfo{"far", "f32", "Far clip distance."},
-    FieldInfo{"active", "bool", "Whether this camera renders."},
+    FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees (perspective).", {}},
+    FieldInfo{"orthographic", "bool", "Parallel projection: no perspective, sizes do not shrink with distance.", {}},
+    FieldInfo{"ortho_size", "f32", "Half of the visible height in world units when orthographic.", {}},
+    FieldInfo{"near", "f32", "Near clip distance.", {}},
+    FieldInfo{"far", "f32", "Far clip distance.", {}},
+    FieldInfo{"active", "bool", "Whether this camera renders.", {}},
 }};
+constexpr std::string_view kCameraRig_modeNames[] = {"chase", "orbit", "offset"};
 constexpr std::array<FieldInfo, 18> kCameraRigFields = {{
-    FieldInfo{"target", "string", "The entity followed, by name or path; empty leaves the camera alone."},
-    FieldInfo{"mode", "i32", "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning."},
-    FieldInfo{"distance", "f32", "Chase and orbit: how far from the pivot."},
-    FieldInfo{"height", "f32", "The pivot, the point it looks at, this high above the target's origin."},
-    FieldInfo{"pitch", "f32", "Chase and orbit: degrees the view looks down (negative) or up at the pivot."},
-    FieldInfo{"yaw", "f32", "Orbit: degrees about +y the view is turned, 0 looking along -z (from +z of the target). Chase: added to the target's heading (180 looks at its face)."},
-    FieldInfo{"offset", "vec3", "Offset: where it stands relative to the pivot, in the world."},
-    FieldInfo{"follow", "f32", "Seconds it takes to close most (63%) of the way to where it should stand; 0 sticks to it."},
-    FieldInfo{"turn", "f32", "Chase: seconds to swing most of the way behind a target that turned."},
-    FieldInfo{"collide", "bool", "Come in front of static and kinematic colliders between the pivot and where it would stand (not the target's own)."},
-    FieldInfo{"orbit_x", "string", "Orbit: an input action whose value turns the yaw (a stick, the mouse, two keys)."},
-    FieldInfo{"orbit_y", "string", "Orbit: an input action whose value tilts the pitch."},
-    FieldInfo{"orbit_speed", "f32", "Degrees a second an action value of 1 turns."},
-    FieldInfo{"pitch_min", "f32", "The lowest pitch the orbit actions reach."},
-    FieldInfo{"pitch_max", "f32", "The highest pitch the orbit actions reach."},
-    FieldInfo{"shake", "f32", "Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it."},
-    FieldInfo{"shake_decay", "f32", "How much trauma goes a second."},
-    FieldInfo{"heading", "f32", "Chase: the eased heading it stands behind, in degrees (written by the engine)."},
+    FieldInfo{"target", "string", "The entity followed, by name or path; empty leaves the camera alone.", {}},
+    FieldInfo{"mode", "i32", "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning.", kCameraRig_modeNames},
+    FieldInfo{"distance", "f32", "Chase and orbit: how far from the pivot.", {}},
+    FieldInfo{"height", "f32", "The pivot, the point it looks at, this high above the target's origin.", {}},
+    FieldInfo{"pitch", "f32", "Chase and orbit: degrees the view looks down (negative) or up at the pivot.", {}},
+    FieldInfo{"yaw", "f32", "Orbit: degrees about +y the view is turned, 0 looking along -z (from +z of the target). Chase: added to the target's heading (180 looks at its face).", {}},
+    FieldInfo{"offset", "vec3", "Offset: where it stands relative to the pivot, in the world.", {}},
+    FieldInfo{"follow", "f32", "Seconds it takes to close most (63%) of the way to where it should stand; 0 sticks to it.", {}},
+    FieldInfo{"turn", "f32", "Chase: seconds to swing most of the way behind a target that turned.", {}},
+    FieldInfo{"collide", "bool", "Come in front of static and kinematic colliders between the pivot and where it would stand (not the target's own).", {}},
+    FieldInfo{"orbit_x", "string", "Orbit: an input action whose value turns the yaw (a stick, the mouse, two keys).", {}},
+    FieldInfo{"orbit_y", "string", "Orbit: an input action whose value tilts the pitch.", {}},
+    FieldInfo{"orbit_speed", "f32", "Degrees a second an action value of 1 turns.", {}},
+    FieldInfo{"pitch_min", "f32", "The lowest pitch the orbit actions reach.", {}},
+    FieldInfo{"pitch_max", "f32", "The highest pitch the orbit actions reach.", {}},
+    FieldInfo{"shake", "f32", "Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it.", {}},
+    FieldInfo{"shake_decay", "f32", "How much trauma goes a second.", {}},
+    FieldInfo{"heading", "f32", "Chase: the eased heading it stands behind, in degrees (written by the engine).", {}},
 }};
+constexpr std::string_view kLight_kindNames[] = {"directional", "point", "spot"};
 constexpr std::array<FieldInfo, 7> kLightFields = {{
-    FieldInfo{"kind", "i32", "0 directional, 1 point, 2 spot."},
-    FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused."},
-    FieldInfo{"intensity", "f32", "Multiplier applied to color."},
-    FieldInfo{"range", "f32", "Point and spot light range in meters: the light fades to nothing there."},
-    FieldInfo{"inner_angle", "f32", "Spot: the half-angle of the cone in degrees inside which the light is full."},
-    FieldInfo{"outer_angle", "f32", "Spot: the half-angle in degrees where it has faded out (at most 89.5)."},
-    FieldInfo{"shadows", "bool", "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'."},
+    FieldInfo{"kind", "i32", "0 directional, 1 point, 2 spot.", kLight_kindNames},
+    FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused.", {}},
+    FieldInfo{"intensity", "f32", "Multiplier applied to color.", {}},
+    FieldInfo{"range", "f32", "Point and spot light range in meters: the light fades to nothing there.", {}},
+    FieldInfo{"inner_angle", "f32", "Spot: the half-angle of the cone in degrees inside which the light is full.", {}},
+    FieldInfo{"outer_angle", "f32", "Spot: the half-angle in degrees where it has faded out (at most 89.5).", {}},
+    FieldInfo{"shadows", "bool", "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'.", {}},
 }};
 constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
-    FieldInfo{"size", "vec3", "The box it covers, centered on the entity, in world units (not turned with it)."},
-    FieldInfo{"intensity", "f32", "Multiplies what it reflects and the light it gives."},
-    FieldInfo{"box_projection", "bool", "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky."},
-    FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}."},
-    FieldInfo{"enabled", "bool", "false stops it being used, without removing it."},
+    FieldInfo{"size", "vec3", "The box it covers, centered on the entity, in world units (not turned with it).", {}},
+    FieldInfo{"intensity", "f32", "Multiplies what it reflects and the light it gives.", {}},
+    FieldInfo{"box_projection", "bool", "Reflect as if the capture lay on the box's walls (a reflection moves right as the eye moves across a room); false treats it as infinitely far, like the sky.", {}},
+    FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}.", {}},
+    FieldInfo{"enabled", "bool", "false stops it being used, without removing it.", {}},
 }};
 constexpr std::array<FieldInfo, 10> kDecalFields = {{
-    FieldInfo{"texture", "string", "A project image (its alpha is where it paints); empty is a soft round spot."},
-    FieldInfo{"color", "color", "Multiplies the image; alpha is the decal's opacity."},
-    FieldInfo{"size", "vec3", "The box's size along the entity's x, y (the projection's depth) and z, times its scale."},
-    FieldInfo{"roughness", "f32", "The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own."},
-    FieldInfo{"emissive", "f32", "How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units."},
-    FieldInfo{"normal_map", "string", "A project image of normals (tangent space, +y up the image, as glTF's) bending the light on what it covers where its texture paints: a puddle's ripples, cracks, a carved rune. Empty leaves the surface's own shape."},
-    FieldInfo{"bumpiness", "f32", "How much the normal map bends the surface (0 flat, 1 as the map says, more to exaggerate)."},
-    FieldInfo{"angle", "f32", "Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean)."},
-    FieldInfo{"order", "i32", "Where decals overlap, a higher order paints over a lower (then the later entity)."},
-    FieldInfo{"enabled", "bool", "false stops it painting."},
+    FieldInfo{"texture", "string", "A project image (its alpha is where it paints); empty is a soft round spot.", {}},
+    FieldInfo{"color", "color", "Multiplies the image; alpha is the decal's opacity.", {}},
+    FieldInfo{"size", "vec3", "The box's size along the entity's x, y (the projection's depth) and z, times its scale.", {}},
+    FieldInfo{"roughness", "f32", "The roughness of what it covers (0.05 makes a wet, mirror-like puddle); negative leaves the surface's own.", {}},
+    FieldInfo{"emissive", "f32", "How brightly the image glows on its own (a lit sign, a glowing rune), in the scene's light units.", {}},
+    FieldInfo{"normal_map", "string", "A project image of normals (tangent space, +y up the image, as glTF's) bending the light on what it covers where its texture paints: a puddle's ripples, cracks, a carved rune. Empty leaves the surface's own shape.", {}},
+    FieldInfo{"bumpiness", "f32", "How much the normal map bends the surface (0 flat, 1 as the map says, more to exaggerate).", {}},
+    FieldInfo{"angle", "f32", "Surfaces turned more than this many degrees from facing the projection fade out (walls under a floor decal stay clean).", {}},
+    FieldInfo{"order", "i32", "Where decals overlap, a higher order paints over a lower (then the later entity).", {}},
+    FieldInfo{"enabled", "bool", "false stops it painting.", {}},
 }};
 constexpr std::array<FieldInfo, 11> kFogFields = {{
-    FieldInfo{"color", "color", "The fog's color as a color picker shows it (sRGB); the alpha is unused."},
-    FieldInfo{"density", "f32", "How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units)."},
-    FieldInfo{"height", "f32", "The height (world Y) where the fog has its density."},
-    FieldInfo{"falloff", "f32", "How fast it thins going up, per unit of height (0: the same at every height)."},
-    FieldInfo{"start", "f32", "Distance from the camera before any fog."},
-    FieldInfo{"max_opacity", "f32", "The most the fog hides, 0..1 (under 1, a far mountain still shows through)."},
-    FieldInfo{"enabled", "bool", "false turns the fog off without removing it."},
-    FieldInfo{"volumetric", "bool", "Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint."},
-    FieldInfo{"anisotropy", "f32", "Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist)."},
-    FieldInfo{"steps", "i32", "Volumetric: samples along each ray, 4..128."},
-    FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far."},
+    FieldInfo{"color", "color", "The fog's color as a color picker shows it (sRGB); the alpha is unused.", {}},
+    FieldInfo{"density", "f32", "How thick the fog is at its base height, per unit of distance (0.03: half gone at about 23 units).", {}},
+    FieldInfo{"height", "f32", "The height (world Y) where the fog has its density.", {}},
+    FieldInfo{"falloff", "f32", "How fast it thins going up, per unit of height (0: the same at every height).", {}},
+    FieldInfo{"start", "f32", "Distance from the camera before any fog.", {}},
+    FieldInfo{"max_opacity", "f32", "The most the fog hides, 0..1 (under 1, a far mountain still shows through).", {}},
+    FieldInfo{"enabled", "bool", "false turns the fog off without removing it.", {}},
+    FieldInfo{"volumetric", "bool", "Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint.", {}},
+    FieldInfo{"anisotropy", "f32", "Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist).", {}},
+    FieldInfo{"steps", "i32", "Volumetric: samples along each ray, 4..128.", {}},
+    FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far.", {}},
 }};
+constexpr std::string_view kSky_modeNames[] = {"off", "procedural", "image", "atmosphere"};
 constexpr std::array<FieldInfo, 15> kSkyFields = {{
-    FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off."},
-    FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle)."},
-    FieldInfo{"zenith", "color", "Procedural: the color straight up."},
-    FieldInfo{"horizon", "color", "Procedural: the color at the horizon."},
-    FieldInfo{"ground", "color", "Procedural: the color below the horizon."},
-    FieldInfo{"intensity", "f32", "Brightness of the sky, as seen and as light."},
-    FieldInfo{"rotation", "f32", "Mode 2: turns the panorama about the vertical axis, in degrees."},
-    FieldInfo{"sun_size", "f32", "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light."},
-    FieldInfo{"diffuse", "f32", "How much the sky lights surfaces (0 leaves only the lights)."},
-    FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness)."},
-    FieldInfo{"haze", "f32", "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun."},
-    FieldInfo{"clouds", "f32", "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md)."},
-    FieldInfo{"cloud_height", "f32", "Mode 3: the clouds' height above the camera's ground, in units."},
-    FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units."},
-    FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
+    FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off.", kSky_modeNames},
+    FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle).", {}},
+    FieldInfo{"zenith", "color", "Procedural: the color straight up.", {}},
+    FieldInfo{"horizon", "color", "Procedural: the color at the horizon.", {}},
+    FieldInfo{"ground", "color", "Procedural: the color below the horizon.", {}},
+    FieldInfo{"intensity", "f32", "Brightness of the sky, as seen and as light.", {}},
+    FieldInfo{"rotation", "f32", "Mode 2: turns the panorama about the vertical axis, in degrees.", {}},
+    FieldInfo{"sun_size", "f32", "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light.", {}},
+    FieldInfo{"diffuse", "f32", "How much the sky lights surfaces (0 leaves only the lights).", {}},
+    FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness).", {}},
+    FieldInfo{"haze", "f32", "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun.", {}},
+    FieldInfo{"clouds", "f32", "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md).", {}},
+    FieldInfo{"cloud_height", "f32", "Mode 3: the clouds' height above the camera's ground, in units.", {}},
+    FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units.", {}},
+    FieldInfo{"enabled", "bool", "false turns the sky off without removing it.", {}},
 }};
 constexpr std::array<FieldInfo, 24> kMeshRendererFields = {{
-    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
-    FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
-    FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent."},
-    FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none."},
-    FieldInfo{"metallic", "f32", "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives)."},
-    FieldInfo{"roughness", "f32", "0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives)."},
-    FieldInfo{"emissive", "color", "Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow."},
-    FieldInfo{"cutoff", "f32", "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none."},
-    FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none."},
-    FieldInfo{"transmission", "f32", "How much light passes through, 0 to 1 (docs/design/rendering.md, Glass): glass, water in a bottle, a window; what is behind shows through, bent by `ior` and tinted by the color. Negative keeps the asset material's (KHR_materials_transmission; 0 for primitives)."},
-    FieldInfo{"ior", "f32", "Index of refraction of what the light passes through: 1.5 glass, 1.33 water; how far what is behind is bent. Negative keeps the asset material's (1.5)."},
-    FieldInfo{"thickness", "f32", "How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0)."},
-    FieldInfo{"clearcoat", "f32", "A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0)."},
-    FieldInfo{"clearcoat_roughness", "f32", "The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03)."},
-    FieldInfo{"sheen", "color", "Cloth's soft glow at grazing angles (velvet, felt, a dusty surface), the colour of that glow (docs/design/rendering.md, Cloth, specular and brushed metal). Black keeps the asset material's (KHR_materials_sheen; none)."},
-    FieldInfo{"sheen_roughness", "f32", "How far the sheen spreads, 0 tight at the rim to 1 soft over the whole surface. Negative keeps the asset material's (0)."},
-    FieldInfo{"specular", "f32", "The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1)."},
-    FieldInfo{"anisotropy", "f32", "Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0)."},
-    FieldInfo{"anisotropy_rotation", "f32", "Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy)."},
-    FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too."},
-    FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
-    FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass."},
-    FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own."},
-    FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small."},
+    FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials).", {}},
+    FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole.", {}},
+    FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent.", {}},
+    FieldInfo{"texture", "string", "Project-relative image (png, jpg) multiplied into the color; overrides the asset's base color texture. Empty for none.", {}},
+    FieldInfo{"metallic", "f32", "0 dielectric to 1 metal; negative keeps the asset material's value (0 for primitives).", {}},
+    FieldInfo{"roughness", "f32", "0 mirror to 1 matte; negative keeps the asset material's value (1 for primitives).", {}},
+    FieldInfo{"emissive", "color", "Light the surface gives off regardless of lighting, added to the asset material's emissive color: sRGB up to 1, and a channel over 1 is an intensity (4 is four times white), which bloom and tone mapping make glow.", {}},
+    FieldInfo{"cutoff", "f32", "Alpha cutoff: texels of the texture whose alpha is under it are cut out (not drawn, not picked), for leaves, fences and grates from a picture with transparent parts; 0 keeps the asset material's cutoff (glTF alphaMode MASK) or none.", {}},
+    FieldInfo{"normal_map", "string", "Project-relative tangent-space normal map (+Y up); overrides the asset's. Empty for none.", {}},
+    FieldInfo{"transmission", "f32", "How much light passes through, 0 to 1 (docs/design/rendering.md, Glass): glass, water in a bottle, a window; what is behind shows through, bent by `ior` and tinted by the color. Negative keeps the asset material's (KHR_materials_transmission; 0 for primitives).", {}},
+    FieldInfo{"ior", "f32", "Index of refraction of what the light passes through: 1.5 glass, 1.33 water; how far what is behind is bent. Negative keeps the asset material's (1.5).", {}},
+    FieldInfo{"thickness", "f32", "How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0).", {}},
+    FieldInfo{"clearcoat", "f32", "A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0).", {}},
+    FieldInfo{"clearcoat_roughness", "f32", "The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03).", {}},
+    FieldInfo{"sheen", "color", "Cloth's soft glow at grazing angles (velvet, felt, a dusty surface), the colour of that glow (docs/design/rendering.md, Cloth, specular and brushed metal). Black keeps the asset material's (KHR_materials_sheen; none).", {}},
+    FieldInfo{"sheen_roughness", "f32", "How far the sheen spreads, 0 tight at the rim to 1 soft over the whole surface. Negative keeps the asset material's (0).", {}},
+    FieldInfo{"specular", "f32", "The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1).", {}},
+    FieldInfo{"anisotropy", "f32", "Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0).", {}},
+    FieldInfo{"anisotropy_rotation", "f32", "Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy).", {}},
+    FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too.", {}},
+    FieldInfo{"visible", "bool", "Whether the mesh is drawn.", {}},
+    FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass.", {}},
+    FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own.", {}},
+    FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small.", {}},
 }};
 constexpr std::array<FieldInfo, 11> kSpriteFields = {{
-    FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color."},
-    FieldInfo{"size", "vec2", "Width and height in world units."},
-    FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture."},
-    FieldInfo{"anchor", "vec2", "Point of the image at the entity's origin: (0,0) bottom-left, (0.5,0.5) center, (1,1) top-right."},
-    FieldInfo{"layer", "i32", "Draw order among sprites; higher is drawn later (on top)."},
-    FieldInfo{"uv", "vec4", "Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets."},
-    FieldInfo{"flip_x", "bool", "Mirror horizontally."},
-    FieldInfo{"flip_y", "bool", "Mirror vertically."},
-    FieldInfo{"filter", "string", "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles)."},
-    FieldInfo{"visible", "bool", "Whether the sprite is drawn."},
-    FieldInfo{"sort_y", "bool", "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer."},
+    FieldInfo{"texture", "string", "Project-relative image (png, jpg). Empty draws a solid color.", {}},
+    FieldInfo{"size", "vec2", "Width and height in world units.", {}},
+    FieldInfo{"color", "color", "Tint and opacity, multiplied into the texture.", {}},
+    FieldInfo{"anchor", "vec2", "Point of the image at the entity's origin: (0,0) bottom-left, (0.5,0.5) center, (1,1) top-right.", {}},
+    FieldInfo{"layer", "i32", "Draw order among sprites; higher is drawn later (on top).", {}},
+    FieldInfo{"uv", "vec4", "Sub-rectangle of the texture as u0, v0, u1, v1 (0..1, v down), for sprite sheets.", {}},
+    FieldInfo{"flip_x", "bool", "Mirror horizontally.", {}},
+    FieldInfo{"flip_y", "bool", "Mirror vertically.", {}},
+    FieldInfo{"filter", "string", "Texture sampling: linear (smooth, and from the mip chain when drawn small) or nearest (crisp pixels from the full-size image, no bleeding between sheet tiles).", {}},
+    FieldInfo{"visible", "bool", "Whether the sprite is drawn.", {}},
+    FieldInfo{"sort_y", "bool", "Within its layer, draw order follows the entity's Y instead of its distance: what is lower on the screen is drawn later (on top), so a top-down scene layers its people and props by where they stand. Set it on every sprite of the layer.", {}},
 }};
 constexpr std::array<FieldInfo, 8> kSpriteAnimationFields = {{
-    FieldInfo{"clip", "string", "Clip name; empty plays nothing."},
-    FieldInfo{"playing", "bool", "Whether time advances."},
-    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit sprite.finished); sprite.play takes it from the clip unless told otherwise."},
-    FieldInfo{"speed", "f32", "Playback rate multiplier; negative plays backwards."},
-    FieldInfo{"fps", "f32", "Frames per second; 0 uses the clip's rate."},
-    FieldInfo{"frame", "i32", "Index into the clip's frame list (read to know where it is, write to jump)."},
-    FieldInfo{"time", "f32", "Seconds into the current frame; advanced by the engine."},
-    FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
+    FieldInfo{"clip", "string", "Clip name; empty plays nothing.", {}},
+    FieldInfo{"playing", "bool", "Whether time advances.", {}},
+    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit sprite.finished); sprite.play takes it from the clip unless told otherwise.", {}},
+    FieldInfo{"speed", "f32", "Playback rate multiplier; negative plays backwards.", {}},
+    FieldInfo{"fps", "f32", "Frames per second; 0 uses the clip's rate.", {}},
+    FieldInfo{"frame", "i32", "Index into the clip's frame list (read to know where it is, write to jump).", {}},
+    FieldInfo{"time", "f32", "Seconds into the current frame; advanced by the engine.", {}},
+    FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play.", {}},
 }};
 constexpr std::array<FieldInfo, 6> kTileMapFields = {{
-    FieldInfo{"map", "string", "Project-relative Tiled JSON map (.tmj)."},
-    FieldInfo{"layer", "string", "Draw only this tile layer; empty draws every visible one."},
-    FieldInfo{"tile_size", "f32", "World units per tile."},
-    FieldInfo{"color", "color", "Tint and opacity over the whole map."},
-    FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this."},
-    FieldInfo{"visible", "bool", "Whether the map is drawn."},
+    FieldInfo{"map", "string", "Project-relative Tiled JSON map (.tmj).", {}},
+    FieldInfo{"layer", "string", "Draw only this tile layer; empty draws every visible one.", {}},
+    FieldInfo{"tile_size", "f32", "World units per tile.", {}},
+    FieldInfo{"color", "color", "Tint and opacity over the whole map.", {}},
+    FieldInfo{"order", "i32", "Draw order among sprites (Sprite.layer); layers of the map draw in file order on top of this.", {}},
+    FieldInfo{"visible", "bool", "Whether the map is drawn.", {}},
 }};
 constexpr std::array<FieldInfo, 7> kAnimationGraphFields = {{
-    FieldInfo{"states", "list:AnimationState", "The states; the first is where it starts."},
-    FieldInfo{"transitions", "list:AnimationTransition", "The ways between states, tried in order every tick."},
-    FieldInfo{"params", "list:AnimationParam", "The parameters conditions and blend spaces read."},
-    FieldInfo{"state", "string", "The state it is in (written by the engine); set it to jump to a state at once. Empty starts in the first."},
-    FieldInfo{"state_time", "f32", "Seconds in the state (written by the engine)."},
-    FieldInfo{"error", "string", "What is wrong with the graph, if anything: a state or parameter that does not exist, a condition that does not read (written by the engine); a broken transition is never taken."},
-    FieldInfo{"enabled", "bool", "false leaves the Animator to scripts."},
+    FieldInfo{"states", "list:AnimationState", "The states; the first is where it starts.", {}},
+    FieldInfo{"transitions", "list:AnimationTransition", "The ways between states, tried in order every tick.", {}},
+    FieldInfo{"params", "list:AnimationParam", "The parameters conditions and blend spaces read.", {}},
+    FieldInfo{"state", "string", "The state it is in (written by the engine); set it to jump to a state at once. Empty starts in the first.", {}},
+    FieldInfo{"state_time", "f32", "Seconds in the state (written by the engine).", {}},
+    FieldInfo{"error", "string", "What is wrong with the graph, if anything: a state or parameter that does not exist, a condition that does not read (written by the engine); a broken transition is never taken.", {}},
+    FieldInfo{"enabled", "bool", "false leaves the Animator to scripts.", {}},
 }};
 constexpr std::array<FieldInfo, 7> kTimelineFields = {{
-    FieldInfo{"path", "string", "The project's timeline file (JSON: tracks, events, duration)."},
-    FieldInfo{"time", "f32", "Seconds into it; advanced by the engine, writable to seek."},
-    FieldInfo{"playing", "bool", "Whether its time advances (and its tracks apply)."},
-    FieldInfo{"speed", "f32", "Rate of play; negative plays it backward."},
-    FieldInfo{"loop", "bool", "Start again at the end, else stop there and emit timeline.finished."},
-    FieldInfo{"finished", "bool", "Set when one that does not loop reached its end (written by the engine)."},
-    FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine)."},
+    FieldInfo{"path", "string", "The project's timeline file (JSON: tracks, events, duration).", {}},
+    FieldInfo{"time", "f32", "Seconds into it; advanced by the engine, writable to seek.", {}},
+    FieldInfo{"playing", "bool", "Whether its time advances (and its tracks apply).", {}},
+    FieldInfo{"speed", "f32", "Rate of play; negative plays it backward.", {}},
+    FieldInfo{"loop", "bool", "Start again at the end, else stop there and emit timeline.finished.", {}},
+    FieldInfo{"finished", "bool", "Set when one that does not loop reached its end (written by the engine).", {}},
+    FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine).", {}},
 }};
+constexpr std::string_view kAnimator_root_motionNames[] = {"off", "move", "report"};
 constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
-    FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose)."},
-    FieldInfo{"playing", "bool", "Whether time advances."},
-    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished)."},
-    FieldInfo{"speed", "f32", "Playback rate multiplier."},
-    FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek."},
-    FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play."},
-    FieldInfo{"blend_clip", "string", "A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none."},
-    FieldInfo{"blend", "f32", "0..1: how much of blend_clip shows over clip."},
-    FieldInfo{"fade", "f32", "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running."},
-    FieldInfo{"fade_time", "f32", "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed."},
-    FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none."},
-    FieldInfo{"from_time", "f32", "Seconds into from_clip, advanced by the engine."},
-    FieldInfo{"layers", "list:AnimationLayer", "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them)."},
-    FieldInfo{"root_motion", "i32", "0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion)."},
-    FieldInfo{"root", "string", "The node whose translation is the root motion; empty picks the clip's topmost node with a translation track."},
-    FieldInfo{"root_delta", "vec3", "The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine)."},
-    FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion)."},
-    FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine)."},
+    FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose).", {}},
+    FieldInfo{"playing", "bool", "Whether time advances.", {}},
+    FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished).", {}},
+    FieldInfo{"speed", "f32", "Playback rate multiplier.", {}},
+    FieldInfo{"time", "f32", "Seconds into the clip; advanced by the engine, writable to seek.", {}},
+    FieldInfo{"finished", "bool", "Set when a non-looping clip reached its end; cleared by play.", {}},
+    FieldInfo{"blend_clip", "string", "A second clip mixed into clip at `blend`, kept in step with it (an AnimationGraph's blend space sets both); empty for none.", {}},
+    FieldInfo{"blend", "f32", "0..1: how much of blend_clip shows over clip.", {}},
+    FieldInfo{"fade", "f32", "Seconds of cross-fade from from_clip into clip; animation.play {fade} sets it. 0 when no fade is running.", {}},
+    FieldInfo{"fade_time", "f32", "Seconds into the cross-fade, advanced by the engine; the blend weight is fade_time / fade, smoothed.", {}},
+    FieldInfo{"from_clip", "string", "The clip fading out (keeps playing at its own time until the fade ends); empty when none.", {}},
+    FieldInfo{"from_time", "f32", "Seconds into from_clip, advanced by the engine.", {}},
+    FieldInfo{"layers", "list:AnimationLayer", "Clips layered over the base clip, applied in order after any cross-fade (animation.layer manages them).", {}},
+    FieldInfo{"root_motion", "i32", "0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion).", kAnimator_root_motionNames},
+    FieldInfo{"root", "string", "The node whose translation is the root motion; empty picks the clip's topmost node with a translation track.", {}},
+    FieldInfo{"root_delta", "vec3", "The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine).", {}},
+    FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion).", {}},
+    FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 14> kIKFields = {{
-    FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints)."},
-    FieldInfo{"bones", "i32", "How many bones the chain has, counted up from `end` (2 for a limb: upper and lower)."},
-    FieldInfo{"tip", "vec3", "The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y."},
-    FieldInfo{"target", "vec3", "Where the effector should be, in world space (used when target_entity is empty)."},
-    FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
-    FieldInfo{"pole_entity", "string", "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has."},
-    FieldInfo{"max_bend", "f32", "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false."},
-    FieldInfo{"limits", "list:IKLimit", "Per-joint bends, by node name, each with a least and a most, and a hinge's side; joints without an entry take max_bend."},
-    FieldInfo{"weight", "f32", "How much of the solve applies: 0 the posed chain, 1 the solved one."},
-    FieldInfo{"iterations", "i32", "FABRIK passes per tick (each is a backward and a forward sweep)."},
-    FieldInfo{"tolerance", "f32", "The solve stops once the effector is this close to the target, in meters."},
-    FieldInfo{"error", "f32", "Distance from the effector to the target after the solve, in meters (written by the engine)."},
-    FieldInfo{"reached", "bool", "Whether the effector ended within tolerance (written by the engine)."},
-    FieldInfo{"bend", "f32", "The largest bend among the chain's joints after the solve, in degrees (written by the engine)."},
+    FieldInfo{"end", "string", "The chain's last node, a joint name (animation.clips lists the skins' joints).", {}},
+    FieldInfo{"bones", "i32", "How many bones the chain has, counted up from `end` (2 for a limb: upper and lower).", {}},
+    FieldInfo{"tip", "vec3", "The effector in the end node's space: the far end of the last bone, e.g. [0, 1, 0] for a unit bone along +Y.", {}},
+    FieldInfo{"target", "vec3", "Where the effector should be, in world space (used when target_entity is empty).", {}},
+    FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target.", {}},
+    FieldInfo{"pole_entity", "string", "An entity the chain's middle joints bend toward, the knee or elbow hint; empty keeps the bend the pose has.", {}},
+    FieldInfo{"max_bend", "f32", "The most any joint of the chain may bend, in degrees: the angle between its bone and the bone above it (for the chain's first joint, its parent's bone, or the direction the pose gives the first bone when it has no parent). 180 leaves the bend free; a target the limited chain cannot reach leaves error and reached false.", {}},
+    FieldInfo{"limits", "list:IKLimit", "Per-joint bends, by node name, each with a least and a most, and a hinge's side; joints without an entry take max_bend.", {}},
+    FieldInfo{"weight", "f32", "How much of the solve applies: 0 the posed chain, 1 the solved one.", {}},
+    FieldInfo{"iterations", "i32", "FABRIK passes per tick (each is a backward and a forward sweep).", {}},
+    FieldInfo{"tolerance", "f32", "The solve stops once the effector is this close to the target, in meters.", {}},
+    FieldInfo{"error", "f32", "Distance from the effector to the target after the solve, in meters (written by the engine).", {}},
+    FieldInfo{"reached", "bool", "Whether the effector ended within tolerance (written by the engine).", {}},
+    FieldInfo{"bend", "f32", "The largest bend among the chain's joints after the solve, in degrees (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 9> kLookAtFields = {{
-    FieldInfo{"node", "string", "The node that turns: a joint, or any node of the asset."},
-    FieldInfo{"forward", "vec3", "The node's aiming axis in its own space."},
-    FieldInfo{"target", "vec3", "The point to aim at, in world space (used when target_entity is empty)."},
-    FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target."},
-    FieldInfo{"weight", "f32", "How much of the turn applies: 0 none, 1 the full aim."},
-    FieldInfo{"max_angle", "f32", "The most the node may turn away from its posed direction, in degrees."},
-    FieldInfo{"speed", "f32", "How fast the aim may turn, in degrees per second: each tick the aim moves toward the target by at most this much, from where the pose points on the first tick, so a head follows smoothly; 0 aims at once."},
-    FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine)."},
-    FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick)."},
+    FieldInfo{"node", "string", "The node that turns: a joint, or any node of the asset.", {}},
+    FieldInfo{"forward", "vec3", "The node's aiming axis in its own space.", {}},
+    FieldInfo{"target", "vec3", "The point to aim at, in world space (used when target_entity is empty).", {}},
+    FieldInfo{"target_entity", "string", "An entity (name or path) whose world position is the target; empty uses target.", {}},
+    FieldInfo{"weight", "f32", "How much of the turn applies: 0 none, 1 the full aim.", {}},
+    FieldInfo{"max_angle", "f32", "The most the node may turn away from its posed direction, in degrees.", {}},
+    FieldInfo{"speed", "f32", "How fast the aim may turn, in degrees per second: each tick the aim moves toward the target by at most this much, from where the pose points on the first tick, so a head follows smoothly; 0 aims at once.", {}},
+    FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine).", {}},
+    FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick).", {}},
 }};
 constexpr std::array<FieldInfo, 24> kParticleEmitterFields = {{
-    FieldInfo{"texture", "string", "Project-relative image; empty draws soft round spots (streaks when stretched)."},
-    FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate."},
-    FieldInfo{"rate", "f32", "Particles per second while emitting."},
-    FieldInfo{"max", "i32", "Most particles alive at once from this emitter (older ones are not replaced; spawning waits)."},
-    FieldInfo{"lifetime", "vec2", "Seconds a particle lives: min and max, drawn uniformly."},
-    FieldInfo{"speed", "vec2", "Initial speed: min and max."},
-    FieldInfo{"direction", "vec3", "Center of the emission cone, in the emitter's local frame."},
-    FieldInfo{"spread", "f32", "Half-angle of the cone in degrees (0 is a beam, 180 is every direction)."},
-    FieldInfo{"gravity", "vec3", "Acceleration applied to every particle, world units per second squared."},
-    FieldInfo{"drag", "f32", "Fraction of velocity lost per second."},
-    FieldInfo{"size", "vec2", "Quad size in world units at birth and at death."},
-    FieldInfo{"color", "color", "Tint at birth."},
-    FieldInfo{"color_end", "color", "Tint at death; alpha 0 fades out."},
-    FieldInfo{"layer", "i32", "Draw order among sprites and particles."},
-    FieldInfo{"billboard", "bool", "Face the camera (3D); false keeps quads in the XY plane for 2D scenes."},
-    FieldInfo{"world_space", "bool", "Particles keep their world position when the emitter moves; false moves them with it."},
-    FieldInfo{"seed", "i32", "Extra seed for the emitter's random stream (the entity id seeds it too)."},
-    FieldInfo{"floor", "f32", "A floor the particles land on: the world height (or the emitter's own when world_space is false) below which a particle is put back and bounces with `bounce`; the default is far below anything."},
-    FieldInfo{"bounce", "f32", "How much of the speed into the floor a particle keeps coming back up; 0 lands it (it slides on with `floor_friction`)."},
-    FieldInfo{"floor_friction", "f32", "Fraction of the speed along the floor lost per second while a particle rests on it."},
-    FieldInfo{"stretch", "f32", "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square."},
-    FieldInfo{"child", "entity", "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none."},
-    FieldInfo{"child_count", "i32", "Particles the child emits at each death."},
-    FieldInfo{"collide", "bool", "Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md)."},
+    FieldInfo{"texture", "string", "Project-relative image; empty draws soft round spots (streaks when stretched).", {}},
+    FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate.", {}},
+    FieldInfo{"rate", "f32", "Particles per second while emitting.", {}},
+    FieldInfo{"max", "i32", "Most particles alive at once from this emitter (older ones are not replaced; spawning waits).", {}},
+    FieldInfo{"lifetime", "vec2", "Seconds a particle lives: min and max, drawn uniformly.", {}},
+    FieldInfo{"speed", "vec2", "Initial speed: min and max.", {}},
+    FieldInfo{"direction", "vec3", "Center of the emission cone, in the emitter's local frame.", {}},
+    FieldInfo{"spread", "f32", "Half-angle of the cone in degrees (0 is a beam, 180 is every direction).", {}},
+    FieldInfo{"gravity", "vec3", "Acceleration applied to every particle, world units per second squared.", {}},
+    FieldInfo{"drag", "f32", "Fraction of velocity lost per second.", {}},
+    FieldInfo{"size", "vec2", "Quad size in world units at birth and at death.", {}},
+    FieldInfo{"color", "color", "Tint at birth.", {}},
+    FieldInfo{"color_end", "color", "Tint at death; alpha 0 fades out.", {}},
+    FieldInfo{"layer", "i32", "Draw order among sprites and particles.", {}},
+    FieldInfo{"billboard", "bool", "Face the camera (3D); false keeps quads in the XY plane for 2D scenes.", {}},
+    FieldInfo{"world_space", "bool", "Particles keep their world position when the emitter moves; false moves them with it.", {}},
+    FieldInfo{"seed", "i32", "Extra seed for the emitter's random stream (the entity id seeds it too).", {}},
+    FieldInfo{"floor", "f32", "A floor the particles land on: the world height (or the emitter's own when world_space is false) below which a particle is put back and bounces with `bounce`; the default is far below anything.", {}},
+    FieldInfo{"bounce", "f32", "How much of the speed into the floor a particle keeps coming back up; 0 lands it (it slides on with `floor_friction`).", {}},
+    FieldInfo{"floor_friction", "f32", "Fraction of the speed along the floor lost per second while a particle rests on it.", {}},
+    FieldInfo{"stretch", "f32", "Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square.", {}},
+    FieldInfo{"child", "entity", "An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none.", {}},
+    FieldInfo{"child_count", "i32", "Particles the child emits at each death.", {}},
+    FieldInfo{"collide", "bool", "Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md).", {}},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
-    FieldInfo{"min", "vec3", "Minimum corner."},
-    FieldInfo{"max", "vec3", "Maximum corner."},
+    FieldInfo{"min", "vec3", "Minimum corner.", {}},
+    FieldInfo{"max", "vec3", "Maximum corner.", {}},
 }};
+constexpr std::string_view kRigidBody_kindNames[] = {"dynamic", "static", "kinematic"};
 constexpr std::array<FieldInfo, 10> kRigidBodyFields = {{
-    FieldInfo{"kind", "i32", "0 dynamic, 1 static, 2 kinematic."},
-    FieldInfo{"mass", "f32", "Kilograms; ignored for static bodies."},
-    FieldInfo{"restitution", "f32", "Bounciness 0..1."},
-    FieldInfo{"friction", "f32", "Coulomb friction coefficient."},
-    FieldInfo{"linear_damping", "f32", "Velocity lost per second (fraction)."},
-    FieldInfo{"angular_damping", "f32", "Angular velocity lost per second (fraction)."},
-    FieldInfo{"gravity_scale", "f32", "Multiplier on world gravity."},
-    FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched."},
-    FieldInfo{"lock_rotation", "bool", "Never rotate (characters on capsules stay upright)."},
-    FieldInfo{"ccd", "bool", "Continuous collision: each step the body is swept along its motion, relative to every shape it may touch (static, kinematic, and dynamic bodies moving too), and stops a skin short of the first impact, so thin walls hold and fast bodies do not cross each other at any speed. A sphere is cast exactly against the other shape; a box or capsule is swept by samples (docs/design/physics.md, Continuous collision). Bodies moving less than half their size per step are not swept."},
+    FieldInfo{"kind", "i32", "0 dynamic, 1 static, 2 kinematic.", kRigidBody_kindNames},
+    FieldInfo{"mass", "f32", "Kilograms; ignored for static bodies.", {}},
+    FieldInfo{"restitution", "f32", "Bounciness 0..1.", {}},
+    FieldInfo{"friction", "f32", "Coulomb friction coefficient.", {}},
+    FieldInfo{"linear_damping", "f32", "Velocity lost per second (fraction).", {}},
+    FieldInfo{"angular_damping", "f32", "Angular velocity lost per second (fraction).", {}},
+    FieldInfo{"gravity_scale", "f32", "Multiplier on world gravity.", {}},
+    FieldInfo{"sleeping", "bool", "Set by the engine when the body came to rest; cleared when touched.", {}},
+    FieldInfo{"lock_rotation", "bool", "Never rotate (characters on capsules stay upright).", {}},
+    FieldInfo{"ccd", "bool", "Continuous collision: each step the body is swept along its motion, relative to every shape it may touch (static, kinematic, and dynamic bodies moving too), and stops a skin short of the first impact, so thin walls hold and fast bodies do not cross each other at any speed. A sphere is cast exactly against the other shape; a box or capsule is swept by samples (docs/design/physics.md, Continuous collision). Bodies moving less than half their size per step are not swept.", {}},
 }};
+constexpr std::string_view kJoint_kindNames[] = {"distance", "ball", "hinge", "slider"};
 constexpr std::array<FieldInfo, 23> kJointFields = {{
-    FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target)."},
-    FieldInfo{"target", "string", "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor."},
-    FieldInfo{"anchor", "vec3", "Attachment point on this body, in its local frame."},
-    FieldInfo{"target_anchor", "vec3", "Attachment point on the target in its local frame, or a world point when there is no target."},
-    FieldInfo{"distance", "f32", "Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here."},
-    FieldInfo{"rope", "bool", "Distance joints only: pull when the anchors are farther than distance, never push."},
-    FieldInfo{"stiffness", "f32", "Distance joints: newtons per meter of stretch; above 0 the rod is a spring (a bungee with rope) instead of a rigid length."},
-    FieldInfo{"damping", "f32", "Springs: newton-seconds per meter, the drag on the stretch speed."},
-    FieldInfo{"break_force", "f32", "Force (newtons) above which the joint breaks; 0 never breaks."},
-    FieldInfo{"force", "f32", "Force the joint carried in the last step, written by the engine."},
-    FieldInfo{"axis", "vec3", "Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame."},
-    FieldInfo{"target_axis", "vec3", "Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here."},
-    FieldInfo{"reference", "vec3", "Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here."},
-    FieldInfo{"limit", "bool", "Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them."},
-    FieldInfo{"lower", "f32", "Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider."},
-    FieldInfo{"upper", "f32", "Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider."},
-    FieldInfo{"motor_speed", "f32", "The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's."},
-    FieldInfo{"motor_torque", "f32", "Hinge: the most torque the motor applies; 0 turns the motor off."},
-    FieldInfo{"motor_force", "f32", "Slider: the most force the motor applies along the axis; 0 turns the motor off."},
-    FieldInfo{"angle", "f32", "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step."},
-    FieldInfo{"translation", "f32", "Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step."},
-    FieldInfo{"speed", "f32", "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's."},
-    FieldInfo{"collide_connected", "bool", "Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them."},
+    FieldInfo{"kind", "i32", "0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target).", kJoint_kindNames},
+    FieldInfo{"target", "string", "Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor.", {}},
+    FieldInfo{"anchor", "vec3", "Attachment point on this body, in its local frame.", {}},
+    FieldInfo{"target_anchor", "vec3", "Attachment point on the target in its local frame, or a world point when there is no target.", {}},
+    FieldInfo{"distance", "f32", "Rest length of a distance joint; negative takes the anchors' distance at the first step and writes it here.", {}},
+    FieldInfo{"rope", "bool", "Distance joints only: pull when the anchors are farther than distance, never push.", {}},
+    FieldInfo{"stiffness", "f32", "Distance joints: newtons per meter of stretch; above 0 the rod is a spring (a bungee with rope) instead of a rigid length.", {}},
+    FieldInfo{"damping", "f32", "Springs: newton-seconds per meter, the drag on the stretch speed.", {}},
+    FieldInfo{"break_force", "f32", "Force (newtons) above which the joint breaks; 0 never breaks.", {}},
+    FieldInfo{"force", "f32", "Force the joint carried in the last step, written by the engine.", {}},
+    FieldInfo{"axis", "vec3", "Hinge: the axis of rotation; slider: the axis of travel. In this body's local frame.", {}},
+    FieldInfo{"target_axis", "vec3", "Hinge and slider: the axis in the target's frame; zero takes the body's axis at the first step and writes it here.", {}},
+    FieldInfo{"reference", "vec3", "Hinge and slider: a direction across the axis in the target's frame from which the turn is measured; zero takes it at the first step and writes it here.", {}},
+    FieldInfo{"limit", "bool", "Hinge: keep angle between lower and upper (equal values lock the hinge). Slider: keep translation between them.", {}},
+    FieldInfo{"lower", "f32", "Lower limit, when limit is set: radians for a hinge, meters along the axis for a slider.", {}},
+    FieldInfo{"upper", "f32", "Upper limit, when limit is set: radians for a hinge, meters along the axis for a slider.", {}},
+    FieldInfo{"motor_speed", "f32", "The speed the motor drives the body to relative to the target: radians per second about a hinge's axis, meters per second along a slider's.", {}},
+    FieldInfo{"motor_torque", "f32", "Hinge: the most torque the motor applies; 0 turns the motor off.", {}},
+    FieldInfo{"motor_force", "f32", "Slider: the most force the motor applies along the axis; 0 turns the motor off.", {}},
+    FieldInfo{"angle", "f32", "Hinge: the body's rotation about the axis relative to the target, in radians, written by the engine every step.", {}},
+    FieldInfo{"translation", "f32", "Slider: how far this body's anchor sits along the axis from the target's anchor, in meters, written by the engine every step.", {}},
+    FieldInfo{"speed", "f32", "The body's speed relative to the target, written by the engine every step: radians per second about a hinge's axis, meters per second along a slider's.", {}},
+    FieldInfo{"collide_connected", "bool", "Whether this body and the joint's target body collide with each other; false lets a ragdoll's limbs or a chain's links overlap where the joint holds them.", {}},
 }};
 constexpr std::array<FieldInfo, 18> kBody2DFields = {{
-    FieldInfo{"velocity", "vec2", "Units per second, relative to what carries the body (a platform or a body it rides); scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops."},
-    FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
-    FieldInfo{"max_fall", "f32", "Fastest downward speed."},
-    FieldInfo{"size", "vec2", "Half extents of the box."},
-    FieldInfo{"offset", "vec2", "Box center relative to the entity's position."},
-    FieldInfo{"map", "string", "Path or name of the TileMap entity to collide with; empty takes the first one."},
-    FieldInfo{"grounded", "bool", "Standing on a solid tile (written by the engine)."},
-    FieldInfo{"on_wall", "i32", "-1 touching a wall on the left, 1 on the right, 0 none (written by the engine)."},
-    FieldInfo{"on_ceiling", "bool", "Head against a tile (written by the engine)."},
-    FieldInfo{"kinematic", "bool", "Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it."},
-    FieldInfo{"one_way", "bool", "Kinematic bodies: catch bodies from above only (a lift that rises through the floor)."},
-    FieldInfo{"step", "f32", "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope)."},
-    FieldInfo{"riding", "entity", "The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine)."},
-    FieldInfo{"on_slope", "i32", "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine)."},
-    FieldInfo{"mass", "f32", "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies)."},
-    FieldInfo{"collide_bodies", "bool", "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body)."},
-    FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution)."},
-    FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed."},
+    FieldInfo{"velocity", "vec2", "Units per second, relative to what carries the body (a platform or a body it rides); scripts set x from input and y for a jump, the engine adds gravity and zeroes what a tile stops.", {}},
+    FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down).", {}},
+    FieldInfo{"max_fall", "f32", "Fastest downward speed.", {}},
+    FieldInfo{"size", "vec2", "Half extents of the box.", {}},
+    FieldInfo{"offset", "vec2", "Box center relative to the entity's position.", {}},
+    FieldInfo{"map", "string", "Path or name of the TileMap entity to collide with; empty takes the first one.", {}},
+    FieldInfo{"grounded", "bool", "Standing on a solid tile (written by the engine).", {}},
+    FieldInfo{"on_wall", "i32", "-1 touching a wall on the left, 1 on the right, 0 none (written by the engine).", {}},
+    FieldInfo{"on_ceiling", "bool", "Head against a tile (written by the engine).", {}},
+    FieldInfo{"kinematic", "bool", "Moves by its velocity only (no gravity, no tiles) and is a solid platform for the other bodies, which ride it while standing on it.", {}},
+    FieldInfo{"one_way", "bool", "Kinematic bodies: catch bodies from above only (a lift that rises through the floor).", {}},
+    FieldInfo{"step", "f32", "The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope).", {}},
+    FieldInfo{"riding", "entity", "The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine).", {}},
+    FieldInfo{"on_slope", "i32", "1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine).", {}},
+    FieldInfo{"mass", "f32", "Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies).", {}},
+    FieldInfo{"collide_bodies", "bool", "Whether this body is pushed apart from, stands on and carries other dynamic bodies; false passes through them (ghosts, pickups with a body).", {}},
+    FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution).", {}},
+    FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed.", {}},
 }};
 constexpr std::array<FieldInfo, 19> kCharacterFields = {{
-    FieldInfo{"velocity", "vec3", "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall."},
-    FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down)."},
-    FieldInfo{"max_fall", "f32", "Fastest downward speed."},
-    FieldInfo{"radius", "f32", "The capsule's radius."},
-    FieldInfo{"height", "f32", "The capsule's whole height, round ends included; the entity is at its centre, so a character standing on the ground at y 0 is at y = height / 2."},
-    FieldInfo{"step", "f32", "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it."},
-    FieldInfo{"max_slope", "f32", "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down."},
-    FieldInfo{"push", "f32", "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed)."},
-    FieldInfo{"swim_speed", "f32", "In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too."},
-    FieldInfo{"mask", "u32", "Bits of the collision layers (Collider.layer) the character is stopped by; all by default."},
-    FieldInfo{"grounded", "bool", "Standing on a floor no steeper than max_slope (written by the engine)."},
-    FieldInfo{"ground_normal", "vec3", "The floor's normal where it stands (written by the engine)."},
-    FieldInfo{"ground", "entity", "The collider it stands on; 0 in the air (written by the engine)."},
-    FieldInfo{"on_wall", "bool", "Stopped by a wall or too-steep ground this tick (written by the engine)."},
-    FieldInfo{"wall_normal", "vec3", "That wall's normal (written by the engine)."},
-    FieldInfo{"on_ceiling", "bool", "Its head hit something this tick (written by the engine)."},
-    FieldInfo{"stepped", "bool", "Walked up an edge this tick (written by the engine)."},
-    FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine)."},
-    FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine)."},
+    FieldInfo{"velocity", "vec3", "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall.", {}},
+    FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down).", {}},
+    FieldInfo{"max_fall", "f32", "Fastest downward speed.", {}},
+    FieldInfo{"radius", "f32", "The capsule's radius.", {}},
+    FieldInfo{"height", "f32", "The capsule's whole height, round ends included; the entity is at its centre, so a character standing on the ground at y 0 is at y = height / 2.", {}},
+    FieldInfo{"step", "f32", "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it.", {}},
+    FieldInfo{"max_slope", "f32", "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down.", {}},
+    FieldInfo{"push", "f32", "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed).", {}},
+    FieldInfo{"swim_speed", "f32", "In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too.", {}},
+    FieldInfo{"mask", "u32", "Bits of the collision layers (Collider.layer) the character is stopped by; all by default.", {}},
+    FieldInfo{"grounded", "bool", "Standing on a floor no steeper than max_slope (written by the engine).", {}},
+    FieldInfo{"ground_normal", "vec3", "The floor's normal where it stands (written by the engine).", {}},
+    FieldInfo{"ground", "entity", "The collider it stands on; 0 in the air (written by the engine).", {}},
+    FieldInfo{"on_wall", "bool", "Stopped by a wall or too-steep ground this tick (written by the engine).", {}},
+    FieldInfo{"wall_normal", "vec3", "That wall's normal (written by the engine).", {}},
+    FieldInfo{"on_ceiling", "bool", "Its head hit something this tick (written by the engine).", {}},
+    FieldInfo{"stepped", "bool", "Walked up an edge this tick (written by the engine).", {}},
+    FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine).", {}},
+    FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 16> kTerrainFields = {{
-    FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity."},
-    FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity."},
-    FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across."},
-    FieldInfo{"heightmap", "string", "A project-relative greyscale PNG (8 or 16 bits), black at 0 and white at `height`, its top row at -z; empty makes the heights from noise (seed, scale, octaves). terrain.save writes one."},
-    FieldInfo{"seed", "u32", "The noise's seed: the same seed, scale and octaves give the same hills."},
-    FieldInfo{"scale", "f32", "The size of the noise's largest features, in units."},
-    FieldInfo{"octaves", "i32", "Layers of noise, each twice as fine and half as tall as the one before (1 to 10)."},
-    FieldInfo{"grass", "color", "The colour of flat and gentle ground."},
-    FieldInfo{"rock", "color", "The colour of ground steeper than rock_slope."},
-    FieldInfo{"snow", "color", "The colour above snow_line."},
-    FieldInfo{"rock_slope", "f32", "Degrees from level above which ground is rock."},
-    FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none."},
-    FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground."},
-    FieldInfo{"paintmap", "string", "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none."},
-    FieldInfo{"layers", "list:TerrainLayer", "Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture."},
-    FieldInfo{"layermap", "string", "A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none."},
+    FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity.", {}},
+    FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity.", {}},
+    FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across.", {}},
+    FieldInfo{"heightmap", "string", "A project-relative greyscale PNG (8 or 16 bits), black at 0 and white at `height`, its top row at -z; empty makes the heights from noise (seed, scale, octaves). terrain.save writes one.", {}},
+    FieldInfo{"seed", "u32", "The noise's seed: the same seed, scale and octaves give the same hills.", {}},
+    FieldInfo{"scale", "f32", "The size of the noise's largest features, in units.", {}},
+    FieldInfo{"octaves", "i32", "Layers of noise, each twice as fine and half as tall as the one before (1 to 10).", {}},
+    FieldInfo{"grass", "color", "The colour of flat and gentle ground.", {}},
+    FieldInfo{"rock", "color", "The colour of ground steeper than rock_slope.", {}},
+    FieldInfo{"snow", "color", "The colour above snow_line.", {}},
+    FieldInfo{"rock_slope", "f32", "Degrees from level above which ground is rock.", {}},
+    FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none.", {}},
+    FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground.", {}},
+    FieldInfo{"paintmap", "string", "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none.", {}},
+    FieldInfo{"layers", "list:TerrainLayer", "Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture.", {}},
+    FieldInfo{"layermap", "string", "A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none.", {}},
 }};
 constexpr std::array<FieldInfo, 5> kWindFields = {{
-    FieldInfo{"direction", "f32", "Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction."},
-    FieldInfo{"speed", "f32", "Units a second."},
-    FieldInfo{"gusts", "f32", "How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong)."},
-    FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind."},
-    FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any)."},
+    FieldInfo{"direction", "f32", "Where the wind blows to, in degrees about +y from +x (90 blows toward -z), as Water.wave_direction.", {}},
+    FieldInfo{"speed", "f32", "Units a second.", {}},
+    FieldInfo{"gusts", "f32", "How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong).", {}},
+    FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind.", {}},
+    FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any).", {}},
 }};
 constexpr std::array<FieldInfo, 17> kWaterFields = {{
-    FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity."},
-    FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed."},
-    FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back)."},
-    FieldInfo{"clarity", "f32", "How deep one sees into it, in units: at this depth what lies below is mostly hidden by the water's colour."},
-    FieldInfo{"wave_height", "f32", "The height of the largest waves, crest over trough, in units; 0 is still water."},
-    FieldInfo{"wave_length", "f32", "The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length."},
-    FieldInfo{"wave_direction", "f32", "Where the waves run, in degrees about +y from +x (90 runs toward -z)."},
-    FieldInfo{"choppiness", "f32", "How sharp the crests are, 0 (rolling) to 1 (peaked)."},
-    FieldInfo{"ripples", "f32", "The strength of the small ripples on the waves, 0 for none."},
-    FieldInfo{"foam", "f32", "How far out from the shore foam reaches, in units of depth; 0 for none."},
-    FieldInfo{"caustics", "f32", "How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none."},
-    FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples."},
-    FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default)."},
-    FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more."},
-    FieldInfo{"splash", "string", "Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none."},
-    FieldInfo{"splash_count", "i32", "Particles a splash throws for an entry at 8 units a second (a fall of about three units); half as fast throws half as many, and at most twice as many."},
-    FieldInfo{"enabled", "bool", "false stops it being drawn and buoying."},
+    FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity.", {}},
+    FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed.", {}},
+    FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back).", {}},
+    FieldInfo{"clarity", "f32", "How deep one sees into it, in units: at this depth what lies below is mostly hidden by the water's colour.", {}},
+    FieldInfo{"wave_height", "f32", "The height of the largest waves, crest over trough, in units; 0 is still water.", {}},
+    FieldInfo{"wave_length", "f32", "The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length.", {}},
+    FieldInfo{"wave_direction", "f32", "Where the waves run, in degrees about +y from +x (90 runs toward -z).", {}},
+    FieldInfo{"choppiness", "f32", "How sharp the crests are, 0 (rolling) to 1 (peaked).", {}},
+    FieldInfo{"ripples", "f32", "The strength of the small ripples on the waves, 0 for none.", {}},
+    FieldInfo{"foam", "f32", "How far out from the shore foam reaches, in units of depth; 0 for none.", {}},
+    FieldInfo{"caustics", "f32", "How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none.", {}},
+    FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples.", {}},
+    FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default).", {}},
+    FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more.", {}},
+    FieldInfo{"splash", "string", "Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none.", {}},
+    FieldInfo{"splash_count", "i32", "Particles a splash throws for an entry at 8 units a second (a fall of about three units); half as fast throws half as many, and at most twice as many.", {}},
+    FieldInfo{"enabled", "bool", "false stops it being drawn and buoying.", {}},
 }};
 constexpr std::array<FieldInfo, 20> kScatterFields = {{
-    FieldInfo{"count", "i32", "Places tried (the most copies there can be; up to 20000)."},
-    FieldInfo{"area", "vec2", "The extent along x and z, centred on the entity."},
-    FieldInfo{"seed", "u32", "The same seed and settings place the same copies."},
-    FieldInfo{"on", "string", "Path or name of the entity whose collider the copies stand on (a terrain); empty takes any static collider."},
-    FieldInfo{"scale", "vec2", "The smallest and largest size, times the entity's scale."},
-    FieldInfo{"yaw", "f32", "Degrees of random turn about the vertical (0 keeps them all facing one way)."},
-    FieldInfo{"align", "f32", "How far each copy leans with the ground under it: 0 upright, 1 square to the slope."},
-    FieldInfo{"sink", "f32", "Units each copy is set into the ground (a stone half buried)."},
-    FieldInfo{"spacing", "f32", "The least distance between two copies; 0 lets them crowd."},
-    FieldInfo{"max_slope", "f32", "Degrees: no copy where the ground is steeper."},
-    FieldInfo{"min_height", "f32", "No copy on ground lower than this (world y): above the water line."},
-    FieldInfo{"max_height", "f32", "No copy on ground higher than this (world y): below the snow."},
-    FieldInfo{"max_paint", "f32", "No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1, in a colour or with its textured layers): 0.3 keeps a painted path clear of bushes; 1 places them on paint too."},
-    FieldInfo{"collide", "f32", "Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in the entity's own units, so the entity's Transform scale x multiplies it, and so does each copy's size: on an entity scaled 0.1 across, `collide` 1 is 0.1 in the world. 0: the copies are only drawn."},
-    FieldInfo{"collide_height", "f32", "The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width)."},
-    FieldInfo{"sway", "f32", "How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still."},
-    FieldInfo{"sway_speed", "f32", "Sways a second, on the simulation clock (a paused game is still)."},
-    FieldInfo{"fade", "f32", "Copies farther from the camera than this are not drawn; over the last fifth of the distance they shrink into the ground. 0 draws them at any distance."},
-    FieldInfo{"shade", "f32", "How much each copy's brightness varies, 0..1."},
-    FieldInfo{"placed", "i32", "How many copies stand (written by the engine)."},
+    FieldInfo{"count", "i32", "Places tried (the most copies there can be; up to 20000).", {}},
+    FieldInfo{"area", "vec2", "The extent along x and z, centred on the entity.", {}},
+    FieldInfo{"seed", "u32", "The same seed and settings place the same copies.", {}},
+    FieldInfo{"on", "string", "Path or name of the entity whose collider the copies stand on (a terrain); empty takes any static collider.", {}},
+    FieldInfo{"scale", "vec2", "The smallest and largest size, times the entity's scale.", {}},
+    FieldInfo{"yaw", "f32", "Degrees of random turn about the vertical (0 keeps them all facing one way).", {}},
+    FieldInfo{"align", "f32", "How far each copy leans with the ground under it: 0 upright, 1 square to the slope.", {}},
+    FieldInfo{"sink", "f32", "Units each copy is set into the ground (a stone half buried).", {}},
+    FieldInfo{"spacing", "f32", "The least distance between two copies; 0 lets them crowd.", {}},
+    FieldInfo{"max_slope", "f32", "Degrees: no copy where the ground is steeper.", {}},
+    FieldInfo{"min_height", "f32", "No copy on ground lower than this (world y): above the water line.", {}},
+    FieldInfo{"max_height", "f32", "No copy on ground higher than this (world y): below the snow.", {}},
+    FieldInfo{"max_paint", "f32", "No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1, in a colour or with its textured layers): 0.3 keeps a painted path clear of bushes; 1 places them on paint too.", {}},
+    FieldInfo{"collide", "f32", "Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in the entity's own units, so the entity's Transform scale x multiplies it, and so does each copy's size: on an entity scaled 0.1 across, `collide` 1 is 0.1 in the world. 0: the copies are only drawn.", {}},
+    FieldInfo{"collide_height", "f32", "The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width).", {}},
+    FieldInfo{"sway", "f32", "How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still.", {}},
+    FieldInfo{"sway_speed", "f32", "Sways a second, on the simulation clock (a paused game is still).", {}},
+    FieldInfo{"fade", "f32", "Copies farther from the camera than this are not drawn; over the last fifth of the distance they shrink into the ground. 0 draws them at any distance.", {}},
+    FieldInfo{"shade", "f32", "How much each copy's brightness varies, 0..1.", {}},
+    FieldInfo{"placed", "i32", "How many copies stand (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 14> kVehicleFields = {{
-    FieldInfo{"wheels", "list:Wheel", "The wheels, each with its mount, suspension and role."},
-    FieldInfo{"throttle", "f32", "-1..1: forward drive at 1, reverse at -1."},
-    FieldInfo{"steer", "f32", "-1..1: the steering wheels turn left at -1 and right at 1, by max_steer degrees."},
-    FieldInfo{"brake", "f32", "0..1: how hard every wheel on the ground brakes."},
-    FieldInfo{"power", "f32", "The acceleration full throttle gives on level ground, units per second squared."},
-    FieldInfo{"top_speed", "f32", "The speed at which the engine stops pushing, units per second."},
-    FieldInfo{"braking", "f32", "The deceleration a full brake gives, units per second squared."},
-    FieldInfo{"max_steer", "f32", "Degrees the steering wheels turn at full steer."},
-    FieldInfo{"grip", "f32", "How much sideways force the tyres can hold, as a multiple of the load on them: above what the turn asks, the car slides."},
-    FieldInfo{"suspension_hz", "f32", "How stiff the springs are, as the bounce's frequency with the body's weight on them."},
-    FieldInfo{"damping", "f32", "How fast a bounce dies: 0 bounces on, 1 settles without overshoot."},
-    FieldInfo{"roll_resistance", "f32", "Units per second squared the wheels lose to rolling when nothing drives or brakes them."},
-    FieldInfo{"speed", "f32", "Forward speed, negative backing up (written by the engine)."},
-    FieldInfo{"grounded", "i32", "Wheels on the ground (written by the engine)."},
+    FieldInfo{"wheels", "list:Wheel", "The wheels, each with its mount, suspension and role.", {}},
+    FieldInfo{"throttle", "f32", "-1..1: forward drive at 1, reverse at -1.", {}},
+    FieldInfo{"steer", "f32", "-1..1: the steering wheels turn left at -1 and right at 1, by max_steer degrees.", {}},
+    FieldInfo{"brake", "f32", "0..1: how hard every wheel on the ground brakes.", {}},
+    FieldInfo{"power", "f32", "The acceleration full throttle gives on level ground, units per second squared.", {}},
+    FieldInfo{"top_speed", "f32", "The speed at which the engine stops pushing, units per second.", {}},
+    FieldInfo{"braking", "f32", "The deceleration a full brake gives, units per second squared.", {}},
+    FieldInfo{"max_steer", "f32", "Degrees the steering wheels turn at full steer.", {}},
+    FieldInfo{"grip", "f32", "How much sideways force the tyres can hold, as a multiple of the load on them: above what the turn asks, the car slides.", {}},
+    FieldInfo{"suspension_hz", "f32", "How stiff the springs are, as the bounce's frequency with the body's weight on them.", {}},
+    FieldInfo{"damping", "f32", "How fast a bounce dies: 0 bounces on, 1 settles without overshoot.", {}},
+    FieldInfo{"roll_resistance", "f32", "Units per second squared the wheels lose to rolling when nothing drives or brakes them.", {}},
+    FieldInfo{"speed", "f32", "Forward speed, negative backing up (written by the engine).", {}},
+    FieldInfo{"grounded", "i32", "Wheels on the ground (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 7> kTopDown2DFields = {{
-    FieldInfo{"velocity", "vec2", "Units per second along X and Y."},
-    FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width)."},
-    FieldInfo{"map", "string", "Path or name of the TileMap entity to collide with; empty takes the first one."},
-    FieldInfo{"blocked_x", "bool", "The X move was stopped by a solid cell this tick (written by the engine)."},
-    FieldInfo{"blocked_y", "bool", "The Y move was stopped by a solid cell this tick (written by the engine)."},
-    FieldInfo{"tile_x", "i32", "The map cell under the center, -1 outside the map (written by the engine)."},
-    FieldInfo{"tile_y", "i32", "The map cell under the center, -1 outside the map (written by the engine)."},
+    FieldInfo{"velocity", "vec2", "Units per second along X and Y.", {}},
+    FieldInfo{"radius", "f32", "How far ahead of the center, along the move, the cell must be open (the body's half width).", {}},
+    FieldInfo{"map", "string", "Path or name of the TileMap entity to collide with; empty takes the first one.", {}},
+    FieldInfo{"blocked_x", "bool", "The X move was stopped by a solid cell this tick (written by the engine).", {}},
+    FieldInfo{"blocked_y", "bool", "The Y move was stopped by a solid cell this tick (written by the engine).", {}},
+    FieldInfo{"tile_x", "i32", "The map cell under the center, -1 outside the map (written by the engine).", {}},
+    FieldInfo{"tile_y", "i32", "The map cell under the center, -1 outside the map (written by the engine).", {}},
 }};
+constexpr std::string_view kCollider_shapeNames[] = {"box", "sphere", "capsule", "mesh"};
 constexpr std::array<FieldInfo, 9> kColliderFields = {{
-    FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other)."},
-    FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules."},
-    FieldInfo{"offset", "vec3", "Local offset of the shape center."},
-    FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response."},
-    FieldInfo{"mesh", "string", "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh."},
-    FieldInfo{"node", "string", "For shape 3: only the triangles of this node of the file (its name, or its index as text), in the node's own space as MeshRenderer.node draws it; empty takes the whole file (the MeshRenderer's node when the mesh is the MeshRenderer's)."},
-    FieldInfo{"layer", "u32", "Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them."},
-    FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes."},
-    FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions)."},
+    FieldInfo{"shape", "i32", "0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other).", kCollider_shapeNames},
+    FieldInfo{"size", "vec3", "Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules.", {}},
+    FieldInfo{"offset", "vec3", "Local offset of the shape center.", {}},
+    FieldInfo{"is_trigger", "bool", "Overlap events only, no collision response.", {}},
+    FieldInfo{"mesh", "string", "For shape 3: the glTF file whose triangles collide (project-relative path); empty uses the entity's MeshRenderer mesh.", {}},
+    FieldInfo{"node", "string", "For shape 3: only the triangles of this node of the file (its name, or its index as text), in the node's own space as MeshRenderer.node draws it; empty takes the whole file (the MeshRenderer's node when the mesh is the MeshRenderer's).", {}},
+    FieldInfo{"layer", "u32", "Bits of the layers this shape is on (bit 0 by default); [physics] layers in project.toml names them and physics.layers lists them.", {}},
+    FieldInfo{"mask", "u32", "Bits of the layers this shape collides with (all by default). Two shapes collide, touch as a trigger, or answer a query only when each is on a layer the other's mask includes.", {}},
+    FieldInfo{"group", "i32", "Collision group: two shapes in the same negative group never collide, in the same positive group always collide, whatever their layers; 0 leaves it to the layers (docs/design/physics.md, Groups and exceptions).", {}},
 }};
 constexpr std::array<FieldInfo, 16> kAudioSourceFields = {{
-    FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav."},
-    FieldInfo{"volume", "f32", "Linear gain, 0..4."},
-    FieldInfo{"pitch", "f32", "Playback rate multiplier."},
-    FieldInfo{"lowpass", "f32", "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice."},
-    FieldInfo{"reverb", "f32", "How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room."},
-    FieldInfo{"bus", "string", "The bus the voice plays on (music, effects, dialogue: any name): a bus is set as one with audio.bus, its volume, a mute, a low-pass and ducking under another bus (docs/design/audio.md, Buses)."},
-    FieldInfo{"loop", "bool", "Restart when the clip ends."},
-    FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists."},
-    FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is)."},
-    FieldInfo{"near", "f32", "Distance within which a spatial source plays at its full volume."},
-    FieldInfo{"range", "f32", "Distance at which a spatial source is silent."},
-    FieldInfo{"occlusion", "f32", "How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is)."},
-    FieldInfo{"doppler", "f32", "How strongly a spatial source's pitch follows its motion toward or away from the listener, and the listener's own (the Doppler effect, sound at 343 m/s): 1 as in air, 0 keeps the pitch; the change is held between half and twice the pitch."},
-    FieldInfo{"occluded", "bool", "Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes)."},
-    FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine)."},
-    FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine)."},
+    FieldInfo{"clip", "string", "Project-relative WAV path such as assets/hum.wav.", {}},
+    FieldInfo{"volume", "f32", "Linear gain, 0..4.", {}},
+    FieldInfo{"pitch", "f32", "Playback rate multiplier.", {}},
+    FieldInfo{"lowpass", "f32", "How much of the high end is kept when the voice starts, 0..1: 1 is the clip as it is, small values muffle it (underwater, behind a door); audio.set {lowpass} changes a playing voice.", {}},
+    FieldInfo{"reverb", "f32", "How much of the voice goes to the room's reverb (audio.reverb), 0..1: 0 keeps it dry whatever the room.", {}},
+    FieldInfo{"bus", "string", "The bus the voice plays on (music, effects, dialogue: any name): a bus is set as one with audio.bus, its volume, a mute, a low-pass and ducking under another bus (docs/design/audio.md, Buses).", {}},
+    FieldInfo{"loop", "bool", "Restart when the clip ends.", {}},
+    FieldInfo{"autoplay", "bool", "Start playing as soon as the component exists.", {}},
+    FieldInfo{"spatial", "bool", "Heard from where the entity is: the volume falls from full within `near` of the listener (an enabled AudioListener entity, else the camera) to nothing at `range`, and the sound pans to the side the entity is on (docs/design/audio.md, Where a sound is).", {}},
+    FieldInfo{"near", "f32", "Distance within which a spatial source plays at its full volume.", {}},
+    FieldInfo{"range", "f32", "Distance at which a spatial source is silent.", {}},
+    FieldInfo{"occlusion", "f32", "How much a wall in the way takes from a spatial source, 0..1: above 0, each tick a ray runs from the listener to the entity, and a collider of another entity across it (not a trigger, not the listener's own) scales the volume by 1 - occlusion and cuts the voice's high end to `lowpass` times the same, so a sound behind a door is quieter and muffled (docs/design/audio.md, Where a sound is).", {}},
+    FieldInfo{"doppler", "f32", "How strongly a spatial source's pitch follows its motion toward or away from the listener, and the listener's own (the Doppler effect, sound at 343 m/s): 1 as in air, 0 keeps the pitch; the change is held between half and twice the pitch.", {}},
+    FieldInfo{"occluded", "bool", "Whether a collider stands between the listener and this source right now (written by the engine when `occlusion` is above 0; `audio.occluded` is emitted when it changes).", {}},
+    FieldInfo{"playing", "bool", "Whether a voice is currently playing this source (written by the engine).", {}},
+    FieldInfo{"voice", "u32", "Id of the playing voice, 0 when silent (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 1> kAudioListenerFields = {{
-    FieldInfo{"enabled", "bool", "Whether this listener is the one; disabled, the camera listens again."},
+    FieldInfo{"enabled", "bool", "Whether this listener is the one; disabled, the camera listens again.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
-    FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane."},
-    FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component."},
+    FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane.", {}},
+    FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component.", {}},
 }};
+constexpr std::string_view kNavAgent_modeNames[] = {"idle", "walk", "follow", "formation"};
+constexpr std::string_view kNavAgent_stateNames[] = {"idle", "moving", "arrived", "stuck"};
 constexpr std::array<FieldInfo, 17> kNavAgentFields = {{
-    FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations)."},
-    FieldInfo{"goal", "vec3", "The point to reach in mode 1."},
-    FieldInfo{"target", "entity", "The entity to follow in mode 2, or the leader whose slot to keep in mode 3."},
-    FieldInfo{"offset", "vec3", "In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes."},
-    FieldInfo{"speed", "f32", "Top speed, units per second."},
-    FieldInfo{"radius", "f32", "The agent's radius for keeping clear of other agents and obstacles."},
-    FieldInfo{"arrive", "f32", "Distance from the goal at which the agent stops (state 2)."},
-    FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once."},
-    FieldInfo{"avoidance", "f32", "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others."},
-    FieldInfo{"queue", "f32", "How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning."},
-    FieldInfo{"priority", "i32", "Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it."},
-    FieldInfo{"state", "i32", "0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine)."},
-    FieldInfo{"velocity", "vec3", "The velocity chosen this tick (written by the engine)."},
-    FieldInfo{"corner", "vec3", "The point the agent is heading for: the next corner of its path, or the goal (written by the engine)."},
-    FieldInfo{"distance", "f32", "Length of the remaining path (written by the engine)."},
-    FieldInfo{"neighbours", "i32", "Agents and obstacles the avoidance considered this tick (written by the engine)."},
-    FieldInfo{"queued", "bool", "Whether the agent slowed down behind an agent ahead this tick (written by the engine)."},
+    FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations).", kNavAgent_modeNames},
+    FieldInfo{"goal", "vec3", "The point to reach in mode 1.", {}},
+    FieldInfo{"target", "entity", "The entity to follow in mode 2, or the leader whose slot to keep in mode 3.", {}},
+    FieldInfo{"offset", "vec3", "In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes.", {}},
+    FieldInfo{"speed", "f32", "Top speed, units per second.", {}},
+    FieldInfo{"radius", "f32", "The agent's radius for keeping clear of other agents and obstacles.", {}},
+    FieldInfo{"arrive", "f32", "Distance from the goal at which the agent stops (state 2).", {}},
+    FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once.", {}},
+    FieldInfo{"avoidance", "f32", "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others.", {}},
+    FieldInfo{"queue", "f32", "How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning.", {}},
+    FieldInfo{"priority", "i32", "Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it.", {}},
+    FieldInfo{"state", "i32", "0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine).", kNavAgent_stateNames},
+    FieldInfo{"velocity", "vec3", "The velocity chosen this tick (written by the engine).", {}},
+    FieldInfo{"corner", "vec3", "The point the agent is heading for: the next corner of its path, or the goal (written by the engine).", {}},
+    FieldInfo{"distance", "f32", "Length of the remaining path (written by the engine).", {}},
+    FieldInfo{"neighbours", "i32", "Agents and obstacles the avoidance considered this tick (written by the engine).", {}},
+    FieldInfo{"queued", "bool", "Whether the agent slowed down behind an agent ahead this tick (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 1> kMorphFields = {{
-    FieldInfo{"weights", "list:MorphWeight", "The targets and their weights."},
+    FieldInfo{"weights", "list:MorphWeight", "The targets and their weights.", {}},
+}};
+
+constexpr std::array<RecordInfo, 9> kRecords = {{
+    RecordInfo{"MeshLod", kMeshLodFields},
+    RecordInfo{"MorphWeight", kMorphWeightFields},
+    RecordInfo{"IKLimit", kIKLimitFields},
+    RecordInfo{"Wheel", kWheelFields},
+    RecordInfo{"AnimationLayer", kAnimationLayerFields},
+    RecordInfo{"AnimationState", kAnimationStateFields},
+    RecordInfo{"AnimationTransition", kAnimationTransitionFields},
+    RecordInfo{"AnimationParam", kAnimationParamFields},
+    RecordInfo{"TerrainLayer", kTerrainLayerFields},
 }};
 
 constexpr std::array<ComponentInfo, 40> kComponents = {{
@@ -3436,5 +3533,6 @@ constexpr std::array<ComponentInfo, 40> kComponents = {{
 }  // namespace
 
 std::span<const ComponentInfo> component_infos() { return kComponents; }
+std::span<const RecordInfo> record_infos() { return kRecords; }
 
 }  // namespace pocket::world

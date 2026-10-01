@@ -261,6 +261,9 @@ void Session::apply_project_settings() {
         if (!text || j.is_discarded() || !j.is_object() || !j.contains("buses") || !j["buses"].is_object()) log::warn("runtime", "audio.json is not an object with \"buses\"; keeping the project.toml buses");
         else for (const auto& [name, bj] : j["buses"].items()) if (bj.is_object()) audio_->set_bus(name, bus_settings(audio_->bus(name), bj));
     }
+    // The project's own components (components.toml beside project.toml, handed over by the tool)
+    // before anything is loaded that may carry them.
+    if (auto r = world_->declare_components(project_.value("components", Json::array())); !r) log::warn("runtime", "components.toml: {}", r.error().to_string());
     if (project_.contains("input") && project_["input"].is_object()) gestures_.configure(project_["input"]);
     // [input] cursor: how the pointer starts, "visible" (the default), "hidden" or "locked" (docs/design/input.md, The cursor).
     {
@@ -4313,6 +4316,7 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
                     if (!e2 && t > made) stale.push_back(std::filesystem::relative(f, options_.project_dir, e2).generic_string());
                 };
                 newer(options_.project_dir / "project.toml");
+                newer(options_.project_dir / "components.toml");
                 for (auto it = std::filesystem::recursive_directory_iterator(options_.project_dir / "scripts", ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
                     const std::string ext = it->path().extension().string();
                     if (it->is_regular_file() && (ext == ".ts" || ext == ".tsx" || ext == ".js")) newer(it->path());
@@ -4694,11 +4698,6 @@ Result<Json> Session::model_children(const std::string& mesh_path, std::vector<s
             r = {(c2.x + c0.z) / k, (c2.y + c1.z) / k, 0.25f * k, (c0.y - c1.x) / k};
         }
     };
-    static const std::set<std::string> known_components = {
-#define POCKET_COMPONENT_NAME(C) #C,
-        POCKET_COMPONENT_LIST(POCKET_COMPONENT_NAME)
-#undef POCKET_COMPONENT_NAME
-    };
     std::function<Json(int)> entity_of = [&](int ni) -> Json {
         const assets::Node& n = mesh->nodes[static_cast<std::size_t>(ni)];
         const bool named = !n.name.empty() && name_count[n.name] == 1;
@@ -4751,7 +4750,7 @@ Result<Json> Session::model_children(const std::string& mesh_path, std::vector<s
                 }
                 const Json given = key == "pocket" ? obj : Json{{key.substr(7), obj}};
                 for (const auto& [component, fields] : given.items()) {
-                    if (!known_components.contains(component)) {
+                    if (!world_->known_component(component)) {   // the engine's and the project's
                         warnings.push_back(std::format("{}: no component named {} (world.schema lists them)", n.name, component));
                         continue;
                     }
@@ -4832,6 +4831,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             parent = resolve_entity(p["parent"]);
             if (!w.alive(parent)) return fail("no_such_entity", "no parent for {}", p["parent"].dump());
         }
+        POCKET_TRY_VOID(w.check_components(p.value("components", Json::object())));
         POCKET_TRY(id, w.spawn(opt<std::string>(p, "name", ""), parent, p.value("components", Json::object()), cause));
         Json j;
         j["id"] = id;
@@ -4846,7 +4846,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     if (op == "get") {
         POCKET_TRY(id, need_entity("entity"));
         std::string comp = opt<std::string>(p, "component", "");
-        if (!world::World::known_component(comp)) return fail("unknown_component", "unknown component '{}'", comp);
+        if (!w.known_component(comp)) return fail("unknown_component", "unknown component '{}'", comp);
         if (!w.has(id, comp)) return nullptr;
         return w.get(id, comp);
     }
@@ -4854,8 +4854,11 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         POCKET_TRY(id, need_entity("entity"));
         if (!p.contains("value") || !p["value"].is_object()) return fail("bad_args", "world.set needs value: the fields to change as an object, e.g. {{entity: \"Ball\", component: \"MeshRenderer\", value: {{color: {{r: 0, g: 1, b: 0, a: 1}}}}}}");
         if (!p.contains("component") || !p["component"].is_string()) return fail("bad_args", "world.set needs component: the component's name, e.g. \"MeshRenderer\" (world.schema lists them)");
-        POCKET_TRY_VOID(w.set(id, opt<std::string>(p, "component", ""), p["value"], cause));
-        return Json{{"ok", true}};
+        const std::string comp = p["component"].get<std::string>();
+        POCKET_TRY_VOID(w.check_patch(comp, p["value"]));
+        POCKET_TRY_VOID(w.set(id, comp, p["value"], cause));
+        POCKET_TRY(now, w.get(id, comp));
+        return Json{{"ok", true}, {"value", now}};   // the component as it is now, the patch merged in
     }
     if (op == "remove") {
         POCKET_TRY(id, need_entity("entity"));
@@ -4960,7 +4963,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     if (op == "schema") {
         // Every component, or the ones asked for: by name (component, components) or by a word in
         // the name, a field or the docs (search).
-        Json all = world::World::schema();
+        Json all = w.schema();
         const std::string one = opt<std::string>(p, "component", "");
         std::set<std::string> names;
         if (!one.empty()) names.insert(one);
@@ -5055,6 +5058,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             if (!w.alive(parent)) return fail("no_such_entity", "no entity for {}", p["parent"].dump());
         }
         Json overrides = p.contains("components") && p["components"].is_object() ? p["components"] : Json::object();
+        POCKET_TRY_VOID(w.check_components(overrides));
         std::uint64_t cause = static_cast<std::uint64_t>(opt<double>(p, "cause", 0));
         POCKET_TRY(roots, w.instantiate(fragment, parent, overrides, opt<std::string>(p, "name", ""), cause));
         Json j;

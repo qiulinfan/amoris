@@ -882,7 +882,9 @@ fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
     return lit / 16.0;
 }
 
-fn shade(in: VsOut) -> vec4f {
+// `cut`: whether this pipeline draws cut-outs. Only the cut-out pipelines are compiled with the
+// discard, so the solid ones keep the GPU's early depth test and hidden-surface removal.
+fn shade(in: VsOut, cut: bool) -> vec4f {
     let object = objects[in.instance];
     // Derivatives and samples first: both must stay in uniform control flow.
     let dp1 = dpdx(in.world_pos);
@@ -895,7 +897,7 @@ fn shade(in: VsOut) -> vec4f {
     let em = textureSample(emissive_tex, base_samp, in.uv).rgb;
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     // A cut-out: texels under the cutoff are not drawn (nor picked, the id goes with the color).
-    if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
+    if (cut && object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     // Unlit (MeshRenderer.unlit, KHR_materials_unlit): the colour as it is.
     if ((object.id.y & 4u) != 0u) { return vec4f(base.rgb + object.emissive.rgb * em, base.a); }
     var n = normalize(in.normal);
@@ -1040,12 +1042,21 @@ fn shade(in: VsOut) -> vec4f {
 
 @fragment fn fs(in: VsOut) -> FsOut {
     var out: FsOut;
-    out.color = shade(in);
+    out.color = shade(in, false);
+    out.id = in.id;
+    return out;
+}
+@fragment fn fs_cut(in: VsOut) -> FsOut {
+    var out: FsOut;
+    out.color = shade(in, true);
     out.id = in.id;
     return out;
 }
 @fragment fn fs_color(in: VsOut) -> @location(0) vec4f {
-    return shade(in);
+    return shade(in, false);
+}
+@fragment fn fs_color_cut(in: VsOut) -> @location(0) vec4f {
+    return shade(in, true);
 }
 // Order-independent transparency (weighted blended, McGuire and Bavoil): each translucent surface
 // adds its premultiplied color into an accumulation target weighed by how near and how opaque it
@@ -1057,7 +1068,7 @@ struct OitOut {
     @location(1) reveal: f32,
 };
 @fragment fn fs_oit(in: VsOut) -> OitOut {
-    let c = shade(in);
+    let c = shade(in, true);
     let a = clamp(c.a, 0.0, 1.0);
     let z = abs(dot(in.world_pos - frame.camera_pos.xyz, frame.camera_fwd.xyz));
     let w = a * clamp(10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0)), 1e-2, 3e3);
@@ -1088,6 +1099,12 @@ fn motion(in: VsOut) -> vec2f {
     return (in.cur.xy / in.cur.w - in.prev.xy / in.prev.w) * vec2f(0.5, -0.5);
 }
 @fragment fn fs_id(in: VsOut) -> IdOut {
+    return id_surface(in, false);
+}
+@fragment fn fs_id_cut(in: VsOut) -> IdOut {
+    return id_surface(in, true);
+}
+fn id_surface(in: VsOut, cut: bool) -> IdOut {
     let object = objects[in.instance];
     let dp1 = dpdx(in.world_pos);
     let dp2 = dpdy(in.world_pos);
@@ -1097,7 +1114,7 @@ fn motion(in: VsOut) -> vec2f {
     let mr = textureSample(mr_tex, base_samp, in.uv);
     let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
-    if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
+    if (cut && object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
     if (object.pbr.w > 0.5) { n = mapped_normal(in, n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
     let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
@@ -2500,6 +2517,8 @@ struct Renderer::Impl {
     WGPUPipelineLayout layout = nullptr;
     WGPURenderPipeline pipeline = nullptr;
     WGPURenderPipeline skinned_pipeline = nullptr;
+    WGPURenderPipeline cut_pipeline = nullptr;             // cut-outs (MeshRenderer.cutoff): the only lit pipelines with a discard
+    WGPURenderPipeline cut_skinned_pipeline = nullptr;
     WGPURenderPipeline blend_pipeline = nullptr;           // the lit shading alpha blended, no depth writes
     WGPURenderPipeline blend_skinned_pipeline = nullptr;
     WGPURenderPipeline shadow_skinned_pipeline = nullptr;
@@ -2796,6 +2815,8 @@ struct Renderer::Impl {
     int ms_samples = 1;
     WGPURenderPipeline id_pipeline = nullptr;
     WGPURenderPipeline id_skinned_pipeline = nullptr;
+    WGPURenderPipeline id_cut_pipeline = nullptr;
+    WGPURenderPipeline id_cut_skinned_pipeline = nullptr;
     WGPURenderPipeline id_sprite_pipeline = nullptr;
     WGPUVertexAttribute mesh_attrs[5]{};
     WGPUVertexAttribute skin_attrs[2]{};
@@ -4149,7 +4170,7 @@ struct Renderer::Impl {
         ct.writeMask = WGPUColorWriteMask_All;
         WGPUFragmentState fs{};
         fs.module = shader;
-        fs.entryPoint = rhi::str("fs_color");
+        fs.entryPoint = rhi::str("fs_color_cut");   // probes are drawn rarely and small: one pipeline, cut-outs included
         fs.targetCount = 1;
         fs.targets = &ct;
         WGPUDepthStencilState ds{};
@@ -5572,7 +5593,7 @@ struct Renderer::Impl {
     void release_scene_pipelines() {
         if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
         sky_pipeline = nullptr;
-        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_sprite_pipeline}) {
+        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
         }
@@ -5618,13 +5639,23 @@ struct Renderer::Impl {
         rpd.fragment = &fs;
         pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!pipeline) return fail("gpu_pipeline_failed", "mesh pipeline creation failed");
+        // Cut-outs: the same shading with its discard, drawn after the solid meshes.
+        fs.entryPoint = rhi::str(split ? "fs_color_cut" : "fs_cut");
+        rpd.label = rhi::str("pocket.mesh.cut");
+        cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!cut_pipeline) return fail("gpu_pipeline_failed", "cut-out pipeline creation failed");
         // Skinned meshes: the same lit fragment, a vertex stage that blends joint matrices.
-        rpd.label = rhi::str("pocket.mesh.skinned");
+        rpd.label = rhi::str("pocket.mesh.skinned.cut");
         rpd.vertex.entryPoint = rhi::str("vs_skinned");
         rpd.vertex.bufferCount = 2;
         rpd.vertex.buffers = vbls;
+        cut_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!cut_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned cut-out pipeline creation failed");
+        fs.entryPoint = rhi::str(split ? "fs_color" : "fs");
+        rpd.label = rhi::str("pocket.mesh.skinned");
         skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!skinned_pipeline) return fail("gpu_pipeline_failed", "skinned pipeline creation failed");
+        fs.entryPoint = rhi::str(split ? "fs_color_cut" : "fs_cut");   // a translucent mesh may be cut out too
         // Translucent meshes: the same lit shading blended over what is behind, depth tested but
         // not written (so they never hide each other), drawn after the opaque ones far to near.
         WGPUBlendState mesh_blend{};
@@ -5731,10 +5762,18 @@ struct Renderer::Impl {
             irpd.vertex.buffers = &vbl;
             id_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
             if (!id_pipeline) return fail("gpu_pipeline_failed", "id pipeline creation failed");
-            irpd.label = rhi::str("pocket.ids.skinned");
+            ifs.entryPoint = rhi::str("fs_id_cut");
+            irpd.label = rhi::str("pocket.ids.cut");
+            id_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
+            if (!id_cut_pipeline) return fail("gpu_pipeline_failed", "cut-out id pipeline creation failed");
+            irpd.label = rhi::str("pocket.ids.skinned.cut");
             irpd.vertex.entryPoint = rhi::str("vs_skinned");
             irpd.vertex.bufferCount = 2;
             irpd.vertex.buffers = vbls;
+            id_cut_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
+            if (!id_cut_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned cut-out id pipeline creation failed");
+            ifs.entryPoint = rhi::str("fs_id");
+            irpd.label = rhi::str("pocket.ids.skinned");
             id_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
             if (!id_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned id pipeline creation failed");
             irpd.label = rhi::str("pocket.ids.sprite");
@@ -7902,6 +7941,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         if (a.blend != b.blend) return !a.blend;            // opaque first
         if (a.blend) return a.depth > b.depth;              // translucent far to near
         if (a.in_view != b.in_view) return a.in_view;       // what the camera sees together, so its runs stay whole
+        if (a.cutout != b.cutout) return !a.cutout;         // cut-outs after the solid meshes they may stand behind
         if (a.skinned != b.skinned) return !a.skinned;
         if (a.texture != b.texture) return a.texture < b.texture;
         if (a.mesh != b.mesh) return a.mesh < b.mesh;
@@ -8160,10 +8200,11 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     // Instanced runs of equal mesh, submesh and material; the same loop serves both passes.
     // The blend pipelines are given for the color pass only: the shadow and id passes draw a
     // translucent mesh like any other (it casts a shadow and is picked).
-    // `cut` (the shadow passes): an unskinned cut-out draws through it with its material at group 3,
-    // so the texture's holes let the light through.
+    // `cut` and `cut_skinned`: the pipelines a cut-out draws through, the only ones with a discard
+    // (a solid mesh keeps the GPU's early depth test). The shadow passes have no material group:
+    // their unskinned cut-outs bind theirs at group 3, so the texture's holes let the light through.
     // `keep` (a light's shadow faces): draws it turns down are skipped, splitting their runs.
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr) {
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr, WGPURenderPipeline cut_skinned = nullptr) {
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
         bool current_skinned = false, current_blend = false, current_cut = false;
@@ -8173,7 +8214,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             if (keep && !(*keep)(i)) { ++i; continue; }
             const Draw& d = draws[i];
             const bool blend = d.blend && blend_plain != nullptr;
-            const bool cutting = d.cutout && !d.skinned && cut != nullptr;
+            const bool cutting = d.cutout && !blend && (d.skinned ? cut_skinned : cut) != nullptr;
             std::size_t run = 1;
             while (i + run < draws.size()) {
                 if (keep && !(*keep)(i + run)) break;
@@ -8183,13 +8224,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 ++run;
             }
             if (d.skinned != current_skinned || blend != current_blend || cutting != current_cut) {
-                wgpuRenderPassEncoderSetPipeline(pass, cutting ? cut : blend ? (d.skinned ? blend_skinned : blend_plain) : (d.skinned ? skinned : plain));
+                wgpuRenderPassEncoderSetPipeline(pass, blend ? (d.skinned ? blend_skinned : blend_plain) : cutting ? (d.skinned ? cut_skinned : cut) : (d.skinned ? skinned : plain));
                 current_skinned = d.skinned;
                 current_blend = blend;
                 current_cut = cutting;
                 current_mesh = nullptr;
             }
-            if (cutting) wgpuRenderPassEncoderSetBindGroup(pass, 3, d.material, 0, nullptr);
+            if (cutting && !with_materials) wgpuRenderPassEncoderSetBindGroup(pass, 3, d.material, 0, nullptr);
             if (d.gpu != current_mesh) {
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, d.gpu->vertices, 0, WGPU_WHOLE_SIZE);
                 if (d.skinned) wgpuRenderPassEncoderSetVertexBuffer(pass, 1, d.gpu->skin, 0, WGPU_WHOLE_SIZE);
@@ -8541,7 +8582,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         if (!draws.empty()) {
             wgpuRenderPassEncoderSetBindGroup(ipass, 0, im.scene_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(ipass, 1, im.object_bg, 0, nullptr);
-            draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline, nullptr, nullptr, nullptr, &in_view_only);
+            draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline, nullptr, nullptr, im.id_cut_pipeline, &in_view_only, nullptr, im.id_cut_skinned_pipeline);
         }
         if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.stats.id_draws);
         wgpuRenderPassEncoderEnd(ipass);
@@ -8586,7 +8627,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, nullptr, (oit || glassy) ? &solid_only : &in_view_only);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, im.cut_pipeline, (oit || glassy) ? &solid_only : &in_view_only, nullptr, im.cut_skinned_pipeline);
     }
     if (glassy) {
         // The scene so far copied for the glass to show through, then the glass over it, and the
@@ -8611,8 +8652,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         set_viewport(pass);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, nullptr, nullptr, nullptr, &glass_only);
-        if (!oit && translucent_instances > 0) draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, nullptr, &translucent_only);
+        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, nullptr, nullptr, im.cut_pipeline, &glass_only, nullptr, im.cut_skinned_pipeline);
+        if (!oit && translucent_instances > 0) draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, im.cut_pipeline, &translucent_only, nullptr, im.cut_skinned_pipeline);
         im.stats.glass = glass_instances;
     }
     if (oit) {

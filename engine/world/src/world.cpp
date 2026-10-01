@@ -19,17 +19,19 @@ namespace {
 // flecs asserts on is_alive(0); a default or not-found entity has id 0.
 bool live(flecs::entity e) { return e.id() != 0 && e.is_alive(); }
 
+// What the world can do with one component by name: the engine's (generated structs) and the
+// project's (components.toml beside project.toml: a JSON value per entity) alike.
 struct ComponentOps {
     std::string_view name;
     bool serialized;
-    bool (*has)(flecs::entity);
-    Json (*get)(flecs::entity);
-    void (*set)(flecs::entity, const Json&);
-    void (*remove)(flecs::entity);
-    void (*hash)(StateHasherRef&, flecs::entity);
-    Json (*defaults)();
-    std::size_t (*span)(flecs::entity, std::string_view, float**);  // numeric field floats (mutable)
-    void (*modified)(flecs::entity);
+    std::function<bool(flecs::entity)> has;
+    std::function<Json(flecs::entity)> get;
+    std::function<void(flecs::entity, const Json&)> set;
+    std::function<void(flecs::entity)> remove;
+    std::function<void(StateHasherRef&, flecs::entity)> hash;
+    std::function<Json()> defaults;
+    std::function<std::size_t(flecs::entity, std::string_view, float**)> span;  // numeric field floats (mutable)
+    std::function<void(flecs::entity)> modified;
 };
 
 #define POCKET_OPS(C)                                                                                   \
@@ -44,7 +46,7 @@ struct ComponentOps {
         [](flecs::entity e, std::string_view path, float** out) { return numeric_span(e.get_mut<C>(), path, out); }, \
         [](flecs::entity e) { e.modified<C>(); }},
 
-const std::vector<ComponentOps>& ops_table() {
+const std::vector<ComponentOps>& engine_ops() {
     static const std::vector<ComponentOps> table = [] {
         std::vector<ComponentOps> t = {POCKET_COMPONENT_LIST(POCKET_OPS)};
         for (auto& op : t) {
@@ -58,8 +60,8 @@ const std::vector<ComponentOps>& ops_table() {
 }
 #undef POCKET_OPS
 
-const ComponentOps* find_ops(std::string_view name) {
-    for (const auto& op : ops_table()) {
+const ComponentOps* find_engine_ops(std::string_view name) {
+    for (const auto& op : engine_ops()) {
         if (op.name == name) return &op;
     }
     return nullptr;
@@ -134,9 +136,7 @@ std::string short_field(std::string_view name) {
 
 }  // namespace
 
-std::string format_component_compact(std::string_view component, const Json& value, bool only_non_default) {
-    const ComponentOps* op = find_ops(component);
-    Json defaults = op ? op->defaults() : Json::object();
+std::string format_component_compact(std::string_view component, const Json& value, bool only_non_default, const Json& defaults) {
     std::string out(component);
     std::string fields;
     for (auto& [k, v] : value.items()) {
@@ -148,6 +148,108 @@ std::string format_component_compact(std::string_view component, const Json& val
     if (!fields.empty()) out += " " + fields;
     return out;
 }
+
+std::string format_component_compact(std::string_view component, const Json& value, bool only_non_default) {
+    const ComponentOps* op = find_engine_ops(component);
+    return format_component_compact(component, value, only_non_default, op ? op->defaults() : Json::object());
+}
+
+// A component a project declares (components.toml beside project.toml): a JSON object per entity
+// holding every field, kept to the declared types as it is written.
+struct ProjectComponent {
+    struct Field {
+        std::string name, type, doc;
+        std::vector<std::string> names;          // an i32 field's value names
+        std::vector<std::string_view> name_views;
+    };
+    std::string name, doc;
+    std::vector<Field> fields;
+    std::vector<FieldInfo> infos;   // views into `fields`, for the schema and the patch check
+    Json defaults = Json::object();
+    ecs_entity_t id = 0;
+};
+
+namespace {
+
+// Flecs stores a project component's value as a Json object in place.
+void json_ctor(void* ptr, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) new (static_cast<Json*>(ptr) + i) Json();
+}
+void json_dtor(void* ptr, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) (static_cast<Json*>(ptr) + i)->~Json();
+}
+void json_copy(void* dst, const void* src, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) static_cast<Json*>(dst)[i] = static_cast<const Json*>(src)[i];
+}
+void json_move(void* dst, void* src, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) static_cast<Json*>(dst)[i] = std::move(static_cast<Json*>(src)[i]);
+}
+void json_copy_ctor(void* dst, const void* src, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) new (static_cast<Json*>(dst) + i) Json(static_cast<const Json*>(src)[i]);
+}
+void json_move_ctor(void* dst, void* src, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) new (static_cast<Json*>(dst) + i) Json(std::move(static_cast<Json*>(src)[i]));
+}
+void json_ctor_move_dtor(void* dst, void* src, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) {
+        new (static_cast<Json*>(dst) + i) Json(std::move(static_cast<Json*>(src)[i]));
+        (static_cast<Json*>(src) + i)->~Json();
+    }
+}
+void json_move_dtor(void* dst, void* src, std::int32_t count, const ecs_type_info_t*) {
+    for (std::int32_t i = 0; i < count; ++i) {
+        static_cast<Json*>(dst)[i] = std::move(static_cast<Json*>(src)[i]);
+        (static_cast<Json*>(src) + i)->~Json();
+    }
+}
+
+std::string_view parts_of(std::string_view type) {
+    if (type == "vec2") return "xy";
+    if (type == "vec3") return "xyz";
+    if (type == "vec4" || type == "quat") return "xyzw";
+    if (type == "color") return "rgba";
+    return {};
+}
+
+double as_f32(double v) { return static_cast<double>(static_cast<float>(v)); }
+
+// One field's value as written (a number, a name, a part list) into the stored form; what does
+// not fit the type leaves the stored value as it was (a command's patch was checked before).
+void write_field(const ProjectComponent::Field& f, Json& stored, const Json& v) {
+    const std::string_view t = f.type;
+    if (t == "f32") { if (v.is_number()) stored = as_f32(v.get<double>()); }
+    else if (t == "f64") { if (v.is_number()) stored = v.get<double>(); }
+    else if (t == "i32" || t == "u32" || t == "i64") {
+        if (v.is_number()) stored = static_cast<std::int64_t>(v.get<double>());
+        else if (v.is_string()) {
+            const auto it = std::find(f.names.begin(), f.names.end(), v.get<std::string>());
+            if (it != f.names.end()) stored = static_cast<std::int64_t>(it - f.names.begin());
+        }
+    }
+    else if (t == "bool") { if (v.is_boolean()) stored = v.get<bool>(); else if (v.is_number()) stored = v.get<double>() != 0; }
+    else if (t == "string") { if (v.is_string()) stored = v; }
+    else if (t == "entity") { if (v.is_number()) stored = static_cast<std::uint64_t>(std::max(0.0, v.get<double>())); }
+    else if (const std::string_view parts = parts_of(t); !parts.empty()) {
+        if (v.is_array()) {
+            for (std::size_t i = 0; i < parts.size() && i < v.size(); ++i) if (v[i].is_number()) stored[std::string(1, parts[i])] = as_f32(v[i].get<double>());
+        } else if (v.is_object()) {
+            for (const auto& [k, x] : v.items()) if (k.size() == 1 && parts.find(k[0]) != std::string_view::npos && x.is_number()) stored[k] = as_f32(x.get<double>());
+        }
+    }
+}
+
+void hash_field(const ProjectComponent::Field& f, StateHasherRef& h, const Json& v) {
+    const std::string_view t = f.type;
+    if (t == "f32") h.f32(v.is_number() ? v.get<float>() : 0.0f);
+    else if (t == "f64") h.f64(v.is_number() ? v.get<double>() : 0.0);
+    else if (t == "i32" || t == "u32" || t == "i64") h.i64(v.is_number() ? v.get<std::int64_t>() : 0);
+    else if (t == "bool") h.u8(v.is_boolean() && v.get<bool>() ? 1 : 0);
+    else if (t == "string") h.str(v.is_string() ? v.get_ref<const std::string&>() : std::string());
+    else if (t == "entity") h.entity(v.is_number() ? v.get<std::uint64_t>() : 0);
+    else for (char c : parts_of(t)) h.f32(v.is_object() && v.contains(std::string(1, c)) && v[std::string(1, c)].is_number() ? v[std::string(1, c)].get<float>() : 0.0f);
+}
+
+}  // namespace
 
 struct World::Impl {
     std::map<std::string, std::pair<Vec3, Vec3>> mesh_bounds;  // local AABB per asset mesh path
@@ -165,6 +267,18 @@ struct World::Impl {
     flecs::query<const Sprite, const WorldTransform> sprite_bounds;
     flecs::query<SpriteAnimation, Sprite> sprite_anim;
     std::map<std::string, World::SpriteClip> clips;
+    // The components this world knows: the engine's, then the project's.
+    std::vector<ComponentOps> ops = engine_ops();
+    std::vector<ComponentInfo> infos{component_infos().begin(), component_infos().end()};
+    std::vector<std::unique_ptr<ProjectComponent>> project;
+    std::map<std::string, ecs_entity_t> project_ids;   // flecs ids by name, kept across redeclarations
+
+    const ComponentOps* find(std::string_view name) const {
+        for (const auto& op : ops) {
+            if (op.name == name) return &op;
+        }
+        return nullptr;
+    }
 
     Impl() {
         ecs_log_set_level(-1);
@@ -225,6 +339,106 @@ struct World::Impl {
 };
 
 World::World() : impl_(std::make_unique<Impl>()) {}
+
+Status World::declare_components(const Json& list) {
+    if (list.is_null()) return declare_components(Json::array());
+    if (!list.is_array()) return fail("bad_components", "a project's components are an array of {{name, doc, fields}}");
+    std::vector<std::unique_ptr<ProjectComponent>> next;
+    for (const Json& c : list) {
+        auto pc = std::make_unique<ProjectComponent>();
+        pc->name = c.value("name", "");
+        pc->doc = c.value("doc", "");
+        if (pc->name.empty()) return fail("bad_components", "a project component needs a name");
+        if (find_engine_ops(pc->name)) return fail("bad_components", "{} is an engine component; a project's components need names of their own", pc->name);
+        for (const auto& other : next) if (other->name == pc->name) return fail("bad_components", "{} is declared twice", pc->name);
+        for (const Json& f : c.value("fields", Json::array())) {
+            ProjectComponent::Field field;
+            field.name = f.value("name", "");
+            field.type = f.value("type", "");
+            field.doc = f.value("doc", "");
+            for (const Json& n : f.value("names", Json::array())) if (n.is_string()) field.names.push_back(n.get<std::string>());
+            const bool scalar = field.type == "f32" || field.type == "f64" || field.type == "i32" || field.type == "u32" || field.type == "i64" || field.type == "bool" || field.type == "string" || field.type == "entity";
+            if (field.name.empty() || (!scalar && parts_of(field.type).empty())) return fail("bad_components", "{}.{}: a field is a name and one of the types f32, f64, i32, u32, i64, bool, string, entity, vec2, vec3, vec4, quat, color (not '{}')", pc->name, field.name, field.type);
+            // The default as declared, kept to the type; otherwise zero, false, empty, white for a color.
+            Json value = field.type == "string" ? Json("") : field.type == "bool" ? Json(false) : Json(0);
+            if (const std::string_view parts = parts_of(field.type); !parts.empty()) {
+                value = Json::object();
+                for (char p : parts) value[std::string(1, p)] = (field.type == "color" || (field.type == "quat" && p == 'w')) ? 1.0 : 0.0;
+            }
+            if (f.contains("default")) write_field(field, value, f["default"]);
+            pc->defaults[field.name] = value;
+            pc->fields.push_back(std::move(field));
+        }
+        for (auto& f : pc->fields) {
+            for (const auto& n : f.names) f.name_views.emplace_back(n);
+            pc->infos.push_back(FieldInfo{f.name, f.type, f.doc, f.name_views});
+        }
+        // One flecs component per name for the world's life: a reload that declares it again keeps it.
+        auto known = impl_->project_ids.find(pc->name);
+        if (known != impl_->project_ids.end()) {
+            pc->id = known->second;
+        } else {
+            flecs::entity ent = impl_->ecs.entity(("__project::" + pc->name).c_str());
+            ecs_component_desc_t cd{};
+            cd.entity = ent.id();
+            cd.type.size = sizeof(Json);
+            cd.type.alignment = alignof(Json);
+            ecs_component_init(impl_->ecs.c_ptr(), &cd);
+            ecs_type_hooks_t hooks{};
+            hooks.ctor = json_ctor;
+            hooks.dtor = json_dtor;
+            hooks.copy = json_copy;
+            hooks.move = json_move;
+            hooks.copy_ctor = json_copy_ctor;
+            hooks.move_ctor = json_move_ctor;
+            hooks.ctor_move_dtor = json_ctor_move_dtor;
+            hooks.move_dtor = json_move_dtor;
+            ecs_set_hooks_id(impl_->ecs.c_ptr(), ent.id(), &hooks);
+            pc->id = ent.id();
+            impl_->project_ids.emplace(pc->name, pc->id);
+        }
+        next.push_back(std::move(pc));
+    }
+    impl_->project = std::move(next);
+    impl_->ops = engine_ops();
+    impl_->infos.assign(component_infos().begin(), component_infos().end());
+    ecs_world_t* w = impl_->ecs.c_ptr();
+    for (const auto& owned : impl_->project) {
+        const ProjectComponent* pc = owned.get();
+        ComponentOps op{
+            pc->name, true,
+            [w, pc](flecs::entity e) { return ecs_has_id(w, e.id(), pc->id); },
+            [w, pc](flecs::entity e) { const auto* v = static_cast<const Json*>(ecs_get_id(w, e.id(), pc->id)); return v ? *v : pc->defaults; },
+            [w, pc](flecs::entity e, const Json& patch) {
+                const bool fresh = !ecs_has_id(w, e.id(), pc->id);
+                auto* v = static_cast<Json*>(ecs_ensure_id(w, e.id(), pc->id, sizeof(Json)));
+                if (fresh || !v->is_object()) *v = pc->defaults;
+                if (patch.is_object()) {
+                    for (const auto& f : pc->fields) if (patch.contains(f.name)) write_field(f, (*v)[f.name], patch[f.name]);
+                }
+                ecs_modified_id(w, e.id(), pc->id);
+            },
+            [w, pc](flecs::entity e) { ecs_remove_id(w, e.id(), pc->id); },
+            [w, pc](StateHasherRef& h, flecs::entity e) {
+                const auto* v = static_cast<const Json*>(ecs_get_id(w, e.id(), pc->id));
+                for (const auto& f : pc->fields) hash_field(f, h, v && v->contains(f.name) ? (*v)[f.name] : pc->defaults[f.name]);
+            },
+            [pc]() { return pc->defaults; },
+            [](flecs::entity, std::string_view, float**) -> std::size_t { return 0; },   // typed-array packing is the engine's components only, for now
+            [w, pc](flecs::entity e) { ecs_modified_id(w, e.id(), pc->id); },
+        };
+        impl_->ops.push_back(std::move(op));
+        impl_->infos.push_back(ComponentInfo{pc->name, pc->doc, true, pc->infos});
+    }
+    return {};
+}
+
+std::span<const ComponentInfo> World::component_infos_all() const { return impl_->infos; }
+
+bool World::project_component(std::string_view component) const {
+    for (const auto& pc : impl_->project) if (pc->name == component) return true;
+    return false;
+}
 World::~World() = default;
 
 flecs::entity World::entity(EntityId id) const { return impl_->ecs.entity(id); }
@@ -266,7 +480,7 @@ Result<EntityId> World::spawn(std::string_view name, EntityId parent, const Json
     }
     if (components.is_object()) {
         for (auto& [cname, value] : components.items()) {
-            const ComponentOps* op = find_ops(cname);
+            const ComponentOps* op = impl_->find(cname);
             if (!op) {
                 e.destruct();
                 impl_->forget_root(e.id());
@@ -399,16 +613,16 @@ std::size_t World::entity_count() const {
     return n;
 }
 
-bool World::known_component(std::string_view component) { return find_ops(component) != nullptr; }
+bool World::known_component(std::string_view component) const { return impl_->find(component) != nullptr; }
 
 bool World::has(EntityId id, std::string_view component) const {
-    const ComponentOps* op = find_ops(component);
+    const ComponentOps* op = impl_->find(component);
     flecs::entity e = impl_->ecs.entity(id);
     return op && live(e) && op->has(e);
 }
 
 Result<Json> World::get(EntityId id, std::string_view component) const {
-    const ComponentOps* op = find_ops(component);
+    const ComponentOps* op = impl_->find(component);
     if (!op) return fail("unknown_component", "unknown component '{}'", component);
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
@@ -417,7 +631,7 @@ Result<Json> World::get(EntityId id, std::string_view component) const {
 }
 
 Status World::set(EntityId id, std::string_view component, const Json& partial, std::uint64_t cause) {
-    const ComponentOps* op = find_ops(component);
+    const ComponentOps* op = impl_->find(component);
     if (!op) return fail("unknown_component", "unknown component '{}'", component);
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
@@ -432,7 +646,7 @@ Status World::set(EntityId id, std::string_view component, const Json& partial, 
 }
 
 Status World::remove(EntityId id, std::string_view component, std::uint64_t cause) {
-    const ComponentOps* op = find_ops(component);
+    const ComponentOps* op = impl_->find(component);
     if (!op) return fail("unknown_component", "unknown component '{}'", component);
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return fail("no_such_entity", "entity {} is not alive", id);
@@ -449,7 +663,7 @@ std::vector<std::string> World::components_of(EntityId id) const {
     std::vector<std::string> out;
     flecs::entity e = impl_->ecs.entity(id);
     if (!live(e)) return out;
-    for (const auto& op : ops_table()) {
+    for (const auto& op : impl_->ops) {
         if (op.has(e)) out.emplace_back(op.name);
     }
     return out;
@@ -477,7 +691,7 @@ Json World::describe(EntityId id) const {
     }
     j["children"] = kids;
     Json comps = Json::object();
-    for (const auto& op : ops_table()) {
+    for (const auto& op : impl_->ops) {
         if (op.has(e)) comps[std::string(op.name)] = op.get(e);
     }
     j["components"] = comps;
@@ -497,12 +711,12 @@ std::string World::tree(const TreeOptions& options) const {
         std::string n = name(id);
         out << "- " << (n.empty() ? "(unnamed)" : n) << " #" << id;
         std::string comps;
-        for (const auto& op : ops_table()) {
+        for (const auto& op : impl_->ops) {
             if (!op.has(e)) continue;
             if (!options.components.empty() && std::find(options.components.begin(), options.components.end(), std::string(op.name)) == options.components.end()) continue;
             if (!comps.empty()) comps += " | ";
             if (options.values && op.name != "WorldTransform" && op.name != "Bounds") {
-                comps += format_component_compact(op.name, op.get(e), true);
+                comps += format_component_compact(op.name, op.get(e), true, op.defaults());
             } else {
                 comps += std::string(op.name);
             }
@@ -538,17 +752,17 @@ Json World::query(const QueryOptions& options) const {
     Json results = Json::array();
     std::vector<const ComponentOps*> with, without, fields;
     for (const auto& n : options.with) {
-        const ComponentOps* op = find_ops(n);
+        const ComponentOps* op = impl_->find(n);
         if (!op) return Json{{"error", "unknown component " + n}};
         with.push_back(op);
     }
     for (const auto& n : options.without) {
-        const ComponentOps* op = find_ops(n);
+        const ComponentOps* op = impl_->find(n);
         if (!op) return Json{{"error", "unknown component " + n}};
         without.push_back(op);
     }
     for (const auto& n : options.fields) {
-        const ComponentOps* op = find_ops(n);
+        const ComponentOps* op = impl_->find(n);
         if (!op) return Json{{"error", "unknown component " + n}};
         fields.push_back(op);
     }
@@ -589,7 +803,7 @@ Json World::summary() const {
     j["entities"] = entity_count();
     j["roots"] = roots().size();
     Json comps = Json::object();
-    for (const auto& op : ops_table()) {
+    for (const auto& op : impl_->ops) {
         std::size_t n = 0;
         for (EntityId r : roots()) impl_->visit(r, 0, [&](EntityId id, int) { if (op.has(impl_->ecs.entity(id))) ++n; return true; });
         if (n) comps[std::string(op.name)] = n;
@@ -600,9 +814,9 @@ Json World::summary() const {
     return j;
 }
 
-Json World::schema() {
+Json World::schema() const {
     Json comps = Json::array();
-    for (const auto& info : component_infos()) {
+    for (const auto& info : impl_->infos) {
         Json c;
         c["name"] = std::string(info.name);
         c["doc"] = std::string(info.doc);
@@ -613,10 +827,17 @@ Json World::schema() {
             fj["name"] = std::string(f.name);
             fj["type"] = std::string(f.type);
             fj["doc"] = std::string(f.doc);
+            if (!f.names.empty()) {
+                // The value names a write may use instead of the numbers (the index is the value).
+                Json names = Json::array();
+                for (std::string_view n : f.names) names.push_back(std::string(n));
+                fj["names"] = std::move(names);
+            }
             fields.push_back(fj);
         }
         c["fields"] = fields;
-        const ComponentOps* op = find_ops(info.name);
+        if (project_component(info.name)) c["project"] = true;   // declared by the project's components.toml
+        const ComponentOps* op = impl_->find(info.name);
         if (op) c["default"] = op->defaults();
         comps.push_back(c);
     }
@@ -656,17 +877,17 @@ std::vector<std::size_t> field_sizes(flecs::world& ecs, const ComponentOps* op, 
 }  // namespace
 
 Result<World::PackInfo> World::pack(std::string_view component, const std::vector<std::string>& fields, const QueryOptions& options, std::vector<float>& data, std::vector<double>& ids) const {
-    const ComponentOps* op = find_ops(component);
+    const ComponentOps* op = impl_->find(component);
     if (!op) return fail("no_such_component", "unknown component '{}'", component);
     if (fields.empty()) return fail("bad_args", "pack needs at least one field");
     std::vector<const ComponentOps*> with, without;
     for (const auto& n : options.with) {
-        const ComponentOps* o = find_ops(n);
+        const ComponentOps* o = impl_->find(n);
         if (!o) return fail("no_such_component", "unknown component '{}'", n);
         with.push_back(o);
     }
     for (const auto& n : options.without) {
-        const ComponentOps* o = find_ops(n);
+        const ComponentOps* o = impl_->find(n);
         if (!o) return fail("no_such_component", "unknown component '{}'", n);
         without.push_back(o);
     }
@@ -715,7 +936,7 @@ Result<World::PackInfo> World::pack(std::string_view component, const std::vecto
 }
 
 Status World::unpack(std::string_view component, const std::vector<std::string>& fields, const double* ids, std::size_t count, const float* data) {
-    const ComponentOps* op = find_ops(component);
+    const ComponentOps* op = impl_->find(component);
     if (!op) return fail("no_such_component", "unknown component '{}'", component);
     std::vector<EntityId> given;
     given.reserve(count);
@@ -888,31 +1109,41 @@ void World::tick(double dt) {
 }
 
 std::uint64_t World::hash() const {
-    // An entity a component refers to is hashed as its place in the walk below (1 the first root).
-    std::unordered_map<std::uint64_t, std::uint64_t> order;
+    // The tree in order, walked once; an entity a component refers to is hashed as its place in
+    // it (1 the first root).
+    std::vector<std::pair<EntityId, int>> walk;
+    walk.reserve(impl_->roots.size());
     for (EntityId r : roots()) {
-        impl_->visit(r, 0, [&](EntityId id, int) {
-            order.emplace(id, order.size() + 1);
+        impl_->visit(r, 0, [&](EntityId id, int depth) {
+            walk.emplace_back(id, depth);
             return true;
         });
     }
+    std::unordered_map<std::uint64_t, std::uint64_t> order;   // made when a component first refers to an entity
     StateHasherRef h;
     h.key_of = [&](std::uint64_t id) {
+        if (order.empty()) {
+            order.reserve(walk.size());
+            for (std::size_t i = 0; i < walk.size(); ++i) order.emplace(walk[i].first, i + 1);
+        }
         auto it = order.find(id);
         return it == order.end() ? ~std::uint64_t{0} : it->second;
     };
-    for (EntityId r : roots()) {
-        impl_->visit(r, 0, [&](EntityId id, int depth) {
-            flecs::entity e = impl_->ecs.entity(id);
-            h.str(name(id));
-            h.u32(static_cast<std::uint32_t>(depth));
-            for (const auto& op : ops_table()) {
-                if (!op.has(e)) continue;
-                h.str(op.name);
-                op.hash(h, e);
-            }
-            return true;
-        });
+    // Which components an entity has is its table's: asked once per table, not per entity.
+    std::unordered_map<const ecs_table_t*, std::vector<const ComponentOps*>> carried;
+    for (const auto& [id, depth] : walk) {
+        flecs::entity e = impl_->ecs.entity(id);
+        const char* n = e.name().c_str();
+        h.str(n ? std::string_view(n) : std::string_view());
+        h.u32(static_cast<std::uint32_t>(depth));
+        auto [it, fresh] = carried.try_emplace(ecs_get_table(impl_->ecs.c_ptr(), id));
+        if (fresh) {
+            for (const auto& op : impl_->ops) if (op.has(e)) it->second.push_back(&op);
+        }
+        for (const ComponentOps* op : it->second) {
+            h.str(op->name);
+            op->hash(h, e);
+        }
     }
     return h.digest();
 }
@@ -921,7 +1152,7 @@ Json World::components_json(EntityId id) const {
     Json comps = Json::object();
     flecs::entity e = impl_->ecs.entity(id);
     if (id == 0 || !e.is_alive()) return comps;
-    for (const auto& op : ops_table()) {
+    for (const auto& op : impl_->ops) {
         if (op.serialized && op.has(e)) comps[std::string(op.name)] = op.get(e);
     }
     return comps;
@@ -930,7 +1161,7 @@ Json World::components_json(EntityId id) const {
 void World::component_hashes(EntityId id, const std::function<void(std::string_view, std::uint64_t)>& fn) const {
     flecs::entity e = impl_->ecs.entity(id);
     if (id == 0 || !e.is_alive()) return;
-    for (const auto& op : ops_table()) {
+    for (const auto& op : impl_->ops) {
         if (!op.serialized || !op.has(e)) continue;
         StateHasherRef h;
         h.key_of = [this](std::uint64_t id) {
@@ -957,7 +1188,7 @@ Json World::save_entity_json(EntityId id) const {
         Json j;
         j["name"] = name(id);
         Json comps = Json::object();
-        for (const auto& op : ops_table()) {
+        for (const auto& op : impl_->ops) {
             if (op.serialized && op.has(e)) comps[std::string(op.name)] = op.get(e);
         }
         if (!comps.empty()) j["components"] = comps;

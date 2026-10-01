@@ -35,3 +35,16 @@ The same 3000 cubes drawn two ways (release build, headless 960x540, Apple M5, `
 | Instanced: one storage buffer of objects, `instance_index` per row, one draw per (mesh, submesh, material) run | 1 | 0.35 |
 
 The script side of this sample (8.4 ms, half of it the deliberately slow JSON path) is what the frame is made of; the renderer is not the cost at this size. `perf` reports every phase (`frame`, `poll`, `tick`, `script`, `physics`, `world`, `state`, `render`) so the next bottleneck is a number too.
+
+## Hashing the swarm (2026-10-01)
+
+Every tick folds the exposed state and the whole world into the run's tick hash (what replays, `recorder` and lockstep peers compare). At 3002 entities the `state` phase was 1.35 ms a tick (release, 300 headless frames, `timings.state.avg_ms`), against 0.008 ms with `--no-tick-hash`; timing its parts put 1.32 ms in `World::hash` and the rest at a few microseconds. The bytes hashed (about 260 an entity: names, component names, every field) went through FNV-1a a byte at a time, a multiply each, one after another.
+
+| Change | `state` ms/tick |
+|---|---:|
+| before | 1.35 |
+| the world walked once, which components an entity has asked once per flecs table | 1.19 |
+| `StateHasher` mixing one step per value (a string: its length, then eight bytes a step) | 0.42 |
+| the entity-order map built only when a component refers to an entity | 0.38 to 0.43 |
+
+The digest is new (`hello-golden.json` and the reproducible-math sweep pin were regenerated); what is hashed is unchanged, and the mixing uses 64-bit integer operations only, so native and web builds agree as before.

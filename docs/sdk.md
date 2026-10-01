@@ -86,6 +86,22 @@ A slot is one JSON file (the scene plus the `onSave` objects per script context)
 
 `scenario("walking right collects a coin", (g) => { g.holdWhile("move_x", 1); g.until(() => g.state("score") >= 1, { timeout: 1 }); g.check(() => expect(g.count("coin.collected")).toBe(1)); })` in `<project>/scenarios/*.ts`; `pocket scenario <project> --seeds 20` runs them (`docs/design/scenarios.md`).
 
+## Your own components
+
+A game's own data goes on its entities as components it declares, not in script variables: a `components.toml` beside `project.toml`, in the engine's format (ADR 0007):
+
+```toml
+[[component]]
+name = "Enemy"
+doc = "A chaser: what it does to the player on a hit and where it came from."
+fields = [
+    { name = "damage", type = "f32", default = 10.0, doc = "Health a hit takes from the player." },
+    { name = "kind", type = "i32", default = 0, enum = ["grunt", "brute"], doc = "0 grunt, 1 brute." },
+]
+```
+
+They are components like the engine's: `world.spawn` and `world.set` write them (`{kind: "brute"}`; a misspelt field is refused with the nearest one), `world.query({with: ["Enemy"]})` finds them, the world hash, saves, `recorder.track` and the editor's inspector see them, a scene file or a Blender custom property (`pocket.Enemy = {"kind": "brute"}`) sets them, and `pocket check` types them (`world.get(e, "Enemy").damage` is a number). Fields are scalars and vectors (`f32`, `f64`, `i32`, `u32`, `i64`, `bool`, `string`, `entity`, `vec2`, `vec3`, `vec4`, `quat`, `color`), and an `i32` may name its values. `project.apply` and `pocket run --watch` pick up an edited `components.toml`. `samples/playground` keeps its enemies this way; `tests/evidence/components/` is an agent's session with them.
+
 ## Packages
 
 A package from npm is imported by its name, like the SDK: `npm install simplex-noise` in the project directory, then `import { createNoise2D } from "simplex-noise"`. The bundler finds it in the nearest `node_modules` (the project's or one above it) and enters it through its package.json the way a browser bundler does: `exports` under the `import`, `module`, `browser`, `default` and `require` conditions, in the package's order, subpaths and `*` patterns included (`inkjs/full`); without `exports`, `module`, then `browser`, then `main`. ES modules go the same way as the project's own files; CommonJS files are wrapped with `module`, `exports` and `require` (what they require by a string literal is bundled, and an ES module importing one sees `module.exports` as its default and its properties by name); JSON files are their value. Node's own modules (`fs`, `path`, `crypto`, ...) do not exist in a game: a static import of one is refused with a message, a `require` of one throws only when it runs (packages often try one and fall back), and one a package's `"browser"` map turns off (`"crypto": false`) is an empty object. `pocket check` reads the packages' own types or their `@types/` package. Nothing else is needed at run time: the packages are in the bundle, so a packed game carries them, web build included.

@@ -2,7 +2,7 @@
 //
 // Every call goes through one native command with JSON parameters; the same commands are served
 // over HTTP to external agents, so what a script can do, an agent can do, with the same words.
-import type { ComponentName, Components, Vec3 } from "./generated/components";
+import type { ComponentEnums, ComponentName, Components, Vec3 } from "./generated/components";
 
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
@@ -14,7 +14,9 @@ export type Entity = number;
 export type EntityRef = Entity | string;
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
-export type ComponentPatch = { [K in ComponentName]?: DeepPartial<Components[K]> };
+/** A component as a write gives it: a field with value names takes the name too (`Light.kind: "point"`); reads give numbers. */
+export type ComponentInput<K extends ComponentName> = { [F in keyof Components[K]]: F extends keyof ComponentEnums[K] ? Components[K][F] | ComponentEnums[K][F] : Components[K][F] };
+export type ComponentPatch = { [K in ComponentName]?: DeepPartial<ComponentInput<K>> };
 
 export function command<T = unknown>(name: string, params?: unknown): T {
     return __pocket.command(name, params) as T;
@@ -87,7 +89,7 @@ export const world = {
         const v = command<Components[K] | null>("world.get", { entity, component });
         return v === null ? undefined : v;
     },
-    set<K extends ComponentName>(entity: EntityRef, component: K, value: DeepPartial<Components[K]>, cause?: number): void {
+    set<K extends ComponentName>(entity: EntityRef, component: K, value: DeepPartial<ComponentInput<K>>, cause?: number): void {
         command("world.set", { entity, component, value, cause });
     },
     remove(entity: EntityRef, component: ComponentName, cause?: number): void {

@@ -183,7 +183,8 @@ TEST_CASE("scene save and load round trip", "[world]") {
 }
 
 TEST_CASE("schema lists every component with defaults", "[world]") {
-    Json s = World::schema();
+    World w;
+    Json s = w.schema();
     REQUIRE(s["components"].size() == component_infos().size());
     bool found = false;
     for (auto& c : s["components"]) {
@@ -194,8 +195,66 @@ TEST_CASE("schema lists every component with defaults", "[world]") {
         }
     }
     REQUIRE(found);
-    REQUIRE(World::known_component("Velocity"));
-    REQUIRE_FALSE(World::known_component("Nope"));
+    REQUIRE(w.known_component("Velocity"));
+    REQUIRE_FALSE(w.known_component("Nope"));
+}
+
+TEST_CASE("a project declares components of its own: set, queried, hashed, saved and checked like the engine's", "[world][project]") {
+    const Json enemy = Json::parse(R"([{"name": "Enemy", "doc": "A foe.", "fields": [
+        {"name": "hp", "type": "f32", "default": 10},
+        {"name": "speed", "type": "f32", "default": 2.5},
+        {"name": "kind", "type": "i32", "names": ["grunt", "boss"]},
+        {"name": "home", "type": "vec3"},
+        {"name": "tint", "type": "color"},
+        {"name": "angry", "type": "bool"},
+        {"name": "label", "type": "string", "default": "foe"}]}])");
+    World w;
+    REQUIRE(w.declare_components(enemy).has_value());
+    REQUIRE(w.known_component("Enemy"));
+    REQUIRE(w.project_component("Enemy"));
+    const std::uint64_t before = w.hash();
+    auto id = w.spawn("Orc", 0, Json{{"Enemy", Json{{"kind", "boss"}, {"home", Json::array({1, 2, 3})}}}});
+    REQUIRE(id.has_value());
+    Json v = w.get(*id, "Enemy").value();
+    INFO(v.dump());
+    REQUIRE(v["hp"] == 10.0);
+    REQUIRE(v["kind"] == 1);
+    REQUIRE(v["home"] == Json{{"x", 1.0}, {"y", 2.0}, {"z", 3.0}});
+    REQUIRE(v["tint"]["a"] == 1.0);
+    REQUIRE(v["label"] == "foe");
+    REQUIRE(w.set(*id, "Enemy", Json{{"hp", 4}, {"angry", true}}).has_value());
+    REQUIRE(w.get(*id, "Enemy").value()["hp"] == 4.0);
+    REQUIRE(w.get(*id, "Enemy").value()["speed"] == 2.5);   // merged, not replaced
+    REQUIRE(w.hash() != before);
+    const std::uint64_t after = w.hash();
+    REQUIRE(w.set(*id, "Enemy", Json{{"hp", 5}}).has_value());
+    REQUIRE(w.hash() != after);   // its fields are in the hash
+    QueryOptions q;
+    q.with = {"Enemy"};
+    REQUIRE(w.query(q)["count"] == 1);
+    REQUIRE(w.components_of(*id) == std::vector<std::string>{"Enemy"});
+    // Checked like an engine component's patch.
+    auto bad = w.check_patch("Enemy", Json{{"hpp", 3}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("did you mean 'hp'") != std::string::npos);
+    REQUIRE_FALSE(w.check_patch("Enemy", Json{{"kind", "dragon"}}).has_value());
+    REQUIRE(w.check_patch("Enemy", Json{{"kind", "grunt"}, {"tint", Json{{"r", 0.5}}}}).has_value());
+    // The schema has it, marked as the project's.
+    bool listed = false;
+    for (const Json& c : w.schema()["components"]) if (c["name"] == "Enemy") listed = c.value("project", false) && c["fields"][2]["names"] == Json::array({"grunt", "boss"});
+    REQUIRE(listed);
+    // Saved and loaded into a world that declares it too: the same world, the same hash.
+    Json saved = w.save();
+    World w2;
+    REQUIRE(w2.declare_components(enemy).has_value());
+    REQUIRE(w2.load(saved).has_value());
+    REQUIRE(w2.get(w2.find("Orc"), "Enemy").value() == w.get(*id, "Enemy").value());
+    REQUIRE(w2.hash() == w.hash());
+    // Declaring again (a reload) keeps the values; an engine name cannot be taken.
+    REQUIRE(w.declare_components(enemy).has_value());
+    REQUIRE(w.get(*id, "Enemy").value()["hp"] == 5.0);
+    REQUIRE_FALSE(w.declare_components(Json::parse(R"([{"name": "Transform", "fields": []}])")).has_value());
+    REQUIRE(w.destroy(*id).has_value());
 }
 
 #include <pocket/world/transcript.hpp>

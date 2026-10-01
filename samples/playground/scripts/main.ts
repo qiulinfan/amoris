@@ -3,11 +3,12 @@
 // Enemies spawn on a timer as navigation agents that follow the player around the pillars and
 // around a cart rolling across the south half (docs/design/navigation.md), and are "hit" when they get
 // close. Every hit is an event whose cause is the spawn event of that enemy, so an agent can ask
-// "why did the player lose health?" and get a chain, not a guess.
+// "why did the player lose health?" and get a chain, not a guess. What an enemy is lives on the
+// entity as the project's own Enemy component (components.toml): world.query finds them all.
 import { events, expose, log, nav, onStart, onTick, particles, random, setClearColor, tween, world } from "pocket";
 
-const enemies = new Map<number, { spawnSeq: number; spawnTick: number }>();
 let nextSpawn = 0.5;
+let spawned = 0;
 let hits = 0;
 let killed = 0;
 let navCells = 0;
@@ -54,41 +55,42 @@ onTick(({ tick, time }) => {
         else if (cartPos.x < -5 && cartVel.x < 0) world.set(cart, "Velocity", { linear: { x: 1.5, y: 0, z: 0 } });
     }
 
-    if (time >= nextSpawn && enemies.size < 6) {
+    const enemies = world.query({ with: ["Enemy", "Transform"] });
+    if (time >= nextSpawn && enemies.length < 6) {
         nextSpawn = time + 0.75;
         const angle = random() * Math.PI * 2;
         const dist = 6 + random() * 2;
+        const brute = ++spawned % 5 === 0;   // every fifth one
         // Enemies come from a prefab file; the position and the agent's target are set per spawn.
         const id = world.instantiate("prefabs/enemy.json", {
             parent: "/Level",
             components: {
                 Transform: { position: { x: Math.cos(angle) * dist, y: 0.5, z: Math.sin(angle) * dist }, scale: { x: 0.2, y: 0.2, z: 0.2 } },
-                NavAgent: { mode: 2, target: player, speed: 2.5, radius: 0.35 },
+                NavAgent: { mode: "follow", target: player, speed: brute ? 1.8 : 2.5, radius: 0.35 },
+                Enemy: { kind: brute ? "brute" : "grunt", damage: brute ? 20 : 10 },
             },
         });
         // Pop in over 0.4 s of simulation time (tweens run on ticks, so this replays exactly).
         tween.scale(id, 1, { duration: 0.4, ease: "backOut" });
         const spawnSeq = events.lastSeq();
-        enemies.set(id, { spawnSeq, spawnTick: tick });
+        world.set(id, "Enemy", { spawn_seq: spawnSeq, spawn_tick: tick });
         events.emit("enemy.spawned", { id, angle: Number(angle.toFixed(3)) }, { subject: id, cause: spawnSeq });
     }
 
     const playerPos = world.get(player, "Transform")!.position;
     const settled: Array<{ x: number; z: number }> = [];
-    for (const [id, info] of enemies) {
-        const t = world.get(id, "Transform");
-        if (t === undefined) {
-            enemies.delete(id);
-            continue;
-        }
+    for (const row of enemies) {
+        const id = row.id;
+        const t = row.Transform!;
+        const info = row.Enemy!;
         const dx = playerPos.x - t.position.x;
         const dz = playerPos.z - t.position.z;
         const d = Math.hypot(dx, dz);
         if (d < 0.75) {
             hits++;
             const health = world.get(player, "Health")!;
-            const hitSeq = events.emit("player.hit", { by: id, damage: 10, health: health.current - 10 }, { subject: player, cause: info.spawnSeq });
-            world.set(player, "Health", { current: health.current - 10 }, hitSeq);
+            const hitSeq = events.emit("player.hit", { by: id, damage: info.damage, health: health.current - info.damage }, { subject: player, cause: info.spawn_seq });
+            world.set(player, "Health", { current: health.current - info.damage }, hitSeq);
             // Sparks where the enemy was: a one-shot emitter that lives just long enough.
             const sparks = world.spawn("Sparks", {
                 parent: "/Level",
@@ -101,25 +103,24 @@ onTick(({ tick, time }) => {
             });
             particles.burst(sparks, 30);
             world.destroy(id, hitSeq);
-            enemies.delete(id);
             killed++;
             continue;
         }
         // The agent does the walking; a corner that is not the player is a detour around something.
         const agent = world.get(id, "NavAgent");
         if (agent !== undefined && agent.state === 1 && Math.hypot(agent.corner.x - playerPos.x, agent.corner.z - playerPos.z) > 0.6) detours++;
-        if (tick - info.spawnTick > 15) settled.push({ x: t.position.x, z: t.position.z });
+        if (tick - info.spawn_tick > 15) settled.push({ x: t.position.x, z: t.position.z });
     }
     for (let i = 0; i < settled.length; i++) {
         for (let j = i + 1; j < settled.length; j++) minGap = Math.min(minGap, Math.hypot(settled[i].x - settled[j].x, settled[i].z - settled[j].z));
     }
 
     if (tick % 120 === 0 && tick > 0) {
-        log("status", { tick, enemies: enemies.size, hits, health: world.get(player, "Health")?.current });
+        log("status", { tick, enemies: enemies.length, hits, health: world.get(player, "Health")?.current });
     }
 });
 
-expose("enemies", () => enemies.size);
+expose("enemies", () => world.query({ with: ["Enemy"] }).length);
 expose("nav.cells", () => navCells);
 expose("nav.detours", () => detours);
 expose("nav.blocked", () => nav.info().blocked);

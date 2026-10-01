@@ -75,6 +75,42 @@ TEST_CASE("Math.random follows the run seed, on a stream of its own", "[runtime]
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a component write is checked field by field, takes value names and answers the value", "[runtime][world][strict]") {
+    auto o = hello_options(10);
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Light", Json{{"kind", "point"}, {"intensity", 2}}}}}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Lamp"}, {"component", "Light"}}).value()["kind"] == 1);
+    Json set = s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"kind", "spot"}}}}).value();
+    INFO(set.dump());
+    REQUIRE(set["ok"] == true);
+    REQUIRE(set["value"]["kind"] == 2);
+    REQUIRE(set["value"]["intensity"] == 2.0);   // the patch merged into what was there
+    auto refused = [&](const Json& params, std::string_view needle) {
+        auto r = s.command("world.set", params);
+        REQUIRE_FALSE(r.has_value());
+        INFO(r.error().message);
+        REQUIRE(r.error().message.find(needle) != std::string::npos);
+    };
+    refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"colour", Json{{"r", 1}}}}}}, "did you mean 'color'");
+    refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"kind", "spotlight"}}}}, "one of directional, point, spot");
+    refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"intensity", "bright"}}}}, "Light.intensity is a number");
+    refused(Json{{"entity", "Lamp"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1}, {"q", 2}}}}}}, "Transform.position is a vec3 with the parts xyz, not 'q'");
+    refused(Json{{"entity", "Lamp"}, {"component", "Animator"}, {"value", Json{{"layers", Json::array({Json{{"clip", "walk"}, {"wieght", 1}}})}}}}, "Animator.layers[0] has no field 'wieght'; did you mean 'weight'?");
+    REQUIRE(s.command("world.get", Json{{"entity", "Lamp"}, {"component", "Light"}}).value()["kind"] == 2);   // nothing was applied
+    auto spawned = s.command("world.spawn", Json{{"name", "Bad"}, {"components", Json{{"Lihgt", Json::object()}}}});
+    REQUIRE_FALSE(spawned.has_value());
+    REQUIRE(spawned.error().message.find("did you mean 'Light'") != std::string::npos);
+    REQUIRE_FALSE(s.command("world.find", Json{{"path", "Bad"}}).value().is_number());   // refused before anything was made
+    // The schema shows the names; a scene may use them too.
+    Json schema = s.command("world.schema", Json{{"component", "Light"}}).value();
+    REQUIRE(schema["components"][0]["fields"][0]["names"] == Json::array({"directional", "point", "spot"}));
+    Json scene = {{"format", "pocket-scene"}, {"version", 1}, {"entities", Json::array({Json{{"name", "Crate"}, {"components", Json{{"RigidBody", Json{{"kind", "kinematic"}}}}}}})}};
+    REQUIRE(s.command("world.instantiate", Json{{"scene", scene}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Crate"}, {"component", "RigidBody"}}).value()["kind"] == 2);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("hello runs headless and reports state", "[runtime]") {
     auto o = hello_options(120);
     o.capture = root() / "build" / "test-out" / "hello-120.png";
