@@ -362,6 +362,11 @@ struct Image {
     std::vector<std::uint8_t> rgba;  // 8-bit RGBA, row major, top-left origin
     std::vector<float> hdr;          // for a Radiance .hdr: linear float RGBA (rgba then holds it clipped and sRGB-encoded)
     [[nodiscard]] Json describe() const;
+    // What it looks like, for a model that reads rather than sees: coverage, where it is drawn,
+    // its colours by name with their shares, how alike its halves are, and with ascii_width over 0
+    // itself in that many characters across (docs/design/assets.md, Looking without eyes).
+    // `frame`: a rendered frame (everything drawn): its colours, and characters by lightness.
+    [[nodiscard]] Json look(int ascii_width = 0, bool frame = false) const;
 };
 
 // Parse glTF 2.0 from memory. Every node with a mesh is baked into world space of the file
@@ -508,7 +513,9 @@ class AssetStore {
     void invalidate_all();
     // Files under <project>/assets by kind (mesh, image, other) with sizes.
     [[nodiscard]] Json list() const;
-    [[nodiscard]] Json describe(const std::string& path);
+    // An image also says what it looks like (coverage, where it is drawn, its colours by name, how
+    // alike its halves are) and, with ascii_width, itself in characters.
+    [[nodiscard]] Json describe(const std::string& path, int ascii_width = 0);
     [[nodiscard]] Json stats() const;
     [[nodiscard]] const std::filesystem::path& project_dir() const { return project_dir_; }
     // Version bumps whenever something is (re)loaded or invalidated; renderers use it to

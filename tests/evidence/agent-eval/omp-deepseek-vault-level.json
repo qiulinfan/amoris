@@ -1,0 +1,44 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via extension --model deepseek/deepseek-flash --env-file /Users/qiulinfan/.omp/agent/.env",
+  "passed": 1,
+  "total": 1,
+  "seconds": 35.4,
+  "tasks": [
+    {
+      "name": "vault_level",
+      "project": "dungeon",
+      "ok": true,
+      "seconds": 35.4,
+      "detail": "a 12 by 8 vault, walled, a solid pillar, 3 coins and a start on its floor",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "extension",
+        "model": "deepseek/deepseek-flash",
+        "seconds": 34.9,
+        "turns": 11,
+        "tool_calls": 15,
+        "tools": {
+          "bash": 8,
+          "read": 3,
+          "pocket (docs)": 1,
+          "pocket": 3
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 19763,
+          "output": 6258,
+          "cache_read": 236928,
+          "total": 262949
+        },
+        "cost_usd": 0.00743
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0074,
+    "tokens": 262949,
+    "tool_calls": 15
+  }
+}

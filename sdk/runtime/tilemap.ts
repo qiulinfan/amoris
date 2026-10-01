@@ -109,6 +109,14 @@ export const tilemap = {
     create(name: string, map: NewMap): { map: string; width: number; height: number; layers: string[]; tilesets: Array<{ name: string; first_gid: number; tiles: number; columns: number }> } {
         return command("tilemap.create", { name, ...map }) as { map: string; width: number; height: number; layers: string[]; tilesets: Array<{ name: string; first_gid: number; tiles: number; columns: number }> };
     },
+    /**
+     * A map drawn in characters (docs/design/tilemaps.md, Maps in characters): `rows` of text and a `legend`
+     * from a character to a tile on a layer ({layer, tile}, or {layers: [...]} bottom first), to an object
+     * ({object: "coin"}: Coin_1, Coin_2 ... in the "objects" layer), or null; "*" a tile under every cell.
+     */
+    fromText(name: string, map: { rows: string[]; legend: Record<string, null | { layer?: string; tile?: number; tileset?: string; gid?: number; layers?: Array<{ layer: string; tile?: number; tileset?: string; gid?: number }>; object?: string; name?: string; under?: { layer: string; tile?: number; tileset?: string } }>; tilesets?: NewMap["tilesets"]; layers?: Array<string | { name: string; solid?: boolean }>; tile_width?: number; tile_height?: number }): { map: string; width: number; height: number; layers: string[]; tilesets: Array<{ name: string; first_gid: number; tiles: number; columns: number }>; objects: Record<string, number> } {
+        return command("tilemap.text", { name, ...map }) as { map: string; width: number; height: number; layers: string[]; tilesets: Array<{ name: string; first_gid: number; tiles: number; columns: number }>; objects: Record<string, number> };
+    },
     /** The map's size, layers, tilesets, object layers, tile size and world bounds. */
     info(entity: EntityRef): Record<string, unknown> {
         return command("tilemap.info", { entity }) as Record<string, unknown>;

@@ -126,7 +126,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: "pocket_look",
         label: "Pocket look",
-        description: "See the running game: renders the current frame to a PNG and returns it as an image, with the visible entities and their pixel bounds. With around (true, or an entity's name), a sheet of the scene or that entity from six sides instead (front, right, back, left, top, perspective).",
+        description: "See the running game: renders the current frame to a PNG and returns it as an image, with the visible entities and their pixel bounds, and the frame in characters for a model that reads text (rows dark to light \" .:-=+*#%@\", rows of colour letters, and its colours by name). With around (true, or an entity's name), a sheet of the scene or that entity from six sides instead (front, right, back, left, top, perspective).",
         parameters: Type.Object({ around: Type.Optional(Type.Union([Type.Boolean(), Type.String()])) }),
         async execute(_id: string, params: { around?: boolean | string }) {
             const dir = mkdtempSync(join(tmpdir(), "pocket-look-"));
@@ -142,11 +142,13 @@ export default function (pi: ExtensionAPI) {
                 };
             }
             const path = join(dir, "frame.png");
-            const cap = await call("capture", { path });
+            const cap = await call("capture", { path, ascii: 64 });
             const visible = await call("render.visible", { limit: 20 });
+            const look = cap.look ?? {};
+            const drawing = Array.isArray(look.ascii) ? `\nThe frame in characters (dark to light), then in colour letters (${look.ascii_key}):\n${look.ascii.join("\n")}\n\n${look.ascii_colours.join("\n")}\nColours: ${(look.colours ?? []).map((c: { name: string; share: number }) => `${c.name} ${Math.round(c.share * 100)}%`).join(", ")}` : "";
             return {
                 content: [
-                    { type: "text", text: text({ width: cap.width, height: cap.height, visible: visible.visible ?? visible }) },
+                    { type: "text", text: text({ width: cap.width, height: cap.height, visible: visible.visible ?? visible }) + drawing },
                     { type: "image", data: readFileSync(path).toString("base64"), mimeType: "image/png" },
                 ],
                 details: undefined,

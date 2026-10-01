@@ -442,6 +442,44 @@ def theme_song_check(env, answer):
     return True, f"{playing[0]['clip']}: {len(tracks)} tracks, {secs[0]:.1f} s, looping"
 
 
+VAULT_ROWS = ["############", "#@.........#", "#..c.......#", "#....##....#", "#....##..c.#", "#..........#", "#.....c....#", "############"]
+
+
+def vault_level_solve(env):
+    legend = {"*": {"layer": "floor", "tile": 0}, "#": {"layer": "walls", "tile": 1}, ".": None, "@": {"object": "start"}, "c": {"object": "coin"}}
+    env.command("tilemap.text", {"name": "maps/vault.tmj", "rows": VAULT_ROWS, "legend": legend, "tilesets": [{"image": "assets/dungeon_tiles.png"}], "layers": ["floor", {"name": "walls", "solid": True}]})
+    env.command("world.spawn", {"name": "Vault", "components": {"Transform": {"position": {"x": 40, "y": 0, "z": 0}}, "TileMap": {"map": "maps/vault.tmj"}}})
+
+
+def vault_level_check(env, answer):
+    p = entity_pos(env, "Vault")
+    if p is None or not near(p["x"], 40, 0.01) or not near(p["y"], 0, 0.01):
+        return False, f"no entity Vault at x 40, y 0 ({p})"
+    info = env.command("tilemap.info", {"entity": "Vault"})
+    if info.get("width") != 12 or info.get("height") != 8:
+        return False, f"the Vault's map is {info.get('width')} by {info.get('height')}, not 12 by 8"
+    solid = lambda x, y: env.command("tilemap.solid", {"entity": "Vault", "tile_x": x, "tile_y": y})["solid"]  # noqa: E731
+    border = [(x, 0) for x in range(12)] + [(x, 7) for x in range(12)] + [(0, y) for y in range(8)] + [(11, y) for y in range(8)]
+    if not all(solid(x, y) for x, y in border):
+        return False, "the walls around the vault are not all solid"
+    if not all(solid(x, y) for x, y in ((5, 3), (6, 3), (5, 4), (6, 4))):
+        return False, "the 2 by 2 pillar at the center (cells 5..6, 3..4) is not solid"
+    open_cells = [(x, y) for x in range(1, 11) for y in range(1, 7) if not (5 <= x <= 6 and 3 <= y <= 4)]
+    if sum(1 for x, y in open_cells if solid(x, y)) > 0:
+        return False, "cells inside the vault besides the pillar are solid"
+    objs = env.command("tilemap.objects", {"entity": "Vault"})
+    coins = [o for o in objs if o.get("type") == "coin"]
+    starts = [o for o in objs if o.get("type") == "start"]
+    if len(coins) != 3 or len(starts) != 1:
+        return False, f"the vault has {len(coins)} coins and {len(starts)} starts, not 3 and 1"
+    for o in coins + starts:
+        x, y = o["center"]["x"] - 40, -o["center"]["y"]
+        cx, cy = int(x), int(y)
+        if not (1 <= cx <= 10 and 1 <= cy <= 6) or solid(cx, cy):
+            return False, f"{o['name']} is at cell ({cx}, {cy}), not on the vault's floor"
+    return True, "a 12 by 8 vault, walled, a solid pillar, 3 coins and a start on its floor"
+
+
 def jump_sound_check(env, answer):
     # A sound file under assets/, silent until the player jumps, heard right after, and again on the next jump.
     st = lambda: env.command("state", {})["state"]  # noqa: E731
@@ -1800,6 +1838,8 @@ TASKS = [
      "task": "Make the sprites game night, through the running game: its tile map (the entity Level) and the Player's sprite lit by the scene's lights, the ambient light #202840 at intensity 0.3, and a warm point light (colour #ffb060, range 5) that goes wherever the Player goes, half a unit in front of it toward the camera. Answer null."},
     {"name": "guard_view", "project": "dungeon", "ticks": 5, "solve": guard_view_solve, "check": guard_view_check,
      "task": "In the dungeon game, about where the Player stands now: how many map cells can it see within 6 cells, as the map's field of view counts them, and does the torch Torch_6 have a clear line of sight from where it is to the Player? Answer with an object {\"cells\": number, \"sees\": boolean}."},
+    {"name": "vault_level", "project": "dungeon", "ticks": 2, "solve": vault_level_solve, "check": vault_level_check,
+     "task": "Add a vault to the running dungeon game: a new tile map named maps/vault.tmj, 12 by 8 cells, with the dungeon's tiles (assets/dungeon_tiles.png: tile 0 floor, tile 1 wall), solid walls all around its edge and a solid 2 by 2 pillar at its center (cells 5 and 6 across, 3 and 4 down), floor everywhere else, and objects on the floor: three of type coin and one of type start. Show it as an entity named Vault at x 40, y 0. Answer null."},
     {"name": "wait_for_coin", "project": "sprites", "ticks": 0, "solve": wait_for_coin_solve, "check": wait_for_coin_check,
      "task": "Hold the move_x action toward +x and run the game until the player collects its first coin; answer with the tick at which the coin was collected, as the integer \"answer\"."},
 ]
@@ -1844,7 +1884,8 @@ def doc_paths():
 def scratch_copy(task):
     """A copy of the task's sample in the run's directory, with its own bundle name; its guide
     (AGENTS.md) points at the copied documentation rather than the repository's."""
-    name = f"bench-{task['name']}-{os.getpid()}"
+    # A name that says nothing of the task: an agent that searched for it found the harness's checks.
+    name = f"game-{os.getpid()}-{TASKS.index(task) if task in TASKS else 0:02d}"
     base = eval_dir()
     dst = os.path.join(base, name)
     shutil.rmtree(dst, ignore_errors=True)

@@ -4921,6 +4921,67 @@ TEST_CASE("a tile map's solid cells cast 2D shadows from the lights onto lit spr
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a capture looks at the frame in characters for a model that reads", "[runtime][capture][look]") {
+    app::Session s(hello_options(100000));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const Json c = s.command("capture", Json{{"ascii", 32}}).value();
+    REQUIRE(c.contains("look"));
+    const Json& look = c["look"];
+    INFO(look.dump());
+    // 32 across; rows for the frame's shape at half height per character.
+    REQUIRE(look["ascii"][0].get<std::string>().size() == 32);
+    REQUIRE(look["ascii"].size() == look["ascii_colours"].size());
+    REQUIRE(look["ascii"].size() == static_cast<std::size_t>(std::lround(32.0 * c["height"].get<double>() / c["width"].get<double>() * 0.5)));
+    REQUIRE_FALSE(look["colours"].empty());
+    REQUIRE_FALSE(look.contains("coverage"));   // a frame is drawn everywhere
+    REQUIRE_FALSE(s.command("capture", Json::object()).value().contains("look"));
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a map drawn in characters: tiles on layers, objects at cell centers, walls solid", "[runtime][tilemap][text]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "dungeon";
+    o.bundle = root() / "build" / "ts" / "dungeon.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    const Json rows = Json::array({"##########", "#@..#....#", "#...#.c..#", "#.c....###", "##########"});
+    const Json legend{{"*", Json{{"layer", "floor"}, {"tile", 0}}}, {"#", Json{{"layer", "walls"}, {"tile", 1}}}, {".", nullptr}, {"@", Json{{"object", "start"}}}, {"c", Json{{"object", "coin"}}}};
+    const Json made = s.command("tilemap.text", Json{{"name", "maps/text.tmj"}, {"rows", rows}, {"legend", legend}, {"tilesets", Json::array({Json{{"image", "assets/dungeon_tiles.png"}}})}, {"layers", Json::array({"floor", Json{{"name", "walls"}, {"solid", true}}})}}).value();
+    INFO(made.dump());
+    REQUIRE(made["width"] == 10);
+    REQUIRE(made["height"] == 5);
+    REQUIRE(made["layers"] == Json::array({"floor", "walls"}));
+    REQUIRE(made["objects"]["coin"] == 2);
+    REQUIRE(made["objects"]["start"] == 1);
+    REQUIRE(s.command("world.spawn", Json{{"name", "Text"}, {"components", Json{{"Transform", Json::object()}, {"TileMap", Json{{"map", "maps/text.tmj"}}}}}}).has_value());
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Text"}, {"tile_x", 4}, {"tile_y", 1}}).value()["solid"] == true);
+    REQUIRE(s.command("tilemap.solid", Json{{"entity", "Text"}, {"tile_x", 3}, {"tile_y", 1}}).value()["solid"] == false);
+    // The floor is under every cell, walls included.
+    const Json tile = s.command("tilemap.tile", Json{{"entity", "Text"}, {"tile_x", 0}, {"tile_y", 0}, {"layer", "floor"}}).value();
+    REQUIRE(tile["layers"][0]["id"] == 0);
+    const Json objs = s.command("tilemap.objects", Json{{"entity", "Text"}}).value();
+    REQUIRE(objs[0]["name"] == "Start_1");
+    REQUIRE(objs[0]["center"]["x"].get<double>() == Catch::Approx(1.5));
+    REQUIRE(objs[0]["center"]["y"].get<double>() == Catch::Approx(-1.5));
+    // A character the legend lacks, and a tile the tileset lacks, are named.
+    auto bad = s.command("tilemap.text", Json{{"name", "maps/bad.tmj"}, {"rows", Json::array({"#?#"})}, {"legend", legend}, {"tilesets", Json::array({Json{{"image", "assets/dungeon_tiles.png"}}})}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("'?'") != std::string::npos);
+    auto far = s.command("tilemap.text", Json{{"name", "maps/bad.tmj"}, {"rows", Json::array({"#"})}, {"legend", Json{{"#", Json{{"layer", "walls"}, {"tile", 9}}}}}, {"tilesets", Json::array({Json{{"image", "assets/dungeon_tiles.png"}}})}});
+    REQUIRE_FALSE(far.has_value());
+    REQUIRE(far.error().message.find("outside tileset") != std::string::npos);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a mesh made from numbers is drawn, collided with, and saved with the scene", "[runtime][mesh][made]") {
     app::Session s(hello_options(1000));
     REQUIRE(s.start().has_value());

@@ -685,3 +685,38 @@ TEST_CASE("a clip is described for an agent that cannot hear it, and read again 
     REQUIRE(a->analyze("assets/tone.sfx").value()["pitch"][0]["note"] == "A5");
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("a restart is silent and lets go: the last run's sounds stop and held actions go, the scene's own sounds start again", "[audio][reload]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "audio";
+    o.bundle = root() / "build" / "ts" / "audio.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.command("audio.play", Json{{"clip", "assets/theme.song"}, {"loop", true}}).has_value());
+    auto clips = [&]() {
+        std::vector<std::string> out;
+        for (const Json& v : s.command("audio.list", Json::object()).value()) out.push_back(v["clip"].get<std::string>());
+        return out;
+    };
+    const auto before = clips();
+    REQUIRE(std::find(before.begin(), before.end(), "assets/theme.song") != before.end());
+    REQUIRE(s.command("project.reload", Json::object()).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    const auto after = clips();
+    REQUIRE(std::find(after.begin(), after.end(), "assets/theme.song") == after.end());
+    REQUIRE(std::find(after.begin(), after.end(), "assets/hum.wav") != after.end());   // the scene's AudioSource again
+    // An action held for the last run is let go by a restart.
+    REQUIRE(s.command("input.hold", Json{{"action", "coin"}, {"ticks", 600}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("project.reload", Json::object()).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("input.state", Json::object()).value()["actions"]["coin"]["down"] == false);
+    REQUIRE(s.finish().has_value());
+}

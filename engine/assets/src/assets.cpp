@@ -931,6 +931,126 @@ Json Image::describe() const {
 
 namespace {
 
+// The name of a colour as a person would say it, from its hue, saturation and value (sRGB).
+const char* colour_name(int r, int g, int b) {
+    const double rf = r / 255.0, gf = g / 255.0, bf = b / 255.0;
+    const double mx = std::max({rf, gf, bf}), mn = std::min({rf, gf, bf});
+    const double v = mx, s = mx > 0 ? (mx - mn) / mx : 0;
+    if (v < 0.16) return "black";
+    if (s < 0.18) return v > 0.85 ? "white" : v > 0.55 ? "light grey" : v > 0.3 ? "grey" : "dark grey";
+    double h = 0;
+    const double d = mx - mn;
+    if (mx == rf) h = 60 * std::fmod((gf - bf) / d, 6.0);
+    else if (mx == gf) h = 60 * ((bf - rf) / d + 2);
+    else h = 60 * ((rf - gf) / d + 4);
+    if (h < 0) h += 360;
+    if (h < 15 || h >= 345) return v < 0.55 && s > 0.4 ? "dark red" : s < 0.45 && v > 0.7 ? "pink" : "red";
+    if (h < 40) return v < 0.6 ? "brown" : "orange";
+    if (h < 52) return v < 0.6 ? "olive" : s > 0.55 ? "gold" : "tan";
+    if (h < 70) return v < 0.55 ? "olive" : "yellow";
+    if (h < 160) return v < 0.45 ? "dark green" : "green";
+    if (h < 200) return "cyan";
+    if (h < 255) return v < 0.45 ? "navy" : "blue";
+    if (h < 290) return "purple";
+    return s < 0.5 ? "pink" : "magenta";
+}
+
+}  // namespace
+
+Json Image::look(int ascii_width, bool frame) const {
+    Json j = frame ? Json{{"width", width}, {"height", height}} : describe();
+    const std::size_t n = static_cast<std::size_t>(width) * height;
+    if (n == 0 || rgba.size() < n * 4) return j;
+    // Where it is drawn (alpha over a half), and what colours it is drawn in.
+    std::uint32_t x0 = width, y0 = height, x1 = 0, y1 = 0;
+    std::size_t opaque = 0, clear = 0;
+    std::map<std::string, std::array<double, 4>> names;   // count, r, g, b sums
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const std::uint8_t* p = &rgba[(static_cast<std::size_t>(y) * width + x) * 4];
+            if (p[3] < 8) ++clear;
+            if (!frame && p[3] <= 128) continue;
+            ++opaque;
+            x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y);
+            auto& c = names[colour_name(p[0], p[1], p[2])];
+            c[0] += 1; c[1] += p[0]; c[2] += p[1]; c[3] += p[2];
+        }
+    }
+    if (!frame) {
+        j["coverage"] = std::round(static_cast<double>(opaque) / static_cast<double>(n) * 1000) / 1000;
+        j["transparent"] = std::round(static_cast<double>(clear) / static_cast<double>(n) * 1000) / 1000;
+        if (opaque > 0) j["drawn"] = Json{{"x", x0}, {"y", y0}, {"width", x1 - x0 + 1}, {"height", y1 - y0 + 1}};
+    }
+    std::vector<std::pair<std::string, std::array<double, 4>>> sorted(names.begin(), names.end());
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second[0] > b.second[0]; });
+    Json colours = Json::array();
+    for (std::size_t k = 0; k < sorted.size() && k < 5; ++k) {
+        const auto& [name, c] = sorted[k];
+        if (c[0] / static_cast<double>(opaque) < 0.02) break;
+        colours.push_back(Json{{"name", name}, {"share", std::round(c[0] / static_cast<double>(opaque) * 100) / 100}, {"hex", std::format("#{:02x}{:02x}{:02x}", static_cast<int>(c[1] / c[0]), static_cast<int>(c[2] / c[0]), static_cast<int>(c[3] / c[0]))}});
+    }
+    j["colours"] = colours;
+    // How alike its left and right halves are (alpha, mirrored).
+    std::size_t same = 0, total = 0;
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width / 2; ++x) {
+            const bool a = rgba[(static_cast<std::size_t>(y) * width + x) * 4 + 3] > 128;
+            const bool b = rgba[(static_cast<std::size_t>(y) * width + (width - 1 - x)) * 4 + 3] > 128;
+            if (a || b) { ++total; same += a == b; }
+        }
+    }
+    if (total > 0 && !frame) j["mirror_symmetry"] = std::round(static_cast<double>(same) / static_cast<double>(total) * 100) / 100;
+    if (ascii_width > 0) {
+        // The picture in characters: a cell's coverage as " .:+#" and, beside it, the letter of its
+        // commonest colour (a cell is about twice as tall as wide, as a terminal's are).
+        const int cw = std::clamp(ascii_width, 4, 96);
+        const int ch = std::max(1, static_cast<int>(std::lround(static_cast<double>(cw) * height / width * 0.5)));
+        static const std::map<std::string, char> kLetters = {{"black", 'k'}, {"white", 'w'}, {"light grey", 'l'}, {"grey", 'g'}, {"dark grey", 'd'}, {"red", 'R'}, {"dark red", 'r'}, {"pink", 'P'}, {"orange", 'O'}, {"brown", 'N'}, {"gold", 'G'}, {"tan", 'T'}, {"olive", 'V'}, {"yellow", 'Y'}, {"green", 'E'}, {"dark green", 'e'}, {"cyan", 'C'}, {"blue", 'B'}, {"navy", 'n'}, {"purple", 'U'}, {"magenta", 'M'}};
+        Json shape = Json::array(), letters = Json::array();
+        for (int cy = 0; cy < ch; ++cy) {
+            std::string row, lrow;
+            for (int cx = 0; cx < cw; ++cx) {
+                const auto px0 = static_cast<std::uint32_t>(static_cast<double>(cx) * width / cw), px1 = std::max(px0 + 1, static_cast<std::uint32_t>(static_cast<double>(cx + 1) * width / cw));
+                const auto py0 = static_cast<std::uint32_t>(static_cast<double>(cy) * height / ch), py1 = std::max(py0 + 1, static_cast<std::uint32_t>(static_cast<double>(cy + 1) * height / ch));
+                std::size_t in = 0, all = 0;
+                double light = 0;
+                std::map<std::string, int> counts;
+                for (std::uint32_t y = py0; y < std::min(py1, height); ++y) {
+                    for (std::uint32_t x = px0; x < std::min(px1, width); ++x) {
+                        const std::uint8_t* p = &rgba[(static_cast<std::size_t>(y) * width + x) * 4];
+                        ++all;
+                        light += (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 255.0;
+                        if (frame || p[3] > 128) { ++in; counts[colour_name(p[0], p[1], p[2])]++; }
+                    }
+                }
+                if (frame) {
+                    // A frame by how light each cell is, dark to light.
+                    static constexpr const char* kRamp = " .:-=+*#%@";
+                    const double l = all ? light / static_cast<double>(all) : 0.0;
+                    row += kRamp[std::clamp(static_cast<int>(l * 10.0), 0, 9)];
+                } else {
+                    const double f = all ? static_cast<double>(in) / static_cast<double>(all) : 0.0;
+                    row += f < 0.1 ? ' ' : f < 0.35 ? '.' : f < 0.6 ? ':' : f < 0.85 ? '+' : '#';
+                }
+                if (counts.empty()) lrow += ' ';
+                else {
+                    const auto top = std::max_element(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+                    const auto it = kLetters.find(top->first);
+                    lrow += it != kLetters.end() ? it->second : '?';
+                }
+            }
+            shape.push_back(row);
+            letters.push_back(lrow);
+        }
+        j["ascii"] = shape;
+        j["ascii_colours"] = letters;
+        j["ascii_key"] = "k black, w white, l light grey, g grey, d dark grey, R red, r dark red, P pink, O orange, N brown, G gold, T tan, V olive, Y yellow, E green, e dark green, C cyan, B blue, n navy, U purple, M magenta";
+    }
+    return j;
+}
+
+namespace {
+
 struct Accessor {
     const std::uint8_t* data = nullptr;
     std::size_t count = 0;
@@ -2009,7 +2129,7 @@ Json AssetStore::list() const {
     return files;
 }
 
-Json AssetStore::describe(const std::string& path) {
+Json AssetStore::describe(const std::string& path, int ascii_width) {
     std::string ext = std::filesystem::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     Json j;
@@ -2026,7 +2146,7 @@ Json AssetStore::describe(const std::string& path) {
     } else {
         auto i = image(path);
         if (!i) { j["error"] = i.error().to_string(); return j; }
-        j = (*i)->describe();
+        j = (*i)->look(ascii_width);
         j["kind"] = "image";
     }
     return j;

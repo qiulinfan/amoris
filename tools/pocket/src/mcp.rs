@@ -124,8 +124,9 @@ fn tools_list() -> Value {
             "limit": { "type": "integer", "default": 200 },
             "type": { "type": "string", "description": "type prefix filter, e.g. 'player.'" }
         }), &[])),
-        tool("capture", "Write the last frame to a PNG (and optionally the entity id buffer) and return which entities are visible; image: true also returns the frame itself, for a model that sees.", obj_schema(json!({
+        tool("capture", "Write the last frame to a PNG (and optionally the entity id buffer) and return which entities are visible; image: true also returns the frame itself, for a model that sees; ascii (true, or a width) the frame in characters and colour letters, for a model that reads.", obj_schema(json!({
             "path": { "type": "string", "description": "PNG path (default: build/mcp/capture.png in the workspace)" },
+            "ascii": { "description": "true (64 across) or a width: the frame as rows of characters dark to light and rows of colour letters, with its colours by name" },
             "ids": { "type": "string", "description": "PNG path for the false-color id buffer" },
             "image": { "type": "boolean", "default": false }
         }), &[])),

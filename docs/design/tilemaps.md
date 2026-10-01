@@ -42,6 +42,27 @@ The editor paints with the same calls: select the map entity, pick a layer and a
 
 `tilemap.create {name, width, height, tile_width?, tile_height?, orientation?, layers?, tilesets?}` (`tilemap.create(name, map)` in scripts) makes a map without Tiled, for a dungeon generated per run or a level an agent lays out: `width` by `height` tiles of `tile_width` by `tile_height` pixels (16), its tile layers empty (`["ground"]` by default; `{name, solid: true}` makes a layer whose every tile is solid, as Tiled's layer property does), and tilesets cut from project images (`{image, tile_width?, tile_height?, spacing?, margin?, solid?: [local ids]}`), numbered on from 1 in order. It is kept under `name` (a project path such as `maps/dungeon.tmj`) like a map read from a file: a `TileMap` names it, `tilemap.set` and `tilemap.fill` paint it, bodies collide with it, and `tilemap.save {path}` writes it as Tiled JSON for Tiled to open. Until then it has no file, and `world.save` carries it in the scene (`tilemaps`), with every other map made or copied at runtime; save slots also carry the maps read from files that were edited since, so a level dug into by the player loads as it was left. A map made again under the same name replaces the old one, and what was drawn from it is built again. `runtime_tests` (`[tilemap][made]`): a 12 by 6 map with a solid wall layer and a strip of seven tiles, its bottom row filled, a box that lands on it, and the saved scene giving a fresh session the same solid cells.
 
+## Maps in characters
+
+A model draws a level well as text. `tilemap.text {name, rows, legend, tilesets, layers?}` (`tilemap.fromText(name, {...})` in scripts) makes a map from it, kept like a map made by code:
+
+```ts
+tilemap.fromText("maps/level1.tmj", {
+    rows: [
+        "##########",
+        "#@..#....#",
+        "#...#.c..#",
+        "#.c....###",
+        "##########",
+    ],
+    legend: { "*": { layer: "floor", tile: 0 }, "#": { layer: "walls", tile: 1 }, ".": null, "@": { object: "start" }, "c": { object: "coin" } },
+    tilesets: [{ image: "assets/dungeon_tiles.png" }],
+    layers: ["floor", { name: "walls", solid: true }],
+});
+```
+
+A legend entry puts a tile on a layer (`{layer, tile}`, the tile a local id of the first tileset or of `tileset`, or a `gid`), several tiles bottom first (`{layers: [...]}`), or an object (`{object: "coin"}`, a point at the cell's center named `Coin_1`, `Coin_2` ... with that type, in an object layer `objects`; `under` puts a tile beneath it), or nothing (`null`); `"*"` puts its tile under every cell and a space is an empty cell. The layers come in the order they first appear (the `"*"` ones first), or as `layers` orders them, which also marks solid ones. A character the legend lacks and a tile a tileset lacks are refused by name. The answer counts the objects by type; `tilemap.spawn {prefabs}` turns them into entities, or a script reads them with `tilemap.objects`. `runtime_tests` (`[tilemap][text]`): ten by five cells with walls, a start and two coins: the walls solid, the floor under every cell, the start at its cell's center, and a stray `?` and a tile past the tileset named.
+
 ## Sight
 
 `tilemap.sight {entity, from, to, layers?}` (`tilemap.sight(map, from, to)` in scripts) says whether a guard sees the player: the straight line between two world points is walked cell by cell (Amanatides and Woo's traversal), and the first cell past the start that hides what is behind it stops it, answering `visible: false` and `blocked_at` with the cell, the point on the line where it enters the cell and how far that is. A cell hides when it is solid (one-way platforms do not), or, given `layers`, when one of those layers has a tile there, so tall grass on a layer of its own hides a player without being a wall; a tile whose tileset gives it `opaque = true` or `false` says so whatever else holds (a window is solid and see-through). The point a line ends in counts: a player standing in a hiding cell is not seen.

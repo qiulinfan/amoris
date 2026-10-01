@@ -2835,6 +2835,44 @@ Result<Json> Session::env_command(std::string_view op, const Json& p) {
 Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
     // Tile maps (docs/design/tilemaps.md): what is where, in tiles and in world units.
     auto& w = *world_;
+    // The tilesets of a map made by code: {image, name?, tile_width?, tile_height?, spacing?, margin?,
+    // solid?: [local ids]}, numbered on from gid 1.
+    auto made_tilesets = [&](const Json& list, const std::string& name, int tw, int th) -> Result<Json> {
+        Json tilesets = Json::array();
+        std::uint32_t gid = 1;
+        const std::filesystem::path map_dir = std::filesystem::path(name).parent_path();
+        for (const Json& t : list) {
+            const std::string image = t.value("image", std::string());
+            if (image.empty()) return fail("bad_args", "a tileset needs an image (project-relative)");
+            auto img = assets_->image(image);
+            if (!img) return fail("bad_image", "{}: {}", image, img.error().message);
+            const int stw = t.value("tile_width", tw), sth = t.value("tile_height", th), spacing = t.value("spacing", 0), margin = t.value("margin", 0);
+            const int iw = static_cast<int>((*img)->width), ih = static_cast<int>((*img)->height);
+            const int columns = (iw - 2 * margin + spacing) / (stw + spacing), rows = (ih - 2 * margin + spacing) / (sth + spacing);
+            if (columns <= 0 || rows <= 0) return fail("bad_args", "{} ({}x{}) does not hold a single {}x{} tile", image, iw, ih, stw, sth);
+            Json ts{{"firstgid", gid}, {"name", t.value("name", std::filesystem::path(image).stem().string())}, {"image", std::filesystem::path(image).lexically_relative(map_dir.empty() ? std::filesystem::path(".") : map_dir).generic_string()},
+                    {"imagewidth", iw}, {"imageheight", ih}, {"tilewidth", stw}, {"tileheight", sth}, {"columns", columns}, {"tilecount", columns * rows}, {"spacing", spacing}, {"margin", margin}};
+            if (t.contains("solid") && t["solid"].is_array()) {
+                Json tiles = Json::array();
+                for (const Json& sid : t["solid"]) if (sid.is_number_integer()) tiles.push_back(Json{{"id", sid}, {"properties", Json::array({Json{{"name", "solid"}, {"type", "bool"}, {"value", true}}})}});
+                ts["tiles"] = tiles;
+            }
+            tilesets.push_back(ts);
+            gid += static_cast<std::uint32_t>(columns * rows);
+        }
+        return tilesets;
+    };
+    auto keep_made = [&](Json doc, const std::string& name, int width, int height) -> Result<Json> {
+        POCKET_TRY(map, assets::parse_tilemap(doc.dump(), name));
+        map.file = false;
+        const assets::TileMap* made = assets_->put_tilemap(std::move(map));
+        world_->events().emit(clock_.tick, "tilemap.created", 0, Json{{"path", name}, {"width", width}, {"height", height}}, 0, "tilemap");
+        Json sets = Json::array();
+        for (const assets::TileSet& st : made->tilesets) sets.push_back(Json{{"name", st.name}, {"first_gid", st.first_gid}, {"tiles", st.tile_count}, {"columns", st.columns}});
+        Json ls = Json::array();
+        for (const assets::TileLayer& l : made->layers) ls.push_back(l.name);
+        return Json{{"map", name}, {"width", width}, {"height", height}, {"layers", ls}, {"tilesets", sets}};
+    };
     if (op == "create") {
         // A map made by code: its size in tiles, its tiles' size in pixels, its tile layers (empty)
         // and tilesets, kept under `name` for a TileMap to draw and tilemap.set to fill; no file
@@ -2865,39 +2903,129 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         }
         doc["layers"] = layers;
         doc["nextlayerid"] = lid;
-        Json tilesets = Json::array();
-        std::uint32_t gid = 1;
-        const std::filesystem::path map_dir = std::filesystem::path(name).parent_path();
-        for (const Json& t : p.value("tilesets", Json::array())) {
-            // {image, name?, tile_width?, tile_height?, spacing?, margin?, solid?: [local ids]}
-            const std::string image = t.value("image", std::string());
-            if (image.empty()) return fail("bad_args", "a tileset needs an image (project-relative)");
-            auto img = assets_->image(image);
-            if (!img) return fail("bad_image", "{}: {}", image, img.error().message);
-            const int stw = t.value("tile_width", tw), sth = t.value("tile_height", th), spacing = t.value("spacing", 0), margin = t.value("margin", 0);
-            const int iw = static_cast<int>((*img)->width), ih = static_cast<int>((*img)->height);
-            const int columns = (iw - 2 * margin + spacing) / (stw + spacing), rows = (ih - 2 * margin + spacing) / (sth + spacing);
-            if (columns <= 0 || rows <= 0) return fail("bad_args", "{} ({}x{}) does not hold a single {}x{} tile", image, iw, ih, stw, sth);
-            Json ts{{"firstgid", gid}, {"name", t.value("name", std::filesystem::path(image).stem().string())}, {"image", std::filesystem::path(image).lexically_relative(map_dir.empty() ? std::filesystem::path(".") : map_dir).generic_string()},
-                    {"imagewidth", iw}, {"imageheight", ih}, {"tilewidth", stw}, {"tileheight", sth}, {"columns", columns}, {"tilecount", columns * rows}, {"spacing", spacing}, {"margin", margin}};
-            if (t.contains("solid") && t["solid"].is_array()) {
-                Json tiles = Json::array();
-                for (const Json& sid : t["solid"]) if (sid.is_number_integer()) tiles.push_back(Json{{"id", sid}, {"properties", Json::array({Json{{"name", "solid"}, {"type", "bool"}, {"value", true}}})}});
-                ts["tiles"] = tiles;
-            }
-            tilesets.push_back(ts);
-            gid += static_cast<std::uint32_t>(columns * rows);
-        }
+        POCKET_TRY(tilesets, made_tilesets(p.value("tilesets", Json::array()), name, tw, th));
         doc["tilesets"] = tilesets;
-        POCKET_TRY(map, assets::parse_tilemap(doc.dump(), name));
-        map.file = false;
-        const assets::TileMap* made = assets_->put_tilemap(std::move(map));
-        world_->events().emit(clock_.tick, "tilemap.created", 0, Json{{"path", name}, {"width", width}, {"height", height}}, 0, "tilemap");
-        Json sets = Json::array();
-        for (const assets::TileSet& s : made->tilesets) sets.push_back(Json{{"name", s.name}, {"first_gid", s.first_gid}, {"tiles", s.tile_count}, {"columns", s.columns}});
-        Json ls = Json::array();
-        for (const assets::TileLayer& l : made->layers) ls.push_back(l.name);
-        return Json{{"map", name}, {"width", width}, {"height", height}, {"layers", ls}, {"tilesets", sets}};
+        return keep_made(std::move(doc), name, width, height);
+    }
+    if (op == "text") {
+        // A map drawn in characters (docs/design/tilemaps.md, Maps in characters): rows of text, a
+        // legend from a character to a tile on a layer (or several, bottom first) or to an object,
+        // "*" a tile under every cell; layers in the order they first appear, or as `layers` says.
+        if (!assets_) return fail("no_assets", "no asset store");
+        const std::string name = opt<std::string>(p, "name", "");
+        if (name.empty()) return fail("bad_args", "a map needs a name (a project-relative path such as maps/level1.tmj)");
+        if (!p.contains("rows") || !p["rows"].is_array() || p["rows"].empty()) return fail("bad_args", "rows: [\"#####\", \"#@.c#\", ...], one string a row of cells");
+        if (!p.contains("legend") || !p["legend"].is_object()) return fail("bad_args", "legend: {{\"#\": {{layer: \"walls\", tile: 1}}, \"c\": {{object: \"coin\"}}, ...}}");
+        std::vector<std::string> rows;
+        int width = 0;
+        for (const Json& r : p["rows"]) {
+            if (!r.is_string()) return fail("bad_args", "every row is a string");
+            rows.push_back(r.get<std::string>());
+            width = std::max(width, static_cast<int>(rows.back().size()));
+        }
+        const int height = static_cast<int>(rows.size());
+        if (width <= 0 || width > 4096 || height > 4096) return fail("bad_args", "rows make a map 1 to 4096 cells each way");
+        const int tw = opt<int>(p, "tile_width", 16), th = opt<int>(p, "tile_height", tw);
+        POCKET_TRY(tilesets, made_tilesets(p.value("tilesets", Json::array()), name, tw, th));
+        // What each character puts: tiles {layer, tile} (tile a local id of `tileset`, the first by default) and objects.
+        struct Put { std::string layer; std::uint32_t gid = 0; };
+        struct Mark { std::vector<Put> tiles; std::string object, object_name; };
+        std::map<std::string, Mark> marks;
+        std::vector<std::string> order;   // layers as they first appear
+        auto gid_of = [&](const Json& e) -> Result<std::uint32_t> {
+            if (e.contains("gid")) return e["gid"].get<std::uint32_t>();
+            const int local = e.value("tile", -1);
+            if (local < 0) return fail("bad_args", "a tile in the legend needs tile (a local id) or gid");
+            const std::string set = e.value("tileset", std::string());
+            for (const Json& ts : tilesets) {
+                if (!set.empty() && ts["name"] != set) continue;
+                if (local >= ts["tilecount"].get<int>()) return fail("bad_args", "tile {} is outside tileset '{}' (0..{})", local, ts["name"].get<std::string>(), ts["tilecount"].get<int>() - 1);
+                return ts["firstgid"].get<std::uint32_t>() + static_cast<std::uint32_t>(local);
+            }
+            return fail("bad_args", "no tileset {} for tile {}", set.empty() ? std::string("at all (give tilesets)") : "'" + set + "'", local);
+        };
+        for (const auto& [key, e] : p["legend"].items()) {
+            if (key.size() != 1 && key != "*") return fail("bad_args", "legend key '{}' is one character (or * for every cell)", key);
+            Mark m;
+            auto put = [&](const Json& t) -> Status {
+                if (!t.contains("layer")) return fail("bad_args", "legend '{}': a tile needs its layer", key);
+                POCKET_TRY(g, gid_of(t));
+                const std::string layer = t["layer"].get<std::string>();
+                m.tiles.push_back({layer, g});
+                if (std::find(order.begin(), order.end(), layer) == order.end()) order.push_back(layer);
+                return {};
+            };
+            if (e.is_null()) { marks[key] = m; continue; }
+            if (e.contains("layers") && e["layers"].is_array()) for (const Json& t : e["layers"]) POCKET_TRY_VOID(put(t));
+            else if (e.contains("layer")) POCKET_TRY_VOID(put(e));
+            if (e.contains("object")) {
+                m.object = e["object"].get<std::string>();
+                m.object_name = e.value("name", std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(m.object.empty() ? 'o' : m.object[0])))) + m.object.substr(m.object.empty() ? 0 : 1));
+                if (e.contains("under")) POCKET_TRY_VOID(put(e["under"]));
+            }
+            if (m.tiles.empty() && m.object.empty()) return fail("bad_args", "legend '{}' puts nothing: give {{layer, tile}}, {{layers: [...]}} or {{object}}", key);
+            marks[key] = m;
+        }
+        // The "*" tiles first, at the bottom.
+        if (auto star = marks.find("*"); star != marks.end()) {
+            std::vector<std::string> first;
+            for (const Put& t : star->second.tiles) if (std::find(first.begin(), first.end(), t.layer) == first.end()) first.push_back(t.layer);
+            for (const std::string& l : order) if (std::find(first.begin(), first.end(), l) == first.end()) first.push_back(l);
+            order = first;
+        }
+        std::map<std::string, bool> solid;
+        if (p.contains("layers") && p["layers"].is_array()) {
+            std::vector<std::string> given;
+            for (const Json& l : p["layers"]) {
+                const std::string ln = l.is_string() ? l.get<std::string>() : l.value("name", std::string());
+                given.push_back(ln);
+                if (l.is_object() && l.value("solid", false)) solid[ln] = true;
+            }
+            for (const std::string& l : order) if (std::find(given.begin(), given.end(), l) == given.end()) given.push_back(l);
+            order = given;
+        }
+        if (order.empty()) order.push_back("ground");
+        std::map<std::string, std::vector<std::uint32_t>> data;
+        for (const std::string& l : order) data[l].assign(static_cast<std::size_t>(width) * height, 0);
+        Json objects = Json::array();
+        std::map<std::string, int> counts;
+        int oid = 1;
+        std::string unknown;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const char c = x < static_cast<int>(rows[y].size()) ? rows[y][static_cast<std::size_t>(x)] : ' ';
+                const std::size_t at = static_cast<std::size_t>(y) * width + x;
+                if (auto star = marks.find("*"); star != marks.end()) for (const Put& t : star->second.tiles) data[t.layer][at] = t.gid;
+                if (c == ' ') continue;
+                const auto it = marks.find(std::string(1, c));
+                if (it == marks.end()) {
+                    if (unknown.find(c) == std::string::npos) unknown += c;
+                    continue;
+                }
+                for (const Put& t : it->second.tiles) data[t.layer][at] = t.gid;
+                if (!it->second.object.empty()) {
+                    const int n = ++counts[it->second.object];
+                    objects.push_back(Json{{"id", oid++}, {"name", std::format("{}_{}", it->second.object_name, n)}, {"type", it->second.object}, {"x", (x + 0.5) * tw}, {"y", (y + 0.5) * th}, {"width", 0}, {"height", 0}, {"point", true}, {"rotation", 0}, {"visible", true}});
+                }
+            }
+        }
+        if (!unknown.empty()) return fail("bad_args", "the rows use characters the legend does not have: '{}' (a space is an empty cell)", unknown);
+        Json doc{{"type", "map"}, {"version", "1.10"}, {"orientation", "orthogonal"}, {"renderorder", "right-down"}, {"width", width}, {"height", height}, {"tilewidth", tw}, {"tileheight", th}, {"infinite", false}};
+        Json layers = Json::array();
+        int lid = 1;
+        for (const std::string& l : order) {
+            Json layer{{"type", "tilelayer"}, {"id", lid++}, {"name", l}, {"width", width}, {"height", height}, {"x", 0}, {"y", 0}, {"opacity", 1}, {"visible", true}, {"data", data[l]}};
+            if (solid[l]) layer["properties"] = Json::array({Json{{"name", "solid"}, {"type", "bool"}, {"value", true}}});
+            layers.push_back(layer);
+        }
+        if (!objects.empty()) layers.push_back(Json{{"type", "objectgroup"}, {"id", lid++}, {"name", "objects"}, {"x", 0}, {"y", 0}, {"opacity", 1}, {"visible", true}, {"draworder", "topdown"}, {"objects", objects}});
+        doc["layers"] = layers;
+        doc["nextlayerid"] = lid;
+        doc["nextobjectid"] = oid;
+        doc["tilesets"] = tilesets;
+        POCKET_TRY(made, keep_made(std::move(doc), name, width, height));
+        made["objects"] = counts;
+        return made;
     }
     if (!p.contains("entity")) return fail("bad_args", "missing 'entity' (a TileMap's entity; tilemap.create makes a map)");
     world::EntityId id = resolve_entity(p["entity"]);
@@ -4218,7 +4346,12 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
 
 Result<Json> Session::assets_command(std::string_view op, const Json& p) {
     if (op == "list") return assets_->list();
-    if (op == "describe") return assets_->describe(opt<std::string>(p, "path", ""));
+    if (op == "describe") {
+        // An image in characters too: ascii true (32 across) or a width.
+        int ascii = 0;
+        if (p.contains("ascii")) ascii = p["ascii"].is_boolean() ? (p["ascii"].get<bool>() ? 32 : 0) : opt<int>(p, "ascii", 0);
+        return assets_->describe(opt<std::string>(p, "path", ""), ascii);
+    }
     if (op == "stats") {
         Json j = assets_->stats();
         j["render"] = renderer_->describe().value("assets", Json::object());
@@ -5391,9 +5524,15 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         bool start = scripts && (was_active || options_.editor_bundle.empty());
         if (start && scene) {
             // A restart plays as a fresh run would: random() and Math.random from the run's seed
-            // again, so a game edited and reloaded meets the same rocks, cards and rolls.
+            // again, so a game edited and reloaded meets the same rocks, cards and rolls; and in
+            // silence, the last run's sounds stopped (the scene's own start again).
             rng_.reseed(options_.seed);
             seed_math_random();
+            if (audio_) audio_->stop_all();
+            // Nothing held over either: an action an agent held for the last run is let go.
+            for (auto& [key, until] : held_keys_) until = clock_.tick;
+            release_expired_holds();
+            pending_holds_.clear();
         }
         if (start) dispatch("start", Json::object(), "project");
         host_->drain_microtasks();
@@ -7215,6 +7354,18 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
             POCKET_TRY(idj, render_command("ids", Json{{"path", ids_path}}));
             c["ids"] = idj;
         }
+        if (p.contains("ascii")) {
+            // The frame in characters for a model that reads (" .:-=+*#%@" dark to light) and in
+            // colour letters, with the frame's colours by name.
+            const int w = p["ascii"].is_boolean() ? (p["ascii"].get<bool>() ? 64 : 0) : opt<int>(p, "ascii", 0);
+            if (w > 0) {
+                assets::Image frame_img;
+                frame_img.width = img.width;
+                frame_img.height = img.height;
+                frame_img.rgba = img.rgba;
+                c["look"] = frame_img.look(w, true);
+            }
+        }
         c["render"] = renderer_->describe();
         capture_info_ = c;
         return c;
@@ -7294,7 +7445,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
             std::string what(h.summary);
             const std::size_t end = std::min({what.find(". "), what.find("; "), what.find(": ")});
             if (end != std::string::npos) what = what.substr(0, end);
-            if (what.size() > 100) what = what.substr(0, 97) + "...";
+            if (what.size() > 80) what = what.substr(0, 77) + "...";
             text += command_help_json(h)["usage"].get<std::string>() + " - " + what + "\n";
         }
         return Json{{"text", text + "(help {command} for any command's full description)\n"}};
@@ -7314,7 +7465,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

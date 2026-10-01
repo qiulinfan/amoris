@@ -31,6 +31,23 @@ Images decode through stb_image (PNG, JPEG, BMP, TGA, GIF frames, PSD, HDR to 8-
 
 SVG files are images too, drawn into pixels by nanosvg (vendored, zlib) when first used: paths, shapes, strokes, fills and linear and radial gradients (no text and no filters). An SVG is drawn at twice its size (its `width` and `height`, or its `viewBox`), so `<svg width="32" height="32">` is a 64-pixel sprite; `"assets/coin.svg?size=256"` draws its longer side 256 pixels and `?scale=4` four times its size (at most 4096), each size kept apart and all of them read again when the file changes. A sprite's `texture`, a mesh's texture and an interface element's `image` take an SVG like any picture. A model that writes text writes SVG well, so a game's art can start as files an agent writes: a coin, a badge, an icon, a tile. `assets_tests` (`[svg]`): `samples/assets/assets/star.svg` (a gold star on a blue disc) is 96 pixels square, gold at the middle, blue between the points and clear in the corners, 200 pixels asked at `?size=200` and 24 at `?scale=0.5`.
 
+## Looking without eyes
+
+`assets.describe {path}` of an image says what it looks like, for a model that reads rather than sees what it drew: `coverage` (the share of pixels drawn, alpha over a half) and `transparent`, the `drawn` box, its `colours` by name (black, white, greys, red, dark red, pink, orange, brown, gold, tan, olive, yellow, green, dark green, cyan, blue, navy, purple, magenta: from hue, saturation and value) with each one's `share` and average `hex`, and `mirror_symmetry` (how alike its left and right halves are). With `ascii` (true for 32 characters across, or a width) it is also itself in characters: `ascii`, rows of `" .:+#"` by how much of each cell is drawn (half as many rows as columns for a square, as a terminal's cells are twice as tall as wide), and `ascii_colours`, the letter of each cell's commonest colour (`ascii_key` says which is which). The star badge at 24 across:
+
+```
+      .::++##++::.               nnnnnnnnnnnn
+    :##############:          nnnnBBBBBBBBBBnnnn
+  :##################:       nnnBBBBBBGGBBBBBBnnn
+ +####################+     nnBBBBBBBBGGBBBBBBBBnn
++######################+   nnBBBGGGGGGGGGGGGGGBBBnn
++######################+   nnBBBBBBGGGGGGGGBBBBBBnn
+ +####################+     nnBBBBGGGGBBGGGGBBBBnn
+    :##############:          nnnnBBBBBBBBBBnnnn
+```
+
+`assets_tests` (`[look]`): the star is three quarters covered, symmetric, blue first with gold among its colours, 12 rows of 24 at 24 across, gold in the middle and nothing in a corner.
+
 ## Rendering
 
 The mesh pipeline samples one base color texture per draw (group 2: texture + sampler, linear filtering, repeat) multiplied by the object color; a 1x1 white texture stands in when there is none. Primitives carry texture coordinates (cube per face, sphere equirectangular, plane 0..1, cylinder unwrapped). glTF meshes upload once per path; each material becomes a draw with its base color, metallic-roughness, normal and emissive maps in one bind group, and draws are sorted by material then mesh so bind changes are rare and the order is stable. A mesh that cannot be loaded is drawn as a magenta cube and listed under `render.stats.assets.missing` every frame, with one warning in the log, so a wrong path is visible instead of silent.

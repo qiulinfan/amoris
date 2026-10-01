@@ -1068,3 +1068,23 @@ TEST_CASE("an SVG is read as an image drawn at twice its size, or at the size as
     for (const Json& a : listed.is_array() ? listed : listed["files"]) if (a.value("path", std::string()) == "assets/star.svg") { found = true; REQUIRE(a["kind"] == "image"); }
     REQUIRE(found);
 }
+
+TEST_CASE("an image says what it looks like, in numbers, colour names and characters", "[assets][look]") {
+    assets::AssetStore store(project());
+    const Json d = store.describe("assets/star.svg", 24);
+    INFO(d.dump());
+    REQUIRE(d["kind"] == "image");
+    REQUIRE(d["coverage"].get<double>() == Catch::Approx(0.75).margin(0.05));   // a disc in its square
+    REQUIRE(d["mirror_symmetry"].get<double>() > 0.95);
+    std::vector<std::string> names;
+    for (const Json& c : d["colours"]) names.push_back(c["name"].get<std::string>());
+    REQUIRE(names.front() == "blue");
+    REQUIRE(std::find(names.begin(), names.end(), "gold") != names.end());
+    REQUIRE(d["ascii"].size() == 12);   // half as many rows as columns for a square
+    REQUIRE(d["ascii"][0].get<std::string>().size() == 24);
+    // The middle is the star's gold; a corner is empty.
+    REQUIRE(d["ascii_colours"][6].get<std::string>()[12] == 'G');
+    REQUIRE(d["ascii"][0].get<std::string>()[0] == ' ');
+    // Without ascii, the numbers alone.
+    REQUIRE_FALSE(store.describe("assets/star.svg").contains("ascii"));
+}
