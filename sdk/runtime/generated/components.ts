@@ -320,7 +320,7 @@ export interface Fog {
     volumetric: boolean;
     /** Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist). */
     anisotropy: number;
-    /** Volumetric: samples along each ray, 4..128. */
+    /** Volumetric: samples along each ray a frame, 4..128; frames blend, so 16 a frame comes out as 40 did alone, and a frame with none before it (the first, a capture after an undrawn step) takes four times as many. */
     steps: number;
     /** Volumetric: how far along each ray the fog is marched; the sky counts as that far. */
     distance: number;
@@ -1226,7 +1226,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
-    Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 32, distance: 60 },
+    Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },

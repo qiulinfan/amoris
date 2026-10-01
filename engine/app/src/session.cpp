@@ -795,7 +795,9 @@ void Session::run_tick() {
     physics_->step(*world_, clock_.tick_seconds);
     physics_->move_characters(*world_, clock_.tick_seconds);   // after the bodies: platforms have moved (docs/design/physics.md, Characters)
     splash_water(before_physics);
-    if (!physics_->contacts().empty()) {
+    // Contacts become JSON for the scripts only when one of them listens (onContacts): a pile of
+    // resting bodies touches every tick, and nothing need be made of it otherwise.
+    if (!physics_->contacts().empty() && dispatch("wants", "contacts") == Json(true)) {
         Json contacts = Json::array();
         for (const auto& c : physics_->contacts()) {
             Json cj;
@@ -4262,6 +4264,89 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         j["window"] = Json{{"width", device_->width()}, {"height", device_->height()}};
         return j;
     }
+    if (op == "brief") {
+        // What an agent needs first, in a screenful of text: the files, the scene's top, the
+        // components in use and the project's own, the actions, the exposed state, what has
+        // happened, what is wrong, and where to look next.
+        std::string t;
+        auto line = [&](const std::string& s) { t += s; t += '\n'; };
+        auto join = [](const std::vector<std::string>& v, std::size_t most) {
+            std::string s;
+            for (std::size_t i = 0; i < v.size() && i < most; ++i) s += (i ? ", " : "") + v[i];
+            if (v.size() > most) s += std::format(", +{} more", v.size() - most);
+            return s;
+        };
+        line(std::format("project {} ({}), tick {}, {}, seed {}{}", name_, options_.project_dir.filename().string(), clock_.tick, paused_ ? "paused" : "running", options_.seed, options_.headless ? ", headless" : ""));
+        // Files by kind, the build's and the tools' left out.
+        std::map<std::string, std::vector<std::string>> files;
+        std::error_code ec;
+        for (auto it = std::filesystem::recursive_directory_iterator(options_.project_dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            const std::string fn = it->path().filename().string();
+            if (it->is_directory() && (fn == "build" || fn == "dist" || fn == "node_modules" || fn.starts_with("."))) { it.disable_recursion_pending(); continue; }
+            if (!it->is_regular_file()) continue;
+            const std::string rel = std::filesystem::relative(it->path(), options_.project_dir, ec).generic_string();
+            const std::string top = rel.find('/') == std::string::npos ? "." : rel.substr(0, rel.find('/'));
+            files[top].push_back(rel);
+        }
+        for (auto& [dir, list] : files) {
+            std::sort(list.begin(), list.end());
+            if (dir == "." || dir == "scripts" || dir == "scenarios" || dir == "prefabs" || dir == "benches") line(std::format("  {}: {}", dir == "." ? "files" : dir, join(list, 12)));
+            else line(std::format("  {}/: {} files", dir, list.size()));
+        }
+        // The scene's roots, with how much hangs under each.
+        std::vector<std::string> roots;
+        for (world::EntityId r : world_->roots()) {
+            std::size_t under = 0;
+            std::function<void(world::EntityId)> count = [&](world::EntityId e) { for (world::EntityId c : world_->children(e)) { ++under; count(c); } };
+            count(r);
+            roots.push_back(under ? std::format("{} (+{})", world_->name(r), under) : world_->name(r));
+        }
+        const Json summary = world_->summary();
+        line(std::format("world: {} entities; roots: {}", summary.value("entities", 0), join(roots, 12)));
+        std::vector<std::pair<int, std::string>> used;
+        for (const auto& [c, n] : summary.value("components", Json::object()).items()) if (c != "WorldTransform" && c != "Bounds") used.emplace_back(n.get<int>(), c);
+        std::sort(used.begin(), used.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+        std::vector<std::string> used_text;
+        for (const auto& [n, c] : used) used_text.push_back(std::format("{} {}", c, n));
+        line("components in use: " + join(used_text, 16));
+        // The project's own components (components.toml), with their fields.
+        for (const auto& info : world_->component_infos_all()) {
+            if (!world_->project_component(info.name)) continue;
+            std::vector<std::string> fields;
+            for (const auto& f : info.fields) {
+                std::string names;
+                for (std::string_view n : f.names) names += (names.empty() ? ": " : "|") + std::string(n);
+                fields.push_back(std::format("{} {}{}", f.name, f.type, names));
+            }
+            line(std::format("project component {} {{{}}}", info.name, join(fields, 12)));
+        }
+        std::vector<std::string> actions;
+        for (const auto& [a, spec] : input_map_.describe().items()) {
+            std::vector<std::string> keys;
+            for (const char* side : {"positive", "negative", "axis"}) for (const Json& k : spec.value(side, Json::array())) keys.push_back(k.get<std::string>());
+            actions.push_back(std::format("{} ({})", a, join(keys, 4)));
+        }
+        if (!actions.empty()) line("input actions: " + join(actions, 10));
+        std::vector<std::string> state;
+        if (last_state_.is_object()) for (const auto& [k, v] : last_state_.items()) state.push_back(std::format("{}={}", k, v.dump()));
+        line(state.empty() ? "exposed state: none (scripts expose values with expose())" : "exposed state: " + join(state, 16));
+        std::vector<std::pair<std::uint64_t, std::string>> kinds;
+        for (const auto& [k, v] : world_->events().histogram().items()) kinds.emplace_back(v.get<std::uint64_t>(), k);
+        std::sort(kinds.begin(), kinds.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+        std::vector<std::string> kinds_text;
+        for (const auto& [n, k] : kinds) kinds_text.push_back(std::format("{} x{}", k, n));
+        line(std::format("events: {} so far; {}", world_->events().total(), join(kinds_text, 10)));
+        POCKET_TRY(lint, world_lint(Json{{"limit", 3}}));
+        std::string wrong = std::format("lint: {} errors, {} warnings", lint.value("errors", 0), lint.value("warnings", 0));
+        for (const Json& pr : lint.value("problems", Json::array())) {
+            if (pr.value("severity", "") == "info") continue;
+            wrong += std::format("; {}: {}", pr.value("path", pr.value("component", "")), pr.value("problem", ""));
+        }
+        line(wrong);
+        if (!script_diagnostics_.empty()) line(std::format("type errors: {} (script.diagnostics lists them)", script_diagnostics_.size()));
+        line("next: world.tree {depth}, world.query {with}, world.describe {entity}, transcript, help {command}, commands {family | search, text: true}; edit scripts then project.apply");
+        return Json{{"text", t}};
+    }
     if (op == "reload") {
         // Hot reload: the scene from disk and/or the project's scripts. A running project starts
         // again; one the editor holds dormant stays dormant. `pocket run --watch` calls this.
@@ -5653,8 +5738,81 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         // want "each".
         const std::string render = opt<std::string>(p, "render", "last");
         if (render != "last" && render != "each") return fail("bad_args", "render is \"last\" (draw the last tick only, headless) or \"each\"");
+        // `until`: stop at the first tick after which something holds, so "walk right until the
+        // coin is taken" is one call: an event (by type or type prefix), an exposed state value or
+        // a component field compared with equals, above, below, at_least, at_most or changes.
+        std::function<bool(Json&)> met;
+        std::uint64_t seen = world_->events().last_seq();
+        if (p.contains("until") && !p["until"].is_null()) {
+            const Json& u = p["until"];
+            if (!u.is_object()) return fail("bad_args", "until is {{event}} or {{state | entity, component, field}} with equals, above, below, at_least, at_most or changes");
+            if (u.contains("event")) {
+                if (!u["event"].is_string()) return fail("bad_args", "until.event is an event type or a prefix of one (\"coin.\")");
+                const std::string prefix = u["event"].get<std::string>();
+                met = [this, prefix, &seen](Json& detail) {
+                    const auto found = world_->events().since(seen, 1, prefix);
+                    seen = world_->events().last_seq();
+                    if (found.empty()) return false;
+                    detail["event"] = world::event_to_json(found.front());
+                    return true;
+                };
+            } else {
+                std::function<Result<Json>()> read;
+                if (u.contains("state")) {
+                    const std::string key = u["state"].is_string() ? u["state"].get<std::string>() : "";
+                    if (key.empty()) return fail("bad_args", "until.state names an exposed value (state lists them)");
+                    read = [this, key]() -> Result<Json> { return last_state_.is_object() && last_state_.contains(key) ? last_state_[key] : Json(); };
+                } else if (u.contains("entity") && u.contains("component") && u.contains("field")) {
+                    const world::EntityId id = resolve_entity(u["entity"]);
+                    if (!world_->alive(id)) return fail("no_such_entity", "until.entity: no entity for {}", u["entity"].dump());
+                    const std::string comp = u["component"].is_string() ? u["component"].get<std::string>() : "";
+                    const std::string field = u["field"].is_string() ? u["field"].get<std::string>() : "";
+                    read = [this, id, comp, field]() -> Result<Json> {
+                        if (!world_->alive(id) || !world_->has(id, comp)) return Json();
+                        POCKET_TRY(v, world_->get(id, comp));
+                        Json at = v;
+                        std::size_t start = 0;
+                        while (start <= field.size()) {
+                            const std::size_t dot = field.find('.', start);
+                            const std::string part = field.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+                            if (!at.is_object() || !at.contains(part)) return Json();
+                            at = at[part];
+                            if (dot == std::string::npos) break;
+                            start = dot + 1;
+                        }
+                        return at;
+                    };
+                } else {
+                    return fail("bad_args", "until needs event, state, or entity with component and field");
+                }
+                const char* ops[] = {"equals", "above", "below", "at_least", "at_most", "changes"};
+                std::string op;
+                for (const char* o : ops) if (u.contains(o)) op = o;
+                if (op.empty()) return fail("bad_args", "until compares with one of equals, above, below, at_least, at_most, changes");
+                const Json target = u[op];
+                if (op != "equals" && op != "changes" && !target.is_number()) return fail("bad_args", "until.{} is a number", op);
+                POCKET_TRY(first, read());
+                met = [read, op, target, first](Json& detail) {
+                    auto now = read();
+                    if (!now) return false;
+                    const Json& v = *now;
+                    bool hit = false;
+                    if (op == "equals") hit = v == target;
+                    else if (op == "changes") hit = v != first;
+                    else if (v.is_number()) {
+                        const double x = v.get<double>(), t = target.get<double>();
+                        hit = op == "above" ? x > t : op == "below" ? x < t : op == "at_least" ? x >= t : x <= t;
+                    }
+                    if (hit) detail["value"] = v;
+                    return hit;
+                };
+            }
+        }
         stepping_ = true;
-        for (int i = 0; i < ticks; ++i) {
+        Json until_detail = Json::object();
+        int ran = 0;
+        bool hit = false;
+        for (int i = 0; i < ticks && !hit; ++i) {
             bool was_paused = paused_;
             paused_ = false;
             skip_render_ = options_.headless && render == "last" && i + 1 < ticks;
@@ -5662,9 +5820,19 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
             skip_render_ = false;
             if (!r) { paused_ = was_paused; stepping_ = false; return fail(r.error()); }
             paused_ = was_paused;
+            ++ran;
+            if (met && met(until_detail)) hit = true;
         }
         stepping_ = false;
-        return command("state", Json::object(), source);
+        POCKET_TRY(out, command("state", Json::object(), source));
+        if (met) {
+            // Whether it came, at which tick, and what was seen; a step that ran out says so.
+            until_detail["met"] = hit;
+            until_detail["ticks"] = ran;
+            if (hit) until_detail["tick"] = clock_.tick - 1;
+            out["until"] = until_detail;
+        }
+        return out;
     }
     if (name == "pause") { paused_ = true; return Json{{"paused", true}}; }
     if (name == "resume") {
@@ -5785,7 +5953,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

@@ -154,7 +154,7 @@ Air that thickens with distance and thins with height (docs/design/rendering.md,
 | `enabled` | bool | true | false turns the fog off without removing it. |
 | `volumetric` | bool | false | Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint. |
 | `anisotropy` | f32 | 0.6 | Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist). |
-| `steps` | i32 | 32 | Volumetric: samples along each ray, 4..128. |
+| `steps` | i32 | 16 | Volumetric: samples along each ray a frame, 4..128; frames blend, so 16 a frame comes out as 40 did alone, and a frame with none before it (the first, a capture after an undrawn step) takes four times as many. |
 | `distance` | f32 | 60.0 | Volumetric: how far along each ray the fog is marched; the sky counts as that far. |
 
 ## Sky

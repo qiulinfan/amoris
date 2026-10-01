@@ -145,7 +145,7 @@ fields = [
     { name = "enabled", type = "bool", default = true, doc = "false turns the fog off without removing it." },
     { name = "volumetric", type = "bool", default = false, doc = "Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint." },
     { name = "anisotropy", type = "f32", default = 0.6, doc = "Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist)." },
-    { name = "steps", type = "i32", default = 32, doc = "Volumetric: samples along each ray, 4..128." },
+    { name = "steps", type = "i32", default = 16, doc = "Volumetric: samples along each ray a frame, 4..128; frames blend, so 16 a frame comes out as 40 did alone, and a frame with none before it (the first, a capture after an undrawn step) takes four times as many." },
     { name = "distance", type = "f32", default = 60.0, doc = "Volumetric: how far along each ray the fog is marched; the sky counts as that far." },
 ]
 

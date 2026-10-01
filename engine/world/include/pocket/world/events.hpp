@@ -47,6 +47,7 @@ class EventLog {
     void clear();
 
    private:
+    [[nodiscard]] std::size_t index_after(std::uint64_t seq) const;   // the first stored event with a greater seq
     std::deque<Event> events_;
     std::size_t capacity_;
     std::uint64_t next_seq_ = 1;

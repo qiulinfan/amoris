@@ -378,6 +378,12 @@ export function isActive(): boolean {
         case "contacts":
             dispatchContacts(arg as ContactT[]);
             return undefined;
+        case "wants":
+            // Whether an active context has a handler for what the engine would otherwise not make.
+            if (arg === "contacts") {
+                for (const [name, h] of registry.contexts) if (registry.active.has(name) && h.contacts.length > 0) return true;
+            }
+            return false;
         case "stop":
             for (const h of selected(context)) for (const f of h.stop) f();
             if (typeof context === "string") registry.active.delete(context);

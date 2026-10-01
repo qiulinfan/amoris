@@ -41,8 +41,9 @@ export default function (pi: ExtensionAPI) {
         description:
             "Send one command to the running Pocket game engine and get its JSON result. Every engine feature is a command: " +
             "world.tree {depth} (the scene as text), world.query {with, name}, world.describe {entity}, world.spawn {name, components}, " +
-            "world.set {entity, component, value}, world.destroy {entity}, step {ticks}, state, events.since {seq}, events.why {seq}, " +
+            "world.set {entity, component, value}, world.destroy {entity}, step {ticks, until?} (until stops early: {event: \"coin.\"} or {state: \"score\", at_least: 3}), state, events.since {seq}, events.why {seq}, " +
             "transcript, render.visible, capture {path}, input.hold {action, ticks}, nav.path, physics.raycast, tilemap.*, audio.*, ui.* ... " +
+            "project.brief first: the project's files, scene, components, actions, state and problems as one text. " +
             "`commands {text: true}` lists them all one line each (family or search narrows it); help {command} says how to call one; world.schema {component} gives a component's fields. Entities are ids or names/paths such as Player or /Level/Player. The runtime is paused: step advances it.",
         parameters: Type.Object({
             method: Type.String({ description: "command name, e.g. world.tree" }),

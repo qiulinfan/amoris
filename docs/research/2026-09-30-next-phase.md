@@ -6,6 +6,8 @@ by a fifth pass, ranked by value for effort. It is the working plan; items are s
 docs/status.md as they land. Line numbers are at 6bc9395. The four full reports are in
 `2026-09-30-reports.json` beside this file.
 
+**Where it stands (2026-10-01).** Items 1 to 10 and 12 have landed: a56d2a6 and 245edf0 (5), bc6299e (1), 01bfacd (2), e93cb33 (3, ADR 0006), 6bd2f6e (4), d64c95b (6), 2821e44 (7), b3c809a (8: the digest changed after all, since the bytes, not the lookups, were the cost), 3d71900 (9), 787182d (10), 82fcfe2 (12, ADR 0007). Item 11 waits: the id pass draws translucent and glass surfaces into the prepass depth, so an `Equal` scene pass would drop the solids behind them unless the id pass first draws its solids alone; and on the Apple GPU this was measured on, the solid pipelines without a discard (item 9) already leave hidden-surface removal to shade a pixel about once, so the saving is for immediate-mode GPUs (most desktop and many browser ones), which should be measured there.
+
 Roadmap: next phase of aipocket (read-only research, checked against the code)
 
 **Context**

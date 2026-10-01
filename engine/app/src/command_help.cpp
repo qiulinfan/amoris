@@ -9,7 +9,7 @@ namespace {
 constexpr CommandHelp kHelp[] = {
     {"state", "", "The simulation's tick, time, pause state, exposed script state and hashes."},
     {"perf", "", "Where the time goes: milliseconds per phase (frame, poll, tick, script, physics, world, state, render)."},
-    {"step", "ticks?, render?", "Run the paused simulation for ticks (1 by default) and answer the state after; headless, only the last tick is drawn unless render is \"each\"."},
+    {"step", "ticks?, render?, until?", "Run the paused simulation for ticks (1 by default) and answer the state after; headless, only the last tick is drawn unless render is \"each\". until stops early: {event: \"coin.\"}, {state: \"score\", at_least: 3}, {entity, component, field: \"position.y\", below: 0} (equals, above, below, at_least, at_most, changes); the answer's until says met, tick and what was seen."},
     {"pause", "", "Stop the simulation clock; frames still draw and commands still work."},
     {"resume", "", "Start the simulation clock again."},
     {"time.scale", "scale?, seconds?", "Slow motion (under 1), fast forward (up to 8) or a hit-stop (0), for seconds of real time or until changed; no params reads it."},
@@ -196,6 +196,7 @@ constexpr CommandHelp kHelp[] = {
     {"script.diagnostics", "diagnostics?", "The project's type errors ({file, line, column, severity, message}) as `pocket run/editor --watch` last found them after a rebundle; diagnostics sets them (and logs each). `pocket check` finds them without a runtime."},
     {"script.eval", "source", "Run JavaScript in the project's context and answer its value."},
     {"project.info", "", "The project's name, directories, settings and scripts."},
+    {"project.brief", "", "What to know first, as text: the files, the scene's roots, the components in use and the project's own, the input actions, the exposed state, the events so far, what lint finds, and where to look next."},
     {"project.reload", "scene?, scripts?, settings?", "A fresh world from the scene with the bundled scripts started over it, and project.toml's settings read again (input map, audio buses and room, render and physics settings, sprite clips; settings defaults to scripts); lists sources newer than the bundle as stale. After editing scripts use project.apply."},
     {"project.apply", "ticks?", "After editing scripts or project.toml: bundle and type-check the project with the pocket tool, reload it and step ticks (1); answers the type errors, the reload, the state and any script errors. A bundle that fails leaves the running project as it was."},
     {"project.save_scene", "path?", "Write the world as the project's scene."},

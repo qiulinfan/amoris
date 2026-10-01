@@ -3068,7 +3068,7 @@ constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"enabled", "bool", "false turns the fog off without removing it.", {}},
     FieldInfo{"volumetric", "bool", "Light the fog (docs/design/rendering.md, Volumetric light): each view ray is marched through it at half resolution, gathering the sun's light through its shadows (shafts where something blocks it) and the point and spot lights' through theirs, instead of fading to the flat color. The color becomes the fog's tint.", {}},
     FieldInfo{"anisotropy", "f32", "Volumetric: how much the fog scatters light forward, -0.9..0.9 (0 evenly; toward 0.9 a glow around a light you look toward, as in mist).", {}},
-    FieldInfo{"steps", "i32", "Volumetric: samples along each ray, 4..128.", {}},
+    FieldInfo{"steps", "i32", "Volumetric: samples along each ray a frame, 4..128; frames blend, so 16 a frame comes out as 40 did alone, and a frame with none before it (the first, a capture after an undrawn step) takes four times as many.", {}},
     FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far.", {}},
 }};
 constexpr std::string_view kSky_modeNames[] = {"off", "procedural", "image", "atmosphere"};

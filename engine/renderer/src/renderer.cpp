@@ -207,6 +207,10 @@ struct alignas(16) FrameUniforms {
     float shadow_soft[4];        // soft shadows: tan of the sun's radius (0: off), contact shadows on, the blocker search's reach
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
+// The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
+// millimetres against a bias of tenths of a unit, at half the memory traffic of 32-bit floats.
+// The lights' atlas keeps 32-bit floats: a perspective depth crowds its precision near the light.
+constexpr WGPUTextureFormat kCascadeDepth = WGPUTextureFormat_Depth16Unorm;
 constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
 // The id pass's surface targets (screen-space reflections): the normal (octahedral), roughness and
 // metallic; and the albedo.
@@ -1374,9 +1378,11 @@ fn ssr_px(c: vec4f) -> vec2f {
 // sun's light through its cascades (so what blocks the sun cuts a shaft) and the point and spot
 // lights' through the clusters and their shadow faces, scattered toward the eye by the
 // Henyey-Greenstein phase; it writes the light gathered and how much of what lies behind still shows.
-struct Vol { medium: vec4f, albedo: vec4f, march: vec4f, target_size: vec4f };
+struct Vol { medium: vec4f, albedo: vec4f, march: vec4f, target_size: vec4f, history: vec4f };
 @group(1) @binding(8) var<uniform> vol: Vol;
 @group(1) @binding(9) var vol_depth: texture_depth_2d;
+@group(1) @binding(10) var vol_history: texture_2d<f32>;   // last frame's result (history.x: whether it is one)
+@group(1) @binding(11) var vol_samp: sampler;
 // Henyey-Greenstein, scaled so an even medium (g = 0) scatters 1: lit fog then matches a lit white
 // surface, the engine's convention for light of intensity one.
 fn phase_hg(cos_t: f32, g: f32) -> f32 {
@@ -1469,8 +1475,9 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32, cxy: vec2u) -> vec3f {
     len = min(len, vol.march.y);
     let steps = max(u32(vol.march.x), 1u);
     let dt = len / f32(steps);
-    // Each pixel starts its steps at its own offset (interleaved gradient noise), so banding turns to grain.
-    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))));
+    // Each pixel starts its steps at its own offset (interleaved gradient noise), so banding turns to
+    // grain, and every frame at another (march.w), so the frames blended below sample between each other's steps.
+    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))) + vol.march.w);
     let g = vol.medium.w;
     let sun_phase = phase_hg(dot(frame.sun_dir.xyz, -dir), g);
     var ambient = frame.ambient.rgb;
@@ -1493,7 +1500,21 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32, cxy: vec2u) -> vec3f {
     // The most the fog may hide: what it gathered shrinks with what it may cover.
     let floor_t = 1.0 - vol.albedo.w;
     if (trans < floor_t && trans < 1.0) { gathered = gathered * (1.0 - floor_t) / (1.0 - trans); trans = floor_t; }
-    return vec4f(gathered * vol.albedo.rgb, trans);
+    var result = vec4f(gathered * vol.albedo.rgb, trans);
+    if (vol.history.x > 0.5) {
+        // Where this pixel's point was last frame, and what was gathered there: each frame adds its
+        // share (history.y) to the blend, so a few steps a frame add up to many.
+        let at = far_h.xyz / far_h.w;
+        let prev = frame.prev_view_proj * vec4f(at, 1.0);
+        let pn = prev.xy / prev.w;
+        let puv = vec2f(pn.x * 0.5 + 0.5, 0.5 - pn.y * 0.5);
+        if (prev.w > 0.0 && all(puv >= vec2f(0.0)) && all(puv <= vec2f(1.0))) {
+            let tuv = (frame.viewport.xy + puv * frame.viewport.zw) / vec2f(dims);
+            let past = textureSampleLevel(vol_history, vol_samp, tuv, 0.0);
+            result = mix(past, result, vol.history.y);
+        }
+    }
+    return result;
 }
 
 // Water (docs/design/water.md): each body a grid over its extent moved by the Gerstner waves of
@@ -2538,6 +2559,7 @@ struct Renderer::Impl {
     WGPUBuffer line_buffer = nullptr;
     std::size_t line_capacity = 0;  // vertices
     WGPURenderPipeline shadow_pipeline = nullptr;
+    WGPURenderPipeline atlas_pipeline = nullptr, atlas_skinned_pipeline = nullptr, atlas_cut_pipeline = nullptr;   // the same for the lights' atlas
     WGPUPipelineLayout shadow_layout = nullptr;
     WGPUBindGroupLayout scene_bgl = nullptr;   // frame uniforms + shadow map + comparison sampler
     WGPUBindGroup scene_bg = nullptr;
@@ -2591,15 +2613,19 @@ struct Renderer::Impl {
     WGPUTextureView post_lut = nullptr;           // and the look-up table's
     // Volumetric fog: the half-size target, a stand-in (nothing gathered, everything shows) when it
     // is off, the pass (the mesh module's vs_volume/fs_volume over the scene group and its own).
-    WGPUTexture volume_tex = nullptr, volume_none_tex = nullptr;
-    WGPUTextureView volume_view = nullptr, volume_none_view = nullptr;
+    WGPUTexture volume_tex[2]{}, volume_none_tex = nullptr;            // this frame's and last frame's, in turn
+    WGPUTextureView volume_view[2]{}, volume_none_view = nullptr;
+    int volume_cur = 0;                                                  // the one written this frame
+    bool volume_valid = false;                                           // the other holds last frame's
+    std::uint64_t volume_frame = 0;
+    WGPUBindGroup volume_bgs[2]{};
+    WGPUSampler volume_samp = nullptr;
     std::uint32_t volume_w = 0, volume_h = 0;
     WGPUBindGroupLayout volume_bgl = nullptr;
     WGPUPipelineLayout volume_layout = nullptr;
     WGPURenderPipeline volume_pipeline = nullptr;
     WGPUBuffer volume_uniforms = nullptr;
-    WGPUBindGroup volume_bg = nullptr;
-    WGPUTextureView volume_depth = nullptr;       // the depth view volume_bg reads
+    WGPUTextureView volume_depth = nullptr;       // the depth view volume_bgs read
     // The depth prepass: the id pass at one sample with a depth target of its own, sampled by the AO
     // pass and the fog afterwards; a 1x1 stand-in when there is none.
     WGPUTexture prepass_tex = nullptr;
@@ -2975,13 +3001,14 @@ struct Renderer::Impl {
         if (ao_bgl) wgpuBindGroupLayoutRelease(ao_bgl);
         if (ao_shader) wgpuShaderModuleRelease(ao_shader);
         if (ao_uniforms) wgpuBufferRelease(ao_uniforms);
-        if (volume_bg) wgpuBindGroupRelease(volume_bg);
         if (volume_uniforms) wgpuBufferRelease(volume_uniforms);
         if (volume_pipeline) wgpuRenderPipelineRelease(volume_pipeline);
         if (volume_layout) wgpuPipelineLayoutRelease(volume_layout);
         if (volume_bgl) wgpuBindGroupLayoutRelease(volume_bgl);
-        for (WGPUTextureView v : {volume_view, volume_none_view}) if (v) wgpuTextureViewRelease(v);
-        for (WGPUTexture t : {volume_tex, volume_none_tex}) if (t) wgpuTextureRelease(t);
+        for (WGPUTextureView v : {volume_view[0], volume_view[1], volume_none_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {volume_tex[0], volume_tex[1], volume_none_tex}) if (t) wgpuTextureRelease(t);
+        for (WGPUBindGroup g : volume_bgs) if (g) wgpuBindGroupRelease(g);
+        if (volume_samp) wgpuSamplerRelease(volume_samp);
         if (ao_white_view) wgpuTextureViewRelease(ao_white_view);
         if (ao_white_tex) wgpuTextureRelease(ao_white_tex);
         if (prepass_view) wgpuTextureViewRelease(prepass_view);
@@ -3082,6 +3109,7 @@ struct Renderer::Impl {
         if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
         if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
         if (shadow_cut_pipeline) wgpuRenderPipelineRelease(shadow_cut_pipeline);
+        for (WGPURenderPipeline pl : {atlas_pipeline, atlas_skinned_pipeline, atlas_cut_pipeline}) if (pl) wgpuRenderPipelineRelease(pl);
         for (WGPURenderPipeline p : {oit_pipeline, oit_skinned_pipeline, oit_composite_pipeline, oit_ms_pipeline, oit_ms_skinned_pipeline, oit_ms_composite_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         if (oit_bg) wgpuBindGroupRelease(oit_bg);
         for (WGPUTextureView v : {oit_accum_view, oit_reveal_view, oit_ms_accum_view, oit_ms_reveal_view}) if (v) wgpuTextureViewRelease(v);
@@ -3374,8 +3402,9 @@ struct Renderer::Impl {
     struct VolumeUniforms {
         float medium[4];         // density, base height, falloff, anisotropy
         float albedo[4];         // the fog's color (linear), the most it hides
-        float march[4];          // steps, distance, start
+        float march[4];          // steps, distance, start, this frame's jitter offset
         float target_size[4];
+        float history[4];        // last frame's result usable (1/0), the share of this frame
     };
     struct MeterUniforms {
         float viewport[4];
@@ -3551,7 +3580,7 @@ struct Renderer::Impl {
     Status draw_post(rhi::Frame& frame, rhi::Color clear, const world::Fog* fog_settings) {
         // The post group reads the prepass depth when there is one (for the fog).
         WGPUTextureView depth_view = prepass_view && split_applied ? prepass_view : no_depth_view;
-        WGPUTextureView volume_now = stats.volumetric ? volume_view : volume_none_view;
+        WGPUTextureView volume_now = stats.volumetric ? volume_view[volume_cur] : volume_none_view;
         // The grade's look-up table, when it names an image of the right shape.
         WGPUTextureView lut_now = white.view;
         bool lut_on = false;
@@ -5325,7 +5354,7 @@ struct Renderer::Impl {
 
     // The volumetric fog's pass and its stand-in (docs/design/rendering.md, Volumetric light).
     Status create_volume() {
-        WGPUBindGroupLayoutEntry ve[2]{};
+        WGPUBindGroupLayoutEntry ve[4]{};
         ve[0].binding = 8;
         ve[0].visibility = WGPUShaderStage_Fragment;
         ve[0].buffer.type = WGPUBufferBindingType_Uniform;
@@ -5334,9 +5363,16 @@ struct Renderer::Impl {
         ve[1].visibility = WGPUShaderStage_Fragment;
         ve[1].texture.sampleType = WGPUTextureSampleType_Depth;
         ve[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        ve[2].binding = 10;
+        ve[2].visibility = WGPUShaderStage_Fragment;
+        ve[2].texture.sampleType = WGPUTextureSampleType_Float;
+        ve[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+        ve[3].binding = 11;
+        ve[3].visibility = WGPUShaderStage_Fragment;
+        ve[3].sampler.type = WGPUSamplerBindingType_Filtering;
         WGPUBindGroupLayoutDescriptor vd{};
         vd.label = rhi::str("pocket.volume");
-        vd.entryCount = 2;
+        vd.entryCount = 4;
         vd.entries = ve;
         volume_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &vd);
         WGPUBindGroupLayout layouts[2] = {scene_bgl, volume_bgl};
@@ -5367,6 +5403,15 @@ struct Renderer::Impl {
         volume_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!volume_pipeline) return fail("gpu_pipeline_failed", "the volumetric fog pipeline could not be created");
         volume_uniforms = device->create_buffer("pocket.volume", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(VolumeUniforms));
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.volume.history");
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.lodMaxClamp = 1.0f;
+        sd.maxAnisotropy = 1;
+        volume_samp = wgpuDeviceCreateSampler(device->device(), &sd);
         auto [nt, nv] = make_target("pocket.volume.none", 1, 1, kHdrFormat, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
         volume_none_tex = nt;
         volume_none_view = nv;
@@ -5385,33 +5430,45 @@ struct Renderer::Impl {
     // March the fog into the half-size target (the prepass depth must be there).
     Status draw_volume(rhi::Frame& frame, const world::Fog& fog) {
         const std::uint32_t vw = std::max(1u, (frame.width + 1) / 2), vh = std::max(1u, (frame.height + 1) / 2);
-        if (!volume_tex || volume_w != vw || volume_h != vh) {
-            if (volume_view) wgpuTextureViewRelease(volume_view);
-            if (volume_tex) wgpuTextureRelease(volume_tex);
-            auto [t, v] = make_target("pocket.volume", vw, vh, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
-            if (!t) return fail("gpu_texture_failed", "cannot create the volumetric fog target {}x{}", vw, vh);
-            volume_tex = t;
-            volume_view = v;
+        if (!volume_tex[0] || volume_w != vw || volume_h != vh) {
+            for (int k = 0; k < 2; ++k) {
+                if (volume_view[k]) wgpuTextureViewRelease(volume_view[k]);
+                if (volume_tex[k]) wgpuTextureRelease(volume_tex[k]);
+                auto [t, v] = make_target("pocket.volume", vw, vh, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+                if (!t) return fail("gpu_texture_failed", "cannot create the volumetric fog target {}x{}", vw, vh);
+                volume_tex[k] = t;
+                volume_view[k] = v;
+            }
             volume_w = vw;
             volume_h = vh;
+            volume_valid = false;
+            volume_depth = nullptr;
             post_volume = nullptr;
         }
-        if (!volume_bg || volume_depth != prepass_view) {
-            if (volume_bg) wgpuBindGroupRelease(volume_bg);
-            WGPUBindGroupEntry e[2]{};
-            e[0].binding = 8;
-            e[0].buffer = volume_uniforms;
-            e[0].size = sizeof(VolumeUniforms);
-            e[1].binding = 9;
-            e[1].textureView = prepass_view;
-            WGPUBindGroupDescriptor d{};
-            d.label = rhi::str("pocket.volume");
-            d.layout = volume_bgl;
-            d.entryCount = 2;
-            d.entries = e;
-            volume_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+        if (!volume_bgs[0] || volume_depth != prepass_view) {
+            // One group per direction of the turn: write into k, read last frame's from the other.
+            for (int k = 0; k < 2; ++k) {
+                if (volume_bgs[k]) wgpuBindGroupRelease(volume_bgs[k]);
+                WGPUBindGroupEntry e[4]{};
+                e[0].binding = 8;
+                e[0].buffer = volume_uniforms;
+                e[0].size = sizeof(VolumeUniforms);
+                e[1].binding = 9;
+                e[1].textureView = prepass_view;
+                e[2].binding = 10;
+                e[2].textureView = volume_view[1 - k];
+                e[3].binding = 11;
+                e[3].sampler = volume_samp;
+                WGPUBindGroupDescriptor d{};
+                d.label = rhi::str("pocket.volume");
+                d.layout = volume_bgl;
+                d.entryCount = 4;
+                d.entries = e;
+                volume_bgs[k] = wgpuDeviceCreateBindGroup(device->device(), &d);
+            }
             volume_depth = prepass_view;
         }
+        const int k = 1 - volume_cur;   // write into the one not holding last frame's
         VolumeUniforms u{};
         u.medium[0] = std::max(fog.density, 0.0f);
         u.medium[1] = fog.height;
@@ -5421,14 +5478,21 @@ struct Renderer::Impl {
         u.albedo[1] = decode(fog.color.g);
         u.albedo[2] = decode(fog.color.b);
         u.albedo[3] = std::clamp(fog.max_opacity, 0.0f, 1.0f);
-        u.march[0] = static_cast<float>(std::clamp(fog.steps, 4, 128));
+        // A frame with last frame's to blend with marches the steps asked for; one without (the
+        // first, after a cut, an agent's capture after an undrawn step) four times as many, so it
+        // looks as the blend would.
+        const int steps = std::clamp(fog.steps, 4, 128);
+        u.march[0] = static_cast<float>(volume_valid ? steps : std::min(steps * 4, 128));
         u.march[1] = std::max(fog.distance, 0.1f);
         u.march[2] = std::max(fog.start, 0.0f);
+        u.march[3] = std::fmod(static_cast<float>(volume_frame++ % 64) * 0.618034f, 1.0f);   // golden-ratio steps through the jitter
         u.target_size[0] = static_cast<float>(vw);
         u.target_size[1] = static_cast<float>(vh);
+        u.history[0] = volume_valid ? 1.0f : 0.0f;
+        u.history[1] = 0.25f;
         device->write_buffer(volume_uniforms, 0, &u, sizeof u);
         WGPURenderPassColorAttachment ca{};
-        ca.view = volume_view;
+        ca.view = volume_view[k];
         ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         ca.loadOp = WGPULoadOp_Clear;
         ca.storeOp = WGPUStoreOp_Store;
@@ -5440,10 +5504,12 @@ struct Renderer::Impl {
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         wgpuRenderPassEncoderSetPipeline(enc, volume_pipeline);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
-        wgpuRenderPassEncoderSetBindGroup(enc, 1, volume_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(enc, 1, volume_bgs[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(enc);
         wgpuRenderPassEncoderRelease(enc);
+        volume_cur = k;
+        volume_valid = true;
         stats.draw_calls++;
         return {};
     }
@@ -6056,7 +6122,7 @@ struct Renderer::Impl {
         // Shadow map: depth only from the sun, both faces (thin geometry still casts), the bias
         // in the lookup handles acne.
         WGPUDepthStencilState sds{};
-        sds.format = WGPUTextureFormat_Depth32Float;
+        sds.format = kCascadeDepth;
         sds.depthWriteEnabled = WGPUOptionalBool_True;
         sds.depthCompare = WGPUCompareFunction_Less;
         sds.stencilFront.compare = WGPUCompareFunction_Always;
@@ -6106,6 +6172,18 @@ struct Renderer::Impl {
             crpd.fragment = &cfs;
             shadow_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &crpd);
             if (!shadow_cut_pipeline) return fail("gpu_pipeline_failed", "cut-out shadow pipeline creation failed");
+            // The same three for the lights' atlas, at its 32-bit depth.
+            sds.format = WGPUTextureFormat_Depth32Float;
+            crpd.label = rhi::str("pocket.atlas.cut");
+            atlas_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &crpd);
+            rpd.label = rhi::str("pocket.atlas.skinned");
+            atlas_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            rpd.label = rhi::str("pocket.atlas");
+            rpd.vertex.entryPoint = rhi::str("vs_shadow");
+            rpd.vertex.bufferCount = 1;
+            rpd.vertex.buffers = &vbl;
+            atlas_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            if (!atlas_pipeline || !atlas_skinned_pipeline || !atlas_cut_pipeline) return fail("gpu_pipeline_failed", "the shadow atlas pipelines could not be created");
         }
         joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16);
         joint_staging.resize(static_cast<std::size_t>(kMaxJoints) * 16);
@@ -6133,7 +6211,7 @@ struct Renderer::Impl {
         std_.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
         std_.dimension = WGPUTextureDimension_2D;
         std_.size = {kShadowMapSize, kShadowMapSize, kCascades};
-        std_.format = WGPUTextureFormat_Depth32Float;
+        std_.format = kCascadeDepth;
         std_.mipLevelCount = 1;
         std_.sampleCount = 1;
         shadow_texture = wgpuDeviceCreateTexture(device->device(), &std_);
@@ -8508,7 +8586,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 const Draw& d = draws[k];
                 return d.radius < 0 || length(d.center - at) <= reach + d.radius;
             };
-            draw_runs(apass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, &keep, &im.stats.shadow_instances);
+            draw_runs(apass, false, im.stats.shadow_draws, im.atlas_pipeline, im.atlas_skinned_pipeline, nullptr, nullptr, im.atlas_cut_pipeline, &keep, &im.stats.shadow_instances);
         }
         wgpuRenderPassEncoderEnd(apass);
         wgpuRenderPassEncoderRelease(apass);
@@ -8781,6 +8859,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     }
     im.stats.volumetric = fog_on && fog.volumetric && im.prepass_view && im.split_applied;
     if (im.stats.volumetric) POCKET_TRY_VOID(im.draw_volume(frame, fog));
+    else im.volume_valid = false;   // a history from before a gap would show what is no longer there
     if (im.bloom.enabled && im.bloom.strength > 0) POCKET_TRY_VOID(im.draw_bloom(frame));
     POCKET_TRY_VOID(im.draw_post(frame, clear, fog_on ? &fog : nullptr));
     im.timer_end_frame(frame.encoder);
@@ -8895,6 +8974,7 @@ void Renderer::set_view(std::optional<ViewOverride> view) {
 void Renderer::cut() {
     impl_->taa_valid = false;
     impl_->motion_prev_set = false;
+    impl_->volume_valid = false;
 }
 
 void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4

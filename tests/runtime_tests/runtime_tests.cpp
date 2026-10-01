@@ -3313,6 +3313,66 @@ TEST_CASE("an anchored element follows its entity's projection and hides when th
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("project.brief says what the project is made of and what it is doing, as one text", "[runtime][brief]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 120}}).has_value());
+    const std::string t = s.command("project.brief", Json::object()).value()["text"].get<std::string>();
+    INFO(t);
+    for (std::string_view want : {"project playground", "scripts: scripts/main.ts", "scenarios: scenarios/crowd.ts", "roots: Level (+", "components in use: Transform", "project component Enemy {damage f32, kind i32: grunt|brute", "exposed state: enemies=", "events: ", "enemy.spawned x", "lint: 0 errors", "next: "}) {
+        REQUIRE(t.find(want) != std::string::npos);
+    }
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a step runs until an event, a state value or a field says so", "[runtime][step][until]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "sprites";
+    o.bundle = root() / "build" / "ts" / "sprites.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 320;
+    o.height = 180;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.frame().has_value());
+    // Walking right collects the coin ahead within a second (the sprites scenario): one call.
+    REQUIRE(s.command("input.hold", Json{{"action", "move_x"}, {"ticks", 600}}).has_value());
+    Json a = s.command("step", Json{{"ticks", 600}, {"until", Json{{"event", "coin."}}}}).value();
+    INFO(a.dump());
+    REQUIRE(a["until"]["met"] == true);
+    REQUIRE(a["until"]["ticks"].get<int>() < 60);
+    REQUIRE(a["until"]["event"]["type"] == "coin.collected");
+    REQUIRE(a["state"]["score"] == 1);
+    REQUIRE(a["until"]["tick"] == a["tick"].get<int>() - 1);
+    // An exposed value, and a field of a component.
+    Json b = s.command("step", Json{{"ticks", 600}, {"until", Json{{"state", "player.x"}, {"above", 2}}}}).value();
+    REQUIRE(b["until"]["met"] == true);
+    REQUIRE(b["until"]["value"].get<double>() > 2);
+    Json c = s.command("step", Json{{"ticks", 600}, {"until", Json{{"entity", "Player"}, {"component", "Transform"}, {"field", "position.x"}, {"at_least", 3}}}}).value();
+    REQUIRE(c["until"]["met"] == true);
+    REQUIRE(c["until"]["value"].get<double>() >= 3);
+    // Not met: the whole step runs and says so.
+    Json d = s.command("step", Json{{"ticks", 20}, {"until", Json{{"state", "score"}, {"equals", 99}}}}).value();
+    REQUIRE(d["until"]["met"] == false);
+    REQUIRE(d["until"]["ticks"] == 20);
+    REQUIRE_FALSE(s.command("step", Json{{"ticks", 5}, {"until", Json{{"state", "score"}}}}).has_value());   // no comparison
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("a click on the interface is the interface's; elsewhere it presses the action bound to the button", "[runtime][input][mouse]") {
     app::Options o;
     o.project_dir = root() / "samples" / "sprites";

@@ -117,7 +117,7 @@ fn tools_list() -> Value {
             "components": { "type": "array", "items": { "type": "string" } },
             "search": { "type": "string" }
         }), &[])),
-        tool("step", "Advance the paused simulation by N ticks and return the state summary (tick, exposed state, hashes).", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 } }), &[])),
+        tool("step", "Advance the paused simulation by N ticks and return the state summary (tick, exposed state, hashes). `until` stops at the first tick after which something holds: {event: \"coin.\"} (an event type or prefix), {state: \"score\", at_least: 3}, or {entity, component, field: \"position.y\", below: 0}, compared with equals, above, below, at_least, at_most or changes; the answer's `until` says whether it was met, at which tick and what was seen.", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 }, "until": { "type": "object", "description": "a condition that ends the step early" } }), &[])),
         tool("events_since", "Causal event log entries after a sequence number, oldest first.", obj_schema(json!({
             "seq": { "type": "integer", "default": 0 },
             "limit": { "type": "integer", "default": 200 },
@@ -256,6 +256,10 @@ impl<'a> McpServer<'a> {
         std::thread::spawn(move || for _ in lines {});
         self.session = Some(RuntimeSession { child: Some(child), url: url.clone(), project: project.to_string(), stdout: Some(stdout_thread) });
         let state = self.rpc("state", json!({}))?;
+        // The brief first (what the project is made of and what it is doing), as text.
+        if let Some(brief) = self.rpc("project.brief", json!({})).ok().and_then(|b| b.get("text").and_then(|t| t.as_str()).map(str::to_string)) {
+            return Ok(Value::String(format!("started {project} at {url}\n{brief}runtime_stop returns the final report")));
+        }
         Ok(json!({ "project": project, "url": url, "state": state, "hint": "use step, world_tree, world_query, events_since, capture; runtime_stop returns the final report" }))
     }
 
@@ -266,6 +270,9 @@ impl<'a> McpServer<'a> {
         let url = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| anyhow!("url is required"))?.trim_end_matches('/').to_string();
         self.session = Some(RuntimeSession { child: None, url: url.clone(), project: "attached".into(), stdout: None });
         let state = self.rpc("state", json!({}))?;
+        if let Some(brief) = self.rpc("project.brief", json!({})).ok().and_then(|b| b.get("text").and_then(|t| t.as_str()).map(str::to_string)) {
+            return Ok(Value::String(format!("attached to {url}\n{brief}")));
+        }
         Ok(json!({ "attached": url, "state": state }))
     }
 

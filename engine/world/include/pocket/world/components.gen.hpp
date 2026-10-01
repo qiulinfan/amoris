@@ -326,7 +326,7 @@ struct Fog {
     bool enabled = true;
     bool volumetric = false;
     float anisotropy = 0.6f;
-    std::int32_t steps = 32;
+    std::int32_t steps = 16;
     float distance = 60.0f;
     constexpr bool operator==(const Fog&) const = default;
 };
