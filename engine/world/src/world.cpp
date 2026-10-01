@@ -151,6 +151,7 @@ std::string format_component_compact(std::string_view component, const Json& val
 
 struct World::Impl {
     std::map<std::string, std::pair<Vec3, Vec3>> mesh_bounds;  // local AABB per asset mesh path
+    std::function<bool(const std::string&, Vec3&, Vec3&)> mesh_bounds_source;
     std::map<EntityId, std::string> derived_meshes;             // meshes the engine made for an entity (a terrain's)
     std::map<EntityId, std::vector<World::Instance>> derived_instances;   // copies the engine placed (a scatter's)
     flecs::world ecs;
@@ -742,6 +743,7 @@ Status World::unpack(std::string_view component, const std::vector<std::string>&
 }
 
 void World::set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max) { impl_->mesh_bounds[std::string(mesh)] = {min, max}; }
+void World::set_mesh_bounds_source(std::function<bool(const std::string&, Vec3&, Vec3&)> source) { impl_->mesh_bounds_source = std::move(source); }
 
 void World::set_derived_mesh(EntityId id, std::string path) {
     if (path.empty()) impl_->derived_meshes.erase(id);
@@ -772,6 +774,14 @@ void World::update_bounds() {
         if (mesh == "plane") { lo.y = 0; hi.y = 0; }
         else if (mesh == "capsule") { lo.y = -1; hi.y = 1; }
         else if (auto it = impl_->mesh_bounds.find(mesh); it != impl_->mesh_bounds.end()) { lo = it->second.first; hi = it->second.second; }
+        else if (mesh.find('/') != std::string::npos && impl_->mesh_bounds_source) {
+            Vec3 a, b;
+            if (impl_->mesh_bounds_source(mesh, a, b)) {
+                impl_->mesh_bounds[mesh] = {a, b};
+                lo = a;
+                hi = b;
+            }
+        }
         Mat4 m = Mat4::trs(wt.position, wt.rotation, wt.scale);
         Bounds b;
         bool first = true;

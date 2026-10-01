@@ -307,6 +307,7 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
     Submesh sm;
     sm.index_count = static_cast<std::uint32_t>(m.indices.size());
     m.submeshes.push_back(sm);
+    fill_tangents(m);
     Material mat;
     mat.name = "terrain";
     mat.roughness = 0.95f;

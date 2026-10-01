@@ -295,9 +295,10 @@ TEST_CASE("material maps bend normals, make metals and glow", "[renderer][pbr]")
         for (auto& [k, v] : extra.items()) mr[k] = v;
         REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 0}, {"z", 0}}}, {"scale", Json{{"x", 2}, {"y", 1}, {"z", 2}}}}}, {"MeshRenderer", mr}}}}).has_value());
     };
-    // Three planes: no map, a flat map, a map bent toward +Y (up in the image = toward -Z in the
-    // world for a plane whose v axis runs along +Z). The bent one faces away from a light that
-    // comes from -Z, so it is darker; the flat map changes nothing.
+    // Three planes: no map, a flat map, a map bent toward +Y (glTF's convention: up in the image,
+    // which is toward -Z in the world for a plane whose v runs along +Z, the image's top row at
+    // v 0). The bent one faces the light, which comes from -Z and above, so it is brighter; the
+    // flat map changes nothing.
     plane("Bare", 40.0f, Json::object());
     plane("Flat", 43.0f, Json{{"normal_map", "assets/normal_flat.png"}});
     plane("Bent", 46.0f, Json{{"normal_map", "assets/normal_up.png"}});
@@ -312,7 +313,7 @@ TEST_CASE("material maps bend normals, make metals and glow", "[renderer][pbr]")
     INFO("bare " << bare << " flat " << flat << " bent " << bent);
     REQUIRE(bare > 150);
     REQUIRE(std::abs(bare - flat) < 12);
-    REQUIRE(bent < bare * 0.85);
+    REQUIRE(bent > bare * 1.15);
     // A map that does not exist: the flat default stands in and the miss is reported next to the
     // sample's own missing mesh.
     REQUIRE(s.command("world.set", Json{{"entity", "Bent"}, {"component", "MeshRenderer"}, {"value", Json{{"normal_map", "assets/normal_down.png"}}}}).has_value());
@@ -871,6 +872,99 @@ TEST_CASE("soft shadows are sharp at their casters and soft far from them; conta
     REQUIRE(std::abs(behind_off - open_off) < 8);   // without them the maps' absence leaves it lit
     REQUIRE(behind_on < behind_off - 30);            // with them the floor at the block's foot darkens
     REQUIRE(std::abs(open_on - open_off) < 6);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("cloth, specular, brushed metal and unlit surfaces answer the light their own way", "[renderer][materials]") {
+    app::Options o = playground_options();
+    o.width = 480;
+    o.height = 270;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", components}}).has_value()); };
+    auto set_mr = [&](const char* name, Json value) { REQUIRE(s.command("world.set", Json{{"entity", name}, {"component", "MeshRenderer"}, {"value", value}}).has_value()); };
+    auto grey = [&](const Json& cap, std::size_t i) { return cap["pixels"][i][1].get<int>(); };
+    // A sphere at the origin seen from 3 units along +z, the sun shining from behind the camera.
+    spawn("Ball", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "sphere"}, {"color", Json{{"r", 0.1}, {"g", 0.1}, {"b", 0.1}, {"a", 1}}}, {"roughness", 0.3}, {"metallic", 0}}}});
+    spawn("Sun", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 0}, {"intensity", 1.2}}}});
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 3}}}}}, {"Camera", Json{{"fov_degrees", 40}}}});
+    REQUIRE(s.frame().has_value());
+    auto at = [&](Vec3 p) {
+        Json pr = s.command("render.project", Json{{"point", Json{{"x", p.x}, {"y", p.y}, {"z", p.z}}}}).value();
+        return Json{{"x", pr["x"]}, {"y", pr["y"]}};
+    };
+    // The highlight at the middle, and a ring 0.4 out toward the rim.
+    Json probes = Json::array({at({0, 0, 0.5f})});
+    for (int k = 0; k < 8; ++k) probes.push_back(at({0.4f * std::cos(0.785f * static_cast<float>(k)), 0.4f * std::sin(0.785f * static_cast<float>(k)), 0.3f}));
+    auto look = [&]() {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        Json cap = s.command("capture", Json{{"pixels", probes}}).value();
+        int ring = 0;
+        for (std::size_t i = 1; i < 9; ++i) ring += grey(cap, i);
+        return std::make_pair(grey(cap, 0), ring / 8);
+    };
+    auto [plain_mid, plain_ring] = look();
+    // KHR_materials_specular: no reflection from a non-metal at 0.
+    set_mr("Ball", Json{{"specular", 0.0}});
+    auto [matte_mid, matte_ring] = look();
+    // KHR_materials_sheen: a white sheen over the dark ball brightens it toward its rim.
+    set_mr("Ball", Json{{"specular", -1.0}, {"sheen", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}, {"sheen_roughness", 0.3}});
+    auto [sheen_mid, sheen_ring] = look();
+    INFO("middle / ring: plain " << plain_mid << "/" << plain_ring << ", specular 0 " << matte_mid << "/" << matte_ring << ", sheen " << sheen_mid << "/" << sheen_ring);
+    REQUIRE(matte_mid < plain_mid - 40);          // the highlight is gone
+    REQUIRE(sheen_ring > plain_ring + 25);        // the cloth's glow
+    // Unlit: with the sun from the side, a lit ball is bright on one side and dark on the other;
+    // unlit it is its colour on both.
+    set_mr("Ball", Json{{"sheen", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"color", Json{{"r", 0.2}, {"g", 0.6}, {"b", 0.2}, {"a", 1}}}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", 0}, {"y", 0.7071}, {"z", 0}, {"w", 0.7071}}}}}}).has_value());
+    const Json sides = Json::array({at({-0.35f, 0, 0.35f}), at({0.35f, 0, 0.35f})});
+    auto both = [&]() {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        Json cap = s.command("capture", Json{{"pixels", sides}}).value();
+        return std::make_pair(grey(cap, 0), grey(cap, 1));
+    };
+    auto [lit_l, lit_r] = both();
+    set_mr("Ball", Json{{"unlit", true}});
+    auto [unlit_l, unlit_r] = both();
+    INFO("left / right lit " << lit_l << "/" << lit_r << ", unlit " << unlit_l << "/" << unlit_r);
+    REQUIRE(std::abs(lit_l - lit_r) > 60);
+    REQUIRE(std::abs(unlit_l - unlit_r) <= 3);
+    // KHR_materials_anisotropy: a polished metal floor under a lamp, seen from straight above. The
+    // highlight is round, stretched along the uv's u at 1, and along the other axis turned 90 degrees.
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    spawn("Floor", Json{{"Transform", Json{{"scale", Json{{"x", 6}, {"y", 1}, {"z", 6}}}}}, {"MeshRenderer", Json{{"mesh", "plane"}, {"color", Json{{"r", 1}, {"g", 1}, {"b", 1}, {"a", 1}}}, {"metallic", 1}, {"roughness", 0.2}}}});
+    spawn("Lamp", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"Light", Json{{"kind", 1}, {"intensity", 0.6}, {"range", 8}}}});
+    spawn("Dark", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 0}, {"intensity", 0.0}}}});   // no sun: else a default key light
+    spawn("Camera", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 4}, {"z", 0}}}, {"rotation", Json{{"x", -0.7071}, {"y", 0}, {"z", 0}, {"w", 0.7071}}}}}, {"Camera", Json{{"fov_degrees", 50}}}});
+    REQUIRE(s.frame().has_value());
+    Json cross = Json::array();
+    for (int i = -60; i <= 60; ++i) cross.push_back(Json{{"x", 240 + 2 * i}, {"y", 135}});
+    for (int i = -60; i <= 60; ++i) cross.push_back(Json{{"x", 240}, {"y", 135 + 2 * i}});
+    // How far the highlight reaches across the image and down it: samples over half its peak.
+    int shot = 0;
+    auto spread = [&]() {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        Json cap = s.command("capture", Json{{"pixels", cross}, {"path", (root() / "build" / "test-out" / ("anisotropy-" + std::to_string(shot++) + ".png")).string()}}).value();
+        int peak = 0, floor_level = 255;
+        for (std::size_t i = 0; i < 242; ++i) { peak = std::max(peak, grey(cap, i)); floor_level = std::min(floor_level, grey(cap, i)); }
+        const int half = floor_level + (peak - floor_level) / 2;
+        int across = 0, down = 0;
+        for (std::size_t i = 0; i < 121; ++i) across += grey(cap, i) > half ? 1 : 0;
+        for (std::size_t i = 121; i < 242; ++i) down += grey(cap, i) > half ? 1 : 0;
+        return std::make_pair(across, down);
+    };
+    auto [round_x, round_y] = spread();
+    set_mr("Floor", Json{{"anisotropy", 1.0}});
+    auto [brushed_x, brushed_y] = spread();
+    set_mr("Floor", Json{{"anisotropy", 1.0}, {"anisotropy_rotation", 90.0}});
+    auto [turned_x, turned_y] = spread();
+    INFO("highlight across / down: round " << round_x << "/" << round_y << ", brushed " << brushed_x << "/" << brushed_y << ", turned 90 " << turned_x << "/" << turned_y);
+    REQUIRE(std::max(round_x, round_y) < std::min(round_x, round_y) * 1.3 + 2);
+    const bool along_x = brushed_x > brushed_y;
+    REQUIRE(std::max(brushed_x, brushed_y) > std::min(brushed_x, brushed_y) * 1.8);
+    REQUIRE((turned_x > turned_y) != along_x);   // turned a quarter, it runs the other way
+    REQUIRE(std::max(turned_x, turned_y) > std::min(turned_x, turned_y) * 1.8);
     REQUIRE(s.finish().has_value());
 }
 

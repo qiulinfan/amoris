@@ -83,8 +83,20 @@ A running runtime is the engine's interface: every feature is a command on its c
 
 - Start one: `./.pocket/pocket run <project> -- --headless --serve 4711 --paused --json`, or open the editor with `./.pocket/pocket editor <project> -- --serve 4711`.
 - Call it: the `pocket` MCP server (registered in `.mcp.json`; `runtime_attach {url}`, or it attaches to `$POCKET_RPC_URL`), the pi extension `integrations/pi/pocket.ts`, or `./.pocket/pocket rpc <method> '<params>'` in a shell.
+- After editing a project's scripts or `project.toml` while it runs: `project.apply` bundles, type-checks, reloads and steps it in one call (docs/mcp.md, Applying an edit).
 - Ask it: `help {command}` gives a command's parameters and purpose; a command refuses keys it does not take and names the right ones. `world.tree`, `world.query`, `world.describe`, `transcript` and `events.why` read the game as text; `world.lint` lists what is likely wrong (with fixes) after building something; `render.views {path, entity?}` shows it from six sides in one picture; `capture` and `render.visible` show what the camera sees.
-- The runtime is paused; `step {ticks}` advances it. Entities are ids, names or paths (`Player`, `/Level/Player`).
+- The runtime is paused; `step {ticks}` advances it, drawing only the last tick when headless (`render: "each"` for effects that build up over frames: TAA, auto exposure, probe bounces). Entities are ids, names or paths (`Player`, `/Level/Player`).
+
+## Development helpers
+
+`tools/scripts/dev/` holds the scripts a working session reuses (standard library only):
+
+- `runtime.py`: `Runtime(sample, port, size, release=False)` starts a headless runtime serving a sample (bundle it first with `pocket ts`) and `rpc(method, params)` calls it; as a script, `runtime.py <sample> <method> '<json>' ...` runs calls in order and prints the answers. Run anything that talks to a runtime outside the sandbox (loopback connections are blocked inside it).
+- `gpu_probe.py <sample> [--size WxH] [--frames N] [--rpc method '<json>']`: the release runtime's GPU time per frame, in all and per pass (`render.stats.gpu`), beside `perf`; for measuring a renderer change before and after.
+- `suite.sh [name]`: the whole `pocket test --json` in the background into `build/test-reports/<name>.json`, with `<name>.done` when it ends; `test_summary.py <report>` prints the verdict and each failure. Run the module or tag a change touches directly (`./build/debug/bin/<module> "[tag]"`) while working, and the whole suite before a commit that changes shared code.
+- `edits.py`: `patch(path, [(old, new), ...])`, exact replacements that fail unless each old text occurs once.
+
+Image work (cropping or stitching captures for evidence) uses Pillow in the ignored `.venv` at the root: `python3 -m venv .venv && .venv/bin/pip install pillow`.
 
 ## Repository layout
 
@@ -93,7 +105,9 @@ pocket.toml        workspace manifest: targets, platforms, toolchain and depende
 tools/pocket/      Rust build tool (cargo workspace)
 engine/            C++26 modules, one directory per module with a module.toml
 sdk/               TypeScript SDK: generated .d.ts, runtime helpers, base tsconfig
-pytools/           Python tools (uv project)
+tools/scripts/     Python tools: the agent benchmark and its runners, sample assets, evidence; dev/ (Development helpers)
+editor/            the editor, a Pocket UI program in TypeScript
+integrations/      agent integrations (pi extension)
 samples/           sample projects written in TypeScript
 tests/             cross-cutting integration tests, golden images, evidence
 docs/              decisions/, design documents, lessons

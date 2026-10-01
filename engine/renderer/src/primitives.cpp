@@ -1,5 +1,7 @@
 #include <pocket/renderer/primitives.hpp>
 
+#include <pocket/core/tangents.hpp>
+
 #include <cmath>
 
 namespace pocket::renderer {
@@ -142,15 +144,19 @@ MeshData make_capsule(int segments, int rings) {
 }
 
 MeshData make_primitive(int kind) {
+    MeshData m;
     switch (static_cast<Primitive>(kind)) {
-        case Primitive::Sphere: return make_sphere();
-        case Primitive::Plane: return make_plane();
-        case Primitive::Cylinder: return make_cylinder();
-        case Primitive::Quad: return make_quad();
-        case Primitive::Capsule: return make_capsule();
-        case Primitive::Cube: break;
+        case Primitive::Sphere: m = make_sphere(); break;
+        case Primitive::Plane: m = make_plane(); break;
+        case Primitive::Cylinder: m = make_cylinder(); break;
+        case Primitive::Quad: m = make_quad(); break;
+        case Primitive::Capsule: m = make_capsule(); break;
+        default: m = make_cube(); break;
     }
-    return make_cube();
+    // Tangents along the uvs, for normal maps and brushed metal.
+    const std::vector<Vec4> t = uv_tangents(m.vertices, m.indices);
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) m.vertices[i].tangent = pack_tangent(t[i]);
+    return m;
 }
 
 void primitive_bounds(int kind, Vec3& out_min, Vec3& out_max) {

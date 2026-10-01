@@ -534,7 +534,7 @@ else:
         print('POCKET_ERROR cannot import: ' + str(e))
         sys.exit(4)
 opts = dict(filepath=out, export_format='GLB', export_apply=True, export_yup=True, export_cameras=True, export_lights=True,
-            export_animations=True, export_skins=True, export_morph=True, export_extras=True, export_import_convert_lighting_mode='COMPAT')
+            export_animations=True, export_skins=True, export_morph=True, export_extras=True, export_tangents=True, export_import_convert_lighting_mode='COMPAT')
 try:
     bpy.ops.export_scene.gltf(**opts)
 except TypeError:

@@ -134,6 +134,9 @@ class World {
     Status unpack(std::string_view component, const std::vector<std::string>& fields, const double* ids, std::size_t count, const float* data);
     // Local bounds of an asset mesh (by MeshRenderer.mesh path) so Bounds can be computed for it.
     void set_mesh_bounds(std::string_view mesh, Vec3 min, Vec3 max);
+    // Where bounds come from for a mesh path not yet set (the asset store), so an entity's Bounds
+    // do not wait for the mesh to be drawn: true with the local bounds, false when it has none.
+    void set_mesh_bounds_source(std::function<bool(const std::string& mesh, Vec3& min, Vec3& max)> source);
     // The mesh the engine made for an entity (a Terrain's, docs/design/terrain.md): the renderer
     // draws it and a mesh collider collides as it in place of MeshRenderer.mesh and Collider.mesh.
     // An empty path clears it.

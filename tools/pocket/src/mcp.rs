@@ -83,6 +83,7 @@ fn tools_list() -> Value {
             "url": { "type": "string", "description": "the control server's base url, e.g. http://127.0.0.1:4711" }
         }), &["url"])),
         tool("runtime_stop", "Stop the running session and return its final JSON report; an attached runtime is let go (quit: true stops it too).", obj_schema(json!({ "quit": { "type": "boolean", "default": false } }), &[])),
+        tool("project_apply", "After editing the running project's scripts or project.toml: bundle and type-check them, reload the project and step it, in one call; answers the type errors, the reload, the state after and any script errors. A bundle that fails leaves the running project as it was.", obj_schema(json!({ "ticks": { "type": "integer", "default": 1 } }), &[])),
         tool("runtime_command", "Send any runtime command with JSON params. Use runtime_commands to list them; the world.*, events.* (events.why explains an event by its causes), recorder.* (time travel when the session started with history), render.* (render.visible: what the camera sees; render.unproject: the world point under a pixel), tilemap.* (tilemap.set/fill edit a map, tilemap.save writes it back), nav.* (nav.bake a walkability grid, nav.path / nav.reachable / nav.nearest over it) families plus state, step, capture, log.tail, report.", obj_schema(json!({
             "method": { "type": "string" },
             "params": { "type": "object" }
@@ -183,7 +184,7 @@ impl<'a> McpServer<'a> {
         }
         let bundle = crate::commands::bundle_project(self.ws, &dir, None)?;
         let exe = crate::commands::exe_path(self.ws, "debug", "pocket_runtime")?;
-        let mut cmd = crate::toolchain::command(exe.to_str().unwrap());
+        let mut cmd = crate::commands::runtime_command(self.ws, &exe);
         cmd.arg("--project").arg(&dir).arg("--bundle").arg(&bundle.out).args(["--serve", "0", "--paused", "--json", "--log-level", "warn"]);
         if args.get("editor").and_then(|e| e.as_bool()).unwrap_or(false) {
             // The editor beside the project: its panes show up in ui_snapshot and its buttons
@@ -332,6 +333,7 @@ impl<'a> McpServer<'a> {
             "runtime_start" => self.start_session(&args).map(|v| Self::text_result(v, false)),
             "runtime_stop" => self.stop_session(&args).map(|v| Self::text_result(v, false)),
             "runtime_attach" => self.attach(&args).map(|v| Self::text_result(v, false)),
+            "project_apply" => self.rpc("project.apply", args).map(|v| Self::text_result(v, false)),
             "runtime_command" => {
                 let method = s("method").ok_or_else(|| anyhow!("method is required"))?;
                 let params = args.get("params").cloned().unwrap_or(json!({}));

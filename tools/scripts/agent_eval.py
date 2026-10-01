@@ -1059,7 +1059,7 @@ def run_external(cmd, env, task, timeout, project_dir):
     """One external runner: the task as JSON on stdin, the last JSON line of its output as the answer."""
     payload = {"task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": DOCS,
                "notes": "POST {\"id\": 1, \"method\": \"<command>\", \"params\": {...}} to rpc_url + \"/rpc\"; the runtime is paused; `commands` lists every method."
-                        + (f" This task edits files: change {task.get('edits', task.get('entry', 'scripts/main.ts'))} under project_dir; the harness bundles the project again and reloads the project (a fresh world from the scene, the script started again) when you are done." if task.get("script") else "")}
+                        + (f" This task edits files: change {task.get('edits', task.get('entry', 'scripts/main.ts'))} under project_dir; after an edit the command project.apply (pocket_apply in pi, project_apply over MCP) bundles and type-checks it, reloads the project (a fresh world from the scene, the script started again) and steps it, so you can see what it does; the harness bundles and reloads it once more when you are done." if task.get("script") else "")}
     proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})
     answer = None
     metrics = {}

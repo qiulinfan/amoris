@@ -428,6 +428,13 @@ TEST_CASE("glTF material maps are read with their factors", "[assets][pbr]") {
     REQUIRE(m.normal_texture == "assets/plate_normal.png");
     REQUIRE(m.normal_scale == Catch::Approx(1.0f));
     REQUIRE(m.emissive_texture == "assets/plate_glow.png");
+    // Its vertices get tangents from the uvs (the file has none): unit length, across the normal.
+    for (const assets::MeshVertex& v : (*mesh)->vertices) {
+        const Vec3 t{v.tangent.x, v.tangent.y, v.tangent.z};
+        REQUIRE(std::abs(v.tangent.w) == Catch::Approx(1.0f));
+        REQUIRE(length(t) == Catch::Approx(1.0f).margin(1e-4));
+        REQUIRE(std::abs(dot(t, v.normal)) < 1e-3);
+    }
     REQUIRE(m.emissive.x == Catch::Approx(1.0f));
     REQUIRE(m.metallic == Catch::Approx(1.0f));
     REQUIRE(m.roughness == Catch::Approx(1.0f));

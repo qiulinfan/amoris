@@ -2,6 +2,7 @@
 
 #include <pocket/core/fs.hpp>
 #include <pocket/core/log.hpp>
+#include <pocket/core/tangents.hpp>
 
 #include <stb_image.h>
 
@@ -63,6 +64,10 @@ Json Mesh::describe() const {
             mj["clearcoat"] = m.clearcoat;
             mj["clearcoat_roughness"] = m.clearcoat_roughness;
         }
+        if (m.sheen_color.x > 0 || m.sheen_color.y > 0 || m.sheen_color.z > 0) mj["sheen"] = Json{{"color", Json::array({m.sheen_color.x, m.sheen_color.y, m.sheen_color.z})}, {"roughness", m.sheen_roughness}};
+        if (m.specular != 1 || m.specular_color.x != 1 || m.specular_color.y != 1 || m.specular_color.z != 1) mj["specular"] = Json{{"factor", m.specular}, {"color", Json::array({m.specular_color.x, m.specular_color.y, m.specular_color.z})}};
+        if (m.anisotropy > 0) mj["anisotropy"] = Json{{"strength", m.anisotropy}, {"rotation", m.anisotropy_rotation}};
+        if (m.unlit) mj["unlit"] = true;
         mats.push_back(mj);
     }
     j["materials"] = mats;
@@ -93,6 +98,7 @@ Json Mesh::describe() const {
     j["moving_parts"] = moving_parts();
     j["skinned"] = skinned();
     j["vertex_colors"] = vertex_colors;
+    j["tangents"] = file_tangents ? "file" : "uv";
     Json sk = Json::array();
     for (const auto& s : skins) sk.push_back(Json{{"name", s.name}, {"joints", s.joints.size()}});
     j["skins"] = sk;
@@ -1024,6 +1030,14 @@ Mat4 transpose_of(const Mat4& m) {
 
 }  // namespace
 
+void fill_tangents(Mesh& mesh) {
+    bool missing = false;
+    for (const MeshVertex& v : mesh.vertices) if (v.tangent.w == 0) { missing = true; break; }
+    if (!missing) return;
+    const std::vector<Vec4> made = uv_tangents(mesh.vertices, mesh.indices);
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i) if (mesh.vertices[i].tangent.w == 0) mesh.vertices[i].tangent = made[i];
+}
+
 Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& base_dir, const std::string& display_path) {
     Gltf g;
     g.base_dir = base_dir;
@@ -1163,6 +1177,25 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                 mat.clearcoat = std::clamp(t->value("clearcoatFactor", 0.0f), 0.0f, 1.0f);
                 mat.clearcoat_roughness = std::clamp(t->value("clearcoatRoughnessFactor", 0.0f), 0.0f, 1.0f);
             }
+            // Cloth, the specular layer, brushed metal and shadeless surfaces (Blender's Sheen,
+            // Specular IOR Level and Tint, Anisotropic, and an emission-only or unlit material).
+            auto vec3_at = [](const Json& o, const char* key, Vec3 fallback) {
+                if (!o.contains(key) || !o[key].is_array() || o[key].size() != 3) return fallback;
+                return Vec3{o[key][0].get<float>(), o[key][1].get<float>(), o[key][2].get<float>()};
+            };
+            if (const Json* t = obj("KHR_materials_sheen")) {
+                mat.sheen_color = vec3_at(*t, "sheenColorFactor", Vec3{0, 0, 0});
+                mat.sheen_roughness = std::clamp(t->value("sheenRoughnessFactor", 0.0f), 0.0f, 1.0f);
+            }
+            if (const Json* t = obj("KHR_materials_specular")) {
+                mat.specular = std::clamp(t->value("specularFactor", 1.0f), 0.0f, 1.0f);
+                mat.specular_color = vec3_at(*t, "specularColorFactor", Vec3{1, 1, 1});
+            }
+            if (const Json* t = obj("KHR_materials_anisotropy")) {
+                mat.anisotropy = std::clamp(t->value("anisotropyStrength", 0.0f), 0.0f, 1.0f);
+                mat.anisotropy_rotation = t->value("anisotropyRotation", 0.0f);
+            }
+            if (obj("KHR_materials_unlit")) mat.unlit = true;
         }
         mesh.materials.push_back(mat);
     }
@@ -1326,16 +1359,19 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
             const bool part = skin_index < 0 && moved[static_cast<std::size_t>(ni)];
             const Mat4 bake = skin_index >= 0 || part ? Mat4::identity() : world;
             Mat4 normal_m = transpose_of(bake.inverse_affine());
+            const Vec3 bx{bake.at(0, 0), bake.at(0, 1), bake.at(0, 2)}, by{bake.at(1, 0), bake.at(1, 1), bake.at(1, 2)}, bz{bake.at(2, 0), bake.at(2, 1), bake.at(2, 2)};
+            const bool bake_mirrors = dot(cross(bx, by), bz) < 0;
             for (const Json& prim : meshes[static_cast<std::size_t>(mi)].value("primitives", Json::array())) {
                 int mode = prim.value("mode", 4);
                 if (mode != 4) continue;  // triangles only
                 const Json& attrs = prim.value("attributes", Json::object());
                 if (!attrs.contains("POSITION")) continue;
                 POCKET_TRY(pos, g.accessor(attrs["POSITION"].get<int>()));
-                std::optional<Accessor> nrm, uv, jnt, wgt, col;
+                std::optional<Accessor> nrm, uv, jnt, wgt, col, tan;
                 if (attrs.contains("COLOR_0")) { POCKET_TRY(a, g.accessor(attrs["COLOR_0"].get<int>())); col = a; mesh.vertex_colors = true; }
                 if (attrs.contains("NORMAL")) { POCKET_TRY(a, g.accessor(attrs["NORMAL"].get<int>())); nrm = a; }
                 if (attrs.contains("TEXCOORD_0")) { POCKET_TRY(a, g.accessor(attrs["TEXCOORD_0"].get<int>())); uv = a; }
+                if (attrs.contains("TANGENT")) { POCKET_TRY(a, g.accessor(attrs["TANGENT"].get<int>())); if (a.components == 4) { tan = a; mesh.file_tangents = true; } }
                 if (skin_index >= 0 && attrs.contains("JOINTS_0") && attrs.contains("WEIGHTS_0")) {
                     POCKET_TRY(a, g.accessor(attrs["JOINTS_0"].get<int>())); jnt = a;
                     POCKET_TRY(b, g.accessor(attrs["WEIGHTS_0"].get<int>())); wgt = b;
@@ -1419,6 +1455,19 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
                         mv.normal = normalize(Vec3{n4.x, n4.y, n4.z});
                     } else {
                         mv.normal = {0, 1, 0};
+                    }
+                    if (tan && v < tan->count) {
+                        // A direction: the bake's turn and scale, not its normal matrix; a mirroring
+                        // bake turns the bitangent's side over.
+                        const std::uint8_t* tp = tan->data + v * tan->stride;
+                        const std::size_t tcs = component_size(tan->component_type);
+                        Vec4 t4 = bake * Vec4{read_float(tp, tan->component_type, tan->normalized), read_float(tp + tcs, tan->component_type, tan->normalized), read_float(tp + 2 * tcs, tan->component_type, tan->normalized), 0};
+                        const Vec3 t3 = Vec3{t4.x, t4.y, t4.z};
+                        if (length(t3) > 1e-8f) {
+                            const Vec3 tn = normalize(t3);
+                            const float side = read_float(tp + 3 * tcs, tan->component_type, tan->normalized) < 0 ? -1.0f : 1.0f;
+                            mv.tangent = {tn.x, tn.y, tn.z, side * (bake_mirrors ? -1.0f : 1.0f)};
+                        }
                     }
                     if (uv && v < uv->count) {
                         const std::uint8_t* up = uv->data + v * uv->stride;
@@ -1623,6 +1672,7 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
         failures_["mesh:" + path] = parsed.error().message;
         return fail(parsed.error());
     }
+    fill_tangents(*parsed);
     auto owned = std::make_unique<Mesh>(std::move(*parsed));
     const Mesh* raw = owned.get();
     meshes_[path] = std::move(owned);

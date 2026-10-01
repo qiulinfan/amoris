@@ -169,7 +169,7 @@ pub fn run(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Resul
     }
     let bundle = bundle_project(ws, &project, None)?;
     let exe = exe_path(ws, config, runtime)?;
-    let status = toolchain::command(exe.to_str().unwrap())
+    let status = runtime_command(ws, &exe)
         .arg("--project")
         .arg(&project)
         .arg("--bundle")
@@ -220,7 +220,7 @@ pub fn editor(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Re
     let editor_bundle = bundle_project(ws, &editor_dir, None)?;
     let bundle = bundle_project(ws, &project, None)?;
     let exe = exe_path(ws, config, runtime)?;
-    let status = toolchain::command(exe.to_str().unwrap())
+    let status = runtime_command(ws, &exe)
         .arg("--project")
         .arg(&project)
         .arg("--bundle")
@@ -424,6 +424,17 @@ expose("crates", () => crates);
 pub struct BundleResult {
     pub out: PathBuf,
     pub modules: Vec<String>,
+}
+
+/// A runtime process as the tool starts it: it knows the workspace and this tool (POCKET_ROOT,
+/// POCKET_TOOL), so `project.apply` can bundle and type-check the project it is running.
+pub fn runtime_command(ws: &Workspace, exe: &Path) -> std::process::Command {
+    let mut cmd = toolchain::command(exe.to_str().unwrap());
+    cmd.env("POCKET_ROOT", &ws.root);
+    if let Ok(me) = std::env::current_exe() {
+        cmd.env("POCKET_TOOL", me);
+    }
+    cmd
 }
 
 pub fn bundle_project(ws: &Workspace, project: &Path, out: Option<&Path>) -> Result<BundleResult> {
@@ -693,7 +704,7 @@ pub fn run_captured(ws: &Workspace, config: &str, target: &str, args: &[String])
     }
     let bundle = bundle_project(ws, &project, None)?;
     let exe = exe_path(ws, config, runtime)?;
-    let output = toolchain::command(exe.to_str().unwrap()).arg("--project").arg(&project).arg("--bundle").arg(&bundle.out).args(args).current_dir(&ws.root).output()?;
+    let output = runtime_command(ws, &exe).arg("--project").arg(&project).arg("--bundle").arg(&bundle.out).args(args).current_dir(&ws.root).output()?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or(json!({ "raw": stdout }));
     let ok = output.status.success() && report.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);

@@ -199,6 +199,12 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `thickness` | f32 | -1.0 | How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0). |
 | `clearcoat` | f32 | -1.0 | A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0). |
 | `clearcoat_roughness` | f32 | -1.0 | The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03). |
+| `sheen` | color | [0.0, 0.0, 0.0, 1.0] | Cloth's soft glow at grazing angles (velvet, felt, a dusty surface), the colour of that glow (docs/design/rendering.md, Cloth, specular and brushed metal). Black keeps the asset material's (KHR_materials_sheen; none). |
+| `sheen_roughness` | f32 | -1.0 | How far the sheen spreads, 0 tight at the rim to 1 soft over the whole surface. Negative keeps the asset material's (0). |
+| `specular` | f32 | -1.0 | The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1). |
+| `anisotropy` | f32 | -1.0 | Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0). |
+| `anisotropy_rotation` | f32 | 0.0 | Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy). |
+| `unlit` | bool | false | Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 | `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |
 | `lods` | list:MeshLod | [] | Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own. |

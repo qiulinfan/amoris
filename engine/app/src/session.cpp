@@ -15,6 +15,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 #include <limits>
 #include <map>
@@ -23,6 +24,14 @@
 #include <set>
 #include <unordered_map>
 #include <thread>
+
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char** environ;
+#endif
 
 namespace pocket::app {
 
@@ -567,6 +576,15 @@ Status Session::start() {
     if (project_.contains("assets") && project_["assets"].is_object() && project_["assets"].contains("blender") && project_["assets"]["blender"].is_string()) assets_->set_blender(project_["assets"]["blender"].get<std::string>());
     physics_->set_assets(assets_.get());
     renderer_->set_assets(assets_.get());
+    // An asset mesh's bounds from the store, so Bounds do not wait for the renderer to draw it
+    // (a headless step draws only its last tick).
+    world_->set_mesh_bounds_source([this](const std::string& mesh, Vec3& lo, Vec3& hi) {
+        auto m = assets_->mesh(mesh);
+        if (!m) return false;
+        lo = (*m)->aabb_min;
+        hi = (*m)->aabb_max;
+        return true;
+    });
     audio::Config ac;
     ac.project_dir = options_.project_dir;
     ac.headless = options_.headless;
@@ -4204,7 +4222,34 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         j["scripts"] = scripts;
         j["started"] = start;
         j["ok"] = errors_.empty();
+        // Sources edited since the bundle was made are not in what was just loaded.
+        if (scripts) {
+            Json stale = Json::array();
+            std::error_code ec;
+            const auto made = std::filesystem::last_write_time(options_.bundle, ec);
+            if (!ec) {
+                auto newer = [&](const std::filesystem::path& f) {
+                    std::error_code e2;
+                    const auto t = std::filesystem::last_write_time(f, e2);
+                    if (!e2 && t > made) stale.push_back(std::filesystem::relative(f, options_.project_dir, e2).generic_string());
+                };
+                newer(options_.project_dir / "project.toml");
+                for (auto it = std::filesystem::recursive_directory_iterator(options_.project_dir / "scripts", ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+                    const std::string ext = it->path().extension().string();
+                    if (it->is_regular_file() && (ext == ".ts" || ext == ".tsx" || ext == ".js")) newer(it->path());
+                }
+            }
+            if (!stale.empty()) {
+                j["stale"] = stale;
+                j["hint"] = "these sources are newer than the bundle just loaded: project.apply bundles them and reloads";
+            }
+        }
         return j;
+    }
+    if (op == "apply") {
+        // Edit, then one call (docs/mcp.md, Applying an edit): the project's scripts bundled again
+        // by the pocket tool, type-checked, the project reloaded and stepped, and what came of it.
+        return apply_project(opt<int>(p, "ticks", 1));
     }
     if (op == "save_scene") {
         std::string rel = opt<std::string>(p, "path", project_.contains("scene") && project_["scene"].is_string() ? project_["scene"].get<std::string>() : "");
@@ -4278,7 +4323,16 @@ Status Session::frame() {
     dispatch("frame", frame_info());
     host_->drain_microtasks();
     std::uint64_t presented_before = device_->presented_frames();
-    if (errors_.empty()) {
+    if (skip_render_) {
+        // Not drawn (a headless step's earlier ticks): what drawing does besides the GPU's work.
+        if (audio_) audio_->pump();
+        update_terrains();
+        if (ui_ && ui_->node_count() > 1) {
+            float w = 0, h = 0, scale = 1;
+            ui_size(w, h, scale);
+            ui_->layout(w, h, scale);
+        }
+    } else if (errors_.empty()) {
         Stopwatch render_sw;
         auto r = render_frame();
         perf_render_.add(render_sw.ms());
@@ -4430,6 +4484,94 @@ Result<Json> Session::world_lint(const Json& p) {
     for (const Json& err : errors_) add("error", 0, "script", err.is_object() && err.contains("message") && err["message"].is_string() ? err["message"].get<std::string>() : err.dump(), "fix the script (log.tail and script.diagnostics say where)");
     Json j{{"problems", std::move(problems)}, {"errors", counts["error"]}, {"warnings", counts["warning"]}, {"infos", counts["info"]}};
     j["ok"] = counts["error"] == 0;
+    return j;
+}
+
+// The pocket tool run with arguments (`project.apply`): its exit code and what it printed.
+Result<std::pair<int, std::string>> Session::run_tool(const std::vector<std::string>& args) const {
+#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+    (void)args;
+    return fail("unsupported", "running the pocket tool is not available on this platform");
+#else
+    const char* root = std::getenv("POCKET_ROOT");
+    const char* tool_env = std::getenv("POCKET_TOOL");
+    const std::string tool = tool_env && *tool_env ? tool_env : root && *root ? (std::filesystem::path(root) / ".pocket" / "pocket").string() : "";
+    std::error_code ec;
+    if (tool.empty() || !std::filesystem::is_regular_file(tool, ec)) return fail("unavailable", "no pocket tool to bundle with: start the runtime through pocket (pocket run, pocket editor, the MCP server), which sets POCKET_ROOT and POCKET_TOOL");
+    std::vector<std::string> all{tool};
+    if (root && *root) { all.push_back("--root"); all.push_back(root); }
+    all.insert(all.end(), args.begin(), args.end());
+    std::vector<char*> argv;
+    for (std::string& a : all) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    const std::filesystem::path log_path = std::filesystem::temp_directory_path(ec) / std::format("pocket-apply-{}.log", static_cast<long>(getpid()));
+    const std::string log_file = log_path.string();
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+    pid_t pid = 0;
+    const int rc = posix_spawn(&pid, tool.c_str(), &actions, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (rc != 0) return fail("unavailable", "cannot start {}: {}", tool, std::strerror(rc));
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    auto text = fs::read_text(log_path);
+    std::filesystem::remove(log_path, ec);
+    return std::make_pair(WIFEXITED(status) ? WEXITSTATUS(status) : -1, text ? *text : std::string());
+#endif
+}
+
+Result<Json> Session::apply_project(int ticks) {
+    if (ticks < 0 || ticks > 100000) return fail("bad_args", "ticks must be in [0, 100000]");
+    if (options_.bundle.empty()) return fail("unavailable", "this runtime was started without a bundle path to write");
+    const std::string dir = options_.project_dir.string(), bundle = options_.bundle.string();
+    Json j;
+    // Bundled: a failure leaves the running project as it is.
+    Stopwatch sw;
+    POCKET_TRY(bundled, run_tool({"ts", dir, "--out", bundle}));
+    j["bundle_ms"] = std::round(sw.ms());
+    if (bundled.first != 0) {
+        std::string why = bundled.second;
+        if (why.size() > 2000) why = why.substr(why.size() - 2000);
+        return fail("bundle_failed", "the scripts did not bundle, the running project is unchanged:\n{}", why);
+    }
+    // Type-checked: the errors go where `pocket run --watch` puts them (script.diagnostics, the
+    // editor's Script tab), files relative to the project; they do not stop the reload.
+    sw = Stopwatch{};
+    POCKET_TRY(checked, run_tool({"--json", "check", dir}));
+    j["check_ms"] = std::round(sw.ms());
+    Json report;
+    if (const std::size_t at = checked.second.find('{'); at != std::string::npos) report = Json::parse(checked.second.substr(at), nullptr, false);
+    Json diagnostics = Json::array();
+    if (report.is_object() && report.contains("diagnostics") && report["diagnostics"].is_array()) {
+        std::error_code ec;
+        const std::string prefix = std::filesystem::weakly_canonical(options_.project_dir, ec).generic_string() + "/";
+        for (Json d : report["diagnostics"]) {
+            if (d.contains("file") && d["file"].is_string()) {
+                std::string f = d["file"].get<std::string>();
+                const std::string abs = std::filesystem::weakly_canonical(f, ec).generic_string();
+                if (abs.starts_with(prefix)) d["file"] = abs.substr(prefix.size());
+                else if (const std::size_t s = f.find(options_.project_dir.filename().string() + "/"); s != std::string::npos) d["file"] = f.substr(s + options_.project_dir.filename().string().size() + 1);
+            }
+            diagnostics.push_back(d);
+        }
+        (void)script_command("diagnostics", Json{{"diagnostics", diagnostics}});
+    }
+    j["type_errors"] = diagnostics.size();
+    if (!diagnostics.empty()) {
+        Json first = Json::array();
+        for (std::size_t i = 0; i < std::min<std::size_t>(diagnostics.size(), 10); ++i) first.push_back(diagnostics[i]);
+        j["types"] = first;
+    }
+    POCKET_TRY(reloaded, command("project.reload", Json::object(), "agent"));
+    j["reload"] = reloaded;
+    if (ticks > 0 && errors_.empty()) {
+        POCKET_TRY(state, command("step", Json{{"ticks", ticks}}, "agent"));
+        j["state"] = state;
+    }
+    if (!errors_.empty()) j["script_errors"] = Json(errors_);
+    j["ok"] = errors_.empty();
     return j;
 }
 
@@ -5376,19 +5518,28 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
             Json errs = Json::array();
             for (std::size_t i = errors_.size() > 3 ? errors_.size() - 3 : 0; i < errors_.size(); ++i) errs.push_back(errors_[i]);
             j["errors"] = errs;
-            j["hint"] = "a script error stopped the simulation: fix the script and project.reload (script.reload keeps the world)";
+            j["hint"] = "a script error stopped the simulation: fix the script, then project.apply (bundles and reloads; script.reload keeps the world)";
         }
         return j;
     }
     if (name == "step") {
-        if (!errors_.empty()) return fail("script_error", "the simulation is stopped by a script error: {}; fix it and project.reload (state shows the errors)", errors_.back().value("message", std::string("unknown")));
+        if (!errors_.empty()) return fail("script_error", "the simulation is stopped by a script error: {}; fix it and project.apply (state shows the errors)", errors_.back().value("message", std::string("unknown")));
         int ticks = opt<int>(p, "ticks", 1);
         if (ticks < 0 || ticks > 100000) return fail("bad_args", "ticks must be in [0, 100000]");
+        // Headless, only the last tick is drawn unless every frame is asked for (render: "each"):
+        // what an agent looks at afterwards is that frame, and drawing the others costs most of a
+        // long step. Effects that build up over drawn frames (TAA, auto exposure, probe bounces)
+        // want "each".
+        const std::string render = opt<std::string>(p, "render", "last");
+        if (render != "last" && render != "each") return fail("bad_args", "render is \"last\" (draw the last tick only, headless) or \"each\"");
         stepping_ = true;
         for (int i = 0; i < ticks; ++i) {
             bool was_paused = paused_;
             paused_ = false;
-            if (auto r = frame(); !r) { paused_ = was_paused; stepping_ = false; return fail(r.error()); }
+            skip_render_ = options_.headless && render == "last" && i + 1 < ticks;
+            auto r = frame();
+            skip_render_ = false;
+            if (!r) { paused_ = was_paused; stepping_ = false; return fail(r.error()); }
             paused_ = was_paused;
         }
         stepping_ = false;
@@ -5396,7 +5547,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
     }
     if (name == "pause") { paused_ = true; return Json{{"paused", true}}; }
     if (name == "resume") {
-        if (!errors_.empty()) return fail("script_error", "the simulation is stopped by a script error: {}; fix it and project.reload", errors_.back().value("message", std::string("unknown")));
+        if (!errors_.empty()) return fail("script_error", "the simulation is stopped by a script error: {}; fix it and project.apply", errors_.back().value("message", std::string("unknown")));
         paused_ = false;
         return Json{{"paused", false}};
     }
@@ -5483,7 +5634,7 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
         return all;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "project.info", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.touch", "input.pad", "input.rumble", "input.state", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.objects", "tilemap.spawn", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

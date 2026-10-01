@@ -853,7 +853,7 @@ def main():
     write_glb(os.path.join(out, "crate.glb"), doc, buf)
     # Pyramid: 5 vertices, no normals, no uvs.
     pp = [(-0.5, 0, -0.5), (0.5, 0, -0.5), (0.5, 0, 0.5), (-0.5, 0, 0.5), (0, 1, 0)]
-    pi = [0, 2, 1, 0, 3, 2, 0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4]
+    pi = [0, 1, 2, 0, 2, 3, 0, 4, 1, 1, 4, 2, 2, 4, 3, 3, 4, 0]   # counter-clockwise seen from outside (the base faces down)
     doc, buf = glb(pp, None, None, pi, {"name": "green", "pbrMetallicRoughness": {"baseColorFactor": [0.3, 0.8, 0.35, 1], "metallicFactor": 0, "roughnessFactor": 1}}, [{"name": "pyramid"}])
     write_gltf_embedded(os.path.join(out, "pyramid.gltf"), doc, buf)
     # Plate: a cube with every PBR map (normal, metallic-roughness, emissive) for docs and tests.

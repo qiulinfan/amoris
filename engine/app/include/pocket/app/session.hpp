@@ -82,6 +82,10 @@ class Session {
     void bind_natives();
     world::EntityId resolve_entity(const Json& v) const;
     Result<Json> world_command(std::string_view op, const Json& p, std::string_view source);
+    // The pocket tool run with arguments, its exit code and output (`project.apply`).
+    Result<std::pair<int, std::string>> run_tool(const std::vector<std::string>& args) const;
+    // Bundle and type-check the project's scripts with the tool, reload, step `ticks`.
+    Result<Json> apply_project(int ticks);
     // A model file's nodes as entity descriptions (docs/design/assets.md, Live models).
     Result<Json> model_children(const std::string& mesh_path, std::vector<std::string>& warnings);
     // A project file's content hash, as Model.hash keeps it ("" when it cannot be read).
@@ -246,6 +250,7 @@ class Session {
     double time_scale_ = 1.0;    // simulation seconds per real second (slow motion below 1, a hit-stop at 0)
     double scale_left_ = 0.0;    // real seconds the scale holds before returning to 1 (0: until the next call)
     bool stepping_ = false;      // inside `step`: a frame is exactly one tick whatever the scale
+    bool skip_render_ = false;   // inside a headless `step` before its last tick: simulate, do not draw
     bool quit_ = false;
     bool started_ = false;
     bool stopped_ = false;

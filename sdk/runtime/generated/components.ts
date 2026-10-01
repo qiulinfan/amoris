@@ -390,6 +390,18 @@ export interface MeshRenderer {
     clearcoat: number;
     /** The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03). */
     clearcoat_roughness: number;
+    /** Cloth's soft glow at grazing angles (velvet, felt, a dusty surface), the colour of that glow (docs/design/rendering.md, Cloth, specular and brushed metal). Black keeps the asset material's (KHR_materials_sheen; none). */
+    sheen: Color;
+    /** How far the sheen spreads, 0 tight at the rim to 1 soft over the whole surface. Negative keeps the asset material's (0). */
+    sheen_roughness: number;
+    /** The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1). */
+    specular: number;
+    /** Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0). */
+    anisotropy: number;
+    /** Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy). */
+    anisotropy_rotation: number;
+    /** Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. */
+    unlit: boolean;
     /** Whether the mesh is drawn. */
     visible: boolean;
     /** Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. */
@@ -1168,7 +1180,7 @@ export const componentDefaults: { readonly [K in ComponentName]: Components[K] }
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 32, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
-    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
+    MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, unlit: false, visible: true, cast_shadows: true, lods: [], cull_screen: 0 },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true },

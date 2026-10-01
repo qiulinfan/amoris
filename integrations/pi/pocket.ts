@@ -52,6 +52,17 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.registerTool({
+        name: "pocket_apply",
+        label: "Pocket apply",
+        description: "After editing the game's scripts or project.toml: bundle and type-check them, reload the game and step it, in one call. Answers the type errors, the state after and any script error; a script that does not bundle leaves the running game as it was.",
+        parameters: Type.Object({ ticks: Type.Optional(Type.Number({ description: "ticks to step after the reload (1)" })) }),
+        async execute(_id: string, params: { ticks?: number }) {
+            const result = await call("project.apply", params?.ticks === undefined ? {} : { ticks: params.ticks });
+            return { content: [{ type: "text", text: text(result) }], details: undefined };
+        },
+    });
+
+    pi.registerTool({
         name: "pocket_look",
         label: "Pocket look",
         description: "See the running game: renders the current frame to a PNG and returns it as an image, with the visible entities and their pixel bounds. With around (true, or an entity's name), a sheet of the scene or that entity from six sides instead (front, right, back, left, top, perspective).",

@@ -3,6 +3,7 @@
 
 #include <pocket/core/math.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -13,7 +14,14 @@ struct Vertex {
     Vec3 normal;
     Vec2 uv;
     std::uint32_t color = 0xFFFFFFFFu;   // RGBA, 8 bits each, sRGB-encoded (decoded in the vertex stage)
+    std::uint32_t tangent = 0;           // xyz along the uv's u and w the bitangent's side, signed 8 bits each; 0 for none
 };
+
+// A tangent (xyz, w) as a Vertex keeps it: four signed bytes.
+inline std::uint32_t pack_tangent(Vec4 t) {
+    auto b = [](float x) { return static_cast<std::uint32_t>(static_cast<std::uint8_t>(static_cast<std::int8_t>(std::lround(std::fmax(-1.0f, std::fmin(1.0f, x)) * 127.0f)))); };
+    return b(t.x) | (b(t.y) << 8) | (b(t.z) << 16) | (b(t.w) << 24);
+}
 
 struct MeshData {
     std::vector<Vertex> vertices;

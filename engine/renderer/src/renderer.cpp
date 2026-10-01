@@ -167,7 +167,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 400;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 448;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -238,7 +238,7 @@ struct alignas(16) ObjectUniforms {
     float model[16];
     float normal[16];
     float color[4];
-    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit, 2 = casts no shadow)
+    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit sprite or tile, 2 = casts no shadow, 4 = an unlit mesh)
     float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
     float pbr[4];             // metallic, roughness, normal scale, 1 when a normal map is bound
     float emissive[4];        // linear RGB added after lighting; w: alpha cutoff (texels under it are cut out; 0 for none)
@@ -250,6 +250,9 @@ struct alignas(16) ObjectUniforms {
     float layer_tile[4];      // each layer's repeats per unit of the mesh's uv
     float optics[4];          // glass and lacquer: transmission, index of refraction, clear coat, its roughness
     float volume[4];          // what the glass absorbs per unit (linear RGB), and its thickness in world units
+    float sheen[4];           // cloth: the sheen's colour (linear RGB) and roughness
+    float spec[4];            // the dielectric reflection's tint less 1 (linear RGB) and 1 less its strength: all 0 for a plain surface
+    float aniso[4];           // brushed metal: strength, and the cosine and sine of its turn from the uv's u
 };
 static_assert(sizeof(ObjectUniforms) == kObjectStride);
 
@@ -486,6 +489,9 @@ struct Object {
     layer_tile: vec4f,
     optics: vec4f,
     volume: vec4f,
+    sheen: vec4f,
+    spec: vec4f,
+    aniso: vec4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
@@ -548,7 +554,15 @@ struct VsOut {
     @location(5) @interpolate(flat) instance: u32,
     @location(6) cur: vec4f,    // where the point is this frame and was last frame, unjittered (the id pass's motion)
     @location(7) prev: vec4f,
+    @location(8) tangent: vec4f,   // along the uv's u in the world, w the bitangent's side; 0 for none
 };
+// A vertex's tangent into the world by a model matrix (its side turned over by a mirroring one).
+fn world_tangent(model: mat4x4f, t: vec4f) -> vec4f {
+    let w = (model * vec4f(t.xyz, 0.0)).xyz;
+    if (dot(w, w) < 1e-12 || t.w == 0.0) { return vec4f(0.0); }
+    let mirror = select(1.0, -1.0, dot(cross(model[0].xyz, model[1].xyz), model[2].xyz) < 0.0);
+    return vec4f(normalize(w), t.w * mirror);
+}
 
 fn vertex_color(c: vec4f) -> vec4f {
     return vec4f(select(pow((c.rgb + 0.055) / 1.055, vec3f(2.4)), c.rgb / 12.92, c.rgb <= vec3f(0.04045)), c.a);
@@ -578,7 +592,7 @@ fn sway(object: Object, local: vec3f, t: f32) -> vec3f {
     let lean = vec2f(sin(w - phase) + 0.3 * sin(2.3 * w - 1.7 * phase), 0.45 * sin(1.3 * w - 0.8 * phase));
     return vec3f(lean.x, 0.0, lean.y) * (object.sway.x * h * h / 1.3);
 }
-@vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(5) vcolor: vec4f) -> VsOut {
+@vertex fn vs(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(5) vcolor: vec4f, @location(6) tangent: vec4f) -> VsOut {
     let object = objects[instance];
     var out: VsOut;
     let local = vec4f(morph_position(object, vid, position), 1.0);
@@ -588,6 +602,7 @@ fn sway(object: Object, local: vec3f, t: f32) -> vec3f {
     out.prev = frame.prev_view_proj * (object.prev_model * local + vec4f(sway(object, local.xyz, frame.clock.y), 0.0));
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
+    out.tangent = world_tangent(object.model, tangent);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.color = object.color * vertex_color(vcolor);
     out.id = object.id.x;
@@ -635,7 +650,7 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     return joints[base + j.x] * w.x + joints[base + j.y] * w.y + joints[base + j.z] * w.z + joints[base + j.w] * w.w;
 }
 
-@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f, @location(5) vcolor: vec4f) -> VsOut {
+@vertex fn vs_skinned(@builtin(instance_index) instance: u32, @builtin(vertex_index) vid: u32, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) j: vec4u, @location(4) w: vec4f, @location(5) vcolor: vec4f, @location(6) tangent: vec4f) -> VsOut {
     let object = objects[instance];
     let skin = skin_matrix(object.id.z, j, w);
     let model = object.model * skin;
@@ -647,6 +662,7 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     out.prev = frame.prev_view_proj * (object.prev_model * skin * local);   // this frame's pose: the joints' own motion is not followed
     out.world_pos = world.xyz;
     out.normal = normalize((model * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
+    out.tangent = world_tangent(model, tangent);
     out.uv = mix(object.uv_rect.xy, object.uv_rect.zw, uv);
     out.color = object.color * vertex_color(vcolor);
     out.id = object.id.x;
@@ -667,7 +683,8 @@ struct FsOut {
 };
 
 // Tangent frame from screen-space derivatives (no vertex tangents needed), then the map's
-// +Y-up (glTF) normal bent into world space.
+// +Y-up (glTF) normal bent into world space. WebGPU's dpdy runs down the screen, so this frame's
+// t and b point against the uv's u and v: b is the texture's up, and the map's x turns over.
 fn perturb_normal(n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, map: vec3f) -> vec3f {
     let dp2perp = cross(dp2, n);
     let dp1perp = cross(n, dp1);
@@ -675,7 +692,18 @@ fn perturb_normal(n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, ma
     let b = dp2perp * duv1.y + dp1perp * duv2.y;
     let invmax = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
     let tbn = mat3x3f(t * invmax, b * invmax, n);
-    return normalize(tbn * vec3f(map.x, -map.y, map.z));
+    return normalize(tbn * vec3f(-map.x, map.y, map.z));
+}
+// A normal map's normal: through the vertex's tangent frame when it has one (smooth across
+// triangles, glTF's convention: the bitangent is cross(n, t) * w, toward the texture's up), else
+// through the frame from the uv's screen derivatives (constant over each triangle).
+fn mapped_normal(in: VsOut, n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, map: vec3f) -> vec3f {
+    let t = in.tangent.xyz - n * dot(n, in.tangent.xyz);
+    if (dot(t, t) > 0.01) {
+        let tn = normalize(t);
+        return normalize(mat3x3f(tn, cross(n, tn) * in.tangent.w, n) * map);
+    }
+    return perturb_normal(n, dp1, dp2, duv1, duv2, map);
 }
 
 // GGX / Schlick / Smith specular plus Lambert diffuse for one light direction; the diffuse term
@@ -701,9 +729,55 @@ fn coat(object: Object, gn: vec3f, v: vec3f, l: vec3f) -> vec4f {
     let f = (0.04 + 0.96 * pow(1.0 - max(dot(v, h), 0.0), 5.0)) * object.optics.z;
     return vec4f(vec3f(d * g * f / max(4.0 * ndv, 1e-4)), 1.0 - f);
 }
-// The surface's response to a light, with its clear coat when it has one.
-fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32) -> vec3f {
-    let base = brdf(n, v, l, albedo, metallic, roughness);
+// KHR_materials_specular's tint and strength, kept as their differences from a plain surface's.
+fn spec_tint(object: Object) -> vec3f { return vec3f(1.0) + object.spec.rgb; }
+fn spec_level(object: Object) -> f32 { return 1.0 - object.spec.w; }
+// The surface's response to a light (docs/design/rendering.md, Cloth, specular and brushed metal):
+// its specular layer's strength and tint (KHR_materials_specular), a highlight stretched along
+// `at` for brushed metal (KHR_materials_anisotropy: anisotropic GGX with its height-correlated
+// Smith visibility), a sheen over it for cloth (KHR_materials_sheen: the Charlie distribution with
+// Neubelt's visibility, the layer below dimmed by what the sheen takes), and its clear coat.
+fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32, at: vec3f) -> vec3f {
+    let h = normalize(l + v);
+    let ndl = max(dot(n, l), 0.0);
+    let ndv = max(dot(n, v), 1e-4);
+    let ndh = max(dot(n, h), 0.0);
+    let vdh = max(dot(v, h), 0.0);
+    let a = roughness * roughness;
+    let f0 = mix(min(vec3f(0.04) * spec_tint(object), vec3f(1.0)) * spec_level(object), albedo, metallic);
+    let f90 = mix(spec_level(object), 1.0, metallic);
+    let f = f0 + (vec3f(f90) - f0) * pow(1.0 - vdh, 5.0);
+    var spec: vec3f;
+    if (object.aniso.x > 0.0) {
+        let b = cross(n, at);
+        let ta = max(mix(a, 1.0, object.aniso.x * object.aniso.x), 1e-3);
+        let ba = max(a, 1e-3);
+        let th = dot(at, h);
+        let bh = dot(b, h);
+        let dd = th * th / (ta * ta) + bh * bh / (ba * ba) + ndh * ndh;
+        let d = 1.0 / max(ta * ba * dd * dd, 1e-6);   // times pi, as below
+        let lv = ndl * length(vec3f(ta * dot(at, v), ba * dot(b, v), ndv));
+        let lt = ndv * length(vec3f(ta * dot(at, l), ba * dot(b, l), ndl));
+        spec = d * (0.5 / max(lv + lt, 1e-5)) * f * ndl;
+    } else {
+        let a2 = a * a;
+        let denom = ndh * ndh * (a2 - 1.0) + 1.0;
+        let d = a2 / max(denom * denom, 1e-6);            // GGX, times pi
+        let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+        let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+        spec = d * g * f / max(4.0 * ndv, 1e-4);
+    }
+    let diffuse = albedo * (1.0 - metallic) * (vec3f(1.0) - f);
+    var base = diffuse * ndl + spec;
+    let sheen_max = max(object.sheen.r, max(object.sheen.g, object.sheen.b));
+    if (sheen_max > 0.0) {
+        let sa = max(object.sheen.w, 0.07);
+        let inv = 1.0 / (sa * sa);
+        let sin2 = max(1.0 - ndh * ndh, 0.0078125);
+        let ds = (2.0 + inv) * pow(sin2, inv * 0.5) * 0.5;   // Charlie, times pi
+        let vs = 1.0 / max(4.0 * (ndl + ndv - ndl * ndv), 1e-4);
+        base = base * (1.0 - sheen_max * 0.157) + object.sheen.rgb * (ds * vs * ndl);
+    }
     if (object.optics.z <= 0.0) { return base; }
     let c = coat(object, gn, v, l);
     return base * c.w + c.rgb;
@@ -822,9 +896,18 @@ fn shade(in: VsOut) -> vec4f {
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     // A cut-out: texels under the cutoff are not drawn (nor picked, the id goes with the color).
     if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
+    // Unlit (MeshRenderer.unlit, KHR_materials_unlit): the colour as it is.
+    if ((object.id.y & 4u) != 0u) { return vec4f(base.rgb + object.emissive.rgb * em, base.a); }
     var n = normalize(in.normal);
-    if (object.pbr.w > 0.5) {
-        n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z));
+    if (object.pbr.w > 0.5) { n = mapped_normal(in, n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
+    // Brushed metal's direction: the uv's u across the surface, turned by its rotation.
+    var aniso_t = vec3f(0.0);
+    if (object.aniso.x > 0.0) {
+        let across = select(-(cross(dp2, n) * duv1.x + cross(n, dp1) * duv2.x), in.tangent.xyz, dot(in.tangent.xyz, in.tangent.xyz) > 0.25);
+        var t = across - n * dot(n, across);
+        if (dot(t, t) < 1e-12) { t = cross(n, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.9)); }
+        t = normalize(t);
+        aniso_t = normalize(t * object.aniso.y + cross(n, t) * object.aniso.z);
     }
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
@@ -834,7 +917,16 @@ fn shade(in: VsOut) -> vec4f {
     // Glass passes light instead of scattering it: its diffuse part gives way to what it transmits.
     let albedo = paint.albedo * (1.0 - clamp(object.optics.x, 0.0, 1.0));
     let gn = normalize(in.normal);
-    let f0 = mix(vec3f(0.04), paint.albedo, metallic);
+    // The reflection's strength and tint (KHR_materials_specular) for the sky's light too, and for
+    // brushed metal a normal bent across the grain, so the sky's reflection stretches with it.
+    let f0 = mix(min(vec3f(0.04) * spec_tint(object), vec3f(1.0)) * spec_level(object), paint.albedo, metallic);
+    let spec_strength = mix(spec_level(object), 1.0, metallic);
+    var rn = n;
+    if (object.aniso.x > 0.0) {
+        let grain = cross(n, aniso_t);
+        let bend = pow(1.0 - object.aniso.x * (1.0 - sqrt(roughness)), 4.0);
+        rn = normalize(mix(cross(cross(grain, v), grain), n, bend));
+    }
     var color = frame.ambient.rgb * mix(albedo, f0, metallic);
     // Inside a reflection probe's box, what the probe saw takes the place of the sky's light: its
     // reflection, and its diffuse light from all around (a room lit by its lamps and walls, not the sky).
@@ -844,12 +936,12 @@ fn shade(in: VsOut) -> vec4f {
         // The sky's light instead of the flat ambient: diffuse from its harmonics, specular from the
         // prefiltered level matching the roughness, in the mirror direction.
         let ndv = max(dot(n, v), 1e-4);
-        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, n)), roughness * frame.env.w).rgb * frame.env.z;
+        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, rn)), roughness * frame.env.w).rgb * frame.env.z;
         let diffuse = mix(sh_irradiance(n) * frame.env.y, probe_d.rgb, probe_d.w);
-        color = albedo * (1.0 - metallic) * diffuse + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv);
+        color = albedo * (1.0 - metallic) * diffuse + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv) * spec_strength;
     } else if (probe.w > 0.0) {
         let ndv = max(dot(n, v), 1e-4);
-        color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv), probe.w);
+        color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv) * spec_strength, probe.w);
     }
     // A clear coat reflects the sky over the rest, by its own Fresnel on the geometric normal.
     if (object.optics.z > 0.0 && frame.env.x > 0.5) {
@@ -898,7 +990,7 @@ fn shade(in: VsOut) -> vec4f {
         let contact = textureSampleLevel(ao_tex, ao_samp, in.clip.xy * frame.ao.yz, 0.0).g;
         shadow = min(shadow, mix(1.0 - frame.shadow.z, 1.0, contact));
     }
-    color += frame.sun_color.rgb * surface_light(object, gn, n, v, l, albedo, metallic, roughness) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l);
+    color += frame.sun_color.rgb * surface_light(object, gn, n, v, l, albedo, metallic, roughness, aniso_t) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l);
     // Point and spot lights: the ones the pixel's cluster lists.
     if (frame.clusters.w > 0u) {
         let at = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
@@ -935,7 +1027,7 @@ fn shade(in: VsOut) -> vec4f {
                 }
                 lit = face_lit(face, in.world_pos, normalize(in.normal), pl, li.cone.z * dist);
             }
-            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness) * (att * att * cone * lit);
+            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness, aniso_t) * (att * att * cone * lit);
         }
     }
     if (object.optics.x > 0.0) { color += transmitted(object, in.world_pos, n, v, paint.albedo, roughness); }
@@ -1007,7 +1099,7 @@ fn motion(in: VsOut) -> vec2f {
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     if (object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
-    if (object.pbr.w > 0.5) { n = perturb_normal(n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
+    if (object.pbr.w > 0.5) { n = mapped_normal(in, n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
     let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
     n = paint.normal;
     var out: IdOut;
@@ -2705,7 +2797,7 @@ struct Renderer::Impl {
     WGPURenderPipeline id_pipeline = nullptr;
     WGPURenderPipeline id_skinned_pipeline = nullptr;
     WGPURenderPipeline id_sprite_pipeline = nullptr;
-    WGPUVertexAttribute mesh_attrs[4]{};
+    WGPUVertexAttribute mesh_attrs[5]{};
     WGPUVertexAttribute skin_attrs[2]{};
     WGPUVertexBufferLayout vbl{};
     WGPUVertexBufferLayout vbls[2]{};
@@ -5890,8 +5982,11 @@ struct Renderer::Impl {
         mesh_attrs[3].format = WGPUVertexFormat_Unorm8x4;
         mesh_attrs[3].offset = sizeof(float) * 8;
         mesh_attrs[3].shaderLocation = 5;
+        mesh_attrs[4].format = WGPUVertexFormat_Snorm8x4;   // the tangent
+        mesh_attrs[4].offset = sizeof(float) * 8 + sizeof(std::uint32_t);
+        mesh_attrs[4].shaderLocation = 6;
         vbl.arrayStride = sizeof(Vertex);
-        vbl.attributeCount = 4;
+        vbl.attributeCount = 5;
         vbl.attributes = mesh_attrs;
         skin_attrs[0].format = WGPUVertexFormat_Uint16x4;
         skin_attrs[0].offset = 0;
@@ -6637,7 +6732,7 @@ struct Renderer::Impl {
         };
         for (const auto& v : src.vertices) {
             const std::uint32_t a = static_cast<std::uint32_t>(std::lround(std::clamp(v.color.w, 0.0f, 1.0f) * 255.0f));
-            verts.push_back({v.position, v.normal, v.uv, enc(v.color.x) | (enc(v.color.y) << 8) | (enc(v.color.z) << 16) | (a << 24)});
+            verts.push_back({v.position, v.normal, v.uv, enc(v.color.x) | (enc(v.color.y) << 8) | (enc(v.color.z) << 16) | (a << 24), pack_tangent(v.tangent)});
         }
         AssetMesh am;
         am.gpu.vertices = device->create_buffer(path.c_str(), WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, verts.size() * sizeof(Vertex), verts.data());
@@ -7572,6 +7667,19 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 const float left = mat ? (&mat->attenuation_color.x)[k] : 1.0f;
                 ou.volume[k] = mat && mat->attenuation_distance > 0 ? -std::log(std::clamp(left, 1e-4f, 1.0f)) / (mat->attenuation_distance * across) : 0.0f;
             }
+            // Cloth, specular and brushed metal, and unlit (docs/design/rendering.md, Cloth, specular
+            // and brushed metal): the MeshRenderer's values, or the material's.
+            const bool own_sheen = mr.sheen.r > 0 || mr.sheen.g > 0 || mr.sheen.b > 0;
+            const Vec3 sheen = own_sheen ? Vec3{decode(mr.sheen.r), decode(mr.sheen.g), decode(mr.sheen.b)} : (mat ? mat->sheen_color : Vec3{0, 0, 0});
+            ou.sheen[0] = sheen.x; ou.sheen[1] = sheen.y; ou.sheen[2] = sheen.z;
+            ou.sheen[3] = std::clamp(mr.sheen_roughness >= 0 ? mr.sheen_roughness : (mat ? mat->sheen_roughness : 0.0f), 0.0f, 1.0f);
+            const Vec3 tint = mat ? mat->specular_color : Vec3{1, 1, 1};
+            ou.spec[0] = tint.x - 1; ou.spec[1] = tint.y - 1; ou.spec[2] = tint.z - 1;
+            ou.spec[3] = 1.0f - std::clamp(mr.specular >= 0 ? mr.specular : (mat ? mat->specular : 1.0f), 0.0f, 1.0f);
+            const float aniso = std::clamp(mr.anisotropy >= 0 ? mr.anisotropy : (mat ? mat->anisotropy : 0.0f), 0.0f, 1.0f);
+            const float turn = mr.anisotropy >= 0 ? radians(mr.anisotropy_rotation) : (mat ? mat->anisotropy_rotation : 0.0f);
+            ou.aniso[0] = aniso; ou.aniso[1] = std::cos(turn); ou.aniso[2] = std::sin(turn);
+            if (mr.unlit || (mat && mat->unlit)) ou.id[1] |= 4u;
             const bool glass = transmission > 0.001f;
             const bool blend = !glass && (color.w < 0.999f || (mat && mat->blend));
             const Vec3 to_cam = t.position - im.camera.position;

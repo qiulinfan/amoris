@@ -1007,6 +1007,12 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["thickness"] = v.thickness;
     j["clearcoat"] = v.clearcoat;
     j["clearcoat_roughness"] = v.clearcoat_roughness;
+    vec_to_json(j["sheen"], v.sheen);
+    j["sheen_roughness"] = v.sheen_roughness;
+    j["specular"] = v.specular;
+    j["anisotropy"] = v.anisotropy;
+    j["anisotropy_rotation"] = v.anisotropy_rotation;
+    j["unlit"] = v.unlit;
     j["visible"] = v.visible;
     j["cast_shadows"] = v.cast_shadows;
     j["lods"] = Json::array();
@@ -1029,6 +1035,12 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "thickness", v.thickness);
     scalar_from_json(j, "clearcoat", v.clearcoat);
     scalar_from_json(j, "clearcoat_roughness", v.clearcoat_roughness);
+    if (j.is_object() && j.contains("sheen")) vec_from_json(j["sheen"], v.sheen);
+    scalar_from_json(j, "sheen_roughness", v.sheen_roughness);
+    scalar_from_json(j, "specular", v.specular);
+    scalar_from_json(j, "anisotropy", v.anisotropy);
+    scalar_from_json(j, "anisotropy_rotation", v.anisotropy_rotation);
+    scalar_from_json(j, "unlit", v.unlit);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "cast_shadows", v.cast_shadows);
     if (j.is_object() && j.contains("lods") && j["lods"].is_array()) {
@@ -1059,6 +1071,15 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.thickness);
     h.f32(v.clearcoat);
     h.f32(v.clearcoat_roughness);
+    h.f32(v.sheen.r);
+    h.f32(v.sheen.g);
+    h.f32(v.sheen.b);
+    h.f32(v.sheen.a);
+    h.f32(v.sheen_roughness);
+    h.f32(v.specular);
+    h.f32(v.anisotropy);
+    h.f32(v.anisotropy_rotation);
+    h.u8(v.unlit ? 1 : 0);
     h.u8(v.visible ? 1 : 0);
     h.u8(v.cast_shadows ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.lods.size()));
@@ -1086,6 +1107,15 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "thickness") { *out = &v.thickness; return 1; }
     if (path == "clearcoat") { *out = &v.clearcoat; return 1; }
     if (path == "clearcoat_roughness") { *out = &v.clearcoat_roughness; return 1; }
+    if (path == "sheen") { *out = &v.sheen.r; return 4; }
+    if (path == "sheen.r") { *out = &v.sheen.r; return 1; }
+    if (path == "sheen.g") { *out = &v.sheen.g; return 1; }
+    if (path == "sheen.b") { *out = &v.sheen.b; return 1; }
+    if (path == "sheen.a") { *out = &v.sheen.a; return 1; }
+    if (path == "sheen_roughness") { *out = &v.sheen_roughness; return 1; }
+    if (path == "specular") { *out = &v.specular; return 1; }
+    if (path == "anisotropy") { *out = &v.anisotropy; return 1; }
+    if (path == "anisotropy_rotation") { *out = &v.anisotropy_rotation; return 1; }
     if (path.starts_with("lods.")) {
         std::string_view rest = path.substr(5);
         std::size_t index = 0;
@@ -2980,7 +3010,7 @@ constexpr std::array<FieldInfo, 15> kSkyFields = {{
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units."},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it."},
 }};
-constexpr std::array<FieldInfo, 18> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 24> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials)."},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole."},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent."},
@@ -2995,6 +3025,12 @@ constexpr std::array<FieldInfo, 18> kMeshRendererFields = {{
     FieldInfo{"thickness", "f32", "How thick the transmitting body is, in world units: the light bends over this depth, and the color tints more the thicker it is (0: a thin pane). Negative keeps the asset material's (KHR_materials_volume; 0)."},
     FieldInfo{"clearcoat", "f32", "A clear lacquer over the surface, 0 to 1: a second, sharp reflection on top (car paint, varnished wood, a wet surface). Negative keeps the asset material's (KHR_materials_clearcoat; 0)."},
     FieldInfo{"clearcoat_roughness", "f32", "The lacquer's roughness, 0 mirror to 1 matte. Negative keeps the asset material's (0.03)."},
+    FieldInfo{"sheen", "color", "Cloth's soft glow at grazing angles (velvet, felt, a dusty surface), the colour of that glow (docs/design/rendering.md, Cloth, specular and brushed metal). Black keeps the asset material's (KHR_materials_sheen; none)."},
+    FieldInfo{"sheen_roughness", "f32", "How far the sheen spreads, 0 tight at the rim to 1 soft over the whole surface. Negative keeps the asset material's (0)."},
+    FieldInfo{"specular", "f32", "The strength of a non-metal's reflection, 0 none (a matte, powdery surface) to 1 the usual. Negative keeps the asset material's (KHR_materials_specular; 1)."},
+    FieldInfo{"anisotropy", "f32", "Brushed metal: 0 a round highlight to 1 one stretched along the surface's texture direction (its uv's u). Negative keeps the asset material's (KHR_materials_anisotropy; 0)."},
+    FieldInfo{"anisotropy_rotation", "f32", "Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy)."},
+    FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too."},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn."},
     FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass."},
     FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own."},

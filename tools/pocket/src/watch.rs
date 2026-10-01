@@ -4,7 +4,6 @@
 use crate::commands::{build_targets, bundle_project, exe_path, find_project};
 use crate::manifest::Workspace;
 use crate::report::{parse_compiler_diagnostics, Report};
-use crate::toolchain;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::net::TcpListener;
@@ -143,7 +142,7 @@ pub fn watch(ws: &Workspace, config: &str, target: &str, args: &[String], editor
     };
     let port = free_port()?;
     let exe = exe_path(ws, config, runtime)?;
-    let mut cmd = toolchain::command(exe.to_str().unwrap());
+    let mut cmd = crate::commands::runtime_command(ws, &exe);
     cmd.arg("--project").arg(&project).arg("--bundle").arg(&bundle.out).arg("--serve").arg(port.to_string());
     if let Some(eb) = &editor_bundle {
         cmd.arg("--editor").arg(eb).arg("--paused").arg("--title").arg(format!("Pocket Editor - {target}"));

@@ -1,4 +1,5 @@
 #include <pocket/core/core.hpp>
+#include <pocket/core/tangents.hpp>
 
 #include <catch_amalgamated.hpp>
 
@@ -218,3 +219,31 @@ TEST_CASE("Reproducible math is as close as libm and pinned to the bit", "[core]
     INFO("sweep hash " << hex64(h.digest()));
     CHECK(hex64(h.digest()) == "62265331655f6ff2");
 }
+
+TEST_CASE("tangents run along the uv's u, their bitangent toward the texture's up", "[core][tangents]") {
+    // A floor quad facing +Y with u along +X and v along +Z (the image's top row at v 0, far side).
+    struct V { Vec3 position, normal; Vec2 uv; };
+    const std::vector<V> quad = {{{-1, 0, 1}, {0, 1, 0}, {0, 1}}, {{1, 0, 1}, {0, 1, 0}, {1, 1}}, {{1, 0, -1}, {0, 1, 0}, {1, 0}}, {{-1, 0, -1}, {0, 1, 0}, {0, 0}}};
+    const std::vector<std::uint32_t> idx = {0, 1, 2, 0, 2, 3};
+    const std::vector<Vec4> t = uv_tangents(quad, idx);
+    REQUIRE(t.size() == 4);
+    for (const Vec4& v : t) {
+        REQUIRE(v.x == Catch::Approx(1.0f));
+        REQUIRE(v.y == Catch::Approx(0.0f).margin(1e-6));
+        REQUIRE(v.z == Catch::Approx(0.0f).margin(1e-6));
+        // cross(n, t) * w: toward -Z, where the image's top is.
+        const Vec3 b = cross(Vec3{0, 1, 0}, Vec3{v.x, v.y, v.z}) * v.w;
+        REQUIRE(b.z == Catch::Approx(-1.0f));
+    }
+    // The same quad with its image mirrored left to right: the tangent turns round, the side flips.
+    std::vector<V> mirrored = quad;
+    for (V& v : mirrored) v.uv.x = 1 - v.uv.x;
+    const std::vector<Vec4> m = uv_tangents(mirrored, idx);
+    REQUIRE(m[0].x == Catch::Approx(-1.0f));
+    REQUIRE(m[0].w == -t[0].w);
+    // No distinct uvs: no tangent.
+    std::vector<V> flat = quad;
+    for (V& v : flat) v.uv = {0, 0};
+    REQUIRE(uv_tangents(flat, idx)[0].w == 0.0f);
+}
+

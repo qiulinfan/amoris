@@ -3729,6 +3729,15 @@ set_input(b, ['Base Color'], (0.6, 0.02, 0.02, 1))
 set_input(b, ['Coat Weight', 'Clearcoat'], 1.0)
 set_input(b, ['Coat Roughness', 'Clearcoat Roughness'], 0.05)
 ball.data.materials.append(paint)
+velvet, b = principled('Velvet')
+set_input(b, ['Sheen Weight', 'Sheen'], 1.0)
+set_input(b, ['Sheen Roughness'], 0.4)
+floor.data.materials.append(velvet)
+brushed, b = principled('Brushed')
+set_input(b, ['Metallic'], 1.0)
+set_input(b, ['Anisotropic'], 0.8)
+set_input(b, ['Specular IOR Level'], 0.25)
+pillar.data.materials.append(brushed)
 bpy.ops.object.empty_add(location=(0, 3, 1))
 marker = bpy.context.active_object
 marker.name = 'Marker'
@@ -3752,6 +3761,7 @@ bpy.ops.wm.save_as_mainfile(filepath=argv[0])
     const Json d = s.command("assets.describe", Json{{"path", "assets/import-test/level.blend"}}).value();
     INFO(d.dump());
     REQUIRE(d["properties"]["Floor"]["pocket"].is_string());
+    REQUIRE(d["tangents"] == "file");   // Blender's own tangents, as its normal maps were baked against
     REQUIRE(d["properties"]["Pillar"]["note"] == "not ours");
     double transmission = 0, ior = 0, coat = 0;
     for (const Json& m : d["materials"]) {
@@ -3761,6 +3771,19 @@ bpy.ops.wm.save_as_mainfile(filepath=argv[0])
     REQUIRE(transmission == Catch::Approx(1.0));
     REQUIRE(ior == Catch::Approx(1.45).margin(0.01));
     REQUIRE(coat == Catch::Approx(1.0));
+    // Cloth and brushed metal (Blender's Sheen, Anisotropic and Specular IOR Level).
+    Json velvet, brushed;
+    for (const Json& m : d["materials"]) {
+        if (m["name"] == "Velvet") velvet = m;
+        if (m["name"] == "Brushed") brushed = m;
+    }
+    REQUIRE(velvet.contains("sheen"));
+    REQUIRE(velvet["sheen"]["color"][0].get<double>() > 0.5);
+    REQUIRE(velvet["sheen"]["roughness"].get<double>() == Catch::Approx(0.4).margin(0.01));
+    REQUIRE(brushed.contains("anisotropy"));
+    REQUIRE(brushed["anisotropy"]["strength"].get<double>() == Catch::Approx(0.8).margin(0.01));
+    REQUIRE(brushed.contains("specular"));
+    REQUIRE(brushed["specular"]["factor"].get<double>() < 0.9);
     // Instantiated far from the sample's own things: the components from the properties, and a
     // warning for the one that names nothing.
     Json inst = s.command("world.instantiate", Json{{"mesh", "assets/import-test/level.blend"}, {"position", Json{{"x", 60}, {"y", 0}, {"z", 0}}}}).value();

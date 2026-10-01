@@ -25,6 +25,7 @@ struct MeshVertex {
     Vec3 normal;
     Vec2 uv;
     Vec4 color{1, 1, 1, 1};   // linear; a file's vertex colors (glTF COLOR_0, OBJ's r g b after a vertex), white without
+    Vec4 tangent{0, 0, 0, 0}; // along the uv's u, w the bitangent's side (glTF TANGENT, else made from the uvs); 0 for none
 };
 
 // A terrain's textured layers (docs/design/terrain.md, Layers), made with its mesh: how much of each
@@ -73,6 +74,17 @@ struct Material {
     float attenuation_distance = 0;
     float clearcoat = 0;
     float clearcoat_roughness = 0.03f;
+    // Cloth, specular and brushed metal (glTF KHR_materials_sheen, _specular, _anisotropy) and
+    // lighting left out (KHR_materials_unlit): a sheen's colour (linear) and roughness, the
+    // dielectric reflection's strength and tint, a highlight stretched along the surface's
+    // tangent by `anisotropy` (0..1) turned `anisotropy_rotation` radians from it.
+    Vec3 sheen_color{0, 0, 0};
+    float sheen_roughness = 0;
+    float specular = 1;
+    Vec3 specular_color{1, 1, 1};
+    float anisotropy = 0;
+    float anisotropy_rotation = 0;
+    bool unlit = false;
     std::shared_ptr<const TerrainLayers> terrain;   // a terrain drawn from textured layers; null otherwise
 };
 
@@ -168,6 +180,7 @@ struct Mesh {
     Vec3 aabb_min{0, 0, 0}, aabb_max{0, 0, 0};
     std::uint32_t node_count = 0;  // glTF nodes baked into this mesh
     bool vertex_colors = false;    // whether the file gave its vertices colors
+    bool file_tangents = false;    // whether the file gave its vertices tangents (glTF TANGENT, as Blender exports them); else they are made from the uvs
     std::vector<SkinVertex> skin_vertices;  // same length as vertices when skinned() (else empty)
     std::vector<Node> nodes;
     std::vector<Skin> skins;
@@ -353,6 +366,9 @@ struct Image {
 // Skinned meshes keep their bind-space vertices with joints and weights; the node hierarchy,
 // skins and animations come along so the runtime can pose them (docs/design/animation.md).
 Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& base_dir, const std::string& display_path);
+// Tangents made from the uvs for the vertices whose file gave none (every mesh the store loads,
+// and terrains).
+void fill_tangents(Mesh& mesh);
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path);
 // Wavefront OBJ with its MTL libraries (read through `read`, project-relative paths): one node per
 // object, one submesh per object and material, normals smoothed where the file has none.

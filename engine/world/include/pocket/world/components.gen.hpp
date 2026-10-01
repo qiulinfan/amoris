@@ -375,6 +375,12 @@ struct MeshRenderer {
     float thickness = -1.0f;
     float clearcoat = -1.0f;
     float clearcoat_roughness = -1.0f;
+    Color4 sheen{0.0f, 0.0f, 0.0f, 1.0f};
+    float sheen_roughness = -1.0f;
+    float specular = -1.0f;
+    float anisotropy = -1.0f;
+    float anisotropy_rotation = 0.0f;
+    bool unlit = false;
     bool visible = true;
     bool cast_shadows = true;
     std::vector<MeshLod> lods = {};
