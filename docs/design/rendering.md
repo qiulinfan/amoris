@@ -7,7 +7,8 @@ graph beside the ECS, so an agent's `world.set` is the whole API.
 `samples/showcase` (a courtyard at dusk: a procedural sky and a low sun with cascaded shadows,
 volumetric fog the colonnade cuts into shafts, a reflecting pool, lanterns with shadows, a spot on
 crates in a pavilion whose polished floor a reflection probe keeps from mirroring the sky, AgX,
-bloom, ambient occlusion and TAA, the camera circling) turns nearly everything below on at once;
+bloom, ambient occlusion and TAA, the camera circling, three built-in humanoids strolling a path
+round the pool and fireflies drifting as GPU particles) turns nearly everything below on at once;
 `pocket editor showcase` opens it, and `renderer_tests` (`[showcase]`) checks that every part runs.
 
 ## One frame

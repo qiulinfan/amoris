@@ -973,6 +973,7 @@ struct Work {
 struct Gait {
     Vec3 last{0, 0, 0};
     float speed = 0;
+    float moving = 0;   // seconds it has been moving without a stop (its speed this tick over 0.3)
     bool primed = false;
     std::uint64_t stamp = 0;
 };
@@ -1015,14 +1016,21 @@ void step_locomotion(world::World& world, assets::AssetStore& assets, float dt, 
         gait.last = at;
         gait.primed = true;
         gait.speed += (raw - gait.speed) * std::min(1.0f, dt * 8.0f);
-        // What it may take over: nothing playing, its own three, or a one-shot played out (not die).
-        const bool own = a.clip.empty() || a.clip == "idle" || a.clip == "walk" || a.clip == "run";
-        if (!own && !(a.finished && a.clip != "die")) return;
+        gait.moving = raw > 0.3f ? gait.moving + dt : 0.0f;
         const bool has_walk = mesh.clip("walk") != nullptr, has_run = mesh.clip("run") != nullptr, has_idle = mesh.clip("idle") != nullptr;
         const float walk = std::max(a.walk_speed, 0.05f), run = std::max(a.run_speed, walk + 0.05f);
         const float s = gait.speed;
         // Thresholds with a margin either side, so a speed near one does not flicker between clips.
         const float still = 0.15f, mid = (walk + run) * 0.5f;
+        // Another clip than its own three: die stays; a one-shot plays out; a looping one (a wave,
+        // a dance) is kept while the entity stands, and given up once it has walked a third of a
+        // second (not on the ticks it takes to stop, when a wave is often begun).
+        const bool own = a.clip.empty() || a.clip == "idle" || a.clip == "walk" || a.clip == "run";
+        if (!own) {
+            if (a.clip == "die") return;
+            if (!a.loop && !a.finished) return;
+            if (a.loop && gait.moving < 0.33f) return;
+        }
         std::string want = a.clip == "walk" || a.clip == "run" ? a.clip : "idle";
         if (want == "idle" && s > still * 1.3f) want = s > mid * 1.1f ? "run" : "walk";
         else if (want == "walk" && s < still) want = "idle";

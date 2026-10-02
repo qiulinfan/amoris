@@ -407,6 +407,16 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   of two states; its one failed call applied a `scene.json` that was not JSON, which `project.apply`
   answered without saying where (a scene or prefab that does not parse is now answered with the
   line, the column, the reason and the line itself).
+- **The villagers.** `villagers` went to opencode with GLM 5.3 Flash the day it was added and failed
+  twice, each time on the engine's account (`opencode-glm-villagers-1.json`, `-2.json`). The first
+  agent gave its villagers a `Behavior` whose greeting state played a looping `wave` and whose
+  wandering state named no clip, and `Animator.locomotion` would not take back a looping clip it had
+  not chosen, so they waved as they walked away; locomotion now takes it back once the entity has
+  moved a third of a second. The second agent, which found the humanoid and its clips through
+  `docs_search` in three calls instead of reading the animation document, moved its villagers from
+  its own script and played the wave on the tick a villager stopped, while the gait's smoothed speed
+  still said walking, and the gait took it at once; it now waits for that third of a second of
+  movement. Its `world.lint` had also called every humanoid a missing file, which it no longer does.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

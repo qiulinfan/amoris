@@ -4,7 +4,9 @@
 // crates in a pavilion whose polished floor a reflection probe keeps from mirroring the sky, AgX,
 // bloom, ambient occlusion and TAA. The camera circles slowly; the orb bobs over the pool; a
 // timeline (timelines/dusk.json, on the Dusk entity) sinks and reddens the sun and brings up the
-// pavilion lamp over 24 seconds, then back.
+// pavilion lamp over 24 seconds, then back. Three visitors (the built-in humanoid, walked by
+// Animator.locomotion) stroll a path round the pool, and fireflies (particles on the GPU, stirred
+// by turbulence) drift over the courtyard.
 //
 // Open it in the editor (`pocket editor showcase`) or run it (`pocket run showcase`).
 import { expose, onStart, onTick, world } from "pocket";

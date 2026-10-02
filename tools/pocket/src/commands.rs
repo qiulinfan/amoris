@@ -447,7 +447,7 @@ A game made with Pocket, an engine meant to be driven by agents as much as by pe
 1. Start the game paused with its control server: `{tool} run {name} -- --serve 4711 --paused` (or the MCP tool `runtime_start`).
 2. Read it first: `{tool} rpc project.brief` gives the files, the scene, the components in use, the input actions, the exposed state and what looks wrong.
 3. Change the world with commands (`world.spawn`, `world.set`, `world.destroy`; `help {{"command": "world.set"}}` says how to call one), or edit the files below and apply them to the running game with `project.apply`, which bundles, type-checks, reloads and steps it in one call.
-4. Check what happened: `step {{"ticks": 600, "until": {{"event": "coin."}}}}`, `step {{"ticks": 90, "watch": ["Player:Transform.position.y"]}}` (a value's first, last, least and greatest through the step), `state`, `world.query`, `events.since`, `transcript`; `capture {{"path": "shot.png"}}` when it has to be seen. Several commands go in one call as `{{"calls": [{{"method", "params"}}, ...]}}`.
+4. Check what happened: `step {{"ticks": 600, "until": {{"event": "coin."}}}}`, `step {{"ticks": 90, "watch": ["Player:Transform.position.y"]}}` (a value's first, last, least and greatest through the step), `state`, `world.query`, `events.since`, `transcript`; `capture {{"path": "shot.png"}}` when it has to be seen, and `capture.gif {{"path": "play.gif", "seconds": 3}}` to show a person what the game does. Several commands go in one call as `{{"calls": [{{"method", "params"}}, ...]}}`.
 
 ## The files
 

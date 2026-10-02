@@ -5,6 +5,7 @@
 #include "command_help.hpp"
 #include "journal.hpp"
 #include "behavior.hpp"
+#include "gif.hpp"
 #include "ragdoll.hpp"
 #include "web_fs.hpp"
 #include <pocket/world/water.hpp>
@@ -6212,7 +6213,11 @@ Result<Json> Session::world_lint(const Json& p) {
     // Files the scene names.
     ecs.each([&](flecs::entity e, const world::MeshRenderer& mr) {
         const bool primitive = mr.mesh.empty() || mr.mesh == "cube" || mr.mesh == "sphere" || mr.mesh == "plane" || mr.mesh == "cylinder" || mr.mesh == "quad" || mr.mesh == "capsule";
-        if (!primitive && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule)");
+        const bool builtin = mr.mesh == "humanoid" || mr.mesh.starts_with("humanoid?");
+        if (!primitive && !builtin && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule) or the built-in humanoid");
+        if (mr.mesh.starts_with("humanoid?") && assets_) {
+            if (auto m = assets_->mesh(mr.mesh); !m) add("error", e.id(), "MeshRenderer", m.error().message, "skin, shirt, trousers, shoes and hair take \"#rrggbb\" or a colour's name; hair=none leaves the head bare");
+        }
         if (file_missing(mr.texture)) add("error", e.id(), "MeshRenderer", std::format("the texture {} is not in the project", mr.texture), "point MeshRenderer.texture at an image in the project, or clear it");
         if (file_missing(mr.normal_map)) add("error", e.id(), "MeshRenderer", std::format("the normal map {} is not in the project", mr.normal_map), "point MeshRenderer.normal_map at an image in the project, or clear it");
     });
@@ -7924,6 +7929,35 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return Json{{"scale", time_scale_}, {"seconds", scale_left_}};
     }
     if (name == "quit") { quit_ = true; return Json{{"ok", true}}; }
+    if (name == "capture.gif") {
+        // An animated picture of play (docs/mcp.md, capture.gif): `seconds` of ticks stepped and
+        // drawn, a frame every `every` ticks, made `width` pixels across, written as a looping GIF.
+        const std::string path = opt<std::string>(p, "path", "");
+        if (path.empty() || !path.ends_with(".gif")) return fail("bad_args", "capture.gif needs a path ending in .gif (project-relative, e.g. \"shots/play.gif\")");
+        const double seconds = std::clamp(opt<double>(p, "seconds", 2.0), 0.05, 30.0);
+        const int every = std::clamp(opt<int>(p, "every", 2), 1, 60);
+        const int ticks = std::max(1, static_cast<int>(std::lround(seconds / clock_.tick_seconds)));
+        std::vector<std::vector<std::uint8_t>> frames;
+        int w = 0, h = 0, to_w = 0, to_h = 0;
+        for (int t = 0; t < ticks; ++t) {
+            POCKET_TRY(stepped, run_command("step", Json{{"ticks", 1}, {"render", "each"}}, source));
+            (void)stepped;
+            if (t % every != 0) continue;
+            POCKET_TRY(img, device_->capture());
+            if (w == 0) {
+                w = static_cast<int>(img.width);
+                h = static_cast<int>(img.height);
+                to_w = std::min(w, std::clamp(opt<int>(p, "width", 480), 32, 1920));
+                to_h = std::max(1, static_cast<int>(std::lround(static_cast<double>(h) * to_w / std::max(w, 1))));
+            }
+            frames.push_back(shrink_rgba(img.rgba, w, h, to_w, to_h));
+        }
+        const int delay = std::max(2, static_cast<int>(std::lround(every * clock_.tick_seconds * 100.0)));
+        const std::string gif = encode_gif(frames, to_w, to_h, delay);
+        POCKET_TRY(out, output_path(options_.project_dir, path));
+        POCKET_TRY_VOID(fs::write_bytes(out, gif.data(), gif.size()));
+        return Json{{"path", out.string()}, {"frames", frames.size()}, {"width", to_w}, {"height", to_h}, {"bytes", gif.size()}, {"seconds", ticks * clock_.tick_seconds}, {"tick", clock_.tick}};
+    }
     if (name == "capture") {
         std::string path = opt<std::string>(p, "path", "");
         POCKET_TRY(img, device_->capture());
@@ -8088,7 +8122,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

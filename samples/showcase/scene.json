@@ -2081,6 +2081,288 @@
      "far": 400
     }
    }
+  },
+  {
+   "name": "Stroll",
+   "components": {
+    "Transform": {},
+    "Path": {
+     "points": [
+      {
+       "x": 5.3,
+       "y": 0,
+       "z": -5.0
+      },
+      {
+       "x": 5.3,
+       "y": 0,
+       "z": 7.0
+      },
+      {
+       "x": 4.0,
+       "y": 0,
+       "z": 8.8
+      },
+      {
+       "x": -4.0,
+       "y": 0,
+       "z": 8.8
+      },
+      {
+       "x": -5.3,
+       "y": 0,
+       "z": 7.0
+      },
+      {
+       "x": -5.3,
+       "y": 0,
+       "z": -5.0
+      },
+      {
+       "x": -4.0,
+       "y": 0,
+       "z": -6.9
+      },
+      {
+       "x": 4.0,
+       "y": 0,
+       "z": -6.9
+      }
+     ],
+     "closed": true
+    }
+   }
+  },
+  {
+   "name": "Visitor0",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 0.9,
+      "y": 0.9,
+      "z": 0.9
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "humanoid?shirt=#c9a25c&trousers=#3a3530"
+    },
+    "Animator": {
+     "locomotion": true,
+     "walk_speed": 1.2
+    },
+    "PathFollower": {
+     "path": "Stroll",
+     "speed": 1.1,
+     "distance": 0.0,
+     "mode": "loop",
+     "orient": "forward"
+    }
+   }
+  },
+  {
+   "name": "Visitor1",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 0.9,
+      "y": 0.9,
+      "z": 0.9
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "humanoid?shirt=#5b7fa8&trousers=#2a2d36&hair=#1b1b1b"
+    },
+    "Animator": {
+     "locomotion": true,
+     "walk_speed": 1.2
+    },
+    "PathFollower": {
+     "path": "Stroll",
+     "speed": 1.0,
+     "distance": 17.0,
+     "mode": "loop",
+     "orient": "forward"
+    }
+   }
+  },
+  {
+   "name": "Visitor2",
+   "components": {
+    "Transform": {
+     "scale": {
+      "x": 0.9,
+      "y": 0.9,
+      "z": 0.9
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "humanoid?shirt=#8a3b3b&trousers=#30302e&skin=#8d5524&hair=none"
+    },
+    "Animator": {
+     "locomotion": true,
+     "walk_speed": 1.2
+    },
+    "PathFollower": {
+     "path": "Stroll",
+     "speed": 1.25,
+     "distance": 33.0,
+     "mode": "loop",
+     "orient": "forward"
+    }
+   }
+  },
+  {
+   "name": "Fireflies0",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -5.6,
+      "y": 1.3,
+      "z": 1.0
+     }
+    },
+    "ParticleEmitter": {
+     "gpu": true,
+     "rate": 25,
+     "max": 400,
+     "lifetime": [
+      6,
+      10
+     ],
+     "speed": [
+      0.05,
+      0.25
+     ],
+     "spread": 180,
+     "gravity": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "drag": 0.2,
+     "turbulence": 0.8,
+     "turbulence_scale": 2.5,
+     "size": [
+      0.06,
+      0.03
+     ],
+     "color": {
+      "r": 1,
+      "g": 0.85,
+      "b": 0.4,
+      "a": 1
+     },
+     "color_end": {
+      "r": 1,
+      "g": 0.55,
+      "b": 0.2,
+      "a": 0
+     },
+     "additive": true
+    }
+   }
+  },
+  {
+   "name": "Fireflies1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 6.4,
+      "y": 1.3,
+      "z": 1.5
+     }
+    },
+    "ParticleEmitter": {
+     "gpu": true,
+     "rate": 25,
+     "max": 400,
+     "lifetime": [
+      6,
+      10
+     ],
+     "speed": [
+      0.05,
+      0.25
+     ],
+     "spread": 180,
+     "gravity": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "drag": 0.2,
+     "turbulence": 0.8,
+     "turbulence_scale": 2.5,
+     "size": [
+      0.06,
+      0.03
+     ],
+     "color": {
+      "r": 1,
+      "g": 0.85,
+      "b": 0.4,
+      "a": 1
+     },
+     "color_end": {
+      "r": 1,
+      "g": 0.55,
+      "b": 0.2,
+      "a": 0
+     },
+     "additive": true
+    }
+   }
+  },
+  {
+   "name": "Fireflies2",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0.0,
+      "y": 1.6,
+      "z": 7.5
+     }
+    },
+    "ParticleEmitter": {
+     "gpu": true,
+     "rate": 25,
+     "max": 400,
+     "lifetime": [
+      6,
+      10
+     ],
+     "speed": [
+      0.05,
+      0.25
+     ],
+     "spread": 180,
+     "gravity": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "drag": 0.2,
+     "turbulence": 0.8,
+     "turbulence_scale": 2.5,
+     "size": [
+      0.06,
+      0.03
+     ],
+     "color": {
+      "r": 1,
+      "g": 0.85,
+      "b": 0.4,
+      "a": 1
+     },
+     "color_end": {
+      "r": 1,
+      "g": 0.55,
+      "b": 0.2,
+      "a": 0
+     },
+     "additive": true
+    }
+   }
   }
  ]
 }

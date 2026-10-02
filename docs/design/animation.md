@@ -316,11 +316,15 @@ tenth of a margin either side so a speed near a threshold does not flicker. A ch
 a fifth of a second, and the walk and the run are played at the pace of the speed (the speed over
 `walk_speed` or `run_speed`, within half and twice), so the feet keep up. The clips are the mesh's
 own of those names (the built-in humanoid has them; a model from a file needs them named so), and a
-missing run falls back to the walk. A clip played over them
-(`animation.play {clip: "wave", loop: false}`) plays out and then the gait takes over again; `die`
-stays. An entity with an enabled `AnimationGraph` is the graph's. `runtime_tests` (`[locomotion]`):
-a humanoid at rest idles, at 1.4 a second walks at its own pace, at 4.5 runs at 1.12 of it, waves
-and then idles, and once dead stays dead while it slides.
+missing run falls back to the walk. Another clip over them is left alone for a while: a one-shot
+(`animation.play {clip: "punch", loop: false}`) plays out and then the gait takes over again, a
+looping one (a wave, a dance) is kept while the entity stands and given up once it has moved a third
+of a second without a stop (so a wave begun on the tick a walker stops is kept, and a villager that
+waved from a `Behavior` state and walks off walks; two benchmark agents' villagers showed both), and
+`die` stays. An entity with an enabled `AnimationGraph` is the graph's. `runtime_tests`
+(`[locomotion]`): a humanoid at rest idles, at 1.4 a second walks at its own pace, at 4.5 runs at
+1.12 of it, waves once and then idles, keeps a looping wave standing and walks once moved, and once
+dead stays dead while it slides.
 
 ## Cues
 

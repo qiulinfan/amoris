@@ -682,7 +682,7 @@ export interface Animator {
     root_rotation: boolean;
     /** The root's yaw change this tick in radians while root_rotation is on (written by the engine). */
     root_delta_yaw: number;
-    /** The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A clip played over them (a punch, a wave) plays out first; die stays (docs/design/animation.md, Locomotion). */
+    /** The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A one-shot played over them (a punch) plays out first, a looping one (a wave) is kept while the entity stands and given up once it has moved a third of a second, and die stays (docs/design/animation.md, Locomotion). */
     locomotion: boolean;
     /** Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace. */
     walk_speed: number;

@@ -289,6 +289,27 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE(load.error().message.find("\"name\": \"A\" \"components\"") != std::string::npos);
 }
 
+TEST_CASE("capture.gif steps and draws play into a looping GIF", "[runtime][capture][gif]") {
+    auto o = hello_options(-1);
+    o.width = 320;
+    o.height = 180;
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    const Json before = s.command("state", Json::object()).value();
+    const Json r = s.command("capture.gif", Json{{"path", (root() / "build" / "test-out" / "hello.gif").string()}, {"seconds", 0.5}, {"every", 3}, {"width", 160}}).value();
+    INFO(r.dump());
+    REQUIRE(r["frames"] == 10);   // thirty ticks, one in three
+    REQUIRE(r["width"] == 160);
+    REQUIRE(r["height"] == 90);
+    REQUIRE(s.command("state", Json::object()).value()["tick"].get<int>() == before["tick"].get<int>() + 30);
+    const auto bytes = fs::read_bytes(r["path"].get<std::string>()).value();
+    REQUIRE(bytes.size() == r["bytes"].get<std::size_t>());
+    REQUIRE(std::string(bytes.begin(), bytes.begin() + 6) == "GIF89a");
+    REQUIRE(bytes.back() == ';');
+    REQUIRE_FALSE(s.command("capture.gif", Json{{"path", "shot.png"}}).has_value());   // a GIF's path ends in .gif
+}
+
 TEST_CASE("the window's view drawn at a scale is stretched to the window, its coordinates the window's", "[runtime][render][scale]") {
     auto o = hello_options(-1);
     o.width = 320;
@@ -351,6 +372,15 @@ TEST_CASE("the built-in humanoid walks, runs and stands by its speed; a one-shot
     REQUIRE(anim()["clip"] == "wave");
     go(0, 90);
     REQUIRE(anim()["clip"] == "idle");
+    // A looping wave begun as it stops is kept while it stands, and given up once it walks.
+    go(1.4, 30);
+    REQUIRE(s.command("animation.play", Json{{"entity", "Walker"}, {"clip", "wave"}, {"loop", true}}).has_value());
+    go(0, 2);
+    REQUIRE(anim()["clip"] == "wave");
+    go(0, 60);
+    REQUIRE(anim()["clip"] == "wave");
+    go(1.4, 40);
+    REQUIRE(anim()["clip"] == "walk");
     // Die stays where it falls, moving or not.
     REQUIRE(s.command("animation.play", Json{{"entity", "Walker"}, {"clip", "die"}, {"loop", false}}).has_value());
     go(1.4, 120);
