@@ -38,14 +38,27 @@ struct TreeOptions {
     std::vector<std::string> components;  // restrict shown components (empty: all)
 };
 
+// One condition on a field for World::query: "Plot.water" equals 0, "Transform.position.y" above 2.
+struct QueryCondition {
+    std::string field;   // the component, then the path into it ("Plot.stage", "Transform.position.y", "Behavior.states.0.name")
+    std::string op;      // equals, not, above, below, at_least, at_most
+    Json value;          // a number, a bool, a string (an enum field's value by its name), or anything for equals and not
+};
+
 struct QueryOptions {
     std::vector<std::string> with;     // components the entity must have
     std::vector<std::string> without;  // components the entity must not have
     std::string name;                  // glob on the entity name ("*" and "?")
     EntityId under = 0;                // restrict to descendants of this entity
     std::vector<std::string> fields;   // components to include in results (empty: those in `with`)
+    std::vector<QueryCondition> where; // all must hold (an entity without the component does not match)
     int limit = 1000;
 };
+
+// world.query's `where` as an agent writes it: {"Plot.water": 0, "Plot.stage": {"at_least": 0}}, the
+// same as a list of such objects, or text: "Plot.stage >= 0 and Plot.water == 0" (==, =, !=, >, <,
+// >=, <=; a number, true, false, null, a quoted or bare word).
+Result<std::vector<QueryCondition>> parse_where(const Json& where);
 
 class World {
    public:

@@ -7231,6 +7231,10 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         q.fields = string_list(p, "fields");
         q.name = opt<std::string>(p, "name", "");
         q.limit = opt<int>(p, "limit", 1000);
+        if (p.contains("where")) {
+            POCKET_TRY(conditions, world::parse_where(p["where"]));
+            q.where = std::move(conditions);
+        }
         if (p.contains("under") && !p["under"].is_null()) {
             q.under = resolve_entity(p["under"]);
             if (!w.alive(q.under)) return fail("no_such_entity", "no entity for {}", p["under"].dump());
@@ -8330,9 +8334,40 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
             }
         }
         if (p.contains("until") && !p["until"].is_null()) {
-            const Json& u = p["until"];
-            if (!u.is_object()) return fail("bad_args", "until is {{event}} or {{state | entity, component, field}} with equals, above, below, at_least, at_most or changes");
-            if (u.contains("event")) {
+            // Text is a world.query condition: until some entity meets it ("Plot.stage == 3").
+            const Json u = p["until"].is_string() ? Json{{"where", p["until"]}} : p["until"];
+            if (!u.is_object()) return fail("bad_args", "until is {{event}}, {{state | entity, component, field}} with equals, above, below, at_least, at_most or changes, or {{where}} (a world.query condition, or its text alone)");
+            if (u.contains("where")) {
+                // Until enough entities meet a condition on their fields (docs/design/world-model.md,
+                // world.query): one by default, or count: n or {at_least: n} (equals, above, below, at_most).
+                POCKET_TRY(conditions, world::parse_where(u["where"]));
+                world::QueryOptions q;
+                q.where = std::move(conditions);
+                q.with = string_list(u, "with");
+                q.name = opt<std::string>(u, "name", "");
+                std::string cop = "at_least";
+                double want = 1;
+                if (u.contains("count")) {
+                    const Json& c = u["count"];
+                    if (c.is_number()) { cop = "equals"; want = c.get<double>(); }
+                    else if (c.is_object() && c.size() == 1 && c.begin().value().is_number()) { cop = c.begin().key(); want = c.begin().value().get<double>(); }
+                    else return fail("bad_args", "until.count is a number or {{at_least: n}} (equals, above, below, at_most)");
+                    if (cop != "equals" && cop != "above" && cop != "below" && cop != "at_least" && cop != "at_most") return fail("bad_args", "until.count compares with equals, above, below, at_least or at_most, not {}", cop);
+                }
+                const Json probe = world_->query(q);
+                if (probe.contains("error")) return fail("bad_query", "until: {}", probe["error"].get<std::string>());
+                met = [this, q, cop, want](Json& detail) {
+                    const Json r = world_->query(q);
+                    const double n = r.value("count", 0);
+                    const bool ok = cop == "equals" ? n == want : cop == "above" ? n > want : cop == "below" ? n < want : cop == "at_least" ? n >= want : n <= want;
+                    if (!ok) return false;
+                    detail["count"] = n;
+                    Json paths = Json::array();
+                    for (const Json& e : r["entities"]) { if (paths.size() >= 8) break; paths.push_back(e["path"]); }
+                    detail["entities"] = paths;
+                    return true;
+                };
+            } else if (u.contains("event")) {
                 if (!u["event"].is_string()) return fail("bad_args", "until.event is an event type or a prefix of one (\"coin.\")");
                 const std::string prefix = u["event"].get<std::string>();
                 met = [this, prefix, &seen](Json& detail) {

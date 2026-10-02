@@ -1014,6 +1014,57 @@ Json World::query(const QueryOptions& options) const {
         return Json{{"error", "unknown component " + (path.size() > 1 ? path.front() : n) + " (fields name a component, or a component's field as \"Transform.position\")"}};
     }
     if (fields.empty() && parts.empty()) fields = with;
+    // The conditions: each field's component and path, checked now so a misspelt one is said at once.
+    struct Test { const ComponentOps* op; std::vector<std::string> path; std::string op_name; Json value; std::span<const std::string_view> names; };
+    std::vector<Test> tests;
+    for (const QueryCondition& c : options.where) {
+        std::vector<std::string> path;
+        for (std::size_t at = 0; at <= c.field.size();) {
+            const std::size_t dot = std::min(c.field.find('.', at), c.field.size());
+            path.push_back(c.field.substr(at, dot - at));
+            at = dot + 1;
+        }
+        const ComponentOps* op = path.size() > 1 ? impl_->find(path.front()) : nullptr;
+        if (!op) return Json{{"error", std::format("where: '{}' names no component's field (\"Plot.water\", \"Transform.position.y\")", c.field)}};
+        path.erase(path.begin());
+        if (!has_field(op->name, path.front())) return Json{{"error", std::format("where: {} has no field '{}' ({})", op->name, path.front(), c.field)}};
+        std::span<const std::string_view> names;
+        for (const auto& info : impl_->infos)
+            if (info.name == op->name)
+                for (const auto& f : info.fields) if (f.name == path.front() && path.size() == 1) names = f.names;
+        Json value = c.value;
+        if (value.is_string() && !names.empty()) {
+            const auto it = std::find(names.begin(), names.end(), value.get<std::string>());
+            if (it == names.end()) return Json{{"error", std::format("where: {} is not one of {}'s values", value.dump(), c.field)}};
+            value = static_cast<int>(it - names.begin());
+        }
+        if (c.op != "equals" && c.op != "not" && !value.is_number()) return Json{{"error", std::format("where: {} {} needs a number, not {}", c.field, c.op, value.dump())}};
+        tests.push_back({op, std::move(path), c.op, std::move(value), names});
+    }
+    auto meets = [&](flecs::entity e) {
+        for (const Test& t : tests) {
+            if (!t.op->has(e)) return false;
+            const Json all = t.op->get(e);
+            const Json* v = &all;
+            for (const auto& seg : t.path) {
+                if (v->is_object() && v->contains(seg)) v = &(*v)[seg];
+                else if (v->is_array() && !seg.empty() && std::all_of(seg.begin(), seg.end(), [](char ch) { return ch >= '0' && ch <= '9'; }) && std::stoul(seg) < v->size()) v = &(*v)[std::stoul(seg)];
+                else return false;
+            }
+            if (t.op_name == "equals" || t.op_name == "not") {
+                const bool same = v->is_number() && t.value.is_number() ? std::fabs(v->get<double>() - t.value.get<double>()) <= 1e-6 : *v == t.value;
+                if (same != (t.op_name == "equals")) return false;
+                continue;
+            }
+            if (!v->is_number()) return false;
+            const double x = v->get<double>(), y = t.value.get<double>();
+            if (t.op_name == "above" && !(x > y)) return false;
+            if (t.op_name == "below" && !(x < y)) return false;
+            if (t.op_name == "at_least" && !(x >= y)) return false;
+            if (t.op_name == "at_most" && !(x <= y)) return false;
+        }
+        return true;
+    };
     std::vector<EntityId> starts = options.under ? children(options.under) : roots();
     int count = 0;
     bool truncated = false;
@@ -1025,6 +1076,7 @@ Json World::query(const QueryOptions& options) const {
             for (auto* op : with) if (!op->has(e)) return true;
             for (auto* op : without) if (op->has(e)) return true;
             if (!options.name.empty() && !glob_match(options.name, name(id))) return true;
+            if (!tests.empty() && !meets(e)) return true;
             if (count >= options.limit) { truncated = true; return false; }
             Json row;
             row["id"] = id;
@@ -1055,6 +1107,80 @@ Json World::query(const QueryOptions& options) const {
     j["truncated"] = truncated;
     j["entities"] = std::move(results);
     return j;
+}
+
+Result<std::vector<QueryCondition>> parse_where(const Json& where) {
+    std::vector<QueryCondition> out;
+    if (where.is_null()) return out;
+    // The names a comparison goes by, as in step's until (equals, above, ...) and as operators.
+    static const std::map<std::string, std::string> ops = {
+        {"equals", "equals"}, {"eq", "equals"}, {"is", "equals"}, {"==", "equals"}, {"=", "equals"}, {"value", "equals"},
+        {"not", "not"}, {"ne", "not"}, {"!=", "not"},
+        {"above", "above"}, {"gt", "above"}, {">", "above"}, {"below", "below"}, {"lt", "below"}, {"<", "below"},
+        {"at_least", "at_least"}, {"gte", "at_least"}, {"min", "at_least"}, {">=", "at_least"},
+        {"at_most", "at_most"}, {"lte", "at_most"}, {"max", "at_most"}, {"<=", "at_most"}};
+    auto from_object = [&](const Json& o) -> Status {
+        for (const auto& [field, test] : o.items()) {
+            if (!test.is_object()) { out.push_back({field, "equals", test}); continue; }
+            if (test.empty()) return fail("bad_args", "where.{}: a value, or {{op: value}} with op one of equals, not, above, below, at_least, at_most", field);
+            for (const auto& [name, value] : test.items()) {
+                const auto it = ops.find(name);
+                if (it == ops.end()) return fail("bad_args", "where.{}: '{}' is no comparison (equals, not, above, below, at_least, at_most)", field, name);
+                out.push_back({field, it->second, value});
+            }
+        }
+        return {};
+    };
+    auto from_text = [&](std::string text) -> Status {
+        // Clauses joined by "and" (any case); each "field op value".
+        std::vector<std::string> clauses;
+        std::string lower = text;
+        for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        std::size_t at = 0;
+        for (std::size_t k = lower.find(" and "); k != std::string::npos; k = lower.find(" and ", at)) {
+            clauses.push_back(text.substr(at, k - at));
+            at = k + 5;
+        }
+        clauses.push_back(text.substr(at));
+        for (std::string c : clauses) {
+            const auto first = c.find_first_not_of(" \t");
+            if (first == std::string::npos) return fail("bad_args", "where: an empty clause in \"{}\"", text);
+            c = c.substr(first, c.find_last_not_of(" \t") - first + 1);
+            std::size_t pos = std::string::npos, len = 0;
+            for (const char* o : {">=", "<=", "!=", "==", ">", "<", "="}) {
+                const auto k = c.find(o);
+                if (k != std::string::npos && (pos == std::string::npos || k < pos || (k == pos && std::strlen(o) > len))) { pos = k; len = std::strlen(o); }
+            }
+            if (pos == std::string::npos) return fail("bad_args", "where: \"{}\" is no comparison: a field, an operator (== != > < >= <=) and a value, as \"Plot.water == 0\"", c);
+            auto trim = [](std::string s) {
+                const auto a = s.find_first_not_of(" \t");
+                return a == std::string::npos ? std::string() : s.substr(a, s.find_last_not_of(" \t") - a + 1);
+            };
+            const std::string field = trim(c.substr(0, pos)), raw = trim(c.substr(pos + len));
+            if (field.empty() || raw.empty()) return fail("bad_args", "where: \"{}\" needs a field and a value", c);
+            Json value;
+            if (raw == "true" || raw == "false") value = raw == "true";
+            else if (raw == "null") value = nullptr;
+            else if ((raw.front() == '"' || raw.front() == '\'') && raw.size() >= 2 && raw.back() == raw.front()) value = raw.substr(1, raw.size() - 2);
+            else {
+                char* end = nullptr;
+                const double d = std::strtod(raw.c_str(), &end);
+                value = end && *end == '\0' ? Json(d) : Json(raw);
+            }
+            out.push_back({field, ops.at(c.substr(pos, len)), value});
+        }
+        return {};
+    };
+    if (where.is_string()) POCKET_TRY_VOID(from_text(where.get<std::string>()));
+    else if (where.is_object()) POCKET_TRY_VOID(from_object(where));
+    else if (where.is_array()) {
+        for (const Json& w : where) {
+            if (w.is_string()) POCKET_TRY_VOID(from_text(w.get<std::string>()));
+            else if (w.is_object()) POCKET_TRY_VOID(from_object(w));
+            else return fail("bad_args", "where: each item is text or an object, not {}", w.dump());
+        }
+    } else return fail("bad_args", "where is text (\"Plot.water == 0 and Plot.stage >= 0\") or an object ({{\"Plot.water\": 0}}), not {}", where.dump());
+    return out;
 }
 
 Json World::summary() const {

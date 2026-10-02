@@ -92,7 +92,7 @@ their context afterwards); `world.schema {component}` (or `components`, or `sear
 component's fields instead of all forty. The pi extension shows results as compact JSON and, when it
 must cut one, names these filters. A command refuses a parameter it does not take and names the ones
 it takes
-(`world.query does not take 'pattern': it takes with?, without?, name?, under?, fields?, limit?`),
+(`world.query does not take 'pattern': it takes with?, without?, name?, under?, where?, fields?, limit?`),
 so a guessed key fails at once instead of being ignored while the call looks like it worked; a
 mistyped command is answered with the names it is close to; and where a command takes an `entity`
 and no `path`, a `path` stands for it. `world.set` without a `value` object (or a `component`) says

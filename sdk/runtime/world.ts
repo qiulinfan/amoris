@@ -171,6 +171,8 @@ export interface QueryOptions {
     name?: string;
     under?: EntityRef;
     fields?: ComponentName[];
+    /** Fields that must hold: "Plot.water == 0 and Plot.stage >= 0", or {"Plot.water": 0, "Health.current": {below: 20}}. */
+    where?: string | Record<string, unknown> | Array<string | Record<string, unknown>>;
     limit?: number;
 }
 

@@ -809,6 +809,60 @@ def guards_footsteps_solve(env, project_dir):
     edit_main(project_dir, transform)
 
 
+def farm_rain_solve(env, project_dir):
+    # The weather answers the field: rain while three or more sown plots are dry, until none is.
+    def transform(t):
+        a = """    spell += dt;
+    if (spell >= DRY_SPELL + RAIN_SPELL) spell -= DRY_SPELL + RAIN_SPELL;
+    const into = spell - DRY_SPELL;
+    const rain = into <= 0 ? 0 : Math.min(1, into / 4, (RAIN_SPELL - into) / 4);"""
+        if a not in t or "let raining = false;" not in t:
+            raise RuntimeError("the farm script changed shape")
+        t = t.replace("let raining = false;", "let raining = false;\nlet rainOn = false;", 1)
+        return t.replace(a, """    const dry = plots().filter((r) => r.Plot!.stage >= 0 && r.Plot!.water <= 0).length;
+    if (dry >= 3) rainOn = true;
+    else if (dry === 0) rainOn = false;
+    const rain = rainOn ? 1 : 0;""", 1)
+    edit_main(project_dir, transform)
+
+
+def farm_rain_check(env, answer):
+    def rain():
+        return env.command("world.get", {"entity": "Weather", "component": "Weather"})["rain"]
+    def sow(n, water):
+        env.command("world.set", {"entity": f"Farm/Plot{n}", "component": "Plot", "value": {"stage": 0, "water": water, "growth": 0}})
+    # Nothing sown: no rain for 110 seconds (the old timer rained after 75).
+    for _ in range(22):
+        env.command("step", {"ticks": 300})
+        if rain() > 0.01:
+            return False, f"it rains ({rain():.2f}) with nothing sown, at tick {env.command('state', {}).get('tick')}"
+    # Two dry sown plots are not enough.
+    sow(0, 0.0)
+    sow(1, 0.0)
+    env.command("step", {"ticks": 120})
+    if rain() > 0.01:
+        return False, f"it rains ({rain():.2f}) with only two sown plots dry"
+    # A third: rain within two seconds.
+    sow(2, 0.0)
+    for _ in range(12):
+        env.command("step", {"ticks": 10})
+        if rain() >= 0.99:
+            break
+    else:
+        return False, f"three sown plots are dry and the rain is {rain():.2f} two seconds later"
+    # The rain waters them; once none is dry it stops.
+    for _ in range(60):
+        env.command("step", {"ticks": 30})
+        if rain() <= 0.01:
+            break
+    else:
+        return False, f"the rain is {rain():.2f} thirty seconds on"
+    plots = [env.command("world.get", {"entity": f"Farm/Plot{n}", "component": "Plot"}) for n in range(3)]
+    if any(p["water"] <= 0 for p in plots):
+        return False, f"the rain stopped with a sown plot still dry: {plots}"
+    return True, "no rain on a timer nor with two dry plots; rain within two seconds of the third, stopping once all three were watered"
+
+
 def guards_footsteps_check(env, answer):
     def state(name):
         return env.command("world.get", {"entity": name, "component": "Behavior"})["state"]
@@ -3721,6 +3775,8 @@ TASKS = [
      "task": "In the walker game, give the Player entity a Health of 30 (current and max) when the game starts, and when the player's health is used up make the hero (the entity Player/Hero, the player's body) go limp as a ragdoll: it falls where it stands and lies there, and from then on the move actions no longer move the player. Answer null."},
     {"name": "fps_shotgun", "project": "fps", "ticks": 0, "script": True, "solve": fps_shotgun_solve, "check": fps_shotgun_check,
      "task": "Turn the fps game's gun into a shotgun: each shot fires 6 pellets, each going off within 3 degrees of where the view looks (randomly) and doing 8 damage to what it hits, instead of one bullet of 25; the magazine holds 6 shots instead of 12. Keep everything else as it is. Answer null."},
+    {"name": "farm_rain", "project": "farm", "ticks": 0, "script": True, "solve": farm_rain_solve, "check": farm_rain_check,
+     "task": "In the farm game it rains on a timer (thirty seconds of rain every hundred and five). Make the weather answer the field instead: it rains (the rain of the Weather on the entity named Weather at 1) as soon as three or more sown plots are dry, and stops (rain 0) once no sown plot is dry; it never rains on a timer. A plot is the project's own Plot component (components.toml): sown when its stage is 0 or more, dry when its water is 0. Answer null."},
     {"name": "guards_footsteps", "project": "guards", "ticks": 0, "script": True, "solve": guards_footsteps_solve, "check": guards_footsteps_check,
      "task": "In the guards game the guards hear the player only while it runs. Make them hear it walking too, but from nearer: while the player walks (moving, not running) its footsteps are a noise that carries 4 units, every half second; standing still makes none. Running stays as it is. Answer null."},
     {"name": "walker_sprint", "project": "walker", "ticks": 0, "script": True, "solve": walker_sprint_solve, "check": walker_sprint_check,

@@ -1,0 +1,61 @@
+{
+  "runner": "python3 tools/scripts/runners/opencode_agent.py --via mcp",
+  "passed": 1,
+  "total": 1,
+  "seconds": 253.2,
+  "tasks": [
+    {
+      "name": "farm_rain",
+      "project": "farm",
+      "ok": true,
+      "seconds": 253.2,
+      "detail": "no rain on a timer nor with two dry plots; rain within two seconds of the third, stopping once all three were watered",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 248.6,
+        "turns": 18,
+        "tool_calls": 20,
+        "tools": {
+          "read": 6,
+          "glob": 1,
+          "grep": 2,
+          "pocket_docs_search": 1,
+          "edit": 4,
+          "pocket_project_apply": 1,
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 2,
+          "pocket_step": 1,
+          "pocket_pocket_scenario": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 50073,
+          "output": 2428,
+          "reasoning": 4934,
+          "cache_read": 636928,
+          "total": 694363
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 18,
+        "tokens": 689429,
+        "calls": 20,
+        "read_kb": 31.8,
+        "failed_calls": 1,
+        "calls_before_edit": 9,
+        "calls_after_edit": 10,
+        "stuck": false
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0,
+    "tokens": 694363,
+    "tool_calls": 20
+  }
+}

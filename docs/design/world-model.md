@@ -38,8 +38,18 @@ components start from the metadata defaults. Vectors accept `{x,y,z}` objects or
   siblings into `(+N more)`. This is the "hierarchy tree as first-class perception" from the design
   document.
 - `world.describe(e)` returns everything about one entity as JSON.
-- `world.query({ with, without, name, under, fields, limit })` returns rows with the requested
-  component values.
+- `world.query({ with, without, name, under, where, fields, limit })` returns rows with the
+  requested component values. `where` keeps the entities whose fields meet conditions, all of them:
+  text (`"Plot.stage >= 0 and Plot.water == 0"`, with `==`, `!=`, `>`, `<`, `>=`, `<=`, the clauses
+  joined by `and`) or an object (`{"Plot.water": 0, "Health.current": {"below": 20}}`, the
+  comparisons named as `step {until}` names them: equals, not, above, below, at_least, at_most); a
+  field is the component and a path into it (`Transform.position.y`, `Behavior.states.0.name`, a
+  number picking a list's element), an enum field takes its value's name (`"Light.kind == point"`),
+  and an entity without the component does not match. A field no component has is refused with the
+  component's own fields in mind. The farm sample counts its sown, ripe and dry plots this way, and
+  an agent asks "which plots are dry" in one call. `step {until: {where}}` (or `until` as the text
+  alone) runs until an entity meets such a condition (`count` for more than one), answering which.
+  `runtime_tests` (`[friction]`) holds both forms, an enum by name and the refusals.
 - `world.summary()` returns counts per component, the tick, the event count and the world hash.
 - `world.schema()` returns the component metadata with defaults so an agent can learn the vocabulary
   without reading source.

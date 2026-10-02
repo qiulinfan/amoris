@@ -2283,6 +2283,24 @@ TEST_CASE("the weather: wet surfaces darken, snow whitens what faces up, rain an
     REQUIRE(std::abs(white[0] - white[2]) < 30);
     REQUIRE(white_top[0] > white_side[0] + 30);                     // and on the block's top, not its side
     REQUIRE(std::abs(white_side[1] - dry_side[1]) < 20);
+    // Under a roof (high over the floor, above the camera and out of its view) none lies, nor is the
+    // floor wet: the shelter map, drawn from above, knows what stands over each spot.
+    REQUIRE(s.command("render.shadows", Json{{"enabled", false}}).has_value());   // its sun shadow elsewhere on the floor would muddy the open spot
+    spawn("Roof", Json{{"Transform", Json{{"position", xyz(-1.0, 6, -0.5)}, {"scale", v3(1.2, 0.1, 1.2)}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
+    REQUIRE(s.frame().has_value());
+    const auto roofed = pixel_at(-1.0, 0, -0.5);
+    const auto open = pixel_at(-2.4, 0, -0.5);
+    INFO("under the roof " << roofed[0] << "," << roofed[1] << "," << roofed[2] << " in the open " << open[0] << "," << open[1] << "," << open[2]);
+    REQUIRE(s.command("render.stats", Json::object()).value()["shelter_draws"].get<int>() >= 1);
+    REQUIRE(open[2] > dry[2] + 50);                                 // white in the open
+    REQUIRE(std::abs(roofed[2] - dry[2]) < 20);                     // bare under the roof
+    weather(Json{{"cover", 0.0}, {"wet", 1.0}});
+    const auto roofed_wet = pixel_at(-1.0, 0, -0.5);
+    INFO("under the roof in the wet " << roofed_wet[0]);
+    REQUIRE(std::abs(roofed_wet[0] - dry[0]) < 15);                 // and dry
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Roof"}}).has_value());
+    REQUIRE(s.command("render.shadows", Json{{"enabled", true}}).has_value());
+    weather(Json{{"cover", 1.0}, {"wet", 0.0}});
     // Rain and snow are drawn about the camera, as many as they are hard (and the density says).
     weather(Json{{"cover", 0.0}, {"rain", 1.0}, {"snow", 0.5}});
     Json stats = s.command("render.stats", Json::object()).value();

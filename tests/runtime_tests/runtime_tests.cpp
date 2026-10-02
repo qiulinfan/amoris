@@ -262,6 +262,32 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     auto beyond = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"lods.2.ratio", 0.2}}}});
     REQUIRE_FALSE(beyond.has_value());
     REQUIRE(beyond.error().message.find("the list has 2") != std::string::npos);
+    // where: the entities whose fields meet conditions, as text or as an object; an enum by its name.
+    auto count = [&](Json where) { return s.command("world.query", Json{{"with", Json::array({"Transform"})}, {"where", where}}).value()["count"].get<int>(); };
+    const int placed = s.command("world.query", Json{{"with", Json::array({"Transform"})}}).value()["count"].get<int>();
+    REQUIRE(count("Transform.position.y == 4") == 1);
+    REQUIRE(count(Json{{"Transform.position.y", 4}}) == 1);
+    REQUIRE(count(Json{{"Transform.position.y", Json{{"at_least", 3.9}}}, {"Transform.position.x", Json{{"below", 4}}}}) == 1);
+    REQUIRE(count("Transform.position.y != 4") == placed - 1);
+    REQUIRE(count("Velocity.linear.x > 0.5 and Transform.position.y >= 4") == 1);
+    REQUIRE(count("Velocity.linear.x > 0.5 and Transform.position.y < 4") == 0);
+    REQUIRE(s.command("world.query", Json{{"where", "Light.kind == point"}}).value()["count"].get<int>() >= 0);
+    auto bad = s.command("world.query", Json{{"where", "Transform.posit == 1"}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("no field 'posit'") != std::string::npos);
+    REQUIRE_FALSE(s.command("world.query", Json{{"where", "Light.kind == bright"}}).has_value());
+    REQUIRE_FALSE(s.command("world.query", Json{{"where", "Transform.position.y ~ 4"}}).has_value());
+    // step until: an entity meets a condition (the text alone, or {where, count}); a bad one is refused before stepping.
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 4}, {"z", 0}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Velocity"}, {"value", Json{{"linear", Json{{"x", 2}, {"y", 0}, {"z", 0}}}}}}).has_value());
+    Json crossed = s.command("step", Json{{"ticks", 300}, {"until", "Transform.position.x > 1"}}).value();
+    INFO(crossed["until"].dump());
+    REQUIRE(crossed["until"]["met"] == true);
+    REQUIRE(crossed["until"]["tick"].get<int>() > 0);
+    REQUIRE(crossed["until"]["entities"][0].get<std::string>().find("Ball") != std::string::npos);
+    Json none = s.command("step", Json{{"ticks", 5}, {"until", Json{{"where", "Transform.position.y > 1000"}, {"count", Json{{"at_least", 1}}}}}}).value();
+    REQUIRE(none["until"]["met"] == false);
+    REQUIRE_FALSE(s.command("step", Json{{"ticks", 5}, {"until", "Transform.posit > 1"}}).has_value());
     // A field named by its only start, or by a short form, is that field, and the answer says so;
     // a start two fields share is refused with both in mind.
     Json pos = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"pos", Json{{"x", 1}}}}}}).value();

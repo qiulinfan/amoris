@@ -214,6 +214,8 @@ struct alignas(16) FrameUniforms {
     float toon[4];               // a cel look (docs/design/rendering.md, Toon): x on, y light's bands, z the bands' softness
     float night[4];              // under an atmosphere, how far into the night (0 by day, 1 deep in it): the stars
     float weather[4];            // the Weather: wet, snow lying, drops of rain drawn, flakes of snow drawn
+    float shelter_vp[16];        // the view from above the shelter map was drawn from
+    float shelter[4];            // x 1 when there is one, y its depth bias
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -228,6 +230,11 @@ constexpr WGPUTextureFormat kVelocityFormat = WGPUTextureFormat_RG16Float;
 constexpr WGPUTextureFormat kSurfaceFormat = WGPUTextureFormat_RGBA16Float;
 constexpr WGPUTextureFormat kAlbedoFormat = WGPUTextureFormat_RGBA8Unorm;
 constexpr std::uint32_t kCascades = 4;
+// The shadow map's layer after the cascades: what stands over the ground about the camera, seen from
+// straight above, so rain and snow fall and lie only where the sky is open (docs/design/rendering.md,
+// Weather).
+constexpr std::uint32_t kShelterLayer = kCascades;
+constexpr float kShelterReach = 32.0f;   // half the square it covers, centred on the camera
 // The environment map: an equirectangular panorama with its GGX prefiltered levels as mips.
 constexpr std::uint32_t kEnvWidth = 512, kEnvHeight = 256, kEnvLevels = 6;
 // Reflection probes: each captured as six square views, turned into a panorama of its own (a layer
@@ -558,6 +565,8 @@ struct Frame {
     toon: vec4f,
     night: vec4f,
     weather: vec4f,
+    shelter_vp: mat4x4f,
+    shelter: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -767,10 +776,21 @@ fn weather_noise(q: vec2f) -> f32 {
     let r = fract(sin(h) * 43758.5453);
     return mix(mix(r.x, r.y, u.x), mix(r.z, r.w, u.x), u.y);
 }
+// How open to the sky a point is (1 open, 0 under something), by the shelter map: the topmost
+// surface over each spot of the ground about the camera, from straight above. Outside it, open.
+fn open_sky(p: vec3f) -> f32 {
+    if (frame.shelter.x < 0.5) { return 1.0; }
+    let sp = frame.shelter_vp * vec4f(p, 1.0);
+    let ndc = sp.xyz / sp.w;
+    if (abs(ndc.x) > 0.99 || abs(ndc.y) > 0.99 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
+    return textureSampleCompareLevel(shadow_map, shadow_samp, vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), 4, ndc.z - frame.shelter.y);
+}
 fn weathered(p: vec3f, surface: Painted) -> Painted {
     var out = surface;
-    let wet = frame.weather.x;
-    let cover = frame.weather.y;
+    // Looked up a little out along the surface, so a wall in the open takes the rain its side does.
+    let open = open_sky(p + out.normal * 0.2);
+    let wet = frame.weather.x * open;
+    let cover = frame.weather.y * open;
     if (wet <= 0.0 && cover <= 0.0) { return out; }
     let up = smoothstep(0.25, 0.9, out.normal.y);
     if (wet > 0.0) {
@@ -1894,6 +1914,7 @@ fn drop_hash(i: u32) -> vec4f {
     return out;
 }
 fn weather_base(in: VsOut) -> vec4f {
+    if (open_sky(in.world_pos) < 0.5) { return vec4f(0.0); }   // under a roof, a tree, a bridge
     let snow = in.normal.x > 0.5;
     var sky = frame.ambient.rgb;
     if (frame.env.x > 0.5) { sky = sky + sh_irradiance(vec3f(0.0, 1.0, 0.0)) * max(frame.env.y, 0.5); }
@@ -2923,6 +2944,9 @@ fn atmosphere(d: vec3f) -> vec3f {
     } else {
         c = procedural(d);
     }
+    // Overcast (a Weather), the sky's light greys toward its own brightness, so what reflects it and
+    // what it lights is the grey of a clouded sky rather than the clear blue above the clouds.
+    c = mix(c, vec3f(dot(c, vec3f(0.2126, 0.7152, 0.0722))), clamp(sp.atmo.y, 0.0, 1.0) * 0.85);
     textureStore(dst, vec2i(id.xy), vec4f(c * sp.misc.w, 1.0));
 }
 fn importance_ggx(xi: vec2f, n: vec3f, a: f32) -> vec3f {
@@ -3514,6 +3538,7 @@ struct Renderer::Impl {
     WGPURenderPipeline particle_pipeline = nullptr;
     WGPURenderPipeline particle_add_pipeline = nullptr;
     WGPURenderPipeline weather_pipeline = nullptr;   // rain and snow about the camera (docs/design/rendering.md, Weather)
+    float env_overcast = 0;                          // the Weather's overcast, greying the sky's panorama
     std::uint32_t weather_drops = 0;                 // how many this frame
     WGPUBindGroupLayout particle_draw_bgl = nullptr;
     WGPUPipelineLayout particle_layout = nullptr;
@@ -3565,9 +3590,18 @@ struct Renderer::Impl {
     WGPUBindGroup scene_bg = nullptr;
     WGPUTexture shadow_texture = nullptr;
     WGPUTextureView shadow_view = nullptr;              // every cascade, for the lookups
-    WGPUTextureView cascade_view[kCascades]{};          // one cascade each, for its pass
+    WGPUTextureView cascade_view[kCascades + 1]{};      // one cascade each, for its pass, and the shelter map
     WGPUBindGroupLayout cascade_bgl = nullptr;          // the cascade's matrix at group 2 binding 5, dynamic offset
-    WGPUBuffer cascade_buffer = nullptr;                // one 256-byte slot per cascade
+    WGPUBuffer cascade_buffer = nullptr;                // one 256-byte slot per cascade, and one for the shelter map
+    // The shelter map (kShelterLayer): drawn while there is weather, again when the camera has moved
+    // two units on or every eight frames, its view kept for the lookups until the next.
+    bool shelter_valid = false;
+    float shelter_x = 1e30f, shelter_z = 1e30f;
+    std::uint64_t shelter_frame = 0;
+    float shelter_vp[16]{};
+    float shelter_bias = 0;
+    std::uint32_t shelter_draws = 0;   // what the last drawing of it drew
+    std::uint64_t shelter_sig = 0;     // what stood over the square then (the draws' places and meshes)
     WGPUBindGroup cascade_bg = nullptr;
     WGPUSampler shadow_sampler = nullptr;
     ShadowSettings shadows;
@@ -5612,7 +5646,7 @@ fn time() -> f32 { return fx.time.x; }
         float sun_color[4];
         float misc[4];         // mode, rotation (radians), GGX alpha for a prefilter level, intensity
         float size[4];         // the level's width and height
-        float atmo[4];         // mode 3: haze
+        float atmo[4];         // mode 3: haze; the Weather's overcast
         float moon[4];         // mode 3 by night: toward the moon, w: up
         float moon_color[4];
     };
@@ -5867,7 +5901,7 @@ fn time() -> f32 { return fx.time.x; }
         // rebuilds (each is a few tenths of a millisecond).
         auto way = [](Vec3 v) { return Vec3{std::round(v.x * 256) / 256, std::round(v.y * 256) / 256, std::round(v.z * 256) / 256}; };
         const Vec3 ks = way(toward_sun), km = way(toward_moon);
-        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%.3g,%.3g,%.3g|%g|%g,%g,%g|%.3g,%.3g,%.3g", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, ks.x, ks.y, ks.z, sun_linear.x, sun_linear.y, sun_linear.z, sky.mode == 3 ? sky.haze : 0.0f, km.x, km.y, km.z, moon_linear.x, moon_linear.y, moon_linear.z);
+        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%.3g,%.3g,%.3g|%g|%g,%g,%g|%.3g,%.3g,%.3g|%.2f", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, ks.x, ks.y, ks.z, sun_linear.x, sun_linear.y, sun_linear.z, sky.mode == 3 ? sky.haze : 0.0f, km.x, km.y, km.z, moon_linear.x, moon_linear.y, moon_linear.z, env_overcast);
         if (env_key == key) return true;
         SkyParams p{};
         auto color = [](float* out, const world::Color4& c) { out[0] = decode(c.r); out[1] = decode(c.g); out[2] = decode(c.b); out[3] = 1; };
@@ -5880,6 +5914,7 @@ fn time() -> f32 { return fx.time.x; }
         p.misc[1] = radians(sky.rotation);
         p.misc[3] = std::max(sky.intensity, 0.0f);
         p.atmo[0] = std::max(sky.haze, 0.0f);
+        p.atmo[1] = env_overcast;
         if (moon) {
             p.moon[0] = toward_moon.x; p.moon[1] = toward_moon.y; p.moon[2] = toward_moon.z; p.moon[3] = 1;
             p.moon_color[0] = moon_linear.x; p.moon_color[1] = moon_linear.y; p.moon_color[2] = moon_linear.z; p.moon_color[3] = 1;
@@ -8530,7 +8565,7 @@ fn time() -> f32 { return fx.time.x; }
         std_.label = rhi::str("pocket.shadow");
         std_.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
         std_.dimension = WGPUTextureDimension_2D;
-        std_.size = {kShadowMapSize, kShadowMapSize, kCascades};
+        std_.size = {kShadowMapSize, kShadowMapSize, kCascades + 1};
         std_.format = kCascadeDepth;
         std_.mipLevelCount = 1;
         std_.sampleCount = 1;
@@ -8540,17 +8575,17 @@ fn time() -> f32 { return fx.time.x; }
         svd.format = std_.format;
         svd.dimension = WGPUTextureViewDimension_2DArray;
         svd.mipLevelCount = 1;
-        svd.arrayLayerCount = kCascades;
+        svd.arrayLayerCount = kCascades + 1;
         svd.aspect = WGPUTextureAspect_DepthOnly;
         svd.usage = std_.usage;
         shadow_view = wgpuTextureCreateView(shadow_texture, &svd);
-        for (std::uint32_t c = 0; c < kCascades; ++c) {
+        for (std::uint32_t c = 0; c <= kShelterLayer; ++c) {
             svd.dimension = WGPUTextureViewDimension_2D;
             svd.baseArrayLayer = c;
             svd.arrayLayerCount = 1;
             cascade_view[c] = wgpuTextureCreateView(shadow_texture, &svd);
         }
-        cascade_buffer = device->create_buffer("pocket.cascades", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 256ull * kCascades);
+        cascade_buffer = device->create_buffer("pocket.cascades", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, 256ull * (kCascades + 1));
         WGPUBindGroupEntry cbe{};
         cbe.binding = 5;
         cbe.buffer = cascade_buffer;
@@ -10118,6 +10153,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     }
     // The weather (docs/design/rendering.md, Weather): the first enabled by id.
     float overcast = 0;
+    bool weather_on = false;
     im.weather_drops = 0;
     {
         world::EntityId wid = 0;
@@ -10136,7 +10172,35 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             fu.weather[3] = static_cast<float>(snow_n);
             im.weather_drops = rain_n + snow_n;
             overcast = std::clamp(wx.overcast >= 0 ? wx.overcast : 0.7f * std::max(rain, snow), 0.0f, 1.0f);
+            weather_on = rain > 0 || snow > 0 || fu.weather[0] > 0 || fu.weather[1] > 0;
         }
+    }
+    // The shelter map's view: a square kShelterReach each way about the camera (its centre on a
+    // two-unit grid, so the texels stay put), 80 units above it to 80 below, from straight above.
+    // Drawn again when the camera crosses to another square, when what stands over it moves or
+    // changes (below, by the draws), and every eight frames.
+    bool shelter_due = false;
+    if (!weather_on) im.shelter_valid = false;
+    else if (!im.secondary) {
+        const float cx = std::round(im.camera.position.x / 2) * 2, cz = std::round(im.camera.position.z / 2) * 2;
+        if (!im.shelter_valid || cx != im.shelter_x || cz != im.shelter_z || frame.index >= im.shelter_frame + 8) {
+            const float top = std::round(im.camera.position.y) + 80;
+            const Mat4 view = Mat4::look_at({cx, top, cz}, {cx, top - 1, cz}, {0, 0, -1});
+            const Mat4 proj = Mat4::orthographic(-kShelterReach, kShelterReach, -kShelterReach, kShelterReach, 0.0f, 160.0f);
+            to_array(proj * view, im.shelter_vp);
+            im.shelter_bias = 0.08f / 160.0f;   // a surface is not under itself
+            im.shelter_x = cx;
+            im.shelter_z = cz;
+            im.shelter_frame = frame.index;
+            im.shelter_valid = true;
+            shelter_due = true;
+        }
+    }
+    im.stats.shelter_draws = im.shelter_valid ? im.shelter_draws : 0;
+    if (im.shelter_valid) {
+        std::memcpy(fu.shelter_vp, im.shelter_vp, sizeof fu.shelter_vp);
+        fu.shelter[0] = 1;
+        fu.shelter[1] = im.shelter_bias;
     }
     im.stats.weather_drops = im.weather_drops;
     im.cluster_lights(fu);
@@ -10244,6 +10308,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     if (has_sky) {
         const Vec3 toward = normalize(Vec3{-fu.sun_dir[0], -fu.sun_dir[1], -fu.sun_dir[2]});
         const Vec3 key_light{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]};
+        im.env_overcast = overcast;
         env_on = moon_up ? im.update_environment(frame, sky, have_sun, sun_way, sun_light, toward, key_light)
                          : im.update_environment(frame, sky, have_sun, toward, key_light);
         if (!env_on) has_sky = false;
@@ -11267,6 +11332,61 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             wgpuRenderPassEncoderEnd(spass);
             wgpuRenderPassEncoderRelease(spass);
         }
+    }
+    // The shelter map (docs/design/rendering.md, Weather): what stands over the square about the
+    // camera, from above, as a cascade is drawn; characters left out, so the ground under one walking
+    // in the rain does not dry in its shape.
+    if (im.shelter_valid) {
+        // What stands over the square, by place (to a centimetre) and mesh: drawn again when it changes.
+        Mat4 svp;
+        std::memcpy(svp.m, im.shelter_vp, sizeof svp.m);
+        std::uint64_t sig = 1469598103934665603ull;
+        auto mix = [&](std::int64_t v) { sig = (sig ^ static_cast<std::uint64_t>(v)) * 1099511628211ull; };
+        for (const Draw& d : draws) {
+            if (d.skinned) continue;
+            const Vec4 p = svp * Vec4{d.center.x, d.center.y, d.center.z, 1};
+            if (d.radius >= 0 && (std::fabs(p.x) > 1.0f + d.radius / kShelterReach || std::fabs(p.y) > 1.0f + d.radius / kShelterReach)) continue;
+            mix(std::llround(d.center.x * 100)); mix(std::llround(d.center.y * 100)); mix(std::llround(d.center.z * 100));
+            mix(std::llround(d.radius * 100)); mix(d.first); mix(d.count);
+        }
+        shelter_due = shelter_due || sig != im.shelter_sig;
+        im.shelter_sig = sig;
+    }
+    if (shelter_due) {
+        im.device->write_buffer(im.cascade_buffer, 256ull * kShelterLayer, im.shelter_vp, sizeof im.shelter_vp);
+        WGPURenderPassDepthStencilAttachment sds{};
+        sds.view = im.cascade_view[kShelterLayer];
+        sds.depthLoadOp = WGPULoadOp_Clear;
+        sds.depthStoreOp = WGPUStoreOp_Store;
+        sds.depthClearValue = 1.0f;
+        sds.stencilLoadOp = WGPULoadOp_Undefined;
+        sds.stencilStoreOp = WGPUStoreOp_Undefined;
+        sds.stencilReadOnly = true;
+        WGPURenderPassDescriptor srp{};
+        srp.label = rhi::str("pocket.shelter");
+        srp.colorAttachmentCount = 0;
+        srp.depthStencilAttachment = &sds;
+        WGPURenderPassEncoder spass = im.begin_pass(frame.encoder, srp);
+        if (!draws.empty()) {
+            wgpuRenderPassEncoderSetBindGroup(spass, 0, im.frame_bg, 0, nullptr);
+            wgpuRenderPassEncoderSetBindGroup(spass, 1, im.object_bg, 0, nullptr);
+            const std::uint32_t offset = 256u * kShelterLayer;
+            wgpuRenderPassEncoderSetBindGroup(spass, 2, im.cascade_bg, 1, &offset);
+            Mat4 svp;
+            std::memcpy(svp.m, im.shelter_vp, sizeof svp.m);
+            const std::function<bool(std::size_t)> over_square = [&](std::size_t k) {
+                const Draw& d = draws[k];
+                if (d.skinned) return false;
+                if (d.radius < 0) return true;
+                const Vec4 p = svp * Vec4{d.center.x, d.center.y, d.center.z, 1};
+                const float reach = 1.0f + d.radius / kShelterReach;
+                return std::fabs(p.x) <= reach && std::fabs(p.y) <= reach;
+            };
+            im.shelter_draws = 0;
+            draw_runs(spass, false, im.shelter_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, &over_square);
+        }
+        wgpuRenderPassEncoderEnd(spass);
+        wgpuRenderPassEncoderRelease(spass);
     }
     // A reflection probe's capture: the scene drawn six ways from its center with the frame's own
     // shading (the sky, the sun with the camera's cascades, the point and spot lights reaching the
@@ -12293,6 +12413,7 @@ Json Renderer::describe() const {
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
     j["weather_drops"] = s.weather_drops;
+    j["shelter_draws"] = s.shelter_draws;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;

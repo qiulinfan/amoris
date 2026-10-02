@@ -1,0 +1,11 @@
+# The farm's own components (docs/decisions/0007-project-components.md): what each plot holds is on
+# the plot, so world.query, saves, the recorder and an agent see the field as it is.
+
+[[component]]
+name = "Plot"
+doc = "A plot of tilled soil: what grows on it, how wet it is and how far along the crop is toward its next stage."
+fields = [
+    { name = "stage", type = "i32", default = -1, doc = "-1 bare soil; 0 a sprout, 1 leaves, 2 grown, 3 ripe." },
+    { name = "water", type = "f32", default = 0.0, doc = "How wet the soil is, 0 to 1: a crop grows only while it is above 0. It dries over 45 seconds; watering or rain fills it." },
+    { name = "growth", type = "f32", default = 0.0, doc = "Seconds watered toward the next stage (8 a stage)." },
+]

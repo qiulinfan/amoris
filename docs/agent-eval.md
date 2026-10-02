@@ -37,6 +37,7 @@ checks the world through the same commands. A task passes or fails; nothing is s
 | `car_speed` | drive | tune a car's top speed and power, drive it for five seconds through its action, and answer with its speed | `world.get` on the Vehicle (the settings, the speed) |
 | `fps_shotgun` | fps (a copy) | make the gun a shotgun: six pellets a shot within 3 degrees of the view, 8 damage each, a magazine of six | `combat.hitscan` events (a held raider five ahead: most of six pellets, 8 each, spread), `state` (`ammo` after one shot and after six) |
 | `guards_footsteps` | guards (a copy) | the guards hear the player walking too, from nearer: a noise that carries 4 every half second while it walks, none standing | `events.since` (`noise` while walking, not standing, about 4), a guard three from the walking player leaving its round |
+| `farm_rain` | farm (a copy) | the weather answers the field: rain while three or more sown plots are dry (the project's own `Plot` component), until none is; no rain on a timer | the Weather's `rain` over 110 seconds with nothing sown, with two dry plots, with three, and after the rain has watered them |
 | `walker_sprint` | walker (a copy) | add an input action in `project.toml` and use it in the script: a sprint on LShift, 9 units a second instead of 5 | `input.describe`, `input.hold`, `state` (a second of walking with and without it) |
 | `raft` | hills | spawn a dynamic box collider 2 by 0.2 by 1 and drop it into the lake so it floats (the mass is the runner's to choose), run 180 ticks, answer with the surface's height under it | `world.get` on its RigidBody and Collider, 120 more ticks, then `water.height` under it: within 0.3 of the surface, still over the lake |
 | `calm_lake` | hills | make the lake still and clearer (8 units) and raise it half a unit, answer with its surface's height | `world.get` on the Water and its Transform, `water.height` |
@@ -466,6 +467,12 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   `help {command: "world.add"}`, the second run to look for that name, and `world.get` given
   `quiet`. `world.add` is now `world.set` by another name (it adds the component when missing), and
   `quiet` is let pass on any command.
+- **The farm.** `farm_rain` (on a copy of the farm sample: rain that answers the field, read from
+  the project's own `Plot` component) went to opencode with GLM 5.3 Flash the day the sample landed:
+  passed at its first run in 253 seconds and 20 calls (`opencode-glm-farm-rain.json`). The agent
+  read `components.toml`, the script and the sample's scenarios, found the `Weather` fields with one
+  `docs_search`, made the change in four edits, watched `Weather.rain`, `Weather.wet` and two plots'
+  water through a 500-tick `step` with `watch`, and ran the sample's scenarios before answering.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

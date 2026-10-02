@@ -354,18 +354,28 @@ Both build up and go by themselves, written back each tick: `wet` runs toward `r
 after 15 seconds of a downpour, dry 90 seconds after it stops) and `cover` builds while it snows
 (full after 40 seconds at `snow` 1) and melts in four minutes once it stops, faster in rain; a game
 sets either to start wet or white. `overcast` (negative follows the weather: seven tenths of the
-rain or snow) dims the sun's direct light by up to four fifths and, under an atmosphere, clouds the
-sky over at least that much; the sky's own light is left as it was. It does not know what is under a
-roof: the inside of a house open to the sky gets wet too, and rain falls through ceilings onto a
-camera indoors. Pair it with the sound beds (`sfx:rain`, `sfx:wind`; `docs/design/audio.md`).
+rain or snow) dims the sun's direct light by up to four fifths, under an atmosphere clouds the sky
+over at least that much, and greys the sky's own light toward its brightness (the panorama the
+reflections and the ambient light come from), so wet ground under a clouded sky mirrors grey rather
+than blue. Rain and snow keep off what is under cover: a shelter map, one more layer of the shadow
+map, holds the topmost surface over each spot of a square 64 units across about the camera, drawn
+from straight above as a cascade is (what casts no shadow does not shelter either, and characters
+are left out so the ground under one walking in the rain does not dry in its shape). A surface is
+wet or white only where the sky is open over a point a fifth of a unit out from it along its normal
+(so a wall in the open takes the rain its side does and the floor under eaves stays dry), and a drop
+under a roof, a tree or a bridge is not drawn. The map is drawn again when the camera crosses into
+another two-unit square, when what stands over the square moves or changes (its draws' places and
+meshes, to a centimetre), and every eight frames; with no weather it is not drawn at all. Pair it
+with the sound beds (`sfx:rain`, `sfx:wind`; `docs/design/audio.md`).
 
-`render.stats.weather_drops` counts what is drawn. `runtime_tests` (`[weather]`): seven and a half
-seconds of a downpour wet things halfway, nine dry seconds take a tenth off, ten seconds of snow lay
-a quarter, ten after melt a twenty-fourth and rain takes the rest. `renderer_tests` (`[weather]`): a
-wet floor is darker, snow lying whitens the floor and a block's top but not its side, the drops
-drawn are as many as the rain, the snow and the density say, and the sun's light falls with the
-overcast. `tests/evidence/rendering/weather.png` is the village in a downpour and under snow lying a
-quarter, half and wholly.
+`render.stats.weather_drops` counts what is drawn and `render.stats.shelter_draws` what the shelter
+map last drew. `runtime_tests` (`[weather]`): seven and a half seconds of a downpour wet things
+halfway, nine dry seconds take a tenth off, ten seconds of snow lay a quarter, ten after melt a
+twenty-fourth and rain takes the rest. `renderer_tests` (`[weather]`): a wet floor is darker, snow
+lying whitens the floor and a block's top but not its side, the drops drawn are as many as the rain,
+the snow and the density say, the floor under a roof stays bare and dry, and the sun's light falls
+with the overcast. `tests/evidence/rendering/weather.png` is the village in a downpour and under
+snow lying a quarter, half and wholly.
 
 ## Ambient occlusion and fog
 
