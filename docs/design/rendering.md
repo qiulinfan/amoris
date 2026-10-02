@@ -291,7 +291,13 @@ the sun goes from three to fourteen degrees down: a grid over the directions wit
 cells in a thousand, each as bright and as warm or cool as its hash says, twinkling a little and
 sinking into the haze toward the horizon; clouds cover them. A `Fog` under an atmosphere takes the
 sky's colour around the horizon (the mean of eight directions a little above it) instead of its own,
-so distance fades into the sky at noon, into gold at sunset and into the dark at night.
+so distance fades into the sky at noon, into gold at sunset and into the dark at night. Without a
+`Fog`, the atmosphere fades far land into the air by itself (aerial perspective, `Sky.aerial`, 1; 0
+none): a fog of the same colour, a tenth thick at about 250 units and two fifths at 1250 on an
+ordinary day (more with `haze`), thinning with height and never past 0.85, that leaves the sky as it
+is (its haze is already in it). `renderer_tests` (`[aerial]`): a dark block 900 units off lightens
+toward the air while the sky above it stays the same, and a thin `Fog` of the scene's own takes its
+place.
 
 ### A day
 

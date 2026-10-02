@@ -1230,6 +1230,7 @@ void to_json(Json& j, const Sky& v) {
     j["sun_size"] = v.sun_size;
     j["diffuse"] = v.diffuse;
     j["specular"] = v.specular;
+    j["aerial"] = v.aerial;
     j["haze"] = v.haze;
     j["clouds"] = v.clouds;
     j["cloud_height"] = v.cloud_height;
@@ -1252,6 +1253,7 @@ void from_json(const Json& j, Sky& v) {
     scalar_from_json(j, "sun_size", v.sun_size);
     scalar_from_json(j, "diffuse", v.diffuse);
     scalar_from_json(j, "specular", v.specular);
+    scalar_from_json(j, "aerial", v.aerial);
     scalar_from_json(j, "haze", v.haze);
     scalar_from_json(j, "clouds", v.clouds);
     scalar_from_json(j, "cloud_height", v.cloud_height);
@@ -1283,6 +1285,7 @@ void hash_component(StateHasherRef& h, const Sky& v) {
     h.f32(v.sun_size);
     h.f32(v.diffuse);
     h.f32(v.specular);
+    h.f32(v.aerial);
     h.f32(v.haze);
     h.f32(v.clouds);
     h.f32(v.cloud_height);
@@ -1316,6 +1319,7 @@ std::size_t numeric_span(Sky& v, std::string_view path, float** out) {
     if (path == "sun_size") { *out = &v.sun_size; return 1; }
     if (path == "diffuse") { *out = &v.diffuse; return 1; }
     if (path == "specular") { *out = &v.specular; return 1; }
+    if (path == "aerial") { *out = &v.aerial; return 1; }
     if (path == "haze") { *out = &v.haze; return 1; }
     if (path == "clouds") { *out = &v.clouds; return 1; }
     if (path == "cloud_height") { *out = &v.cloud_height; return 1; }
@@ -5045,7 +5049,7 @@ constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far.", {}},
 }};
 constexpr std::string_view kSky_modeNames[] = {"off", "procedural", "image", "atmosphere"};
-constexpr std::array<FieldInfo, 19> kSkyFields = {{
+constexpr std::array<FieldInfo, 20> kSkyFields = {{
     FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off.", kSky_modeNames},
     FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle).", {}},
     FieldInfo{"zenith", "color", "Procedural: the color straight up.", {}},
@@ -5056,6 +5060,7 @@ constexpr std::array<FieldInfo, 19> kSkyFields = {{
     FieldInfo{"sun_size", "f32", "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light.", {}},
     FieldInfo{"diffuse", "f32", "How much the sky lights surfaces (0 leaves only the lights).", {}},
     FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness).", {}},
+    FieldInfo{"aerial", "f32", "Mode 3, without a Fog: how much far land fades into the air (aerial perspective), a tenth at about 250 units and two fifths at 1250 at 1, thinning with height; 0 none.", {}},
     FieldInfo{"haze", "f32", "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun.", {}},
     FieldInfo{"clouds", "f32", "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md).", {}},
     FieldInfo{"cloud_height", "f32", "Mode 3: where the clouds start: the world height of their undersides (with a cloud_depth), or of the flat layer above the camera (cloud_depth 0), in units.", {}},

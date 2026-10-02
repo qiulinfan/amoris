@@ -478,6 +478,8 @@ export interface Sky {
     diffuse: number;
     /** How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness). */
     specular: number;
+    /** Mode 3, without a Fog: how much far land fades into the air (aerial perspective), a tenth at about 250 units and two fifths at 1250 at 1, thinning with height; 0 none. */
+    aerial: number;
     /** Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun. */
     haze: number;
     /** Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md). */
@@ -1823,7 +1825,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     IrradianceVolume: { size: { x: 10, y: 4, z: 10 }, probes: { x: 4, y: 2, z: 4 }, intensity: 1, visibility: true, enabled: true },
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
-    Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, cloud_depth: -1, time_of_day: -1, day_length: 0, sun_height: 60, enabled: true },
+    Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, aerial: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, cloud_depth: -1, time_of_day: -1, day_length: 0, sun_height: 60, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, material: "", material_params: { x: 0, y: 0, z: 0, w: 0 }, texture_tile: 0, unlit: false, visible: true, highlight: { r: 0, g: 0, b: 0, a: 0 }, after_dark: false, cast_shadows: true, lods: [], cull_screen: 0 },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, material: "", params: { x: 0, y: 0, z: 0, w: 0 }, additive: false, lit: false, normal_map: "" },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },

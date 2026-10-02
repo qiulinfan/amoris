@@ -202,6 +202,7 @@ fields = [
     { name = "sun_size", type = "f32", default = 1.5, doc = "Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light." },
     { name = "diffuse", type = "f32", default = 1.0, doc = "How much the sky lights surfaces (0 leaves only the lights)." },
     { name = "specular", type = "f32", default = 1.0, doc = "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness)." },
+    { name = "aerial", type = "f32", default = 1.0, doc = "Mode 3, without a Fog: how much far land fades into the air (aerial perspective), a tenth at about 250 units and two fifths at 1250 at 1, thinning with height; 0 none." },
     { name = "haze", type = "f32", default = 1.0, doc = "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun." },
     { name = "clouds", type = "f32", default = 0.0, doc = "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md)." },
     { name = "cloud_height", type = "f32", default = 1500.0, doc = "Mode 3: where the clouds start: the world height of their undersides (with a cloud_depth), or of the flat layer above the camera (cloud_depth 0), in units." },

@@ -2754,6 +2754,38 @@ TEST_CASE("grass grows on a terrain: blades over bare brown ground turn it green
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("aerial perspective: under an atmosphere far land fades toward the air, the sky as it was, and a Fog replaces it", "[renderer][sky][aerial]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 3}, {"aerial", 0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"yaw", 160}, {"pitch", -50}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    // A dark block 900 units off filling the middle of the view, the sky above it.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Far"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", -900}}}, {"scale", Json{{"x", 300}, {"y", 200}, {"z", 10}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", "#202020"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"Camera", Json{{"fov_degrees", 40}, {"far", 2000}}}}}}).has_value());
+    auto look = [&]() {
+        for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+        return s.command("capture", Json{{"pixels", Json::array({Json{{"x", 80}, {"y", 60}}, Json{{"x", 80}, {"y", 4}}})}}).value()["pixels"];
+    };
+    const Json clear = look();
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"aerial", 1}}}}).has_value());
+    const Json hazed = look();
+    INFO("clear " << clear.dump() << " hazed " << hazed.dump());
+    auto sum = [](const Json& p) { return p[0].get<int>() + p[1].get<int>() + p[2].get<int>(); };
+    REQUIRE(sum(hazed[0]) > sum(clear[0]) + 40);                  // the block lightened toward the air
+    REQUIRE(std::abs(sum(hazed[1]) - sum(clear[1])) <= 3);        // the sky above it as it was
+    // A Fog of the scene's own takes its place: thin enough, the block is darker than in the air's haze.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mist"}, {"components", Json{{"Fog", Json{{"density", 0.00001}}}}}}).has_value());
+    const Json fogged = look();
+    INFO("own fog " << fogged.dump());
+    REQUIRE(sum(fogged[0]) < sum(hazed[0]) - 20);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("caustics: the sunlight on a bed under water gathers into lines that move with time, and none without", "[renderer][water][caustics]") {
     const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-caustics.png";
     std::filesystem::remove(ref);

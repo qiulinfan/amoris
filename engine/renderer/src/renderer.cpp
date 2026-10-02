@@ -3196,9 +3196,11 @@ fn graded(e: vec3f) -> vec3f {
     return mix(s0, s1, b - b0);
 }
 // Exponential height fog along the ray from the camera to the point (fog: density, base height,
-// falloff, start; fog2.x: the most it hides, fog2.y: on).
+// falloff, start; fog2.x: the most it hides, fog2.y: on, fog2.w: the sky left as it is, as for the
+// atmosphere's own aerial perspective, its haze already in the sky).
 fn fogged(c: vec3f, pos: vec2f) -> vec3f {
     let d = textureLoad(depth, vec2i(pos.xy), 0);
+    if (d >= 1.0 && post.fog2.w > 0.5) { return c; }
     let uv = (pos.xy - post.viewport.xy) / max(post.viewport.zw, vec2f(1.0));
     let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let far = post.inv_view_proj * vec4f(ndc, select(d, 1.0, d >= 1.0), 1.0);
@@ -4658,6 +4660,7 @@ struct Renderer::Impl {
     // ids then come from their own single-sample pass with these pipelines.
     float last_clock = 0;  // the simulated seconds of the last frame drawn (swaying copies' motion)
     bool fog_from_sky = false;   // an atmosphere: the fog takes the sky's colour around the horizon
+    bool fog_aerial = false;     // the fog is the atmosphere's aerial perspective (no Fog): the sky left out
     Vec3 fog_sky{0, 0, 0};
     bool clock_valid = false;
     int msaa = 1;          // requested (1 or 4)
@@ -6231,6 +6234,7 @@ fn time() -> f32 { return fx.time.x; }
             u.fog2[0] = std::clamp(fog_settings->max_opacity, 0.0f, 1.0f);
             u.fog2[1] = 1.0f;
             u.fog2[2] = stats.volumetric ? 1.0f : 0.0f;
+            u.fog2[3] = fog_aerial ? 1.0f : 0.0f;
         }
         u.lut[0] = lut_on ? 1.0f : 0.0f;
         u.lut[1] = std::clamp(grade.lut_strength, 0.0f, 1.0f);
@@ -11156,6 +11160,28 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     world.ecs().each([&](flecs::entity, const world::Fog& f) {
         if (!fog_on && f.enabled && f.density > 0) { fog = f; fog_on = true; }
     });
+    // Aerial perspective (docs/design/rendering.md, Atmosphere): without a Fog, an atmosphere's
+    // far land fades into the air, a tenth gone at about 250 units and two fifths at 1250 on an
+    // ordinary day, thinning with height; the fog takes the sky's colour about the horizon.
+    im.fog_aerial = false;
+    if (!fog_on) {
+        world::EntityId sky_id = 0;
+        world::Sky first_sky;
+        world.ecs().each([&](flecs::entity e, const world::Sky& s) {
+            if (s.enabled && (!sky_id || e.id() < sky_id)) { sky_id = e.id(); first_sky = s; }
+        });
+        if (sky_id && first_sky.mode == 3 && first_sky.aerial > 0) {
+            fog = world::Fog{};
+            fog.density = 0.0004f * first_sky.aerial * (0.5f + 0.5f * std::max(first_sky.haze, 0.0f));
+            fog.height = 0;
+            fog.falloff = 0.0015f;
+            fog.start = 0;
+            fog.max_opacity = 0.85f;
+            fog.volumetric = false;
+            fog_on = true;
+            im.fog_aerial = true;
+        }
+    }
     // Water reads the prepass's depth and adds its surfaces to it.
     im.gather_water(world);
     // Glass reads a copy of the scene drawn before it, which the split passes make room for: known

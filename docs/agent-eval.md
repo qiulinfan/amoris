@@ -505,6 +505,17 @@ units (`docs/design/terrain.md`), the change that failure led to. Of the twenty-
 changes made while the run went on, `world.schema` answers a name it does not have with the nearest
 (`BoxCollider`: `Collider`), and two `project.apply` calls met scripts that used SDK names
 (`onStart`) without importing them: a script error now says where such a name comes from.
+- **Sea, grass, a sailboat.** `sea_around`, `meadow` and `sailboat` (the oceans, grass and boats
+  added that day) went to opencode with GLM 5.3 Flash over MCP with `village_weather` and `wolves`
+  on 2026-10-02: 4 of 5 at the first try in 17 minutes, 81 tool calls (`opencode-glm-new5.json`).
+  The sea took 88 seconds and 10 calls, the meadow 61 and 9, both found through `world.schema` and
+  `docs_search` without a document read; the sailboat took 353 seconds and 19 calls, none failed,
+  the agent finding `Boat` by `world.schema {search}` (whose answer, 29 KB for `wind` over ten
+  components, is now short: 7 KB) and looking at its boat with `look_around` before answering. The
+  village kept its square and took the evening rain in 314 seconds and 30 calls. `wolves` failed on
+  the check, not the game: its agent's script was right, and the check counted every `sheep.caught`
+  in the log, the agent's own tries before the check among them; it now counts those the check's own
+  run makes. Run again, `wolves` passed in 144 seconds (`opencode-glm-wolves2.json`).
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

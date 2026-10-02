@@ -477,6 +477,7 @@ struct Sky {
     float sun_size = 1.5f;
     float diffuse = 1.0f;
     float specular = 1.0f;
+    float aerial = 1.0f;
     float haze = 1.0f;
     float clouds = 0.0f;
     float cloud_height = 1500.0f;

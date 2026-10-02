@@ -214,6 +214,7 @@ The sky around the scene (docs/design/rendering.md, Sky and environment light): 
 | `sun_size` | f32 | 1.5 | Procedural: angular diameter of the sun's disc in degrees (0 draws none); the disc follows the first directional Light. |
 | `diffuse` | f32 | 1.0 | How much the sky lights surfaces (0 leaves only the lights). |
 | `specular` | f32 | 1.0 | How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness). |
+| `aerial` | f32 | 1.0 | Mode 3, without a Fog: how much far land fades into the air (aerial perspective), a tenth at about 250 units and two fifths at 1250 at 1, thinning with height; 0 none. |
 | `haze` | f32 | 1.0 | Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun. |
 | `clouds` | f32 | 0.0 | Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md). |
 | `cloud_height` | f32 | 1500.0 | Mode 3: where the clouds start: the world height of their undersides (with a cloud_depth), or of the flat layer above the camera (cloud_depth 0), in units. |

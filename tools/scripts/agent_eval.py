@@ -2769,6 +2769,8 @@ def wolves_solve(env, project_dir):
 
 def wolves_check(env, answer):
     import math
+    # Only what happens while the check runs: the agent's own tries left events in the log too.
+    start = env.command("events.last_seq", {})["seq"]
 
     def pos(name):
         try:
@@ -2813,9 +2815,8 @@ def wolves_check(env, answer):
     if math.hypot(sp["x"] - w2b["x"], sp["z"] - w2b["z"]) > 3 - 0.9:
         return False, f"{moved}, put 3 behind Wolf2, is still {math.hypot(sp['x'] - w2b['x'], sp['z'] - w2b['z']):.2f} from it half a second later"
     # Ten seconds on: the sheep are caught, each a sheep.caught event naming a wolf, the sheep gone.
-    seq = env.command("events.last_seq", {})["seq"]
     env.command("step", {"ticks": 600})
-    caught = env.command("events.since", {"seq": 0, "type": "sheep.caught"})["events"]
+    caught = env.command("events.since", {"seq": start, "type": "sheep.caught"})["events"]
     wolves = {env.command("world.find", {"path": n}) for n in ("Wolf1", "Wolf2")}
     if len(caught) < 3 or any(e.get("subject") not in wolves for e in caught):
         return False, f"{len(caught)} sheep.caught events, subjects {[e.get('subject') for e in caught]} (the wolves are {sorted(wolves)})"
