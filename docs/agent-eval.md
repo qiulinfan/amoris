@@ -417,6 +417,11 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   its own script and played the wave on the tick a villager stopped, while the gait's smoothed speed
   still said walking, and the gait took it at once; it now waits for that third of a second of
   movement. Its `world.lint` had also called every humanoid a missing file, which it no longer does.
+  A third agent (`-3.json`, 359 seconds, 29 calls, six `docs_search` calls and no whole document
+  read) wrote what the reference does, a `Behavior` that wanders and greets with `face`, and set the
+  villagers' `home` to the centre of the square with a radius of 6; the engine took a home of zero
+  to mean "not given" and let each wander round where it began, up to 7 units out. The origin is now
+  a home like any other.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

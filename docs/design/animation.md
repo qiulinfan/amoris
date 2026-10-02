@@ -297,7 +297,11 @@ once. The engine writes it as a glTF binary and reads it with the reader every f
 it is drawn, posed, cross-faded, layered, given `AnimationGraph`s and attachments, and takes clips
 from Mixamo files by `animation.library`, exactly as a model from a file is; `animation.clips` and
 `assets.describe` name its clips and joints. A `Ragdoll` makes it eleven bodies, one a joint, so it
-falls where it is struck. `samples/walker`'s hero is the same figure made by
+falls where it is struck. A crowd is cheap: `tools/scripts/crowd_evidence.py`
+(`tests/evidence/rendering/crowd.png`) puts 256 of them in eight shirts on a grid, two in three
+walking by `Velocity` with `Animator.locomotion` on, and at 1280 by 720 with shadows a frame took
+0.92 ms of the CPU (0.11 of it posing them) and 0.66 ms of the GPU, in 41 draws: skinned copies of
+one mesh and material are one instanced draw. `samples/walker`'s hero is the same figure made by
 `tools/scripts/make_sample_assets.py`, with its clips in files of their own.
 `tools/scripts/humanoid_evidence.py` (`tests/evidence/rendering/humanoids.png`) shows six looks
 idling, walking, running, waving, punching and lying where they fell. `assets_tests`

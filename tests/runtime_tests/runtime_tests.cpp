@@ -563,6 +563,24 @@ TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behi
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a Behavior's home is its starting place unless given, the origin included", "[runtime][behavior][home]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    const Json states{{"states", Json::array({Json{{"name", "rest"}}})}};
+    Json given = states;
+    given["home"] = Json{{"x", 0}, {"y", 0}, {"z", 0}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Free"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3}, {"y", 0}, {"z", 4}}}}}, {"Behavior", states}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Kept"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3}, {"y", 0}, {"z", 4}}}}}, {"Behavior", given}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    auto home = [&](const char* n) { return s.command("world.get", Json{{"entity", n}, {"component", "Behavior"}}).value()["home"]; };
+    REQUIRE(home("Free")["x"] == 3);
+    REQUIRE(home("Free")["z"] == 4);
+    REQUIRE(home("Kept")["x"] == 0);   // the centre it was given, not where it began
+    REQUIRE(home("Kept")["z"] == 0);
+}
+
 TEST_CASE("a Behavior state that faces its target turns the entity's -Z toward it, at its turn speed", "[runtime][behavior][face]") {
     auto o = hello_options(-1);
     o.paused = true;

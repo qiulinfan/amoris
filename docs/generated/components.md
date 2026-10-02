@@ -882,7 +882,7 @@ A state machine for what a non-player character does (docs/design/behavior.md): 
 | `states` | list:BehaviorState | [] | The states; the first is where it starts. |
 | `transitions` | list:BehaviorTransition | [] | The ways between states, tried in order every tick. |
 | `target` | entity | 0 | What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set). |
-| `home` | vec3 | [0.0, 0.0, 0.0] | Where wander roams around and home goes back to; zero is where it stands at its first tick. |
+| `home` | vec3 | [0.0, -1000000.0, 0.0] | Where wander roams around and home goes back to, in the world (the origin is a place like any other); the default, a million units down, takes where it stands at its first tick. |
 | `sight` | f32 | 15.0 | How far it sees: sees is 0 for a target farther than this. |
 | `fov` | f32 | 360.0 | The angle it sees across, in degrees, about where it faces (its -Z); 360 all round. |
 | `eye` | f32 | 1.0 | The height of its eyes, and the target's middle, above their origins, for the line of sight. |

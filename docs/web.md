@@ -190,11 +190,13 @@ take 35% and 18% longer, so the smaller size was not worth the slower simulation
 
 ## Costs and what is next
 
-- `pocket_runtime.wasm` is 7.1 MB with Asyncify and 4.9 MB with JSPI, at `-O2`; the packaged `ui`
-  sample is 97 KB, so the runtime is the download. The `wasm-small` configuration (JSPI,
-  `-Oz -flto`) brings it to 4.0 MB; `-Os -flto` gave 4.5 MB and `-O2 -flto` 5.3 MB (link-time
-  inlining grows the code), measured on 2026-09-19. The price is speed: the physics sample steps 600
-  ticks in 25 ms with `wasm-small` against 18 ms with `wasm-jspi` in Chromium 152
+- `pocket_runtime.wasm` is 13.3 MB with Asyncify and 9.3 MB with JSPI, at `-O2`, measured on
+  2026-10-02 (it was 7.1 and 4.9 MB on 2026-09-19, before 2D physics, compressed textures and
+  meshes, voxels and the rest); a server that compresses sends 4.3 and 3.2 MB as gzip, 3.1 and 2.4
+  MB as Brotli. The packaged `ui` sample is 97 KB, so the runtime is the download. The `wasm-small`
+  configuration (JSPI, `-Oz -flto`) brings it to 4.0 MB; `-Os -flto` gave 4.5 MB and `-O2 -flto` 5.3
+  MB (link-time inlining grows the code), measured on 2026-09-19. The price is speed: the physics
+  sample steps 600 ticks in 25 ms with `wasm-small` against 18 ms with `wasm-jspi` in Chromium 152
   (`pocket.command("step", {ticks: 600})`, after the first call), which is still a few hundred times
   real time, so a game that is not simulation-bound loses nothing it can feel.
 - Leaving out the modules a project does not use would not shrink the download much: of the engine's

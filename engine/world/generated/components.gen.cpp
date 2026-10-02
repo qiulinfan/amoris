@@ -5189,7 +5189,7 @@ constexpr std::array<FieldInfo, 15> kBehaviorFields = {{
     FieldInfo{"states", "list:BehaviorState", "The states; the first is where it starts.", {}},
     FieldInfo{"transitions", "list:BehaviorTransition", "The ways between states, tried in order every tick.", {}},
     FieldInfo{"target", "entity", "What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set).", {}},
-    FieldInfo{"home", "vec3", "Where wander roams around and home goes back to; zero is where it stands at its first tick.", {}},
+    FieldInfo{"home", "vec3", "Where wander roams around and home goes back to, in the world (the origin is a place like any other); the default, a million units down, takes where it stands at its first tick.", {}},
     FieldInfo{"sight", "f32", "How far it sees: sees is 0 for a target farther than this.", {}},
     FieldInfo{"fov", "f32", "The angle it sees across, in degrees, about where it faces (its -Z); 360 all round.", {}},
     FieldInfo{"eye", "f32", "The height of its eyes, and the target's middle, above their origins, for the line of sight.", {}},

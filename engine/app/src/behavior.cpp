@@ -110,7 +110,7 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
         } else if (entered_[id] != b.state) {
             enter(*cur, entered_[id]);   // set from outside (a script, an agent): entered as a transition would
         }
-        if (b.home.x == 0 && b.home.y == 0 && b.home.z == 0) b.home = at;
+        if (b.home.y <= -999999.0f) b.home = at;   // not given: where it stands now (the origin may be meant)
         // What it perceives.
         const bool has_target = b.target && w.alive(b.target);
         const Vec3 to = has_target ? position_of(w, b.target) : at;

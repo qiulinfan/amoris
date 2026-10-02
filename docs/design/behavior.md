@@ -70,8 +70,10 @@ taken; at most one a tick. A condition is written as an `AnimationGraph`'s is (c
   transition with `on` needs one, whatever its condition.
 
 A condition that does not read, or a transition to a state that is not there, is said in `error` and
-never taken. `home` is where the entity stood at its first tick unless it was given;
-`enabled: false` holds the state and leaves the agent alone.
+never taken. `home` is where the entity stood at its first tick unless it was given (any point, the
+origin included: the default that means "not given" is a million units down; an agent that set its
+villagers' home to the centre of a square had them wander round where each started, when zero meant
+"not given"); `enabled: false` holds the state and leaves the agent alone.
 
 ## The sample
 

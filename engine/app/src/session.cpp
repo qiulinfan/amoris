@@ -972,21 +972,40 @@ void Session::bind_natives() {
 namespace {
 // Where a file stops being JSON, for the one who wrote it: the parser's line, column and reason, and
 // that line of the file ("line 4, column 9: syntax error ... near `"Transform": {"pos" 1}`").
-std::string json_problem(const std::string& text) {
-    try {
-        (void)Json::parse(text);
-    } catch (const Json::parse_error& e) {
-        std::string why = e.what();
-        if (const auto at = why.find("parse error at "); at != std::string::npos) why = why.substr(at + 15);
-        std::size_t line_start = 0, line_no = 1;
-        const std::size_t byte = std::min<std::size_t>(e.byte > 0 ? e.byte - 1 : 0, text.size());
-        for (std::size_t i = 0; i < byte; ++i) if (text[i] == '\n') { line_start = i + 1; ++line_no; }
-        std::string line = text.substr(line_start, text.find('\n', line_start) - line_start);
-        if (line.size() > 160) line = line.substr(0, 160) + "...";
-        return std::format("{} (line {}: `{}`)", why, line_no, line);
-    } catch (...) {
+// Read through the parser's events (no exceptions: the web build has none), keeping its error.
+struct ProblemSax : nlohmann::json_sax<Json> {
+    std::size_t at = 0;
+    std::string why;
+    bool null() override { return true; }
+    bool boolean(bool) override { return true; }
+    bool number_integer(number_integer_t) override { return true; }
+    bool number_unsigned(number_unsigned_t) override { return true; }
+    bool number_float(number_float_t, const string_t&) override { return true; }
+    bool string(string_t&) override { return true; }
+    bool binary(binary_t&) override { return true; }
+    bool start_object(std::size_t) override { return true; }
+    bool key(string_t&) override { return true; }
+    bool end_object() override { return true; }
+    bool start_array(std::size_t) override { return true; }
+    bool end_array() override { return true; }
+    bool parse_error(std::size_t position, const std::string&, const nlohmann::detail::exception& ex) override {
+        at = position;
+        why = ex.what();
+        return false;
     }
-    return "not valid JSON";
+};
+std::string json_problem(const std::string& text) {
+    ProblemSax sax;
+    (void)Json::sax_parse(text, &sax);
+    if (sax.why.empty()) return "not valid JSON";
+    std::string why = sax.why;
+    if (const auto at = why.find("parse error at "); at != std::string::npos) why = why.substr(at + 15);
+    std::size_t line_start = 0, line_no = 1;
+    const std::size_t byte = std::min<std::size_t>(sax.at > 0 ? sax.at - 1 : 0, text.size());
+    for (std::size_t i = 0; i < byte; ++i) if (text[i] == '\n') { line_start = i + 1; ++line_no; }
+    std::string line = text.substr(line_start, text.find('\n', line_start) - line_start);
+    if (line.size() > 160) line = line.substr(0, 160) + "...";
+    return std::format("{} (line {}: `{}`)", why, line_no, line);
 }
 }  // namespace
 
