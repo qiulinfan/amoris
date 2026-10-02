@@ -216,8 +216,9 @@ The sky around the scene (docs/design/rendering.md, Sky and environment light): 
 | `specular` | f32 | 1.0 | How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness). |
 | `haze` | f32 | 1.0 | Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun. |
 | `clouds` | f32 | 0.0 | Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md). |
-| `cloud_height` | f32 | 1500.0 | Mode 3: the clouds' height above the camera's ground, in units. |
+| `cloud_height` | f32 | 1500.0 | Mode 3: where the clouds start: the world height of their undersides (with a cloud_depth), or of the flat layer above the camera (cloud_depth 0), in units. |
 | `cloud_scale` | f32 | 900.0 | Mode 3: the size of the clouds' features, in units. |
+| `cloud_depth` | f32 | -1.0 | Mode 3: how deep the layer of clouds is, in units: marched as a volume, lit through by the sun and the sky, the camera can fly into them (docs/design/rendering.md, Clouds); negative as deep as cloud_scale, 0 a flat layer (cheaper). |
 | `time_of_day` | f32 | -1.0 | Hours, 0 to 24: the engine puts the first directional light (the sun) where the sun is at that hour, rising in the east (+x) at 6, highest to the south (+z) at 12, setting in the west at 18, under the horizon at night (docs/design/rendering.md, A day); negative leaves the light where it is. |
 | `day_length` | f32 | 0.0 | Seconds of game time a whole day takes, time_of_day running on by itself (0: the hour stands). |
 | `sun_height` | f32 | 60.0 | Degrees above the horizon the sun climbs at noon. |
@@ -679,7 +680,9 @@ A body of water (docs/design/water.md): a surface size.x by size.y (x by z) cent
 | `ripples` | f32 | 1.0 | The strength of the small ripples on the waves, 0 for none. |
 | `foam` | f32 | 0.5 | How far out from the shore foam reaches, in units of depth; 0 for none. |
 | `caustics` | f32 | 1.0 | How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none. |
-| `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. |
+| `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course. |
+| `course` | string | "" | A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity. |
+| `width` | f32 | 4.0 | A river's width, in units across its course. |
 | `density` | f32 | 2.0 | The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). |
 | `drag` | f32 | 1.0 | How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. |
 | `splash` | string | "" | Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none. |

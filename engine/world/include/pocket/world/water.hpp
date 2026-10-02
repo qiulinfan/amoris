@@ -4,8 +4,11 @@
 #pragma once
 
 #include <pocket/world/components.gen.hpp>
+#include <pocket/world/paths.hpp>
 
 #include <array>
+#include <memory>
+#include <vector>
 
 namespace pocket::world {
 
@@ -31,5 +34,34 @@ WaterPoint water_surface(const Water& w, float level, float x, float z, float t)
 WaterPoint water_at(const Water& w, float level, float x, float z, float t);
 // Whether world (x, z) is within the water's extent around `center`.
 bool water_covers(const Water& w, Vec3 center, float x, float z);
+
+// A body of water as the world has it (docs/design/water.md): a lake, `size` around its entity at
+// the entity's height, or a river along the Path its `course` names, `width` across, its level the
+// course's own height and its current down the course. Every system that asks about water (the
+// physics' buoyancy, water.height, the renderer, rings) asks through this.
+struct WaterBody {
+    EntityId id = 0;
+    Water water;
+    Vec3 center;                                // the entity's place
+    std::shared_ptr<const PathCurve> course;    // a river's, else null
+    [[nodiscard]] bool river() const { return course != nullptr; }
+    // Where (x, z) lies by a river's course, in plan: the nearest point on it, how far along, how
+    // far off to the side, and the way the river runs there (level, unit length).
+    struct Place {
+        Vec3 on;
+        float along = 0, off = 1e30f;
+        Vec3 dir{1, 0, 0};
+    };
+    [[nodiscard]] Place place(float x, float z) const;
+    [[nodiscard]] bool covers(float x, float z) const;
+    // The rest height of the surface over (x, z), and the surface itself at time t.
+    [[nodiscard]] float level(float x, float z) const;
+    [[nodiscard]] WaterPoint at(float x, float z, float t) const;
+    // A box round all of it: its extent across, from its depth under its lowest level to its waves
+    // over its highest.
+    void bounds(Vec3& lo, Vec3& hi) const;
+};
+// The enabled Water bodies, by entity id; a course that names no Path of two points leaves a lake.
+std::vector<WaterBody> water_bodies(const World& w);
 
 }  // namespace pocket::world

@@ -213,6 +213,7 @@ struct RenderStats {
     bool contact_shadows = false;     // whether contact shadows were marched this frame
     bool fog = false;                 // whether fog was applied this frame
     bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
+    bool clouds = false;              // whether volumetric clouds were marched this frame (Sky.cloud_depth)
     bool taa = false;                 // whether the frame was resolved against its history (temporal anti-aliasing)
     bool oit = false;                 // whether translucent meshes were blended order-independently this frame
     bool lut = false;                 // whether a look-up table graded the frame

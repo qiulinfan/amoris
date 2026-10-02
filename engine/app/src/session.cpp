@@ -2066,11 +2066,7 @@ void Session::update_water_rings(float dt) {
     world::World& w = *world_;
     for (auto& r : water_rings_) r.age += dt;
     std::erase_if(water_rings_, [](const renderer::Renderer::WaterRing& r) { return r.age > 3.5f; });
-    struct Pool { world::Water water; Vec3 center; };
-    std::vector<Pool> pools;
-    w.ecs().each([&](flecs::entity, const world::Water& wa, const world::WorldTransform& t) {
-        if (wa.enabled && wa.size.x > 0 && wa.size.y > 0) pools.push_back({wa, t.position});
-    });
+    const std::vector<world::WaterBody> pools = world::water_bodies(w);
     if (pools.empty()) {
         water_rings_.clear();
         wakes_.clear();
@@ -2086,9 +2082,9 @@ void Session::update_water_rings(float dt) {
         std::set<world::EntityId> seen;
         auto wake = [&](world::EntityId id, Vec3 at) {
             seen.insert(id);
-            for (const Pool& pool : pools) {
-                if (!world::water_covers(pool.water, pool.center, at.x, at.z)) continue;
-                const float level = world::water_at(pool.water, pool.center.y, at.x, at.z, time).position.y;
+            for (const world::WaterBody& pool : pools) {
+                if (!pool.covers(at.x, at.z)) continue;
+                const float level = pool.at(at.x, at.z, time).position.y;
                 if (std::fabs(at.y - level) > 1.0f) continue;   // under it, or above it
                 auto [it, fresh] = wakes_.try_emplace(id, std::pair{at, 0.0f});
                 it->second.second += dt;
@@ -2318,25 +2314,28 @@ Result<Json> Session::water_command(std::string_view op, const Json& p) {
     if (!p.contains("x") || !p.contains("z")) return fail("bad_args", "water.height needs x and z");
     const float x = opt<float>(p, "x", 0.0f), z = opt<float>(p, "z", 0.0f);
     auto vec = [](Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; };
-    // The water asked for, or the first by id (enabled) whose extent covers the point.
-    world::EntityId id = 0;
+    // The water asked for, or the first by id (enabled) whose extent covers the point; a lake's or a
+    // river's alike (a river's level is its course's height there).
+    const std::vector<world::WaterBody> bodies = world::water_bodies(*world_);
+    const world::WaterBody* body = nullptr;
     if (p.contains("entity") && !p["entity"].is_null()) {
-        id = resolve_entity(p["entity"]);
+        const world::EntityId id = resolve_entity(p["entity"]);
         if (!id || !world_->try_get<world::Water>(id)) return fail("no_water", "{} has no Water", p["entity"].dump());
+        for (const auto& b : bodies) if (b.id == id) body = &b;
+        if (!body) return fail("no_water", "{}'s Water is not enabled", p["entity"].dump());
     } else {
-        std::vector<world::EntityId> ids;
-        world_->ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {
-            if (wa.enabled && world::water_covers(wa, t.position, x, z)) ids.push_back(e.id());
-        });
-        if (ids.empty()) return Json{{"entity", nullptr}, {"inside", false}};
-        id = *std::min_element(ids.begin(), ids.end());
+        for (const auto& b : bodies) if (!body && b.covers(x, z)) body = &b;
+        if (!body) return Json{{"entity", nullptr}, {"inside", false}};
     }
-    const world::Water wa = world_->ecs().entity(id).get<world::Water>();
-    const world::WorldTransform* wt = world_->try_get<world::WorldTransform>(id);
-    const Vec3 c = wt ? wt->position : Vec3{0, 0, 0};
-    const world::WaterPoint s = world::water_at(wa, c.y, x, z, static_cast<float>(world_->seconds()));
-    return Json{{"entity", id}, {"path", world_->path(id)}, {"height", s.position.y}, {"point", vec(s.position)}, {"normal", vec(s.normal)}, {"velocity", vec(s.velocity)},
-                {"level", c.y}, {"bottom", c.y - std::max(wa.depth, 0.0f)}, {"inside", world::water_covers(wa, c, x, z)}};
+    const world::WaterPoint s = body->at(x, z, static_cast<float>(world_->seconds()));
+    const float level = body->level(x, z);
+    Json j{{"entity", body->id}, {"path", world_->path(body->id)}, {"height", s.position.y}, {"point", vec(s.position)}, {"normal", vec(s.normal)}, {"velocity", vec(s.velocity)},
+           {"level", level}, {"bottom", level - std::max(body->water.depth, 0.0f)}, {"inside", body->covers(x, z)}};
+    if (body->river()) {
+        const auto pl = body->place(x, z);
+        j["river"] = Json{{"along", pl.along}, {"off", pl.off}, {"length", body->course->length}, {"downstream", vec(pl.dir)}};
+    }
+    return j;
 }
 
 Result<Json> Session::terrain_command(std::string_view op, const Json& p) {

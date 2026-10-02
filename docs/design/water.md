@@ -73,6 +73,26 @@ bed. A scene with water always has the prepass. With MSAA the water pass comes a
 sprites and lines included, and tests against the prepass, so a sprite or line behind the surface
 shows through it.
 
+## Rivers
+
+A Water whose `course` names an entity with a `Path` (`docs/design/paths.md`) is a river: a ribbon
+`width` across along the path's curve, its surface at the course's own height there (so a river
+falls with its bed), its current running down the course from the first point to the last at the
+speed of `flow` (the vector's length), its waves and ripples riding that current. Everything that
+asks about water asks the same body (`world::WaterBody`): what floats in it is buoyed at the
+course's level and carried downstream, a character swims in it, `water.height` answers its level
+there and, under `river`, how far `along` the course the point is, how far `off` its middle and
+which way is `downstream`; a splash, rings and the shelter of a roof work on it as on a lake. The
+renderer draws a grid down the course and across it (the course evened out to 64 points, a cell
+every few units or along the smallest wave), the banks' rim moving only up and down. A river's
+caustics are off (the box a lake's caustics use does not fit it). The bed is the scene's: carve it
+(`terrain.sculpt {mode: "lower"}` along the points) and set the points half a unit under the old
+ground. `runtime_tests` (`[water][river]`): a straight course falling from 10 to 8 is at 9 halfway,
+covered one unit off its middle and not two and a half, its current 2 downstream, and a crate
+dropped in it is carried along afloat. `tests/evidence/rendering/river.png`
+(`tools/scripts/dev/river_evidence.py`) is a stream found by walking downhill through the hills into
+their lake, its bed carved, a log floating down it.
+
 ## Floating
 
 In the physics step (after the forces, before the contacts), each dynamic body is cut into cells: 27
@@ -180,7 +200,7 @@ Diving and climbing out onto a ledge (a swimmer stays at the surface unless its 
 and walks out only up a slope), waves of its own from what floats or falls in (rings and wakes bend
 the surface's light but do not raise it or move what floats on it), caustics from the waves' own
 shape (the net is procedural, not traced from the surface), water of other shapes than a rectangle
-(rivers that bend, round ponds; the rectangle reaches under the shore instead) and turned with its
+or a river's ribbon (round ponds; the rectangle reaches under the shore instead) and turned with its
 entity, levels of detail for open sea larger than 256 cells a side can show well, and translucent
 meshes in front of the water (they are drawn before it without writing depth, so the surface covers
 them).

@@ -833,12 +833,27 @@ fn weathered(p: vec3f, surface: Painted) -> Painted {
         out.roughness = mix(out.roughness, 0.03, puddle);
         out.metallic = mix(out.metallic, 0.0, puddle);
         out.normal = normalize(mix(out.normal, vec3f(0.0, 1.0, 0.0), puddle));   // standing water is flat over the bumps under it
+        let near = 1.0 - smoothstep(8.0, 16.0, distance(p, frame.camera_pos.xyz));
         if (puddle > 0.0 && frame.weather.z > 0.0) {
             // While it rains, the drops' rings on the puddles, more of them the harder it rains; gone by
             // sixteen units off, where a ring would be finer than the pixels and only glitter.
-            let near = 1.0 - smoothstep(8.0, 16.0, distance(p, frame.camera_pos.xyz));
             let g = ripples(p.xz, frame.clock.x) * min(frame.weather.z / 4500.0, 1.0) * near;
             out.normal = normalize(out.normal + vec3f(g.x, 0.0, g.y) * 0.3 * puddle);
+        }
+        if (frame.weather.z > 0.0 && up > 0.5 && near > 0.0) {
+            // And drops splashing on what faces up: in each cell a fifth of a unit across, now and
+            // then a small bright splash for a tenth of a second, as many as it rains hard.
+            let cell = floor(p.xz * 5.0);
+            let h = fract(sin(vec2f(dot(cell, vec2f(127.1, 311.7)), dot(cell, vec2f(269.5, 183.3)))) * 43758.5453);
+            let turn = frame.clock.x * (1.5 + h.x) + h.y * 13.0;
+            let k = fract(turn);
+            let hit = floor(turn);
+            let where_ = fract(sin(vec2f(hit * 12.9898 + cell.x, hit * 78.233 + cell.y)) * 43758.5453);
+            let spot = length(fract(p.xz * 5.0) - (0.2 + 0.6 * where_));
+            let on = step(k, 0.1) * step(1.0 - min(frame.weather.z / 9000.0, 1.0) * 0.6, fract(h.x * 7.3 + hit * 0.618));
+            let splash = on * (1.0 - smoothstep(0.03, 0.08, spot)) * near * up * wet;
+            out.albedo = mix(out.albedo, vec3f(0.85, 0.88, 0.92), splash);   // lit as the ground is: dim at night
+            out.roughness = mix(out.roughness, 0.2, splash);
         }
     }
     if (cover > 0.0) {
@@ -1718,12 +1733,48 @@ fn cloud_density(xz: vec2f) -> f32 {
     let edge = 0.75 - 0.5 * frame.clouds.x;
     return smoothstep(edge, edge + 0.2, n);
 }
+// Volumetric clouds (docs/design/rendering.md, Clouds): how much of the layer over world x, z the
+// clouds may fill, 0 to 1. Three octaves of the flat layer's noise (the finer ones are the 3D
+// noise's work), spread to the same range, with a softer edge: what is marched and the shadows on
+// the ground both read it.
+fn cloud_cover(xz: vec2f) -> f32 {
+    var n = 0.0;
+    var a = 0.5;
+    var q = (xz + frame.cloud_drift.xy) * frame.clouds.z;
+    // Each octave turned against the last, so no grid shows in the tops seen from above.
+    let turn = mat2x2f(0.8, 0.6, -0.6, 0.8);
+    for (var k = 0; k < 3; k = k + 1) {
+        n = n + a * cloud_noise(q);
+        q = turn * q * 2.03 + vec2f(1.7, 9.2);
+        a = a * 0.5;
+    }
+    let edge = 0.62 - 0.5 * frame.clouds.x;
+    return smoothstep(edge - 0.12, edge + 0.22, n * 1.107);
+}
 // The sun's light the clouds let through to a point: the layer where the way to the sun crosses it
-// (a cloud's shadow on the ground, drifting with it).
+// (a cloud's shadow on the ground, drifting with it). Volumetric clouds start at cloud_height in
+// the world and are thick, so the shadow comes from a third of the way up them.
 fn cloud_shade(p: vec3f, l: vec3f) -> f32 {
     if (frame.clouds.w < 0.5 || l.y <= 0.02) { return 1.0; }
+    if (frame.cloud_drift.z > 0.5) {
+        let rise = frame.clouds.y + frame.cloud_drift.w * 0.35 - p.y;
+        if (rise <= 0.0) { return 1.0; }
+        return 1.0 - 0.75 * smoothstep(0.1, 0.6, cloud_cover(p.xz + l.xz * (rise / l.y)));
+    }
     let rise = frame.camera_pos.y + frame.clouds.y - p.y;
     return 1.0 - 0.7 * cloud_density(p.xz + l.xz * (rise / l.y));
+}
+// Volumetric clouds as a mirror shows them (water): their cover where the mirrored ray crosses a
+// third of the way up the layer, lit as their sunlit and sky-lit sides average out.
+fn cloud_mirror(p: vec3f, r: vec3f, c: vec3f) -> vec3f {
+    if (frame.cloud_drift.z < 0.5 || r.y <= 0.01) { return c; }
+    let t = (frame.clouds.y + frame.cloud_drift.w * 0.3 - p.y) / r.y;
+    let thick = smoothstep(0.2, 0.75, cloud_cover(p.xz + r.xz * t)) * smoothstep(0.01, 0.15, r.y);
+    if (thick <= 0.0) { return c; }
+    let s = normalize(-frame.sun_dir.xyz);
+    let sky_light = textureSampleLevel(env_tex, env_samp, env_uv(vec3f(0.0, 1.0, 0.0)), frame.env.w).rgb;
+    let body = frame.sun_color.rgb * (0.3 + 0.35 * clamp(s.y * 2.0, 0.0, 1.0)) + sky_light * 1.1;
+    return mix(c, body * frame.env.z, thick * 0.85);
 }
 fn clouded(d: vec3f, c: vec3f) -> vec3f {
     if (frame.clouds.w < 0.5 || d.y <= 0.0) { return c; }
@@ -1757,10 +1808,13 @@ fn stars(d: vec3f) -> vec3f {
     let tint = mix(vec3f(1.0, 0.82, 0.66), vec3f(0.72, 0.84, 1.0), f32((h >> 3u) & 7u) / 7.0);
     return tint * bright * twinkle * smoothstep(0.38, 0.0, length(g - at)) * smoothstep(0.02, 0.25, d.y);
 }
-fn sky_color(ndc: vec2f) -> vec3f {
+fn sky_dir(ndc: vec2f) -> vec3f {
     let far = frame.inv_view_proj * vec4f(ndc, 1.0, 1.0);
     let near = frame.inv_view_proj * vec4f(ndc, 0.0, 1.0);
-    let d = normalize(far.xyz / far.w - near.xyz / near.w);
+    return normalize(far.xyz / far.w - near.xyz / near.w);
+}
+// The sky without its clouds.
+fn sky_clear(d: vec3f) -> vec3f {
     var c = textureSampleLevel(env_tex, env_samp, env_uv(d), 0.0).rgb;
     if (((frame.sky.x > 0.5 && frame.sky.x < 1.5) || frame.sky.x > 2.5) && frame.sky.w > 0.5) {
         let mu = dot(d, normalize(-frame.sun_dir.xyz));
@@ -1770,15 +1824,36 @@ fn sky_color(ndc: vec2f) -> vec3f {
     if (frame.night.x > 0.0) { c = c + stars(d) * frame.night.x; }
     // Lightning: the clouded sky lit white-blue for the flash, brightest overhead.
     if (frame.flash.x > 0.0) { c = c + vec3f(0.6, 0.66, 0.9) * frame.flash.x * (0.5 + 0.5 * max(d.y, 0.0)); }
+    return c;
+}
+// The sky with the flat layer of clouds (a reflection probe's views; the main view without depth).
+fn sky_color(ndc: vec2f) -> vec3f {
+    let d = sky_dir(ndc);
+    return clouded(d, sky_clear(d));
+}
+// The main view's clouds, marched at a quarter of its size (fs_clouds): their light over what
+// shows of the sky behind them.
+@group(1) @binding(35) var cloud_view: texture_2d<f32>;
+@group(1) @binding(36) var cloud_view_samp: sampler;
+fn sky_view(ndc: vec2f) -> vec3f {
+    let d = sky_dir(ndc);
+    let c = sky_clear(d);
+    if (frame.cloud_drift.z > 0.5) {
+        let cv = textureSampleLevel(cloud_view, cloud_view_samp, vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), 0.0);
+        return c * cv.a + cv.rgb;
+    }
     return clouded(d, c);
 }
 @fragment fn fs_sky(in: SkyOut) -> FsOut {
     var out: FsOut;
-    out.color = vec4f(sky_color(in.ndc), 1.0);
+    out.color = vec4f(sky_view(in.ndc), 1.0);
     out.id = 0u;
     return out;
 }
 @fragment fn fs_sky_color(in: SkyOut) -> @location(0) vec4f {
+    return vec4f(sky_view(in.ndc), 1.0);
+}
+@fragment fn fs_sky_probe(in: SkyOut) -> @location(0) vec4f {
     return vec4f(sky_color(in.ndc), 1.0);
 }
 
@@ -2345,6 +2420,7 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32, cxy: vec2u) -> vec3f {
     let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))) + vol.march.w);
     let g = vol.medium.w;
     let sun_phase = phase_hg(dot(frame.sun_dir.xyz, -dir), g);
+    let sun_l = normalize(-frame.sun_dir.xyz);   // the clouds' shadows break the sunlit fog into shafts
     var ambient = frame.ambient.rgb;
     if (frame.env.x > 0.5) { ambient = ambient + sh_irradiance(vec3f(0.0, 1.0, 0.0)) * frame.env.y; }
     var trans = 1.0;
@@ -2356,7 +2432,7 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32, cxy: vec2u) -> vec3f {
         let p = start + dir * t;
         let sigma = vol.medium.x * exp(-vol.medium.z * (p.y - vol.medium.y));
         if (sigma <= 1e-6) { continue; }
-        let light = ambient + frame.sun_color.rgb * (sun_phase * sun_visible(p)) + local_scatter(p, dir, g, cxy);
+        let light = ambient + frame.sun_color.rgb * (sun_phase * sun_visible(p) * cloud_shade(p, sun_l)) + local_scatter(p, dir, g, cxy);
         let step_t = exp(-sigma * dt);
         gathered = gathered + trans * light * (1.0 - step_t);
         trans = trans * step_t;
@@ -2382,6 +2458,166 @@ fn local_scatter(p: vec3f, dir: vec3f, g: f32, cxy: vec2u) -> vec3f {
     return result;
 }
 
+// Volumetric clouds (docs/design/rendering.md, Clouds): marched through the layer from cloud_height
+// to cloud_height + cloud_depth into a quarter-size target, each pixel the light the clouds along
+// its ray send toward the camera (rgb) and how much of the sky behind still shows (a). The world is
+// round here (a planet's radius, the curvature as a parabola), so the layer sinks to the horizon
+// and the far clouds thin into the haze. The cover (cloud_cover) says where clouds may be and how
+// tall; a tiling block of 3D noise (red: billows, blue: finer wisps) carves them; at each step the
+// light toward the sun is marched too, a few steps that grow, and scattered in several orders.
+// Each frame starts its steps at another offset and blends with last frame's, reprojected.
+struct CloudParams {
+    march: vec4f,   // steps, this frame's share of the blend (0: no history), the jitter offset, the farthest the march looks
+    size: vec4f,    // the target's width and height, extinction per unit at full density, the light march's reach
+    weather: vec4f, // x: how overcast the Weather makes it (rain clouds: closed, thick and dark)
+};
+@group(1) @binding(30) var<uniform> cl: CloudParams;
+@group(1) @binding(31) var cloud_shape_tex: texture_3d<f32>;
+@group(1) @binding(32) var cloud_shape_samp: sampler;   // repeating
+@group(1) @binding(33) var cloud_history: texture_2d<f32>;
+@group(1) @binding(34) var cloud_history_samp: sampler;
+const kCloudPlanet = 6360000.0;
+// Along a ray from height h with rise dy, how far until it reaches height H: coming up to it
+// (h < H; on a round world a ray always does), or coming down to it (h > H; -1 if it never does).
+fn cloud_rise(h: f32, dy: f32, H: f32) -> f32 {
+    let k = (1.0 - dy * dy) / (2.0 * kCloudPlanet);
+    return 2.0 * (H - h) / max(dy + sqrt(dy * dy + 4.0 * k * (H - h)), 1e-9);
+}
+fn cloud_fall(h: f32, dy: f32, H: f32) -> f32 {
+    let k = (1.0 - dy * dy) / (2.0 * kCloudPlanet);
+    let disc = dy * dy - 4.0 * k * (h - H);
+    if (dy >= 0.0 || disc < 0.0) { return -1.0; }
+    return 2.0 * (h - H) / (-dy + sqrt(disc));
+}
+// How dense the cloud is at q (world x, height, z, drifted), h01 of the way up the layer, under
+// a cover of `cover`: the taller the cover, the taller the cloud; rounded at the top, flat below.
+fn cloud_dens(q: vec3f, h01: f32, cover: f32, fine: bool) -> f32 {
+    let tallest = mix(0.3, 1.0, cover);
+    if (h01 >= tallest) { return 0.0; }
+    let u = q * frame.clouds.z * 0.3 + vec3f(0.0, 0.0, frame.clock.x * 0.0021);
+    let n = textureSampleLevel(cloud_shape_tex, cloud_shape_samp, u, 0.0);
+    // The tops rise and fall with the billows, so no two columns end alike.
+    let top = tallest * (0.65 + 0.35 * n.g);
+    let profile = smoothstep(0.0, 0.07, h01) * (1.0 - smoothstep(top * 0.5, top, h01));
+    let s = min(cover * profile * 1.4, 1.0);
+    if (s <= 0.01) { return 0.0; }
+    var d = clamp((n.r - (1.0 - s)) / s, 0.0, 1.0);
+    // A sky nearly all covered closes into one deck, as does rain's.
+    let deck = max(smoothstep(0.7, 1.0, frame.clouds.x), smoothstep(0.25, 0.65, cl.weather.x));
+    d = mix(d, max(d, s * n.g * n.g * 1.3), deck);
+    if (fine && d > 0.0) {
+        let m = textureSampleLevel(cloud_shape_tex, cloud_shape_samp, u * 4.3 + vec3f(0.37, 0.11, 0.73), 0.0).b;
+        // Wisps at the bottom, billows higher up.
+        let e = 0.42 * mix(1.0 - m, m, clamp(h01 * 4.0, 0.0, 1.0)) * (1.0 - 0.6 * deck);
+        d = clamp((d - e) / (1.0 - e), 0.0, 1.0);
+    }
+    return d;
+}
+@fragment fn fs_clouds(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let uv = pos.xy / cl.size.xy;
+    let d = sky_dir(vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0));
+    let o = frame.camera_pos.xyz;
+    let base = frame.clouds.y;
+    let top = base + frame.cloud_drift.w;
+    // The stretch of the ray inside the layer.
+    var t0 = 0.0;
+    var t1 = 0.0;
+    if (o.y < base) {
+        t0 = cloud_rise(o.y, d.y, base);
+        t1 = cloud_rise(o.y, d.y, top);
+    } else if (o.y <= top) {
+        let down = cloud_fall(o.y, d.y, base);
+        t1 = select(cloud_rise(o.y, d.y, top), down, down > 0.0);
+    } else {
+        t0 = cloud_fall(o.y, d.y, top);
+        if (t0 < 0.0) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+        let down = cloud_fall(o.y, d.y, base);
+        t1 = select(cl.march.w, down, down > 0.0);
+    }
+    if (t0 >= cl.march.w) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+    t1 = min(t1, cl.march.w);
+    // The steps grow with the distance (the i-th at (i / steps)^2 of the way): fine where the
+    // clouds are near, inside them above all, coarse far off where they are small.
+    let steps = max(u32(cl.march.x), 1u);
+    let span = t1 - t0;
+    let n2 = f32(steps * steps);
+    let jitter = fract(52.9829189 * fract(dot(pos.xy, vec2f(0.06711056, 0.00583715))) + cl.march.z);
+    let l = normalize(-frame.sun_dir.xyz);
+    let mu = dot(d, l);
+    let sun_on = frame.sky.w > 0.5 && l.y > -0.05;
+    // The sky's light from above (dimmer on the clouds' undersides) and a lightning flash's.
+    let sky_up = textureSampleLevel(env_tex, env_samp, env_uv(vec3f(0.0, 1.0, 0.0)), frame.env.w).rgb;
+    let flash = vec3f(0.6, 0.66, 0.9) * frame.flash.x * 3.0;
+    let k = (1.0 - d.y * d.y) / (2.0 * kCloudPlanet);
+    var trans = 1.0;
+    var light = vec3f(0.0);
+    var at_sum = 0.0;
+    var w_sum = 0.0;
+    for (var i = 0u; i < steps; i = i + 1u) {
+        let ai = f32(i) + jitter;
+        let t = t0 + span * ai * ai / n2;
+        let dt = span * (2.0 * f32(i) + 1.0) / n2;
+        let alt = o.y + d.y * t + k * t * t;
+        let h01 = (alt - base) / (top - base);
+        if (h01 < 0.0 || h01 > 1.0) { continue; }
+        let p = o + d * t;
+        let cover = cloud_cover(p.xz);
+        if (cover <= 0.01) { continue; }
+        let q = vec3f(p.x + frame.cloud_drift.x, alt, p.z + frame.cloud_drift.y);
+        let dens = cloud_dens(q, h01, cover, true);
+        if (dens <= 0.0) { continue; }
+        // Toward the sun: the cloud the light crosses to get here, in steps that grow.
+        var od = 0.0;
+        if (sun_on) {
+            var walked = 0.0;
+            for (var j = 1; j <= 5; j = j + 1) {
+                let s = cl.size.w * f32(j * j) / 25.0;
+                let h2 = h01 + l.y * s / (top - base);
+                if (h2 > 1.0) { break; }
+                od = od + cloud_dens(q + l * s, h2, cover, false) * (s - walked);
+                walked = s;
+            }
+            od = od * cl.size.z;
+        }
+        // Several orders of scattering, each fainter, reaching further and less forward (the light
+        // that bounces about inside a cloud before it leaves).
+        var sun_in = 0.0;
+        var a = 1.0;
+        var b = 1.0;
+        var c = 1.0;
+        for (var o2 = 0; o2 < 3; o2 = o2 + 1) {
+            sun_in = sun_in + a * exp(-od * b) * mix(phase_hg(mu, 0.8 * c), phase_hg(mu, -0.25 * c), 0.3);
+            a = a * 0.5;
+            b = b * 0.4;
+            c = c * 0.5;
+        }
+        // Rain clouds are dark: thick, and seen from below.
+        let gathered = (frame.sun_color.rgb * sun_in * select(0.0, 1.0, sun_on) + sky_up * (0.45 + 0.75 * h01)) * (1.0 - 0.6 * cl.weather.x) + flash;
+        let sigma = dens * cl.size.z * (1.0 + 2.0 * cl.weather.x);
+        let step_t = exp(-sigma * dt);
+        let taken = trans * (1.0 - step_t);
+        light = light + gathered * taken;
+        at_sum = at_sum + t * taken;
+        w_sum = w_sum + taken;
+        trans = trans * step_t;
+        if (trans < 0.01) { break; }
+    }
+    // Far away the clouds thin into the haze over the horizon.
+    let dist = select(t0, at_sum / w_sum, w_sum > 1e-4);
+    let fade = 1.0 - smoothstep(cl.march.w * 0.35, cl.march.w, dist);
+    var result = vec4f(light * fade, mix(1.0, trans, fade));
+    if (cl.march.y > 0.0) {
+        // Where this ray's clouds were on the screen last frame, and what was gathered there.
+        let prev = frame.prev_view_proj * vec4f(o + d * dist, 1.0);
+        let pn = prev.xy / prev.w;
+        let puv = vec2f(pn.x * 0.5 + 0.5, 0.5 - pn.y * 0.5);
+        if (prev.w > 0.0 && all(puv >= vec2f(0.0)) && all(puv <= vec2f(1.0))) {
+            result = mix(textureSampleLevel(cloud_history, cloud_history_samp, puv, 0.0), result, cl.march.y);
+        }
+    }
+    return result;
+}
+
 // Water (docs/design/water.md): each body a grid over its extent moved by the Gerstner waves of
 // world::water_surface (the two must change together), drawn after the solid scene. What lies
 // below shows through, bent by the waves and fading into the water's colour with the depth the
@@ -2398,8 +2634,11 @@ struct WaterBody {
     misc: vec4f,              // current x, z, ripples, foam
     more: vec4f,              // the waves' amplitudes summed, choppiness
     id: vec4u,                // the entity's id
+    course: vec4f,            // a river: its course's points (0 a lake), width, speed down it, length
 };
 @group(1) @binding(16) var<uniform> water: array<WaterBody, 8>;
+// Rivers' courses (docs/design/water.md, Rivers): up to 64 points a body, each xyz and its distance along.
+@group(1) @binding(20) var<uniform> water_course: array<vec4f, 512>;
 @group(1) @binding(17) var water_scene: texture_2d<f32>;
 @group(1) @binding(18) var water_depth: texture_depth_2d;
 @group(1) @binding(19) var water_samp: sampler;
@@ -2408,16 +2647,18 @@ struct WaterOut {
     @location(0) world_pos: vec3f,
     @location(1) rest: vec2f,
     @location(2) @interpolate(flat) body: u32,
+    @location(3) flow: vec2f,     // the current here (a river's runs down its course)
+    @location(4) level: f32,      // the rest height here (a river's falls along it)
 };
-fn water_phase(b: WaterBody, k: u32, rest: vec2f) -> f32 {
+fn water_phase(b: WaterBody, k: u32, rest: vec2f, flow: vec2f) -> f32 {
     let d = b.dir_k[k];
-    let p = rest - b.misc.xy * b.center.w;
+    let p = rest - flow * b.center.w;
     return d.z * dot(d.xy, p) - d.w * b.center.w + b.amp[k].z;
 }
-fn water_offset(b: WaterBody, rest: vec2f) -> vec3f {
+fn water_offset(b: WaterBody, rest: vec2f, flow: vec2f) -> vec3f {
     var o = vec3f(0.0);
     for (var k = 0u; k < 4u; k = k + 1u) {
-        let theta = water_phase(b, k, rest);
+        let theta = water_phase(b, k, rest, flow);
         let a = b.amp[k];
         let d = b.dir_k[k];
         let qa = a.y * a.x;
@@ -2425,10 +2666,10 @@ fn water_offset(b: WaterBody, rest: vec2f) -> vec3f {
     }
     return o;
 }
-fn water_normal(b: WaterBody, rest: vec2f) -> vec3f {
+fn water_normal(b: WaterBody, rest: vec2f, flow: vec2f) -> vec3f {
     var n = vec3f(0.0, 1.0, 0.0);
     for (var k = 0u; k < 4u; k = k + 1u) {
-        let theta = water_phase(b, k, rest);
+        let theta = water_phase(b, k, rest, flow);
         let a = b.amp[k];
         let d = b.dir_k[k];
         let wa = d.z * a.x;
@@ -2450,9 +2691,9 @@ fn water_noise(p: vec2f) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 // The slope of the small ripples: two layers of noise drifting apart, carried by the current.
-fn water_ripples(b: WaterBody, rest: vec2f) -> vec2f {
+fn water_ripples(b: WaterBody, rest: vec2f, flow: vec2f) -> vec2f {
     let t = b.center.w;
-    let p = rest - b.misc.xy * t;
+    let p = rest - flow * t;
     let q1 = p * 1.3 + vec2f(t * 0.31, t * 0.17);
     let q2 = p * 3.1 + vec2f(-t * 0.43, t * 0.29);
     let e = 0.05;
@@ -2508,17 +2749,41 @@ fn water_absorb(b: WaterBody, seen: vec3f, through: f32, scatter: vec3f) -> vec3
     if (corner == 5u) { c = vec2u(1u, 1u); }
     let g = vec2u(cell % nx, cell / nx) + c;
     let f = vec2f(g) / vec2f(f32(nx), f32(nz));
-    let rest = b.center.xz + mix(-b.extent.xy, b.extent.xy, f);
-    var o = water_offset(b, rest);
+    var rest = b.center.xz + mix(-b.extent.xy, b.extent.xy, f);
+    var level = b.center.y;
+    var flow = b.misc.xy;
+    let river = b.course.x > 0.5;
+    if (river) {
+        // A river: the grid's x runs down the course, its z across it; the level and the current
+        // are the course's there.
+        let n = u32(b.course.x);
+        let along = f.x * b.course.w;
+        var i = 0u;
+        loop {
+            if (i + 2u >= n || water_course[body * 64u + i + 1u].w >= along) { break; }
+            i = i + 1u;
+        }
+        let a = water_course[body * 64u + i];
+        let e = water_course[body * 64u + i + 1u];
+        let on = mix(a.xyz, e.xyz, clamp((along - a.w) / max(e.w - a.w, 1e-4), 0.0, 1.0));
+        let run = vec2f(e.x - a.x, e.z - a.z);
+        let dir = run / max(length(run), 1e-5);
+        rest = on.xz + vec2f(-dir.y, dir.x) * ((f.y - 0.5) * b.course.y);
+        level = on.y;
+        flow = dir * b.course.z;
+    }
+    var o = water_offset(b, rest, flow);
     // The rim moves only up and down, so the water keeps meeting the shore and its neighbours.
-    if (g.x == 0u || g.x == nx) { o.x = 0.0; }
-    if (g.y == 0u || g.y == nz) { o.z = 0.0; }
-    let world = vec3f(rest.x + o.x, b.center.y + o.y, rest.y + o.z);
+    if (g.x == 0u || g.x == nx) { o.x = 0.0; if (river) { o.z = 0.0; } }
+    if (g.y == 0u || g.y == nz) { o.z = 0.0; if (river) { o.x = 0.0; } }
+    let world = vec3f(rest.x + o.x, level + o.y, rest.y + o.z);
     var out: WaterOut;
     out.clip = frame.view_proj * vec4f(world, 1.0);
     out.world_pos = world;
     out.rest = rest;
     out.body = body;
+    out.flow = flow;
+    out.level = level;
     return out;
 }
 struct WaterFsOut {
@@ -2531,8 +2796,8 @@ struct WaterFsOut {
     let px = in.clip.xy;
     let dims = vec2f(textureDimensions(water_scene));
     let dist = length(frame.camera_pos.xyz - in.world_pos);
-    let rs = water_ripples(b, in.rest) * (b.misc.z / (1.0 + dist * 0.06));
-    var n = normalize(water_normal(b, in.rest) - vec3f(rs.x, 0.0, rs.y));
+    let rs = water_ripples(b, in.rest, in.flow) * (b.misc.z / (1.0 + dist * 0.06));
+    var n = normalize(water_normal(b, in.rest, in.flow) - vec3f(rs.x, 0.0, rs.y));
     // Rings (docs/design/water.md, Rings): spreading at a unit and a fifth a second from where
     // something fell in or moves through, a short train of waves fading as it goes; and while it
     // rains, the drops' rings as on a puddle, near the camera.
@@ -2585,7 +2850,7 @@ struct WaterFsOut {
     let rough = 0.04;
     let r = reflect(-v, n);
     var refl = frame.ambient.rgb;
-    if (frame.env.x > 0.5) { refl = textureSampleLevel(env_tex, env_samp, env_uv(r), rough * frame.env.w).rgb * frame.env.z; }
+    if (frame.env.x > 0.5) { refl = cloud_mirror(in.world_pos, r, textureSampleLevel(env_tex, env_samp, env_uv(r), rough * frame.env.w).rgb * frame.env.z); }
     let probe = probe_specular(in.world_pos, n, v, rough);
     refl = mix(refl, probe.rgb, probe.w);
     let fresnel = env_brdf(vec3f(0.04), rough, ndv);
@@ -2600,7 +2865,7 @@ struct WaterFsOut {
         let shore = clamp(1.0 - below / b.misc.w, 0.0, 1.0);
         foam = shore * shore;
     }
-    let crest = (in.world_pos.y - b.center.y) / max(b.more.x, 1e-3);
+    let crest = (in.world_pos.y - in.level) / max(b.more.x, 1e-3);
     foam = max(foam, smoothstep(0.6, 1.0, crest) * b.more.y * 0.7);
     let t = b.center.w;
     let pattern = water_noise(in.rest * 2.1 + vec2f(t * 0.23, -t * 0.11)) * 0.6 + water_noise(in.rest * 6.3 - vec2f(t * 0.17, t * 0.29)) * 0.4;
@@ -3062,6 +3327,68 @@ fn importance_ggx(xi: vec2f, n: vec3f, a: f32) -> vec3f {
 
 // A probe's six views into level 0 of its panorama: each direction looks up the view it falls in
 // (by its largest axis) through that view's own projection, so the views need no cube convention.
+// The clouds' noise (docs/design/rendering.md, Clouds): a 64x64x64 block that tiles, made once on
+// the GPU when clouds are first marched. Red: Perlin noise worn into billows by Worley noise at
+// three sizes; green: that Worley noise; blue: finer Worley noise for the clouds' edges.
+constexpr const char* kCloudNoiseWgsl = R"WGSL(
+@group(0) @binding(0) var dst: texture_storage_3d<rgba8unorm, write>;
+fn wrap(c: vec3i, period: i32) -> vec3i { return ((c % period) + period) % period; }
+fn hash3(c: vec3i) -> vec3f {
+    var v = vec3u(c) * vec3u(1597334673u, 3812015801u, 2798796415u);
+    v = vec3u(v.x ^ v.y ^ v.z) * vec3u(1597334673u, 3812015801u, 2798796415u);
+    v = (v ^ (v >> vec3u(16u))) * vec3u(0x7feb352du);
+    return vec3f(v ^ (v >> vec3u(15u))) / 4294967295.0;
+}
+fn worley(p: vec3f, period: i32) -> f32 {
+    let cell = vec3i(floor(p));
+    let f = fract(p);
+    var best = 1e9;
+    for (var z = -1; z <= 1; z = z + 1) {
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let o = vec3i(x, y, z);
+                let at = vec3f(o) + hash3(wrap(cell + o, period)) - f;
+                best = min(best, dot(at, at));
+            }
+        }
+    }
+    return clamp(sqrt(best), 0.0, 1.0);
+}
+fn gradient(c: vec3i, period: i32, f: vec3f) -> f32 {
+    return dot(normalize(hash3(wrap(c, period) + vec3i(17, 31, 57)) * 2.0 - 1.0), f);
+}
+fn perlin(p: vec3f, period: i32) -> f32 {
+    let i = vec3i(floor(p));
+    let f = fract(p);
+    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let x00 = mix(gradient(i, period, f), gradient(i + vec3i(1, 0, 0), period, f - vec3f(1.0, 0.0, 0.0)), u.x);
+    let x10 = mix(gradient(i + vec3i(0, 1, 0), period, f - vec3f(0.0, 1.0, 0.0)), gradient(i + vec3i(1, 1, 0), period, f - vec3f(1.0, 1.0, 0.0)), u.x);
+    let x01 = mix(gradient(i + vec3i(0, 0, 1), period, f - vec3f(0.0, 0.0, 1.0)), gradient(i + vec3i(1, 0, 1), period, f - vec3f(1.0, 0.0, 1.0)), u.x);
+    let x11 = mix(gradient(i + vec3i(0, 1, 1), period, f - vec3f(0.0, 1.0, 1.0)), gradient(i + vec3i(1, 1, 1), period, f - vec3f(1.0, 1.0, 1.0)), u.x);
+    return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
+}
+@compute @workgroup_size(4, 4, 4) fn make_noise(@builtin(global_invocation_id) id: vec3u) {
+    let p = (vec3f(id) + 0.5) / 64.0;
+    var pf = 0.0;
+    var a = 0.5;
+    var period = 4;
+    for (var k = 0; k < 4; k = k + 1) {
+        pf = pf + a * perlin(p * f32(period), period);
+        a = a * 0.5;
+        period = period * 2;
+    }
+    pf = clamp(pf * 1.1 + 0.5, 0.0, 1.0);
+    let w1 = 1.0 - worley(p * 4.0, 4);
+    let w2 = 1.0 - worley(p * 8.0, 8);
+    let w3 = 1.0 - worley(p * 16.0, 16);
+    let wf = w1 * 0.625 + w2 * 0.25 + w3 * 0.125;
+    let shape = clamp((pf + wf - 1.0) / wf, 0.0, 1.0);
+    let w4 = 1.0 - worley(p * 32.0, 32);
+    let fine = w2 * 0.25 + w3 * 0.45 + w4 * 0.3;
+    textureStore(dst, vec3i(id), vec4f(shape, wf, fine, 1.0));
+}
+)WGSL";
+
 constexpr const char* kProbeFillWgsl = R"WGSL(
 struct ProbeFill { faces: array<mat4x4f, 6>, center: vec4f, size: vec4f };
 @group(0) @binding(0) var<uniform> pf: ProbeFill;
@@ -3793,6 +4120,28 @@ struct Renderer::Impl {
     WGPURenderPipeline volume_pipeline = nullptr;
     WGPUBuffer volume_uniforms = nullptr;
     WGPUTextureView volume_depth = nullptr;       // the depth view volume_bgs read
+    // Volumetric clouds (docs/design/rendering.md, Clouds): quarter-size targets in turn (this
+    // frame's, last frame's), a stand-in for the sky when they are not marched, the pass (the mesh
+    // module's vs_volume/fs_clouds over the scene group and its own) and the 3D noise block they are
+    // carved from (made on the GPU the first time they are marched).
+    WGPUTexture cloud_tex[2]{}, cloud_none_tex = nullptr, cloud_noise_tex = nullptr;
+    WGPUTextureView cloud_view[2]{}, cloud_none_view = nullptr, cloud_noise_view = nullptr;
+    int cloud_cur = 0;                                   // the one written this frame
+    bool cloud_valid = false;                            // the other holds last frame's
+    bool cloud_noise_made = false;
+    bool clouds_now = false;                             // this frame marches them (set with the frame's uniforms)
+    float cloud_reach = 0, cloud_depth = 0;              // how far the march looks, the layer's depth
+    float cloud_overcast = 0;                            // how overcast the Weather makes it
+    std::uint64_t cloud_frame = 0;
+    std::uint32_t cloud_w = 0, cloud_h = 0;
+    WGPUBindGroupLayout cloud_bgl = nullptr, cloud_sky_bgl = nullptr, cloud_noise_bgl = nullptr;
+    WGPUPipelineLayout cloud_layout = nullptr, cloud_noise_layout = nullptr;
+    WGPURenderPipeline cloud_pipeline = nullptr;
+    WGPUComputePipeline cloud_noise_pipeline = nullptr;
+    WGPUShaderModule cloud_noise_shader = nullptr;
+    WGPUBuffer cloud_uniforms = nullptr;
+    WGPUSampler cloud_repeat_samp = nullptr, cloud_clamp_samp = nullptr;
+    WGPUBindGroup cloud_bgs[2]{}, cloud_sky_bgs[2]{}, cloud_sky_none_bg = nullptr, cloud_noise_bg = nullptr;
     // Screen-space global illumination: half-size targets in turn (this frame's, last frame's), the
     // gathering pass and the full-size pass that adds what it gathered.
     SsgiSettings ssgi;
@@ -3835,15 +4184,18 @@ struct Renderer::Impl {
         float misc[4];       // current x, z, ripples, foam
         float more[4];       // the amplitudes summed, choppiness
         std::uint32_t id[4];
+        float course[4];     // a river: its course's points (0 a lake), width, speed down it, length
     };
     std::vector<WaterGpu> water_bodies;
+    float water_course_data[kMaxWater * 64][4]{};   // rivers' courses, 64 points a body
+    WGPUBuffer water_course_buf = nullptr;
     // Decals: this frame's, their images' array (a layer per image path, 0 the built-in spot).
     WGPUBuffer decal_buffer = nullptr;
     WGPUTexture decal_tex = nullptr;
     WGPUTextureView decal_view = nullptr;
     WGPUSampler decal_sampler = nullptr;
     std::map<std::string, std::uint32_t> decal_layers;
-    std::vector<std::pair<world::Water, Vec3>> water_src;   // the components and centres behind them
+    std::vector<world::WaterBody> water_src;   // the bodies behind them (lakes and rivers)
     int water_under = -1;
     WGPUBindGroupLayout water_bgl = nullptr;
     WGPUPipelineLayout water_layout = nullptr;
@@ -4043,7 +4395,7 @@ struct Renderer::Impl {
     std::vector<WGPUBindGroup> probe_groups;   // the last capture's groups, released at the next
     // The sky: its pipelines, the environment map (level views for the compute passes, one view of
     // every level for sampling), the harmonics buffer, the panorama's source texture.
-    WGPUPipelineLayout sky_layout = nullptr;      // the scene group only
+    WGPUPipelineLayout sky_layout = nullptr;      // the scene group and the clouds' (cloud_sky_bgl)
     WGPURenderPipeline sky_pipeline = nullptr;    // follows the sample count like the scene pipelines
     WGPUShaderModule sky_shader = nullptr;
     WGPUShaderModule irr_shader = nullptr;
@@ -4450,6 +4802,16 @@ struct Renderer::Impl {
         for (WGPUTexture t : {volume_tex[0], volume_tex[1], volume_none_tex}) if (t) wgpuTextureRelease(t);
         for (WGPUBindGroup g : volume_bgs) if (g) wgpuBindGroupRelease(g);
         if (volume_samp) wgpuSamplerRelease(volume_samp);
+        if (cloud_uniforms) wgpuBufferRelease(cloud_uniforms);
+        if (cloud_pipeline) wgpuRenderPipelineRelease(cloud_pipeline);
+        if (cloud_noise_pipeline) wgpuComputePipelineRelease(cloud_noise_pipeline);
+        if (cloud_noise_shader) wgpuShaderModuleRelease(cloud_noise_shader);
+        for (WGPUPipelineLayout l : {cloud_layout, cloud_noise_layout}) if (l) wgpuPipelineLayoutRelease(l);
+        for (WGPUBindGroupLayout l : {cloud_bgl, cloud_sky_bgl, cloud_noise_bgl}) if (l) wgpuBindGroupLayoutRelease(l);
+        for (WGPUBindGroup g : {cloud_bgs[0], cloud_bgs[1], cloud_sky_bgs[0], cloud_sky_bgs[1], cloud_sky_none_bg, cloud_noise_bg}) if (g) wgpuBindGroupRelease(g);
+        for (WGPUTextureView v : {cloud_view[0], cloud_view[1], cloud_none_view, cloud_noise_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : {cloud_tex[0], cloud_tex[1], cloud_none_tex, cloud_noise_tex}) if (t) wgpuTextureRelease(t);
+        for (WGPUSampler sm : {cloud_repeat_samp, cloud_clamp_samp}) if (sm) wgpuSamplerRelease(sm);
         if (ao_white_view) wgpuTextureViewRelease(ao_white_view);
         if (ao_white_tex) wgpuTextureRelease(ao_white_tex);
         release_scaled();
@@ -4474,6 +4836,7 @@ struct Renderer::Impl {
         release_water_targets();
         for (WGPURenderPipeline p : {water_pipeline[0], water_pipeline[1], water_under_pipeline[0], water_under_pipeline[1], water_depth_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         if (water_uniforms) wgpuBufferRelease(water_uniforms);
+        if (water_course_buf) wgpuBufferRelease(water_course_buf);
         if (decal_buffer) wgpuBufferRelease(decal_buffer);
         if (decal_view) wgpuTextureViewRelease(decal_view);
         if (decal_tex) wgpuTextureRelease(decal_tex);
@@ -4893,6 +5256,11 @@ struct Renderer::Impl {
         float march[4];          // steps, distance, start, this frame's jitter offset
         float target_size[4];
         float history[4];        // last frame's result usable (1/0), the share of this frame
+    };
+    struct CloudUniforms {
+        float march[4];          // steps, this frame's share of the blend (0: no history), the jitter offset, the farthest the march looks
+        float size[4];           // the target's width and height, extinction per unit at full density, the light march's reach
+        float weather[4];        // how overcast the Weather makes it
     };
     struct MeterUniforms {
         float viewport[4];
@@ -6266,7 +6634,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.vertex.buffers = vbls;
         probe_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         WGPUFragmentState kfs = fs;
-        kfs.entryPoint = rhi::str("fs_sky_color");
+        kfs.entryPoint = rhi::str("fs_sky_probe");
         WGPUDepthStencilState kds = ds;
         kds.depthWriteEnabled = WGPUOptionalBool_False;
         kds.depthCompare = WGPUCompareFunction_Always;
@@ -6751,7 +7119,11 @@ fn time() -> f32 { return fx.time.x; }
     // comes after the scene's and tests against the prepass), the view from under a surface, and
     // the surface's depth alone for the prepass.
     Status create_water() {
-        WGPUBindGroupLayoutEntry be[4]{};
+        WGPUBindGroupLayoutEntry be[5]{};
+        be[4].binding = 20;
+        be[4].visibility = WGPUShaderStage_Vertex;
+        be[4].buffer.type = WGPUBufferBindingType_Uniform;
+        be[4].buffer.minBindingSize = sizeof(water_course_data);
         be[0].binding = 16;
         be[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
         be[0].buffer.type = WGPUBufferBindingType_Uniform;
@@ -6769,7 +7141,7 @@ fn time() -> f32 { return fx.time.x; }
         be[3].sampler.type = WGPUSamplerBindingType_Filtering;
         WGPUBindGroupLayoutDescriptor bd{};
         bd.label = rhi::str("pocket.water");
-        bd.entryCount = 4;
+        bd.entryCount = 5;
         bd.entries = be;
         water_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
         WGPUBindGroupLayout layouts[2] = {scene_bgl, water_bgl};
@@ -6832,6 +7204,7 @@ fn time() -> f32 { return fx.time.x; }
         water_depth_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!water_depth_pipeline) return fail("gpu_pipeline_failed", "the water depth pipeline could not be created");
         water_uniforms = device->create_buffer("pocket.water", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(WaterGpu) * kMaxWater);
+        water_course_buf = device->create_buffer("pocket.water.course", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(water_course_data));
         WGPUSamplerDescriptor sd{};
         sd.label = rhi::str("pocket.water");
         sd.addressModeU = WGPUAddressMode_ClampToEdge;
@@ -6870,7 +7243,10 @@ fn time() -> f32 { return fx.time.x; }
         water_depth_view = dv;
         water_w = w;
         water_h = h;
-        WGPUBindGroupEntry e[4]{};
+        WGPUBindGroupEntry e[5]{};
+        e[4].binding = 20;
+        e[4].buffer = water_course_buf;
+        e[4].size = sizeof(water_course_data);
         e[0].binding = 16;
         e[0].buffer = water_uniforms;
         e[0].size = sizeof(WaterGpu) * kMaxWater;
@@ -6883,7 +7259,7 @@ fn time() -> f32 { return fx.time.x; }
         WGPUBindGroupDescriptor d{};
         d.label = rhi::str("pocket.water");
         d.layout = water_bgl;
-        d.entryCount = 4;
+        d.entryCount = 5;
         d.entries = e;
         water_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
         return {};
@@ -6892,16 +7268,13 @@ fn time() -> f32 { return fx.time.x; }
     // The enabled bodies (the first kMaxWater by id) with their waves at the world's time.
     void gather_water(const world::World& w) {
         water_bodies.clear();
-        water_src.clear();
-        std::vector<std::pair<std::uint64_t, std::pair<world::Water, Vec3>>> found;
-        w.ecs().each([&](flecs::entity e, const world::Water& wa, const world::WorldTransform& t) {
-            if (wa.enabled && wa.size.x > 0 && wa.size.y > 0) found.push_back({e.id(), {wa, t.position}});
-        });
-        std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-        if (found.size() > kMaxWater) found.resize(kMaxWater);
+        water_src = world::water_bodies(w);
+        if (water_src.size() > kMaxWater) water_src.resize(kMaxWater);
         const auto time = static_cast<float>(w.seconds());
-        for (const auto& [id, src] : found) {
-            const auto& [wa, c] = src;
+        for (const world::WaterBody& body : water_src) {
+            const world::Water& wa = body.water;
+            const Vec3 c = body.center;
+            const std::uint64_t id = body.id;
             WaterGpu g{};
             g.center[0] = c.x; g.center[1] = c.y; g.center[2] = c.z; g.center[3] = time;
             // Four vertices along the smallest wave, at most 256 cells a side; still water a cell every four units.
@@ -6910,6 +7283,27 @@ fn time() -> f32 { return fx.time.x; }
             g.extent[1] = wa.size.y * 0.5f;
             g.extent[2] = std::clamp(std::ceil(wa.size.x / cell), 1.0f, 256.0f);
             g.extent[3] = std::clamp(std::ceil(wa.size.y / cell), 1.0f, 256.0f);
+            if (body.river()) {
+                // Its course, evened out to 64 points at most; the grid down it and across.
+                const world::PathCurve& course = *body.course;
+                const std::size_t slot = water_bodies.size();
+                const int n = static_cast<int>(std::clamp<std::size_t>(course.points.size(), 2, 64));
+                for (int k = 0; k < n; ++k) {
+                    const float along = course.length * static_cast<float>(k) / static_cast<float>(n - 1);
+                    const Vec3 q = course.sample(along);
+                    float* row = water_course_data[slot * 64 + static_cast<std::size_t>(k)];
+                    row[0] = q.x; row[1] = q.y; row[2] = q.z; row[3] = along;
+                }
+                const float width = std::max(wa.width, 0.0f);
+                g.course[0] = static_cast<float>(n);
+                g.course[1] = width;
+                g.course[2] = std::hypot(wa.flow.x, wa.flow.y);
+                g.course[3] = course.length;
+                g.extent[2] = std::clamp(std::ceil(course.length / std::max(cell, 0.25f)), 1.0f, 512.0f);
+                g.extent[3] = std::clamp(std::ceil(width / std::max(cell, 0.25f)), 2.0f, 64.0f);
+                const Vec3 mid = course.sample(course.length * 0.5f);
+                g.center[0] = mid.x; g.center[1] = mid.y; g.center[2] = mid.z;
+            }
             g.color[0] = decode(wa.color.r); g.color[1] = decode(wa.color.g); g.color[2] = decode(wa.color.b);
             g.color[3] = std::max(wa.clarity, 0.01f);
             const auto waves = world::water_waves(wa);
@@ -6925,7 +7319,6 @@ fn time() -> f32 { return fx.time.x; }
             g.more[1] = std::clamp(wa.choppiness, 0.0f, 1.0f);
             g.id[0] = static_cast<std::uint32_t>(id & 0xFFFFFFFFu);
             water_bodies.push_back(g);
-            water_src.emplace_back(wa, c);
         }
         stats.water = static_cast<std::uint32_t>(water_bodies.size());
     }
@@ -6947,13 +7340,14 @@ fn time() -> f32 { return fx.time.x; }
         wgpuCommandEncoderCopyTextureToTexture(frame.encoder, &src, &dst, &ext);
         water_under = -1;
         for (std::size_t i = 0; i < water_src.size() && water_under < 0; ++i) {
-            const auto& [wa, c] = water_src[i];
+            const world::WaterBody& body = water_src[i];
             const Vec3 eye = camera.position;
-            if (!world::water_covers(wa, c, eye.x, eye.z) || eye.y < c.y - std::max(wa.depth, 0.0f)) continue;
-            if (eye.y < world::water_at(wa, c.y, eye.x, eye.z, water_bodies[i].center[3]).position.y) water_under = static_cast<int>(i);
+            if (!body.covers(eye.x, eye.z) || eye.y < body.level(eye.x, eye.z) - std::max(body.water.depth, 0.0f)) continue;
+            if (eye.y < body.at(eye.x, eye.z, water_bodies[i].center[3]).position.y) water_under = static_cast<int>(i);
         }
         stats.underwater = water_under >= 0;
         device->write_buffer(water_uniforms, 0, water_bodies.data(), water_bodies.size() * sizeof(WaterGpu));
+        device->write_buffer(water_course_buf, 0, water_course_data, sizeof(water_course_data));
         WGPURenderPassColorAttachment ca[3]{};
         const WGPUTextureView views[3] = {hdr_view, id_view, surface_view};
         for (int k = 0; k < 3; ++k) {
@@ -7505,6 +7899,257 @@ fn time() -> f32 { return fx.time.x; }
         taa_next = 1 - k;
         taa_valid = true;
         stats.taa = true;
+        stats.draw_calls++;
+        return {};
+    }
+
+    // The volumetric clouds' pass, the sky's group that reads them, and the noise block's
+    // (docs/design/rendering.md, Clouds).
+    Status create_clouds() {
+        WGPUBindGroupLayoutEntry ce[5]{};
+        ce[0].binding = 30;
+        ce[0].visibility = WGPUShaderStage_Fragment;
+        ce[0].buffer.type = WGPUBufferBindingType_Uniform;
+        ce[0].buffer.minBindingSize = sizeof(CloudUniforms);
+        ce[1].binding = 31;
+        ce[1].visibility = WGPUShaderStage_Fragment;
+        ce[1].texture.sampleType = WGPUTextureSampleType_Float;
+        ce[1].texture.viewDimension = WGPUTextureViewDimension_3D;
+        ce[2].binding = 32;
+        ce[2].visibility = WGPUShaderStage_Fragment;
+        ce[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        ce[3].binding = 33;
+        ce[3].visibility = WGPUShaderStage_Fragment;
+        ce[3].texture.sampleType = WGPUTextureSampleType_Float;
+        ce[3].texture.viewDimension = WGPUTextureViewDimension_2D;
+        ce[4].binding = 34;
+        ce[4].visibility = WGPUShaderStage_Fragment;
+        ce[4].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor cd{};
+        cd.label = rhi::str("pocket.clouds");
+        cd.entryCount = 5;
+        cd.entries = ce;
+        cloud_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &cd);
+        WGPUBindGroupLayoutEntry ke[2]{};
+        ke[0].binding = 35;
+        ke[0].visibility = WGPUShaderStage_Fragment;
+        ke[0].texture.sampleType = WGPUTextureSampleType_Float;
+        ke[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+        ke[1].binding = 36;
+        ke[1].visibility = WGPUShaderStage_Fragment;
+        ke[1].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor kd{};
+        kd.label = rhi::str("pocket.clouds.sky");
+        kd.entryCount = 2;
+        kd.entries = ke;
+        cloud_sky_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &kd);
+        WGPUBindGroupLayout layouts[2] = {scene_bgl, cloud_bgl};
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.clouds");
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
+        cloud_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str("fs_clouds");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.clouds");
+        rpd.layout = cloud_layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs_volume");
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        cloud_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!cloud_pipeline) return fail("gpu_pipeline_failed", "the clouds' pipeline could not be created");
+        cloud_uniforms = device->create_buffer("pocket.clouds", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(CloudUniforms));
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.clouds.repeat");
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_Repeat;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.lodMaxClamp = 1.0f;
+        sd.maxAnisotropy = 1;
+        cloud_repeat_samp = wgpuDeviceCreateSampler(device->device(), &sd);
+        sd.label = rhi::str("pocket.clouds.clamp");
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        cloud_clamp_samp = wgpuDeviceCreateSampler(device->device(), &sd);
+        // The sky's stand-in: no cloud light, all of the sky showing.
+        auto [nt, nv] = make_target("pocket.clouds.none", 1, 1, kHdrFormat, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+        cloud_none_tex = nt;
+        cloud_none_view = nv;
+        const std::uint16_t none[4] = {0, 0, 0, to_half(1.0f)};
+        WGPUTexelCopyTextureInfo dst{};
+        dst.texture = cloud_none_tex;
+        dst.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout layout{};
+        layout.bytesPerRow = sizeof none;
+        layout.rowsPerImage = 1;
+        WGPUExtent3D ext{1, 1, 1};
+        wgpuQueueWriteTexture(device->queue(), &dst, none, sizeof none, &layout, &ext);
+        cloud_sky_none_bg = make_cloud_sky_group(cloud_none_view);
+        // The noise block and its compute pass.
+        POCKET_TRY(module, device->create_shader("pocket.clouds.noise", kCloudNoiseWgsl));
+        cloud_noise_shader = module;
+        WGPUBindGroupLayoutEntry ne{};
+        ne.binding = 0;
+        ne.visibility = WGPUShaderStage_Compute;
+        ne.storageTexture.access = WGPUStorageTextureAccess_WriteOnly;
+        ne.storageTexture.format = WGPUTextureFormat_RGBA8Unorm;
+        ne.storageTexture.viewDimension = WGPUTextureViewDimension_3D;
+        WGPUBindGroupLayoutDescriptor nd{};
+        nd.label = rhi::str("pocket.clouds.noise");
+        nd.entryCount = 1;
+        nd.entries = &ne;
+        cloud_noise_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &nd);
+        WGPUPipelineLayoutDescriptor npld{};
+        npld.label = rhi::str("pocket.clouds.noise");
+        npld.bindGroupLayoutCount = 1;
+        npld.bindGroupLayouts = &cloud_noise_bgl;
+        cloud_noise_layout = wgpuDeviceCreatePipelineLayout(device->device(), &npld);
+        WGPUComputePipelineDescriptor cpd{};
+        cpd.label = rhi::str("pocket.clouds.noise");
+        cpd.layout = cloud_noise_layout;
+        cpd.compute.module = cloud_noise_shader;
+        cpd.compute.entryPoint = rhi::str("make_noise");
+        cloud_noise_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
+        if (!cloud_noise_pipeline) return fail("gpu_pipeline_failed", "the clouds' noise pipeline could not be created");
+        return {};
+    }
+    WGPUBindGroup make_cloud_sky_group(WGPUTextureView view) {
+        WGPUBindGroupEntry e[2]{};
+        e[0].binding = 35;
+        e[0].textureView = view;
+        e[1].binding = 36;
+        e[1].sampler = cloud_clamp_samp;
+        WGPUBindGroupDescriptor d{};
+        d.label = rhi::str("pocket.clouds.sky");
+        d.layout = cloud_sky_bgl;
+        d.entryCount = 2;
+        d.entries = e;
+        return wgpuDeviceCreateBindGroup(device->device(), &d);
+    }
+
+    // March the clouds into the quarter-size target, before the scene pass draws the sky over them.
+    Status draw_clouds(rhi::Frame& frame) {
+        if (!cloud_noise_made) {
+            WGPUTextureDescriptor td{};
+            td.label = rhi::str("pocket.clouds.noise");
+            td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_StorageBinding;
+            td.dimension = WGPUTextureDimension_3D;
+            td.size = {64, 64, 64};
+            td.format = WGPUTextureFormat_RGBA8Unorm;
+            td.mipLevelCount = 1;
+            td.sampleCount = 1;
+            cloud_noise_tex = wgpuDeviceCreateTexture(device->device(), &td);
+            if (!cloud_noise_tex) return fail("gpu_texture_failed", "cannot create the clouds' noise");
+            WGPUTextureViewDescriptor vd{};
+            vd.format = WGPUTextureFormat_RGBA8Unorm;
+            vd.dimension = WGPUTextureViewDimension_3D;
+            vd.mipLevelCount = 1;
+            vd.arrayLayerCount = 1;
+            vd.aspect = WGPUTextureAspect_All;
+            cloud_noise_view = wgpuTextureCreateView(cloud_noise_tex, &vd);
+            WGPUBindGroupEntry e{};
+            e.binding = 0;
+            e.textureView = cloud_noise_view;
+            WGPUBindGroupDescriptor d{};
+            d.label = rhi::str("pocket.clouds.noise");
+            d.layout = cloud_noise_bgl;
+            d.entryCount = 1;
+            d.entries = &e;
+            cloud_noise_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
+            WGPUComputePassDescriptor cpd{};
+            cpd.label = rhi::str("pocket.clouds.noise");
+            WGPUComputePassEncoder cp = begin_compute(frame.encoder, cpd);
+            wgpuComputePassEncoderSetPipeline(cp, cloud_noise_pipeline);
+            wgpuComputePassEncoderSetBindGroup(cp, 0, cloud_noise_bg, 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(cp, 16, 16, 16);
+            wgpuComputePassEncoderEnd(cp);
+            wgpuComputePassEncoderRelease(cp);
+            cloud_noise_made = true;
+        }
+        const std::uint32_t cw = std::max(1u, (applied.w + 3) / 4), ch = std::max(1u, (applied.h + 3) / 4);
+        if (!cloud_tex[0] || cloud_w != cw || cloud_h != ch) {
+            for (int k = 0; k < 2; ++k) {
+                if (cloud_view[k]) wgpuTextureViewRelease(cloud_view[k]);
+                if (cloud_tex[k]) wgpuTextureRelease(cloud_tex[k]);
+                auto [t, v] = make_target("pocket.clouds", cw, ch, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+                if (!t) return fail("gpu_texture_failed", "cannot create the clouds' target {}x{}", cw, ch);
+                cloud_tex[k] = t;
+                cloud_view[k] = v;
+            }
+            // One group per direction of the turn: write into k, read last frame's from the other.
+            for (int k = 0; k < 2; ++k) {
+                if (cloud_bgs[k]) wgpuBindGroupRelease(cloud_bgs[k]);
+                if (cloud_sky_bgs[k]) wgpuBindGroupRelease(cloud_sky_bgs[k]);
+                WGPUBindGroupEntry e[5]{};
+                e[0].binding = 30;
+                e[0].buffer = cloud_uniforms;
+                e[0].size = sizeof(CloudUniforms);
+                e[1].binding = 31;
+                e[1].textureView = cloud_noise_view;
+                e[2].binding = 32;
+                e[2].sampler = cloud_repeat_samp;
+                e[3].binding = 33;
+                e[3].textureView = cloud_view[1 - k];
+                e[4].binding = 34;
+                e[4].sampler = cloud_clamp_samp;
+                WGPUBindGroupDescriptor d{};
+                d.label = rhi::str("pocket.clouds");
+                d.layout = cloud_bgl;
+                d.entryCount = 5;
+                d.entries = e;
+                cloud_bgs[k] = wgpuDeviceCreateBindGroup(device->device(), &d);
+                cloud_sky_bgs[k] = make_cloud_sky_group(cloud_view[k]);
+            }
+            cloud_w = cw;
+            cloud_h = ch;
+            cloud_valid = false;
+        }
+        const int k = 1 - cloud_cur;
+        CloudUniforms u{};
+        // A frame with last frame's to blend with marches 48 steps; one without (the first, after a
+        // gap, an agent's capture after an undrawn step) 128 and keeps them all.
+        u.march[0] = cloud_valid ? 48.0f : 128.0f;
+        u.march[1] = cloud_valid ? 0.2f : 0.0f;
+        u.march[2] = std::fmod(static_cast<float>(cloud_frame++ % 64) * 0.618034f, 1.0f);
+        u.march[3] = cloud_reach;
+        u.size[0] = static_cast<float>(cw);
+        u.size[1] = static_cast<float>(ch);
+        u.size[2] = 32.0f / std::max(cloud_depth, 1.0f);   // a cloud the layer's depth across: some 30 times as thick as it lets through
+        u.size[3] = 0.5f * cloud_depth;
+        u.weather[0] = std::clamp(cloud_overcast, 0.0f, 1.0f);
+        device->write_buffer(cloud_uniforms, 0, &u, sizeof u);
+        WGPURenderPassColorAttachment ca{};
+        ca.view = cloud_view[k];
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, 1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.clouds");
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
+        wgpuRenderPassEncoderSetPipeline(enc, cloud_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(enc, 1, cloud_bgs[k], 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        cloud_cur = k;
+        cloud_valid = true;
+        stats.clouds = true;
         stats.draw_calls++;
         return {};
     }
@@ -8488,10 +9133,12 @@ fn time() -> f32 { return fx.time.x; }
             particle_sim_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
             if (!particle_sim_pipeline) return fail("gpu_pipeline_failed", "the GPU particles' simulation could not be created");
         }
+        POCKET_TRY_VOID(create_clouds());
+        WGPUBindGroupLayout sky_groups[2] = {scene_bgl, cloud_sky_bgl};
         WGPUPipelineLayoutDescriptor kpld{};
         kpld.label = rhi::str("pocket.sky");
-        kpld.bindGroupLayoutCount = 1;
-        kpld.bindGroupLayouts = &scene_bgl;
+        kpld.bindGroupLayoutCount = 2;
+        kpld.bindGroupLayouts = sky_groups;
         sky_layout = wgpuDeviceCreatePipelineLayout(device->device(), &kpld);
         WGPUBindGroupLayoutEntry ce{};
         ce.binding = 5;
@@ -10080,6 +10727,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     im.applied = Viewport{x0, y0, static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)};
     float aspect = im.applied.h > 0 ? static_cast<float>(im.applied.w) / static_cast<float>(im.applied.h) : 1.0f;
     im.stats = RenderStats{};
+    im.clouds_now = false;
     im.stats.water = static_cast<std::uint32_t>(im.water_bodies.size());
     im.camera = im.find_camera(world, aspect);
 
@@ -10101,11 +10749,13 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     {
         const std::size_t n = std::min<std::size_t>(im.water_src.size(), 4);
         for (std::size_t i = 0; i < n; ++i) {
-            const auto& [wa, c] = im.water_src[i];
+            const world::Water& wa = im.water_src[i].water;
+            const Vec3 c = im.water_src[i].center;
             float* a = fu.waters[i * 2];
             float* b = fu.waters[i * 2 + 1];
             a[0] = c.x; a[1] = c.y; a[2] = c.z; a[3] = wa.size.x * 0.5f;
-            b[0] = wa.size.y * 0.5f; b[1] = std::max(wa.depth, 0.0f); b[2] = std::max(wa.caustics, 0.0f);
+            // A river's level falls along it: no caustics from it (its box would be a lake's).
+            b[0] = wa.size.y * 0.5f; b[1] = std::max(wa.depth, 0.0f); b[2] = im.water_src[i].river() ? 0.0f : std::max(wa.caustics, 0.0f);
         }
         fu.water_info[0] = static_cast<float>(n);
         fu.water_info[1] = static_cast<float>(world.seconds());
@@ -10458,6 +11108,17 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             fu.clouds[3] = 1;
             fu.cloud_drift[0] = -v.x * t;
             fu.cloud_drift[1] = -v.z * t;
+            // With a depth they are marched as a volume in the main view (a secondary view keeps the flat layer).
+            // (A negative depth: as deep as the clouds' features are wide.)
+            const float depth = sky.cloud_depth < 0 ? std::max(sky.cloud_scale, 1.0f) : sky.cloud_depth;
+            if (depth > 0 && !im.secondary && im.applied.w > 0 && im.applied.h > 0) {
+                im.clouds_now = true;
+                im.cloud_depth = depth;
+                im.cloud_overcast = overcast;
+                im.cloud_reach = std::max(40.0f * std::max(sky.cloud_scale, 1.0f), 4.0f * (fu.clouds[1] + depth));
+                fu.cloud_drift[2] = 1;
+                fu.cloud_drift[3] = depth;
+            }
         }
     }
     // Overcast, the sun's direct light is dimmed (the sky's own light, built from it above, is not).
@@ -11580,6 +12241,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             if (im.stats.sky != 0) {
                 wgpuRenderPassEncoderSetPipeline(ppass, im.probe_sky_pipeline);
                 wgpuRenderPassEncoderSetBindGroup(ppass, 0, group, 0, nullptr);
+                wgpuRenderPassEncoderSetBindGroup(ppass, 1, im.cloud_sky_none_bg, 0, nullptr);
                 wgpuRenderPassEncoderDraw(ppass, 3, 1, 0, 0);
             }
             if (!draws.empty()) {
@@ -11925,6 +12587,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         wgpuRenderPassEncoderRelease(ipass);
         if (ao_pass) im.draw_ao(frame);
     }
+    if (im.clouds_now && im.stats.sky != 0) POCKET_TRY_VOID(im.draw_clouds(frame));
+    else if (!im.secondary) im.cloud_valid = false;   // a history from before a gap would show clouds long gone
     // Order-independent transparency: the translucent meshes leave this pass for their own, and
     // what is drawn after them (sprites, lines) waits for a pass after the composite. With MSAA
     // this first part keeps its samples, unresolved, for the composite to be laid over.
@@ -11954,6 +12618,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     if (im.stats.sky != 0) {
         wgpuRenderPassEncoderSetPipeline(pass, im.sky_pipeline);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.stats.clouds ? im.cloud_sky_bgs[im.cloud_cur] : im.cloud_sky_none_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         im.stats.draw_calls++;
     }
@@ -12517,6 +13182,7 @@ Json Renderer::describe() const {
     j["contact_shadows"] = s.contact_shadows;
     j["fog"] = s.fog;
     j["volumetric"] = s.volumetric;
+    j["clouds"] = s.clouds;
     j["taa"] = s.taa;
     j["oit"] = s.oit;
     j["lut"] = s.lut;

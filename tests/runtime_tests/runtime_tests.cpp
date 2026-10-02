@@ -1014,6 +1014,43 @@ TEST_CASE("a Scatter's colliders are in world units, whatever the entity's scale
     REQUIRE(hit["path"] == "/Reeds");   // within its 0.1 radius
 }
 
+TEST_CASE("a river runs along its Path: covered within its width, its level the course's, its current downstream, carrying what floats", "[runtime][water][river]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // A straight course falling from 10 high at x 200 to 8 at x 220.
+    Json path = Json::object();
+    path["Transform"] = Json::object();
+    path["Path"] = Json{{"points", Json::array({Json{{"x", 200}, {"y", 10}, {"z", 0}}, Json{{"x", 220}, {"y", 8}, {"z", 0}}})}, {"smooth", false}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Course"}, {"components", path}}).has_value());
+    Json river = Json::object();
+    river["Transform"] = Json::object();
+    river["Water"] = Json{{"course", "Course"}, {"width", 4}, {"depth", 3}, {"flow", Json{{"x", 2}, {"y", 0}}}, {"wave_height", 0}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "River"}, {"components", river}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json mid = s.command("water.height", Json{{"x", 210}, {"z", 1}}).value();
+    INFO(mid.dump());
+    REQUIRE(mid["path"] == "/River");
+    REQUIRE(mid["inside"] == true);
+    REQUIRE(mid["level"].get<double>() == Catch::Approx(9).margin(0.01));          // halfway down its fall
+    REQUIRE(mid["river"]["along"].get<double>() == Catch::Approx(10).margin(0.05));
+    REQUIRE(mid["river"]["off"].get<double>() == Catch::Approx(1).margin(0.01));
+    REQUIRE(mid["velocity"]["x"].get<double>() == Catch::Approx(2).margin(0.01));  // the current, downstream
+    REQUIRE(s.command("water.height", Json{{"x", 210}, {"z", 2.5}}).value()["entity"].is_null());   // beyond its banks
+    // A crate dropped in rides the current downstream.
+    Json crate = Json::object();
+    crate["Transform"] = Json{{"position", Json{{"x", 203}, {"y", 10.5}, {"z", 0}}}};
+    crate["RigidBody"] = Json{{"kind", "dynamic"}, {"mass", 0.2}};
+    crate["Collider"] = Json{{"shape", "box"}, {"size", Json{{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", crate}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 240}}).has_value());
+    const Json at = s.command("world.get", Json{{"entity", "Crate"}, {"component", "Transform"}, {"field", "position"}}).value();
+    INFO(at.dump());
+    REQUIRE(at["x"].get<double>() > 206);     // carried along
+    REQUIRE(at["y"].get<double>() > 8.0);     // afloat, not sunk to the bottom
+}
+
 TEST_CASE("a wall between a noise and a Behavior halves how far it carries", "[runtime][behavior][noise][walls]") {
     auto o = hello_options(-1);
     o.paused = true;

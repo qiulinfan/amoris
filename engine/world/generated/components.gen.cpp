@@ -1234,6 +1234,7 @@ void to_json(Json& j, const Sky& v) {
     j["clouds"] = v.clouds;
     j["cloud_height"] = v.cloud_height;
     j["cloud_scale"] = v.cloud_scale;
+    j["cloud_depth"] = v.cloud_depth;
     j["time_of_day"] = v.time_of_day;
     j["day_length"] = v.day_length;
     j["sun_height"] = v.sun_height;
@@ -1255,6 +1256,7 @@ void from_json(const Json& j, Sky& v) {
     scalar_from_json(j, "clouds", v.clouds);
     scalar_from_json(j, "cloud_height", v.cloud_height);
     scalar_from_json(j, "cloud_scale", v.cloud_scale);
+    scalar_from_json(j, "cloud_depth", v.cloud_depth);
     scalar_from_json(j, "time_of_day", v.time_of_day);
     scalar_from_json(j, "day_length", v.day_length);
     scalar_from_json(j, "sun_height", v.sun_height);
@@ -1285,6 +1287,7 @@ void hash_component(StateHasherRef& h, const Sky& v) {
     h.f32(v.clouds);
     h.f32(v.cloud_height);
     h.f32(v.cloud_scale);
+    h.f32(v.cloud_depth);
     h.f32(v.time_of_day);
     h.f32(v.day_length);
     h.f32(v.sun_height);
@@ -1317,6 +1320,7 @@ std::size_t numeric_span(Sky& v, std::string_view path, float** out) {
     if (path == "clouds") { *out = &v.clouds; return 1; }
     if (path == "cloud_height") { *out = &v.cloud_height; return 1; }
     if (path == "cloud_scale") { *out = &v.cloud_scale; return 1; }
+    if (path == "cloud_depth") { *out = &v.cloud_depth; return 1; }
     if (path == "time_of_day") { *out = &v.time_of_day; return 1; }
     if (path == "day_length") { *out = &v.day_length; return 1; }
     if (path == "sun_height") { *out = &v.sun_height; return 1; }
@@ -3027,6 +3031,8 @@ void to_json(Json& j, const Water& v) {
     j["foam"] = v.foam;
     j["caustics"] = v.caustics;
     vec_to_json(j["flow"], v.flow);
+    j["course"] = v.course;
+    j["width"] = v.width;
     j["density"] = v.density;
     j["drag"] = v.drag;
     j["splash"] = v.splash;
@@ -3047,6 +3053,8 @@ void from_json(const Json& j, Water& v) {
     scalar_from_json(j, "foam", v.foam);
     scalar_from_json(j, "caustics", v.caustics);
     if (j.is_object() && j.contains("flow")) vec_from_json(j["flow"], v.flow);
+    scalar_from_json(j, "course", v.course);
+    scalar_from_json(j, "width", v.width);
     scalar_from_json(j, "density", v.density);
     scalar_from_json(j, "drag", v.drag);
     scalar_from_json(j, "splash", v.splash);
@@ -3072,6 +3080,8 @@ void hash_component(StateHasherRef& h, const Water& v) {
     h.f32(v.caustics);
     h.f32(v.flow.x);
     h.f32(v.flow.y);
+    h.str(v.course);
+    h.f32(v.width);
     h.f32(v.density);
     h.f32(v.drag);
     h.str(v.splash);
@@ -3101,6 +3111,7 @@ std::size_t numeric_span(Water& v, std::string_view path, float** out) {
     if (path == "flow") { *out = &v.flow.x; return 2; }
     if (path == "flow.x") { *out = &v.flow.x; return 1; }
     if (path == "flow.y") { *out = &v.flow.y; return 1; }
+    if (path == "width") { *out = &v.width; return 1; }
     if (path == "density") { *out = &v.density; return 1; }
     if (path == "drag") { *out = &v.drag; return 1; }
     return 0;
@@ -4853,7 +4864,7 @@ constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far.", {}},
 }};
 constexpr std::string_view kSky_modeNames[] = {"off", "procedural", "image", "atmosphere"};
-constexpr std::array<FieldInfo, 18> kSkyFields = {{
+constexpr std::array<FieldInfo, 19> kSkyFields = {{
     FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off.", kSky_modeNames},
     FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle).", {}},
     FieldInfo{"zenith", "color", "Procedural: the color straight up.", {}},
@@ -4866,8 +4877,9 @@ constexpr std::array<FieldInfo, 18> kSkyFields = {{
     FieldInfo{"specular", "f32", "How much surfaces reflect the sky (metals and glossy surfaces mirror it by their roughness).", {}},
     FieldInfo{"haze", "f32", "Mode 3: how much haze (dust, water) the air holds besides the air itself: 0 a clear mountain sky, 1 an ordinary day, 4 a hazy summer's; more whitens the sky and the glow around the sun.", {}},
     FieldInfo{"clouds", "f32", "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md).", {}},
-    FieldInfo{"cloud_height", "f32", "Mode 3: the clouds' height above the camera's ground, in units.", {}},
+    FieldInfo{"cloud_height", "f32", "Mode 3: where the clouds start: the world height of their undersides (with a cloud_depth), or of the flat layer above the camera (cloud_depth 0), in units.", {}},
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units.", {}},
+    FieldInfo{"cloud_depth", "f32", "Mode 3: how deep the layer of clouds is, in units: marched as a volume, lit through by the sun and the sky, the camera can fly into them (docs/design/rendering.md, Clouds); negative as deep as cloud_scale, 0 a flat layer (cheaper).", {}},
     FieldInfo{"time_of_day", "f32", "Hours, 0 to 24: the engine puts the first directional light (the sun) where the sun is at that hour, rising in the east (+x) at 6, highest to the south (+z) at 12, setting in the west at 18, under the horizon at night (docs/design/rendering.md, A day); negative leaves the light where it is.", {}},
     FieldInfo{"day_length", "f32", "Seconds of game time a whole day takes, time_of_day running on by itself (0: the hour stands).", {}},
     FieldInfo{"sun_height", "f32", "Degrees above the horizon the sun climbs at noon.", {}},
@@ -5206,7 +5218,7 @@ constexpr std::array<FieldInfo, 10> kWeatherFields = {{
     FieldInfo{"sound", "bool", "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game.", {}},
     FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
 }};
-constexpr std::array<FieldInfo, 17> kWaterFields = {{
+constexpr std::array<FieldInfo, 19> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity.", {}},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed.", {}},
     FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back).", {}},
@@ -5218,7 +5230,9 @@ constexpr std::array<FieldInfo, 17> kWaterFields = {{
     FieldInfo{"ripples", "f32", "The strength of the small ripples on the waves, 0 for none.", {}},
     FieldInfo{"foam", "f32", "How far out from the shore foam reaches, in units of depth; 0 for none.", {}},
     FieldInfo{"caustics", "f32", "How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none.", {}},
-    FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples.", {}},
+    FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course.", {}},
+    FieldInfo{"course", "string", "A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity.", {}},
+    FieldInfo{"width", "f32", "A river's width, in units across its course.", {}},
     FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default).", {}},
     FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more.", {}},
     FieldInfo{"splash", "string", "Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none.", {}},

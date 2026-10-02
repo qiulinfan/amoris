@@ -481,6 +481,7 @@ struct Sky {
     float clouds = 0.0f;
     float cloud_height = 1500.0f;
     float cloud_scale = 900.0f;
+    float cloud_depth = -1.0f;
     float time_of_day = -1.0f;
     float day_length = 0.0f;
     float sun_height = 60.0f;
@@ -989,6 +990,8 @@ struct Water {
     float foam = 0.5f;
     float caustics = 1.0f;
     Vec2 flow{0.0f, 0.0f};
+    std::string course = "";
+    float width = 4.0f;
     float density = 2.0f;
     float drag = 1.0f;
     std::string splash = "";

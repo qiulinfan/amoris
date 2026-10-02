@@ -301,14 +301,17 @@ west along the ground, at midnight up from below, and a day of 24 seconds moves 
 in a second; `renderer_tests` (`[atmosphere]`): with the sun six degrees down the light is cool and
 dim and the sky overhead a dark blue.
 
-`clouds` (0..1) lays a layer of clouds over it at `cloud_height` (1500 units above the camera) with
-features `cloud_scale` (900) across: five octaves of value noise drawn in the sky pass, thinning
-toward the horizon, lit by the sun (brightest looking toward it, reddened with it) and by the sky
-from above, darker where they are thick. They drift with the `Wind` (`docs/design/wind.md`) at six
-times its speed, as air up there moves faster, or at 12 units a second along +x without one, on the
-simulation clock. They shade what is under them: a surface's sunlight is cut by up to seven tenths
-where the way to the sun crosses a cloud, so their shadows drift over the ground with them. They are
-drawn in the sky pass only, so the environment's reflections and its light do not show them.
+`clouds` (0..1) covers that much of the sky with clouds from `cloud_height` (1500) up, with features
+`cloud_scale` (900) across and `cloud_depth` deep: by default (negative) as deep as they are wide,
+marched as a volume (Clouds, below); with `cloud_depth` 0 they are a flat layer that far above the
+camera, five octaves of value noise drawn in the sky pass, thinning toward the horizon, lit by the
+sun (brightest looking toward it, reddened with it) and by the sky from above, darker where they are
+thick. Either way they drift with the `Wind` (`docs/design/wind.md`) at six times its speed, as air
+up there moves faster, or at 12 units a second along +x without one, on the simulation clock. They
+shade what is under them: a surface's sunlight is cut by up to seven tenths (three quarters under a
+volume) where the way to the sun crosses a cloud, so their shadows drift over the ground with them.
+The environment's reflections and its light do not show them (water shows a volume's, Clouds);
+reflection probes and secondary views see the flat layer.
 
 The sky is an environment map on the GPU: a 512x256 half-float panorama whose mip levels are the
 same sky convolved with GGX lobes of roughness 0 to 1 (compute passes: the first level from the
@@ -355,9 +358,11 @@ puddles where a broad noise is high, more of them the wetter, dark and mirror-sm
 bumps under them; while it rains, drops ring them: two offset grids of cells half a unit across,
 each a drop at its own place and time whose ring widens and fades over six tenths of the cell's
 turn, bending the water's normal, gone by sixteen units off where a ring would be finer than the
-pixels. `cover` (0 to 1) lays snow on what faces up: where a two-octave noise is under the cover, so
-about that share of flat ground, in patches while there is little and everywhere at full, white and
-matte; walls stay bare. A walker whose footfalls are known (`Animator.footsteps` or
+pixels; and drops splash on whatever faces up and is wet: in each cell a fifth of a unit across, now
+and then a small pale splash for a tenth of a second, more of them the harder it rains, lit as the
+ground is. `cover` (0 to 1) lays snow on what faces up: where a two-octave noise is under the cover,
+so about that share of flat ground, in patches while there is little and everywhere at full, white
+and matte; walls stay bare. A walker whose footfalls are known (`Animator.footsteps` or
 `footstep_noise`, `docs/design/animation.md`) leaves prints in it: each footfall where snow lies
 presses a sole's oval a tenth of a unit to that foot's side along the heading, greyer the deeper;
 prints fill in over a minute and a half, faster while it snows, and the newest 64 are drawn
@@ -401,6 +406,41 @@ lying whitens the floor and a block's top but not its side, the drops drawn are 
 the snow and the density say, the floor under a roof stays bare and dry, and the sun's light falls
 with the overcast. `tests/evidence/rendering/weather.png` is the village in a downpour and under
 snow lying a quarter, half and wholly.
+
+## Clouds
+
+With a depth (the default) the atmosphere's clouds are a volume, marched in a pass of their own
+before the scene pass (`fs_clouds`) at a quarter of the view's width and height into a target the
+sky pass reads: for each pixel, the light the clouds along its ray send to the camera and how much
+of the sky behind still shows. The layer runs from `cloud_height` to `cloud_height + cloud_depth` in
+world height, so a camera can fly up into it, and the world is round there (a planet's radius, the
+curvature as a parabola): the layer sinks toward the horizon, and the clouds furthest off (past a
+third of 40 times `cloud_scale`) thin into the haze.
+
+Where clouds may be, and how tall, comes from the cover over x, z: three octaves of the flat layer's
+noise (each turned against the last), thresholded by `clouds`, which the shadows on the ground read
+too. Within it a 64x64x64 block of noise that tiles, made once on the GPU when clouds are first
+marched (Perlin noise worn into billows by Worley noise at three sizes, finer Worley noise beside
+it), carves the shapes: flat bases, rounded tops that rise higher where the cover is thicker and
+with the billows, wisps below and billows above from the finer noise. A sky nearly all covered, or
+rain's overcast, closes them into one deck. Each step along the ray also marches five growing steps
+toward the sun, and the light that gets through is scattered in three orders, each fainter, reaching
+further and less forward (the light that bounces about inside a cloud), with a forward and a back
+lobe; the sky's light from above lights them too, less on their undersides, and a lightning flash
+lights them from within. Rain's overcast makes them thicker and darker. The steps (48 a frame) grow
+with the distance, fine near and inside a cloud, coarse far off; each frame starts them at another
+offset and blends a fifth of itself with last frame's, reprojected (a frame without one, as the
+first or a capture after an undrawn step, marches 128).
+
+Water mirrors them: its sky reflection takes their cover where the mirrored ray crosses a third of
+the way up the layer, lit as their sides average out. Their shadows break volumetric fog's sunlight
+(Volumetric light) as they break the ground's. On this Mac the pass took 0.3 to 1.3 ms at 1280x720
+(`render.stats` `gpu`, with other GPU work running). `render.stats` says `clouds` when it ran.
+`renderer_tests` (`[clouds]`): clouds whiten the blue they cover and break the sky up; rain's
+overcast leaves no blue between them and darkens them; a camera inside a full layer sees white all
+round, evenly; with no depth the flat layer is drawn and nothing is marched.
+`tests/evidence/rendering/clouds.png` (`tools/scripts/dev/clouds_evidence.py`): the hills on a fair
+morning, at sunset, in rain and under the moon.
 
 ## Ambient occlusion and fog
 

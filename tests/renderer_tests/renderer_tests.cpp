@@ -2596,6 +2596,81 @@ TEST_CASE("the atmosphere: a blue day, a warm low sun that reddens its own light
     std::filesystem::remove(ref);
 }
 
+TEST_CASE("volumetric clouds: marched where the sky shows, whiter than the blue they cover, a darker deck under rain, grey all round from inside, and the flat layer without depth", "[renderer][sky][clouds]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 3}, {"clouds", 0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"yaw", 30}, {"pitch", -55}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"pitch", 45}}}}}, {"Camera", Json{{"fov_degrees", 70}}}}}}).has_value());
+    // The frame's mean colour over a grid of its pixels, and the spread of their brightness.
+    struct Look {
+        double r = 0, g = 0, b = 0, spread = 0;
+    };
+    auto look = [&](int frames) {
+        for (int i = 0; i < frames; ++i) REQUIRE(s.frame().has_value());
+        Json points = Json::array();
+        for (int y = 5; y < 120; y += 10)
+            for (int x = 5; x < 160; x += 10) points.push_back(Json{{"x", x}, {"y", y}});
+        const Json px = s.command("capture", Json{{"pixels", points}}).value()["pixels"];
+        Look l;
+        double squares = 0;
+        for (const Json& p : px) {
+            l.r += p[0].get<double>();
+            l.g += p[1].get<double>();
+            l.b += p[2].get<double>();
+            const double v = (p[0].get<double>() + p[1].get<double>() + p[2].get<double>()) / 3;
+            squares += v * v;
+        }
+        const auto n = static_cast<double>(px.size());
+        l.r /= n;
+        l.g /= n;
+        l.b /= n;
+        const double mean = (l.r + l.g + l.b) / 3;
+        l.spread = std::sqrt(std::max(0.0, squares / n - mean * mean));
+        return l;
+    };
+    auto marched = [&]() { return s.command("render.stats", Json::object()).value()["clouds"].get<bool>(); };
+    const Look clear = look(2);
+    REQUIRE_FALSE(marched());
+    // Clouds by default have depth: marched, whitening the blue, broken (the frame's brightness varies).
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"clouds", 0.6}}}}).has_value());
+    const Look cloudy = look(8);
+    INFO("clear " << clear.r << "," << clear.g << "," << clear.b << " spread " << clear.spread << "; cloudy " << cloudy.r << "," << cloudy.g << "," << cloudy.b << " spread " << cloudy.spread);
+    REQUIRE(marched());
+    REQUIRE(cloudy.r - cloudy.b > clear.r - clear.b + 10);
+    REQUIRE(cloudy.spread > clear.spread + 5);
+    // Rain's overcast closes them into a deck: no blue left between them, and darker.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Rain"}, {"components", Json{{"Weather", Json{{"overcast", 0.9}}}}}}).has_value());
+    const Look rain = look(8);
+    INFO("rain " << rain.r << "," << rain.g << "," << rain.b << " spread " << rain.spread);
+    REQUIRE(rain.b - rain.r < cloudy.b - cloudy.r);
+    REQUIRE(rain.b - rain.r < 12);
+    REQUIRE(rain.r + rain.g + rain.b < cloudy.r + cloudy.g + cloudy.b);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Rain"}}).has_value());
+    // From inside a full layer, looking level: white every way (a little blue from the sky's light), even.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"clouds", 1}, {"cloud_height", 100}, {"cloud_depth", 400}, {"cloud_scale", 400}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 200}, {"z", 0}}}, {"rotation", Json{{"pitch", 0}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"fov_degrees", 40}}}}).has_value());
+    const Look inside = look(8);
+    INFO("inside " << inside.r << "," << inside.g << "," << inside.b << " spread " << inside.spread);
+    REQUIRE(inside.b - inside.r < (clear.b - clear.r) / 3);
+    REQUIRE(inside.r + inside.g + inside.b > clear.r + clear.g + clear.b);
+    REQUIRE(inside.spread < cloudy.spread);
+    // No depth: the flat layer, drawn in the sky pass and not marched.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"clouds", 0.6}, {"cloud_height", 1500}, {"cloud_depth", 0}, {"cloud_scale", 900}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}, {"rotation", Json{{"pitch", 45}}}}}}).has_value());
+    const Look flat = look(2);
+    INFO("flat " << flat.r << "," << flat.g << "," << flat.b);
+    REQUIRE_FALSE(marched());
+    REQUIRE(flat.r - flat.b > clear.r - clear.b + 5);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("caustics: the sunlight on a bed under water gathers into lines that move with time, and none without", "[renderer][water][caustics]") {
     const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-caustics.png";
     std::filesystem::remove(ref);
