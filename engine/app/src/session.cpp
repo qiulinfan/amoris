@@ -5920,6 +5920,36 @@ bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float bas
 // AudioSource components start their voices; voices report back; finished voices clear `playing`.
 void Session::tick_audio(double dt) {
     world::World& w = *world_;
+    // The weather's sound: its rain and wind beds looping as loud as it rains and snows, started
+    // when it begins and stopped when it ends (Weather.sound false leaves them to the game).
+    {
+        world::EntityId wid = 0;
+        world::Weather wx;
+        w.ecs().each([&](flecs::entity e, const world::Weather& x) {
+            if (x.enabled && (!wid || e.id() < wid)) { wid = e.id(); wx = x; }
+        });
+        const bool on = wid && wx.sound;
+        const float want[2] = {on ? 0.6f * std::clamp(wx.rain, 0.0f, 1.0f) : 0.0f, on ? 0.35f * std::clamp(wx.snow, 0.0f, 1.0f) : 0.0f};
+        const char* clips[2] = {"sfx:rain", "sfx:wind"};
+        for (int k = 0; k < 2; ++k) {
+            if (want[k] < 0.01f) {
+                if (weather_voice_[k]) audio_->stop(weather_voice_[k]);
+                weather_voice_[k] = 0;
+                weather_volume_[k] = 0;
+                continue;
+            }
+            if (!weather_voice_[k]) {
+                audio::PlayOptions o;
+                o.volume = want[k];
+                o.loop = true;
+                if (auto id = audio_->play(clips[k], o)) weather_voice_[k] = *id;
+                weather_volume_[k] = want[k];
+            } else if (std::fabs(want[k] - weather_volume_[k]) > 0.01f) {
+                if (!audio_->set(weather_voice_[k], Json{{"volume", want[k]}})) weather_voice_[k] = 0;   // gone (stopped by the game): started again next tick
+                weather_volume_[k] = want[k];
+            }
+        }
+    }
     // The listener's velocity this tick, for the Doppler effect.
     {
         const Vec3 ear = listener_position();

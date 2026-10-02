@@ -235,6 +235,8 @@ class Session {
     std::map<std::uint32_t, Vec3> voice_prev_pos_;
     Vec3 listener_prev_{0, 0, 0}, listener_vel_{0, 0, 0};
     bool listener_prev_set_ = false;
+    std::uint32_t weather_voice_[2] = {0, 0};   // the Weather's rain and wind beds while they play (docs/design/rendering.md, Weather)
+    float weather_volume_[2] = {0, 0};
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
     struct NamedFont { std::string name, path; std::unique_ptr<ui::Font> font; };

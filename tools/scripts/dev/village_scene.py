@@ -42,7 +42,9 @@ for i, (x, z, deg, mesh) in enumerate(houses):
     # Each house faces -z: turned to face the well.
     face = math.atan2(-x, -z)
     deg = math.degrees(face) + 180
-    level.append(prop(f"House{i}", mesh, x, z, deg, ("box", (2.4, 1.6, 1.8), (0, 1.6, 0))))
+    house = prop(f"House{i}", mesh + ("&" if "?" in mesh else "?") + "lit=1.5", x, z, deg, ("box", (2.4, 1.6, 1.8), (0, 1.6, 0)))
+    house["components"]["MeshRenderer"]["after_dark"] = True   # the windows light up at dusk
+    level.append(house)
 level.append(prop("Well", "well", 0, 0, 0, ("capsule", (0.85, 0.2, 0.85), (0, 0.6, 0))))
 # The market stall to the east of the well.
 stall = [("Stall", "table", 5.5, -2.5, 0, ("box", (0.6, 0.4, 0.4), (0, 0.4, 0))), ("StallCrate0", "crate", 6.6, -3.2, 15, ("box", (0.5, 0.5, 0.5), (0, 0.5, 0))),

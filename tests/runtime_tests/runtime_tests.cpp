@@ -477,6 +477,17 @@ TEST_CASE("a sky's time of day stands the sun where it is at that hour, and its 
     const int noon = entries(12), night = entries(23);
     INFO("cluster entries at noon " << noon << ", at night " << night);
     REQUIRE(night > noon);
+    // A mesh whose glow is after dark: a black block glowing red only at night.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Window"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", "#000000"}, {"emissive", "#ff0000"}, {"after_dark", true}}}}}}).has_value());
+    auto glow = [&](double hour) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"time_of_day", hour}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+        const Json at = s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}).value();
+        return s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"][0].get<int>();
+    };
+    const int by_day = glow(12), by_night = glow(23);
+    INFO("the window's red by day " << by_day << ", by night " << by_night);
+    REQUIRE(by_night > by_day + 100);
 }
 
 TEST_CASE("the weather wets what it rains on and lays snow, and both go once it stops", "[runtime][weather]") {
@@ -502,6 +513,25 @@ TEST_CASE("the weather wets what it rains on and lays snow, and both go once it 
     set(Json{{"rain", 1.0}});
     REQUIRE(s.command("step", Json{{"ticks", 360}}).has_value());
     REQUIRE(field("cover") < 0.01);
+    // Its sound: the rain's bed looping as loud as it rains, gone when it stops or sound is off.
+    auto beds = [&] {
+        std::map<std::string, double> out;
+        const Json list = s.command("audio.list", Json::object()).value();
+        for (const Json& v : list.is_array() ? list : list.value("voices", Json::array())) out[v.value("clip", "")] = v.value("volume", 0.0);
+        return out;
+    };
+    set(Json{{"rain", 0.5}});
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    INFO(s.command("audio.list", Json::object()).value().dump());
+    REQUIRE(beds().count("sfx:rain") == 1);
+    REQUIRE(beds()["sfx:rain"] == Catch::Approx(0.3).margin(0.02));
+    set(Json{{"rain", 0.0}, {"snow", 1.0}});
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(beds().count("sfx:rain") == 0);
+    REQUIRE(beds().count("sfx:wind") == 1);
+    set(Json{{"sound", false}});
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(beds().count("sfx:wind") == 0);
 }
 
 TEST_CASE("the toon look outlines each entity where the id under the pixels changes", "[runtime][render][toon]") {

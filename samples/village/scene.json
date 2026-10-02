@@ -138,7 +138,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house"
+       "mesh": "house?lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"
@@ -175,7 +176,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?width=5&roof=#4a5a6a&walls=#e8dcc0"
+       "mesh": "house?width=5&roof=#4a5a6a&walls=#e8dcc0&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"
@@ -212,7 +214,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?roof=#7a5a2a"
+       "mesh": "house?roof=#7a5a2a&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"
@@ -249,7 +252,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?width=3.5&depth=3&walls=#d0c0a0"
+       "mesh": "house?width=3.5&depth=3&walls=#d0c0a0&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"
@@ -286,7 +290,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?width=4.5&roof=#5a7a4a"
+       "mesh": "house?width=4.5&roof=#5a7a4a&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"
@@ -323,7 +328,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?width=3&height=2.2&roof=#8a3a3a"
+       "mesh": "house?width=3&height=2.2&roof=#8a3a3a&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"
@@ -360,7 +366,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?roof=#6a4a7a&walls=#e0d0b0"
+       "mesh": "house?roof=#6a4a7a&walls=#e0d0b0&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"

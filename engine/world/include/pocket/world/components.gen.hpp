@@ -519,6 +519,7 @@ struct MeshRenderer {
     bool unlit = false;
     bool visible = true;
     Color4 highlight{0.0f, 0.0f, 0.0f, 0.0f};
+    bool after_dark = false;
     bool cast_shadows = true;
     std::vector<MeshLod> lods = {};
     float cull_screen = 0.0f;
@@ -961,6 +962,7 @@ struct Weather {
     float cover = 0.0f;
     float overcast = -1.0f;
     float density = 1.0f;
+    bool sound = true;
     bool enabled = true;
     constexpr bool operator==(const Weather&) const = default;
 };

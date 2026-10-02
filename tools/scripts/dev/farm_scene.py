@@ -59,13 +59,14 @@ for z in [-6.6, -4.6, -2.6, -0.6, 0.6]:
     for x in [-6.0, 6.0]:
         fences.append(prop(f"Fence{k}", f"fence?seed={k % 6}", x, z, 90, ("box", (1.0, 0.5, 0.08), (0, 0.5, 0)))); k += 1
 buildings = [
-    prop("Farmhouse", "house?width=5&roof=#8a3a2a&walls=#e8dcc0", -12, -6, 90, ("box", (2.6, 1.6, 2.0), (0, 1.6, 0))),
+    prop("Farmhouse", "house?width=5&roof=#8a3a2a&walls=#e8dcc0&lit=1.5", -12, -6, 90, ("box", (2.6, 1.6, 2.0), (0, 1.6, 0))),
     prop("Barn", "house?width=6&depth=5&height=3.2&roof=#5a3a2a&walls=#9a3a2a", 12, -7, -90, ("box", (3.1, 1.8, 2.6), (0, 1.8, 0))),
     prop("Well", "well", 8, 4, 0, ("capsule", (0.85, 0.2, 0.85), (0, 0.6, 0))),
     prop("Bin", "crate?size=1.1&seed=3", -8, 4, 20, ("box", (0.55, 0.55, 0.55), (0, 0.55, 0))),
     prop("BinSign", "sign?board=#e0c890", -8.9, 4.9, 200),
     prop("Bench", "bench", -12, -1, 90, ("box", (0.8, 0.25, 0.2), (0, 0.25, 0))),
 ]
+buildings[0]["components"]["MeshRenderer"]["after_dark"] = True   # the farmhouse's windows light up at dusk
 lamps = []
 for i, (x, z) in enumerate([(-7, 2.4), (7, 2.4), (-9.5, -6), (9, -4)]):
     t = prop(f"Lamp{i}", "torch", x, z)

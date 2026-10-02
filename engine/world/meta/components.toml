@@ -250,6 +250,7 @@ fields = [
     { name = "unlit", type = "bool", default = false, doc = "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too." },
     { name = "visible", type = "bool", default = true, doc = "Whether the mesh is drawn." },
     { name = "highlight", type = "color", default = [0.0, 0.0, 0.0, 0.0], doc = "An outline round the entity in this colour, its alpha the strength (0 none): what the player can pick up, talk to or open, the target in sight (docs/design/rendering.md, Highlights; up to 32 at once)." },
+    { name = "after_dark", type = "bool", default = false, doc = "Its glow (its emissive and its materials') shows only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below, as a Light's after_dark does: lit windows, a street lamp's head (docs/design/rendering.md, A day)." },
     { name = "cast_shadows", type = "bool", default = true, doc = "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass." },
     { name = "lods", type = "list:MeshLod", doc = "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own." },
     { name = "cull_screen", type = "f32", default = 0.0, doc = "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small." },
@@ -739,6 +740,7 @@ fields = [
     { name = "cover", type = "f32", default = 0.0, doc = "How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white." },
     { name = "overcast", type = "f32", default = -1.0, doc = "How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more)." },
     { name = "density", type = "f32", default = 1.0, doc = "Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged)." },
+    { name = "sound", type = "bool", default = true, doc = "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game." },
     { name = "enabled", type = "bool", default = true, doc = "False: no weather (the next enabled Weather by id, if any)." },
 ]
 

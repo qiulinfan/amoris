@@ -284,7 +284,11 @@ Result<std::string> prop_glb(const std::string& path) {
     } else if (name == "house") {
         // Four walls with a door and two windows on the front (-z), a pitched roof along x.
         const float w = std::max(number("width", 4.0f), 1.0f), d = std::max(number("depth", 3.0f), 1.0f), h = std::max(number("height", 2.6f), 1.0f);
-        mats = {{colour("walls", "#d8c8a8"), 0.9f}, {colour("roof", "#9a3b2c"), 0.8f}, {colour("door", "#5a3a22"), 0.8f}, {colour("windows", "#2a3440"), 0.2f}};
+        // lit: the windows glow warm from within, this bright (0, the default, dark glass); with
+        // MeshRenderer.after_dark the glow comes on at dusk.
+        PropMaterial windows{colour("windows", "#2a3440"), 0.2f};
+        windows.emissive = Vec3{1.0f, 0.62f, 0.3f} * std::max(number("lit", 0.0f), 0.0f);
+        mats = {{colour("walls", "#d8c8a8"), 0.9f}, {colour("roof", "#9a3b2c"), 0.8f}, {colour("door", "#5a3a22"), 0.8f}, windows};
         parts.resize(4);
         box(parts[0], {0, h / 2, 0}, {w / 2, h / 2, d / 2});
         // The roof: two slopes and two gable ends, a little over the walls.
@@ -400,7 +404,7 @@ Result<std::string> prop_glb(const std::string& path) {
         static const std::map<std::string, std::vector<std::string>> takes = {
             {"tree", {"height", "trunk", "leaves", "seed"}}, {"pine", {"height", "trunk", "leaves", "seed"}}, {"rock", {"size", "color", "seed"}},
             {"bush", {"size", "color", "seed"}}, {"barrel", {"color", "hoops", "seed"}}, {"lamp", {"height", "color", "light", "glow", "seed"}},
-            {"fence", {"length", "color", "seed"}}, {"house", {"width", "depth", "height", "walls", "roof", "door", "windows", "seed"}}, {"crate", {"size", "color", "seed"}},
+            {"fence", {"length", "color", "seed"}}, {"house", {"width", "depth", "height", "walls", "roof", "door", "windows", "lit", "seed"}}, {"crate", {"size", "color", "seed"}},
             {"chest", {"color", "bands", "seed"}}, {"torch", {"color", "light", "glow", "seed"}}, {"bench", {"color", "seed"}}, {"table", {"color", "seed"}},
             {"chair", {"color", "seed"}}, {"well", {"stone", "wood", "roof", "seed"}}, {"sign", {"color", "board", "seed"}}, {"tower", {"height", "stone", "wood", "roof", "seed"}},
             {"crop", {"stage", "leaves", "fruit", "seed"}}};

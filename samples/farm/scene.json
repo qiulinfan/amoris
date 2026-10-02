@@ -3681,7 +3681,8 @@
        }
       },
       "MeshRenderer": {
-       "mesh": "house?width=5&roof=#8a3a2a&walls=#e8dcc0"
+       "mesh": "house?width=5&roof=#8a3a2a&walls=#e8dcc0&lit=1.5",
+       "after_dark": true
       },
       "RigidBody": {
        "kind": "static"

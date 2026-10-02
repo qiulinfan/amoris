@@ -254,6 +254,7 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `unlit` | bool | false | Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 | `highlight` | color | [0.0, 0.0, 0.0, 0.0] | An outline round the entity in this colour, its alpha the strength (0 none): what the player can pick up, talk to or open, the target in sight (docs/design/rendering.md, Highlights; up to 32 at once). |
+| `after_dark` | bool | false | Its glow (its emissive and its materials') shows only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below, as a Light's after_dark does: lit windows, a street lamp's head (docs/design/rendering.md, A day). |
 | `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |
 | `lods` | list:MeshLod | [] | Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own. |
 | `cull_screen` | f32 | 0.0 | Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small. |
@@ -654,6 +655,7 @@ Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the 
 | `cover` | f32 | 0.0 | How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white. |
 | `overcast` | f32 | -1.0 | How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more). |
 | `density` | f32 | 1.0 | Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged). |
+| `sound` | bool | true | Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game. |
 | `enabled` | bool | true | False: no weather (the next enabled Weather by id, if any). |
 
 ## Water

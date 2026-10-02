@@ -1350,6 +1350,7 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["unlit"] = v.unlit;
     j["visible"] = v.visible;
     vec_to_json(j["highlight"], v.highlight);
+    j["after_dark"] = v.after_dark;
     j["cast_shadows"] = v.cast_shadows;
     j["lods"] = Json::array();
     for (const auto& x : v.lods) { Json e; to_json(e, x); j["lods"].push_back(std::move(e)); }
@@ -1382,6 +1383,7 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "unlit", v.unlit);
     scalar_from_json(j, "visible", v.visible);
     if (j.is_object() && j.contains("highlight")) vec_from_json(j["highlight"], v.highlight);
+    scalar_from_json(j, "after_dark", v.after_dark);
     scalar_from_json(j, "cast_shadows", v.cast_shadows);
     if (j.is_object() && j.contains("lods") && j["lods"].is_array()) {
         v.lods.clear();
@@ -1431,6 +1433,7 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.highlight.g);
     h.f32(v.highlight.b);
     h.f32(v.highlight.a);
+    h.u8(v.after_dark ? 1 : 0);
     h.u8(v.cast_shadows ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.lods.size()));
     for (const auto& x : v.lods) hash_record(h, x);
@@ -2958,6 +2961,7 @@ void to_json(Json& j, const Weather& v) {
     j["cover"] = v.cover;
     j["overcast"] = v.overcast;
     j["density"] = v.density;
+    j["sound"] = v.sound;
     j["enabled"] = v.enabled;
 }
 
@@ -2968,6 +2972,7 @@ void from_json(const Json& j, Weather& v) {
     scalar_from_json(j, "cover", v.cover);
     scalar_from_json(j, "overcast", v.overcast);
     scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "sound", v.sound);
     scalar_from_json(j, "enabled", v.enabled);
 }
 
@@ -2978,6 +2983,7 @@ void hash_component(StateHasherRef& h, const Weather& v) {
     h.f32(v.cover);
     h.f32(v.overcast);
     h.f32(v.density);
+    h.u8(v.sound ? 1 : 0);
     h.u8(v.enabled ? 1 : 0);
 }
 
@@ -4466,18 +4472,20 @@ std::size_t read_numbers(const Weather& v, double* out) {
     out[3] = static_cast<double>(v.cover);
     out[4] = static_cast<double>(v.overcast);
     out[5] = static_cast<double>(v.density);
-    out[6] = static_cast<double>(v.enabled);
-    return 7;
+    out[6] = static_cast<double>(v.sound);
+    out[7] = static_cast<double>(v.enabled);
+    return 8;
 }
 bool write_numbers(Weather& v, const double* in, std::size_t n) {
-    if (n != 7) return false;
+    if (n != 8) return false;
     v.rain = static_cast<float>(in[0]);
     v.snow = static_cast<float>(in[1]);
     v.wet = static_cast<float>(in[2]);
     v.cover = static_cast<float>(in[3]);
     v.overcast = static_cast<float>(in[4]);
     v.density = static_cast<float>(in[5]);
-    v.enabled = in[6] != 0;
+    v.sound = in[6] != 0;
+    v.enabled = in[7] != 0;
     return true;
 }
 
@@ -4843,7 +4851,7 @@ constexpr std::array<FieldInfo, 18> kSkyFields = {{
     FieldInfo{"sun_height", "f32", "Degrees above the horizon the sun climbs at noon.", {}},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it.", {}},
 }};
-constexpr std::array<FieldInfo, 28> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 29> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials).", {}},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole.", {}},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent.", {}},
@@ -4869,6 +4877,7 @@ constexpr std::array<FieldInfo, 28> kMeshRendererFields = {{
     FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too.", {}},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn.", {}},
     FieldInfo{"highlight", "color", "An outline round the entity in this colour, its alpha the strength (0 none): what the player can pick up, talk to or open, the target in sight (docs/design/rendering.md, Highlights; up to 32 at once).", {}},
+    FieldInfo{"after_dark", "bool", "Its glow (its emissive and its materials') shows only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below, as a Light's after_dark does: lit windows, a street lamp's head (docs/design/rendering.md, A day).", {}},
     FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass.", {}},
     FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own.", {}},
     FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small.", {}},
@@ -5161,13 +5170,14 @@ constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind.", {}},
     FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any).", {}},
 }};
-constexpr std::array<FieldInfo, 7> kWeatherFields = {{
+constexpr std::array<FieldInfo, 8> kWeatherFields = {{
     FieldInfo{"rain", "f32", "How hard it rains, 0 to 1 (1: a downpour of some nine thousand drops about the camera).", {}},
     FieldInfo{"snow", "f32", "How hard it snows, 0 to 1.", {}},
     FieldInfo{"wet", "f32", "How wet things are now, 0 to 1: it rises toward `rain` (fully wet after 15 seconds of a downpour) and dries over 90 seconds once the rain eases; set it for a world that starts wet.", {}},
     FieldInfo{"cover", "f32", "How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white.", {}},
     FieldInfo{"overcast", "f32", "How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more).", {}},
     FieldInfo{"density", "f32", "Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged).", {}},
+    FieldInfo{"sound", "bool", "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game.", {}},
     FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
 }};
 constexpr std::array<FieldInfo, 17> kWaterFields = {{

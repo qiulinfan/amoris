@@ -785,6 +785,27 @@ fn open_sky(p: vec3f) -> f32 {
     if (abs(ndc.x) > 0.99 || abs(ndc.y) > 0.99 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
     return textureSampleCompareLevel(shadow_map, shadow_samp, vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), 4, ndc.z - frame.shelter.y);
 }
+// Rings spreading where drops land on standing water: two offset grids of cells half a unit across,
+// each cell one drop at its own place and time, its ring widening and fading over six tenths of the
+// cell's turn; the slope of the rings, to bend the puddle's normal by.
+fn ripples(p: vec2f, t: f32) -> vec2f {
+    var g = vec2f(0.0);
+    for (var layer = 0; layer < 2; layer = layer + 1) {
+        let q = p * 2.0 + vec2f(f32(layer) * 0.5, f32(layer) * 0.37);
+        let cell = floor(q);
+        let h = fract(sin(vec2f(dot(cell, vec2f(127.1, 311.7)), dot(cell, vec2f(269.5, 183.3))) + f32(layer) * 3.1) * 43758.5453);
+        let cycle = fract(t * 1.3 + h.x * 7.0 + h.y * 3.0);
+        if (cycle > 0.6) { continue; }   // a ring for six tenths of the cell's turn, then still water
+        let phase = cycle / 0.6;
+        let v = q - (cell + 0.25 + 0.5 * h);
+        let d = length(v);
+        let x = (d - phase * 0.45) * 28.0;
+        if (abs(x) < 3.14159) {
+            g = g + (v / max(d, 1e-4)) * sin(x) * (0.5 + 0.5 * cos(x)) * (1.0 - phase);
+        }
+    }
+    return g;
+}
 fn weathered(p: vec3f, surface: Painted) -> Painted {
     var out = surface;
     // Looked up a little out along the surface, so a wall in the open takes the rain its side does.
@@ -801,6 +822,14 @@ fn weathered(p: vec3f, surface: Painted) -> Painted {
         out.albedo = out.albedo * mix(1.0, 0.55, puddle);
         out.roughness = mix(out.roughness, 0.03, puddle);
         out.metallic = mix(out.metallic, 0.0, puddle);
+        out.normal = normalize(mix(out.normal, vec3f(0.0, 1.0, 0.0), puddle));   // standing water is flat over the bumps under it
+        if (puddle > 0.0 && frame.weather.z > 0.0) {
+            // While it rains, the drops' rings on the puddles, more of them the harder it rains; gone by
+            // sixteen units off, where a ring would be finer than the pixels and only glitter.
+            let near = 1.0 - smoothstep(8.0, 16.0, distance(p, frame.camera_pos.xyz));
+            let g = ripples(p.xz, frame.clock.x) * min(frame.weather.z / 4500.0, 1.0) * near;
+            out.normal = normalize(out.normal + vec3f(g.x, 0.0, g.y) * 0.3 * puddle);
+        }
     }
     if (cover > 0.0) {
         // Lying where the patches' noise is under the cover (so about that much of flat ground), all
@@ -3539,6 +3568,7 @@ struct Renderer::Impl {
     WGPURenderPipeline particle_add_pipeline = nullptr;
     WGPURenderPipeline weather_pipeline = nullptr;   // rain and snow about the camera (docs/design/rendering.md, Weather)
     float env_overcast = 0;                          // the Weather's overcast, greying the sky's panorama
+    float after_dark_lit = 1;                        // 0 by day .. 1 once the sun is down: Light and MeshRenderer after_dark
     std::uint32_t weather_drops = 0;                 // how many this frame
     WGPUBindGroupLayout particle_draw_bgl = nullptr;
     WGPUPipelineLayout particle_layout = nullptr;
@@ -10111,10 +10141,15 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             im.light_staging.push_back(g);
         }
     });
-    if (!after_dark.empty() && have_sun) {
-        // Lit as the sun goes down: from four degrees above the horizon to two below.
+    // How far toward lit what is lit after dark is: the sun from four degrees above the horizon to
+    // two below (lights here, meshes' glow as their draws are made); without a sun, lit.
+    im.after_dark_lit = 1;
+    if (have_sun) {
         const float k = std::clamp((0.07f - im.sun_toward.y) / 0.105f, 0.0f, 1.0f);
-        const float lit = k * k * (3 - 2 * k);
+        im.after_dark_lit = k * k * (3 - 2 * k);
+    }
+    if (!after_dark.empty() && have_sun) {
+        const float lit = im.after_dark_lit;
         if (lit <= 0) {
             // By day they are not there at all: no clustering, no shadow faces.
             for (auto it = after_dark.rbegin(); it != after_dark.rend(); ++it) im.light_staging.erase(im.light_staging.begin() + static_cast<std::ptrdiff_t>(*it));
@@ -10479,6 +10514,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             ou.emissive[0] = decode(mr.emissive.r) + (mat ? mat->emissive.x : 0.0f);
             ou.emissive[1] = decode(mr.emissive.g) + (mat ? mat->emissive.y : 0.0f);
             ou.emissive[2] = decode(mr.emissive.b) + (mat ? mat->emissive.z : 0.0f);
+            if (mr.after_dark) for (int k = 0; k < 3; ++k) ou.emissive[k] *= im.after_dark_lit;   // glowing once the sun is down
             ou.emissive[3] = mr.cutoff > 0 ? mr.cutoff : (mat ? mat->alpha_cutoff : 0.0f);
             WGPUBindGroup group = nullptr;
             std::string material_key = tex + "|" + normal_map + "|" + mr_map;
