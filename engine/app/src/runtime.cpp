@@ -9,8 +9,13 @@
 #include <cstring>
 #endif
 
+#include <csignal>
 #include <cstdio>
 #include <print>
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#include <unistd.h>
+#endif
 
 namespace pocket::app {
 
@@ -49,6 +54,7 @@ std::string usage() {
   --net-join HOST:PORT  join a lockstep game (the host's seed and input delay are used)
   --net-delay N         ticks between an input and the tick it acts on (default 3)
   --net-dedicated       with --net-host: run and relay the game without playing it (a server both players reach)
+  --exit-with-parent    end when the process that started this one is gone (what a tool starts and may forget)
 )";
 }
 
@@ -109,6 +115,7 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--net-join") { POCKET_TRY(v, need(i, "--net-join")); o.net_join = v; ++i; }
         else if (a == "--net-delay") { POCKET_TRY(v, need(i, "--net-delay")); o.net_delay = std::stoi(v); ++i; }
         else if (a == "--net-dedicated") o.net_dedicated = true;
+        else if (a == "--exit-with-parent") o.exit_with_parent = true;
         else if (a == "--help" || a == "-h") return fail("help", "{}", usage());
         else return fail("bad_args", "unknown argument '{}'", a);
     }
@@ -204,9 +211,30 @@ Result<Json> run(const Options& options) {
     return session->report();   // not reached: the loop above never returns
 }
 #else
+namespace {
+// A stop asked of the process (Ctrl-C, kill, a closed terminal): the loop ends and the run reports
+// as at its end. Installed after the session starts, over what the platform layer put there, so a
+// paused headless server, which polls no window events, still hears it.
+volatile std::sig_atomic_t g_stop = 0;
+extern "C" void on_stop_signal(int) { g_stop = 1; }
+}  // namespace
+
 Result<Json> run(const Options& options) {
     Session session(options);
     POCKET_TRY_VOID(session.start());
+    std::signal(SIGINT, on_stop_signal);
+    std::signal(SIGTERM, on_stop_signal);
+#if !defined(_WIN32)
+    std::signal(SIGHUP, on_stop_signal);
+    const pid_t parent = getppid();
+#endif
+    auto orphaned = [&] {
+#if !defined(_WIN32)
+        return options.exit_with_parent && getppid() != parent;
+#else
+        return false;
+#endif
+    };
     std::unique_ptr<ControlServer> server;
     if (options.serve >= 0) {
         server = std::make_unique<ControlServer>(session, options.serve);
@@ -219,6 +247,10 @@ Result<Json> run(const Options& options) {
     session.set_paused(options.paused);
     bool stopped_by_error = false;
     while (!session.finished() && (session.ok() || server)) {
+        if (g_stop || orphaned()) {
+            log::warn("runtime", "{}", g_stop ? "asked to stop: ending the run" : "the process that started this runtime is gone: ending the run");
+            break;
+        }
         if (server) server->pump(session.paused() || !session.ok() ? 50 : 0);
         if (!session.ok()) {
             // Serving, a script error stops the simulation but not the runtime: whoever drives it (an

@@ -380,6 +380,21 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   `script.eval` (`docs/design/dialogue.md`, Trying it); and `ui.click {id: "start"}`, a name where
   an id goes, was read as no element at all, though the dialogue documentation said it worked; names
   now stand for elements in every `ui.*` command.
+- **Fifty-seven on opencode.** The set of fifty-seven (the fifty-five, `pause_menu` and `breakout`)
+  went to opencode with GLM 5.3 Flash over MCP again on the night of 2026-10-01, after the fixes the
+  run of fifty-five asked for, the friction fixes from its failed calls, `world.query` field paths,
+  `Behavior` and the template's finished look: 57 of 57 at the first try in 131 minutes, 20.6
+  million tokens, 713 tool calls (`opencode-glm-full57.json`). On the fifty-five both runs had, 52
+  passed before and 55 now, in 115 minutes against 122, 632 calls against 753 and 17.2 million
+  tokens against 22.3 (`tools/scripts/compare_runs.py`); `guard_view` took 42 seconds and 12 calls,
+  `snake` 503 and 23, `voxel_house` 232 and 19, and `breakout` passed in 660 seconds and 55 calls at
+  the edge of the runner's time. Failed calls fell from 48 to 15. Of those, six were opencode's own
+  `edit` tool missing the text it was to replace; two were `world.spawn` refusing `Transform.pos`,
+  which `world.spawn` and `world.set` now read as `position` and say so in `renamed`; two asked
+  `tilemap.get` and `tilemap.text {entity}` to read a map, which now read a cell or the rows; and
+  two were `pocket_scenario` calls cut off by the MCP client's minute because the tool, installed
+  before it honoured `POCKET_RUNTIME`, was building the engine from the checkout being edited (the
+  agent ran the same scenario through the shell in seconds).
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

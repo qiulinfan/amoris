@@ -47,6 +47,7 @@ struct Options {
     int net_host = -1;                     // lockstep host on this port (0: any free port); -1: not hosting
     int net_players = 2;                   // players the host waits for, itself included (unless dedicated)
     bool net_dedicated = false;            // the host runs and relays the game without playing in it: players are those who join
+    bool exit_with_parent = false;         // end when the process that started this one is gone (a tool's session it forgot)
     std::string net_join;                  // join a lockstep host at host:port
     int net_delay = 3;                     // ticks between an input and the tick it acts on (the host's is used)
 };

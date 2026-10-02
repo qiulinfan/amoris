@@ -125,6 +125,14 @@ export const tilemap = {
     tile(entity: EntityRef, at: { x: number; y: number } | { tile_x: number; tile_y: number }, layer?: string): TileInfo {
         return command("tilemap.tile", { entity, ...at, layer }) as TileInfo;
     },
+    /**
+     * The map read as rows of characters, the reverse of fromText: per tile layer a character for
+     * each tile it uses ('.' empty) and a legend from character to tile; with solid, the collision
+     * ('#' solid, '-' one way, '/' a slope, '.' free). A window with tile_x, tile_y, width, height.
+     */
+    rows(entity: EntityRef, options: { layer?: string; solid?: boolean; tile_x?: number; tile_y?: number; width?: number; height?: number } = {}): { tile_x: number; tile_y: number; width: number; height: number; rows?: string[]; layers?: Array<{ layer: string; rows: string[]; legend: Record<string, { gid: number; tileset?: string; id?: number }> }> } {
+        return command("tilemap.rows", { entity, ...options }) as { tile_x: number; tile_y: number; width: number; height: number; rows?: string[]; layers?: Array<{ layer: string; rows: string[]; legend: Record<string, { gid: number; tileset?: string; id?: number }> }> };
+    },
     /** Whether a world position (or tile) is solid on any visible layer. */
     solid(entity: EntityRef, at: { x: number; y: number } | { tile_x: number; tile_y: number }): boolean {
         return (command("tilemap.solid", { entity, ...at }) as { solid: boolean }).solid;

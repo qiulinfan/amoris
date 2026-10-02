@@ -806,6 +806,35 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("the built-in humanoid: a skinned model with its clips, its colours from the query", "[assets][humanoid]") {
+    auto plain = assets::humanoid_glb("");
+    REQUIRE(plain.has_value());
+    auto m = assets::parse_gltf(*plain, std::filesystem::temp_directory_path(), "humanoid");
+    REQUIRE(m.has_value());
+    REQUIRE(m->skinned());
+    REQUIRE(m->skins.size() == 1);
+    REQUIRE(m->skins[0].joints.size() == 11);
+    std::vector<std::string> names;
+    for (const assets::AnimationClip& c : m->animations) names.push_back(c.name);
+    for (const char* want : {"idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "crouch", "crouch_walk", "jump", "wave", "punch", "die"})
+        REQUIRE(std::find(names.begin(), names.end(), want) != names.end());
+    REQUIRE(m->aabb_min.y == Catch::Approx(0.0f).margin(1e-4));     // standing on its feet at the origin
+    REQUIRE(m->aabb_max.y == Catch::Approx(2.02f).margin(0.01));    // two metres and a hair
+    // A red shirt (sRGB #c83c32 in linear light), no hair: two boxes fewer.
+    auto red = assets::parse_gltf(*assets::humanoid_glb("shirt=red&hair=none"), std::filesystem::temp_directory_path(), "humanoid?shirt=red&hair=none");
+    REQUIRE(red.has_value());
+    const auto shirt = std::find_if(red->materials.begin(), red->materials.end(), [](const assets::Material& mm) { return mm.name == "shirt"; });
+    REQUIRE(shirt != red->materials.end());
+    REQUIRE(shirt->base_color.x == Catch::Approx(0.5776f).margin(0.01));
+    REQUIRE(shirt->base_color.y == Catch::Approx(0.0452f).margin(0.01));
+    REQUIRE(red->vertices.size() + 2 * 24 == m->vertices.size());
+    // A part it does not have and a colour it cannot read are said by name.
+    auto bad = assets::humanoid_glb("hat=red");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("hat") != std::string::npos);
+    REQUIRE_FALSE(assets::humanoid_glb("shirt=sparkly").has_value());
+}
+
 TEST_CASE("a large terrain is drawn in squares whose coarser levels stay within their errors", "[assets][terrain][lod]") {
     const assets::Terrain t = assets::terrain_from_noise(5, 30.0f, 5, 257, {128, 128}, 16.0f);
     const assets::Mesh m = assets::terrain_mesh(t, {}, "terrain:lod@1");

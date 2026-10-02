@@ -2076,11 +2076,27 @@ std::string model_importer(const std::string& ext) {
 Result<const Mesh*> AssetStore::mesh(const std::string& path) {
     if (auto it = meshes_.find(path); it != meshes_.end()) return it->second.get();
     if (auto f = failures_.find("mesh:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);
-    POCKET_TRY(full, resolve(path));
-    std::string ext = full.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     Result<Mesh> parsed = fail("bad_asset", "unread");
-    if (ext == ".obj") {
+    if (path == "humanoid" || path.starts_with("humanoid?")) {
+        // The built-in character (docs/design/animation.md, A character without a file), its
+        // colours from the query: "humanoid?shirt=#c33&hair=none".
+        auto glb = humanoid_glb(path.size() > 9 ? path.substr(9) : std::string());
+        if (!glb) {
+            failures_["mesh:" + path] = glb.error().message;
+            return fail(glb.error());
+        }
+        parsed = parse_gltf(*glb, project_dir_, path);
+        if (parsed) parsed->importer = "builtin";
+    }
+    std::filesystem::path full;
+    std::string ext;
+    if (!parsed && parsed.error().message == "unread") {
+        POCKET_TRY(found, resolve(path));
+        full = found;
+        ext = full.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    }
+    if (!full.empty() && ext == ".obj") {
         POCKET_TRY(text, fs::read_text(full));
         parsed = parse_obj(text, path, [this](const std::string& p) -> Result<std::string> {
             POCKET_TRY(f, resolve(p));
@@ -2111,7 +2127,7 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
             parsed->importer = "blender";
             parsed->converted = std::filesystem::relative(*glb, project_dir_).generic_string();
         }
-    } else {
+    } else if (!full.empty()) {
         POCKET_TRY(bytes, fs::read_bytes(full));
         parsed = parse_gltf(std::string(bytes.begin(), bytes.end()), full.parent_path(), path);
     }
@@ -2373,7 +2389,7 @@ Json AssetStore::list() const {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             const bool model = !model_importer(ext).empty();
-            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" || ext == ".webp" || ext == ".ktx2" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".sfx" || ext == ".song" ? "audio" : ext == ".mtl" ? "material" : "other";
+            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" || ext == ".webp" || ext == ".ktx2" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac" || ext == ".sfx" || ext == ".song" ? "audio" : ext == ".mtl" ? "material" : "other";
 
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();
@@ -2411,7 +2427,7 @@ Json AssetStore::describe(const std::string& path, int ascii_width) {
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     Json j;
     j["path"] = path;
-    if (!model_importer(ext).empty()) {
+    if (!model_importer(ext).empty() || path == "humanoid" || path.starts_with("humanoid?")) {
         auto m = mesh(path);
         if (!m) { j["error"] = m.error().to_string(); return j; }
         j = (*m)->describe();

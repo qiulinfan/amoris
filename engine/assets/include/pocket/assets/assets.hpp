@@ -402,6 +402,10 @@ struct Image {
 // Skinned meshes keep their bind-space vertices with joints and weights; the node hierarchy,
 // skins and animations come along so the runtime can pose them (docs/design/animation.md).
 Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& base_dir, const std::string& display_path);
+// The built-in humanoid as a glTF binary (docs/design/animation.md, A character without a file):
+// `query` sets its colours ("shirt=#c33&hair=none"); its clips are idle, walk, run, walk_back,
+// strafe_left, strafe_right, crouch, crouch_walk, jump, wave, punch and die.
+Result<std::string> humanoid_glb(const std::string& query);
 // Tangents made from the uvs for the vertices whose file gave none (every mesh the store loads,
 // and terrains).
 void fill_tangents(Mesh& mesh);

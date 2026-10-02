@@ -475,6 +475,49 @@ TEST_CASE("an MP3 clip decodes whole or streams, like an Ogg", "[audio][mp3]") {
     REQUIRE(bad.error().code == "bad_audio");
 }
 
+TEST_CASE("a FLAC clip decodes whole or streams, sample for sample", "[audio][flac]") {
+    auto make = [&](double stream_seconds) {
+        audio::Config c;
+        c.project_dir = root() / "samples" / "audio";
+        c.headless = true;
+        c.stream_seconds = stream_seconds;
+        auto a = audio::Audio::create(c);
+        REQUIRE(a.has_value());
+        return std::move(*a);
+    };
+    auto whole = make(1e9), streamed = make(0.0);
+    for (auto* a : {&whole, &streamed}) REQUIRE((*a)->load("assets/tone.flac").has_value());
+    Json wc = whole->clips(), sc = streamed->clips();
+    INFO(wc.dump() << " " << sc.dump());
+    REQUIRE(wc[0]["source_rate"] == 44100);
+    REQUIRE(wc[0]["source_channels"] == 1);
+    REQUIRE(wc[0]["seconds"].get<double>() == Catch::Approx(0.5).margin(0.01));   // lossless: no padding
+    REQUIRE(wc[0]["streamed"] == false);
+    REQUIRE(sc[0]["streamed"] == true);
+    audio::PlayOptions o;
+    for (auto* a : {&whole, &streamed}) REQUIRE((*a)->play("assets/tone.flac", o).has_value());
+    std::vector<float> w_mix, s_mix;
+    for (int i = 0; i < 8; ++i) {
+        const auto& w = whole->render_frames(4000);
+        w_mix.insert(w_mix.end(), w.begin(), w.end());
+        const auto& s = streamed->render_frames(4000);
+        s_mix.insert(s_mix.end(), s.begin(), s.end());
+    }
+    float loud = 0, worst = 0;
+    for (std::size_t i = 0; i < w_mix.size(); ++i) { loud = std::max(loud, std::abs(w_mix[i])); worst = std::max(worst, std::abs(w_mix[i] - s_mix[i])); }
+    INFO("loudest " << loud << ", worst difference " << worst);
+    REQUIRE(loud > 0.1f);
+    REQUIRE(worst < 0.05f);
+    float tail = 0;
+    for (std::size_t i = w_mix.size() - 4000; i < w_mix.size(); ++i) tail = std::max(tail, std::abs(w_mix[i]));
+    REQUIRE(tail == 0.0f);
+    std::ofstream(root() / "samples" / "audio" / "assets" / "fake.flac") << "not a flac at all";
+    auto bad = whole->load("assets/fake.flac");
+    std::filesystem::remove(root() / "samples" / "audio" / "assets" / "fake.flac");
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().code == "bad_audio");
+}
+
 TEST_CASE("a bus thins with a high-pass, echoes with feedback and rings on, and sends to the room by its reverb", "[audio][buses][busfx]") {
     const int rate = audio::Config{}.sample_rate;
     auto peak_in = [](const std::vector<float>& mix, std::size_t from, std::size_t to) {

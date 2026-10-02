@@ -1,0 +1,2442 @@
+{
+  "runner": "python3 tools/scripts/runners/opencode_agent.py --via mcp",
+  "passed": 57,
+  "total": 57,
+  "seconds": 7878.8,
+  "tasks": [
+    {
+      "name": "spawn_named",
+      "project": "hello",
+      "ok": true,
+      "seconds": 26.0,
+      "detail": "a red cube at (2, 1, -3)",
+      "answer": {
+        "id": 492,
+        "path": "/Beacon",
+        "position": {
+          "x": 2,
+          "y": 1,
+          "z": -3
+        },
+        "mesh": "cube",
+        "color": {
+          "r": 1,
+          "g": 0,
+          "b": 0
+        }
+      },
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 23.6,
+        "turns": 4,
+        "tool_calls": 3,
+        "tools": {
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 1,
+          "pocket_world_describe": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 21179,
+          "output": 225,
+          "reasoning": 45,
+          "cache_read": 62464,
+          "total": 83913
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 4,
+        "tokens": 83868,
+        "calls": 3,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "recolor",
+      "project": "hello",
+      "ok": true,
+      "seconds": 22.0,
+      "detail": "Ball's color is {'r': 0.0, 'g': 1.0, 'b': 0.0, 'a': 1.0}",
+      "answer": {
+        "entity": "Ball",
+        "component": "MeshRenderer",
+        "color": {
+          "r": 0,
+          "g": 1,
+          "b": 0
+        }
+      },
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 21.8,
+        "turns": 3,
+        "tool_calls": 3,
+        "tools": {
+          "pocket_runtime_command": 2,
+          "pocket_runtime_help": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 21470,
+          "output": 166,
+          "reasoning": 125,
+          "cache_read": 41792,
+          "total": 63553
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 3,
+        "tokens": 63428,
+        "calls": 3,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "tile_edit",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 32.9,
+      "detail": "cell (3, 2) on ground holds gid 1",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 32.6,
+        "turns": 5,
+        "tool_calls": 4,
+        "tools": {
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 3
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 31071,
+          "output": 222,
+          "reasoning": 239,
+          "cache_read": 73920,
+          "total": 105452
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 5,
+        "tokens": 105213,
+        "calls": 4,
+        "read_kb": 0.0,
+        "failed_calls": 2
+      }
+    },
+    {
+      "name": "clear_enemies",
+      "project": "playground",
+      "ok": true,
+      "seconds": 28.1,
+      "detail": "0 enemies remain",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 27.8,
+        "turns": 5,
+        "tool_calls": 4,
+        "tools": {
+          "pocket_world_query": 2,
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 10083,
+          "output": 118,
+          "reasoning": 111,
+          "cache_read": 93824,
+          "total": 104136
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 5,
+        "tokens": 104025,
+        "calls": 4,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "play_clip",
+      "project": "assets",
+      "ok": true,
+      "seconds": 82.5,
+      "detail": "Arm plays 'turn' loop True playing True",
+      "answer": {
+        "entity": "Arm",
+        "clip": "turn",
+        "loop": true,
+        "playing": true
+      },
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 82.2,
+        "turns": 3,
+        "tool_calls": 3,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "pocket_world_describe": 1,
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 42433,
+          "output": 154,
+          "reasoning": 163,
+          "cache_read": 21760,
+          "total": 64510
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 3,
+        "tokens": 64347,
+        "calls": 3,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "path_length",
+      "project": "playground",
+      "ok": true,
+      "seconds": 12.1,
+      "detail": "answered 22.942, the path is 22.942",
+      "answer": 22.94249725341797,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 11.5,
+        "turns": 2,
+        "tool_calls": 1,
+        "tools": {
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 20803,
+          "output": 62,
+          "reasoning": 62,
+          "cache_read": 20800,
+          "total": 41727
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 2,
+        "tokens": 41665,
+        "calls": 1,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "count_overlap",
+      "project": "physics",
+      "ok": true,
+      "seconds": 18.5,
+      "detail": "answered 5, there are 5",
+      "answer": 5,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 18.1,
+        "turns": 3,
+        "tool_calls": 2,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 10011,
+          "output": 93,
+          "reasoning": 88,
+          "cache_read": 52416,
+          "total": 62608
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 3,
+        "tokens": 62520,
+        "calls": 2,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "event_cause",
+      "project": "playground",
+      "ok": true,
+      "seconds": 26.0,
+      "detail": "answered 'entity.spawned', the root cause is 'entity.spawned'",
+      "answer": "entity.spawned",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 24.9,
+        "turns": 4,
+        "tool_calls": 3,
+        "tools": {
+          "pocket_events_since": 2,
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 32149,
+          "output": 142,
+          "reasoning": 225,
+          "cache_read": 54912,
+          "total": 87428
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 4,
+        "tokens": 87203,
+        "calls": 3,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "night_lamp",
+      "project": "hello",
+      "ok": true,
+      "seconds": 59.9,
+      "detail": "night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered 1",
+      "answer": 1,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 59.2,
+        "turns": 6,
+        "tool_calls": 6,
+        "tools": {
+          "pocket_runtime_command": 4,
+          "pocket_runtime_commands": 1,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 12840,
+          "output": 384,
+          "reasoning": 386,
+          "cache_read": 122304,
+          "total": 135914
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 6,
+        "tokens": 135528,
+        "calls": 6,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "expose_count",
+      "project": "hello",
+      "ok": true,
+      "seconds": 36.3,
+      "detail": "answer 4, entities 4",
+      "answer": 4,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 35.5,
+        "turns": 4,
+        "tool_calls": 4,
+        "tools": {
+          "grep": 1,
+          "read": 1,
+          "edit": 1,
+          "pocket_project_apply": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 36055,
+          "output": 307,
+          "reasoning": 154,
+          "cache_read": 58880,
+          "total": 95396
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 4,
+        "tokens": 95242,
+        "calls": 4,
+        "read_kb": 2.8,
+        "failed_calls": 0,
+        "calls_before_edit": 2,
+        "calls_after_edit": 1,
+        "stuck": false
+      }
+    },
+    {
+      "name": "ball_lower",
+      "project": "hello",
+      "ok": true,
+      "seconds": 24.0,
+      "detail": "the ball starts its fall at y 0.9918",
+      "answer": 1.0,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 23.2,
+        "turns": 4,
+        "tool_calls": 3,
+        "tools": {
+          "read": 1,
+          "edit": 1,
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 24178,
+          "output": 248,
+          "reasoning": 45,
+          "cache_read": 70208,
+          "total": 94679
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 4,
+        "tokens": 94634,
+        "calls": 3,
+        "read_kb": 2.5,
+        "failed_calls": 0,
+        "calls_before_edit": 1,
+        "calls_after_edit": 1,
+        "stuck": false
+      }
+    },
+    {
+      "name": "spawn_stars",
+      "project": "hello",
+      "ok": true,
+      "seconds": 40.4,
+      "detail": "Star0 to Star4 along x at y 2, spheres",
+      "answer": "Added a loop in onStart in scripts/main.ts that spawns Star0\u2013Star4 at x=i, y=2, z=0 with MeshRenderer mesh \"sphere\"; verified all five exist in the world.",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 39.5,
+        "turns": 5,
+        "tool_calls": 4,
+        "tools": {
+          "read": 1,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_world_query": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 24566,
+          "output": 503,
+          "reasoning": 75,
+          "cache_read": 94720,
+          "total": 119864
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 5,
+        "tokens": 119789,
+        "calls": 4,
+        "read_kb": 2.5,
+        "failed_calls": 0,
+        "calls_before_edit": 1,
+        "calls_after_edit": 2,
+        "stuck": false
+      }
+    },
+    {
+      "name": "double_jump",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 268.6,
+      "detail": "rose 3.79 with jump pressed again in the air (a single jump rises 2.3)",
+      "answer": {
+        "double_jump_rise_units": 3.79,
+        "second_press_delay_s": 0.2,
+        "single_jump_rise_units": 2.21,
+        "scenarios": "24/24 passed"
+      },
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 267.4,
+        "turns": 18,
+        "tool_calls": 17,
+        "tools": {
+          "read": 1,
+          "edit": 3,
+          "pocket_runtime_command": 4,
+          "pocket_runtime_help": 1,
+          "pocket_step": 4,
+          "pocket_pocket_scenario": 2,
+          "glob": 1,
+          "bash": 1
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 32210,
+          "output": 1539,
+          "reasoning": 1971,
+          "cache_read": 485248,
+          "total": 520968
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 18,
+        "tokens": 518997,
+        "calls": 17,
+        "read_kb": 10.6,
+        "failed_calls": 2,
+        "calls_before_edit": 1,
+        "calls_after_edit": 15,
+        "stuck": true
+      }
+    },
+    {
+      "name": "coin_respawn",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 292.5,
+      "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
+      "answer": "Collected coins now hide for exactly 3 seconds of game time (timer.after(3)), then respawn at their original position \u2014 drawn, collectable and counted in \"coins\" again \u2014 verified returning exactly 180 ticks after collection and never before",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 291.5,
+        "turns": 19,
+        "tool_calls": 19,
+        "tools": {
+          "read": 1,
+          "grep": 2,
+          "edit": 5,
+          "bash": 2,
+          "pocket_pocket_check": 1,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 5,
+          "pocket_step": 2
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 38664,
+          "output": 2727,
+          "reasoning": 4600,
+          "cache_read": 574400,
+          "total": 620391
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 19,
+        "tokens": 615791,
+        "calls": 19,
+        "read_kb": 15.6,
+        "failed_calls": 1,
+        "calls_before_edit": 3,
+        "calls_after_edit": 15,
+        "stuck": true
+      }
+    },
+    {
+      "name": "jump_sound",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 195.5,
+      "detail": "assets/jump.wav plays after a jump and again after the next",
+      "answer": "Added assets/jump.wav (mono 16-bit PCM, 0.25 s rising tone) and scripts/main.tsx now calls audio.play('assets/jump.wav') only inside the grounded-jump branch; verified in the running runtime that it plays on ground jumps and at no other time.",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 195.0,
+        "turns": 22,
+        "tool_calls": 25,
+        "tools": {
+          "read": 6,
+          "grep": 2,
+          "bash": 7,
+          "edit": 4,
+          "pocket_project_apply": 1,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 4
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 40511,
+          "output": 2741,
+          "reasoning": 1861,
+          "cache_read": 714944,
+          "total": 760057
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 22,
+        "tokens": 758196,
+        "calls": 25,
+        "read_kb": 31.1,
+        "failed_calls": 2,
+        "calls_before_edit": 10,
+        "calls_after_edit": 14,
+        "stuck": false
+      }
+    },
+    {
+      "name": "coin_chime",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 172.2,
+      "detail": "assets/coin_pickup.sfx (0.35 s) plays when a coin is collected, not before",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 171.8,
+        "turns": 19,
+        "tool_calls": 23,
+        "tools": {
+          "read": 8,
+          "grep": 1,
+          "write": 1,
+          "edit": 3,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 4,
+          "pocket_runtime_commands": 1,
+          "pocket_step": 2,
+          "pocket_events_since": 1,
+          "pocket_pocket_scenario": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 47718,
+          "output": 2103,
+          "reasoning": 3385,
+          "cache_read": 642624,
+          "total": 695830
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 19,
+        "tokens": 692445,
+        "calls": 23,
+        "read_kb": 35.4,
+        "failed_calls": 1,
+        "calls_before_edit": 8,
+        "calls_after_edit": 14,
+        "stuck": false
+      }
+    },
+    {
+      "name": "theme_song",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 143.4,
+      "detail": "assets/tune.song: 4 tracks, 8.3 s, looping",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 142.9,
+        "turns": 15,
+        "tool_calls": 17,
+        "tools": {
+          "read": 3,
+          "bash": 5,
+          "grep": 1,
+          "write": 1,
+          "edit": 4,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 1,
+          "pocket_step": 1
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 62330,
+          "output": 2059,
+          "reasoning": 2717,
+          "cache_read": 461888,
+          "total": 528994
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 15,
+        "tokens": 526277,
+        "calls": 17,
+        "read_kb": 30.3,
+        "failed_calls": 2,
+        "calls_before_edit": 6,
+        "calls_after_edit": 10,
+        "stuck": false
+      }
+    },
+    {
+      "name": "merchant_talk",
+      "project": "talk",
+      "ok": true,
+      "seconds": 247.8,
+      "detail": "two potions bought, gold and potions [(4, 1), (1, 2)], then none offered at 1 gold",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 247.3,
+        "turns": 19,
+        "tool_calls": 21,
+        "tools": {
+          "read": 8,
+          "write": 1,
+          "edit": 4,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 6,
+          "pocket_runtime_commands": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 62943,
+          "output": 2654,
+          "reasoning": 5339,
+          "cache_read": 553152,
+          "total": 624088
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 19,
+        "tokens": 618749,
+        "calls": 21,
+        "read_kb": 16.8,
+        "failed_calls": 0,
+        "calls_before_edit": 8,
+        "calls_after_edit": 12,
+        "stuck": false
+      }
+    },
+    {
+      "name": "lamp_prefab",
+      "project": "hello",
+      "ok": true,
+      "seconds": 86.4,
+      "detail": "three lamps from the prefab, yellow spheres with a point light under each",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 86.0,
+        "turns": 10,
+        "tool_calls": 13,
+        "tools": {
+          "read": 6,
+          "grep": 2,
+          "bash": 1,
+          "write": 1,
+          "edit": 1,
+          "pocket_runtime_command": 2
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 56665,
+          "output": 1300,
+          "reasoning": 1131,
+          "cache_read": 247104,
+          "total": 306200
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 10,
+        "tokens": 305069,
+        "calls": 13,
+        "read_kb": 27.5,
+        "failed_calls": 0,
+        "calls_before_edit": 9,
+        "calls_after_edit": 3,
+        "stuck": false
+      }
+    },
+    {
+      "name": "hill_raise",
+      "project": "hills",
+      "ok": true,
+      "seconds": 67.7,
+      "detail": "the ground at (20.0, -20.0) raised to 10.06, nothing moved 12 units away",
+      "answer": 10.060868263244627,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 66.3,
+        "turns": 5,
+        "tool_calls": 6,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 1,
+          "pocket_runtime_command": 4
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 39048,
+          "output": 492,
+          "reasoning": 1392,
+          "cache_read": 93120,
+          "total": 134052
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 5,
+        "tokens": 132660,
+        "calls": 6,
+        "read_kb": 20.6,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "yard_flag",
+      "project": "walker",
+      "ok": true,
+      "seconds": 157.4,
+      "detail": "a red flag on the pole streams out 1.51 in the wind (answered 1.4538)",
+      "answer": 1.4538,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 157.1,
+        "turns": 12,
+        "tool_calls": 17,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 2,
+          "pocket_runtime_help": 2,
+          "grep": 1,
+          "pocket_world_schema": 4,
+          "pocket_world_tree": 1,
+          "pocket_runtime_command": 4,
+          "pocket_step": 2
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 49421,
+          "output": 1135,
+          "reasoning": 4676,
+          "cache_read": 338112,
+          "total": 393344
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 12,
+        "tokens": 388668,
+        "calls": 17,
+        "read_kb": 10.9,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "flowers",
+      "project": "hills",
+      "ok": true,
+      "seconds": 85.9,
+      "detail": "1197 red flowers on the hills, none on ground steeper than 20.0 degrees",
+      "answer": "Flowers entity spawned with a red sphere MeshRenderer and a Scatter on Hills covering the whole terrain at max_slope 20\u00b0; 1197 flowers placed (\u2265 50 required).",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 85.4,
+        "turns": 8,
+        "tool_calls": 8,
+        "tools": {
+          "pocket_world_schema": 1,
+          "pocket_runtime_commands": 1,
+          "pocket_world_tree": 1,
+          "pocket_runtime_command": 3,
+          "pocket_step": 1,
+          "pocket_capture": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 38907,
+          "output": 542,
+          "reasoning": 1429,
+          "cache_read": 234176,
+          "total": 275054
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 8,
+        "tokens": 273625,
+        "calls": 8,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "car_speed",
+      "project": "drive",
+      "ok": true,
+      "seconds": 53.7,
+      "detail": "top speed 35, power 14, driven to 28.61",
+      "answer": 28.6066,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 53.4,
+        "turns": 7,
+        "tool_calls": 8,
+        "tools": {
+          "pocket_world_query": 2,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_help": 2,
+          "pocket_runtime_command": 2,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 23482,
+          "output": 285,
+          "reasoning": 613,
+          "cache_read": 134336,
+          "total": 158716
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 7,
+        "tokens": 158103,
+        "calls": 8,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "knockout",
+      "project": "walker",
+      "ok": true,
+      "seconds": 291.2,
+      "detail": "health used up, the hero limp on 11 bodies with its head at 0.19, the player still (0.00)",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 290.8,
+        "turns": 18,
+        "tool_calls": 21,
+        "tools": {
+          "read": 4,
+          "bash": 4,
+          "grep": 1,
+          "edit": 2,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 9
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 41795,
+          "output": 2541,
+          "reasoning": 5549,
+          "cache_read": 567680,
+          "total": 617565
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 18,
+        "tokens": 612016,
+        "calls": 21,
+        "read_kb": 14.0,
+        "failed_calls": 0,
+        "calls_before_edit": 8,
+        "calls_after_edit": 12,
+        "stuck": false
+      }
+    },
+    {
+      "name": "walker_sprint",
+      "project": "walker",
+      "ok": true,
+      "seconds": 106.0,
+      "detail": "a second of walking covers 5.00, with sprint held 9.00 (5 and 9 wanted)",
+      "answer": "Sprint added: input action `sprint` bound to LShift in project.toml; scripts/main.ts walks at 9 u/s while sprint is held (verified: x moved 0\u21929 over 1 s) and at 5 u/s otherwise (verified: 5 over 1 s), project.apply passed with 0 type errors.",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 105.7,
+        "turns": 16,
+        "tool_calls": 17,
+        "tools": {
+          "read": 3,
+          "grep": 3,
+          "edit": 3,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 4,
+          "pocket_step": 3
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 58383,
+          "output": 1178,
+          "reasoning": 1442,
+          "cache_read": 444416,
+          "total": 505419
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 16,
+        "tokens": 503977,
+        "calls": 17,
+        "read_kb": 27.9,
+        "failed_calls": 0,
+        "calls_before_edit": 6,
+        "calls_after_edit": 10,
+        "stuck": false
+      }
+    },
+    {
+      "name": "raft",
+      "project": "hills",
+      "ok": true,
+      "seconds": 199.7,
+      "detail": "the raft floats at 3.17 on the surface at 3.16",
+      "answer": 3.089,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 199.3,
+        "turns": 11,
+        "tool_calls": 14,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "pocket_world_tree": 1,
+          "pocket_runtime_help": 2,
+          "read": 1,
+          "pocket_world_schema": 2,
+          "pocket_runtime_command": 5,
+          "pocket_step": 2
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 67445,
+          "output": 1281,
+          "reasoning": 5592,
+          "cache_read": 362368,
+          "total": 436686
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 11,
+        "tokens": 431094,
+        "calls": 14,
+        "read_kb": 13.3,
+        "failed_calls": 1
+      }
+    },
+    {
+      "name": "sand_road",
+      "project": "hills",
+      "ok": true,
+      "seconds": 113.8,
+      "detail": "a sand road from x -30 to 30 along z 0, the ground beside it as it was",
+      "answer": 1.0,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 113.5,
+        "turns": 8,
+        "tool_calls": 15,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 1,
+          "pocket_runtime_command": 12,
+          "pocket_runtime_help": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 54182,
+          "output": 940,
+          "reasoning": 3763,
+          "cache_read": 175744,
+          "total": 234629
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 8,
+        "tokens": 230866,
+        "calls": 15,
+        "read_kb": 20.6,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "reed_field",
+      "project": "hills",
+      "ok": true,
+      "seconds": 191.6,
+      "detail": "1786 reeds that sway 0.3 and stop what runs into them",
+      "answer": 1786,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 191.3,
+        "turns": 9,
+        "tool_calls": 11,
+        "tools": {
+          "pocket_runtime_command": 2,
+          "pocket_world_tree": 1,
+          "pocket_world_schema": 2,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_help": 1,
+          "grep": 1,
+          "pocket_step": 1,
+          "pocket_world_query": 1,
+          "pocket_world_describe": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 66217,
+          "output": 767,
+          "reasoning": 6924,
+          "cache_read": 277888,
+          "total": 351796
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 9,
+        "tokens": 344872,
+        "calls": 11,
+        "read_kb": 11.6,
+        "failed_calls": 1
+      }
+    },
+    {
+      "name": "stormy_dusk",
+      "project": "hills",
+      "ok": true,
+      "seconds": 207.2,
+      "detail": "a cloudy sunset from the west, the sun light 0.55, 0.28, 0.05, a wind of 12 toward +x",
+      "answer": 0.547944188117981,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 207.0,
+        "turns": 11,
+        "tool_calls": 14,
+        "tools": {
+          "pocket_runtime_command": 4,
+          "pocket_world_tree": 1,
+          "pocket_world_schema": 2,
+          "read": 2,
+          "grep": 2,
+          "pocket_runtime_help": 2,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 45094,
+          "output": 981,
+          "reasoning": 6595,
+          "cache_read": 383296,
+          "total": 435966
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 11,
+        "tokens": 429371,
+        "calls": 14,
+        "read_kb": 13.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "dirt_patch",
+      "project": "hills",
+      "ok": true,
+      "seconds": 47.2,
+      "detail": "sand below 0.2 of the height and a patch of dirt, 0.96 at its centre",
+      "answer": 0.9620615839958192,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 46.9,
+        "turns": 4,
+        "tool_calls": 4,
+        "tools": {
+          "pocket_runtime_command": 2,
+          "read": 1,
+          "pocket_runtime_commands": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 40108,
+          "output": 736,
+          "reasoning": 1010,
+          "cache_read": 67456,
+          "total": 109310
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 4,
+        "tokens": 108300,
+        "calls": 4,
+        "read_kb": 20.6,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "glass_window",
+      "project": "hello",
+      "ok": true,
+      "seconds": 70.4,
+      "detail": "a window of glass (ior 1.52) and a lacquered ball; one glass drawn",
+      "answer": 1,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 70.0,
+        "turns": 9,
+        "tool_calls": 10,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 1,
+          "pocket_runtime_help": 2,
+          "pocket_world_schema": 1,
+          "pocket_runtime_command": 5
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 61535,
+          "output": 556,
+          "reasoning": 926,
+          "cache_read": 271872,
+          "total": 334889
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 9,
+        "tokens": 333963,
+        "calls": 10,
+        "read_kb": 53.2,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "persian_locale",
+      "project": "ui",
+      "ok": true,
+      "seconds": 64.5,
+      "detail": "Persian complete, named in every language; the score reads \u0627\u0645\u062a\u06cc\u0627\u0632 \u06f0",
+      "answer": "Added locales/fa.json with all 27 texts translated into Persian (placeholders and plural kept) and language.fa = \"\u0641\u0627\u0631\u0633\u06cc\" added to en.json, zh.json, ar.json and fa.json; locale.check is complete and the interface renders in Persian.",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 64.1,
+        "turns": 7,
+        "tool_calls": 11,
+        "tools": {
+          "read": 5,
+          "write": 1,
+          "edit": 3,
+          "pocket_runtime_command": 2
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 51761,
+          "output": 1398,
+          "reasoning": 873,
+          "cache_read": 137408,
+          "total": 191440
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 7,
+        "tokens": 190567,
+        "calls": 11,
+        "read_kb": 9.3,
+        "failed_calls": 0,
+        "calls_before_edit": 4,
+        "calls_after_edit": 6,
+        "stuck": false
+      }
+    },
+    {
+      "name": "blender_level",
+      "project": "assets",
+      "ok": true,
+      "seconds": 377.9,
+      "detail": "a level from Blender: a static floor it collides with at 1.5, a pillar with 50 health",
+      "answer": 1.495,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 377.6,
+        "turns": 13,
+        "tool_calls": 21,
+        "tools": {
+          "read": 8,
+          "grep": 1,
+          "pocket_runtime_help": 3,
+          "write": 1,
+          "bash": 1,
+          "pocket_runtime_command": 3,
+          "pocket_world_describe": 3,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 54246,
+          "output": 1923,
+          "reasoning": 9973,
+          "cache_read": 547968,
+          "total": 614110
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 13,
+        "tokens": 604137,
+        "calls": 21,
+        "read_kb": 56.5,
+        "failed_calls": 0,
+        "calls_before_edit": 12,
+        "calls_after_edit": 8,
+        "stuck": false
+      }
+    },
+    {
+      "name": "calm_lake",
+      "project": "hills",
+      "ok": true,
+      "seconds": 46.6,
+      "detail": "a still, clear lake at 3.70",
+      "answer": 3.7,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 46.3,
+        "turns": 6,
+        "tool_calls": 6,
+        "tools": {
+          "pocket_world_describe": 1,
+          "read": 1,
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 3
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 47114,
+          "output": 503,
+          "reasoning": 637,
+          "cache_read": 102336,
+          "total": 150590
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 6,
+        "tokens": 149953,
+        "calls": 6,
+        "read_kb": 13.3,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "spike_trap",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 73.6,
+      "detail": "spikes took 60 in four hits; depleted at tick 120",
+      "answer": 120,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 73.2,
+        "turns": 10,
+        "tool_calls": 14,
+        "tools": {
+          "pocket_world_schema": 2,
+          "pocket_world_tree": 1,
+          "pocket_runtime_commands": 2,
+          "pocket_runtime_help": 3,
+          "pocket_runtime_command": 3,
+          "pocket_step": 3
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 46834,
+          "output": 621,
+          "reasoning": 1213,
+          "cache_read": 191680,
+          "total": 240348
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 10,
+        "tokens": 239135,
+        "calls": 14,
+        "read_kb": 0.0,
+        "failed_calls": 1
+      }
+    },
+    {
+      "name": "brute_enemies",
+      "project": "playground",
+      "ok": true,
+      "seconds": 36.5,
+      "detail": "4 enemies, all brutes doing 25",
+      "answer": 4,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 36.1,
+        "turns": 5,
+        "tool_calls": 5,
+        "tools": {
+          "pocket_world_schema": 1,
+          "pocket_world_tree": 1,
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 1,
+          "pocket_world_query": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 23567,
+          "output": 348,
+          "reasoning": 371,
+          "cache_read": 89472,
+          "total": 113758
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 5,
+        "tokens": 113387,
+        "calls": 5,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "roof_mesh",
+      "project": "hello",
+      "ok": true,
+      "seconds": 54.7,
+      "detail": "a 4-triangle roof spanning y 2..3",
+      "answer": 4,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 54.5,
+        "turns": 7,
+        "tool_calls": 8,
+        "tools": {
+          "pocket_runtime_commands": 2,
+          "pocket_runtime_help": 2,
+          "pocket_world_schema": 1,
+          "pocket_runtime_command": 2,
+          "pocket_world_describe": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 46321,
+          "output": 390,
+          "reasoning": 1302,
+          "cache_read": 119168,
+          "total": 167181
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 7,
+        "tokens": 165879,
+        "calls": 8,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "walled_room",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 85.9,
+      "detail": "a walled 10 by 8 room; the pebble rests at -6.750",
+      "answer": -6.750069618225098,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 85.7,
+        "turns": 9,
+        "tool_calls": 12,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 1,
+          "pocket_world_schema": 3,
+          "pocket_runtime_help": 3,
+          "pocket_runtime_command": 2,
+          "pocket_step": 1,
+          "pocket_world_describe": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 40521,
+          "output": 824,
+          "reasoning": 2129,
+          "cache_read": 280320,
+          "total": 323794
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 9,
+        "tokens": 321665,
+        "calls": 12,
+        "read_kb": 26.6,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "plank_bridge",
+      "project": "crates",
+      "ok": true,
+      "seconds": 216.5,
+      "detail": "five planks hang between the points, lowest at 3.841",
+      "answer": 3.841,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 216.2,
+        "turns": 9,
+        "tool_calls": 11,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 1,
+          "pocket_world_tree": 1,
+          "pocket_runtime_help": 2,
+          "pocket_world_schema": 1,
+          "pocket_runtime_command": 4,
+          "grep": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 60302,
+          "output": 2067,
+          "reasoning": 6581,
+          "cache_read": 230208,
+          "total": 299158
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 9,
+        "tokens": 292577,
+        "calls": 11,
+        "read_kb": 15.1,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "dodge",
+      "project": "blank",
+      "ok": true,
+      "seconds": 243.3,
+      "detail": "moves at 6, rocks fall at 4 one a second, a hit ends it at 4.05",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 243.0,
+        "turns": 20,
+        "tool_calls": 25,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 5,
+          "grep": 5,
+          "write": 2,
+          "edit": 1,
+          "pocket_project_apply": 2,
+          "pocket_step": 2,
+          "pocket_runtime_command": 7
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 38764,
+          "output": 3295,
+          "reasoning": 5091,
+          "cache_read": 599104,
+          "total": 646254
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 20,
+        "tokens": 641163,
+        "calls": 25,
+        "read_kb": 13.5,
+        "failed_calls": 0,
+        "calls_before_edit": 11,
+        "calls_after_edit": 13,
+        "stuck": false
+      }
+    },
+    {
+      "name": "snake",
+      "project": "blank",
+      "ok": true,
+      "seconds": 502.8,
+      "detail": "starts right, eats and grows to 4, a cell every 0.15 s, no reversing, turns, ends at the top edge",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 502.5,
+        "turns": 14,
+        "tool_calls": 23,
+        "tools": {
+          "read": 7,
+          "pocket_runtime_command": 6,
+          "grep": 2,
+          "edit": 1,
+          "write": 2,
+          "pocket_pocket_check": 1,
+          "pocket_runtime_commands": 1,
+          "pocket_step": 1,
+          "pocket_world_query": 1,
+          "pocket_world_describe": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 67443,
+          "output": 4423,
+          "reasoning": 16948,
+          "cache_read": 514752,
+          "total": 603566
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 14,
+        "tokens": 586618,
+        "calls": 23,
+        "read_kb": 25.1,
+        "failed_calls": 0,
+        "calls_before_edit": 10,
+        "calls_after_edit": 12,
+        "stuck": false
+      }
+    },
+    {
+      "name": "pause_menu",
+      "project": "blank",
+      "ok": true,
+      "seconds": 309.7,
+      "detail": "title, start, a second of play (4 units, 1 s), pause holding the Box and the clock, resume, restart at (0, 0)",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 309.4,
+        "turns": 19,
+        "tool_calls": 26,
+        "tools": {
+          "read": 11,
+          "grep": 2,
+          "bash": 1,
+          "edit": 1,
+          "write": 2,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 5,
+          "pocket_runtime_commands": 1,
+          "pocket_step": 2
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 55506,
+          "output": 3119,
+          "reasoning": 7893,
+          "cache_read": 761280,
+          "total": 827798
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 19,
+        "tokens": 819905,
+        "calls": 26,
+        "read_kb": 62.2,
+        "failed_calls": 0,
+        "calls_before_edit": 14,
+        "calls_after_edit": 11,
+        "stuck": false
+      }
+    },
+    {
+      "name": "breakout",
+      "project": "blank",
+      "ok": true,
+      "seconds": 660.5,
+      "detail": "32 bricks, a paddle at 10 a second held in, a brick broken from below (score 10), walls and the paddle bounce, a miss costs a life, the last brick clears the level, three misses end it",
+      "answer": null,
+      "error": "runner exited 247: opencode exited -9",
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 660.0,
+        "turns": 49,
+        "tool_calls": 55,
+        "tools": {
+          "read": 7,
+          "pocket_runtime_command": 11,
+          "grep": 5,
+          "write": 2,
+          "pocket_project_apply": 6,
+          "pocket_runtime_commands": 1,
+          "pocket_step": 12,
+          "edit": 8,
+          "pocket_events_since": 1,
+          "pocket_capture": 1,
+          "pocket_look_around": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 134635,
+          "output": 8444,
+          "reasoning": 22338,
+          "cache_read": 2429056,
+          "total": 2594473
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 49,
+        "tokens": 2572135,
+        "calls": 55,
+        "read_kb": 30.2,
+        "failed_calls": 0,
+        "calls_before_edit": 12,
+        "calls_after_edit": 42,
+        "stuck": true
+      }
+    },
+    {
+      "name": "key_door",
+      "project": "blank",
+      "ok": true,
+      "seconds": 286.6,
+      "detail": "the door held without the key; with it the Exit was reached at tick 765",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 286.4,
+        "turns": 14,
+        "tool_calls": 17,
+        "tools": {
+          "read": 4,
+          "grep": 1,
+          "bash": 1,
+          "edit": 1,
+          "write": 2,
+          "pocket_project_apply": 1,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 6
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 40087,
+          "output": 3559,
+          "reasoning": 8142,
+          "cache_read": 407616,
+          "total": 459404
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 14,
+        "tokens": 451262,
+        "calls": 17,
+        "read_kb": 3.9,
+        "failed_calls": 0,
+        "calls_before_edit": 6,
+        "calls_after_edit": 10,
+        "stuck": false
+      }
+    },
+    {
+      "name": "grey_flashback",
+      "project": "crates",
+      "ok": true,
+      "seconds": 28.7,
+      "detail": "1 effect(s); the crates and the car are grey",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 28.4,
+        "turns": 6,
+        "tool_calls": 6,
+        "tools": {
+          "pocket_runtime_commands": 2,
+          "pocket_runtime_help": 1,
+          "pocket_runtime_command": 1,
+          "pocket_step": 1,
+          "pocket_capture": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 32721,
+          "output": 328,
+          "reasoning": 713,
+          "cache_read": 97856,
+          "total": 131618
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 6,
+        "tokens": 130905,
+        "calls": 6,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "svg_coin",
+      "project": "hello",
+      "ok": true,
+      "seconds": 46.8,
+      "detail": "an SVG coin, gold [245, 197, 66] with a darker rim [182, 131, 20]",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 46.5,
+        "turns": 8,
+        "tool_calls": 11,
+        "tools": {
+          "read": 4,
+          "grep": 1,
+          "write": 1,
+          "pocket_world_schema": 1,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_world_describe": 1,
+          "pocket_capture": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 21011,
+          "output": 985,
+          "reasoning": 1268,
+          "cache_read": 207872,
+          "total": 231136
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 8,
+        "tokens": 229868,
+        "calls": 11,
+        "read_kb": 15.6,
+        "failed_calls": 0,
+        "calls_before_edit": 5,
+        "calls_after_edit": 5,
+        "stuck": false
+      }
+    },
+    {
+      "name": "orange_ball",
+      "project": "hello",
+      "ok": true,
+      "seconds": 133.3,
+      "detail": "the Ball is drawn [255, 102, 0] through materials/flat-orange.wgsl",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 133.0,
+        "turns": 13,
+        "tool_calls": 18,
+        "tools": {
+          "read": 9,
+          "grep": 3,
+          "write": 1,
+          "edit": 1,
+          "pocket_runtime_command": 3,
+          "pocket_capture": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 28582,
+          "output": 1678,
+          "reasoning": 3287,
+          "cache_read": 401088,
+          "total": 434635
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 13,
+        "tokens": 431348,
+        "calls": 18,
+        "read_kb": 31.7,
+        "failed_calls": 0,
+        "calls_before_edit": 12,
+        "calls_after_edit": 5,
+        "stuck": false
+      }
+    },
+    {
+      "name": "night_level",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 76.0,
+      "detail": "a warm light at {'x': 5.999996662139893, 'y': -2.999000072479248, 'z': 0.5} by the player at {'x': 5.999996662139893, 'y': -2.999000072479248, 'z': 0.0} after it walked",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 75.7,
+        "turns": 8,
+        "tool_calls": 9,
+        "tools": {
+          "pocket_runtime_command": 4,
+          "pocket_runtime_commands": 2,
+          "pocket_world_schema": 1,
+          "pocket_step": 1,
+          "pocket_capture": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 84232,
+          "output": 670,
+          "reasoning": 1406,
+          "cache_read": 143552,
+          "total": 229860
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 8,
+        "tokens": 228454,
+        "calls": 9,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "guard_view",
+      "project": "dungeon",
+      "ok": true,
+      "seconds": 41.7,
+      "detail": "105 cells in view, the torch does not see the player",
+      "answer": {
+        "cells": 105,
+        "sees": false
+      },
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 41.4,
+        "turns": 8,
+        "tool_calls": 12,
+        "tools": {
+          "pocket_world_query": 3,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 6,
+          "pocket_world_describe": 2
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 34366,
+          "output": 607,
+          "reasoning": 846,
+          "cache_read": 144000,
+          "total": 179819
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 8,
+        "tokens": 178973,
+        "calls": 12,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "vault_level",
+      "project": "dungeon",
+      "ok": true,
+      "seconds": 70.6,
+      "detail": "a 12 by 8 vault, walled, a solid pillar, 3 coins and a start on its floor",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 70.3,
+        "turns": 10,
+        "tool_calls": 12,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "read": 1,
+          "pocket_runtime_help": 2,
+          "pocket_runtime_command": 8
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 22936,
+          "output": 943,
+          "reasoning": 2529,
+          "cache_read": 281408,
+          "total": 307816
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 10,
+        "tokens": 305287,
+        "calls": 12,
+        "read_kb": 26.6,
+        "failed_calls": 1
+      }
+    },
+    {
+      "name": "slow_swarm",
+      "project": "blank",
+      "ok": true,
+      "seconds": 573.4,
+      "detail": "same swarm, 6.69 -> 0.12 ms of script a tick",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 571.2,
+        "turns": 18,
+        "tool_calls": 21,
+        "tools": {
+          "read": 6,
+          "pocket_runtime_command": 9,
+          "grep": 3,
+          "write": 1,
+          "edit": 1,
+          "pocket_pocket_run_headless": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 61766,
+          "output": 3816,
+          "reasoning": 15839,
+          "cache_read": 715264,
+          "total": 796685
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 18,
+        "tokens": 780846,
+        "calls": 21,
+        "read_kb": 25.8,
+        "failed_calls": 0,
+        "calls_before_edit": 13,
+        "calls_after_edit": 7,
+        "stuck": false
+      }
+    },
+    {
+      "name": "leaky_cannon",
+      "project": "blank",
+      "ok": true,
+      "seconds": 32.5,
+      "detail": "300 pellets left about before, 14 now, the same 286 landings",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 31.8,
+        "turns": 6,
+        "tool_calls": 6,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "pocket_runtime_command": 1,
+          "pocket_step": 1,
+          "pocket_world_query": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 61454,
+          "output": 465,
+          "reasoning": 600,
+          "cache_read": 84800,
+          "total": 147319
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 6,
+        "tokens": 146719,
+        "calls": 6,
+        "read_kb": 2.7,
+        "failed_calls": 0,
+        "calls_before_edit": 2,
+        "calls_after_edit": 3,
+        "stuck": false
+      }
+    },
+    {
+      "name": "sinking_crate",
+      "project": "blank",
+      "ok": true,
+      "seconds": 73.0,
+      "detail": "BlueCrate rests at y 0.497, the Ghost still sinks; answered 'Collider.group'",
+      "answer": "Collider.group",
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 72.5,
+        "turns": 10,
+        "tool_calls": 10,
+        "tools": {
+          "read": 4,
+          "grep": 1,
+          "edit": 1,
+          "pocket_project_apply": 2,
+          "write": 1,
+          "pocket_runtime_command": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 48375,
+          "output": 1884,
+          "reasoning": 1415,
+          "cache_read": 269824,
+          "total": 321498
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 10,
+        "tokens": 320083,
+        "calls": 10,
+        "read_kb": 31.6,
+        "failed_calls": 1,
+        "calls_before_edit": 3,
+        "calls_after_edit": 6,
+        "stuck": false
+      }
+    },
+    {
+      "name": "voxel_house",
+      "project": "hello",
+      "ok": true,
+      "seconds": 232.1,
+      "detail": "6 by 6 by 6 cells in 3 colours, 68 triangles, at (10, 0, 0)",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 231.7,
+        "turns": 16,
+        "tool_calls": 19,
+        "tools": {
+          "read": 5,
+          "grep": 3,
+          "write": 1,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_runtime_command": 3,
+          "pocket_capture": 3,
+          "pocket_world_query": 1,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 99930,
+          "output": 1899,
+          "reasoning": 5960,
+          "cache_read": 439616,
+          "total": 547405
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 16,
+        "tokens": 541445,
+        "calls": 19,
+        "read_kb": 19.6,
+        "failed_calls": 0,
+        "calls_before_edit": 8,
+        "calls_after_edit": 10,
+        "stuck": false
+      }
+    },
+    {
+      "name": "frozen_coins",
+      "project": "blank",
+      "ok": true,
+      "seconds": 47.7,
+      "detail": "four coins taken, the next one glowing each time, level.complete once, no script error",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 47.3,
+        "turns": 9,
+        "tool_calls": 9,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "pocket_runtime_command": 6
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 39057,
+          "output": 862,
+          "reasoning": 1058,
+          "cache_read": 184576,
+          "total": 225553
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 9,
+        "tokens": 224495,
+        "calls": 9,
+        "read_kb": 2.1,
+        "failed_calls": 0,
+        "calls_before_edit": 2,
+        "calls_after_edit": 6,
+        "stuck": false
+      }
+    },
+    {
+      "name": "festival_flags",
+      "project": "blank",
+      "ok": true,
+      "seconds": 100.0,
+      "detail": "the same 24 flags flying, a tick 7.46 -> 1.13 ms",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 98.7,
+        "turns": 13,
+        "tool_calls": 16,
+        "tools": {
+          "read": 8,
+          "grep": 1,
+          "pocket_runtime_command": 4,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_capture": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 96641,
+          "output": 1262,
+          "reasoning": 1528,
+          "cache_read": 415232,
+          "total": 514663
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 13,
+        "tokens": 513135,
+        "calls": 16,
+        "read_kb": 41.5,
+        "failed_calls": 0,
+        "calls_before_edit": 10,
+        "calls_after_edit": 5,
+        "stuck": false
+      }
+    },
+    {
+      "name": "wait_for_coin",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 57.1,
+      "detail": "the first coin went at tick 6",
+      "answer": 6,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 56.8,
+        "turns": 9,
+        "tool_calls": 10,
+        "tools": {
+          "pocket_runtime_commands": 1,
+          "pocket_world_tree": 1,
+          "pocket_runtime_help": 2,
+          "pocket_runtime_command": 3,
+          "pocket_step": 3
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 35032,
+          "output": 240,
+          "reasoning": 1344,
+          "cache_read": 171520,
+          "total": 208136
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 9,
+        "tokens": 206792,
+        "calls": 10,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0,
+    "tokens": 20611151,
+    "tool_calls": 713
+  }
+}

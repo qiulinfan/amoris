@@ -278,6 +278,29 @@ renamed `mixamorig:root` and `mixamorig:tip` and its one clip called `mixamo.com
 clip on the arm with no channel left out; played, it bows the tip to 60 degrees at half a second,
 the clip is there again after a reload, and a missing file is refused.
 
+## A character without a file
+
+A game wants people in it before anyone has drawn them. `MeshRenderer.mesh = "humanoid"` is a figure
+the engine makes itself: boxes on eleven joints named as Mixamo names them (`Hips`, `Spine`, `Head`,
+`LeftUpLeg` ... `RightForeArm`), two metres tall standing on its origin and facing +Z, skinned
+rigidly, in five materials, with twelve clips of its own: `idle`, `walk`, `run`, `walk_back`,
+`strafe_left`, `strafe_right`, `crouch`, `crouch_walk`, `jump`, `wave`, `punch` and `die` (the last
+held where it ends, played with `loop` off). A query sets its colours,
+`"humanoid?shirt=red&trousers=navy&skin=#8d5524&hair=none"`: `skin`, `shirt`, `trousers`, `shoes`
+and `hair` take `"#rrggbb"`, `"#rgb"` or a plain name (red, green, blue, yellow, orange, purple,
+pink, brown, black, white, grey, tan, navy, teal, olive), `hair=none` leaves the head bare, and a
+part or colour it does not know is refused by name. Each distinct query is a model of its own, made
+once. The engine writes it as a glTF binary and reads it with the reader every file goes through, so
+it is drawn, posed, cross-faded, layered, given `AnimationGraph`s and attachments, and takes clips
+from Mixamo files by `animation.library`, exactly as a model from a file is; `animation.clips` and
+`assets.describe` name its clips and joints. `samples/walker`'s hero is the same figure made by
+`tools/scripts/make_sample_assets.py`, with its clips in files of their own.
+`tools/scripts/humanoid_evidence.py` (`tests/evidence/rendering/humanoids.png`) shows six looks
+idling, walking, running, waving, punching and lying where they fell. `assets_tests`
+(`[assets][humanoid]`): its skin of eleven joints and its twelve clips, standing on the origin two
+metres and a hair tall, a red shirt in linear light, no hair two boxes fewer, an unknown part and an
+unreadable colour refused.
+
 ## Cues
 
 An `Animator`'s `cues` are moments of its clips to be announced: `{clip, time, name}` (an empty

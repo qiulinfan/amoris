@@ -5,16 +5,17 @@ the game runs on, and it exists without hardware.
 
 ## Model
 
-- **Clips** are project-relative WAV, Ogg Vorbis or MP3 files (`assets/beep.wav`,
-  `assets/chime.ogg`, `assets/blip.mp3`), decoded once (WAV through SDL, Vorbis through stb_vorbis,
-  MP3 through dr_mp3) and converted to the mixer format (float, stereo, 48 kHz). An Ogg or MP3 clip
-  at least ten seconds long (`[audio] stream_seconds` in `project.toml`; 0 streams every one) is not
-  decoded whole: it streams, its compressed bytes staying in memory and each voice decoding its own
-  way through them a chunk at a time, a few thousand converted frames ahead of the mixer, so a music
-  track costs its file size rather than its decoded size (a three-minute track: a few megabytes
-  rather than thirty). A streamed voice loops without a seam and plays at any pitch like a decoded
-  one; `audio.clips` reports `streamed` and each clip's `bytes`, `audio.stats` the streamed clips
-  and streaming voices. WAV clips decode whole.
+- **Clips** are project-relative WAV, Ogg Vorbis, MP3 or FLAC files (`assets/beep.wav`,
+  `assets/chime.ogg`, `assets/blip.mp3`, `assets/tone.flac`), decoded once (WAV through SDL, Vorbis
+  through stb_vorbis, MP3 through dr_mp3, FLAC through dr_flac) and converted to the mixer format
+  (float, stereo, 48 kHz). An Ogg, MP3 or FLAC clip at least ten seconds long
+  (`[audio] stream_seconds` in `project.toml`; 0 streams every one) is not decoded whole: it
+  streams, its compressed bytes staying in memory and each voice decoding its own way through them a
+  chunk at a time, a few thousand converted frames ahead of the mixer, so a music track costs its
+  file size rather than its decoded size (a three-minute track: a few megabytes rather than thirty).
+  A streamed voice loops without a seam and plays at any pitch like a decoded one; `audio.clips`
+  reports `streamed` and each clip's `bytes`, `audio.stats` the streamed clips and streaming voices.
+  WAV clips decode whole.
 - **Voices** are playing clips with volume, pitch (rate), pan, loop, a low-pass (`lowpass`, 1 for
   the clip as it is, small values muffling it through a one-pole filter per voice: underwater,
   behind a door), a send to the room's reverb (`reverb`, The room below), an optional owning entity,
@@ -217,7 +218,7 @@ without a sound card. WAV clips come from `tools/scripts/make_sample_assets.py -
 
 ## Not yet
 
-Compressed formats beyond Ogg Vorbis and MP3 (FLAC, Opus), more than one room at a time (a door
+Compressed formats beyond Ogg Vorbis, MP3 and FLAC (Opus), more than one room at a time (a door
 between two rooms is a script changing the room) and early reflections that follow the walls (the
 reverb is one tail for the whole room; occlusion is a straight ray, so nothing bends around a corner
 either), a reverb of a bus's own (every bus sends to the one room's), streaming WAV (a long WAV

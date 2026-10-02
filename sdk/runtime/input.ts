@@ -89,6 +89,10 @@ export const input = {
     press(target: { key: string } | { action: string }): void {
         cmd("input.press", target);
     },
+    /** Let go now of what hold holds: a key, an action's keys both ways, or every held key. */
+    release(target: { key: string } | { action: string } | Record<string, never> = {}): string[] {
+        return cmd<{ released: string[] }>("input.release", target).released;
+    },
     /** Capture the pointer (hidden, held in the window, every motion reaching `mouse:x` / `mouse:y`), or let it go. Escape lets it go and a click takes it again. */
     lockCursor(locked = true): void {
         cmd("input.cursor", { locked });

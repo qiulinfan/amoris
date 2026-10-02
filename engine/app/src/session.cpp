@@ -6202,7 +6202,7 @@ Result<Json> Session::world_lint(const Json& p) {
         if (file_missing(m.map)) add("error", e.id(), "TileMap", std::format("the map file {} is not in the project", m.map), "point TileMap.map at a .tmj file in the project");
     });
     ecs.each([&](flecs::entity e, const world::AudioSource& a) {
-        if (file_missing(a.clip)) add("error", e.id(), "AudioSource", std::format("the sound {} is not in the project, so it plays nothing", a.clip), "point AudioSource.clip at a .wav, .ogg or .mp3 in the project");
+        if (file_missing(a.clip)) add("error", e.id(), "AudioSource", std::format("the sound {} is not in the project, so it plays nothing", a.clip), "point AudioSource.clip at a .wav, .ogg, .mp3 or .flac in the project");
     });
     ecs.each([&](flecs::entity e, const world::Timeline& t) {
         if (file_missing(t.path)) add("error", e.id(), "Timeline", std::format("the timeline file {} is not in the project", t.path), "write it (timeline.write, project.write) or point Timeline.path at one");

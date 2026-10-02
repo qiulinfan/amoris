@@ -10,6 +10,7 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | stb_image, stb_image_write | master (2026-09) | public domain / MIT | vendored headers; stb_image decodes project images, stb_image_write writes captures |
 | stb_vorbis | 1.22 (master, 2026-09) | public domain / MIT | vendored source (`third_party/stb/include/stb_vorbis.c`, compiled in `stb_impl.c`); decodes Ogg Vorbis clips for the audio module |
 | dr_mp3 | 0.7.4 (master, 2026-09) | public domain / MIT-0 | vendored header (`third_party/stb/include/dr_mp3.h`, from github.com/mackron/dr_libs, compiled in `stb_impl.c`); decodes MP3 clips for the audio module |
+| dr_flac | 0.13.4 (master, 2026-10) | public domain / MIT-0 | vendored header (`third_party/stb/include/dr_flac.h`, from github.com/mackron/dr_libs, compiled in `stb_impl.c`); decodes FLAC clips for the audio module |
 | Catch2 | 3.16.0 | BSL-1.0 | vendored amalgamation |
 | Yoga | 3.2.1 | MIT | vendored sources |
 | Box2D | 3.1.1 | MIT | vendored sources (`third_party/box2d`, the `src` and `include` directories of github.com/erincatto/box2d at tag v3.1.1); 2D rigid bodies, shapes and joints for the physics module (`docs/design/physics2d.md`) |
