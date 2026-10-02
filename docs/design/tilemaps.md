@@ -167,9 +167,15 @@ under every cell and a space is an empty cell. The layers come in the order they
 `"*"` ones first), or as `layers` orders them, which also marks solid ones. A character the legend
 lacks and a tile a tileset lacks are refused by name. The answer counts the objects by type;
 `tilemap.spawn {prefabs}` turns them into entities, or a script reads them with `tilemap.objects`.
-`runtime_tests` (`[tilemap][text]`): ten by five cells with walls, a start and two coins: the walls
-solid, the floor under every cell, the start at its cell's center, and a stray `?` and a tile past
-the tileset named.
+The other way, `tilemap.rows {entity, layer?, solid?, tile_x?, tile_y?, width?, height?}` reads a
+map (any map, not only one made from text) as rows: per tile layer, a character for each tile it
+uses (`.` empty) and a legend from each character to its tile; with `solid: true`, the collision
+instead (`#` solid, `-` one way, `/` a slope, `.` free); a window of it with the four bounds. An
+agent reads a level that way rather than cell by cell with `tilemap.tile` (one asked for
+`tilemap.get` and then `tilemap.text {entity}` to do it). `runtime_tests` (`[tilemap][text]`): ten
+by five cells with walls, a start and two coins: the walls solid, the floor under every cell, the
+start at its cell's center, the walls read back as the rows they came from and the collision of a
+window, and a stray `?` and a tile past the tileset named.
 
 ## Sight
 

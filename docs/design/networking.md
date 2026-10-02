@@ -21,6 +21,15 @@ scene, the scripts' `onStart` and every random number are the same on every peer
 input delay (`--net-delay`, 3 ticks). Until every player is in, the peers draw and wait: no tick
 runs, and those frames do not count against `--frames`. Then all of them start at tick 0.
 
+Two players who cannot reach each other (each behind a home router) both reach a server: there,
+`--net-host PORT --net-dedicated` (headless) runs the game and relays it without playing in it, so
+`--net-players` counts only those who join, numbered from 0 in the order they come, and the host
+sends no input of its own. It still runs every tick, checks every player's world hash against its
+own (kept as player -1) and keeps the inputs for a player who comes back; `net.info` says
+`dedicated`. `runtime_tests` (`[dedicated]`): a dedicated host and two players on threads play the
+arena 240 ticks with the same exposed state and hash chain on all three, Red moved by player 0's key
+and not by the host's.
+
 ## A tick
 
 A peer's own input (its keys, pad, mouse, and the synthetic input of `input.hold`, `input.press`,
@@ -150,6 +159,7 @@ ball. Run it with `--net-host` on one machine and `--net-join` on another (or tw
 
 Rollback (predicting the others' input and correcting, instead of waiting for it), more players than
 the game started with (a running game takes newcomers only into the places of players who left), a
-snapshot of the world to join from instead of the replay (a long game's replay grows with it),
-relays through a server for peers that cannot reach each other, a browser hosting (WebRTC between
-browsers), `wss://` in the runtime itself, and a hidden tab going on ticking on a timer.
+snapshot of the world to join from instead of the replay (a long game's replay grows with it), a
+relay that only forwards (a dedicated host on a server works, but runs the game itself), a browser
+hosting (WebRTC between browsers), `wss://` in the runtime itself, and a hidden tab going on ticking
+on a timer.

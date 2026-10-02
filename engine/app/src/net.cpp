@@ -113,7 +113,7 @@ void quiet_socket(int fd) {
 }  // namespace
 
 struct Net::Impl {
-    bool host = false, started = false;
+    bool host = false, started = false, dedicated = false;   // dedicated: a host that does not play
     int player = 0, players = 2, delay = 3, port = 0;
     std::uint64_t seed = 1;
     int listen_fd = -1;
@@ -194,7 +194,7 @@ struct Net::Impl {
         if (l.web > 0) { emscripten_websocket_close(l.web, 1000, "gone"); emscripten_websocket_delete(l.web); l.web = 0; }
 #endif
         l.fd = -1;
-        if (host && l.player > 0) {
+        if (host && l.player >= (dedicated ? 0 : 1)) {
             // Everyone goes on without them from the tick after the last input they sent.
             auto it = last_from.find(l.player);
             const std::int64_t at = it == last_from.end() ? delay : it->second + 1;
@@ -211,7 +211,7 @@ struct Net::Impl {
     void check_hashes(std::int64_t tick) {
         auto it = hashes.find(tick);
         if (it == hashes.end()) return;
-        int expected = 0;
+        int expected = dedicated ? 1 : 0;   // a dedicated host's own world is kept apart, as player -1
         for (int p = 0; p < players; ++p) if (!is_away(p, tick)) ++expected;
         if (static_cast<int>(it->second.size()) < expected) return;
         const std::string& first = it->second.begin()->second;
@@ -453,7 +453,7 @@ struct Net::Impl {
             if (started) {
                 // A running game takes a newcomer only into the place of a player who left.
                 int slot = -1;
-                for (int p = 1; p < players && slot < 0; ++p) {
+                for (int p = dedicated ? 0 : 1; p < players && slot < 0; ++p) {
                     bool here = false;
                     for (const Link& o : links) here = here || (o.alive && o.player == p);
                     if (!here && gone(p)) slot = p;
@@ -523,15 +523,17 @@ Net::~Net() {
 #endif
 }
 
-Result<std::unique_ptr<Net>> Net::host(int port, int players, int delay, std::uint64_t seed) {
+Result<std::unique_ptr<Net>> Net::host(int port, int players, int delay, std::uint64_t seed, bool dedicated) {
 #ifdef __EMSCRIPTEN__
-    (void)port; (void)players; (void)delay; (void)seed;
+    (void)port; (void)players; (void)delay; (void)seed; (void)dedicated;
     return fail("unsupported", "networking is not in the browser build");
 #else
     std::unique_ptr<Net> net(new Net());
     Impl& im = *net->impl_;
     im.host = true;
-    im.player = 0;
+    im.dedicated = dedicated;
+    im.player = dedicated ? -1 : 0;
+    im.next_player = dedicated ? 0 : 1;
     im.players = std::clamp(players, 1, 16);
     im.delay = std::clamp(delay, 1, 60);
     im.seed = seed;
@@ -549,11 +551,11 @@ Result<std::unique_ptr<Net>> Net::host(int port, int players, int delay, std::ui
     socklen_t len = sizeof addr;
     getsockname(im.listen_fd, reinterpret_cast<sockaddr*>(&addr), &len);
     im.port = ntohs(addr.sin_port);
-    if (im.players <= 1) {
+    if (im.players <= 1 && !dedicated) {
         im.started = true;
         im.notes.push_back(Json{{"type", "net.started"}, {"players", 1}});
     }
-    log::info("net", "hosting on port {} for {} players (input delay {} ticks)", im.port, im.players, im.delay);
+    log::info("net", "hosting on port {} for {} players{} (input delay {} ticks)", im.port, im.players, dedicated ? ", not playing itself" : "", im.delay);
     return net;
 #endif
 }
@@ -690,6 +692,10 @@ bool Net::catching_up() const { return impl_->catching_up; }
 
 void Net::commit(std::int64_t tick, Json events) {
     Impl& im = *impl_;
+    if (im.player < 0 && im.host) {   // a dedicated host has no input of its own
+        pump();
+        return;
+    }
     if (im.late && (im.back_at < 0 || tick < im.back_at)) {
         im.skipped_max = std::max(im.skipped_max, tick);   // replaying: not in the game yet
         return;
@@ -749,7 +755,7 @@ void Net::report_hash(std::int64_t tick, const std::string& hash) {
     Impl& im = *impl_;
     if (im.host) {
         im.own_hashes[tick] = hash;
-        im.hashes[tick][0] = hash;
+        im.hashes[tick][im.dedicated ? -1 : 0] = hash;
         im.check_hashes(tick);
     } else if (!im.links.empty()) {
         im.send(im.links[0], Json{{"t", "hash"}, {"tick", tick}, {"h", hash}});
@@ -771,6 +777,7 @@ Json Net::info() const {
     j["started"] = im.started;
     j["delay"] = im.delay;
     if (im.host) j["port"] = im.port;
+    if (im.dedicated) j["dedicated"] = true;   // runs and relays the game, player -1
     int connected = 0;
     for (const Link& l : im.links) connected += l.alive ? 1 : 0;
     j["connected"] = connected;

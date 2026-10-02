@@ -48,6 +48,7 @@ std::string usage() {
   --net-players N       how many players the host waits for, itself included
   --net-join HOST:PORT  join a lockstep game (the host's seed and input delay are used)
   --net-delay N         ticks between an input and the tick it acts on (default 3)
+  --net-dedicated       with --net-host: run and relay the game without playing it (a server both players reach)
 )";
 }
 
@@ -107,6 +108,7 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
         else if (a == "--net-players") { POCKET_TRY(v, need(i, "--net-players")); o.net_players = std::stoi(v); ++i; }
         else if (a == "--net-join") { POCKET_TRY(v, need(i, "--net-join")); o.net_join = v; ++i; }
         else if (a == "--net-delay") { POCKET_TRY(v, need(i, "--net-delay")); o.net_delay = std::stoi(v); ++i; }
+        else if (a == "--net-dedicated") o.net_dedicated = true;
         else if (a == "--help" || a == "-h") return fail("help", "{}", usage());
         else return fail("bad_args", "unknown argument '{}'", a);
     }
@@ -118,6 +120,7 @@ Result<Options> parse_args(const std::vector<std::string>& args) {
     // thousand entities it is over a millisecond a tick.
     if (!tick_hash_given && !o.headless && o.record.empty() && o.replay.empty()) o.hash_every_tick = false;
     if (o.net_host >= 0 && !o.net_join.empty()) return fail("bad_args", "--net-host and --net-join are exclusive");
+    if (o.net_dedicated && o.net_host < 0) return fail("bad_args", "--net-dedicated goes with --net-host: it is the host that does not play");
     return o;
 }
 

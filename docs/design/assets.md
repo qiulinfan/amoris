@@ -306,11 +306,12 @@ made it.
 
 ## Not yet
 
-KHR extensions beyond `KHR_texture_transform` (its offset and scale on the base color texture are
-applied, to every map of the material; its rotation is not), `KHR_lights_punctual`,
-`KHR_materials_emissive_strength` and the glass and clear coat factors (their textures are not
-read): sheen, specular, iridescence, materials variants; KTX2 textures in GPU formats (they are
-decoded to RGBA) and HDR KTX2; and audio or font assets through the same store.
+KHR extensions beyond those read: `KHR_texture_transform` (its offset and scale on the base color
+texture, applied to every map of the material; its rotation is not), `KHR_lights_punctual`,
+`KHR_materials_emissive_strength`, `KHR_materials_unlit`, and the factors of transmission, ior,
+volume, clear coat, sheen, specular and anisotropy (their textures are not read); not iridescence or
+materials variants; KTX2 textures in GPU formats (they are decoded to RGBA) and HDR KTX2; and audio
+or font assets through the same store.
 
 ## Tile maps
 

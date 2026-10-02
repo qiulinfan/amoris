@@ -263,6 +263,11 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE_FALSE(fn.has_value());
     REQUIRE(fn.error().message.find("script.eval") != std::string::npos);
     REQUIRE(s.command("log.tail", Json{{"lines", 5}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"values", Json{{"position", Json{{"x", 0.5}}}}}}).value()["value"]["position"]["x"] == 0.5);
+    auto tool = s.command("runtime_commands", Json::object());
+    REQUIRE_FALSE(tool.has_value());
+    REQUIRE(tool.error().message.find("the command is 'commands'") != std::string::npos);
+    REQUIRE(s.command("pocket_world_tree", Json::object()).error().message.find("'world.tree'") != std::string::npos);
     // input.release lets a hold go at once, and only what was held.
     REQUIRE(s.command("input.hold", Json{{"key", "D"}, {"ticks", 600}}).has_value());
     REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
@@ -5456,6 +5461,15 @@ TEST_CASE("a map drawn in characters: tiles on layers, objects at cell centers, 
     REQUIRE(objs[0]["name"] == "Start_1");
     REQUIRE(objs[0]["center"]["x"].get<double>() == Catch::Approx(1.5));
     REQUIRE(objs[0]["center"]["y"].get<double>() == Catch::Approx(-1.5));
+    // Read back as rows: the walls layer is the text's walls, its tile named by the legend; the
+    // collision the same; a window of it.
+    const Json back = s.command("tilemap.rows", Json{{"entity", "Text"}, {"layer", "walls"}}).value();
+    INFO(back.dump());
+    REQUIRE(back["layers"][0]["rows"] == Json::array({"##########", "#...#....#", "#...#....#", "#......###", "##########"}));
+    REQUIRE(back["layers"][0]["legend"]["#"]["id"] == 1);
+    const Json solid = s.command("tilemap.rows", Json{{"entity", "Text"}, {"solid", true}, {"tile_x", 3}, {"tile_y", 1}, {"width", 3}, {"height", 2}}).value();
+    REQUIRE(solid["rows"] == Json::array({".#.", ".#."}));
+    REQUIRE(s.command("tilemap.rows", Json{{"entity", "Text"}, {"layer", "nope"}}).error().code == "no_layer");
     // A character the legend lacks, and a tile the tileset lacks, are named.
     auto bad = s.command("tilemap.text", Json{{"name", "maps/bad.tmj"}, {"rows", Json::array({"#?#"})}, {"legend", legend}, {"tilesets", Json::array({Json{{"image", "assets/dungeon_tiles.png"}}})}});
     REQUIRE_FALSE(bad.has_value());
@@ -5857,11 +5871,11 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
     REQUIRE_FALSE(typo.has_value());
     REQUIRE(typo.error().message.find("world.spawn") != std::string::npos);
     // A key a command does not take is refused, with the ones it takes, instead of being ignored.
-    auto wrong = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"fields", Json{{"color", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 1}}}}}});
+    auto wrong = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"data", Json{{"color", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 1}}}}}});
     REQUIRE_FALSE(wrong.has_value());
     INFO(wrong.error().message);
     REQUIRE(wrong.error().code == "bad_args");
-    REQUIRE(wrong.error().message.find("'fields'") != std::string::npos);
+    REQUIRE(wrong.error().message.find("'data'") != std::string::npos);
     REQUIRE(wrong.error().message.find("entity, component, value") != std::string::npos);
     auto pattern = s.command("world.query", Json{{"pattern", "*Ball*"}});
     REQUIRE_FALSE(pattern.has_value());
@@ -6567,6 +6581,46 @@ TEST_CASE("two peers play a lockstep game: each moves its own player, and their 
     REQUIRE(host.state["state"]["blue.z"].get<double>() > -6.0 + 3.0);
     REQUIRE(host.state["state"]["red.z"].get<double>() == Catch::Approx(6).margin(0.05));
     REQUIRE(host.state["state"]["blue.x"].get<double>() == Catch::Approx(0).margin(0.05));
+    REQUIRE(host.net["desyncs"] == 0);
+}
+
+TEST_CASE("a dedicated host runs and relays the game for two players who joined it, playing in it itself not at all", "[runtime][net][dedicated]") {
+    app::Options ho = arena_options();
+    ho.net_host = 0;
+    ho.net_players = 2;
+    ho.net_dedicated = true;
+    std::promise<int> port;
+    auto port_ready = port.get_future();
+    Peer host, red, blue;
+    // The host holds move_x too: as it does not play, that moves nobody.
+    std::thread host_thread([&] { play_peer(ho, 240, "move_x", -1, &port, host); });
+    const int p = port_ready.get();
+    REQUIRE(p > 0);
+    app::Options ro = arena_options();
+    ro.net_join = "127.0.0.1:" + std::to_string(p);
+    std::thread red_thread([&] { play_peer(ro, 240, "move_x", 1, nullptr, red); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));   // joined in this order: Red is player 0
+    app::Options bo = ro;
+    std::thread blue_thread([&] { play_peer(bo, 240, "move_z", 1, nullptr, blue); });
+    host_thread.join();
+    red_thread.join();
+    blue_thread.join();
+    INFO("host " << host.error << " " << host.state.dump() << " " << host.net.dump());
+    INFO("red " << red.error << " " << red.net.dump());
+    INFO("blue " << blue.error << " " << blue.net.dump());
+    REQUIRE(host.error.empty());
+    REQUIRE(red.error.empty());
+    REQUIRE(blue.error.empty());
+    REQUIRE(host.net["dedicated"] == true);
+    REQUIRE(host.net["player"] == -1);
+    REQUIRE(red.net["player"] == 0);
+    REQUIRE(blue.net["player"] == 1);
+    for (const Peer* q : {&host, &red, &blue}) REQUIRE(q->state["tick"] == 240);
+    REQUIRE(host.state["state"] == red.state["state"]);
+    REQUIRE(red.state["state"] == blue.state["state"]);
+    REQUIRE(host.state["state_hash"] == blue.state["state_hash"]);
+    REQUIRE(red.state["state"]["red.x"].get<double>() > 3.0);           // Red's own key, not the host's (which would move it left)
+    REQUIRE(red.state["state"]["blue.z"].get<double>() > -6.0 + 3.0);
     REQUIRE(host.net["desyncs"] == 0);
 }
 

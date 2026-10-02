@@ -59,6 +59,22 @@ pub struct BuildOutcome {
     pub build_dir: PathBuf,
 }
 
+/// The runtime a command launches: POCKET_RUNTIME when set (a copy under test, launched as it is:
+/// work going on in the checkout must not rebuild it under an agent), else the module built for
+/// `config`. A failed build is the command's report.
+pub fn runtime_exe(ws: &Workspace, config: &str, label: &str) -> Result<std::result::Result<PathBuf, Report>> {
+    if let Some(p) = std::env::var_os("POCKET_RUNTIME").filter(|p| !p.is_empty()) {
+        return Ok(Ok(PathBuf::from(p)));
+    }
+    let outcome = build_targets(ws, config, &["pocket_runtime".to_string()], false)?;
+    if !outcome.ok {
+        let mut rep = Report::failure(label, "runtime build failed");
+        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
+        return Ok(Err(rep));
+    }
+    Ok(Ok(exe_path(ws, config, "pocket_runtime")?))
+}
+
 pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_only: bool) -> Result<BuildOutcome> {
     let target = ws.target_of(config)?;
     let ws = &ws.for_target(&target)?;
@@ -163,15 +179,11 @@ pub fn run(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Resul
     }
     // A sample project: bundle its TypeScript, then run it with the runtime module.
     let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is neither a module nor a project with project.toml"))?;
-    let runtime = "pocket_runtime";
-    let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
-    if !outcome.ok {
-        let mut rep = Report::failure("run", "runtime build failed");
-        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
-        return Ok(rep);
-    }
+    let exe = match runtime_exe(ws, config, "run")? {
+        Ok(exe) => exe,
+        Err(rep) => return Ok(rep),
+    };
     let bundle = bundle_project(ws, &project, None)?;
-    let exe = exe_path(ws, config, runtime)?;
     let status = runtime_command(ws, &exe)
         .arg("--project")
         .arg(&project)
@@ -691,14 +703,10 @@ fn run_scripts(ws: &Workspace, config: &str, target: &str, file: Option<&str>, s
     let t0 = Instant::now();
     let label = if kind == "benches" { "bench" } else { "scenario" };
     let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is not a project with project.toml"))?;
-    let runtime = "pocket_runtime";
-    let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
-    if !outcome.ok {
-        let mut rep = Report::failure(label, "runtime build failed");
-        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
-        return Ok(rep);
-    }
-    let exe = exe_path(ws, config, runtime)?;
+    let exe = match runtime_exe(ws, config, label)? {
+        Ok(exe) => exe,
+        Err(rep) => return Ok(rep),
+    };
     let project_bundle = bundle_project(ws, &project, None)?;
     let files: Vec<(PathBuf, PathBuf)> = match file {
         Some(f) => {
@@ -849,15 +857,11 @@ fn compact_value(v: &serde_json::Value) -> String {
 pub fn run_captured(ws: &Workspace, config: &str, target: &str, args: &[String]) -> Result<Report> {
     let t0 = Instant::now();
     let project = find_project(ws, target).ok_or_else(|| anyhow!("'{target}' is not a project with project.toml"))?;
-    let runtime = "pocket_runtime";
-    let outcome = build_targets(ws, config, &[runtime.to_string()], false)?;
-    if !outcome.ok {
-        let mut rep = Report::failure("run", "runtime build failed");
-        rep.diagnostics = parse_compiler_diagnostics(&outcome.output);
-        return Ok(rep);
-    }
+    let exe = match runtime_exe(ws, config, "run")? {
+        Ok(exe) => exe,
+        Err(rep) => return Ok(rep),
+    };
     let bundle = bundle_project(ws, &project, None)?;
-    let exe = exe_path(ws, config, runtime)?;
     let output = runtime_command(ws, &exe).arg("--project").arg(&project).arg("--bundle").arg(&bundle.out).args(args).current_dir(&ws.root).output()?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or(json!({ "raw": stdout }));

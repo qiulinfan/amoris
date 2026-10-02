@@ -185,10 +185,10 @@ in an empty directory otherwise, never in the repository, so nothing it writes c
 engine's sources. `--env-file` loads a provider's key file into the agent's environment without
 printing it, and `POCKET_EVAL_RUNTIME` names a copy of the runtime for the harness to start, so
 builds made while a long run goes on do not change what it measures. The harness passes the same
-copy to the agent as `POCKET_RUNTIME`, which the MCP server's `runtime_start` launches instead of
-building the checkout: in the run of fifty-five, an agent's `runtime_start` built the engine while
-it was being edited, failed to compile, and the agent spent four calls waiting for the sources to
-settle.
+copy to the agent as `POCKET_RUNTIME`, which the MCP server's `runtime_start`, its scenario, bench
+and headless-run tools and the CLI's `run` and `scenario` launch instead of building the checkout:
+in the run of fifty-five, an agent's `runtime_start` built the engine while it was being edited,
+failed to compile, and the agent spent four calls waiting for the sources to settle.
 
 Copy the runtime to a new file for `POCKET_EVAL_RUNTIME` (`rm` the old copy first: macOS kills a
 signed binary that was overwritten in place, and every task then fails with the runtime gone before

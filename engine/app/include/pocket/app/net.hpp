@@ -21,7 +21,9 @@ class Net {
     Net& operator=(const Net&) = delete;
 
     // Listen on `port` (0: any free port) for `players` - 1 others; the game starts when they are all in.
-    static Result<std::unique_ptr<Net>> host(int port, int players, int delay, std::uint64_t seed);
+    // `dedicated`: the host runs the game and relays it without playing (no input of its own); the
+    // players are the `players` who join, numbered from 0.
+    static Result<std::unique_ptr<Net>> host(int port, int players, int delay, std::uint64_t seed, bool dedicated = false);
     // Connect to a host ("address:port") and wait up to `timeout` seconds for its welcome: this
     // peer's player number, the player count, the seed and the input delay.
     static Result<std::unique_ptr<Net>> join(const std::string& address, double timeout);

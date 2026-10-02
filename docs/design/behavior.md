@@ -91,4 +91,6 @@ point, then its second once there.
 No nested machines or behavior trees; the perception is of one target, by distance and a ray (no
 hearing radius; what it remembers is where it last saw the target and when). A field of view
 narrower than 360 degrees reads where the entity faces, so its `NavAgent` should have `face` on (it
-turns the entity toward where it walks) or the game should turn it.
+turns the entity toward where it walks) or the game should turn it. Sight is a ray against the 3D
+colliders: in a 2D game the tile map's walls and the 2D bodies do not block it, and facing is about
+the vertical, not in the XY plane.
