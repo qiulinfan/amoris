@@ -21,6 +21,16 @@ class AssetStore;
 
 namespace pocket::physics {
 
+// A 2D rigid body as the platformer bodies see it (docs/design/physics2d.md, Bodies and movers):
+// the box round its shapes, how far it moved in the last step, and whether it can be pushed.
+struct Box2DView {
+    world::EntityId entity = 0;
+    Vec2 min, max;
+    Vec2 velocity;
+    bool dynamic = false;
+    bool sensor = false;
+};
+
 struct Hit2D {
     world::EntityId entity = 0;   // the body's entity (a TileMap's for its tiles)
     Vec2 point, normal;
@@ -45,6 +55,11 @@ class Rigid2D {
     // none), and an angular one; wakes the body. Answers the velocity and spin it now has, for the
     // caller to write into the RigidBody2D (else the next step takes the old ones as a script's).
     Result<std::pair<Vec2, float>> impulse(world::EntityId id, Vec2 impulse, std::optional<Vec2> point, float angular);
+    // Every body's box (not the tile map's), for the platformer bodies to stand on and be stopped by.
+    [[nodiscard]] std::vector<Box2DView> boxes() const;
+    // A dynamic body pushed: each axis of its velocity that `v` has brought to at least v's (in its
+    // sign), as a mover walking into a crate shoves it; answers its velocity now, for the RigidBody2D.
+    std::optional<Vec2> push(world::EntityId id, Vec2 v);
     [[nodiscard]] Json describe() const;
     [[nodiscard]] bool active() const;
 

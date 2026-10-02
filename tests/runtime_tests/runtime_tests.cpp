@@ -354,6 +354,46 @@ TEST_CASE("capture.gif steps and draws play into a looping GIF", "[runtime][capt
     REQUIRE_FALSE(s.command("capture.gif", Json{{"path", "shot.png"}}).has_value());   // a GIF's path ends in .gif
 }
 
+TEST_CASE("a camera of higher priority takes the window, blending from the last one over its blend", "[runtime][render][camerablend]") {
+    auto o = hello_options(-1);
+    o.width = 160;
+    o.height = 90;
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"active", false}}}}).has_value());
+    // Two cameras 50 units up, 20 apart, both looking along -z at a point between them.
+    auto cam = [&](const char* name, double x, Json extra) {
+        Json c = Json::object();
+        for (auto& [k, v] : extra.items()) c[k] = v;
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", 50}, {"z", 10}}}}}, {"Camera", c}}}}).has_value());
+    };
+    cam("Left", -10, Json::object());
+    const Json point = Json{{"x", 0}, {"y", 50}, {"z", 0}};
+    auto drawn_x = [&](int ticks) {
+        REQUIRE(s.command("step", Json{{"ticks", ticks}, {"render", "each"}}).has_value());
+        return s.command("render.project", Json{{"point", point}}).value()["x"].get<double>();
+    };
+    REQUIRE(drawn_x(1) > 100);   // seen from the left: right of the middle
+    // A camera on the right with a higher priority and a second's blend takes the window.
+    cam("Right", 10, Json{{"priority", 5}, {"blend", 1.0}});
+    REQUIRE(drawn_x(1) > 100);   // the blend's first frame: still where the left one is
+    Json st = s.command("render.stats", Json::object()).value();
+    INFO(st.dump());
+    REQUIRE(st["camera_blend"]["progress"].get<double>() < 0.05);
+    const double halfway = drawn_x(30);   // half a second: halfway, the point in the middle
+    REQUIRE(halfway == Catch::Approx(80).margin(3));
+    st = s.command("render.stats", Json::object()).value();
+    REQUIRE(st["camera_blend"]["progress"].get<double>() == Catch::Approx(0.5).margin(0.05));
+    REQUIRE(st["camera_blend"]["from"].get<std::uint64_t>() == s.command("world.find", Json{{"name", "Left"}}).value().get<std::uint64_t>());   // `name` for its path
+    REQUIRE(drawn_x(40) < 60);   // there: seen from the right
+    REQUIRE_FALSE(s.command("render.stats", Json::object()).value().contains("camera_blend"));
+    // Lowered under the left one with no blend of its own on the left: a cut back.
+    REQUIRE(s.command("world.set", Json{{"entity", "Right"}, {"component", "Camera"}, {"value", Json{{"priority", -1}}}}).has_value());
+    REQUIRE(drawn_x(1) > 100);
+}
+
 TEST_CASE("the window's view drawn at a scale is stretched to the window, its coordinates the window's", "[runtime][render][scale]") {
     auto o = hello_options(-1);
     o.width = 320;
@@ -605,6 +645,55 @@ TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behi
     REQUIRE(b["unseen"].get<double>() == Catch::Approx(1.0).margin(0.05));
     REQUIRE(b["seen_at"]["z"].get<double>() == Catch::Approx(-6.5).margin(0.01));
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a Behavior hears a noise within its reach and goes to where it was made", "[runtime][behavior][noise]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 64;
+    o.height = 64;
+    o.paused = true;
+    o.frames = 100000;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());   // the script bakes the grid
+    auto at = [&](double x, double z) { return Json{{"position", Json{{"x", x}, {"y", 0}, {"z", z}}}}; };
+    const Json behavior{
+        {"states", Json::array({Json{{"name", "idle"}}, Json{{"name", "listen"}, {"move", "investigate"}, {"speed", 4}}})},
+        {"transitions", Json::array({Json{{"from", "idle"}, {"to", "listen"}, {"when", "noise"}},
+                                     Json{{"from", "listen"}, {"to", "idle"}, {"when", "arrived or unheard > 6"}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", at(-6, -6)}, {"NavAgent", Json{{"speed", 3}}}, {"Behavior", behavior}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Deaf"}, {"components", Json{{"Transform", at(-6, -5)}, {"NavAgent", Json{{"speed", 3}}}, {"Behavior", behavior}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Deaf"}, {"component", "Behavior"}, {"value", Json{{"hearing", 0}}}}).has_value());
+    auto state = [&](const char* who) { return s.command("world.get", Json{{"entity", who}, {"component", "Behavior"}}).value(); };
+    REQUIRE(s.command("step", Json{{"ticks", 5}}).has_value());
+    // A noise 12 away that carries 8: neither hears it.
+    REQUIRE(s.command("events.emit", Json{{"type", "noise"}, {"data", Json{{"at", Json{{"x", 6}, {"y", 0}, {"z", -6}}}, {"radius", 8}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(state("Guard")["state"] == "idle");
+    // One that carries 14 (a thrown stone's landing): the guard goes there, the deaf one stays.
+    REQUIRE(s.command("events.emit", Json{{"type", "noise"}, {"data", Json{{"at", Json{{"x", 6}, {"y", 0}, {"z", -6}}}, {"radius", 14}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    Json g = state("Guard");
+    INFO(g.dump());
+    REQUIRE(g["state"] == "listen");
+    REQUIRE(g["heard_at"]["x"].get<double>() == Catch::Approx(6));
+    REQUIRE(g["unheard"].get<double>() < 0.1);
+    REQUIRE(state("Deaf")["state"] == "idle");
+    REQUIRE(s.command("step", Json{{"ticks", 240}}).has_value());
+    const Json p = s.command("world.get", Json{{"entity", "Guard"}, {"component", "Transform"}}).value()["position"];
+    INFO(p.dump());
+    REQUIRE(std::hypot(p["x"].get<double>() - 6, p["z"].get<double>() + 6) < 1.0);
+    REQUIRE(state("Guard")["state"] == "idle");   // arrived, and back to idling
+    // A noise from an entity (its subject) is made where that entity stands.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Bell"}, {"components", Json{{"Transform", at(2, -6)}}}}).has_value());
+    REQUIRE(s.command("events.emit", Json{{"type", "noise"}, {"subject", "Bell"}, {"data", Json{{"radius", 6}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(state("Guard")["heard_at"]["x"].get<double>() == Catch::Approx(2));
 }
 
 TEST_CASE("a Behavior's home is its starting place unless given, the origin included", "[runtime][behavior][home]") {
@@ -3454,6 +3543,64 @@ TEST_CASE("root rotation turns the entity with the clip's heading and follows th
     // The sample's Turner has walked its circle too.
     REQUIRE(s.command("state", Json::object()).value()["state"].contains("turner.yaw"));
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a platformer body stands on 2D rigid bodies and shoves a dynamic one along", "[runtime][body2d][rigid2d][push]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto at = [](double x, double y) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", 0}}}}; };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Floor"}, {"components", Json{{"Transform", at(0, -0.5)}, {"RigidBody2D", Json{{"kind", "static"}}}, {"Collider2D", Json{{"size", Json{{"x", 20}, {"y", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", at(2, 0.5)}, {"RigidBody2D", Json::object()}, {"Collider2D", Json{{"size", Json{{"x", 0.5}, {"y", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Hero"}, {"components", Json{{"Transform", at(-1, 0.6)}, {"Body2D", Json{{"size", Json{{"x", 0.4}, {"y", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    auto pos = [&](const char* n) { return s.command("world.get", Json{{"entity", n}, {"component", "Transform"}}).value()["position"]; };
+    // Standing on the static floor (no tile map anywhere): grounded, its feet on y 0.
+    Json body = s.command("world.get", Json{{"entity", "Hero"}, {"component", "Body2D"}}).value();
+    REQUIRE(body["grounded"] == true);
+    REQUIRE(pos("Hero")["y"].get<double>() == Catch::Approx(0.5).margin(0.05));
+    // Walking right at 3 a second for a second and a half: into the crate and on, shoving it.
+    for (int i = 0; i < 90; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Hero"}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", 3}, {"y", 0}}}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    }
+    const double hero = pos("Hero")["x"].get<double>(), crate = pos("Crate")["x"].get<double>();
+    INFO("hero " << hero << ", crate " << crate);
+    REQUIRE(crate > 3.0);                     // shoved along
+    REQUIRE(hero + 0.4 <= crate - 0.5 + 0.05);   // never inside it
+    REQUIRE(hero > 1.5);
+    // Up on the crate: it stands on it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Hero"}, {"component", "Transform"}, {"value", at(crate, 2.0)}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Hero"}, {"component", "Body2D"}, {"value", Json{{"velocity", Json{{"x", 0}, {"y", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 40}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Hero"}, {"component", "Body2D"}}).value()["grounded"] == true);
+    REQUIRE(pos("Hero")["y"].get<double>() == Catch::Approx(1.5).margin(0.08));
+}
+
+TEST_CASE("a top-down mover is stopped by 2D rigid bodies and shoves a dynamic one", "[runtime][topdown2d][rigid2d][push]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto at = [](double x, double y) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", 0}}}}; };
+    // A wall to the north and a crate to the east that gravity does not pull (seen from above).
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wall"}, {"components", Json{{"Transform", at(0, 3)}, {"RigidBody2D", Json{{"kind", "static"}}}, {"Collider2D", Json{{"size", Json{{"x", 5}, {"y", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", at(2, 0)}, {"RigidBody2D", Json{{"linear_damping", 2.0}, {"gravity_scale", 0.0}}}, {"Collider2D", Json{{"size", Json{{"x", 0.5}, {"y", 0.5}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Walker"}, {"components", Json{{"Transform", at(0, 0)}, {"TopDown2D", Json{{"radius", 0.3}, {"velocity", Json{{"x", 0}, {"y", 4}}}}}}}}).has_value());
+    auto pos = [&](const char* n) { return s.command("world.get", Json{{"entity", n}, {"component", "Transform"}}).value()["position"]; };
+    // North into the wall: it stops with its edge on the wall's face (2.5) and says it is blocked.
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    REQUIRE(pos("Walker")["y"].get<double>() == Catch::Approx(2.2).margin(0.1));
+    REQUIRE(s.command("world.get", Json{{"entity", "Walker"}, {"component", "TopDown2D"}}).value()["blocked_y"] == true);
+    // Back down and east into the crate for a second and a half: it goes along ahead.
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Transform"}, {"value", at(0, 0)}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "TopDown2D"}, {"value", Json{{"velocity", Json{{"x", 3}, {"y", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 90}}).has_value());
+    const double walker = pos("Walker")["x"].get<double>(), crate = pos("Crate")["x"].get<double>();
+    INFO("walker " << walker << ", crate " << crate);
+    REQUIRE(crate > 3.5);
+    REQUIRE(walker + 0.3 <= crate - 0.5 + 0.05);
 }
 
 TEST_CASE("2D bodies bounce by their restitution and slide to a stop by friction", "[runtime][body2d][bounce]") {

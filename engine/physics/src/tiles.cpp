@@ -1,4 +1,5 @@
 #include <pocket/physics/tiles.hpp>
+#include <pocket/physics/rigid2d.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -41,10 +42,39 @@ struct Rect {
     float l = 0, r = 0, b = 0, t = 0;
     float dx = 0, dy = 0;
     bool one_way = false;
+    bool pushable = false;   // a dynamic 2D rigid body: walked into, it is shoved
 };
 
-void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
+void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt, const std::vector<Box2DView>* bodies, std::vector<std::pair<world::EntityId, Vec2>>* pushes) {
     stats_ = Stats2D{};
+    // The 2D rigid bodies as boxes where the last step left them (docs/design/physics2d.md, Bodies
+    // and movers): platforms for the platformer bodies, walls for the top-down movers, and the
+    // dynamic ones shoved by what walks into them.
+    std::vector<Rect> body_rects;
+    if (bodies) {
+        for (const Box2DView& v : *bodies) {
+            if (v.sensor) continue;
+            Rect rc;
+            rc.id = v.entity;
+            rc.l = v.min.x;
+            rc.r = v.max.x;
+            rc.b = v.min.y;
+            rc.t = v.max.y;
+            rc.dx = v.velocity.x * dt;
+            rc.dy = v.velocity.y * dt;
+            rc.pushable = v.dynamic;
+            body_rects.push_back(rc);
+        }
+    }
+    // The body a top-down mover of radius r would overlap with its center moved from (x0, y0) to
+    // (x, y): its box grown by the radius; one it overlaps already (a body moved onto it) lets it go.
+    auto body_in_way = [&](float x0, float y0, float x, float y, float r) -> const Rect* {
+        for (const Rect& rc : body_rects) {
+            auto inside = [&](float px, float py) { return px > rc.l - r && px < rc.r + r && py > rc.b - r && py < rc.t + r; };
+            if (inside(x, y) && !inside(x0, y0)) return &rc;
+        }
+        return nullptr;
+    };
     // Maps by entity: resolved once per step.
     struct MapEntry { world::EntityId id; MapView view; };
     std::vector<MapEntry> maps, all_maps;   // the platformer's orthogonal maps; every map for the top-down movers
@@ -99,12 +129,22 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         const float sx = dx / static_cast<float>(steps), sy = dy / static_cast<float>(steps);
         for (int i = 0; i < steps; ++i) {
             if (sx != 0 && !b.blocked_x) {
-                if (mv && !stuck && solid_under(*mv, pos.x + sx + (sx > 0 ? radius : -radius), pos.y)) { b.blocked_x = true; stats_.blocked++; }
-                else pos.x += sx;
+                const float ax = pos.x + sx + (sx > 0 ? radius : -radius);
+                if (mv && !stuck && solid_under(*mv, ax, pos.y)) { b.blocked_x = true; stats_.blocked++; }
+                else if (const Rect* rc = body_in_way(pos.x, pos.y, pos.x + sx, pos.y, radius)) {
+                    b.blocked_x = true;
+                    stats_.blocked++;
+                    if (rc->pushable && pushes) pushes->emplace_back(rc->id, Vec2{b.velocity.x, 0.0f});
+                } else pos.x += sx;
             }
             if (sy != 0 && !b.blocked_y) {
-                if (mv && !stuck && solid_under(*mv, pos.x, pos.y + sy + (sy > 0 ? radius : -radius))) { b.blocked_y = true; stats_.blocked++; }
-                else pos.y += sy;
+                const float ay = pos.y + sy + (sy > 0 ? radius : -radius);
+                if (mv && !stuck && solid_under(*mv, pos.x, ay)) { b.blocked_y = true; stats_.blocked++; }
+                else if (const Rect* rc = body_in_way(pos.x, pos.y, pos.x, pos.y + sy, radius)) {
+                    b.blocked_y = true;
+                    stats_.blocked++;
+                    if (rc->pushable && pushes) pushes->emplace_back(rc->id, Vec2{0.0f, b.velocity.y});
+                } else pos.y += sy;
             }
         }
         int cx = -1, cy = -1;
@@ -153,6 +193,8 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
         positions.emplace_back(e.id(), pos);
         writes.emplace_back(e.id(), b);
     });
+    // The 2D rigid bodies as platforms: stood on, ridden as they move, and in the way.
+    rects.insert(rects.end(), body_rects.begin(), body_rects.end());
     w.ecs().each([&](flecs::entity e, const world::Body2D& body_in, const world::Transform& t) {
         if (body_in.kinematic) return;
         world::Body2D b = body_in;
@@ -260,15 +302,19 @@ void Physics2D::step(world::World& w, assets::AssetStore& assets, float dt) {
                 }
             }
             // Solid platforms block sideways too (one-way ones are nothing from the side).
+            const Rect* block_rect = nullptr;   // a platform or rigid body that stopped it
             for (const Rect& rc : rects) {
                 if (rc.one_way || rc.b >= cy + hy - kSkin || rc.t <= bottom + kSkin) continue;
                 if (dx > 0 && rc.l >= cx + hx - kSkin && rc.l < nx + hx) {
                     float x = rc.l - hx - kSkin;
-                    if (!blocked || x < block_x) { blocked = true; block_x = x; top_of_block = rc.t; }
+                    if (!blocked || x < block_x) { blocked = true; block_x = x; top_of_block = rc.t; block_rect = &rc; }
                 } else if (dx < 0 && rc.r <= cx - hx + kSkin && rc.r > nx - hx) {
                     float x = rc.r + hx + kSkin;
-                    if (!blocked || x > block_x) { blocked = true; block_x = x; top_of_block = rc.t; }
+                    if (!blocked || x > block_x) { blocked = true; block_x = x; top_of_block = rc.t; block_rect = &rc; }
                 }
+            }
+            if (blocked && block_rect && block_rect->pushable && pushes && block_x == (dx > 0 ? block_rect->l - hx - kSkin : block_rect->r + hx + kSkin)) {
+                pushes->emplace_back(block_rect->id, Vec2{b.velocity.x, 0.0f});   // shoved at the walker's pace
             }
             bool stepped = false;
             if (blocked && was_grounded && mv && top_of_block - bottom <= step + kSkin) {

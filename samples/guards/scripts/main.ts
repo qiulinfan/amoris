@@ -3,8 +3,10 @@
 // Locomotion), and each a
 // Behavior on the entity: it patrols a Path, runs after the player when it sees it (within 7 units,
 // across 150 degrees of where it faces, no wall between), goes to where it last saw it once it has
-// lost sight of it, and after 4 seconds without seeing it goes back to its round. WASD or the left stick walks the player to the golden vault at
-// the north wall; a guard that reaches the player sends it back to the start.
+// lost sight of it, and after 4 seconds without seeing it goes back to its round. A guard also
+// hears: the player running (Shift) makes a noise that carries 10 units, walls or not, and a guard
+// that hears it goes to look where it was made. WASD or the left stick walks the player to the
+// golden vault at the north wall; a guard that reaches the player sends it back to the start.
 import { events, expose, input, nav, onStart, onTick, repro, world } from "pocket";
 
 const START = { x: 0, y: 0.9, z: 12 };
@@ -15,6 +17,7 @@ let guards: number[] = [];
 let seen = 0;
 let caught = 0;
 let complete = false;
+let footfall = 0;
 
 onStart(() => {
     player = world.find("Player") ?? 0;
@@ -36,12 +39,16 @@ onStart(() => {
                     { name: "patrol", move: "patrol", path: `Routes/${route}`, speed: 2 },
                     { name: "chase", move: "follow", speed: 4.2, event: "guard.spotted" },
                     { name: "search", move: "seek", speed: 4 },
+                    { name: "listen", move: "investigate", speed: 3, event: "guard.heard" },
                 ],
                 transitions: [
                     { from: "patrol", to: "chase", when: "sees" },
                     { from: "chase", to: "search", when: "not sees" },
                     { from: "search", to: "chase", when: "sees" },
                     { from: "search", to: "patrol", when: "unseen > 4" },
+                    { from: "patrol", to: "listen", when: "noise" },
+                    { from: "listen", to: "chase", when: "sees" },
+                    { from: "listen", to: "patrol", when: "(arrived and time > 1) or unheard > 6" },
                 ],
             },
         } });
@@ -51,7 +58,15 @@ onStart(() => {
 
 onTick(() => {
     if (!player) return;
-    const vx = input.axis("move_x") * 5, vz = input.axis("move_z") * 5;
+    const running = input.down("sprint");
+    const speed = running ? 8 : 5;
+    const vx = input.axis("move_x") * speed, vz = input.axis("move_z") * speed;
+    // Running feet are heard: a noise every third of a second while it runs.
+    footfall = Math.max(0, footfall - 1 / 60);
+    if (running && Math.hypot(vx, vz) > 0.1 && footfall === 0) {
+        events.emit("noise", { radius: 10 }, { subject: player });
+        footfall = 1 / 3;
+    }
     world.set(player, "Character", { velocity: { x: vx, y: world.get(player, "Character")!.velocity.y, z: vz } });
     // The body turned to face where it walks (the humanoid faces -Z).
     if (body && Math.hypot(vx, vz) > 0.1) {

@@ -75,7 +75,7 @@ fields = [
 
 [[component]]
 name = "Camera"
-doc = "A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention)."
+doc = "A view of the world. With one active camera the renderer draws the window through it (the highest priority, then the first, if several have the whole window, blending to it over the incoming one's `blend`); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention)."
 fields = [
     { name = "fov_degrees", type = "f32", default = 60.0, doc = "Vertical field of view in degrees (perspective)." },
     { name = "orthographic", type = "bool", default = false, doc = "Parallel projection: no perspective, sizes do not shrink with distance." },
@@ -87,6 +87,8 @@ fields = [
     { name = "order", type = "i32", default = 0, doc = "Cameras with viewports draw from the lowest order up: a minimap above the view it sits in." },
     { name = "target", type = "string", default = "", doc = "Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): \"view:<target>\" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world." },
     { name = "target_size", type = "vec2", default = [256.0, 256.0], doc = "The texture's size in pixels, at most the window's." },
+    { name = "priority", type = "i32", default = 0, doc = "Of the active cameras with the whole window, the highest priority draws it (the first of equals): raise one's to cut or blend to it." },
+    { name = "blend", type = "f32", default = 0.0, doc = "Seconds the window's view takes to move from the camera that drew it to this one when this one takes over, eased in and out (docs/design/cameras.md, Blends); 0 cuts." },
 ]
 
 [[component]]
@@ -969,7 +971,7 @@ name = "BehaviorState"
 doc = "One state of a Behavior (docs/design/behavior.md): how the entity moves while in it, and what entering it plays and says."
 fields = [
     { name = "name", type = "string", default = "", doc = "What transitions and Behavior.state call it." },
-    { name = "move", type = "i32", default = 0, enum = ["stay", "follow", "flee", "wander", "home", "patrol", "seek"], doc = "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at)." },
+    { name = "move", type = "i32", default = 0, enum = ["stay", "follow", "flee", "wander", "home", "patrol", "seek", "investigate"], doc = "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at), 7 investigate: go to where it last heard a noise (heard_at)." },
     { name = "speed", type = "f32", default = 0.0, doc = "Its NavAgent's speed in this state; 0 leaves the agent's own." },
     { name = "radius", type = "f32", default = 5.0, doc = "How far wander roams from home and flee runs from the target." },
     { name = "path", type = "string", default = "", doc = "For patrol: the entity with the Path whose points it walks, by name or path." },
@@ -1005,6 +1007,9 @@ fields = [
     { name = "waypoint", type = "i32", default = 0, doc = "In a patrol, the index of the point it heads for (written by the engine)." },
     { name = "seen_at", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Where the target was when it last saw it, where seek goes (written by the engine)." },
     { name = "unseen", type = "f32", default = 0.0, doc = "Seconds since it last saw the target, or since it started when it never has (written by the engine)." },
+    { name = "hearing", type = "f32", default = 1.0, doc = "How well it hears: a `noise` event reaches it within the noise's radius times this (0: deaf; docs/design/behavior.md, Noises)." },
+    { name = "heard_at", type = "vec3", default = [0.0, 0.0, 0.0], doc = "Where the last noise that reached it was made, where investigate goes (written by the engine)." },
+    { name = "unheard", type = "f32", default = 0.0, doc = "Seconds since a noise last reached it, or since it started when none has (written by the engine)." },
     { name = "enabled", type = "bool", default = true, doc = "false stops it: the state holds and nothing moves the agent." },
     { name = "error", type = "string", default = "", doc = "What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine)." },
 ]

@@ -74,6 +74,28 @@ In scripts: `physics2d.raycast(from, to)`, `physics2d.overlap(center, {half})`,
 a body that also has a `Body2D` or `TopDown2D`, a body under a parent, a joint without a body or
 naming one that has none, and a `Hitbox` whose `Collider2D` is not a sensor.
 
+## Bodies and movers
+
+A platformer's `Body2D` (`docs/design/tilemaps.md`, 2D physics) meets the rigid bodies too. Each
+tick, before the platformer bodies move, every 2D rigid body that is not a sensor is put among their
+platforms as the box round its shapes where the last step left it: they land on it and stand on it
+(a static floor needs no tile map), ride it as it moves (a falling crate takes its rider down, a
+kinematic lift carries it up), and are stopped by its sides. A dynamic one walked into is shoved:
+its sideways velocity is brought up to the walker's before the rigid bodies step, so a player pushes
+a crate along at walking pace and the crate slides on, tips and stacks as Box2D has it. The box is
+the shapes' bounds, so a crate turned on its corner is as wide as its turned outline.
+
+A top-down mover (`TopDown2D`) meets the same boxes as walls: a step that would bring its circle (as
+a square of its radius) into one is dropped and `blocked_x` or `blocked_y` set, as a solid tile
+does, and a dynamic one is shoved along the way the mover went at its speed on that axis. One
+already overlapping it (a crate pushed onto the mover) lets it walk out. Gravity pulls the rigid
+bodies down the screen, so a top-down game's crates want `gravity_scale = 0` and some
+`linear_damping` to slide to rest. `runtime_tests` (`[body2d][rigid2d][push]`): a platformer body
+stands on a static `Collider2D` floor with no map anywhere, walks into a crate a second and a half
+at 3 a second, shoving it more than a unit along without ever being inside it, and set on the crate
+stands on its top; (`[topdown2d][rigid2d][push]`): a mover walking north stops with its edge on a
+static wall's face, and one walking east shoves a crate along ahead of it.
+
 ## The sample
 
 `samples/crates` (`pocket run crates`): fifteen crates in a pyramid, a heavy ball held up by a
@@ -96,7 +118,8 @@ world hash.
 
 ## Limits
 
-Body2D and TopDown2D movers and 2D rigid bodies pass through each other (a character among physics
-crates is a `RigidBody2D` with `fixed_rotation`, moved through its velocity). One shape a body
-(several shapes are several bodies welded together). A body under a parent is placed as a root.
-Continuous collision is Box2D's: static shapes always, dynamic ones for `bullet` bodies.
+TopDown2D movers and 2D rigid bodies pass through each other, and a rigid body is not pushed by a
+`Body2D` standing on it or falling onto it (only walked into), nor stopped by one (a crate falls
+through a player under it). One shape a body (several shapes are several bodies welded together). A
+body under a parent is placed as a root. Continuous collision is Box2D's: static shapes always,
+dynamic ones for `bullet` bodies.

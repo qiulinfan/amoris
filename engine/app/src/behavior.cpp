@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 #include <set>
 #include <string_view>
 
@@ -14,8 +15,8 @@ namespace pocket::app {
 namespace {
 
 // What a transition's condition may read, in this order.
-constexpr std::array<std::string_view, 12> kNames = {"distance", "sees", "unseen", "time", "health", "health_max", "hit", "arrived", "stuck", "random", "has_target", "heard"};
-enum Var : std::size_t { Distance, Sees, Unseen, Time, Hp, HpMax, Hit, Arrived, Stuck, Random, HasTarget, Heard };
+constexpr std::array<std::string_view, 14> kNames = {"distance", "sees", "unseen", "time", "health", "health_max", "hit", "arrived", "stuck", "random", "has_target", "heard", "noise", "unheard"};
+enum Var : std::size_t { Distance, Sees, Unseen, Time, Hp, HpMax, Hit, Arrived, Stuck, Random, HasTarget, Heard, Noised, Unheard };
 
 std::uint64_t mix(std::uint64_t x) {
     x += 0x9e3779b97f4a7c15ull;
@@ -37,16 +38,45 @@ Vec3 position_of(const world::World& w, world::EntityId id) {
     return t ? t->position : Vec3{};
 }
 
+// A noise (docs/design/behavior.md, Noises): a `noise` event's place (`at`, else its subject's) and
+// how far it carries (`radius`, 10 by default).
+struct Noise {
+    Vec3 at;
+    float radius = 10;
+    world::EntityId subject = 0;
+};
+
+std::optional<Noise> noise_of(const world::World& w, const world::Event& e) {
+    Noise n;
+    n.subject = e.subject;
+    const Json& d = e.data;
+    if (d.is_object() && d.contains("at") && d["at"].is_object()) {
+        const Json& a = d["at"];
+        auto num = [&](const char* k) { return a.contains(k) && a[k].is_number() ? a[k].get<float>() : 0.0f; };
+        n.at = Vec3{num("x"), num("y"), num("z")};
+    } else if (e.subject && w.alive(e.subject)) {
+        n.at = position_of(w, e.subject);
+    } else {
+        return std::nullopt;
+    }
+    if (d.is_object() && d.contains("radius") && d["radius"].is_number()) n.radius = std::max(d["radius"].get<float>(), 0.0f);
+    return n;
+}
+
 }  // namespace
 
 void Behaviors::step(world::World& w, const physics::Physics* physics, float dt, std::uint64_t seed, const Hidden& hidden) {
     // What happened since the last tick: who was hit, which event types were emitted.
     std::set<world::EntityId> hit;
     std::set<std::string> heard;
+    std::vector<Noise> noises;
     const std::uint64_t last = w.events().last_seq();
     if (last > seen_seq_) {
         for (const world::Event& e : w.events().since(seen_seq_, 100000)) {
             if (e.type == "hit") hit.insert(e.subject);
+            if (e.type == "noise") {
+                if (auto n = noise_of(w, e)) noises.push_back(*n);
+            }
             heard.insert(e.type);
         }
         seen_seq_ = last;
@@ -145,6 +175,14 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
             b.unseen = 0;
             b.seen_at = to;
         }
+        // What it hears: the latest noise made within its reach, not its own.
+        double noise = 0;
+        for (const Noise& n : noises) {
+            if (n.subject == id || b.hearing <= 0 || length(n.at - at) > n.radius * b.hearing) continue;
+            noise = 1;
+            b.heard_at = n.at;
+            b.unheard = 0;
+        }
         const auto* hp = w.try_get<world::Health>(id);
         const auto* agent = w.try_get<world::NavAgent>(id);
         const std::array<double, kNames.size()> values = {
@@ -152,7 +190,7 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
             hp ? static_cast<double>(hp->current) : 0.0, hp ? static_cast<double>(hp->max) : 0.0,
             hit.contains(id) ? 1.0 : 0.0,
             agent && agent->state == 2 ? 1.0 : 0.0, agent && agent->state == 3 ? 1.0 : 0.0,
-            unit(seed, id, tick, 0), has_target ? 1.0 : 0.0, 0.0};
+            unit(seed, id, tick, 0), has_target ? 1.0 : 0.0, 0.0, noise, static_cast<double>(b.unheard)};
         // The first transition that holds.
         for (std::size_t k = 0; k < b.transitions.size() && k < c.programs.size(); ++k) {
             const auto& t = b.transitions[k];
@@ -233,6 +271,10 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
                     a.mode = 1;
                     a.goal = b.seen_at;
                     break;
+                case 7:   // investigate: where it last heard a noise
+                    a.mode = 1;
+                    a.goal = b.heard_at;
+                    break;
                 default:   // stay
                     a.mode = 0;
                     break;
@@ -262,6 +304,7 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
         }
         b.time += dt;
         if (sees == 0) b.unseen += dt;
+        if (noise == 0) b.unheard += dt;
         b.error = error;
         if (!(b == before)) w.set_typed<world::Behavior>(id, b);
     }

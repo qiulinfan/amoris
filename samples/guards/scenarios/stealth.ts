@@ -39,6 +39,14 @@ scenario("a guard that sees the player runs after it and catches it", (g) => {
     g.check(() => expect(g.state<number>("player.z")).toBeGreaterThan(11), "the player is back at the start");
 });
 
+scenario("a running player is heard, and a guard comes to look", (g) => {
+    g.check(() => { world.set("Player", "Transform", { position: { x: 0, y: 0.9, z: -1 } }); }, "the player in the middle of the yard, out of sight");
+    g.holdWhile("sprint", 1.5);
+    g.holdWhile("move_x", 1.5, 1);
+    g.until(() => ["Guard1", "Guard2", "Guard3"].some((n) => world.get(n, "Behavior")!.state === "listen"), { timeout: 3, label: "a guard heard it" });
+    g.check(() => expect(g.count("guard.heard")).toBeGreaterThan(0), "and said so");
+});
+
 scenario("the vault ends the level", (g) => {
     g.check(() => { world.set("Player", "Transform", { position: { x: 0, y: 0.9, z: -10.5 } }); }, "the player beside the vault");
     g.hold("move_z", 0.6, -1);

@@ -1139,7 +1139,23 @@ void Session::run_tick() {
         dispatch("contacts", contacts);
     }
     mark(System::Contacts);
-    if (physics2d_ && assets_) physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    if (physics2d_ && assets_) {
+        // The platformer bodies stand on the 2D rigid bodies and shove the dynamic ones they walk into.
+        const bool rigid = rigid2d_ && rigid2d_->active();
+        std::vector<physics::Box2DView> boxes;
+        std::vector<std::pair<world::EntityId, Vec2>> pushes;
+        if (rigid) boxes = rigid2d_->boxes();
+        physics2d_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds), rigid ? &boxes : nullptr, rigid ? &pushes : nullptr);
+        for (const auto& [body, shove] : pushes) {
+            if (const auto v = rigid2d_->push(body, shove)) {
+                if (const auto* rb = world_->try_get<world::RigidBody2D>(body)) {
+                    world::RigidBody2D next = *rb;
+                    next.velocity = Vec2{v->x, v->y};
+                    world_->set_typed<world::RigidBody2D>(body, next);
+                }
+            }
+        }
+    }
     mark(System::Tiles2D);
     if (rigid2d_ && assets_) {
         const Vec3 g = physics_->settings().gravity;
@@ -7566,6 +7582,14 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
             adjusted = given;
             adjusted["entity"] = adjusted["path"];
             adjusted.erase("path");
+            chosen = &adjusted;
+        }
+        // And the other way: `entity` or `name` for a command that takes a path (world.find).
+        for (const char* alias : {"entity", "name"}) {
+            if (!chosen->contains(alias) || chosen->contains("path") || !takes("path") || takes(alias)) continue;
+            if (chosen != &adjusted) adjusted = given;
+            adjusted["path"] = adjusted[alias];
+            adjusted.erase(alias);
             chosen = &adjusted;
         }
         // The other names a parameter is often given.

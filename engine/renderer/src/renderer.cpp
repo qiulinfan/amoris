@@ -3376,6 +3376,21 @@ struct Renderer::Impl {
     WGPUTextureView volume_view[2]{}, volume_none_view = nullptr;
     bool secondary = false;                  // drawing a secondary view (Renderer::RenderView)
     world::EntityId camera_pick = 0;         // the view's camera, when one was named
+    // The window's view between cameras (docs/design/cameras.md, Blends): where it stood last frame,
+    // and a blend from the camera that drew it (followed while it lives, else where it was).
+    struct ViewPose {
+        Vec3 position;
+        Quat rotation;
+        float fov = 60, ortho_size = 5;
+        bool ortho = false;
+    };
+    world::EntityId window_camera = 0;
+    ViewPose window_pose;
+    double window_seconds = -1;
+    world::EntityId blend_from = 0;
+    ViewPose blend_pose;
+    double blend_start = 0;
+    float blend_seconds = 0;
     int volume_cur = 0;                                                  // the one written this frame
     bool volume_valid = false;                                           // the other holds last frame's
     std::uint64_t volume_frame = 0;
@@ -9086,8 +9101,10 @@ fn time() -> f32 { return fx.time.x; }
         world::EntityId cam_id = 0;
         world::Camera cam;
         world::WorldTransform ct;
+        // A named view's camera; for the window, the active one of highest priority (the first of equals).
         w.ecs().each([&](flecs::entity e, const world::Camera& c, const world::WorldTransform& t) {
-            if (cam_id == 0 && (camera_pick ? e.id() == camera_pick : c.active && c.target.empty())) {
+            const bool wanted = camera_pick ? e.id() == camera_pick : c.active && c.target.empty();
+            if (wanted && (cam_id == 0 || (!camera_pick && c.priority > cam.priority))) {
                 cam_id = e.id();
                 cam = c;
                 ct = t;
@@ -9095,6 +9112,7 @@ fn time() -> f32 { return fx.time.x; }
         });
         stats.has_camera = cam_id != 0;
         stats.camera = cam_id;
+        if (!camera_pick && cam_id != 0) blend_window_view(w, cam_id, cam, ct);
         if (cam_id == 0) {
             ct.position = {0, 3, 8};
             Vec3 target{0, 0, 0};
@@ -9121,6 +9139,62 @@ fn time() -> f32 { return fx.time.x; }
         cv.near = cam.near;
         cv.far = cam.far;
         return cv;
+    }
+
+    // The window's view as it moves between cameras: when another camera takes the window and asks
+    // for a blend, from where the view stood to that camera over `blend` seconds of world time,
+    // eased in and out; the outgoing camera followed while it lives and the blend did not cut into
+    // another (then from where that one had got to). A world started again (its clock went back)
+    // cuts. The camera's pose and projection are written into `cam` and `ct`.
+    void blend_window_view(const world::World& w, world::EntityId cam_id, world::Camera& cam, world::WorldTransform& ct) {
+        const double now = w.seconds();
+        const bool restarted = now < window_seconds;
+        if (cam_id != window_camera) {
+            if (window_camera != 0 && !restarted && cam.blend > 0) {
+                const bool mid = blend_seconds > 0 && now - blend_start < blend_seconds;
+                blend_from = mid ? 0 : window_camera;
+                blend_pose = window_pose;
+                blend_start = now;
+                blend_seconds = cam.blend;
+            } else {
+                blend_seconds = 0;
+            }
+            window_camera = cam_id;
+        }
+        if (restarted) blend_seconds = 0;
+        window_seconds = now;
+        ViewPose to{ct.position, ct.rotation, cam.fov_degrees, cam.ortho_size, cam.orthographic};
+        if (blend_seconds > 0) {
+            const double t = (now - blend_start) / static_cast<double>(blend_seconds);
+            if (t >= 1.0) {
+                blend_seconds = 0;
+            } else {
+                ViewPose from = blend_pose;
+                if (blend_from != 0 && w.ecs().is_alive(blend_from)) {
+                    const flecs::entity e = w.ecs().entity(blend_from);
+                    const auto* c = e.try_get<world::Camera>();
+                    const auto* t0 = e.try_get<world::WorldTransform>();
+                    if (c && t0) from = ViewPose{t0->position, t0->rotation, c->fov_degrees, c->ortho_size, c->orthographic};
+                }
+                const float x = static_cast<float>(std::clamp(t, 0.0, 1.0));
+                const float e = x * x * (3.0f - 2.0f * x);
+                Quat qa = from.rotation, qb = to.rotation;
+                if (qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w < 0) qb = Quat{-qb.x, -qb.y, -qb.z, -qb.w};
+                to.rotation = normalize(Quat{qa.x + (qb.x - qa.x) * e, qa.y + (qb.y - qa.y) * e, qa.z + (qb.z - qa.z) * e, qa.w + (qb.w - qa.w) * e});
+                to.position = from.position + (to.position - from.position) * e;
+                to.fov = from.fov + (to.fov - from.fov) * e;
+                to.ortho_size = from.ortho_size + (to.ortho_size - from.ortho_size) * e;
+                if (from.ortho != to.ortho && e < 0.5f) to.ortho = from.ortho;   // perspective and parallel do not mix: the switch at halfway
+                stats.blend_from = w.ecs().is_alive(blend_from) ? blend_from : 0;
+                stats.blend = e;
+            }
+        }
+        window_pose = to;
+        ct.position = to.position;
+        ct.rotation = to.rotation;
+        cam.fov_degrees = to.fov;
+        cam.ortho_size = to.ortho_size;
+        cam.orthographic = to.ortho;
     }
 
     // Faces of the shadow atlas for the kept lights that cast shadows, nearest first while faces
@@ -11789,6 +11863,7 @@ Json Renderer::describe() const {
     j["has_sun"] = s.has_sun;
     j["sun_light"] = Json{{"r", s.sun_light[0]}, {"g", s.sun_light[1]}, {"b", s.sun_light[2]}};
     if (s.camera) j["camera"] = s.camera;
+    if (s.blend < 1.0f) j["camera_blend"] = Json{{"from", s.blend_from}, {"progress", std::round(s.blend * 1000.0f) / 1000.0f}};
     const Viewport& v = impl_->applied;
     if (v.w != impl_->last_width || v.h != impl_->last_height) j["viewport"] = Json{{"x", v.x}, {"y", v.y}, {"w", v.w}, {"h", v.h}};
     Json a;

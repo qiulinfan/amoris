@@ -498,7 +498,7 @@ void to_json(Json& j, const BehaviorState& v) {
 
 void from_json(const Json& j, BehaviorState& v) {
     scalar_from_json(j, "name", v.name);
-    enum_from_json(j, "move", v.move, {"stay", "follow", "flee", "wander", "home", "patrol", "seek"});
+    enum_from_json(j, "move", v.move, {"stay", "follow", "flee", "wander", "home", "patrol", "seek", "investigate"});
     scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "radius", v.radius);
     scalar_from_json(j, "path", v.path);
@@ -804,6 +804,8 @@ void to_json(Json& j, const Camera& v) {
     j["order"] = v.order;
     j["target"] = v.target;
     vec_to_json(j["target_size"], v.target_size);
+    j["priority"] = v.priority;
+    j["blend"] = v.blend;
 }
 
 void from_json(const Json& j, Camera& v) {
@@ -817,6 +819,8 @@ void from_json(const Json& j, Camera& v) {
     scalar_from_json(j, "order", v.order);
     scalar_from_json(j, "target", v.target);
     if (j.is_object() && j.contains("target_size")) vec_from_json(j["target_size"], v.target_size);
+    scalar_from_json(j, "priority", v.priority);
+    scalar_from_json(j, "blend", v.blend);
 }
 
 void hash_component(StateHasherRef& h, const Camera& v) {
@@ -834,6 +838,8 @@ void hash_component(StateHasherRef& h, const Camera& v) {
     h.str(v.target);
     h.f32(v.target_size.x);
     h.f32(v.target_size.y);
+    h.i64(static_cast<std::int64_t>(v.priority));
+    h.f32(v.blend);
 }
 
 std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
@@ -850,6 +856,7 @@ std::size_t numeric_span(Camera& v, std::string_view path, float** out) {
     if (path == "target_size") { *out = &v.target_size.x; return 2; }
     if (path == "target_size.x") { *out = &v.target_size.x; return 1; }
     if (path == "target_size.y") { *out = &v.target_size.y; return 1; }
+    if (path == "blend") { *out = &v.blend; return 1; }
     return 0;
 }
 
@@ -3737,6 +3744,9 @@ void to_json(Json& j, const Behavior& v) {
     j["waypoint"] = v.waypoint;
     vec_to_json(j["seen_at"], v.seen_at);
     j["unseen"] = v.unseen;
+    j["hearing"] = v.hearing;
+    vec_to_json(j["heard_at"], v.heard_at);
+    j["unheard"] = v.unheard;
     j["enabled"] = v.enabled;
     j["error"] = v.error;
 }
@@ -3761,6 +3771,9 @@ void from_json(const Json& j, Behavior& v) {
     scalar_from_json(j, "waypoint", v.waypoint);
     if (j.is_object() && j.contains("seen_at")) vec_from_json(j["seen_at"], v.seen_at);
     scalar_from_json(j, "unseen", v.unseen);
+    scalar_from_json(j, "hearing", v.hearing);
+    if (j.is_object() && j.contains("heard_at")) vec_from_json(j["heard_at"], v.heard_at);
+    scalar_from_json(j, "unheard", v.unheard);
     scalar_from_json(j, "enabled", v.enabled);
     scalar_from_json(j, "error", v.error);
 }
@@ -3785,6 +3798,11 @@ void hash_component(StateHasherRef& h, const Behavior& v) {
     h.f32(v.seen_at.y);
     h.f32(v.seen_at.z);
     h.f32(v.unseen);
+    h.f32(v.hearing);
+    h.f32(v.heard_at.x);
+    h.f32(v.heard_at.y);
+    h.f32(v.heard_at.z);
+    h.f32(v.unheard);
     h.u8(v.enabled ? 1 : 0);
     h.str(v.error);
 }
@@ -3814,6 +3832,12 @@ std::size_t numeric_span(Behavior& v, std::string_view path, float** out) {
     if (path == "seen_at.y") { *out = &v.seen_at.y; return 1; }
     if (path == "seen_at.z") { *out = &v.seen_at.z; return 1; }
     if (path == "unseen") { *out = &v.unseen; return 1; }
+    if (path == "hearing") { *out = &v.hearing; return 1; }
+    if (path == "heard_at") { *out = &v.heard_at.x; return 3; }
+    if (path == "heard_at.x") { *out = &v.heard_at.x; return 1; }
+    if (path == "heard_at.y") { *out = &v.heard_at.y; return 1; }
+    if (path == "heard_at.z") { *out = &v.heard_at.z; return 1; }
+    if (path == "unheard") { *out = &v.unheard; return 1; }
     return 0;
 }
 
@@ -4548,10 +4572,10 @@ constexpr std::array<FieldInfo, 2> kPoint2DFields = {{
     FieldInfo{"x", "f32", "Across.", {}},
     FieldInfo{"y", "f32", "Up.", {}},
 }};
-constexpr std::string_view kBehaviorState_moveNames[] = {"stay", "follow", "flee", "wander", "home", "patrol", "seek"};
+constexpr std::string_view kBehaviorState_moveNames[] = {"stay", "follow", "flee", "wander", "home", "patrol", "seek", "investigate"};
 constexpr std::array<FieldInfo, 8> kBehaviorStateFields = {{
     FieldInfo{"name", "string", "What transitions and Behavior.state call it.", {}},
-    FieldInfo{"move", "i32", "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at).", kBehaviorState_moveNames},
+    FieldInfo{"move", "i32", "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at), 7 investigate: go to where it last heard a noise (heard_at).", kBehaviorState_moveNames},
     FieldInfo{"speed", "f32", "Its NavAgent's speed in this state; 0 leaves the agent's own.", {}},
     FieldInfo{"radius", "f32", "How far wander roams from home and flee runs from the target.", {}},
     FieldInfo{"path", "string", "For patrol: the entity with the Path whose points it walks, by name or path.", {}},
@@ -4604,7 +4628,7 @@ constexpr std::array<FieldInfo, 3> kModelFields = {{
 constexpr std::array<FieldInfo, 1> kLifetimeFields = {{
     FieldInfo{"seconds", "f32", "Remaining seconds; the entity is destroyed when it reaches zero.", {}},
 }};
-constexpr std::array<FieldInfo, 10> kCameraFields = {{
+constexpr std::array<FieldInfo, 12> kCameraFields = {{
     FieldInfo{"fov_degrees", "f32", "Vertical field of view in degrees (perspective).", {}},
     FieldInfo{"orthographic", "bool", "Parallel projection: no perspective, sizes do not shrink with distance.", {}},
     FieldInfo{"ortho_size", "f32", "Half of the visible height in world units when orthographic.", {}},
@@ -4615,6 +4639,8 @@ constexpr std::array<FieldInfo, 10> kCameraFields = {{
     FieldInfo{"order", "i32", "Cameras with viewports draw from the lowest order up: a minimap above the view it sits in.", {}},
     FieldInfo{"target", "string", "Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): \"view:<target>\" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world.", {}},
     FieldInfo{"target_size", "vec2", "The texture's size in pixels, at most the window's.", {}},
+    FieldInfo{"priority", "i32", "Of the active cameras with the whole window, the highest priority draws it (the first of equals): raise one's to cut or blend to it.", {}},
+    FieldInfo{"blend", "f32", "Seconds the window's view takes to move from the camera that drew it to this one when this one takes over, eased in and out (docs/design/cameras.md, Blends); 0 cuts.", {}},
 }};
 constexpr std::string_view kCameraRig_modeNames[] = {"chase", "orbit", "offset", "rail"};
 constexpr std::array<FieldInfo, 22> kCameraRigFields = {{
@@ -5200,7 +5226,7 @@ constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane.", {}},
     FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component.", {}},
 }};
-constexpr std::array<FieldInfo, 15> kBehaviorFields = {{
+constexpr std::array<FieldInfo, 18> kBehaviorFields = {{
     FieldInfo{"state", "string", "The state it is in (written by the engine); set it to switch at the next tick. Empty starts in the first.", {}},
     FieldInfo{"previous", "string", "The state it was in before (written by the engine).", {}},
     FieldInfo{"time", "f32", "Seconds in the state (written by the engine).", {}},
@@ -5214,6 +5240,9 @@ constexpr std::array<FieldInfo, 15> kBehaviorFields = {{
     FieldInfo{"waypoint", "i32", "In a patrol, the index of the point it heads for (written by the engine).", {}},
     FieldInfo{"seen_at", "vec3", "Where the target was when it last saw it, where seek goes (written by the engine).", {}},
     FieldInfo{"unseen", "f32", "Seconds since it last saw the target, or since it started when it never has (written by the engine).", {}},
+    FieldInfo{"hearing", "f32", "How well it hears: a `noise` event reaches it within the noise's radius times this (0: deaf; docs/design/behavior.md, Noises).", {}},
+    FieldInfo{"heard_at", "vec3", "Where the last noise that reached it was made, where investigate goes (written by the engine).", {}},
+    FieldInfo{"unheard", "f32", "Seconds since a noise last reached it, or since it started when none has (written by the engine).", {}},
     FieldInfo{"enabled", "bool", "false stops it: the state holds and nothing moves the agent.", {}},
     FieldInfo{"error", "string", "What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine).", {}},
 }};
@@ -5270,7 +5299,7 @@ constexpr std::array<ComponentInfo, 53> kComponents = {{
     ComponentInfo{"Hitbox", "Hurts what it touches (docs/design/combat.md): on a trigger collider or an Area2D, every entity with a Health that comes into it takes `damage` (a `hit` event, caused by the touch), is pushed away by `knockback`, and again every `repeat` seconds while it stays. Spikes, a sword's swing, a bullet (destroy), lava (repeat), a healing spring (negative damage).", true, kHitboxFields},
     ComponentInfo{"Model", "An instance of a model file: world.instantiate {mesh} puts it on the root it makes, and when the file changes (assets.reload, assets.import, or `pocket watch` seeing it saved) a live instance is made again from it in place, its children replaced and the root kept (docs/design/assets.md, Live models).", true, kModelFields},
     ComponentInfo{"Lifetime", "Seconds remaining before the entity is destroyed by the lifetime system.", true, kLifetimeFields},
-    ComponentInfo{"Camera", "A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
+    ComponentInfo{"Camera", "A view of the world. With one active camera the renderer draws the window through it (the highest priority, then the first, if several have the whole window, blending to it over the incoming one's `blend`); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).", true, kCameraFields},
     ComponentInfo{"CameraRig", "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's).", true, kCameraRigFields},
     ComponentInfo{"Light", "A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights).", true, kLightFields},
     ComponentInfo{"ReflectionProbe", "The light inside a box (docs/design/rendering.md, Reflection probes): the scene seen from the entity's position, captured into an environment of its own, in place of the sky's, both what glossy surfaces reflect and the diffuse light all surfaces get. A room's floor then reflects the room, not the sky outside, and a closed room is lit by its lamps and walls, not by the sky above its roof. Up to eight at once, the first by id where boxes overlap.", true, kReflectionProbeFields},

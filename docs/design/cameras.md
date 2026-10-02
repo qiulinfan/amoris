@@ -1,11 +1,12 @@
 # Cameras
 
 A `Camera` component makes an entity a view (`fov_degrees`, `orthographic` and `ortho_size`, `near`,
-`far`, `active`; the renderer uses the first active one, `docs/design/rendering.md`). Where the
-camera stands is its entity's `Transform`. Most games want that transform to follow something: the
-player from behind, the car along its heading, the board from above. A `CameraRig` on the camera's
-entity does that every tick, so a script sets it up once (or the scene file carries it) instead of
-placing the camera by hand each tick.
+`far`, `active`; the renderer uses the active one of highest `priority`, `docs/design/rendering.md`,
+blending to a new one as Blends below says). Where the camera stands is its entity's `Transform`.
+Most games want that transform to follow something: the player from behind, the car along its
+heading, the board from above. A `CameraRig` on the camera's entity does that every tick, so a
+script sets it up once (or the scene file carries it) instead of placing the camera by hand each
+tick.
 
 ## The rig
 
@@ -142,7 +143,34 @@ goes round. `runtime_tests` (`[camerarig][framing]`): on a straight rail 8 in fr
 3 up, the camera stands across from a target at x 5 and stops at the rail's end when the target
 walks past it.
 
+## Blends
+
+A game often has several shots set up at once: the chase camera behind the player, one over the shop
+counter, one framing the boss's arena. Each is a camera entity with its own rig, all of them
+`active`; of those that have the whole window, the one with the highest `Camera.priority` draws it
+(the first of equals). Raising a camera's priority (or lowering the one in front) hands it the
+window, and with `Camera.blend` seconds on the camera taking over, the view travels there instead of
+cutting: its place and turn, its field of view and its orthographic size go from the last camera's
+to the new one's, eased in and out, over that many seconds of world time (a paused world holds the
+blend where it is, and a replay blends the same). The outgoing camera is followed while it lives, so
+blending from a chase camera to a fixed shot leaves a moving player smoothly; a blend that another
+camera cuts into starts from wherever the view had got to; a world started again cuts. A switch
+between perspective and orthographic happens at halfway. While it blends, `render.stats` says
+`camera_blend {from, progress}`, and picking, `render.project` and the audio listener go by the view
+as drawn.
+
+```ts
+// Enter the shop: its camera takes over over 0.8 seconds; leave: back to the chase camera.
+world.set("ShopCam", "Camera", { priority: 10, blend: 0.8 });
+world.set("ShopCam", "Camera", { priority: 0 });   // the chase camera's own blend decides how
+```
+
+`runtime_tests` (`[camerablend]`): two cameras 20 units apart look at a point; one of priority 5
+with a second's blend takes the window from the other, the point in the middle of the window half a
+second in and seen from the new side after a second; lowered again with no blend on the old one, the
+view cuts back.
+
 ## Not yet
 
-Blends between two rigs (a timeline can key a camera's Transform instead,
-`docs/design/timelines.md`).
+A blend's curve of one's own (it is always eased in and out), and blends that depend on the pair of
+cameras (a cut from one shot, a blend from another).

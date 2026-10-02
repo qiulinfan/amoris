@@ -692,6 +692,32 @@ Result<std::pair<Vec2, float>> Rigid2D::impulse(world::EntityId id, Vec2 impulse
     return std::pair{Vec2{v.x, v.y}, b2Body_GetAngularVelocity(b)};
 }
 
+std::vector<Box2DView> Rigid2D::boxes() const {
+    std::vector<Box2DView> out;
+    if (!b2World_IsValid(impl_->world)) return out;
+    for (const auto& [id, body] : impl_->bodies) {
+        if (!b2Body_IsValid(body.id) || !body.has_shape) continue;
+        const b2AABB box = b2Body_ComputeAABB(body.id);
+        const b2Vec2 v = b2Body_GetLinearVelocity(body.id);
+        out.push_back({id, Vec2{box.lowerBound.x, box.lowerBound.y}, Vec2{box.upperBound.x, box.upperBound.y}, Vec2{v.x, v.y}, b2Body_GetType(body.id) == b2_dynamicBody, body.col.sensor});
+    }
+    return out;
+}
+
+std::optional<Vec2> Rigid2D::push(world::EntityId id, Vec2 want) {
+    auto it = impl_->bodies.find(id);
+    if (it == impl_->bodies.end() || !b2Body_IsValid(it->second.id) || b2Body_GetType(it->second.id) != b2_dynamicBody) return std::nullopt;
+    b2Vec2 v = b2Body_GetLinearVelocity(it->second.id);
+    bool changed = false;
+    if ((want.x > 0 && v.x < want.x) || (want.x < 0 && v.x > want.x)) { v.x = want.x; changed = true; }
+    if ((want.y > 0 && v.y < want.y) || (want.y < 0 && v.y > want.y)) { v.y = want.y; changed = true; }
+    if (changed) {
+        b2Body_SetLinearVelocity(it->second.id, v);
+        b2Body_SetAwake(it->second.id, true);
+    }
+    return Vec2{v.x, v.y};
+}
+
 Json Rigid2D::describe() const {
     const Impl& im = *impl_;
     Json j{{"active", b2World_IsValid(im.world)}, {"bodies", im.bodies.size()}, {"joints", im.joints.size()}, {"maps", im.tiles.size()}, {"tile_shapes", im.tile_shapes}, {"steps", im.steps}, {"contacts_begun", im.begun}, {"step_ms", im.step_ms}};

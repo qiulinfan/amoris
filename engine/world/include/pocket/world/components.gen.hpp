@@ -329,7 +329,7 @@ void from_json(const Json& j, Lifetime& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Lifetime& v, std::string_view path, float** out);
 
-/// A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
+/// A view of the world. With one active camera the renderer draws the window through it (the highest priority, then the first, if several have the whole window, blending to it over the incoming one's `blend`); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
 struct Camera {
     float fov_degrees = 60.0f;
     bool orthographic = false;
@@ -341,6 +341,8 @@ struct Camera {
     std::int32_t order = 0;
     std::string target = "";
     Vec2 target_size{256.0f, 256.0f};
+    std::int32_t priority = 0;
+    float blend = 0.0f;
     constexpr bool operator==(const Camera&) const = default;
 };
 void to_json(Json& j, const Camera& v);
@@ -1228,6 +1230,9 @@ struct Behavior {
     std::int32_t waypoint = 0;
     Vec3 seen_at{0.0f, 0.0f, 0.0f};
     float unseen = 0.0f;
+    float hearing = 1.0f;
+    Vec3 heard_at{0.0f, 0.0f, 0.0f};
+    float unheard = 0.0f;
     bool enabled = true;
     std::string error = "";
     constexpr bool operator==(const Behavior&) const = default;

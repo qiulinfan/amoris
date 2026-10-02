@@ -176,8 +176,8 @@ export interface Point2D {
 export interface BehaviorState {
     /** What transitions and Behavior.state call it. */
     name: string;
-    /** How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at). */
-    move: number | "stay" | "follow" | "flee" | "wander" | "home" | "patrol" | "seek";
+    /** How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at), 7 investigate: go to where it last heard a noise (heard_at). */
+    move: number | "stay" | "follow" | "flee" | "wander" | "home" | "patrol" | "seek" | "investigate";
     /** Its NavAgent's speed in this state; 0 leaves the agent's own. */
     speed: number;
     /** How far wander roams from home and flee runs from the target. */
@@ -282,7 +282,7 @@ export interface Lifetime {
     seconds: number;
 }
 
-/** A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention). */
+/** A view of the world. With one active camera the renderer draws the window through it (the highest priority, then the first, if several have the whole window, blending to it over the incoming one's `blend`); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention). */
 export interface Camera {
     /** Vertical field of view in degrees (perspective). */
     fov_degrees: number;
@@ -304,6 +304,10 @@ export interface Camera {
     target: string;
     /** The texture's size in pixels, at most the window's. */
     target_size: Vec2;
+    /** Of the active cameras with the whole window, the highest priority draws it (the first of equals): raise one's to cut or blend to it. */
+    priority: number;
+    /** Seconds the window's view takes to move from the camera that drew it to this one when this one takes over, eased in and out (docs/design/cameras.md, Blends); 0 cuts. */
+    blend: number;
 }
 
 /** Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's). */
@@ -1476,6 +1480,12 @@ export interface Behavior {
     seen_at: Vec3;
     /** Seconds since it last saw the target, or since it started when it never has (written by the engine). */
     unseen: number;
+    /** How well it hears: a `noise` event reaches it within the noise's radius times this (0: deaf; docs/design/behavior.md, Noises). */
+    hearing: number;
+    /** Where the last noise that reached it was made, where investigate goes (written by the engine). */
+    heard_at: Vec3;
+    /** Seconds since a noise last reached it, or since it started when none has (written by the engine). */
+    unheard: number;
     /** false stops it: the state holds and nothing moves the agent. */
     enabled: boolean;
     /** What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine). */
@@ -1682,7 +1692,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Hitbox: { damage: 10, knockback: 0, team: 0, repeat: 0, destroy: false, enabled: true, hits: 0 },
     Model: { path: "", hash: "", live: true },
     Lifetime: { seconds: 1 },
-    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0, target: "", target_size: { x: 256, y: 256 } },
+    Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0, target: "", target_size: { x: 256, y: 256 }, priority: 0, blend: 0 },
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0, targets: "", margin: 1.5, rail: "", look_ahead: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
@@ -1725,7 +1735,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
-    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, home: { x: 0, y: -1000000, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, seen_at: { x: 0, y: 0, z: 0 }, unseen: 0, enabled: true, error: "" },
+    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, home: { x: 0, y: -1000000, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, seen_at: { x: 0, y: 0, z: 0 }, unseen: 0, hearing: 1, heard_at: { x: 0, y: 0, z: 0 }, unheard: 0, enabled: true, error: "" },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, face: false, turn_speed: 540, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },
 };

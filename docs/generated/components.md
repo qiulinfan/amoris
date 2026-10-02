@@ -78,7 +78,7 @@ Seconds remaining before the entity is destroyed by the lifetime system.
 
 ## Camera
 
-A view of the world. With one active camera the renderer draws the window through it (the first, if several have the whole window); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
+A view of the world. With one active camera the renderer draws the window through it (the highest priority, then the first, if several have the whole window, blending to it over the incoming one's `blend`); active cameras with a viewport each draw their part of the window, in order: split screen, a minimap in a corner, a rear-view mirror (docs/design/cameras.md, Several cameras). Perspective by default; orthographic for 2D (looking down -Z with +Y up is the 2D convention).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -92,6 +92,8 @@ A view of the world. With one active camera the renderer draws the window throug
 | `order` | i32 | 0 | Cameras with viewports draw from the lowest order up: a minimap above the view it sits in. |
 | `target` | string | "" | Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): "view:<target>" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world. |
 | `target_size` | vec2 | [256.0, 256.0] | The texture's size in pixels, at most the window's. |
+| `priority` | i32 | 0 | Of the active cameras with the whole window, the highest priority draws it (the first of equals): raise one's to cut or blend to it. |
+| `blend` | f32 | 0.0 | Seconds the window's view takes to move from the camera that drew it to this one when this one takes over, eased in and out (docs/design/cameras.md, Blends); 0 cuts. |
 
 ## CameraRig
 
@@ -893,6 +895,9 @@ A state machine for what a non-player character does (docs/design/behavior.md): 
 | `waypoint` | i32 | 0 | In a patrol, the index of the point it heads for (written by the engine). |
 | `seen_at` | vec3 | [0.0, 0.0, 0.0] | Where the target was when it last saw it, where seek goes (written by the engine). |
 | `unseen` | f32 | 0.0 | Seconds since it last saw the target, or since it started when it never has (written by the engine). |
+| `hearing` | f32 | 1.0 | How well it hears: a `noise` event reaches it within the noise's radius times this (0: deaf; docs/design/behavior.md, Noises). |
+| `heard_at` | vec3 | [0.0, 0.0, 0.0] | Where the last noise that reached it was made, where investigate goes (written by the engine). |
+| `unheard` | f32 | 0.0 | Seconds since a noise last reached it, or since it started when none has (written by the engine). |
 | `enabled` | bool | true | false stops it: the state holds and nothing moves the agent. |
 | `error` | string | "" | What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine). |
 
@@ -1089,7 +1094,7 @@ One state of a Behavior (docs/design/behavior.md): how the entity moves while in
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | string | "" | What transitions and Behavior.state call it. |
-| `move` | i32: 0 `stay`, 1 `follow`, 2 `flee`, 3 `wander`, 4 `home`, 5 `patrol`, 6 `seek` | 0 | How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at). |
+| `move` | i32: 0 `stay`, 1 `follow`, 2 `flee`, 3 `wander`, 4 `home`, 5 `patrol`, 6 `seek`, 7 `investigate` | 0 | How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at), 7 investigate: go to where it last heard a noise (heard_at). |
 | `speed` | f32 | 0.0 | Its NavAgent's speed in this state; 0 leaves the agent's own. |
 | `radius` | f32 | 5.0 | How far wander roams from home and flee runs from the target. |
 | `path` | string | "" | For patrol: the entity with the Path whose points it walks, by name or path. |

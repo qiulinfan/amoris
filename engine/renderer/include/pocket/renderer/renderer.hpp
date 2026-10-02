@@ -232,6 +232,8 @@ struct RenderStats {
     bool has_sun = false;
     float sun_light[3] = {0, 0, 0};   // the sun light as it reaches the ground (linear; an atmosphere colours it)
     world::EntityId camera = 0;
+    world::EntityId blend_from = 0;   // the camera the window's view is blending from (0: none, or one gone)
+    float blend = 1.0f;               // how far the window's view has come to `camera` (eased; 1: there)
     std::uint32_t asset_meshes = 0;   // distinct glTF meshes on the GPU
     std::uint32_t textures = 0;       // distinct images on the GPU
     std::uint32_t materials = 0;      // distinct material bind groups (texture sets)

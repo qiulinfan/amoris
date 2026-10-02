@@ -29,9 +29,15 @@ struct Stats2D {
     std::uint32_t movers = 0;     // top-down movers (TopDown2D) stepped
 };
 
+struct Box2DView;
+
 class Physics2D {
    public:
-    void step(world::World& world, assets::AssetStore& assets, float dt);
+    // `bodies`, when given, are the 2D rigid bodies (docs/design/physics2d.md, Bodies and movers):
+    // the platformer bodies stand on them and are stopped by them like platforms, the top-down
+    // movers are stopped by them like walls, and a dynamic one either walks into is recorded in
+    // `pushes` with the walker's velocity along the way it pushed.
+    void step(world::World& world, assets::AssetStore& assets, float dt, const std::vector<Box2DView>* bodies = nullptr, std::vector<std::pair<world::EntityId, Vec2>>* pushes = nullptr);
     [[nodiscard]] const Stats2D& stats() const { return stats_; }
     [[nodiscard]] Json describe() const;
 
