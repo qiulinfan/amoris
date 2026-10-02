@@ -495,7 +495,8 @@ struct Terrain {
 Result<Terrain> terrain_from_image(const std::string& bytes, const std::string& display_path, int n, Vec2 size, float height);
 // Fractal noise: `octaves` layers of gradient noise, the first with features `scale` units across,
 // each next twice as fine and half as tall, reproducible from `seed`, spread over 0..height.
-Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, Vec2 size, float height);
+// `island` (0..1) lowers the ground toward the edges, to 0 at them at 1 (docs/design/terrain.md, Islands).
+Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, Vec2 size, float height, float island = 0.0f);
 // How a terrain is coloured: grass below, rock where steeper than rock_slope degrees, snow above
 // snow_line (a fraction of the height), blended across their borders; uv repeats every texture_tile units.
 // With layers, those colours give way to the layers' images, stacked in order: each lies by its

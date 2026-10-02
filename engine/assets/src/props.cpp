@@ -173,7 +173,7 @@ std::string glb(const std::string& name, const std::vector<Part>& parts, const s
 
 bool is_prop(std::string_view path) {
     const std::string_view name = path.substr(0, path.find('?'));
-    for (std::string_view p : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign", "tower", "crop"})
+    for (std::string_view p : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign", "tower", "crop", "boat", "grass"})
         if (name == p) return true;
     return false;
 }
@@ -247,6 +247,28 @@ Result<std::string> prop_glb(const std::string& path) {
         mats = {{colour("color", "#7d7a74"), 0.9f}};
         parts.resize(1);
         blob(parts[0], {0, s * 0.35f, 0}, Vec3{s * dice.in(0.5f, 0.7f), s * dice.in(0.35f, 0.5f), s * dice.in(0.45f, 0.65f)}, 0.22f, dice);
+    } else if (name == "grass") {
+        // A tuft of blades leaning out from its foot, each two segments narrowing to a point, faced
+        // both ways; their normals point up, so the tuft takes the light as the ground under it does.
+        const float h = std::max(number("height", 0.45f), 0.02f);
+        const int blades = std::clamp(static_cast<int>(number("blades", 9.0f)), 1, 32);
+        mats = {{colour("color", "#5b8a3a"), 0.9f}};
+        parts.resize(1);
+        Part& p = parts[0];
+        for (int i = 0; i < blades; ++i) {
+            const float a = dice.in(0, 2 * kPi), r = h * dice.in(0.0f, 0.25f), tall = h * dice.in(0.6f, 1.0f), lean = dice.in(0.15f, 0.5f), w = h * 0.06f;
+            const Vec3 out{std::cos(a), 0, std::sin(a)}, side{-std::sin(a), 0, std::cos(a)};
+            const Vec3 foot = out * r;
+            const Vec3 b0 = foot - side * w, b1 = foot + side * w;
+            const Vec3 mid = foot + out * (tall * lean * 0.4f) + Vec3{0, tall * 0.55f, 0};
+            const Vec3 m0 = mid - side * (w * 0.6f), m1 = mid + side * (w * 0.6f);
+            const Vec3 tip = foot + out * (tall * lean) + Vec3{0, tall, 0};
+            for (const auto& [x, y, z] : {std::array<Vec3, 3>{b0, b1, m1}, std::array<Vec3, 3>{b0, m1, m0}, std::array<Vec3, 3>{m0, m1, tip}}) {
+                tri(p, x, y, z);
+                tri(p, x, z, y);
+            }
+        }
+        for (Vec3& n : p.nrm) n = Vec3{0, 1, 0};
     } else if (name == "bush") {
         const float s = std::max(number("size", 1.0f), 0.05f);
         mats = {{colour("color", "#3f6e2e"), 0.85f}};
@@ -367,6 +389,56 @@ Result<std::string> prop_glb(const std::string& path) {
         for (const float s : {-1.0f, 1.0f}) { box(parts[1], {0, h * 0.95f, s * 0.68f}, {0.7f, 0.04f, 0.03f}); box(parts[1], {s * 0.68f, h * 0.95f, 0}, {0.03f, 0.04f, 0.7f}); }
         for (const float x : {-0.6f, 0.6f}) for (const float z : {-0.6f, 0.6f}) box(parts[1], {x, h * 1.0f, z}, {0.04f, h * 0.15f, 0.04f});
         frustum(parts[2], {0, h * 1.15f, 0}, 1.0f, 0.0f, h * 0.3f, 4, kPi / 4);
+    } else if (name == "boat") {
+        // A sailing dinghy, its bow toward -z: an open hull from stations along it (wider amidships,
+        // its sheer rising to the bow, a keel line under it), a floor, a mast forward of the middle
+        // and a sail sheeted along a boom aft. Faces both ways, as the hull is open.
+        const float L = std::max(number("length", 3.2f), 0.5f), k = L / 3.2f;
+        mats = {{colour("color", "#8a5a32"), 0.75f}, {colour("color", "#8a5a32") * 0.7f, 0.85f}, {colour("sail", "#f3ecdc"), 0.9f}, {Vec3{0.35f, 0.24f, 0.15f}, 0.8f}};
+        parts.resize(4);
+        auto both = [&](Part& p, Vec3 a, Vec3 b, Vec3 c) { tri(p, a, b, c); tri(p, a, c, b); };
+        auto quad = [&](Part& p, Vec3 a, Vec3 b, Vec3 c, Vec3 d) { both(p, a, b, c); both(p, a, c, d); };
+        const float at[7] = {0, 0.1f, 0.25f, 0.45f, 0.65f, 0.85f, 1.0f};
+        const float half[7] = {0, 0.45f, 0.8f, 1.0f, 1.0f, 0.92f, 0.85f};
+        const float sheer[7] = {0.66f, 0.6f, 0.56f, 0.53f, 0.53f, 0.55f, 0.57f};
+        const float bottom[7] = {0.3f, 0.16f, 0.08f, 0.05f, 0.05f, 0.08f, 0.14f};
+        const float beam = 0.55f * k, floor_y = 0.2f * k;
+        struct Station { Vec3 gl, gr, bl, br, keel; };
+        std::array<Station, 7> st{};
+        for (int i = 0; i < 7; ++i) {
+            const float z = (at[i] - 0.5f) * L, w = half[i] * beam, yg = sheer[i] * k, yb = bottom[i] * k;
+            st[static_cast<std::size_t>(i)] = {{-w, yg, z}, {w, yg, z}, {-w * 0.35f, yb, z}, {w * 0.35f, yb, z}, {0, yb - 0.07f * k, z}};
+        }
+        for (std::size_t i = 0; i + 1 < st.size(); ++i) {
+            const Station &a = st[i], &b = st[i + 1];
+            quad(parts[0], a.gl, b.gl, b.bl, a.bl);
+            quad(parts[0], a.gr, a.br, b.br, b.gr);
+            quad(parts[0], a.bl, b.bl, b.keel, a.keel);
+            quad(parts[0], a.br, a.keel, b.keel, b.br);
+            // The floor inside, a little above the bottom.
+            if (i >= 1) quad(parts[1], {a.gl.x * 0.75f, floor_y, a.gl.z}, {b.gl.x * 0.75f, floor_y, b.gl.z}, {b.gr.x * 0.75f, floor_y, b.gr.z}, {a.gr.x * 0.75f, floor_y, a.gr.z});
+        }
+        const Station& t = st.back();   // the transom
+        quad(parts[0], t.gl, t.gr, t.br, t.bl);
+        both(parts[0], t.bl, t.br, t.keel);
+        // The mast, the boom and the sail between them; the boom swung `boom` degrees off the centre
+        // line, to starboard (+x) when positive, as the sheet lets it out to the wind.
+        const float mz = -0.1f * L, mh = 2.3f * k, boom_y = floor_y + 0.42f * k, reach = 0.42f * L;
+        const float swing = std::clamp(number("boom", 0.0f), -90.0f, 90.0f) * kPi / 180.0f;
+        const Vec3 aft{std::sin(swing), 0, std::cos(swing)};
+        const Vec3 foot{0, boom_y, mz + 0.03f * k};
+        frustum(parts[3], {0, floor_y, mz}, 0.045f * k, 0.03f * k, mh, 6);
+        const Vec3 mid = foot + aft * (reach * 0.5f);
+        const Vec3 across{aft.z, 0, -aft.x};
+        auto beam_along = [&](Part& p, Vec3 c, float half_len, float t) {   // a square spar along `aft`
+            const Vec3 a = aft * half_len, u{0, t, 0}, s = across * t;
+            const Vec3 q[8] = {c - a - u - s, c - a - u + s, c - a + u + s, c - a + u - s, c + a - u - s, c + a - u + s, c + a + u + s, c + a + u - s};
+            const int f[6][4] = {{0, 1, 2, 3}, {4, 7, 6, 5}, {0, 4, 5, 1}, {3, 2, 6, 7}, {0, 3, 7, 4}, {1, 5, 6, 2}};
+            for (const auto& g : f) quad(p, q[g[0]], q[g[1]], q[g[2]], q[g[3]]);
+        };
+        beam_along(parts[3], mid, reach * 0.5f, 0.025f * k);
+        if (number("furled", 0.0f) < 0.5f) both(parts[2], {0, floor_y + mh * 0.97f, mz + 0.03f * k}, foot + Vec3{0, 0.04f * k, 0}, foot + aft * reach + Vec3{0, 0.04f * k, 0});
+        else beam_along(parts[2], mid + Vec3{0, 0.07f * k, 0}, reach * 0.45f, 0.05f * k);   // the sail rolled on the boom
     } else if (name == "crop") {
         // A plant at a stage of its growing: 0 a sprout, 1 leaves, 2 grown, 3 ripe with its fruit.
         const int stage = std::clamp(static_cast<int>(number("stage", 3)), 0, 3);
@@ -398,7 +470,7 @@ Result<std::string> prop_glb(const std::string& path) {
         box(parts[0], {0, 0.6f, 0}, {0.04f, 0.6f, 0.04f});
         box(parts[1], {0, 1.05f, -0.05f}, {0.4f, 0.22f, 0.025f});
     } else {
-        return fail("bad_asset", "{}: no prop '{}' (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign, tower, crop)", path, name);
+        return fail("bad_asset", "{}: no prop '{}' (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign, tower, crop, boat, grass)", path, name);
     }
     for (const auto& [k, _] : set) {
         static const std::map<std::string, std::vector<std::string>> takes = {
@@ -407,7 +479,7 @@ Result<std::string> prop_glb(const std::string& path) {
             {"fence", {"length", "color", "seed"}}, {"house", {"width", "depth", "height", "walls", "roof", "door", "windows", "lit", "seed"}}, {"crate", {"size", "color", "seed"}},
             {"chest", {"color", "bands", "seed"}}, {"torch", {"color", "light", "glow", "seed"}}, {"bench", {"color", "seed"}}, {"table", {"color", "seed"}},
             {"chair", {"color", "seed"}}, {"well", {"stone", "wood", "roof", "seed"}}, {"sign", {"color", "board", "seed"}}, {"tower", {"height", "stone", "wood", "roof", "seed"}},
-            {"crop", {"stage", "leaves", "fruit", "seed"}}};
+            {"crop", {"stage", "leaves", "fruit", "seed"}}, {"boat", {"length", "color", "sail", "furled", "boom", "seed"}}, {"grass", {"height", "blades", "color", "seed"}}};
         const auto& ok = takes.at(name);
         if (std::find(ok.begin(), ok.end(), k) == ok.end() && error.empty()) {
             std::string list;

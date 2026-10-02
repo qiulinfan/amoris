@@ -1,0 +1,22 @@
+name = "island"
+entry = "scripts/main.tsx"
+scene = "scene.json"
+
+[window]
+title = "Pocket: island"
+width = 960
+height = 540
+
+# Actions instead of keys; agents hold them by name (docs/design/input.md).
+[input.actions]
+move_x = { negative = ["A", "Left", "pad:dpad_left"], positive = ["D", "Right", "pad:dpad_right"], axis = ["pad:leftx"] }
+move_z = { negative = ["W", "Up", "pad:dpad_up"], positive = ["S", "Down", "pad:dpad_down"], axis = ["pad:lefty"] }
+use = ["E", "Space", "pad:a"]
+
+[render]
+msaa = 4
+ao = true
+shadow_softness = 1.0
+
+[render.tonemap]
+operator = "agx"

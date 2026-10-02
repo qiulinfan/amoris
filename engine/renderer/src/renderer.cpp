@@ -2753,6 +2753,37 @@ fn water_absorb(b: WaterBody, seen: vec3f, through: f32, scatter: vec3f) -> vec3
     var level = b.center.y;
     var flow = b.misc.xy;
     let river = b.course.x > 0.5;
+    if (b.course.x < -0.5) {
+        // An ocean (docs/design/water.md, Oceans): rings round the camera (its place snapped to the
+        // first cell's width), each wider than the last by the ratio extent.y, out to near the far
+        // plane; the last ring lies on the horizon, drawn just inside the far plane.
+        let at = round(frame.camera_pos.xz / b.extent.x) * b.extent.x;
+        let a = f32(g.y % nz) / f32(nz) * 6.2831853;
+        let way = vec2f(cos(a), sin(a));
+        var out: WaterOut;
+        if (g.x >= nx) {
+            let far_pos = vec3f(at.x + way.x * 1e5, level, at.y + way.y * 1e5);
+            out.clip = frame.view_proj * vec4f(far_pos, 1.0);
+            out.clip.z = out.clip.w * 0.99999;
+            out.world_pos = far_pos;
+            out.rest = far_pos.xz;
+        } else {
+            let q = b.extent.y;
+            let r = b.extent.x * (pow(q, f32(g.x)) - 1.0) / (q - 1.0);
+            rest = at + way * r;
+            // The waves flatten with the distance, where the rings sample them too sparsely to keep their shape.
+            let reach = b.extent.x * (pow(q, b.extent.z - 1.0) - 1.0) / (q - 1.0);
+            let o = water_offset(b, rest, flow) * (1.0 - smoothstep(reach * 0.06, reach * 0.3, r));
+            let world = vec3f(rest.x + o.x, level + o.y, rest.y + o.z);
+            out.clip = frame.view_proj * vec4f(world, 1.0);
+            out.world_pos = world;
+            out.rest = rest;
+        }
+        out.body = body;
+        out.flow = flow;
+        out.level = level;
+        return out;
+    }
     if (river) {
         // A river: the grid's x runs down the course, its z across it; the level and the current
         // are the course's there.
@@ -2798,6 +2829,11 @@ struct WaterFsOut {
     let dist = length(frame.camera_pos.xyz - in.world_pos);
     let rs = water_ripples(b, in.rest, in.flow) * (b.misc.z / (1.0 + dist * 0.06));
     var n = normalize(water_normal(b, in.rest, in.flow) - vec3f(rs.x, 0.0, rs.y));
+    if (b.course.x < -0.5) {
+        // An ocean's waves smooth out toward its horizon, where a pixel spans many of them.
+        let reach = b.extent.x * (pow(b.extent.y, b.extent.z - 1.0) - 1.0) / (b.extent.y - 1.0);
+        n = normalize(mix(n, vec3f(0.0, 1.0, 0.0), smoothstep(reach * 0.03, reach * 0.18, dist)));
+    }
     // Rings (docs/design/water.md, Rings): spreading at a unit and a fifth a second from where
     // something fell in or moves through, a short train of waves fading as it goes; and while it
     // rains, the drops' rings as on a puddle, near the camera.
@@ -7283,6 +7319,13 @@ fn time() -> f32 { return fx.time.x; }
             g.extent[1] = wa.size.y * 0.5f;
             g.extent[2] = std::clamp(std::ceil(wa.size.x / cell), 1.0f, 256.0f);
             g.extent[3] = std::clamp(std::ceil(wa.size.y / cell), 1.0f, 256.0f);
+            if (body.ocean()) {
+                // An ocean: a grid of rings round the camera (fitted to its far plane in fit_oceans).
+                g.course[0] = -1;
+                g.extent[0] = std::clamp(cell, 0.1f, 2.0f);
+                g.extent[2] = 96;
+                g.extent[3] = 128;
+            }
             if (body.river()) {
                 // Its course, evened out to 64 points at most; the grid down it and across.
                 const world::PathCurve& course = *body.course;
@@ -7321,6 +7364,22 @@ fn time() -> f32 { return fx.time.x; }
             water_bodies.push_back(g);
         }
         stats.water = static_cast<std::uint32_t>(water_bodies.size());
+    }
+    // An ocean's rings grow by a common ratio from its first cell's width out to nine tenths of the
+    // camera's far plane (one ring more lies on the horizon).
+    void fit_oceans(float far) {
+        for (WaterGpu& g : water_bodies) {
+            if (g.course[0] > -0.5f) continue;
+            const float cell = g.extent[0], reach = std::max(far * 0.9f, cell * 200.0f);
+            const int rings = static_cast<int>(g.extent[2]) - 1;
+            float lo = 1.0001f, hi = 2.0f;
+            for (int it = 0; it < 48; ++it) {
+                const float q = 0.5f * (lo + hi);
+                const float r = cell * (std::pow(q, static_cast<float>(rings)) - 1.0f) / (q - 1.0f);
+                (r < reach ? lo : hi) = q;
+            }
+            g.extent[1] = 0.5f * (lo + hi);
+        }
     }
 
     // The water pass: the scene and its depth copied, the view from under a surface if the camera is
@@ -10730,6 +10789,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     im.clouds_now = false;
     im.stats.water = static_cast<std::uint32_t>(im.water_bodies.size());
     im.camera = im.find_camera(world, aspect);
+    im.fit_oceans(im.camera.far);
 
     FrameUniforms fu{};
     // The cel look's bands for the lights in the mesh shader (its outlines are the post pass's).
@@ -10753,9 +10813,10 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const Vec3 c = im.water_src[i].center;
             float* a = fu.waters[i * 2];
             float* b = fu.waters[i * 2 + 1];
-            a[0] = c.x; a[1] = c.y; a[2] = c.z; a[3] = wa.size.x * 0.5f;
+            const bool ocean = im.water_src[i].ocean();
+            a[0] = c.x; a[1] = c.y; a[2] = c.z; a[3] = ocean ? 1e9f : wa.size.x * 0.5f;
             // A river's level falls along it: no caustics from it (its box would be a lake's).
-            b[0] = wa.size.y * 0.5f; b[1] = std::max(wa.depth, 0.0f); b[2] = im.water_src[i].river() ? 0.0f : std::max(wa.caustics, 0.0f);
+            b[0] = ocean ? 1e9f : wa.size.y * 0.5f; b[1] = std::max(wa.depth, 0.0f); b[2] = im.water_src[i].river() ? 0.0f : std::max(wa.caustics, 0.0f);
         }
         fu.water_info[0] = static_cast<float>(n);
         fu.water_info[1] = static_cast<float>(world.seconds());

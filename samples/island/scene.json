@@ -1,0 +1,1395 @@
+{
+ "format": "pocket-scene",
+ "entities": [
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {
+     "mode": "atmosphere",
+     "haze": 1.0,
+     "clouds": 0.42,
+     "time_of_day": 9.0,
+     "day_length": 600
+    }
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": {
+      "x": -0.36,
+      "y": 0.34,
+      "z": 0.14,
+      "w": 0.86
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 1.2,
+     "color": {
+      "r": 1,
+      "g": 0.96,
+      "b": 0.9,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Breeze",
+   "components": {
+    "Wind": {
+     "direction": 0,
+     "speed": 6,
+     "gusts": 0.3,
+     "gust_length": 40
+    }
+   }
+  },
+  {
+   "name": "Sea",
+   "components": {
+    "Transform": {},
+    "Water": {
+     "ocean": true,
+     "depth": 25,
+     "wave_height": 0.35,
+     "wave_length": 9,
+     "wave_direction": 10,
+     "choppiness": 0.5,
+     "color": {
+      "r": 0.03,
+      "g": 0.2,
+      "b": 0.3,
+      "a": 1
+     },
+     "clarity": 3,
+     "foam": 0.45,
+     "caustics": 1
+    }
+   }
+  },
+  {
+   "name": "Isle",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": -3.0,
+      "z": 0
+     }
+    },
+    "Terrain": {
+     "size": {
+      "x": 150,
+      "y": 150
+     },
+     "height": 15,
+     "seed": 7,
+     "scale": 60,
+     "octaves": 5,
+     "resolution": 193,
+     "island": 1.0,
+     "rock_slope": 40,
+     "snow_line": 2,
+     "layers": [
+      {
+       "name": "grass",
+       "texture": "assets/ground/grass.png",
+       "tile": 6
+      },
+      {
+       "name": "sand",
+       "texture": "assets/ground/sand.png",
+       "tile": 5,
+       "height": {
+        "x": 0,
+        "y": 0.27
+       }
+      },
+      {
+       "name": "rock",
+       "texture": "assets/ground/rock.png",
+       "tile": 7,
+       "slope": {
+        "x": 36,
+        "y": 90
+       }
+      }
+     ]
+    },
+    "MeshRenderer": {
+     "roughness": 0.95
+    },
+    "RigidBody": {
+     "kind": "static"
+    },
+    "Collider": {
+     "shape": "mesh"
+    }
+   },
+   "children": [
+    {
+     "name": "Trees",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "tree?seed=1",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 260,
+       "area": {
+        "x": 135.0,
+        "y": 135.0
+       },
+       "seed": 49,
+       "on": "Isle",
+       "min_height": 1.4,
+       "max_height": 9.0,
+       "max_slope": 36,
+       "spacing": 3.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.08,
+       "sway_speed": 0.35,
+       "collide": 0.3,
+       "collide_height": 3
+      }
+     }
+    },
+    {
+     "name": "Pines",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "pine?seed=1",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 160,
+       "area": {
+        "x": 135.0,
+        "y": 135.0
+       },
+       "seed": 50,
+       "on": "Isle",
+       "min_height": 3.5,
+       "max_height": 14.0,
+       "max_slope": 36,
+       "spacing": 3.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.05,
+       "sway_speed": 0.35,
+       "collide": 0.3,
+       "collide_height": 3
+      }
+     }
+    },
+    {
+     "name": "Bushes",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "bush?size=0.9",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 1200,
+       "area": {
+        "x": 135.0,
+        "y": 135.0
+       },
+       "seed": 51,
+       "on": "Isle",
+       "min_height": 1.0,
+       "max_height": 11.0,
+       "max_slope": 36,
+       "spacing": 1.1,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.07,
+       "sway_speed": 0.35
+      }
+     }
+    },
+    {
+     "name": "Rocks",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "rock?size=0.8&seed=1",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 80,
+       "area": {
+        "x": 135.0,
+        "y": 135.0
+       },
+       "seed": 52,
+       "on": "Isle",
+       "min_height": 0.2,
+       "max_height": 14.0,
+       "max_slope": 60,
+       "spacing": 2.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "align": 1,
+       "sink": 0.2
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Islet1",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 175,
+      "y": -3.0,
+      "z": -120
+     }
+    },
+    "Terrain": {
+     "size": {
+      "x": 72,
+      "y": 72
+     },
+     "height": 8,
+     "seed": 23,
+     "scale": 30,
+     "octaves": 5,
+     "resolution": 97,
+     "island": 1.0,
+     "rock_slope": 40,
+     "snow_line": 2,
+     "layers": [
+      {
+       "name": "grass",
+       "texture": "assets/ground/grass.png",
+       "tile": 6
+      },
+      {
+       "name": "sand",
+       "texture": "assets/ground/sand.png",
+       "tile": 5,
+       "height": {
+        "x": 0,
+        "y": 0.27
+       }
+      },
+      {
+       "name": "rock",
+       "texture": "assets/ground/rock.png",
+       "tile": 7,
+       "slope": {
+        "x": 36,
+        "y": 90
+       }
+      }
+     ]
+    },
+    "MeshRenderer": {
+     "roughness": 0.95
+    },
+    "RigidBody": {
+     "kind": "static"
+    },
+    "Collider": {
+     "shape": "mesh"
+    }
+   },
+   "children": [
+    {
+     "name": "Trees",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "tree?seed=5",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 60,
+       "area": {
+        "x": 64.8,
+        "y": 64.8
+       },
+       "seed": 161,
+       "on": "Islet1",
+       "min_height": 1.4,
+       "max_height": 9.0,
+       "max_slope": 36,
+       "spacing": 3.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.08,
+       "sway_speed": 0.35,
+       "collide": 0.3,
+       "collide_height": 3
+      }
+     }
+    },
+    {
+     "name": "Pines",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "pine?seed=5",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 30,
+       "area": {
+        "x": 64.8,
+        "y": 64.8
+       },
+       "seed": 162,
+       "on": "Islet1",
+       "min_height": 3.5,
+       "max_height": 14.0,
+       "max_slope": 36,
+       "spacing": 3.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.05,
+       "sway_speed": 0.35,
+       "collide": 0.3,
+       "collide_height": 3
+      }
+     }
+    },
+    {
+     "name": "Bushes",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "bush?size=0.9",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 260,
+       "area": {
+        "x": 64.8,
+        "y": 64.8
+       },
+       "seed": 163,
+       "on": "Islet1",
+       "min_height": 1.0,
+       "max_height": 11.0,
+       "max_slope": 36,
+       "spacing": 1.1,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.07,
+       "sway_speed": 0.35
+      }
+     }
+    },
+    {
+     "name": "Rocks",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "rock?size=0.8&seed=5",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 24,
+       "area": {
+        "x": 64.8,
+        "y": 64.8
+       },
+       "seed": 164,
+       "on": "Islet1",
+       "min_height": 0.2,
+       "max_height": 14.0,
+       "max_slope": 60,
+       "spacing": 2.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "align": 1,
+       "sink": 0.2
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Islet2",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": -165,
+      "y": -3.0,
+      "z": 135
+     }
+    },
+    "Terrain": {
+     "size": {
+      "x": 64,
+      "y": 64
+     },
+     "height": 7,
+     "seed": 41,
+     "scale": 26,
+     "octaves": 5,
+     "resolution": 97,
+     "island": 1.0,
+     "rock_slope": 40,
+     "snow_line": 2,
+     "layers": [
+      {
+       "name": "grass",
+       "texture": "assets/ground/grass.png",
+       "tile": 6
+      },
+      {
+       "name": "sand",
+       "texture": "assets/ground/sand.png",
+       "tile": 5,
+       "height": {
+        "x": 0,
+        "y": 0.27
+       }
+      },
+      {
+       "name": "rock",
+       "texture": "assets/ground/rock.png",
+       "tile": 7,
+       "slope": {
+        "x": 36,
+        "y": 90
+       }
+      }
+     ]
+    },
+    "MeshRenderer": {
+     "roughness": 0.95
+    },
+    "RigidBody": {
+     "kind": "static"
+    },
+    "Collider": {
+     "shape": "mesh"
+    }
+   },
+   "children": [
+    {
+     "name": "Trees",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "tree?seed=5",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 60,
+       "area": {
+        "x": 57.6,
+        "y": 57.6
+       },
+       "seed": 287,
+       "on": "Islet2",
+       "min_height": 1.4,
+       "max_height": 9.0,
+       "max_slope": 36,
+       "spacing": 3.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.08,
+       "sway_speed": 0.35,
+       "collide": 0.3,
+       "collide_height": 3
+      }
+     }
+    },
+    {
+     "name": "Pines",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "pine?seed=5",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 30,
+       "area": {
+        "x": 57.6,
+        "y": 57.6
+       },
+       "seed": 288,
+       "on": "Islet2",
+       "min_height": 3.5,
+       "max_height": 14.0,
+       "max_slope": 36,
+       "spacing": 3.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.05,
+       "sway_speed": 0.35,
+       "collide": 0.3,
+       "collide_height": 3
+      }
+     }
+    },
+    {
+     "name": "Bushes",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "bush?size=0.9",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 260,
+       "area": {
+        "x": 57.6,
+        "y": 57.6
+       },
+       "seed": 289,
+       "on": "Islet2",
+       "min_height": 1.0,
+       "max_height": 11.0,
+       "max_slope": 36,
+       "spacing": 1.1,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "sway": 0.07,
+       "sway_speed": 0.35
+      }
+     }
+    },
+    {
+     "name": "Rocks",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 3.0,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "rock?size=0.8&seed=5",
+       "lods": [
+        {
+         "screen": 0.05,
+         "ratio": 0.3
+        },
+        {
+         "screen": 0.02,
+         "ratio": 0.1
+        }
+       ]
+      },
+      "Scatter": {
+       "count": 24,
+       "area": {
+        "x": 57.6,
+        "y": 57.6
+       },
+       "seed": 290,
+       "on": "Islet2",
+       "min_height": 0.2,
+       "max_height": 14.0,
+       "max_slope": 60,
+       "spacing": 2.5,
+       "scale": {
+        "x": 0.7,
+        "y": 1.3
+       },
+       "shade": 0.2,
+       "align": 1,
+       "sink": 0.2
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Crates",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Crate0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -75.38,
+        "y": 0.6,
+        "z": 26.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=0"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 39.82,
+        "y": 0.6,
+        "z": -75.1
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=1"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 22.62,
+        "y": 0.6,
+        "z": 87.11
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=2"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -79.72,
+        "y": 0.6,
+        "z": -51.67
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=3"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate4",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 98.62,
+        "y": 0.6,
+        "z": -16.58
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=4"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate5",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -64.59,
+        "y": 0.6,
+        "z": 82.78
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=5"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate6",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -8.69,
+        "y": 0.6,
+        "z": -109.66
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=0"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate7",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 84.13,
+        "y": 0.6,
+        "z": 78.4
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=1"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate8",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -120.0,
+        "y": 0.6,
+        "z": -1.02
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=2"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate9",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 92.88,
+        "y": 0.6,
+        "z": -83.65
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=3"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate10",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -12.46,
+        "y": 0.6,
+        "z": 129.4
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=4"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate11",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -81.23,
+        "y": 0.6,
+        "z": -107.83
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=5"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate12",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 137.65,
+        "y": 0.6,
+        "z": 25.55
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=0"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate13",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -123.0,
+        "y": 0.6,
+        "z": 76.79
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=1"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate14",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 40.17,
+        "y": 0.6,
+        "z": -144.52
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=2"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate15",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 70.27,
+        "y": 0.6,
+        "z": 138.15
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?size=0.9&seed=3"
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 0.35
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.45,
+        "y": 0.45,
+        "z": 0.45
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Boat",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.4,
+      "z": 112
+     }
+    },
+    "MeshRenderer": {
+     "mesh": "boat?length=3.4&furled=1"
+    },
+    "RigidBody": {
+     "kind": "dynamic",
+     "mass": 0.9
+    },
+    "Collider": {
+     "shape": "box",
+     "size": {
+      "x": 0.32,
+      "y": 0.3,
+      "z": 1.6
+     },
+     "offset": {
+      "x": 0,
+      "y": 0.3,
+      "z": 0
+     }
+    },
+    "Boat": {
+     "power": 3.5,
+     "top_speed": 7,
+     "turn_rate": 55,
+     "sail_power": 0.45
+    }
+   }
+  },
+  {
+   "name": "Camera",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 6,
+      "z": 125
+     }
+    },
+    "Camera": {
+     "fov_degrees": 60,
+     "far": 1500
+    },
+    "CameraRig": {
+     "target": "Boat",
+     "mode": 0,
+     "distance": 11,
+     "height": 1.6,
+     "pitch": -14,
+     "follow": 0.25,
+     "turn": 0.8
+    }
+   }
+  }
+ ]
+}

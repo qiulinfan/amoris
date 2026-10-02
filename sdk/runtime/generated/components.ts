@@ -1074,6 +1074,8 @@ export interface Terrain {
     scale: number;
     /** Layers of noise, each twice as fine and half as tall as the one before (1 to 10). */
     octaves: number;
+    /** 0..1: how far the noise's ground falls toward its edges, to 0 at them at 1, so set under Water it ends in a shore all round (docs/design/terrain.md, Islands). */
+    island: number;
     /** The colour of flat and gentle ground. */
     grass: Color;
     /** The colour of ground steeper than rock_slope. */
@@ -1186,6 +1188,8 @@ export interface Water {
     course: string;
     /** A river's width, in units across its course. */
     width: number;
+    /** An ocean or a sea (docs/design/water.md, Oceans): the water runs to the horizon every way at the entity's height, `size` and `course` aside; what is above it (an island, a shore) stands out of it. */
+    ocean: boolean;
     /** The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). */
     density: number;
     /** How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. */
@@ -1272,6 +1276,30 @@ export interface Vehicle {
     speed: number;
     /** Wheels on the ground (written by the engine). */
     grounded: number;
+}
+
+/** A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat. */
+export interface Boat {
+    /** -1..1: an engine's or oars' drive, ahead at 1, astern at -1 (at half the power). */
+    throttle: number;
+    /** -1..1: the rudder, turning left at -1 and right at 1. */
+    steer: number;
+    /** 0..1: how much sail is set to the Wind. */
+    sail: number;
+    /** The acceleration full throttle gives, units per second squared. */
+    power: number;
+    /** The speed through the water at which the throttle stops pushing, units per second. */
+    top_speed: number;
+    /** Degrees a second the boat turns at full rudder once it has way on (a fifth of it at rest). */
+    turn_rate: number;
+    /** How fast a sideways slide dies, per second: the keel's grip on the water. */
+    keel: number;
+    /** The acceleration a full sail gives in a wind of one unit a second, on the best point of sail. */
+    sail_power: number;
+    /** Forward speed, negative going astern (written by the engine). */
+    speed: number;
+    /** Whether the hull is in water, so the controls bite (written by the engine). */
+    afloat: boolean;
 }
 
 /** A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing. */
@@ -1633,6 +1661,7 @@ export interface Components {
     Water: Water;
     Scatter: Scatter;
     Vehicle: Vehicle;
+    Boat: Boat;
     Area2D: Area2D;
     Path: Path;
     PathFollower: PathFollower;
@@ -1691,6 +1720,7 @@ export interface ComponentEnums {
     Water: {};
     Scatter: {};
     Vehicle: {};
+    Boat: {};
     Area2D: {};
     Path: {};
     PathFollower: { mode: "once" | "loop" | "pingpong"; orient: "none" | "forward" | "flat" };
@@ -1711,9 +1741,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Weather" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Weather" | "Water" | "Scatter" | "Vehicle" | "Boat" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Weather", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Weather", "Water", "Scatter", "Vehicle", "Boat", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1732,6 +1762,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     Cloth: [["size", "v2"], ["segments", "v2"], ["pin", "n"], ["stiffness", "n"], ["damping", "n"], ["weight", "n"], ["wind", "n"], ["collide", "b"], ["thickness", "n"], ["enabled", "b"]],
     Wind: [["direction", "n"], ["speed", "n"], ["gusts", "n"], ["gust_length", "n"], ["enabled", "b"]],
     Weather: [["rain", "n"], ["snow", "n"], ["wet", "n"], ["cover", "n"], ["overcast", "n"], ["density", "n"], ["storm", "n"], ["flash", "n"], ["sound", "b"], ["enabled", "b"]],
+    Boat: [["throttle", "n"], ["steer", "n"], ["sail", "n"], ["power", "n"], ["top_speed", "n"], ["turn_rate", "n"], ["keel", "n"], ["sail_power", "n"], ["speed", "n"], ["afloat", "b"]],
     Area2D: [["size", "v2"], ["offset", "v2"], ["enabled", "b"], ["inside", "n"]],
     RigidBody2D: [["kind", "n"], ["velocity", "v2"], ["angular_velocity", "n"], ["gravity_scale", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["fixed_rotation", "b"], ["bullet", "b"], ["awake", "b"], ["enabled", "b"]],
     AudioListener: [["enabled", "b"]],
@@ -1773,13 +1804,14 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
     Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
-    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
+    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, island: 0, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
     Cloth: { size: { x: 1.5, y: 1 }, segments: { x: 12, y: 8 }, pin: 0, stiffness: 0.9, damping: 0.02, weight: 0.4, wind: 1, collide: true, thickness: 0.02, enabled: true },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
     Weather: { rain: 0, snow: 0, wet: 0, cover: 0, overcast: -1, density: 1, storm: 0, flash: 0, sound: true, enabled: true },
-    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, course: "", width: 4, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
+    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, course: "", width: 4, ocean: false, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
+    Boat: { throttle: 0, steer: 0, sail: 0, power: 4, top_speed: 8, turn_rate: 50, keel: 3, sail_power: 0.5, speed: 0, afloat: false },
     Area2D: { size: { x: 0.5, y: 0.5 }, offset: { x: 0, y: 0 }, enabled: true, inside: 0 },
     Path: { points: [], closed: false, smooth: true, length: 0 },
     PathFollower: { path: "", speed: 1, distance: 0, mode: 0, orient: 0, offset: { x: 0, y: 0, z: 0 }, playing: true, finished: false },

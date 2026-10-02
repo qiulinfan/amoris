@@ -280,6 +280,25 @@ dragged toward the water's own motion (waves and current), so it floats at the l
 volume give, rights itself and rides the waves; `water.entered` and `water.left` mark it going in
 and out. `docs/design/water.md` has the whole of it.
 
+## Boats
+
+`Boat` on a dynamic `RigidBody` with a `Collider` that floats on `Water` (`docs/design/water.md`)
+sails it, as `Vehicle` drives a car: scripts set the controls, the engine the rest. While the hull
+is in water (its box's bottom under the surface there and its top not sunk half a unit under, the
+engine writes `afloat`): `throttle` (-1..1) accelerates it along its heading (-z, flattened onto the
+ground) by up to `power` (4 units a second squared; astern at half), until the speed through the
+water reaches `top_speed` (8); `steer` (-1..1, right at 1) turns it toward `turn_rate` degrees a
+second (50), the rudder biting as the boat gets way on (a fifth of it at rest, and the other way
+going astern); the `keel` (3) takes back that share of a sideways slide each second, and as ballast
+pulls a heel or a pitch back upright and damps its swing, so a turn or a wave leans the boat without
+laying it over; `sail` (0..1) sets sail to the `Wind` (`docs/design/wind.md`): none within 45
+degrees of the wind's eye, the most with it on the beam or the quarter, a fifth less dead astern,
+`sail_power` (0.5) units a second squared in a wind of one unit a second, less as the boat nears the
+wind's own speed. The water's drag (its `drag`) slows it as it slows anything afloat. The engine
+writes `speed` (forward, negative astern). `runtime_tests` (`[water][boat]`): full throttle gets way
+on ahead with the boat upright, the rudder brings it round to starboard, and the sail alone drives
+it running before the wind but not heading into it. `samples/island` sails one.
+
 ## Cloth
 
 A `Cloth` on an entity hangs a sheet from it: a flag, a cape, a curtain, washing on a line, a cloth

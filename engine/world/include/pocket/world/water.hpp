@@ -36,8 +36,9 @@ WaterPoint water_at(const Water& w, float level, float x, float z, float t);
 bool water_covers(const Water& w, Vec3 center, float x, float z);
 
 // A body of water as the world has it (docs/design/water.md): a lake, `size` around its entity at
-// the entity's height, or a river along the Path its `course` names, `width` across, its level the
-// course's own height and its current down the course. Every system that asks about water (the
+// the entity's height, a river along the Path its `course` names, `width` across, its level the
+// course's own height and its current down the course, or an ocean, everywhere at the entity's
+// height. Every system that asks about water (the
 // physics' buoyancy, water.height, the renderer, rings) asks through this.
 struct WaterBody {
     EntityId id = 0;
@@ -45,6 +46,7 @@ struct WaterBody {
     Vec3 center;                                // the entity's place
     std::shared_ptr<const PathCurve> course;    // a river's, else null
     [[nodiscard]] bool river() const { return course != nullptr; }
+    [[nodiscard]] bool ocean() const { return water.ocean; }
     // Where (x, z) lies by a river's course, in plan: the nearest point on it, how far along, how
     // far off to the side, and the way the river runs there (level, unit length).
     struct Place {

@@ -1395,7 +1395,7 @@ void Session::update_terrains() {
     for (auto& [id, tc] : list) {
         seen.insert(id);
         TerrainState& st = terrains_[id];
-        const std::string shape = std::format("{}|{}|{:.6g}|{}|{}|{:.6g}x{:.6g}|{:.6g}", tc.heightmap, tc.seed, tc.scale, tc.octaves, tc.resolution, tc.size.x, tc.size.y, tc.height);
+        const std::string shape = std::format("{}|{}|{:.6g}|{}|{}|{:.6g}x{:.6g}|{:.6g}|{:.4g}", tc.heightmap, tc.seed, tc.scale, tc.octaves, tc.resolution, tc.size.x, tc.size.y, tc.height, tc.island);
         std::string look = std::format("{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g}|{:.4g}|{:.4g}", tc.grass.r, tc.grass.g, tc.grass.b, tc.rock.r, tc.rock.g, tc.rock.b, tc.snow.r, tc.snow.g, tc.snow.b, tc.rock_slope, tc.snow_line, tc.texture_tile);
         for (const world::TerrainLayer& ly : tc.layers)
             look += std::format("|{}:{:.4g},{:.4g},{:.4g}:{:.4g}:{:.4g}..{:.4g}:{:.4g}..{:.4g}:{:.4g}", ly.texture, ly.color.r, ly.color.g, ly.color.b, ly.tile, ly.slope.x, ly.slope.y, ly.height.x, ly.height.y, ly.cover);
@@ -1419,7 +1419,7 @@ void Session::update_terrains() {
                     st.error.clear();
                 }
             } else {
-                st.grid = assets::terrain_from_noise(tc.seed, tc.scale, tc.octaves, n, size, tc.height);
+                st.grid = assets::terrain_from_noise(tc.seed, tc.scale, tc.octaves, n, size, tc.height, tc.island);
                 st.error.clear();
             }
             if (kept.size() == st.grid.h.size()) st.grid.paint = std::move(kept);
@@ -8233,6 +8233,17 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
                 chosen = &adjusted;
                 break;
             }
+        }
+        // The components an entity must have, as `has` or `components` (world.query {has: ["Water"]}).
+        for (const char* alias : {"has", "components", "component"}) {
+            if (!takes("with") || takes(alias) || !chosen->contains(alias) || chosen->contains("with")) continue;
+            const Json& v = (*chosen)[alias];
+            if (!v.is_string() && !v.is_array()) continue;
+            if (chosen != &adjusted) adjusted = given;
+            adjusted["with"] = v.is_string() ? Json::array({v}) : v;
+            adjusted.erase(alias);
+            chosen = &adjusted;
+            break;
         }
         for (const char* alias : {"lines", "limit", "count"}) {
             if (name != "log.tail" || !chosen->contains(alias) || chosen->contains("n")) continue;

@@ -2671,6 +2671,41 @@ TEST_CASE("volumetric clouds: marched where the sky shows, whiter than the blue 
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("an ocean runs to the horizon: below it the view shows water, not the sky's ground; a lake does not", "[renderer][water][ocean]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"yaw", 30}, {"pitch", -40}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 4}, {"z", 0}}}}}, {"Camera", Json{{"fov_degrees", 50}, {"far", 500}}}}}}).has_value());
+    // Pixels under the horizon (the camera looks level), out to near the bottom.
+    auto below = [&]() {
+        for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+        const Json px = s.command("capture", Json{{"pixels", Json::array({Json{{"x", 80}, {"y", 72}}, Json{{"x", 20}, {"y", 90}}, Json{{"x", 80}, {"y", 115}}})}}).value()["pixels"];
+        return px;
+    };
+    const Json bare = below();   // the procedural sky's ground below the horizon
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sea"}, {"components", Json{{"Transform", Json::object()}, {"Water", Json{{"ocean", true}, {"wave_height", 0.2}, {"color", Json{{"r", 0.05}, {"g", 0.25}, {"b", 0.4}, {"a", 1}}}}}}}}).has_value());
+    const Json sea = below();
+    INFO("bare " << bare.dump() << " sea " << sea.dump());
+    REQUIRE(s.command("render.stats", Json::object()).value()["water"]["bodies"] == 1);
+    for (int k = 0; k < 3; ++k) {
+        // Water there, bluer than the ground it covers, far out as near.
+        REQUIRE(sea[k][2].get<int>() > sea[k][0].get<int>() + 10);
+        REQUIRE(sea[k][2].get<int>() - sea[k][0].get<int>() > bare[k][2].get<int>() - bare[k][0].get<int>() + 10);
+    }
+    // A lake ten units across, the same otherwise, leaves the ground under the horizon bare.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sea"}, {"component", "Water"}, {"value", Json{{"ocean", false}, {"size", Json{{"x", 10}, {"y", 10}}}}}}).has_value());
+    const Json lake = below();
+    INFO("lake " << lake.dump());
+    REQUIRE(std::abs(lake[0][2].get<int>() - bare[0][2].get<int>()) < 6);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("caustics: the sunlight on a bed under water gathers into lines that move with time, and none without", "[renderer][water][caustics]") {
     const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-caustics.png";
     std::filesystem::remove(ref);

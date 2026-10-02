@@ -2775,6 +2775,7 @@ void to_json(Json& j, const Terrain& v) {
     j["seed"] = v.seed;
     j["scale"] = v.scale;
     j["octaves"] = v.octaves;
+    j["island"] = v.island;
     vec_to_json(j["grass"], v.grass);
     vec_to_json(j["rock"], v.rock);
     vec_to_json(j["snow"], v.snow);
@@ -2795,6 +2796,7 @@ void from_json(const Json& j, Terrain& v) {
     scalar_from_json(j, "seed", v.seed);
     scalar_from_json(j, "scale", v.scale);
     scalar_from_json(j, "octaves", v.octaves);
+    scalar_from_json(j, "island", v.island);
     if (j.is_object() && j.contains("grass")) vec_from_json(j["grass"], v.grass);
     if (j.is_object() && j.contains("rock")) vec_from_json(j["rock"], v.rock);
     if (j.is_object() && j.contains("snow")) vec_from_json(j["snow"], v.snow);
@@ -2818,6 +2820,7 @@ void hash_component(StateHasherRef& h, const Terrain& v) {
     h.i64(static_cast<std::int64_t>(v.seed));
     h.f32(v.scale);
     h.i64(static_cast<std::int64_t>(v.octaves));
+    h.f32(v.island);
     h.f32(v.grass.r);
     h.f32(v.grass.g);
     h.f32(v.grass.b);
@@ -2846,6 +2849,7 @@ std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
     if (path == "size.y") { *out = &v.size.y; return 1; }
     if (path == "height") { *out = &v.height; return 1; }
     if (path == "scale") { *out = &v.scale; return 1; }
+    if (path == "island") { *out = &v.island; return 1; }
     if (path == "grass") { *out = &v.grass.r; return 4; }
     if (path == "grass.r") { *out = &v.grass.r; return 1; }
     if (path == "grass.g") { *out = &v.grass.g; return 1; }
@@ -3033,6 +3037,7 @@ void to_json(Json& j, const Water& v) {
     vec_to_json(j["flow"], v.flow);
     j["course"] = v.course;
     j["width"] = v.width;
+    j["ocean"] = v.ocean;
     j["density"] = v.density;
     j["drag"] = v.drag;
     j["splash"] = v.splash;
@@ -3055,6 +3060,7 @@ void from_json(const Json& j, Water& v) {
     if (j.is_object() && j.contains("flow")) vec_from_json(j["flow"], v.flow);
     scalar_from_json(j, "course", v.course);
     scalar_from_json(j, "width", v.width);
+    scalar_from_json(j, "ocean", v.ocean);
     scalar_from_json(j, "density", v.density);
     scalar_from_json(j, "drag", v.drag);
     scalar_from_json(j, "splash", v.splash);
@@ -3082,6 +3088,7 @@ void hash_component(StateHasherRef& h, const Water& v) {
     h.f32(v.flow.y);
     h.str(v.course);
     h.f32(v.width);
+    h.u8(v.ocean ? 1 : 0);
     h.f32(v.density);
     h.f32(v.drag);
     h.str(v.splash);
@@ -3289,6 +3296,60 @@ std::size_t numeric_span(Vehicle& v, std::string_view path, float** out) {
     if (path == "suspension_hz") { *out = &v.suspension_hz; return 1; }
     if (path == "damping") { *out = &v.damping; return 1; }
     if (path == "roll_resistance") { *out = &v.roll_resistance; return 1; }
+    if (path == "speed") { *out = &v.speed; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Boat& v) {
+    j = Json::object();
+    j["throttle"] = v.throttle;
+    j["steer"] = v.steer;
+    j["sail"] = v.sail;
+    j["power"] = v.power;
+    j["top_speed"] = v.top_speed;
+    j["turn_rate"] = v.turn_rate;
+    j["keel"] = v.keel;
+    j["sail_power"] = v.sail_power;
+    j["speed"] = v.speed;
+    j["afloat"] = v.afloat;
+}
+
+void from_json(const Json& j, Boat& v) {
+    scalar_from_json(j, "throttle", v.throttle);
+    scalar_from_json(j, "steer", v.steer);
+    scalar_from_json(j, "sail", v.sail);
+    scalar_from_json(j, "power", v.power);
+    scalar_from_json(j, "top_speed", v.top_speed);
+    scalar_from_json(j, "turn_rate", v.turn_rate);
+    scalar_from_json(j, "keel", v.keel);
+    scalar_from_json(j, "sail_power", v.sail_power);
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "afloat", v.afloat);
+}
+
+void hash_component(StateHasherRef& h, const Boat& v) {
+    h.f32(v.throttle);
+    h.f32(v.steer);
+    h.f32(v.sail);
+    h.f32(v.power);
+    h.f32(v.top_speed);
+    h.f32(v.turn_rate);
+    h.f32(v.keel);
+    h.f32(v.sail_power);
+    h.f32(v.speed);
+    h.u8(v.afloat ? 1 : 0);
+}
+
+std::size_t numeric_span(Boat& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "throttle") { *out = &v.throttle; return 1; }
+    if (path == "steer") { *out = &v.steer; return 1; }
+    if (path == "sail") { *out = &v.sail; return 1; }
+    if (path == "power") { *out = &v.power; return 1; }
+    if (path == "top_speed") { *out = &v.top_speed; return 1; }
+    if (path == "turn_rate") { *out = &v.turn_rate; return 1; }
+    if (path == "keel") { *out = &v.keel; return 1; }
+    if (path == "sail_power") { *out = &v.sail_power; return 1; }
     if (path == "speed") { *out = &v.speed; return 1; }
     return 0;
 }
@@ -4531,6 +4592,34 @@ bool write_numbers(Scatter&, const double*, std::size_t) { return false; }
 std::size_t read_numbers(const Vehicle&, double*) { return kNotNumeric; }
 bool write_numbers(Vehicle&, const double*, std::size_t) { return false; }
 
+std::size_t read_numbers(const Boat& v, double* out) {
+    out[0] = static_cast<double>(v.throttle);
+    out[1] = static_cast<double>(v.steer);
+    out[2] = static_cast<double>(v.sail);
+    out[3] = static_cast<double>(v.power);
+    out[4] = static_cast<double>(v.top_speed);
+    out[5] = static_cast<double>(v.turn_rate);
+    out[6] = static_cast<double>(v.keel);
+    out[7] = static_cast<double>(v.sail_power);
+    out[8] = static_cast<double>(v.speed);
+    out[9] = static_cast<double>(v.afloat);
+    return 10;
+}
+bool write_numbers(Boat& v, const double* in, std::size_t n) {
+    if (n != 10) return false;
+    v.throttle = static_cast<float>(in[0]);
+    v.steer = static_cast<float>(in[1]);
+    v.sail = static_cast<float>(in[2]);
+    v.power = static_cast<float>(in[3]);
+    v.top_speed = static_cast<float>(in[4]);
+    v.turn_rate = static_cast<float>(in[5]);
+    v.keel = static_cast<float>(in[6]);
+    v.sail_power = static_cast<float>(in[7]);
+    v.speed = static_cast<float>(in[8]);
+    v.afloat = in[9] != 0;
+    return true;
+}
+
 std::size_t read_numbers(const Area2D& v, double* out) {
     out[0] = static_cast<double>(v.size.x);
     out[1] = static_cast<double>(v.size.y);
@@ -5168,7 +5257,7 @@ constexpr std::array<FieldInfo, 19> kCharacterFields = {{
     FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine).", {}},
     FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine).", {}},
 }};
-constexpr std::array<FieldInfo, 16> kTerrainFields = {{
+constexpr std::array<FieldInfo, 17> kTerrainFields = {{
     FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity.", {}},
     FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity.", {}},
     FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across.", {}},
@@ -5176,6 +5265,7 @@ constexpr std::array<FieldInfo, 16> kTerrainFields = {{
     FieldInfo{"seed", "u32", "The noise's seed: the same seed, scale and octaves give the same hills.", {}},
     FieldInfo{"scale", "f32", "The size of the noise's largest features, in units.", {}},
     FieldInfo{"octaves", "i32", "Layers of noise, each twice as fine and half as tall as the one before (1 to 10).", {}},
+    FieldInfo{"island", "f32", "0..1: how far the noise's ground falls toward its edges, to 0 at them at 1, so set under Water it ends in a shore all round (docs/design/terrain.md, Islands).", {}},
     FieldInfo{"grass", "color", "The colour of flat and gentle ground.", {}},
     FieldInfo{"rock", "color", "The colour of ground steeper than rock_slope.", {}},
     FieldInfo{"snow", "color", "The colour above snow_line.", {}},
@@ -5218,7 +5308,7 @@ constexpr std::array<FieldInfo, 10> kWeatherFields = {{
     FieldInfo{"sound", "bool", "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game.", {}},
     FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
 }};
-constexpr std::array<FieldInfo, 19> kWaterFields = {{
+constexpr std::array<FieldInfo, 20> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity.", {}},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed.", {}},
     FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back).", {}},
@@ -5233,6 +5323,7 @@ constexpr std::array<FieldInfo, 19> kWaterFields = {{
     FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course.", {}},
     FieldInfo{"course", "string", "A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity.", {}},
     FieldInfo{"width", "f32", "A river's width, in units across its course.", {}},
+    FieldInfo{"ocean", "bool", "An ocean or a sea (docs/design/water.md, Oceans): the water runs to the horizon every way at the entity's height, `size` and `course` aside; what is above it (an island, a shore) stands out of it.", {}},
     FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default).", {}},
     FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more.", {}},
     FieldInfo{"splash", "string", "Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none.", {}},
@@ -5276,6 +5367,18 @@ constexpr std::array<FieldInfo, 14> kVehicleFields = {{
     FieldInfo{"roll_resistance", "f32", "Units per second squared the wheels lose to rolling when nothing drives or brakes them.", {}},
     FieldInfo{"speed", "f32", "Forward speed, negative backing up (written by the engine).", {}},
     FieldInfo{"grounded", "i32", "Wheels on the ground (written by the engine).", {}},
+}};
+constexpr std::array<FieldInfo, 10> kBoatFields = {{
+    FieldInfo{"throttle", "f32", "-1..1: an engine's or oars' drive, ahead at 1, astern at -1 (at half the power).", {}},
+    FieldInfo{"steer", "f32", "-1..1: the rudder, turning left at -1 and right at 1.", {}},
+    FieldInfo{"sail", "f32", "0..1: how much sail is set to the Wind.", {}},
+    FieldInfo{"power", "f32", "The acceleration full throttle gives, units per second squared.", {}},
+    FieldInfo{"top_speed", "f32", "The speed through the water at which the throttle stops pushing, units per second.", {}},
+    FieldInfo{"turn_rate", "f32", "Degrees a second the boat turns at full rudder once it has way on (a fifth of it at rest).", {}},
+    FieldInfo{"keel", "f32", "How fast a sideways slide dies, per second: the keel's grip on the water.", {}},
+    FieldInfo{"sail_power", "f32", "The acceleration a full sail gives in a wind of one unit a second, on the best point of sail.", {}},
+    FieldInfo{"speed", "f32", "Forward speed, negative going astern (written by the engine).", {}},
+    FieldInfo{"afloat", "bool", "Whether the hull is in water, so the controls bite (written by the engine).", {}},
 }};
 constexpr std::array<FieldInfo, 4> kArea2DFields = {{
     FieldInfo{"size", "vec2", "Half extents of the box.", {}},
@@ -5463,7 +5566,7 @@ constexpr std::array<RecordInfo, 15> kRecords = {{
     RecordInfo{"BehaviorTransition", kBehaviorTransitionFields},
 }};
 
-constexpr std::array<ComponentInfo, 54> kComponents = {{
+constexpr std::array<ComponentInfo, 55> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -5504,6 +5607,7 @@ constexpr std::array<ComponentInfo, 54> kComponents = {{
     ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
+    ComponentInfo{"Boat", "A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat.", true, kBoatFields},
     ComponentInfo{"Area2D", "A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.", true, kArea2DFields},
     ComponentInfo{"Path", "A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies.", true, kPathFields},
     ComponentInfo{"PathFollower", "Moves its entity along a Path at a speed (docs/design/paths.md): a patrol, a car on a racing line, a platform on its run, a creep down a lane. Every tick before physics the engine moves `distance` on by `speed`, puts the Transform there (plus `offset`) and, with `orient`, turns it along the path; path.arrived and path.looped say when it comes to an end.", true, kPathFollowerFields},

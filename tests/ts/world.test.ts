@@ -12,6 +12,12 @@ test("spawn, get, set and describe", () => {
     expect(world.get(player, "Camera")).toBeUndefined();
     expect(world.find("/Level/Player")).toBe(player);
     expect(world.find("Nope")).toBeUndefined();
+    expect(null).toBeNull();
+    expect(world.query({ with: ["Transform"], fields: [] })).toHaveLength(world.query({ with: ["Transform"], fields: [] }).length);
+    expect(() => expect(0).toBeNull()).toThrow();
+    // A rotation given as turns in degrees, as the engine reads it.
+    world.set(player, "Transform", { rotation: { yaw: 90 } });
+    expect(world.get(player, "Transform")!.rotation.y).toBeCloseTo(Math.SQRT1_2, 3);
 });
 
 test("tree and query", () => {

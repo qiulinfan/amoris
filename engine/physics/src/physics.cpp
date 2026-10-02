@@ -1520,6 +1520,70 @@ void Physics::step(world::World& w, double dt_d) {
         veh.speed = speed;
         veh.grounded = grounded;
     }
+    // 1b'. Boats (docs/design/physics.md, Boats): on a body whose hull is in water, the throttle
+    //      drives it along its heading, the rudder turns it (more with way on), the keel holds it
+    //      from sliding sideways and the sail takes the Wind's push, none heading into it.
+    std::vector<std::pair<EntityId, world::Boat>> boats;
+    w.ecs().each([&](flecs::entity e, const world::Boat& bt) { boats.emplace_back(e.id(), bt); });
+    if (!boats.empty()) {
+        std::sort(boats.begin(), boats.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+        const std::vector<world::WaterBody> seas = world::water_bodies(w);
+        const world::WindField wind = world::wind_field(w);
+        const auto sea_time = static_cast<float>(w.seconds());
+        for (auto& [bid, bt] : boats) {
+            auto bit = std::lower_bound(im.bodies.begin(), im.bodies.end(), bid, [](const Body& x, EntityId id) { return x.id < id; });
+            if (bit == im.bodies.end() || bit->id != bid || bit->kind != 0) continue;
+            Body& b = *bit;
+            Vec3 ahead = b.rotation.rotate(Vec3{0, 0, -1});
+            ahead.y = 0;
+            if (length(ahead) < 1e-4f) continue;
+            ahead = normalize(ahead);
+            const Vec3 side = cross(ahead, Vec3{0, 1, 0});   // to starboard (the right)
+            // In water: the hull's bottom under the surface there, and not sunk beneath it.
+            bool afloat = false;
+            for (const world::WaterBody& sea : seas) {
+                if (!sea.covers(b.position.x, b.position.z)) continue;
+                const float surface = sea.at(b.position.x, b.position.z, sea_time).position.y;
+                if (b.aabb_min.y < surface + 0.05f && b.aabb_max.y > surface - 0.5f) { afloat = true; break; }
+            }
+            const float speed = dot(b.velocity, ahead);
+            const float throttle = std::clamp(bt.throttle, -1.0f, 1.0f), steer = std::clamp(bt.steer, -1.0f, 1.0f), sail = std::clamp(bt.sail, 0.0f, 1.0f);
+            if (afloat && (throttle != 0 || steer != 0 || (sail > 0 && wind.on))) { b.sleeping = false; b.sleep_timer = 0; }
+            if (afloat && !b.sleeping) {
+                float push = 0;
+                if (throttle * speed <= 0 || std::fabs(speed) < bt.top_speed) push += throttle * std::max(bt.power, 0.0f) * (throttle < 0 ? 0.5f : 1.0f);
+                if (wind.on && sail > 0 && wind.speed > 0) {
+                    // The point of sail: nothing within 45 degrees of the wind's eye, the most with it
+                    // on the beam or the quarter, a little less dead astern; less as the boat nears the
+                    // wind's own speed.
+                    const float with = ahead.x * wind.dir_x + ahead.z * wind.dir_z;   // 1 the wind astern, -1 ahead
+                    const float point = std::clamp((with + 0.7f) / 0.5f, 0.0f, 1.0f);
+                    const float best = point * point * (3 - 2 * point) * (1.0f - 0.2f * std::max(with, 0.0f) * std::max(with, 0.0f));
+                    const float room = std::max(0.0f, 1.0f - speed / (wind.speed * 1.2f));
+                    push += sail * std::max(bt.sail_power, 0.0f) * wind.speed * best * room;
+                }
+                b.velocity += ahead * (push * dt);
+                const float slip = dot(b.velocity, side);
+                b.velocity -= side * (slip * std::min(1.0f, std::max(bt.keel, 0.0f) * dt));
+                // The rudder bites with way on (a fifth at rest), and the other way going astern.
+                const float bite = std::clamp(std::fabs(speed) / 3.0f, 0.2f, 1.0f) * (speed < -0.2f ? -1.0f : 1.0f);
+                const float target = -steer * bt.turn_rate * std::numbers::pi_v<float> / 180.0f * bite;
+                b.angular.y += (target - b.angular.y) * std::min(1.0f, 3.0f * dt);
+                // Ballast in the keel: a heel or a pitch is pulled back upright and its swing damped,
+                // so a turn or a wave leans the boat without laying it over.
+                const Vec3 tilt = cross(b.rotation.rotate(Vec3{0, 1, 0}), Vec3{0, 1, 0});
+                const float k = std::max(bt.keel, 0.0f);
+                b.angular.x += tilt.x * 4.0f * k * dt;
+                b.angular.z += tilt.z * 4.0f * k * dt;
+                const float settle = std::max(0.0f, 1.0f - 0.8f * k * dt);
+                b.angular.x *= settle;
+                b.angular.z *= settle;
+            }
+            bt.speed = speed;
+            bt.afloat = afloat;
+            w.ecs().entity(bid).set<world::Boat>(bt);
+        }
+    }
     // 1c. Water (docs/design/water.md): a dynamic body's volume is cut into cells (27 across its
     //     box, those of them inside a sphere or a capsule); a cell under the surface is pushed up by
     //     the weight of the water it displaces and dragged toward the water's current, each at its own

@@ -149,7 +149,7 @@ float gradient_noise(float x, float y, std::uint32_t seed) {
 
 }  // namespace
 
-Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, Vec2 size, float height) {
+Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, Vec2 size, float height, float island) {
     Terrain t;
     t.n = std::clamp(n, 2, 1025);
     t.size_x = size.x;
@@ -177,6 +177,19 @@ Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, 
     // Spread over 0..height: the lowest sample at 0, the highest at the top.
     const float span = hi > lo ? hi - lo : 1.0f;
     for (float& v : t.h) v = (v - lo) / span * height;
+    // An island: the ground falls from halfway out (by distance from the middle, in the extent's
+    // own proportions) to the edges, so under water it ends in a shore all round.
+    island = std::clamp(island, 0.0f, 1.0f);
+    if (island > 0) {
+        for (int j = 0; j < t.n; ++j) {
+            for (int i = 0; i < t.n; ++i) {
+                const float u = static_cast<float>(i) / static_cast<float>(t.n - 1) * 2 - 1, w = static_cast<float>(j) / static_cast<float>(t.n - 1) * 2 - 1;
+                const float r = std::sqrt(u * u + w * w);
+                const float k = std::clamp((r - 0.45f) / 0.5f, 0.0f, 1.0f);
+                t.h[static_cast<std::size_t>(j) * static_cast<std::size_t>(t.n) + static_cast<std::size_t>(i)] *= 1.0f - island * k * k * (3 - 2 * k);
+            }
+        }
+    }
     return t;
 }
 

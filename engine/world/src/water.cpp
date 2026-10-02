@@ -116,6 +116,7 @@ WaterBody::Place WaterBody::place(float x, float z) const {
 }
 
 bool WaterBody::covers(float x, float z) const {
+    if (water.ocean) return true;
     if (!course) return water_covers(water, center, x, z);
     return place(x, z).off <= std::max(water.width, 0.0f) * 0.5f;
 }
@@ -134,6 +135,11 @@ WaterPoint WaterBody::at(float x, float z, float t) const {
 
 void WaterBody::bounds(Vec3& lo, Vec3& hi) const {
     const float wave = std::max(water.wave_height, 0.0f), depth = std::max(water.depth, 0.0f);
+    if (water.ocean) {
+        lo = Vec3{-1e30f, center.y - depth, -1e30f};
+        hi = Vec3{1e30f, center.y + wave, 1e30f};
+        return;
+    }
     if (!course) {
         lo = Vec3{center.x - water.size.x * 0.5f, center.y - depth, center.z - water.size.y * 0.5f};
         hi = Vec3{center.x + water.size.x * 0.5f, center.y + wave, center.z + water.size.y * 0.5f};
@@ -156,7 +162,7 @@ std::vector<WaterBody> water_bodies(const World& w) {
         b.id = e.id();
         b.water = wa;
         b.center = t.position;
-        if (!wa.course.empty()) {
+        if (!wa.course.empty() && !wa.ocean) {
             const EntityId pid = w.find(wa.course);
             const auto* path = pid ? w.try_get<Path>(pid) : nullptr;
             const auto* placed = pid ? w.try_get<WorldTransform>(pid) : nullptr;
@@ -165,7 +171,7 @@ std::vector<WaterBody> water_bodies(const World& w) {
                 if (curve->points.size() >= 2) b.course = std::move(curve);
             }
         }
-        if (b.course ? wa.width > 0 : (wa.size.x > 0 && wa.size.y > 0)) out.push_back(std::move(b));
+        if (wa.ocean || (b.course ? wa.width > 0 : (wa.size.x > 0 && wa.size.y > 0))) out.push_back(std::move(b));
     });
     std::sort(out.begin(), out.end(), [](const WaterBody& a, const WaterBody& b) { return a.id < b.id; });
     return out;

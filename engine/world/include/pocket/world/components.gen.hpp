@@ -908,6 +908,7 @@ struct Terrain {
     std::uint32_t seed = 1;
     float scale = 24.0f;
     std::int32_t octaves = 4;
+    float island = 0.0f;
     Color4 grass{0.3f, 0.45f, 0.22f, 1.0f};
     Color4 rock{0.45f, 0.42f, 0.38f, 1.0f};
     Color4 snow{0.92f, 0.93f, 0.95f, 1.0f};
@@ -992,6 +993,7 @@ struct Water {
     Vec2 flow{0.0f, 0.0f};
     std::string course = "";
     float width = 4.0f;
+    bool ocean = false;
     float density = 2.0f;
     float drag = 1.0f;
     std::string splash = "";
@@ -1055,6 +1057,25 @@ void to_json(Json& j, const Vehicle& v);
 void from_json(const Json& j, Vehicle& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Vehicle& v, std::string_view path, float** out);
+
+/// A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat.
+struct Boat {
+    float throttle = 0.0f;
+    float steer = 0.0f;
+    float sail = 0.0f;
+    float power = 4.0f;
+    float top_speed = 8.0f;
+    float turn_rate = 50.0f;
+    float keel = 3.0f;
+    float sail_power = 0.5f;
+    float speed = 0.0f;
+    bool afloat = false;
+    constexpr bool operator==(const Boat&) const = default;
+};
+void to_json(Json& j, const Boat& v);
+void from_json(const Json& j, Boat& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Boat& v, std::string_view path, float** out);
 
 /// A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.
 struct Area2D {
@@ -1378,6 +1399,7 @@ void hash_component(struct StateHasherRef& h, const Weather& v);
 void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
+void hash_component(struct StateHasherRef& h, const Boat& v);
 void hash_component(struct StateHasherRef& h, const Area2D& v);
 void hash_component(struct StateHasherRef& h, const Path& v);
 void hash_component(struct StateHasherRef& h, const PathFollower& v);
@@ -1477,6 +1499,8 @@ std::size_t read_numbers(const Scatter& v, double* out);
 bool write_numbers(Scatter& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Vehicle& v, double* out);
 bool write_numbers(Vehicle& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Boat& v, double* out);
+bool write_numbers(Boat& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Area2D& v, double* out);
 bool write_numbers(Area2D& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Path& v, double* out);

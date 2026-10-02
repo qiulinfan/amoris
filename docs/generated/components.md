@@ -607,6 +607,7 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `seed` | u32 | 1 | The noise's seed: the same seed, scale and octaves give the same hills. |
 | `scale` | f32 | 24.0 | The size of the noise's largest features, in units. |
 | `octaves` | i32 | 4 | Layers of noise, each twice as fine and half as tall as the one before (1 to 10). |
+| `island` | f32 | 0.0 | 0..1: how far the noise's ground falls toward its edges, to 0 at them at 1, so set under Water it ends in a shore all round (docs/design/terrain.md, Islands). |
 | `grass` | color | [0.3, 0.45, 0.22, 1.0] | The colour of flat and gentle ground. |
 | `rock` | color | [0.45, 0.42, 0.38, 1.0] | The colour of ground steeper than rock_slope. |
 | `snow` | color | [0.92, 0.93, 0.95, 1.0] | The colour above snow_line. |
@@ -683,6 +684,7 @@ A body of water (docs/design/water.md): a surface size.x by size.y (x by z) cent
 | `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course. |
 | `course` | string | "" | A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity. |
 | `width` | f32 | 4.0 | A river's width, in units across its course. |
+| `ocean` | bool | false | An ocean or a sea (docs/design/water.md, Oceans): the water runs to the horizon every way at the entity's height, `size` and `course` aside; what is above it (an island, a shore) stands out of it. |
 | `density` | f32 | 2.0 | The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). |
 | `drag` | f32 | 1.0 | How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. |
 | `splash` | string | "" | Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none. |
@@ -736,6 +738,23 @@ A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBo
 | `roll_resistance` | f32 | 0.3 | Units per second squared the wheels lose to rolling when nothing drives or brakes them. |
 | `speed` | f32 | 0.0 | Forward speed, negative backing up (written by the engine). |
 | `grounded` | i32 | 0 | Wheels on the ground (written by the engine). |
+
+## Boat
+
+A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `throttle` | f32 | 0.0 | -1..1: an engine's or oars' drive, ahead at 1, astern at -1 (at half the power). |
+| `steer` | f32 | 0.0 | -1..1: the rudder, turning left at -1 and right at 1. |
+| `sail` | f32 | 0.0 | 0..1: how much sail is set to the Wind. |
+| `power` | f32 | 4.0 | The acceleration full throttle gives, units per second squared. |
+| `top_speed` | f32 | 8.0 | The speed through the water at which the throttle stops pushing, units per second. |
+| `turn_rate` | f32 | 50.0 | Degrees a second the boat turns at full rudder once it has way on (a fifth of it at rest). |
+| `keel` | f32 | 3.0 | How fast a sideways slide dies, per second: the keel's grip on the water. |
+| `sail_power` | f32 | 0.5 | The acceleration a full sail gives in a wind of one unit a second, on the best point of sail. |
+| `speed` | f32 | 0.0 | Forward speed, negative going astern (written by the engine). |
+| `afloat` | bool | false | Whether the hull is in water, so the controls bite (written by the engine). |
 
 ## Area2D
 

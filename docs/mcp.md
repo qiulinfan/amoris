@@ -123,9 +123,10 @@ a start two fields share is refused with the nearest; `tilemap.get` reads a cell
 the map's rows otherwise, and `tilemap.text {entity}` reads the rows (`tilemap.rows`), the names an
 agent reached for first; `world.remove` without a component points to `world.destroy`; a script
 function asked for as a command (`dialogue.check`) is answered with how to call it through
-`script.eval`; `log.tail` takes `lines` for `n`, and `world.set` `values` or `fields` for `value`;
-an MCP tool's name sent as a method (`runtime_commands`) is answered with the command it stands for;
-and `input.release` lets go of what `input.hold` holds.
+`script.eval`; `log.tail` takes `lines` for `n`, `world.set` `values` or `fields` for `value`, and
+`world.query` `has` or `components` (a name or a list) for `with`; an MCP tool's name sent as a
+method (`runtime_commands`) is answered with the command it stands for; and `input.release` lets go
+of what `input.hold` holds.
 
 A field typed as an entity (`Joint2D.body`; `world.schema` shows the type) takes the entity's name
 or path in `world.spawn` and `world.set` as well as its id (`Joint2D: {body: "Plank0"}`), turned

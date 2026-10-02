@@ -56,7 +56,9 @@ smooth, 0 on whole numbers; `noise.fbm2(x, y, { octaves, lacunarity, gain })` ad
 clouds, caves); `new Noise(seed)` is noise over another permutation. `tests/ts/rng.test.ts`: a
 seeded stream repeats, helpers stay in bounds, a shuffle keeps every item, noise is smooth and the
 same for a seed. Tests and scenarios have `expect(x).not.toBe(y)` (`not` before any matcher),
-`toBeGreaterThanOrEqual`, `toBeLessThanOrEqual`, `toBeFalsy` and `toBeDefined` beside the others.
+`toBeGreaterThanOrEqual`, `toBeLessThanOrEqual`, `toBeFalsy`, `toBeDefined`, `toBeNull` and
+`toHaveLength` beside the others. A `Transform.rotation` written from a script may be turns in
+degrees (`{yaw: 90}`, then `pitch`, then `roll`), as the engine reads them.
 
 ## Events
 

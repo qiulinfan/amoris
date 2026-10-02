@@ -49,6 +49,13 @@ function matchers<T>(actual: T) {
         toBeDefined(): void {
             if (actual === undefined) throw new ExpectationError("expected a value, got undefined");
         },
+        toBeNull(): void {
+            if (actual !== null) throw new ExpectationError(`expected null, got ${format(actual)}`);
+        },
+        toHaveLength(expected: number): void {
+            const n = (actual as unknown as { length?: unknown })?.length;
+            if (n !== expected) throw new ExpectationError(`expected length ${expected}, got ${format(n)}`);
+        },
         toContain(item: unknown): void {
             const a = actual as unknown;
             if (typeof a === "string") {

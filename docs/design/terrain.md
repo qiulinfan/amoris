@@ -28,8 +28,14 @@ units (4) and its roughness and the rest apply as to any mesh. Every cell is two
 along the same diagonal everywhere, and every answer about the ground (below) follows those
 triangles, so what a query says is what is drawn and what a body rests on.
 
-Changing the shape settings (heightmap, seed, scale, octaves, resolution, size, height) makes the
-heights again, dropping sculpting; changing only the colours meshes the same heights again.
+Changing the shape settings (heightmap, seed, scale, octaves, resolution, size, height, island)
+makes the heights again, dropping sculpting; changing only the colours meshes the same heights
+again.
+
+An island: `island` (0..1) lowers the noise's ground from halfway out toward the edges (by distance
+from the middle, in the extent's proportions), to 0 at them at 1, so a terrain set a few units under
+`Water` (an ocean, `docs/design/water.md`) ends in a shore all round instead of at the edge of its
+square. `samples/island` has three.
 
 ## Painting
 

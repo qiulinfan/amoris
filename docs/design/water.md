@@ -93,6 +93,26 @@ dropped in it is carried along afloat. `tests/evidence/rendering/river.png`
 (`tools/scripts/dev/river_evidence.py`) is a stream found by walking downhill through the hills into
 their lake, its bed carved, a log floating down it.
 
+## Oceans
+
+`Water.ocean` makes the water run to the horizon every way at its entity's height, `size` and
+`course` aside: an island is ground above it, a shore is where the ground comes up through it. Every
+system asks the same body (`world::WaterBody`), which covers every point: what falls in anywhere
+floats, a character swims, `water.height` answers it a world away. The renderer draws it as rings
+round the camera (96 of them, 128 cells round each), the camera's place snapped to the first cell's
+width so the rings do not slide over the waves; the first is a cell wide (a quarter of the shortest
+wave's length over four, as a lake's cells, at least a tenth of a unit and at most two), each next
+one wider by a common ratio, so the last reaches nine tenths of the camera's far plane, and one more
+ring lies on the horizon, drawn just inside the far plane so the sea meets the sky with nothing of
+the sky's ground between. The waves smooth toward the horizon, where a pixel spans many. Caustics
+fall everywhere under it. `runtime_tests` (`[water][ocean]`): the level is answered at the origin
+and five thousand units off, and a crate dropped in eight hundred off floats at it; `renderer_tests`
+(`[water][ocean]`): under the horizon the view shows the sea out to the far distance where a lake of
+ten units leaves the sky's ground bare. `tests/evidence/rendering/ocean.png`
+(`tools/scripts/dev/ocean_evidence.py`): the hills' lake made an ocean, the hills an island, by day
+with a crate afloat and at sunset. `samples/island` sails a `Boat` (`docs/design/physics.md`, Boats)
+on one, round three terrains made islands (`docs/design/terrain.md`).
+
 ## Floating
 
 In the physics step (after the forces, before the contacts), each dynamic body is cut into cells: 27
@@ -201,6 +221,5 @@ and walks out only up a slope), waves of its own from what floats or falls in (r
 the surface's light but do not raise it or move what floats on it), caustics from the waves' own
 shape (the net is procedural, not traced from the surface), water of other shapes than a rectangle
 or a river's ribbon (round ponds; the rectangle reaches under the shore instead) and turned with its
-entity, levels of detail for open sea larger than 256 cells a side can show well, and translucent
-meshes in front of the water (they are drawn before it without writing depth, so the surface covers
-them).
+entity, and translucent meshes in front of the water (they are drawn before it without writing
+depth, so the surface covers them).

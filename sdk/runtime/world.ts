@@ -7,7 +7,7 @@
 // same values and the same checks, and anything else (a name for a value, a missing component, a
 // cause) takes the command.
 import { numericLayouts } from "./generated/components";
-import type { Color, ComponentEnums, ComponentName, Components, Vec3 } from "./generated/components";
+import type { Color, ComponentEnums, ComponentName, Components, Quat, Vec3 } from "./generated/components";
 
 export type { ComponentName, Components, Vec2, Vec3, Vec4, Quat, Color } from "./generated/components";
 export { componentNames, componentDefaults, derivedComponents } from "./generated/components";
@@ -126,10 +126,15 @@ export type EntityRef = Entity | string;
 
 type DeepPartialField<V> = V extends object ? DeepPartial<V> : V;
 export type DeepPartial<T> = { [K in keyof T]?: DeepPartialField<T[K]> };
-// A colour field also takes "#rrggbb" (or #rgb, #rrggbbaa), as a colour picker shows it.
+// A colour field also takes "#rrggbb" (or #rgb, #rrggbbaa), as a colour picker shows it; a rotation
+// also takes turns in degrees ({yaw: 90}: about +y, then pitch up, then roll), as the engine reads them.
+/** A rotation as turns in degrees: yaw about +y (90 faces -x), pitch up, roll. */
+export type Turn = { yaw?: number; pitch?: number; roll?: number };
 type FieldInput<T> = T extends Color ? Color | string : T;
-/** A component as a write gives it: a field with value names takes the name too (`Light.kind: "point"`); reads give numbers. */
-export type ComponentInput<K extends ComponentName> = { [F in keyof Components[K]]: F extends keyof ComponentEnums[K] ? Components[K][F] | ComponentEnums[K][F] : FieldInput<Components[K][F]> };
+/** A component as a write gives it: a field with value names takes the name too (`Light.kind: "point"`), Transform.rotation turns in degrees; reads give numbers. */
+export type ComponentInput<K extends ComponentName> = {
+    [F in keyof Components[K]]: F extends keyof ComponentEnums[K] ? Components[K][F] | ComponentEnums[K][F] : K extends "Transform" ? (F extends "rotation" ? Quat | Turn : FieldInput<Components[K][F]>) : FieldInput<Components[K][F]>;
+};
 export type ComponentPatch = { [K in ComponentName]?: DeepPartial<ComponentInput<K>> };
 
 export function command<T = unknown>(name: string, params?: unknown): T {

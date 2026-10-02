@@ -695,6 +695,7 @@ fields = [
     { name = "seed", type = "u32", default = 1, doc = "The noise's seed: the same seed, scale and octaves give the same hills." },
     { name = "scale", type = "f32", default = 24.0, doc = "The size of the noise's largest features, in units." },
     { name = "octaves", type = "i32", default = 4, doc = "Layers of noise, each twice as fine and half as tall as the one before (1 to 10)." },
+    { name = "island", type = "f32", default = 0.0, doc = "0..1: how far the noise's ground falls toward its edges, to 0 at them at 1, so set under Water it ends in a shore all round (docs/design/terrain.md, Islands)." },
     { name = "grass", type = "color", default = [0.30, 0.45, 0.22, 1.0], doc = "The colour of flat and gentle ground." },
     { name = "rock", type = "color", default = [0.45, 0.42, 0.38, 1.0], doc = "The colour of ground steeper than rock_slope." },
     { name = "snow", type = "color", default = [0.92, 0.93, 0.95, 1.0], doc = "The colour above snow_line." },
@@ -767,6 +768,7 @@ fields = [
     { name = "flow", type = "vec2", default = [0.0, 0.0], doc = "A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course." },
     { name = "course", type = "string", default = "", doc = "A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity." },
     { name = "width", type = "f32", default = 4.0, doc = "A river's width, in units across its course." },
+    { name = "ocean", type = "bool", default = false, doc = "An ocean or a sea (docs/design/water.md, Oceans): the water runs to the horizon every way at the entity's height, `size` and `course` aside; what is above it (an island, a shore) stands out of it." },
     { name = "density", type = "f32", default = 2.0, doc = "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default)." },
     { name = "drag", type = "f32", default = 1.0, doc = "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more." },
     { name = "splash", type = "string", default = "", doc = "Path or name of an entity with a ParticleEmitter that bursts where something falls or walks in, more and faster the faster it came (docs/design/water.md, Splashes); empty for none." },
@@ -818,6 +820,22 @@ fields = [
     { name = "roll_resistance", type = "f32", default = 0.3, doc = "Units per second squared the wheels lose to rolling when nothing drives or brakes them." },
     { name = "speed", type = "f32", default = 0.0, doc = "Forward speed, negative backing up (written by the engine)." },
     { name = "grounded", type = "i32", default = 0, doc = "Wheels on the ground (written by the engine)." },
+]
+
+[[component]]
+name = "Boat"
+doc = "A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat."
+fields = [
+    { name = "throttle", type = "f32", default = 0.0, doc = "-1..1: an engine's or oars' drive, ahead at 1, astern at -1 (at half the power)." },
+    { name = "steer", type = "f32", default = 0.0, doc = "-1..1: the rudder, turning left at -1 and right at 1." },
+    { name = "sail", type = "f32", default = 0.0, doc = "0..1: how much sail is set to the Wind." },
+    { name = "power", type = "f32", default = 4.0, doc = "The acceleration full throttle gives, units per second squared." },
+    { name = "top_speed", type = "f32", default = 8.0, doc = "The speed through the water at which the throttle stops pushing, units per second." },
+    { name = "turn_rate", type = "f32", default = 50.0, doc = "Degrees a second the boat turns at full rudder once it has way on (a fifth of it at rest)." },
+    { name = "keel", type = "f32", default = 3.0, doc = "How fast a sideways slide dies, per second: the keel's grip on the water." },
+    { name = "sail_power", type = "f32", default = 0.5, doc = "The acceleration a full sail gives in a wind of one unit a second, on the best point of sail." },
+    { name = "speed", type = "f32", default = 0.0, doc = "Forward speed, negative going astern (written by the engine)." },
+    { name = "afloat", type = "bool", default = false, doc = "Whether the hull is in water, so the controls bite (written by the engine)." },
 ]
 
 [[component]]

@@ -237,6 +237,10 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE(q["entities"][0]["Transform"]["position"].size() == 1);
     q = s.command("world.query", Json{{"name", "Ball"}, {"with", Json::array({"Transform"})}, {"fields", Json::array({"position"})}}).value();
     REQUIRE(q["entities"][0]["Transform"].contains("position"));
+    // `has` (or `components`, one name or several) is `with`.
+    q = s.command("world.query", Json{{"name", "Ball"}, {"has", "Transform"}, {"fields", Json::array({"position"})}}).value();
+    REQUIRE(q["entities"][0]["Transform"].contains("position"));
+    REQUIRE(s.command("world.query", Json{{"name", "Ball"}, {"components", Json::array({"Water"})}}).value()["count"] == 0);
     auto bare = s.command("world.query", Json{{"name", "Ball"}, {"fields", Json::array({"position"})}});
     REQUIRE_FALSE(bare.has_value());
     REQUIRE(bare.error().message.find("Transform.position") != std::string::npos);
@@ -1049,6 +1053,84 @@ TEST_CASE("a river runs along its Path: covered within its width, its level the 
     INFO(at.dump());
     REQUIRE(at["x"].get<double>() > 206);     // carried along
     REQUIRE(at["y"].get<double>() > 8.0);     // afloat, not sunk to the bottom
+}
+
+TEST_CASE("an ocean is water everywhere at its entity's height: answered far off, and what falls in floats", "[runtime][water][ocean]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    Json sea = Json::object();
+    sea["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -40}, {"z", 0}}}};
+    sea["Water"] = Json{{"ocean", true}, {"depth", 20}, {"wave_height", 0}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sea"}, {"components", sea}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    for (const auto& [x, z] : {std::pair{0.0, 0.0}, std::pair{3000.0, -5000.0}}) {
+        const Json h = s.command("water.height", Json{{"x", x}, {"z", z}}).value();
+        INFO(h.dump());
+        REQUIRE(h["path"] == "/Sea");
+        REQUIRE(h["inside"] == true);
+        REQUIRE(h["level"].get<double>() == Catch::Approx(-40).margin(0.01));
+    }
+    // A crate dropped in far from anything floats at the level.
+    Json crate = Json::object();
+    crate["Transform"] = Json{{"position", Json{{"x", 800}, {"y", -35}, {"z", -600}}}};
+    crate["RigidBody"] = Json{{"kind", "dynamic"}, {"mass", 0.2}};
+    crate["Collider"] = Json{{"shape", "box"}, {"size", Json{{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", crate}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 300}}).has_value());
+    const Json at = s.command("world.get", Json{{"entity", "Crate"}, {"component", "Transform"}, {"field", "position"}}).value();
+    INFO(at.dump());
+    REQUIRE(at["y"].get<double>() == Catch::Approx(-40).margin(0.4));
+}
+
+TEST_CASE("a Boat afloat: the throttle drives it ahead, the rudder turns it, the sail takes the wind but not heading into it", "[runtime][water][boat]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sea"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -40}, {"z", 0}}}}}, {"Water", Json{{"ocean", true}, {"depth", 20}, {"wave_height", 0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Breeze"}, {"components", Json{{"Wind", Json{{"direction", 0}, {"speed", 6}, {"gusts", 0}}}}}}).has_value());   // toward +x
+    auto launch = [&](double yaw) {
+        Json boat = Json::object();
+        boat["Transform"] = Json{{"position", Json{{"x", 300}, {"y", -40}, {"z", 300}}}, {"rotation", Json{{"yaw", yaw}}}};
+        boat["RigidBody"] = Json{{"kind", "dynamic"}, {"mass", 0.9}};
+        boat["Collider"] = Json{{"shape", "box"}, {"size", Json{{"x", 0.32}, {"y", 0.3}, {"z", 1.6}}}, {"offset", Json{{"x", 0}, {"y", 0.3}, {"z", 0}}}};
+        boat["Boat"] = Json::object();
+        if (s.command("world.find", Json{{"path", "Boat"}}).value().is_number()) REQUIRE(s.command("world.destroy", Json{{"entity", "Boat"}}).has_value());
+        REQUIRE(s.command("world.spawn", Json{{"name", "Boat"}, {"components", boat}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());   // settle on the water
+    };
+    auto boat = [&]() { return s.command("world.get", Json{{"entity", "Boat"}, {"component", "Boat"}}).value(); };
+    auto at = [&]() { return s.command("world.get", Json{{"entity", "Boat"}, {"component", "Transform"}, {"field", "position"}}).value(); };
+    // Full throttle, facing -z: it gets way on ahead and stays upright.
+    launch(0);
+    REQUIRE(boat()["afloat"] == true);
+    const double z0 = at()["z"].get<double>();
+    REQUIRE(s.command("world.set", Json{{"entity", "Boat"}, {"component", "Boat"}, {"value", Json{{"throttle", 1}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 180}}).has_value());
+    INFO(boat().dump() << " at " << at().dump());
+    REQUIRE(boat()["speed"].get<double>() > 2);
+    REQUIRE(at()["z"].get<double>() < z0 - 4);
+    const Json up = s.command("world.get", Json{{"entity", "Boat"}, {"component", "Transform"}, {"field", "rotation"}}).value();
+    REQUIRE(std::abs(up["x"].get<double>()) < 0.1);
+    REQUIRE(std::abs(up["z"].get<double>()) < 0.1);
+    // Rudder to starboard: it comes round to the right (toward +x).
+    const double x0 = at()["x"].get<double>();
+    REQUIRE(s.command("world.set", Json{{"entity", "Boat"}, {"component", "Boat"}, {"value", Json{{"steer", 1}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 120}}).has_value());
+    REQUIRE(at()["x"].get<double>() > x0 + 1);
+    // The sail alone: running before the wind (heading +x) it gets way on; heading into it (-x), none.
+    auto sail_from = [&](double yaw) {
+        launch(yaw);
+        REQUIRE(s.command("world.set", Json{{"entity", "Boat"}, {"component", "Boat"}, {"value", Json{{"sail", 1}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 240}}).has_value());
+        return boat()["speed"].get<double>();
+    };
+    const double running = sail_from(-90), into = sail_from(90);   // yaw -90 faces +x, 90 faces -x
+    INFO("running " << running << " into " << into);
+    REQUIRE(running > 1.5);
+    REQUIRE(std::abs(into) < 0.3);
 }
 
 TEST_CASE("a wall between a noise and a Behavior halves how far it carries", "[runtime][behavior][noise][walls]") {

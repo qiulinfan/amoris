@@ -64,6 +64,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket scenario topdown                                     # top-down action: waves of raiders, aiming by mouse or stick, bullets from combat.shoot
 ./.pocket/pocket scenario defense                                     # tower defense: raiders on a Path, towers built by cursor and gold, shooting what passes
 ./.pocket/pocket scenario farm                                        # a farm under a running day and the weather: sow, water, harvest, sell; plots are the project's own Plot component
+./.pocket/pocket scenario island                                      # a sailing boat (the Boat component) on an ocean round three islands, gathering crates adrift
 ./.pocket/pocket run arena -- --net-host 7777   # and, elsewhere, -- --net-join HOST:7777: a lockstep two-player game (docs/design/networking.md)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)
 # time travel: run with --history 600, then recorder.at {tick} / recorder.diff {from, to} / recorder.track {entity, component, field}; events.why {seq} explains an event
