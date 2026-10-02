@@ -378,7 +378,7 @@ class Renderer {
     void set_footprints(std::vector<Footprint> prints);
     // Rings spreading on water (docs/design/water.md, Rings): where something fell in or moves
     // through it, seconds since, how strong. At most 32.
-    struct WaterRing { float x = 0, z = 0, age = 0, strength = 1; };
+    struct WaterRing { float x = 0, z = 0, age = 0, strength = 1, foam = 0; };   // foam: a boat's wake churns it white
     void set_water_rings(std::vector<WaterRing> rings);
     // The ground grass grows on (docs/design/terrain.md, Grass): a terrain's samples as the session
     // has them, n by n over size_x by size_z centred on its entity: each the height, the share of

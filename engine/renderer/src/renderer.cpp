@@ -220,6 +220,7 @@ struct alignas(16) FrameUniforms {
     float print_info[4];         // how many
     float rings[32][4];          // rings on water: x, z, seconds since, strength
     float ring_info[4];          // how many
+    float ring_foam[8][4];       // each ring's foam (a boat's wake), four to a vec4
     float flash[4];              // lightning's light now (the Weather's flash)
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
@@ -576,6 +577,7 @@ struct Frame {
     print_info: vec4f,
     rings: array<vec4f, 32>,
     ring_info: vec4f,
+    ring_foam: array<vec4f, 8>,
     flash: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
@@ -2969,6 +2971,7 @@ struct WaterFsOut {
     // something fell in or moves through, a short train of waves fading as it goes; and while it
     // rains, the drops' rings as on a puddle, near the camera.
     var rg = vec2f(0.0);
+    var wake = 0.0;   // a boat's wake: its rings' crests churned white, and the water just behind it
     let ring_count = u32(frame.ring_info.x);
     for (var i = 0u; i < ring_count; i = i + 1u) {
         let r = frame.rings[i];
@@ -2977,6 +2980,10 @@ struct WaterFsOut {
         let reach = radius + 0.6;
         if (dot(d, d) > reach * reach) { continue; }
         let dd = length(d);
+        let f = frame.ring_foam[i / 4u][i % 4u];
+        if (f > 0.0) {
+            wake = max(wake, f * exp(-r.z * 0.5) * (smoothstep(0.55, 0.0, abs(dd - radius)) + smoothstep(radius + 0.6, 0.0, dd) * exp(-r.z * 1.2)));
+        }
         let x = (dd - radius) * 11.0;
         if (abs(x) > 6.2831853) { continue; }
         rg = rg + (d / max(dd, 1e-3)) * sin(x) * (0.5 + 0.5 * cos(x * 0.5)) * exp(-r.z * 0.8) * r.w / (1.0 + radius * 0.5);
@@ -3026,11 +3033,11 @@ struct WaterFsOut {
     var color = under * (vec3f(1.0) - fresnel) + refl * fresnel + glint;
     // Foam: in the shallows (within `foam` of the ground below) and on the sharpest crests,
     // broken up by drifting noise.
-    var foam = 0.0;
+    var foam = wake;
     if (b.misc.w > 0.0 && d0 < 1.0) {
         let below = in.world_pos.y - water_world(px, d0).y;
         let shore = clamp(1.0 - below / b.misc.w, 0.0, 1.0);
-        foam = shore * shore;
+        foam = max(foam, shore * shore);
     }
     let crest = (in.world_pos.y - in.level) / max(b.more.x, 1e-3);
     foam = max(foam, smoothstep(0.6, 1.0, crest) * b.more.y * 0.7);
@@ -9325,6 +9332,10 @@ fn time() -> f32 { return fx.time.x; }
                 gg.uploaded = true;
             }
             const float density = std::clamp(gr.density, 1.0f, 400.0f), reach = std::clamp(gr.reach, 1.0f, 400.0f);
+            // A terrain farther from the camera than the blades reach draws none (an islet across the sea).
+            const float off_x = std::max(0.0f, std::fabs(camera.position.x - t.position.x) - gg.field.size_x * 0.5f);
+            const float off_z = std::max(0.0f, std::fabs(camera.position.z - t.position.z) - gg.field.size_z * 0.5f);
+            if (off_x * off_x + off_z * off_z > reach * reach) return;
             const float cell = 1.0f / std::sqrt(density);
             const auto cells = static_cast<std::uint32_t>(std::clamp(std::ceil(2.0f * reach / cell), 1.0f, 1024.0f));
             GrassUniforms u{};
@@ -11408,6 +11419,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         for (std::size_t i = 0; i < r; ++i) {
             const Renderer::WaterRing& w = im.water_rings[im.water_rings.size() - r + i];   // the newest 32
             fu.rings[i][0] = w.x; fu.rings[i][1] = w.z; fu.rings[i][2] = w.age; fu.rings[i][3] = w.strength;
+            fu.ring_foam[i / 4][i % 4] = std::clamp(w.foam, 0.0f, 1.0f);
         }
         fu.ring_info[0] = static_cast<float>(r);
         im.stats.water_rings = static_cast<std::uint32_t>(r);

@@ -315,6 +315,19 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE(sch["unknown"]["Snow"]["did_you_mean"].dump().find("Weather.snow") != std::string::npos);
     REQUIRE(sch["unknown"]["BoxCollider"]["did_you_mean"].dump().find("Collider") != std::string::npos);
     REQUIRE(s.command("world.schema", Json{{"component", "TerrainLayer"}}).error().message.find("Terrain.layers") != std::string::npos);
+    // A search finding several answers each in short: its first sentence, the matching fields, the others' names.
+    const Json wind = s.command("world.schema", Json{{"search", "wind"}}).value();
+    INFO(wind.dump().substr(0, 600));
+    REQUIRE(wind["components"].size() > 3);
+    REQUIRE(wind.dump().size() < 12000);
+    REQUIRE(wind.contains("note"));
+    bool sway = false;
+    for (const Json& c : wind["components"]) {
+        REQUIRE(c.contains("other_fields"));
+        if (c["name"] == "Scatter") for (const Json& f : c.value("matching_fields", Json::array())) sway = sway || f["name"] == "sway";
+    }
+    REQUIRE(sway);
+    REQUIRE(s.command("world.schema", Json{{"search", "ocean"}}).value()["components"][0].contains("fields"));   // one found: whole
     REQUIRE(s.command("wind.at", Json{{"position", Json::array({1, 2, 3})}}).has_value());
     REQUIRE(s.command("world.query", Json{{"with", Json::array({"TerrainLayer"})}}).error().message.find("record in Terrain.layers") != std::string::npos);
     // where: the entities whose fields meet conditions, as text or as an object; an enum by its name.
@@ -1093,6 +1106,20 @@ TEST_CASE("an ocean is water everywhere at its entity's height: answered far off
         REQUIRE(h["inside"] == true);
         REQUIRE(h["level"].get<double>() == Catch::Approx(-40).margin(0.01));
     }
+    // Its surf loops while the listener is within 40 units of the level, not past it.
+    auto surf = [&] {
+        const Json list = s.command("audio.list", Json::object()).value();
+        for (const Json& v : list.is_array() ? list : list.value("voices", Json::array()))
+            if (v.value("clip", "") == "sfx:surf") return v.value("volume", 0.0);
+        return -1.0;
+    };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ear"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -30}, {"z", 0}}}}}, {"AudioListener", Json::object()}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    INFO(s.command("audio.list", Json::object()).value().dump());
+    REQUIRE(surf() == Catch::Approx(0.55 * 0.3 * 0.75).margin(0.02));   // calm (the least), ten units above
+    REQUIRE(s.command("world.set", Json{{"entity", "Ear"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 20}, {"z", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(surf() < 0);
     // A crate dropped in far from anything floats at the level.
     Json crate = Json::object();
     crate["Transform"] = Json{{"position", Json{{"x", 800}, {"y", -35}, {"z", -600}}}};

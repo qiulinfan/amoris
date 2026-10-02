@@ -2128,7 +2128,9 @@ void Session::update_water_rings(float dt) {
                 it->second.second += dt;
                 const float moved = std::hypot(at.x - it->second.first.x, at.z - it->second.first.z);
                 if (!fresh && moved > 0.6f && moved / std::max(it->second.second, 1e-3f) > 0.5f) {
-                    water_rings_.push_back({at.x, at.z, 0.0f, 0.35f});
+                    // A boat under way churns its wake white, the more the faster.
+                    const float foam = w.try_get<world::Boat>(id) ? std::clamp(moved / std::max(it->second.second, 1e-3f) / 4.0f, 0.3f, 1.0f) : 0.0f;
+                    water_rings_.push_back({at.x, at.z, 0.0f, 0.35f, foam});
                     it->second = {at, 0.0f};
                 } else if (fresh || it->second.second > 1.5f) {
                     it->second = {at, 0.0f};
@@ -6133,6 +6135,32 @@ void Session::tick_audio(double dt) {
             }
         }
     }
+    // The sea's sound: an ocean's surf looping while the listener is near its level, louder the
+    // higher its waves and the nearer the ear is to the water.
+    {
+        const Vec3 ear = listener_position();
+        float want = 0;
+        w.ecs().each([&](flecs::entity, const world::Water& wa, const world::WorldTransform& t) {
+            if (!wa.enabled || !wa.ocean || !wa.sound) return;
+            const float above = std::fabs(ear.y - t.position.y);
+            if (above >= 40.0f) return;
+            want = std::max(want, 0.55f * std::clamp(wa.wave_height / 0.4f, 0.3f, 1.5f) * (1.0f - above / 40.0f));
+        });
+        if (want < 0.01f) {
+            if (sea_voice_) audio_->stop(sea_voice_);
+            sea_voice_ = 0;
+            sea_volume_ = 0;
+        } else if (!sea_voice_) {
+            audio::PlayOptions o;
+            o.volume = want;
+            o.loop = true;
+            if (auto id = audio_->play("sfx:surf", o)) sea_voice_ = *id;
+            sea_volume_ = want;
+        } else if (std::fabs(want - sea_volume_) > 0.01f) {
+            if (!audio_->set(sea_voice_, Json{{"volume", want}})) sea_voice_ = 0;
+            sea_volume_ = want;
+        }
+    }
     // The listener's velocity this tick, for the Doppler effect.
     {
         const Vec3 ear = listener_position();
@@ -7548,15 +7576,42 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         for (char& c : find) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (names.empty() && find.empty()) return all;
         Json picked = Json::array();
+        std::vector<bool> searched;   // taken for the search alone, not by name
+        auto lower_of = [](std::string t) {
+            for (char& ch : t) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            return t;
+        };
         for (const Json& c : all["components"]) {
             const std::string n = c["name"].get<std::string>();
             bool take = names.contains(n);
-            if (!take && !find.empty()) {
-                std::string hay = c.dump();
-                for (char& ch : hay) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-                take = hay.find(find) != std::string::npos;
+            const bool by_name = take;
+            if (!take && !find.empty()) take = lower_of(c.dump()).find(find) != std::string::npos;
+            if (take) {
+                picked.push_back(c);
+                searched.push_back(!by_name);
             }
-            if (take) picked.push_back(c);
+        }
+        // A search that finds several answers each in short (its first sentence, the fields that
+        // match with their docs, the names of the rest), so a broad word does not fill an agent's
+        // context; world.schema {component} gives one whole.
+        const auto found_by_search = static_cast<std::size_t>(std::count(searched.begin(), searched.end(), true));
+        if (found_by_search > 1) {
+            for (std::size_t k = 0; k < picked.size(); ++k) {
+                if (!searched[k]) continue;
+                const Json& c = picked[k];
+                std::string doc = c.value("doc", "");
+                if (const std::size_t stop = doc.find(". "); stop != std::string::npos) doc = doc.substr(0, stop + 1);
+                if (doc.size() > 240) doc = doc.substr(0, 237) + "...";
+                Json matched = Json::array(), rest = Json::array();
+                for (const Json& f : c.value("fields", Json::array())) {
+                    if (lower_of(f.value("name", "") + " " + f.value("doc", "")).find(find) != std::string::npos) matched.push_back(Json{{"name", f.value("name", "")}, {"type", f.value("type", "")}, {"doc", f.value("doc", "")}});
+                    else rest.push_back(f.value("name", ""));
+                }
+                Json brief{{"name", c["name"]}, {"doc", doc}};
+                if (!matched.empty()) brief["matching_fields"] = matched;
+                brief["other_fields"] = rest;
+                picked[k] = brief;
+            }
         }
         // Names that are no component: answered beside the ones that are, each with what it might
         // have meant (a component whose name holds it or is held in it, BoxCollider -> Collider; a
@@ -7588,6 +7643,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         }
         Json out{{"components", picked}};
         if (!unknown.empty()) out["unknown"] = unknown;
+        if (found_by_search > 1) out["note"] = std::format("{} components hold '{}', each in short; world.schema {{component: name}} gives one whole", found_by_search, find);
         return out;
     }
     if (op == "update_transforms") {

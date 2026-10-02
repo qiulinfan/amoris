@@ -89,9 +89,11 @@ of them, `commands {usage: true}` the list with usages (the MCP tools `runtime_h
 `help`) it is one line a command, its usage and the first clause of its summary (every command that
 way is 20 KB, which agents asked for seven times in a run of the forty-eight tasks, and kept in
 their context afterwards); `world.schema {component}` (or `components`, or `search`) gives one
-component's fields instead of all forty. The pi extension shows results as compact JSON and, when it
-must cut one, names these filters. A command refuses a parameter it does not take and names the ones
-it takes
+component's fields instead of all forty; a `search` that finds several answers each in short (its
+first sentence, the fields that match with their docs, the names of the others: `wind` in ten
+components is 7 KB where it was 29, which an agent asked for twice in the `sailboat` run). The pi
+extension shows results as compact JSON and, when it must cut one, names these filters. A command
+refuses a parameter it does not take and names the ones it takes
 (`world.query does not take 'pattern': it takes with?, without?, name?, under?, where?, fields?, limit?`),
 so a guessed key fails at once instead of being ignored while the call looks like it worked; a
 mistyped command is answered with the names it is close to; and where a command takes an `entity`

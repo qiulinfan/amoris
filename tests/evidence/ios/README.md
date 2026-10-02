@@ -21,4 +21,10 @@ photographed with `xcrun simctl io <device> screenshot` (here scaled to 1100 pix
   script's `run` and `screenshot` for `farm`; the rain itself was off, as the farm's own weather turn
   sets it each tick.
 
+- `island.png` (2026-10-02, scaled to 1100 across): the island sample (`samples/island`) after 60
+  ticks, then its `Boat` given `sail: 1` and `throttle: 0.5` from the Mac (`world.set`) and 180
+  ticks more: the boat at 3.6 units a second, afloat, under volumetric clouds, on the ocean to the
+  horizon, the island's grass drawn on the GPU (`render.stats`: `clouds` true, three grass fields,
+  MSAA 4). Made by calling the script's `run` and `screenshot` for `island`.
+
 `ios.json` has the windows, the states before and after, and the hello run's GPU description.

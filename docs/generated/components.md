@@ -684,6 +684,7 @@ A body of water (docs/design/water.md): a surface size.x by size.y (x by z) cent
 | `flow` | vec2 | [0.0, 0.0] | A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course. |
 | `course` | string | "" | A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity. |
 | `width` | f32 | 4.0 | A river's width, in units across its course. |
+| `sound` | bool | true | An ocean's surf (sfx:surf) loops while the listener is within 40 units of its level, louder the higher the waves and the nearer; false leaves the sound to the game. |
 | `ocean` | bool | false | An ocean or a sea (docs/design/water.md, Oceans): the water runs to the horizon every way at the entity's height, `size` and `course` aside; what is above it (an island, a shore) stands out of it. |
 | `density` | f32 | 2.0 | The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default). |
 | `drag` | f32 | 1.0 | How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more. |

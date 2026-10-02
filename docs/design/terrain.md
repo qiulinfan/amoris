@@ -165,11 +165,12 @@ under it is, darker at the root, the sun shining through it when it stands again
 shadows and the clouds'. They are drawn first in the scene pass and in the id pass, so water, fog
 and ambient occlusion see them and picking one picks the terrain. The session hands the renderer the
 ground (its heights, the layer's share and the paint, as a half-float texture) when the terrain
-changes. `render.stats` says `grass_blades` (the square's cells). `renderer_tests` (`[grass]`):
-grass turns bare brown ground green, a pixel of it picks the terrain, and grass allowed only above
-the ground grows none. `tests/evidence/rendering/grass.png` (`tools/scripts/dev/grass_evidence.py`):
-the hills' grass at noon and toward a low sun in the wind. A `grass` prop scattered by `Scatter`
-makes tufts that stand alone instead (`docs/design/assets.md`).
+changes. `render.stats` says `grass_blades` (the square's cells; a terrain farther from the camera
+than `reach` draws none). `renderer_tests` (`[grass]`): grass turns bare brown ground green, a pixel
+of it picks the terrain, and grass allowed only above the ground grows none.
+`tests/evidence/rendering/grass.png` (`tools/scripts/dev/grass_evidence.py`): the hills' grass at
+noon and toward a low sun in the wind. A `grass` prop scattered by `Scatter` makes tufts that stand
+alone instead (`docs/design/assets.md`).
 
 ## Levels of detail
 

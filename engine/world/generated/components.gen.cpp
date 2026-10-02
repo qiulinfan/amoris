@@ -3037,6 +3037,7 @@ void to_json(Json& j, const Water& v) {
     vec_to_json(j["flow"], v.flow);
     j["course"] = v.course;
     j["width"] = v.width;
+    j["sound"] = v.sound;
     j["ocean"] = v.ocean;
     j["density"] = v.density;
     j["drag"] = v.drag;
@@ -3060,6 +3061,7 @@ void from_json(const Json& j, Water& v) {
     if (j.is_object() && j.contains("flow")) vec_from_json(j["flow"], v.flow);
     scalar_from_json(j, "course", v.course);
     scalar_from_json(j, "width", v.width);
+    scalar_from_json(j, "sound", v.sound);
     scalar_from_json(j, "ocean", v.ocean);
     scalar_from_json(j, "density", v.density);
     scalar_from_json(j, "drag", v.drag);
@@ -3088,6 +3090,7 @@ void hash_component(StateHasherRef& h, const Water& v) {
     h.f32(v.flow.y);
     h.str(v.course);
     h.f32(v.width);
+    h.u8(v.sound ? 1 : 0);
     h.u8(v.ocean ? 1 : 0);
     h.f32(v.density);
     h.f32(v.drag);
@@ -5397,7 +5400,7 @@ constexpr std::array<FieldInfo, 10> kWeatherFields = {{
     FieldInfo{"sound", "bool", "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game.", {}},
     FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
 }};
-constexpr std::array<FieldInfo, 20> kWaterFields = {{
+constexpr std::array<FieldInfo, 21> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity.", {}},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed.", {}},
     FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back).", {}},
@@ -5412,6 +5415,7 @@ constexpr std::array<FieldInfo, 20> kWaterFields = {{
     FieldInfo{"flow", "vec2", "A current along x and z in units a second: it carries what floats, and the ripples. On a river its length is the speed the water runs down the course.", {}},
     FieldInfo{"course", "string", "A river (docs/design/water.md, Rivers): the name or path of an entity with a Path the water runs along, `width` across, its surface at the course's own height (so a river can fall), running from the first point to the last at the speed of `flow`; empty, a lake of `size` around the entity.", {}},
     FieldInfo{"width", "f32", "A river's width, in units across its course.", {}},
+    FieldInfo{"sound", "bool", "An ocean's surf (sfx:surf) loops while the listener is within 40 units of its level, louder the higher the waves and the nearer; false leaves the sound to the game.", {}},
     FieldInfo{"ocean", "bool", "An ocean or a sea (docs/design/water.md, Oceans): the water runs to the horizon every way at the entity's height, `size` and `course` aside; what is above it (an island, a shore) stands out of it.", {}},
     FieldInfo{"density", "f32", "The mass of one cubic unit of the water: a body lighter than the water it displaces floats (a unit cube of mass 1 floats half under by default).", {}},
     FieldInfo{"drag", "f32", "How quickly a floating body stops moving through the water (about this fraction of its speed a second); what is deeper under is slowed more.", {}},

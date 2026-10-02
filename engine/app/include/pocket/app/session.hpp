@@ -249,6 +249,8 @@ class Session {
     bool listener_prev_set_ = false;
     std::uint32_t weather_voice_[2] = {0, 0};   // the Weather's rain and wind beds while they play (docs/design/rendering.md, Weather)
     float weather_volume_[2] = {0, 0};
+    std::uint32_t sea_voice_ = 0;   // an ocean's surf while it plays (docs/design/water.md, Oceans)
+    float sea_volume_ = 0;
     std::uint64_t footsteps_seen_ = 0;   // the last animation.footstep event played (Animator.footsteps)
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;

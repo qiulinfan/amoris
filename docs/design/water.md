@@ -105,13 +105,16 @@ wave's length over four, as a lake's cells, at least a tenth of a unit and at mo
 one wider by a common ratio, so the last reaches nine tenths of the camera's far plane, and one more
 ring lies on the horizon, drawn just inside the far plane so the sea meets the sky with nothing of
 the sky's ground between. The waves smooth toward the horizon, where a pixel spans many. Caustics
-fall everywhere under it. `runtime_tests` (`[water][ocean]`): the level is answered at the origin
-and five thousand units off, and a crate dropped in eight hundred off floats at it; `renderer_tests`
-(`[water][ocean]`): under the horizon the view shows the sea out to the far distance where a lake of
-ten units leaves the sky's ground bare. `tests/evidence/rendering/ocean.png`
-(`tools/scripts/dev/ocean_evidence.py`): the hills' lake made an ocean, the hills an island, by day
-with a crate afloat and at sunset. `samples/island` sails a `Boat` (`docs/design/physics.md`, Boats)
-on one, round three terrains made islands (`docs/design/terrain.md`).
+fall everywhere under it. Its surf (`sfx:surf`) loops while the listener is within 40 units of its
+level, louder the higher the waves (`wave_height` over 0.4, between 0.3 and 1.5 times) and the
+nearer the ear; `Water.sound` false leaves the sound to the game. `runtime_tests`
+(`[water][ocean]`): the level is answered at the origin and five thousand units off, and a crate
+dropped in eight hundred off floats at it; `renderer_tests` (`[water][ocean]`): under the horizon
+the view shows the sea out to the far distance where a lake of ten units leaves the sky's ground
+bare. `tests/evidence/rendering/ocean.png` (`tools/scripts/dev/ocean_evidence.py`): the hills' lake
+made an ocean, the hills an island, by day with a crate afloat and at sunset. `samples/island` sails
+a `Boat` (`docs/design/physics.md`, Boats) on one, round three terrains made islands
+(`docs/design/terrain.md`).
 
 ## Floating
 
@@ -173,6 +176,11 @@ puddle. Like footprints, rings are the renderer's: the world and its hash do not
 `render.stats.water_rings` counts them. `runtime_tests` (`[water]`): a crate dropped in the lake
 rings it, and pushed along the surface leaves a wake. `tests/evidence/rendering/water-rings.png` is
 three crates fallen into the hills' lake, their rings spreading.
+
+A `Boat` under way churns its rings' crests white, the more the faster it goes (to a quarter of its
+speed in units a second, at least three tenths), and the water just behind it, the foam fading as
+the rings spread: rings left every 0.6 units it moves and spreading at 1.2 units a second make the V
+of a wake behind it, its angle from the boat's speed. `samples/island` shows it.
 
 ## Commands
 

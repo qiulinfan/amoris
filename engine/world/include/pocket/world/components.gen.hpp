@@ -993,6 +993,7 @@ struct Water {
     Vec2 flow{0.0f, 0.0f};
     std::string course = "";
     float width = 4.0f;
+    bool sound = true;
     bool ocean = false;
     float density = 2.0f;
     float drag = 1.0f;
