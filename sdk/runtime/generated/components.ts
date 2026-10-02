@@ -310,8 +310,8 @@ export interface Camera {
 export interface CameraRig {
     /** The entity followed, by name or path; empty leaves the camera alone. */
     target: string;
-    /** 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. */
-    mode: number | "chase" | "orbit" | "offset";
+    /** 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning; 3 rail: on the Path named by `rail`, at the point of it nearest the target, sliding along as the target moves (a side-scroller's track, a corridor's dolly). */
+    mode: number | "chase" | "orbit" | "offset" | "rail";
     /** Chase and orbit: how far from the pivot. */
     distance: number;
     /** The pivot, the point it looks at, this high above the target's origin. */
@@ -344,6 +344,14 @@ export interface CameraRig {
     shake_decay: number;
     /** Chase: the eased heading it stands behind, in degrees (written by the engine). */
     heading: number;
+    /** More entities framed with the target, names or paths separated by commas (two players, a hero and the boss): the rig looks at the middle of them all and draws back until every one is in view, `margin` around them (docs/design/cameras.md, Several targets). */
+    targets: string;
+    /** With targets: units of room kept round the outermost of them. */
+    margin: number;
+    /** Rail mode: the entity with the Path the camera rides, by name or path. */
+    rail: string;
+    /** Seconds of the target's motion the view leads by: a runner sees what it runs into (0 for none). */
+    look_ahead: number;
 }
 
 /** A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights). */
@@ -1588,7 +1596,7 @@ export interface ComponentEnums {
     Model: {};
     Lifetime: {};
     Camera: {};
-    CameraRig: { mode: "chase" | "orbit" | "offset" };
+    CameraRig: { mode: "chase" | "orbit" | "offset" | "rail" };
     Light: { kind: "directional" | "point" | "spot" };
     ReflectionProbe: {};
     IrradianceVolume: {};
@@ -1675,7 +1683,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Model: { path: "", hash: "", live: true },
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0, target: "", target_size: { x: 256, y: 256 } },
-    CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
+    CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0, targets: "", margin: 1.5, rail: "", look_ahead: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
     IrradianceVolume: { size: { x: 10, y: 4, z: 10 }, probes: { x: 4, y: 2, z: 4 }, intensity: 1, visibility: true, enabled: true },

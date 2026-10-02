@@ -449,6 +449,11 @@ void Session::apply_project_settings() {
             }
             renderer_->set_ssr(s);
         }
+        // [render] colorblind = "deuteranopia", or [render.colorblind] mode, simulate, strength.
+        if (r.contains("colorblind") && (r["colorblind"].is_string() || r["colorblind"].is_object())) {
+            const Json args = r["colorblind"].is_string() ? Json{{"mode", r["colorblind"]}} : r["colorblind"];
+            if (auto done = render_command("colorblind", args); !done) log::warn("runtime", "[render] colorblind: {}", done.error().message);
+        }
         // [render] scale = 0.75, or [render.scale] scale, dynamic, target_ms, least, sharpen.
         if (r.contains("scale") && (r["scale"].is_number() || r["scale"].is_object())) {
             renderer::RenderScaleSettings s = renderer_->render_scale();
@@ -460,6 +465,7 @@ void Session::apply_project_settings() {
                 s.target_ms = opt<float>(r["scale"], "target_ms", s.target_ms);
                 s.least = opt<float>(r["scale"], "least", s.least);
                 s.sharpen = opt<float>(r["scale"], "sharpen", s.sharpen);
+                s.pixelated = opt<bool>(r["scale"], "pixelated", s.pixelated);
             }
             renderer_->set_render_scale(s);
         }
@@ -1895,6 +1901,7 @@ void Session::update_camera_rigs(float dt) {
     world_->ecs().each([&](flecs::entity e, const world::CameraRig&, const world::Transform&) { ids.push_back(e.id()); });
     std::sort(ids.begin(), ids.end());
     for (auto it = rig_base_.begin(); it != rig_base_.end();) it = std::binary_search(ids.begin(), ids.end(), it->first) ? std::next(it) : rig_base_.erase(it);
+    for (auto it = rig_motion_.begin(); it != rig_motion_.end();) it = std::binary_search(ids.begin(), ids.end(), it->first) ? std::next(it) : rig_motion_.erase(it);
     if (ids.empty()) return;
     constexpr float kDeg = std::numbers::pi_v<float> / 180.0f;
     Json actions;
@@ -1908,29 +1915,94 @@ void Session::update_camera_rigs(float dt) {
         flecs::entity e = world_->ecs().entity(id);
         world::CameraRig rig = e.get<world::CameraRig>();
         world::Transform tr = e.get<world::Transform>();
-        const world::EntityId target = rig.target.empty() ? 0 : world_->find(rig.target);
-        if (!target || target == id) continue;
-        // Where the target is now: its Transform for a root (already moved this tick), else the
-        // world transform of the tick before.
+        // The target and those framed with it: where each is now (its Transform for a root, already
+        // moved this tick, else the world transform of the tick before).
+        std::vector<world::EntityId> group;
+        if (!rig.target.empty()) group.push_back(world_->find(rig.target));
+        for (std::size_t from = 0; from < rig.targets.size();) {
+            std::size_t comma = rig.targets.find(',', from);
+            if (comma == std::string::npos) comma = rig.targets.size();
+            std::string name = rig.targets.substr(from, comma - from);
+            name.erase(0, name.find_first_not_of(' '));
+            name.erase(name.find_last_not_of(' ') + 1);
+            if (!name.empty()) group.push_back(world_->find(name));
+            from = comma + 1;
+        }
+        std::erase_if(group, [&](world::EntityId g) { return g == 0 || g == id; });
+        if (group.empty()) continue;
+        const world::EntityId target = group.front();
+        auto place = [&](world::EntityId g, Vec3& p, Quat& q) {
+            if (world_->parent(g) == 0) {
+                const auto* t = world_->try_get<world::Transform>(g);
+                if (!t) return false;
+                p = t->position;
+                q = t->rotation;
+            } else {
+                const auto* t = world_->try_get<world::WorldTransform>(g);
+                if (!t) return false;
+                p = t->position;
+                q = t->rotation;
+            }
+            return true;
+        };
         Vec3 at;
         Quat turned;
-        if (world_->parent(target) == 0) {
-            const auto* t = world_->try_get<world::Transform>(target);
-            if (!t) continue;
-            at = t->position;
-            turned = t->rotation;
-        } else {
-            const auto* t = world_->try_get<world::WorldTransform>(target);
-            if (!t) continue;
-            at = t->position;
-            turned = t->rotation;
+        if (!place(target, at, turned)) continue;
+        // Several: their middle, and how far it must stand back for all of them to be in view.
+        float fit = 0;
+        if (group.size() > 1) {
+            std::vector<Vec3> spots;
+            Vec3 sum{0, 0, 0};
+            for (world::EntityId g : group) {
+                Vec3 p;
+                Quat q;
+                if (!place(g, p, q)) continue;
+                spots.push_back(p);
+                sum += p;
+            }
+            if (!spots.empty()) {
+                at = sum * (1.0f / static_cast<float>(spots.size()));
+                float reach = 0;
+                for (const Vec3& p : spots) reach = std::max(reach, length(p - at));
+                reach += std::max(rig.margin, 0.0f);
+                float vfov = 60.0f;
+                if (const auto* cam = e.try_get<world::Camera>()) vfov = cam->fov_degrees;
+                const float aspect = device_ && device_->height() > 0 ? static_cast<float>(device_->width()) / static_cast<float>(device_->height()) : 16.0f / 9.0f;
+                const float half_v = std::clamp(vfov, 1.0f, 170.0f) * 0.5f * kDeg;
+                const float half_h = repro::atan(repro::tan(half_v) * aspect);
+                fit = reach / std::max(repro::sin(std::min(half_v, half_h)), 0.05f);
+            }
         }
-        const Vec3 pivot = at + Vec3{0, rig.height, 0};
         const bool fresh = !rig_base_.contains(id);
         auto ease = [&](float seconds) { return seconds > 0 ? 1.0f - repro::exp(-dt / seconds) : 1.0f; };
+        // Looking ahead: the middle's velocity, eased over a third of a second, times look_ahead; a
+        // jump faster than 30 units a second (a respawn, a teleport, a change of targets) is not a
+        // motion to lead.
+        Vec3 lead{0, 0, 0};
+        {
+            auto& [last, vel] = rig_motion_[id];
+            if (!fresh && dt > 0) {
+                const Vec3 raw = (at - last) * (1.0f / dt);
+                vel = length(raw) > 30.0f ? Vec3{0, 0, 0} : vel + (raw - vel) * ease(0.33f);
+            }
+            last = at;
+            if (rig.look_ahead > 0) lead = Vec3{vel.x, 0, vel.z} * rig.look_ahead;
+        }
+        const Vec3 pivot = at + Vec3{0, rig.height, 0} + lead;
         Vec3 want;
-        if (rig.mode == 2) {
-            want = pivot + rig.offset;
+        if (rig.mode == 3) {
+            // Rail: the point of the path nearest the pivot (the targets' middle).
+            const world::EntityId rail = rig.rail.empty() ? 0 : world_->find(rig.rail);
+            const auto* path = rail ? world_->try_get<world::Path>(rail) : nullptr;
+            if (!path || path->points.empty()) continue;
+            const auto* placed = world_->try_get<world::WorldTransform>(rail);
+            const world::PathCurve curve = world::make_curve(*path, placed ? *placed : world::WorldTransform{});
+            Vec3 on = pivot;
+            (void)curve.nearest(pivot, &on);
+            want = on;
+        } else if (rig.mode == 2) {
+            const float len = length(rig.offset);
+            want = pivot + (len > 1e-4f && fit > len ? rig.offset * (fit / len) : rig.offset);
         } else {
             float yaw = rig.yaw;
             if (rig.mode == 0) {
@@ -1949,7 +2021,7 @@ void Session::update_camera_rigs(float dt) {
             }
             const float y = yaw * kDeg, p = rig.pitch * kDeg;
             const Vec3 look{-repro::sin(y) * repro::cos(p), repro::sin(p), -repro::cos(y) * repro::cos(p)};
-            want = pivot - look * std::max(rig.distance, 0.0f);
+            want = pivot - look * std::max(std::max(rig.distance, 0.0f), fit);
         }
         const Vec3 base = fresh ? want : rig_base_[id];
         Vec3 pos = base + (want - base) * ease(rig.follow);
@@ -4036,11 +4108,31 @@ Result<Json> Session::particles_command(std::string_view op, const Json& p) {
         if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
         world::EntityId id = resolve_entity(p["entity"]);
         if (!world_->alive(id)) return fail("no_such_entity", "no entity for {}", p["entity"].dump());
-        const auto limit = static_cast<std::size_t>(std::clamp(opt<int>(p, "limit", 100), 1, 10000));
-        Json arr = particles_->list(id, limit);
+        // A few of them (10 unless asked: a hundred were 20 KB an agent then carried), and all of them
+        // summed up: where they are, how fast they go, how old.
+        const auto limit = static_cast<std::size_t>(std::clamp(opt<int>(p, "limit", 10), 0, 10000));
+        Json arr = limit > 0 ? particles_->list(id, limit) : Json::array();
         std::size_t alive = 0;
-        if (auto it = particles_->pools().find(id); it != particles_->pools().end()) alive = it->second.alive.size();
-        return Json{{"entity", id}, {"alive", alive}, {"particles", arr}};
+        Json j{{"entity", id}};
+        if (auto it = particles_->pools().find(id); it != particles_->pools().end() && !it->second.alive.empty()) {
+            const auto& all = it->second.alive;
+            alive = all.size();
+            Vec3 lo = all.front().position, hi = lo;
+            double speed = 0, age = 0;
+            for (const renderer::Particle& q : all) {
+                lo = Vec3{std::min(lo.x, q.position.x), std::min(lo.y, q.position.y), std::min(lo.z, q.position.z)};
+                hi = Vec3{std::max(hi.x, q.position.x), std::max(hi.y, q.position.y), std::max(hi.z, q.position.z)};
+                speed += length(q.velocity);
+                age += q.age;
+            }
+            auto r3 = [](float v) { return std::round(v * 1000.0) / 1000.0; };
+            j["bounds"] = Json{{"min", {{"x", r3(lo.x)}, {"y", r3(lo.y)}, {"z", r3(lo.z)}}}, {"max", {{"x", r3(hi.x)}, {"y", r3(hi.y)}, {"z", r3(hi.z)}}}};
+            j["mean_speed"] = r3(static_cast<float>(speed / static_cast<double>(alive)));
+            j["mean_age"] = r3(static_cast<float>(age / static_cast<double>(alive)));
+        }
+        j["alive"] = alive;
+        j["particles"] = arr;
+        return j;
     }
     if (op == "burst") {
         if (!p.contains("entity")) return fail("bad_args", "missing 'entity'");
@@ -4581,6 +4673,26 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         g = renderer_->ssgi();
         return Json{{"enabled", g.enabled}, {"distance", g.distance}, {"rays", g.rays}, {"steps", g.steps}, {"thickness", g.thickness}, {"intensity", g.intensity}};
     }
+    if (op == "colorblind" || op == "colour_vision") {
+        // Colour vision: the frame as a dichromat sees it (simulate), or corrected for them.
+        renderer::ColourVisionSettings c = renderer_->colour_vision();
+        static const std::array<std::string_view, 4> modes = {"off", "protanopia", "deuteranopia", "tritanopia"};
+        if (p.contains("mode")) {
+            const Json& m = p["mode"];
+            if (m.is_number_integer()) {
+                c.mode = m.get<int>();
+            } else if (m.is_string()) {
+                const auto it = std::find(modes.begin(), modes.end(), m.get<std::string>());
+                if (it == modes.end()) return fail("bad_args", "mode is off, protanopia (red), deuteranopia (green) or tritanopia (blue), not {}", m.dump());
+                c.mode = static_cast<int>(it - modes.begin());
+            }
+        }
+        c.simulate = opt<bool>(p, "simulate", c.simulate);
+        c.strength = opt<float>(p, "strength", c.strength);
+        renderer_->set_colour_vision(c);
+        c = renderer_->colour_vision();
+        return Json{{"mode", modes[static_cast<std::size_t>(c.mode)]}, {"simulate", c.simulate}, {"strength", c.strength}};
+    }
     if (op == "scale") {
         // Render scale: the window's view drawn at a fraction of its pixels and stretched up;
         // dynamic moves the fraction to keep the GPU's frame under target_ms.
@@ -4590,10 +4702,11 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         s.target_ms = opt<float>(p, "target_ms", s.target_ms);
         s.least = opt<float>(p, "least", s.least);
         s.sharpen = opt<float>(p, "sharpen", s.sharpen);
+        s.pixelated = opt<bool>(p, "pixelated", s.pixelated);
         renderer_->set_render_scale(s);
         s = renderer_->render_scale();
         const renderer::RenderStats& st = renderer_->stats();
-        return Json{{"scale", s.scale}, {"dynamic", s.dynamic}, {"target_ms", s.target_ms}, {"least", s.least}, {"sharpen", s.sharpen},
+        return Json{{"scale", s.scale}, {"dynamic", s.dynamic}, {"target_ms", s.target_ms}, {"least", s.least}, {"sharpen", s.sharpen}, {"pixelated", s.pixelated},
                     {"drawn", Json{{"scale", st.render_scale}, {"width", st.render_width}, {"height", st.render_height}}}};
     }
     if (op == "dof") {
@@ -8141,7 +8254,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.colorblind", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

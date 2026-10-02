@@ -142,6 +142,16 @@ struct RenderScaleSettings {
     float target_ms = 12.0f;  // dynamic: the GPU's frame it keeps under
     float least = 0.5f;       // dynamic: the smallest fraction it goes to
     float sharpen = 0.25f;    // 0..1: how much the stretched picture is sharpened
+    bool pixelated = false;   // stretched with hard pixel edges (no filtering, no sharpening): a retro look
+};
+
+// Colour vision (docs/design/rendering.md, Colour vision): the finished frame seen as a person with
+// a dichromacy sees it (simulate), or corrected so the colours they cannot tell apart differ in
+// ones they can.
+struct ColourVisionSettings {
+    int mode = 0;            // 0 off, 1 protanopia (red), 2 deuteranopia (green), 3 tritanopia (blue)
+    bool simulate = false;   // show what they see (for a designer) instead of correcting (for a player)
+    float strength = 1.0f;   // 0..1
 };
 
 struct RenderStats {
@@ -168,6 +178,7 @@ struct RenderStats {
     std::vector<std::pair<std::string, double>> gpu_passes;
     double gpu_ms = 0;
     float render_scale = 1.0f;        // the fraction of the window's pixels the view was drawn at
+    int colour_vision = 0;            // the colour vision mode applied in the final pass (0 off)
     std::uint32_t render_width = 0, render_height = 0;   // its size in pixels
     std::uint64_t gpu_age = 0;
     std::uint64_t gpu_frames = 0;   // frames whose timings have come back so far
@@ -335,6 +346,8 @@ class Renderer {
     [[nodiscard]] SsrSettings ssr() const;
     void set_ssgi(SsgiSettings s);
     [[nodiscard]] SsgiSettings ssgi() const;
+    void set_colour_vision(ColourVisionSettings s);
+    [[nodiscard]] ColourVisionSettings colour_vision() const;
     void set_render_scale(RenderScaleSettings s);
     [[nodiscard]] RenderScaleSettings render_scale() const;
     void set_dof(DofSettings s);

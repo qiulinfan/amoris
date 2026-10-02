@@ -19,6 +19,15 @@ export interface LiveParticle {
     resting: boolean;
 }
 
+export interface ParticleList {
+    entity: number;
+    alive: number;
+    particles: LiveParticle[];
+    bounds?: { min: Vec3; max: Vec3 };
+    mean_speed?: number;
+    mean_age?: number;
+}
+
 export const particles = {
     /**
      * Emit count particles at once from an entity with a ParticleEmitter (emitting or not): from the
@@ -30,9 +39,9 @@ export const particles = {
     stats(): ParticleStats {
         return command("particles.stats", {}) as ParticleStats;
     },
-    /** The live particles of one emitter, up to `limit` (default 100). */
-    list(entity: EntityRef, limit = 100): { entity: number; alive: number; particles: LiveParticle[] } {
-        return command("particles.list", { entity, limit }) as { entity: number; alive: number; particles: LiveParticle[] };
+    /** The live particles of one emitter, up to `limit` (default 100), and all of them summed up: the box they fill, their mean speed and age. */
+    list(entity: EntityRef, limit = 100): ParticleList {
+        return command("particles.list", { entity, limit }) as ParticleList;
     },
     /** Remove every live particle. */
     clear(): number {

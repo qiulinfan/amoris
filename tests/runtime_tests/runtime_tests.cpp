@@ -289,6 +289,50 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE(load.error().message.find("\"name\": \"A\" \"components\"") != std::string::npos);
 }
 
+TEST_CASE("colour vision simulates a dichromat's sight and corrects for it", "[runtime][render][colorblind]") {
+    auto o = hello_options(-1);
+    o.width = 160;
+    o.height = 90;
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"active", false}}}}).has_value());
+    // A red and a green panel, unlit, filling the left and the right of a view of their own.
+    const double far = 50;
+    auto panel = [&](const char* name, double x, Json colour) {
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", far}, {"z", 0}}}, {"scale", Json{{"x", 2}, {"y", 3}, {"z", 0.1}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", colour}, {"unlit", true}}}}}}).has_value());
+    };
+    panel("Red", -1, Json{{"r", 0.9}, {"g", 0.1}, {"b", 0.1}, {"a", 1}});
+    panel("Green", 1, Json{{"r", 0.1}, {"g", 0.8}, {"b", 0.1}, {"a", 1}});
+    REQUIRE(s.command("world.spawn", Json{{"name", "Look"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", far}, {"z", 3}}}}}, {"Camera", Json::object()}}}}).has_value());
+    auto look = [&] {
+        REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+        const Json c = s.command("capture", Json{{"pixels", Json::array({Json{{"x", 50}, {"y", 45}}, Json{{"x", 110}, {"y", 45}}})}}).value()["pixels"];
+        return std::pair<Json, Json>{c[0], c[1]};
+    };
+    auto [red, green] = look();
+    INFO(red.dump() << " " << green.dump());
+    REQUIRE(red[0].get<int>() > 3 * red[1].get<int>());
+    REQUIRE(green[1].get<int>() > 3 * green[0].get<int>());
+    // Seen as with deuteranopia: both toward the same yellows, red with green in it, green with red.
+    REQUIRE(s.command("render.colorblind", Json{{"mode", "deuteranopia"}, {"simulate", true}}).value()["mode"] == "deuteranopia");
+    auto [sred, sgreen] = look();
+    INFO(sred.dump() << " " << sgreen.dump());
+    REQUIRE(sred[1].get<int>() > sred[0].get<int>() / 2);
+    REQUIRE(sgreen[0].get<int>() > sgreen[1].get<int>() / 2);
+    REQUIRE(s.command("render.stats", Json::object()).value()["colour_vision"] == "deuteranopia");
+    // Corrected: the colours change, and the red keeps more red than green.
+    REQUIRE(s.command("render.colorblind", Json{{"simulate", false}}).has_value());
+    auto [cred, cgreen] = look();
+    INFO(cred.dump() << " " << cgreen.dump());
+    REQUIRE((cred != red || cgreen != green));
+    REQUIRE(cred[0].get<int>() > cred[1].get<int>());
+    REQUIRE_FALSE(s.command("render.colorblind", Json{{"mode", "monochrome"}}).has_value());
+    REQUIRE(s.command("render.colorblind", Json{{"mode", "off"}}).has_value());
+    REQUIRE(look().first == red);
+}
+
 TEST_CASE("capture.gif steps and draws play into a looping GIF", "[runtime][capture][gif]") {
     auto o = hello_options(-1);
     o.width = 320;
@@ -7340,6 +7384,48 @@ TEST_CASE("a timeline moves fields along its keys and easings, sets others at mo
     ticks(2);
     REQUIRE(s.command("world.get", Json{{"entity", "Director"}, {"component", "Timeline"}}).value()["error"].get<std::string>().find("Nobody") != std::string::npos);
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a camera rig frames several targets and looks ahead of a moving one", "[runtime][camerarig][framing]") {
+    app::Session s(hello_options(10000));
+    REQUIRE(s.start().has_value());
+    auto at = [](double x, double z) { return Json{{"position", Json{{"x", x}, {"y", 0}, {"z", z}}}}; };
+    REQUIRE(s.command("world.spawn", Json{{"name", "One"}, {"components", Json{{"Transform", at(-10, 0)}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Two"}, {"components", Json{{"Transform", at(10, 0)}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Eye"}, {"components", Json{{"Transform", Json::object()}, {"Camera", Json{{"fov_degrees", 60}, {"active", false}}},
+        {"CameraRig", Json{{"target", "One"}, {"targets", "Two"}, {"mode", "orbit"}, {"distance", 5}, {"height", 0}, {"pitch", 0}, {"follow", 0}, {"collide", false}, {"margin", 1}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    auto eye = [&] { return s.command("world.get", Json{{"entity", "Eye"}, {"component", "Transform"}}).value()["position"]; };
+    // Between the two, drawn back until both (11 units from the middle with the margin) fit: at
+    // least 11 / sin(30 degrees) = 22 away, whatever the window's shape.
+    Json p = eye();
+    INFO(p.dump());
+    REQUIRE(p["x"].get<double>() == Catch::Approx(0).margin(1e-3));
+    REQUIRE(p["z"].get<double>() >= 21.9);
+    // Closer together, it comes in, but no nearer than its distance.
+    REQUIRE(s.command("world.set", Json{{"entity", "Two"}, {"component", "Transform"}, {"value", at(-9, 0)}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(eye()["z"].get<double>() == Catch::Approx(5).margin(1e-3));
+    // Looking ahead: one target walking +x at 2 a second, the view a second ahead of it.
+    REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "CameraRig"}, {"value", Json{{"targets", ""}, {"look_ahead", 1}}}}).has_value());
+    for (int i = 0; i < 90; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "One"}, {"component", "Transform"}, {"value", at(-10 + 2.0 * i / 60.0, 0)}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    }
+    const double one = s.command("world.get", Json{{"entity", "One"}, {"component", "Transform"}}).value()["position"]["x"].get<double>();
+    REQUIRE(eye()["x"].get<double>() - one == Catch::Approx(2.0).margin(0.15));
+    // On a rail along x, 8 in front and 3 up: at the point nearest the target, held at its end.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Track"}, {"components", Json{{"Transform", Json::object()}, {"Path", Json{{"points", Json::array({Json{{"x", -20}, {"y", 3}, {"z", 8}}, Json{{"x", 20}, {"y", 3}, {"z", 8}}})}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "CameraRig"}, {"value", Json{{"mode", "rail"}, {"rail", "Track"}, {"look_ahead", 0}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "One"}, {"component", "Transform"}, {"value", at(5, 0)}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    Json r = eye();
+    REQUIRE(r["x"].get<double>() == Catch::Approx(5).margin(0.05));
+    REQUIRE(r["y"].get<double>() == Catch::Approx(3).margin(0.05));
+    REQUIRE(r["z"].get<double>() == Catch::Approx(8).margin(0.05));
+    REQUIRE(s.command("world.set", Json{{"entity", "One"}, {"component", "Transform"}, {"value", at(-30, 0)}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(eye()["x"].get<double>() == Catch::Approx(-20).margin(0.05));
 }
 
 TEST_CASE("a camera rig follows its target: orbit, easing, input turning, chase round a heading, in front of walls, a fixed offset, and a shake that fades", "[runtime][camerarig]") {

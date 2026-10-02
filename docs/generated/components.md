@@ -100,7 +100,7 @@ Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `target` | string | "" | The entity followed, by name or path; empty leaves the camera alone. |
-| `mode` | i32: 0 `chase`, 1 `orbit`, 2 `offset` | 0 | 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. |
+| `mode` | i32: 0 `chase`, 1 `orbit`, 2 `offset`, 3 `rail` | 0 | 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning; 3 rail: on the Path named by `rail`, at the point of it nearest the target, sliding along as the target moves (a side-scroller's track, a corridor's dolly). |
 | `distance` | f32 | 6.0 | Chase and orbit: how far from the pivot. |
 | `height` | f32 | 1.0 | The pivot, the point it looks at, this high above the target's origin. |
 | `pitch` | f32 | -20.0 | Chase and orbit: degrees the view looks down (negative) or up at the pivot. |
@@ -117,6 +117,10 @@ Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as
 | `shake` | f32 | 0.0 | Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it. |
 | `shake_decay` | f32 | 1.5 | How much trauma goes a second. |
 | `heading` | f32 | 0.0 | Chase: the eased heading it stands behind, in degrees (written by the engine). |
+| `targets` | string | "" | More entities framed with the target, names or paths separated by commas (two players, a hero and the boss): the rig looks at the middle of them all and draws back until every one is in view, `margin` around them (docs/design/cameras.md, Several targets). |
+| `margin` | f32 | 1.5 | With targets: units of room kept round the outermost of them. |
+| `rail` | string | "" | Rail mode: the entity with the Path the camera rides, by name or path. |
+| `look_ahead` | f32 | 0.0 | Seconds of the target's motion the view leads by: a runner sees what it runs into (0 for none). |
 
 ## Light
 

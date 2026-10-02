@@ -107,22 +107,40 @@ on integrated graphics) can make a game pay for pixels nobody sees. `render.scal
 `[render] scale = 0.75`) draws the window's view at that fraction of its width and height (0.25 to
 1) into a frame of its own, every pass at that size, and stretches the finished picture into the
 window by bilinear filtering, sharpened against each pixel's four neighbours and held within their
-range so edges do not ring (`sharpen`, 0 to 1, 0.25). The interface is painted afterwards at the
-window's own size, so text stays crisp. Coordinates stay the window's: `render.project`,
-`render.unproject`, `render.pick` and `capture {pixel}` take and answer window pixels, while
-`render.ids` and `render.visible` read the smaller id target. `dynamic: true`
-(`[render.scale] dynamic = true, target_ms = 12, least = 0.5`) moves the fraction: every thirty
-frames whose GPU time came back, if the median is over `target_ms` the fraction drops to what should
-bring it there (the time going with the pixels, so with the square of the fraction), and if it is
-under six tenths of it the fraction rises a twentieth, between `least` and `scale`, in twentieths,
-so the targets are not made again every frame. It needs the GPU's timestamps (Where the time goes,
-below): without them the fraction holds. `render.stats.scale` says the fraction and size drawn when
-it is under 1. Cameras with viewports or targets of their own (split screens, minimaps) are drawn
-whole. At 1920 by 1080 on this machine the showcase's GPU frame took 5.8 ms whole, 3.6 at three
-quarters and 1.9 at a half; the hills (bound more by their 1.1 million triangles and shadows) 4.7,
-3.0 and 2.4. `runtime_tests` (`[render][scale]`): the hello ball projected and picked at the same
-window pixel whole and at half (an id target of 160 by 90 under a 320 by 180 window), and a dynamic
-target no frame can meet taking the fraction down.
+range so edges do not ring (`sharpen`, 0 to 1, 0.25). `pixelated: true` stretches it through the
+nearest texel instead, unsharpened, so each drawn pixel becomes a hard-edged block: a quarter scale
+and `pixelated` give a 3D game the look of an old console or of pixel art, at a sixteenth of the
+shading cost. The interface is painted afterwards at the window's own size, so text stays crisp.
+Coordinates stay the window's: `render.project`, `render.unproject`, `render.pick` and
+`capture {pixel}` take and answer window pixels, while `render.ids` and `render.visible` read the
+smaller id target. `dynamic: true` (`[render.scale] dynamic = true, target_ms = 12, least = 0.5`)
+moves the fraction: every thirty frames whose GPU time came back, if the median is over `target_ms`
+the fraction drops to what should bring it there (the time going with the pixels, so with the square
+of the fraction), and if it is under six tenths of it the fraction rises a twentieth, between
+`least` and `scale`, in twentieths, so the targets are not made again every frame. It needs the
+GPU's timestamps (Where the time goes, below): without them the fraction holds. `render.stats.scale`
+says the fraction and size drawn when it is under 1. Cameras with viewports or targets of their own
+(split screens, minimaps) are drawn whole. At 1920 by 1080 on this machine the showcase's GPU frame
+took 5.8 ms whole, 3.6 at three quarters and 1.9 at a half; the hills (bound more by their 1.1
+million triangles and shadows) 4.7, 3.0 and 2.4. `runtime_tests` (`[render][scale]`): the hello ball
+projected and picked at the same window pixel whole and at half (an id target of 160 by 90 under a
+320 by 180 window), and a dynamic target no frame can meet taking the fraction down.
+
+## Colour vision
+
+About one man in twelve sees colours with one of the three kinds of cone missing or shifted.
+`render.colorblind {mode}` (or `[render] colorblind = "deuteranopia"`) corrects the finished frame
+for one of them, `protanopia` (red), `deuteranopia` (green) or `tritanopia` (blue): the difference
+their eye loses is shifted into colours it keeps, so a red key and a green door that look alike to
+them differ again (daltonization: the frame minus what they see, carried into green and blue, or red
+and green for tritanopia). With `simulate: true` the frame is shown as they see it instead, for a
+designer checking that what matters still reads. The sight is Machado, Oliveira and Fernandes's
+model of a full dichromacy (2009), one matrix in linear light applied in the final pass after the
+grade, so it costs nothing measurable; `strength` (0 to 1) mixes it with the plain frame. The
+interface is drawn afterwards and keeps its own colours. `render.stats.colour_vision` names the mode
+on. `runtime_tests` (`[render][colorblind]`): a red and a green panel seen as with deuteranopia both
+turn toward the same yellows, corrected they change and the red stays redder than green, and off
+gives the plain frame back.
 
 ## Where the time goes
 

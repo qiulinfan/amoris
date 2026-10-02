@@ -873,11 +873,15 @@ void to_json(Json& j, const CameraRig& v) {
     j["shake"] = v.shake;
     j["shake_decay"] = v.shake_decay;
     j["heading"] = v.heading;
+    j["targets"] = v.targets;
+    j["margin"] = v.margin;
+    j["rail"] = v.rail;
+    j["look_ahead"] = v.look_ahead;
 }
 
 void from_json(const Json& j, CameraRig& v) {
     scalar_from_json(j, "target", v.target);
-    enum_from_json(j, "mode", v.mode, {"chase", "orbit", "offset"});
+    enum_from_json(j, "mode", v.mode, {"chase", "orbit", "offset", "rail"});
     scalar_from_json(j, "distance", v.distance);
     scalar_from_json(j, "height", v.height);
     scalar_from_json(j, "pitch", v.pitch);
@@ -894,6 +898,10 @@ void from_json(const Json& j, CameraRig& v) {
     scalar_from_json(j, "shake", v.shake);
     scalar_from_json(j, "shake_decay", v.shake_decay);
     scalar_from_json(j, "heading", v.heading);
+    scalar_from_json(j, "targets", v.targets);
+    scalar_from_json(j, "margin", v.margin);
+    scalar_from_json(j, "rail", v.rail);
+    scalar_from_json(j, "look_ahead", v.look_ahead);
 }
 
 void hash_component(StateHasherRef& h, const CameraRig& v) {
@@ -917,6 +925,10 @@ void hash_component(StateHasherRef& h, const CameraRig& v) {
     h.f32(v.shake);
     h.f32(v.shake_decay);
     h.f32(v.heading);
+    h.str(v.targets);
+    h.f32(v.margin);
+    h.str(v.rail);
+    h.f32(v.look_ahead);
 }
 
 std::size_t numeric_span(CameraRig& v, std::string_view path, float** out) {
@@ -937,6 +949,8 @@ std::size_t numeric_span(CameraRig& v, std::string_view path, float** out) {
     if (path == "shake") { *out = &v.shake; return 1; }
     if (path == "shake_decay") { *out = &v.shake_decay; return 1; }
     if (path == "heading") { *out = &v.heading; return 1; }
+    if (path == "margin") { *out = &v.margin; return 1; }
+    if (path == "look_ahead") { *out = &v.look_ahead; return 1; }
     return 0;
 }
 
@@ -4602,10 +4616,10 @@ constexpr std::array<FieldInfo, 10> kCameraFields = {{
     FieldInfo{"target", "string", "Draw into a texture of this name instead of the window (docs/design/cameras.md, Into a texture): \"view:<target>\" is then an image a Sprite, a MeshRenderer or an interface image shows, a minimap in the HUD or a screen in the world.", {}},
     FieldInfo{"target_size", "vec2", "The texture's size in pixels, at most the window's.", {}},
 }};
-constexpr std::string_view kCameraRig_modeNames[] = {"chase", "orbit", "offset"};
-constexpr std::array<FieldInfo, 18> kCameraRigFields = {{
+constexpr std::string_view kCameraRig_modeNames[] = {"chase", "orbit", "offset", "rail"};
+constexpr std::array<FieldInfo, 22> kCameraRigFields = {{
     FieldInfo{"target", "string", "The entity followed, by name or path; empty leaves the camera alone.", {}},
-    FieldInfo{"mode", "i32", "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning.", kCameraRig_modeNames},
+    FieldInfo{"mode", "i32", "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning; 3 rail: on the Path named by `rail`, at the point of it nearest the target, sliding along as the target moves (a side-scroller's track, a corridor's dolly).", kCameraRig_modeNames},
     FieldInfo{"distance", "f32", "Chase and orbit: how far from the pivot.", {}},
     FieldInfo{"height", "f32", "The pivot, the point it looks at, this high above the target's origin.", {}},
     FieldInfo{"pitch", "f32", "Chase and orbit: degrees the view looks down (negative) or up at the pivot.", {}},
@@ -4622,6 +4636,10 @@ constexpr std::array<FieldInfo, 18> kCameraRigFields = {{
     FieldInfo{"shake", "f32", "Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it.", {}},
     FieldInfo{"shake_decay", "f32", "How much trauma goes a second.", {}},
     FieldInfo{"heading", "f32", "Chase: the eased heading it stands behind, in degrees (written by the engine).", {}},
+    FieldInfo{"targets", "string", "More entities framed with the target, names or paths separated by commas (two players, a hero and the boss): the rig looks at the middle of them all and draws back until every one is in view, `margin` around them (docs/design/cameras.md, Several targets).", {}},
+    FieldInfo{"margin", "f32", "With targets: units of room kept round the outermost of them.", {}},
+    FieldInfo{"rail", "string", "Rail mode: the entity with the Path the camera rides, by name or path.", {}},
+    FieldInfo{"look_ahead", "f32", "Seconds of the target's motion the view leads by: a runner sees what it runs into (0 for none).", {}},
 }};
 constexpr std::string_view kLight_kindNames[] = {"directional", "point", "spot"};
 constexpr std::array<FieldInfo, 7> kLightFields = {{

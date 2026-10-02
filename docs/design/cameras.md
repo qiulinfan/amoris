@@ -117,8 +117,32 @@ sample with a camera fourteen units over the ground drawing into `overhead`, sho
 standing in the scene (left) and by an interface box in the corner (right; the overhead picture's
 background is the clear colour, so the ground plane reads as a square).
 
+## Several targets
+
+`targets` names more entities to frame with `target`, separated by commas (`"Player2"`,
+`"Hero, Boss"`): the rig looks at the middle of them all and stands back as far as its `distance`,
+or farther when that is what it takes for every one of them to be in view, `margin` units of room
+kept round the outermost (the camera's vertical field of view and the window's shape decide how far:
+the circle round them must fit the narrower angle). In `offset` mode the offset is lengthened along
+itself. Chase mode turns with the first target. A couch co-op game keeps both players on screen; a
+boss fight keeps the boss and the hero. `look_ahead` leads the view by that many seconds of the
+targets' motion across the ground (their middle's velocity, eased over a third of a second): a
+runner or a car sees what it is heading into. A jump faster than 30 units a second (a respawn, a
+teleport, a change of targets) is not led. `runtime_tests` (`[camerarig][framing]`): two targets 20
+apart are framed from 22 units or more, brought close the rig comes back to its distance, and a
+target walking at 2 a second is led by 2 with `look_ahead` 1.
+
+## Rails
+
+`mode: "rail"` puts the camera on the `Path` named by `rail` (`docs/design/paths.md`), at the point
+of it nearest the pivot (the target, or the middle of the targets), eased by `follow` and still
+looking at the pivot: a side-scroller's camera on a track beside the level, a corridor's dolly, a
+racetrack's grandstand. At an open path's ends it stops while the target goes on; on a closed one it
+goes round. `runtime_tests` (`[camerarig][framing]`): on a straight rail 8 in front of the level and
+3 up, the camera stands across from a target at x 5 and stops at the rail's end when the target
+walks past it.
+
 ## Not yet
 
-Rails and dolly paths (a timeline can key a camera's Transform instead, `docs/design/timelines.md`),
-several targets framed at once, a look-ahead in the direction of travel, and blends between two
-rigs.
+Blends between two rigs (a timeline can key a camera's Transform instead,
+`docs/design/timelines.md`).

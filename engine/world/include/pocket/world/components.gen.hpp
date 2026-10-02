@@ -368,6 +368,10 @@ struct CameraRig {
     float shake = 0.0f;
     float shake_decay = 1.5f;
     float heading = 0.0f;
+    std::string targets = "";
+    float margin = 1.5f;
+    std::string rail = "";
+    float look_ahead = 0.0f;
     constexpr bool operator==(const CameraRig&) const = default;
 };
 void to_json(Json& j, const CameraRig& v);

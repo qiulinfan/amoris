@@ -53,7 +53,8 @@ particles.burst(sparks, 30);
   curls, embers that wander, magic that eddies. `runtime_tests` (`[particles][gpu]`): a fountain
   shot straight up stays on its axis without it and spreads with it.
 - `particles.stats` (per emitter: alive, spawned, died, landed), `particles.list {entity, limit}`
-  (the live particles of an emitter: position, velocity, age, life, resting),
+  (an emitter's live particles summed up, how many, the box they fill and their mean speed and age,
+  and the first `limit` of them, 10, with position, velocity, age, life and whether resting),
   `particles.burst {entity, count, at?, speed?}` (from the emitter, or from the world point `at`,
   particle speeds times `speed`; Water splashes use it, `docs/design/water.md`), `particles.clear`
   are commands; the SDK's `particles` object wraps them.

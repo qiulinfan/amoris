@@ -2372,7 +2372,8 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 
 constexpr const char* kPostWgsl = R"WGSL(
 struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f,
-               inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f, lut: vec4f };
+               inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f, lut: vec4f,
+               cb: vec4f, cb0: vec4f, cb1: vec4f, cb2: vec4f };   // colour vision: on, then the matrix's rows (linear light)
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
@@ -2521,6 +2522,12 @@ fn encode(c: vec3f) -> vec3f {
     var e = encode(clamp(c, vec3f(0.0), vec3f(1.0)));
     if (post.grade_on != 0u) { e = clamp((e - 0.5) * post.contrast + 0.5, vec3f(0.0), vec3f(1.0)); }
     if (post.lut.x > 0.5) { e = mix(e, graded(e), post.lut.y); }
+    if (post.cb.x > 0.5) {
+        // Colour vision (docs/design/rendering.md, Colour vision): the finished colours in linear
+        // light through one matrix, a simulation of a dichromat's sight or its correction.
+        let l = select(pow((e + 0.055) / 1.055, vec3f(2.4)), e / 12.92, e <= vec3f(0.04045));
+        e = encode(clamp(vec3f(dot(post.cb0.xyz, l), dot(post.cb1.xyz, l), dot(post.cb2.xyz, l)), vec3f(0.0), vec3f(1.0)));
+    }
     return vec4f(e, 1.0);
 }
 )WGSL";
@@ -3314,6 +3321,7 @@ struct Renderer::Impl {
     WGPUTextureView hdr_view = nullptr;
     std::uint32_t hdr_w = 0, hdr_h = 0;
     GradeSettings grade;
+    ColourVisionSettings colour_vision;
     TonemapSettings tonemap;
     float time_step = 1.0f / 60.0f;
     WGPUShaderModule post_shader = nullptr;
@@ -3816,6 +3824,8 @@ struct Renderer::Impl {
     WGPUPipelineLayout upscale_layout = nullptr;
     WGPURenderPipeline upscale_pipeline = nullptr;
     WGPUSampler upscale_sampler = nullptr;
+    WGPUSampler upscale_nearest = nullptr;
+    WGPUBindGroup upscale_bg_nearest = nullptr;   // the same picture through the nearest texel (pixelated)
     WGPUBuffer upscale_params = nullptr;
     WGPUBindGroup upscale_bg = nullptr;
     std::vector<double> scale_samples;            // dynamic: the GPU's frames since the last change
@@ -3823,6 +3833,8 @@ struct Renderer::Impl {
 
     void release_scaled() {
         if (upscale_bg) wgpuBindGroupRelease(upscale_bg);
+        if (upscale_bg_nearest) wgpuBindGroupRelease(upscale_bg_nearest);
+        upscale_bg_nearest = nullptr;
         if (scaled_color_view) wgpuTextureViewRelease(scaled_color_view);
         if (scaled_depth_view) wgpuTextureViewRelease(scaled_depth_view);
         if (scaled_color) wgpuTextureRelease(scaled_color);
@@ -3883,6 +3895,8 @@ struct Renderer::Impl {
             sd.maxAnisotropy = 1;
             sd.lodMaxClamp = 32.0f;
             upscale_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+            sd.magFilter = sd.minFilter = WGPUFilterMode_Nearest;
+            upscale_nearest = wgpuDeviceCreateSampler(device->device(), &sd);
             upscale_params = device->create_buffer("pocket.upscale", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 4);
         }
         if (scaled_w == w && scaled_h == h && scaled_color) return {};
@@ -3910,6 +3924,8 @@ struct Renderer::Impl {
         bgd.entryCount = 3;
         bgd.entries = be;
         upscale_bg = wgpuDeviceCreateBindGroup(device->device(), &bgd);
+        be[1].sampler = upscale_nearest;
+        upscale_bg_nearest = wgpuDeviceCreateBindGroup(device->device(), &bgd);
         return {};
     }
 
@@ -4036,6 +4052,7 @@ struct Renderer::Impl {
         if (upscale_bgl) wgpuBindGroupLayoutRelease(upscale_bgl);
         if (upscale_shader) wgpuShaderModuleRelease(upscale_shader);
         if (upscale_sampler) wgpuSamplerRelease(upscale_sampler);
+        if (upscale_nearest) wgpuSamplerRelease(upscale_nearest);
         if (upscale_params) wgpuBufferRelease(upscale_params);
         if (prepass_view) wgpuTextureViewRelease(prepass_view);
         if (prepass_tex) wgpuTextureRelease(prepass_tex);
@@ -4443,6 +4460,8 @@ struct Renderer::Impl {
         float fog[4];            // density, base height, falloff, start
         float fog2[4];           // the most it hides, on, volumetric
         float lut[4];            // on, strength
+        float cb[4];             // colour vision on
+        float cb_rows[12];       // its matrix, three rows of four
     };
     struct FxUniforms {
         float reproject[16];     // last frame's view-projection times the inverse of this frame's
@@ -5204,6 +5223,43 @@ fn time() -> f32 { return fx.time.x; }
         u.lut[0] = lut_on ? 1.0f : 0.0f;
         u.lut[1] = std::clamp(grade.lut_strength, 0.0f, 1.0f);
         stats.lut = lut_on;
+        {
+            // Colour vision: Machado, Oliveira and Fernandes's (2009) matrices for a full dichromacy,
+            // in linear RGB; corrected, what the eye loses is shifted into what it sees (Fidaner's
+            // daltonization) as one matrix, I + S (I - D); strength mixes it with the identity.
+            static const float sims[3][9] = {
+                {0.152286f, 1.052583f, -0.204868f, 0.114503f, 0.786281f, 0.099216f, -0.003882f, -0.048116f, 1.051998f},    // protanopia
+                {0.367322f, 0.860646f, -0.227968f, 0.280085f, 0.672501f, 0.047413f, -0.011820f, 0.042940f, 0.968881f},     // deuteranopia
+                {1.255528f, -0.076749f, -0.178779f, -0.078411f, 0.930809f, 0.147602f, 0.004733f, 0.691367f, 0.303900f}};   // tritanopia
+            const int mode = std::clamp(colour_vision.mode, 0, 3);
+            u.cb[0] = mode > 0 ? 1.0f : 0.0f;
+            float m[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+            if (mode > 0) {
+                const float* d = sims[mode - 1];
+                if (colour_vision.simulate) {
+                    std::copy(d, d + 9, m);
+                } else {
+                    const float shift_rg[9] = {0, 0, 0, 0.7f, 1, 0, 0.7f, 0, 1};
+                    const float shift_b[9] = {1, 0, 0.7f, 0, 1, 0.7f, 0, 0, 0};
+                    const float* s = mode == 3 ? shift_b : shift_rg;
+                    float lost[9];
+                    for (int k = 0; k < 9; ++k) lost[k] = (k % 4 == 0 ? 1.0f : 0.0f) - d[k];
+                    for (int r = 0; r < 3; ++r)
+                        for (int c = 0; c < 3; ++c) {
+                            float sum = 0;
+                            for (int k = 0; k < 3; ++k) sum += s[r * 3 + k] * lost[k * 3 + c];
+                            m[r * 3 + c] = (r == c ? 1.0f : 0.0f) + sum;
+                        }
+                }
+                const float t = std::clamp(colour_vision.strength, 0.0f, 1.0f);
+                for (int k = 0; k < 9; ++k) m[k] = (k % 4 == 0 ? 1.0f : 0.0f) + (m[k] - (k % 4 == 0 ? 1.0f : 0.0f)) * t;
+            }
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) u.cb_rows[r * 4 + c] = m[r * 3 + c];
+                u.cb_rows[r * 4 + 3] = 0;
+            }
+            stats.colour_vision = mode;
+        }
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
         const bool effects = !secondary && std::any_of(user_effects.begin(), user_effects.end(), [](const UserEffect& e) { return e.def.enabled; });
         if (effects) ensure_user_fx_targets(frame.width, frame.height);
@@ -9406,7 +9462,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     im.stats.render_width = w;
     im.stats.render_height = h;
     // Stretched into the window's frame, sharpened.
-    const float up[4] = {std::clamp(im.scale_settings.sharpen, 0.0f, 1.0f), 0.0f, 1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height)};
+    const bool pixelated = im.scale_settings.pixelated;
+    const float up[4] = {pixelated ? 0.0f : std::clamp(im.scale_settings.sharpen, 0.0f, 1.0f), 0.0f, 1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height)};
     im.device->write_buffer(im.upscale_params, 0, up, sizeof up);
     WGPURenderPassColorAttachment ca{};
     ca.view = frame.color;
@@ -9420,7 +9477,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     rp.colorAttachments = &ca;
     WGPURenderPassEncoder enc = im.begin_pass(frame.encoder, rp);
     wgpuRenderPassEncoderSetPipeline(enc, im.upscale_pipeline);
-    wgpuRenderPassEncoderSetBindGroup(enc, 0, im.upscale_bg, 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(enc, 0, pixelated ? im.upscale_bg_nearest : im.upscale_bg, 0, nullptr);
     wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
     wgpuRenderPassEncoderEnd(enc);
     wgpuRenderPassEncoderRelease(enc);
@@ -11651,6 +11708,12 @@ void Renderer::set_render_scale(RenderScaleSettings s) {
     impl_->scale_samples.clear();
 }
 RenderScaleSettings Renderer::render_scale() const { return impl_->scale_settings; }
+void Renderer::set_colour_vision(ColourVisionSettings s) {
+    s.mode = std::clamp(s.mode, 0, 3);
+    s.strength = std::clamp(s.strength, 0.0f, 1.0f);
+    impl_->colour_vision = s;
+}
+ColourVisionSettings Renderer::colour_vision() const { return impl_->colour_vision; }
 
 Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
@@ -11667,6 +11730,7 @@ Json Renderer::describe() const {
         j["gpu"] = Json{{"ms", std::round(s.gpu_ms * 1000.0) / 1000.0}, {"passes", passes}, {"frames_ago", s.gpu_age}, {"frames_timed", s.gpu_frames}};
     }
     if (s.render_scale < 1.0f) j["scale"] = Json{{"scale", s.render_scale}, {"width", s.render_width}, {"height", s.render_height}};
+    if (s.colour_vision > 0) j["colour_vision"] = std::array<const char*, 4>{"off", "protanopia", "deuteranopia", "tritanopia"}[static_cast<std::size_t>(s.colour_vision)];
     j["shadow_draws"] = s.shadow_draws;
     j["shadow_instances"] = s.shadow_instances;
     j["shadows"] = s.shadows;

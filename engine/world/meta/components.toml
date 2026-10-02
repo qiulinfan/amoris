@@ -94,7 +94,7 @@ name = "CameraRig"
 doc = "Moves its entity (a camera) with a target (docs/design/cameras.md): behind it as it turns (chase), round it at a yaw and pitch a script or two input actions steer (orbit), or at a fixed offset in the world (a top-down or isometric view); always looking at the target, easing after it, brought in front of walls between them, and shaken on request. Runs after the physics and the characters each tick; the entity should be a root (its Transform is the world's)."
 fields = [
     { name = "target", type = "string", default = "", doc = "The entity followed, by name or path; empty leaves the camera alone." },
-    { name = "mode", type = "i32", default = 0, enum = ["chase", "orbit", "offset"], doc = "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning." },
+    { name = "mode", type = "i32", default = 0, enum = ["chase", "orbit", "offset", "rail"], doc = "0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning; 3 rail: on the Path named by `rail`, at the point of it nearest the target, sliding along as the target moves (a side-scroller's track, a corridor's dolly)." },
     { name = "distance", type = "f32", default = 6.0, doc = "Chase and orbit: how far from the pivot." },
     { name = "height", type = "f32", default = 1.0, doc = "The pivot, the point it looks at, this high above the target's origin." },
     { name = "pitch", type = "f32", default = -20.0, doc = "Chase and orbit: degrees the view looks down (negative) or up at the pivot." },
@@ -111,6 +111,10 @@ fields = [
     { name = "shake", type = "f32", default = 0.0, doc = "Trauma, 0..1: the view trembles by its square (up to 4 degrees and 0.15 units), easing off by shake_decay a second; camera.shake adds to it." },
     { name = "shake_decay", type = "f32", default = 1.5, doc = "How much trauma goes a second." },
     { name = "heading", type = "f32", default = 0.0, doc = "Chase: the eased heading it stands behind, in degrees (written by the engine)." },
+    { name = "targets", type = "string", default = "", doc = "More entities framed with the target, names or paths separated by commas (two players, a hero and the boss): the rig looks at the middle of them all and draws back until every one is in view, `margin` around them (docs/design/cameras.md, Several targets)." },
+    { name = "margin", type = "f32", default = 1.5, doc = "With targets: units of room kept round the outermost of them." },
+    { name = "rail", type = "string", default = "", doc = "Rail mode: the entity with the Path the camera rides, by name or path." },
+    { name = "look_ahead", type = "f32", default = 0.0, doc = "Seconds of the target's motion the view leads by: a runner sees what it runs into (0 for none)." },
 ]
 
 [[component]]
