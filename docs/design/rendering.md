@@ -288,16 +288,18 @@ degrees (60) to the south (+z) at noon, setting in the west at 18, under the gro
 and is written back into the `Sky`, so it is saved, hashed and read like any other field. Under an
 atmosphere that is a whole day: a blue noon, a gold evening, a moonlit night under the stars with
 the game's own lights warm in it (the village's lamps; `tests/evidence/rendering/village-day.png`:
-noon, half past five, dusk, eleven at night and its stars). A point or spot light with `after_dark`
-is lit only once the sun is down: it fades in as the first directional light sinks from four degrees
-above the horizon to two below and is not there at all by day (no clustering, no shadow faces);
-without a directional light it is always lit. The village's lamps are. `MeshRenderer.after_dark`
-does the same for a mesh's glow (its emissive and its materials'): the village's and the farm's
-houses are `house?lit=1.5` with it, their windows dark by day and warm at night. `runtime_tests`
-(`[sky][day]`): at noon the sunlight shines down, at 6 west along the ground, at midnight up from
-below, and a day of 24 seconds moves the hour on by one in a second; `renderer_tests`
-(`[atmosphere]`): with the sun six degrees down the light is cool and dim and the sky overhead a
-dark blue.
+noon, half past five, dusk, eleven at night and its stars; `village-day.gif`, a whole day from five
+in the morning in sixteen seconds). A point or spot light with `after_dark` is lit only once the sun
+is down: it fades in as the first directional light sinks from four degrees above the horizon to two
+below and is not there at all by day (no clustering, no shadow faces); without a directional light
+it is always lit. The village's lamps are. Another sky (procedural, an image) has no night of its
+own: under it the sun is put out over its first three degrees below the horizon instead of lighting
+the world from beneath. `MeshRenderer.after_dark` does the same for a mesh's glow (its emissive and
+its materials'): the village's and the farm's houses are `house?lit=1.5` with it, their windows dark
+by day and warm at night. `runtime_tests` (`[sky][day]`): at noon the sunlight shines down, at 6
+west along the ground, at midnight up from below, and a day of 24 seconds moves the hour on by one
+in a second; `renderer_tests` (`[atmosphere]`): with the sun six degrees down the light is cool and
+dim and the sky overhead a dark blue.
 
 `clouds` (0..1) lays a layer of clouds over it at `cloud_height` (1500 units above the camera) with
 features `cloud_scale` (900) across: five octaves of value noise drawn in the sky pass, thinning

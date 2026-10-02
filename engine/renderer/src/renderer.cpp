@@ -10191,9 +10191,17 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     Vec3 sun_way = im.sun_toward, sun_light{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]};
     if (have_sun) {
         int sky_mode = 0;
+        bool running_day = false;
         world.ecs().each([&](flecs::entity, const world::Sky& s) {
             if (!sky_mode && s.enabled && s.mode >= 1 && s.mode <= 3) sky_mode = s.mode;
+            running_day = running_day || (s.enabled && s.time_of_day >= 0);
         });
+        // A day under another sky (or none) has no night of its own: the sun under the horizon is
+        // put out over its first three degrees down, rather than lighting the world from below.
+        if (sky_mode != 3 && running_day && im.sun_toward.y < 0) {
+            const float k = std::clamp(1.0f + im.sun_toward.y / 0.05f, 0.0f, 1.0f);
+            for (int i = 0; i < 3; ++i) fu.sun_color[i] *= k * k * (3 - 2 * k);
+        }
         if (sky_mode == 3 && im.sun_toward.y < 0) {
             moon_up = true;
             const float k = std::clamp(-im.sun_toward.y / 0.1f, 0.0f, 1.0f);

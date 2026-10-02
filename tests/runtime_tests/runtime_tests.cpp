@@ -467,6 +467,11 @@ TEST_CASE("a sky's time of day stands the sun where it is at that hour, and its 
     REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"time_of_day", 8.0}, {"day_length", 24.0}}}}).has_value());
     REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
     REQUIRE(s.command("world.get", Json{{"entity", "Day"}, {"component", "Sky"}}).value()["time_of_day"].get<double>() == Catch::Approx(9.0).margin(0.05));
+    // Under another sky the sun at midnight is out, not shining up from below.
+    REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"mode", "procedural"}, {"time_of_day", 0.0}, {"day_length", 0}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["sun_light"]["r"].get<double>() == Catch::Approx(0).margin(1e-4));
+    REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"mode", "atmosphere"}}}}).has_value());
     // A lamp lit after dark is not there by day (no light in the clusters) and lit at night.
     REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"Light", Json{{"kind", "point"}, {"range", 50}, {"after_dark", true}}}}}}).has_value());
     auto entries = [&](double hour) {
