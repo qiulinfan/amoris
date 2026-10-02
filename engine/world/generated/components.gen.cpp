@@ -3300,6 +3300,92 @@ std::size_t numeric_span(Vehicle& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Grass& v) {
+    j = Json::object();
+    j["density"] = v.density;
+    j["height"] = v.height;
+    j["width"] = v.width;
+    vec_to_json(j["color"], v.color);
+    vec_to_json(j["tip"], v.tip);
+    j["reach"] = v.reach;
+    j["thin"] = v.thin;
+    j["sway"] = v.sway;
+    j["layer"] = v.layer;
+    j["max_slope"] = v.max_slope;
+    j["min_height"] = v.min_height;
+    j["max_height"] = v.max_height;
+    j["max_paint"] = v.max_paint;
+    j["seed"] = v.seed;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Grass& v) {
+    scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "height", v.height);
+    scalar_from_json(j, "width", v.width);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    if (j.is_object() && j.contains("tip")) vec_from_json(j["tip"], v.tip);
+    scalar_from_json(j, "reach", v.reach);
+    scalar_from_json(j, "thin", v.thin);
+    scalar_from_json(j, "sway", v.sway);
+    scalar_from_json(j, "layer", v.layer);
+    scalar_from_json(j, "max_slope", v.max_slope);
+    scalar_from_json(j, "min_height", v.min_height);
+    scalar_from_json(j, "max_height", v.max_height);
+    scalar_from_json(j, "max_paint", v.max_paint);
+    scalar_from_json(j, "seed", v.seed);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Grass& v) {
+    h.f32(v.density);
+    h.f32(v.height);
+    h.f32(v.width);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.tip.r);
+    h.f32(v.tip.g);
+    h.f32(v.tip.b);
+    h.f32(v.tip.a);
+    h.f32(v.reach);
+    h.f32(v.thin);
+    h.f32(v.sway);
+    h.str(v.layer);
+    h.f32(v.max_slope);
+    h.f32(v.min_height);
+    h.f32(v.max_height);
+    h.f32(v.max_paint);
+    h.i64(static_cast<std::int64_t>(v.seed));
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Grass& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "density") { *out = &v.density; return 1; }
+    if (path == "height") { *out = &v.height; return 1; }
+    if (path == "width") { *out = &v.width; return 1; }
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "tip") { *out = &v.tip.r; return 4; }
+    if (path == "tip.r") { *out = &v.tip.r; return 1; }
+    if (path == "tip.g") { *out = &v.tip.g; return 1; }
+    if (path == "tip.b") { *out = &v.tip.b; return 1; }
+    if (path == "tip.a") { *out = &v.tip.a; return 1; }
+    if (path == "reach") { *out = &v.reach; return 1; }
+    if (path == "thin") { *out = &v.thin; return 1; }
+    if (path == "sway") { *out = &v.sway; return 1; }
+    if (path == "max_slope") { *out = &v.max_slope; return 1; }
+    if (path == "min_height") { *out = &v.min_height; return 1; }
+    if (path == "max_height") { *out = &v.max_height; return 1; }
+    if (path == "max_paint") { *out = &v.max_paint; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Boat& v) {
     j = Json::object();
     j["throttle"] = v.throttle;
@@ -4592,6 +4678,9 @@ bool write_numbers(Scatter&, const double*, std::size_t) { return false; }
 std::size_t read_numbers(const Vehicle&, double*) { return kNotNumeric; }
 bool write_numbers(Vehicle&, const double*, std::size_t) { return false; }
 
+std::size_t read_numbers(const Grass&, double*) { return kNotNumeric; }
+bool write_numbers(Grass&, const double*, std::size_t) { return false; }
+
 std::size_t read_numbers(const Boat& v, double* out) {
     out[0] = static_cast<double>(v.throttle);
     out[1] = static_cast<double>(v.steer);
@@ -5368,6 +5457,23 @@ constexpr std::array<FieldInfo, 14> kVehicleFields = {{
     FieldInfo{"speed", "f32", "Forward speed, negative backing up (written by the engine).", {}},
     FieldInfo{"grounded", "i32", "Wheels on the ground (written by the engine).", {}},
 }};
+constexpr std::array<FieldInfo, 15> kGrassFields = {{
+    FieldInfo{"density", "f32", "Blades a square unit near the camera (1 to 400).", {}},
+    FieldInfo{"height", "f32", "The tallest blades' height, in units (each is 0.55 to 1.3 of it).", {}},
+    FieldInfo{"width", "f32", "A blade's width at its root, in units.", {}},
+    FieldInfo{"color", "color", "The colour at the root.", {}},
+    FieldInfo{"tip", "color", "The colour at the tip.", {}},
+    FieldInfo{"reach", "f32", "How far from the camera blades are drawn, in units.", {}},
+    FieldInfo{"thin", "f32", "From this far on they thin out (wider, fewer), in units.", {}},
+    FieldInfo{"sway", "f32", "How far the Wind bends them, 0 none.", {}},
+    FieldInfo{"layer", "string", "The name of the Terrain layer they grow on (its share sets how tall and whether); empty, the first layer, or anywhere without layers.", {}},
+    FieldInfo{"max_slope", "f32", "Degrees: none where the ground is steeper.", {}},
+    FieldInfo{"min_height", "f32", "None on ground lower than this (world y): above the water line.", {}},
+    FieldInfo{"max_height", "f32", "None on ground higher than this (world y).", {}},
+    FieldInfo{"max_paint", "f32", "None where terrain.paint has covered the ground more than this (a path).", {}},
+    FieldInfo{"seed", "u32", "Another seed, another field.", {}},
+    FieldInfo{"enabled", "bool", "false draws none.", {}},
+}};
 constexpr std::array<FieldInfo, 10> kBoatFields = {{
     FieldInfo{"throttle", "f32", "-1..1: an engine's or oars' drive, ahead at 1, astern at -1 (at half the power).", {}},
     FieldInfo{"steer", "f32", "-1..1: the rudder, turning left at -1 and right at 1.", {}},
@@ -5566,7 +5672,7 @@ constexpr std::array<RecordInfo, 15> kRecords = {{
     RecordInfo{"BehaviorTransition", kBehaviorTransitionFields},
 }};
 
-constexpr std::array<ComponentInfo, 55> kComponents = {{
+constexpr std::array<ComponentInfo, 56> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -5607,6 +5713,7 @@ constexpr std::array<ComponentInfo, 55> kComponents = {{
     ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},
+    ComponentInfo{"Grass", "Blades of grass over the Terrain on the same entity (docs/design/terrain.md, Grass): made on the GPU round the camera, one a cell of a grid locked to the world, standing where the ground is gentle, high and low enough, unpainted and (with layers) of the layer named; thinning with the distance and bending in the Wind.", true, kGrassFields},
     ComponentInfo{"Boat", "A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat.", true, kBoatFields},
     ComponentInfo{"Area2D", "A box in the XY plane that notices 2D bodies (Body2D, TopDown2D) coming in and going out (docs/design/tilemaps.md, Areas): an `area.entered` and an `area.exited` event with the body as their subject and the area in their data, and how many are inside. A checkpoint, a pickup, a hazard, a door's trigger; it stops nothing.", true, kArea2DFields},
     ComponentInfo{"Path", "A line through points (docs/design/paths.md): a track, a patrol, a lane enemies walk, a platform's run, a camera's rail. The points are in the entity's own space, so its Transform moves, turns and scales the whole path. PathFollowers move along it; path.sample and path.nearest answer where on it a distance is and how far along a point lies.", true, kPathFields},

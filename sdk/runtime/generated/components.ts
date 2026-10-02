@@ -1278,6 +1278,40 @@ export interface Vehicle {
     grounded: number;
 }
 
+/** Blades of grass over the Terrain on the same entity (docs/design/terrain.md, Grass): made on the GPU round the camera, one a cell of a grid locked to the world, standing where the ground is gentle, high and low enough, unpainted and (with layers) of the layer named; thinning with the distance and bending in the Wind. */
+export interface Grass {
+    /** Blades a square unit near the camera (1 to 400). */
+    density: number;
+    /** The tallest blades' height, in units (each is 0.55 to 1.3 of it). */
+    height: number;
+    /** A blade's width at its root, in units. */
+    width: number;
+    /** The colour at the root. */
+    color: Color;
+    /** The colour at the tip. */
+    tip: Color;
+    /** How far from the camera blades are drawn, in units. */
+    reach: number;
+    /** From this far on they thin out (wider, fewer), in units. */
+    thin: number;
+    /** How far the Wind bends them, 0 none. */
+    sway: number;
+    /** The name of the Terrain layer they grow on (its share sets how tall and whether); empty, the first layer, or anywhere without layers. */
+    layer: string;
+    /** Degrees: none where the ground is steeper. */
+    max_slope: number;
+    /** None on ground lower than this (world y): above the water line. */
+    min_height: number;
+    /** None on ground higher than this (world y). */
+    max_height: number;
+    /** None where terrain.paint has covered the ground more than this (a path). */
+    max_paint: number;
+    /** Another seed, another field. */
+    seed: number;
+    /** false draws none. */
+    enabled: boolean;
+}
+
 /** A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat. */
 export interface Boat {
     /** -1..1: an engine's or oars' drive, ahead at 1, astern at -1 (at half the power). */
@@ -1661,6 +1695,7 @@ export interface Components {
     Water: Water;
     Scatter: Scatter;
     Vehicle: Vehicle;
+    Grass: Grass;
     Boat: Boat;
     Area2D: Area2D;
     Path: Path;
@@ -1720,6 +1755,7 @@ export interface ComponentEnums {
     Water: {};
     Scatter: {};
     Vehicle: {};
+    Grass: {};
     Boat: {};
     Area2D: {};
     Path: {};
@@ -1741,9 +1777,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Weather" | "Water" | "Scatter" | "Vehicle" | "Boat" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Weather" | "Water" | "Scatter" | "Vehicle" | "Grass" | "Boat" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Weather", "Water", "Scatter", "Vehicle", "Boat", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Weather", "Water", "Scatter", "Vehicle", "Grass", "Boat", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1811,6 +1847,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, course: "", width: 4, ocean: false, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
+    Grass: { density: 16, height: 0.5, width: 0.06, color: { r: 0.24, g: 0.42, b: 0.14, a: 1 }, tip: { r: 0.55, g: 0.68, b: 0.3, a: 1 }, reach: 40, thin: 12, sway: 0.6, layer: "", max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 0.3, seed: 1, enabled: true },
     Boat: { throttle: 0, steer: 0, sail: 0, power: 4, top_speed: 8, turn_rate: 50, keel: 3, sail_power: 0.5, speed: 0, afloat: false },
     Area2D: { size: { x: 0.5, y: 0.5 }, offset: { x: 0, y: 0 }, enabled: true, inside: 0 },
     Path: { points: [], closed: false, smooth: true, length: 0 },

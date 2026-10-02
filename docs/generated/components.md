@@ -739,6 +739,28 @@ A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBo
 | `speed` | f32 | 0.0 | Forward speed, negative backing up (written by the engine). |
 | `grounded` | i32 | 0 | Wheels on the ground (written by the engine). |
 
+## Grass
+
+Blades of grass over the Terrain on the same entity (docs/design/terrain.md, Grass): made on the GPU round the camera, one a cell of a grid locked to the world, standing where the ground is gentle, high and low enough, unpainted and (with layers) of the layer named; thinning with the distance and bending in the Wind.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `density` | f32 | 16.0 | Blades a square unit near the camera (1 to 400). |
+| `height` | f32 | 0.5 | The tallest blades' height, in units (each is 0.55 to 1.3 of it). |
+| `width` | f32 | 0.06 | A blade's width at its root, in units. |
+| `color` | color | [0.24, 0.42, 0.14, 1.0] | The colour at the root. |
+| `tip` | color | [0.55, 0.68, 0.3, 1.0] | The colour at the tip. |
+| `reach` | f32 | 40.0 | How far from the camera blades are drawn, in units. |
+| `thin` | f32 | 12.0 | From this far on they thin out (wider, fewer), in units. |
+| `sway` | f32 | 0.6 | How far the Wind bends them, 0 none. |
+| `layer` | string | "" | The name of the Terrain layer they grow on (its share sets how tall and whether); empty, the first layer, or anywhere without layers. |
+| `max_slope` | f32 | 35.0 | Degrees: none where the ground is steeper. |
+| `min_height` | f32 | -1000.0 | None on ground lower than this (world y): above the water line. |
+| `max_height` | f32 | 1000.0 | None on ground higher than this (world y). |
+| `max_paint` | f32 | 0.3 | None where terrain.paint has covered the ground more than this (a path). |
+| `seed` | u32 | 1 | Another seed, another field. |
+| `enabled` | bool | true | false draws none. |
+
 ## Boat
 
 A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat.

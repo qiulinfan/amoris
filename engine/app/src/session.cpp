@@ -213,6 +213,18 @@ void Session::record_error(const Error& e) {
     Error mapped = e;
     mapped.message = source_lines(e.message);
     mapped.detail = source_lines(e.detail);
+    // A name the script used without importing it, that the SDK has (onStart, world, input): say so.
+    for (std::string_view lead : {"Can't find variable: ", "ReferenceError: "}) {
+        const std::size_t at = mapped.message.find(lead);
+        if (at == std::string::npos) continue;
+        std::size_t end = at + lead.size();
+        while (end < mapped.message.size() && (std::isalnum(static_cast<unsigned char>(mapped.message[end])) || mapped.message[end] == '_' || mapped.message[end] == '$')) ++end;
+        const std::string name = mapped.message.substr(at + lead.size(), end - at - lead.size());
+        if (name.empty()) continue;
+        const bool sdk = std::any_of(sdk_helps().begin(), sdk_helps().end(), [&](const SdkHelp& h) { return h.name == name || h.name.starts_with(name + "."); });
+        if (sdk) mapped.message += std::format(" ({} is the SDK's: import {{ {} }} from \"pocket\")", name, name);
+        break;
+    }
     log::error("runtime", "{}", mapped.to_string());
     errors_.push_back(error_json(mapped));
 }
@@ -1471,6 +1483,32 @@ void Session::update_terrains() {
             remesh = true;
         }
         if (remesh) remesh_terrain(id, st, tc);
+        // Grass on it (docs/design/terrain.md, Grass): the ground as the renderer's grass reads it
+        // (the height, the share of the layer it grows on, the paint's cover), sent again when the
+        // terrain or that layer changes.
+        if (const auto* gr = renderer_ ? world_->try_get<world::Grass>(id) : nullptr) {
+            const std::string key = std::format("{}|{}", st.revision, gr->layer);
+            if (grass_keys_[id] != key && st.grid.n >= 2) {
+                grass_keys_[id] = key;
+                int layer = -1;   // without textured layers it grows wherever its other rules let it
+                if (!tc.layers.empty()) {
+                    layer = 0;
+                    for (std::size_t k = 0; k < tc.layers.size() && k < 4; ++k) if (tc.layers[k].name == gr->layer) layer = static_cast<int>(k);
+                }
+                renderer::Renderer::GroundField f;
+                f.revision = st.revision;
+                f.n = st.grid.n;
+                f.size_x = st.grid.size_x;
+                f.size_z = st.grid.size_z;
+                f.samples.resize(st.grid.h.size());
+                for (std::size_t k = 0; k < st.grid.h.size(); ++k) {
+                    const float share = layer < 0 ? 1.0f : (k < st.shares.size() ? st.shares[k][static_cast<std::size_t>(layer)] : 0.0f);
+                    const float paint = k < st.grid.paint.size() ? st.grid.paint[k][3] : 0.0f;
+                    f.samples[k] = {st.grid.h[k], share, paint};
+                }
+                renderer_->set_ground_field(id, std::move(f));
+            }
+        }
     }
     for (auto it = terrains_.begin(); it != terrains_.end();) {
         if (seen.contains(it->first)) { ++it; continue; }

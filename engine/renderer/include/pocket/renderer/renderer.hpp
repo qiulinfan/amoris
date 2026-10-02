@@ -168,6 +168,7 @@ struct ToonSettings {
 struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
+    std::uint32_t shadow_redrawn = 0; // the sun's cascades drawn this frame (a far one is kept a frame or three while it still holds its slice)
     std::uint32_t shadow_instances = 0; // objects drawn into the shadow passes (a light's faces draw only what its reach touches)
     bool shadows = false;             // whether a shadow map was rendered this frame
     int shadow_cascades = 0;          // cascades rendered this frame
@@ -213,6 +214,7 @@ struct RenderStats {
     bool contact_shadows = false;     // whether contact shadows were marched this frame
     bool fog = false;                 // whether fog was applied this frame
     bool volumetric = false;          // whether the fog was marched and lit (volumetric light) this frame
+    std::uint32_t grass_blades = 0;   // grass blades drawn round the camera (docs/design/terrain.md, Grass; the shader culls those that do not grow)
     bool clouds = false;              // whether volumetric clouds were marched this frame (Sky.cloud_depth)
     bool taa = false;                 // whether the frame was resolved against its history (temporal anti-aliasing)
     bool oit = false;                 // whether translucent meshes were blended order-independently this frame
@@ -378,6 +380,16 @@ class Renderer {
     // through it, seconds since, how strong. At most 32.
     struct WaterRing { float x = 0, z = 0, age = 0, strength = 1; };
     void set_water_rings(std::vector<WaterRing> rings);
+    // The ground grass grows on (docs/design/terrain.md, Grass): a terrain's samples as the session
+    // has them, n by n over size_x by size_z centred on its entity: each the height, the share of
+    // the layer the grass grows on and the paint's cover. `revision` changes when they do.
+    struct GroundField {
+        std::uint64_t revision = 0;
+        int n = 0;
+        float size_x = 0, size_z = 0;
+        std::vector<std::array<float, 3>> samples;
+    };
+    void set_ground_field(world::EntityId terrain, GroundField field);
     void set_render_scale(RenderScaleSettings s);
     [[nodiscard]] RenderScaleSettings render_scale() const;
     void set_dof(DofSettings s);

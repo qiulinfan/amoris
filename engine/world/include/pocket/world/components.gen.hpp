@@ -1058,6 +1058,30 @@ void from_json(const Json& j, Vehicle& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Vehicle& v, std::string_view path, float** out);
 
+/// Blades of grass over the Terrain on the same entity (docs/design/terrain.md, Grass): made on the GPU round the camera, one a cell of a grid locked to the world, standing where the ground is gentle, high and low enough, unpainted and (with layers) of the layer named; thinning with the distance and bending in the Wind.
+struct Grass {
+    float density = 16.0f;
+    float height = 0.5f;
+    float width = 0.06f;
+    Color4 color{0.24f, 0.42f, 0.14f, 1.0f};
+    Color4 tip{0.55f, 0.68f, 0.3f, 1.0f};
+    float reach = 40.0f;
+    float thin = 12.0f;
+    float sway = 0.6f;
+    std::string layer = "";
+    float max_slope = 35.0f;
+    float min_height = -1000.0f;
+    float max_height = 1000.0f;
+    float max_paint = 0.3f;
+    std::uint32_t seed = 1;
+    bool enabled = true;
+    constexpr bool operator==(const Grass&) const = default;
+};
+void to_json(Json& j, const Grass& v);
+void from_json(const Json& j, Grass& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Grass& v, std::string_view path, float** out);
+
 /// A boat (docs/design/physics.md, Boats): on a dynamic RigidBody with a Collider that floats on Water, the throttle drives it along its heading (-z), the rudder turns it (more the faster it goes), the keel holds it from sliding sideways and the sail takes the Wind's push, most with the wind on its quarter or beam and none heading into it. Scripts set the controls; the engine writes speed and afloat.
 struct Boat {
     float throttle = 0.0f;
@@ -1399,6 +1423,7 @@ void hash_component(struct StateHasherRef& h, const Weather& v);
 void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
+void hash_component(struct StateHasherRef& h, const Grass& v);
 void hash_component(struct StateHasherRef& h, const Boat& v);
 void hash_component(struct StateHasherRef& h, const Area2D& v);
 void hash_component(struct StateHasherRef& h, const Path& v);
@@ -1499,6 +1524,8 @@ std::size_t read_numbers(const Scatter& v, double* out);
 bool write_numbers(Scatter& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Vehicle& v, double* out);
 bool write_numbers(Vehicle& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Grass& v, double* out);
+bool write_numbers(Grass& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Boat& v, double* out);
 bool write_numbers(Boat& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Area2D& v, double* out);

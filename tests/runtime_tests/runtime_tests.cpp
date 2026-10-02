@@ -223,6 +223,27 @@ TEST_CASE("script.eval has the SDK's exports as names and answers an error with 
     REQUIRE(s.command("script.eval", Json{{"source", "kept"}}).value() == 41);
 }
 
+TEST_CASE("a script that uses an SDK name it did not import is told where it comes from", "[runtime][friction][imports]") {
+    const std::filesystem::path dir = root() / "build" / "test-out";
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path bundle = dir / "no-import.js";
+    {
+        std::ofstream f(bundle);
+        f << "onStart(() => {});\n";
+    }
+    auto o = hello_options(-1);
+    o.bundle = bundle;
+    o.project_config = "";
+    app::Session s(o);
+    (void)s.start();
+    const Json st = s.command("state", Json::object()).value();
+    INFO(st.dump());
+    REQUIRE(st.contains("errors"));
+    const std::string message = st["errors"][0].value("message", std::string());
+    REQUIRE(message.find("onStart") != std::string::npos);
+    REQUIRE(message.find("import { onStart } from \"pocket\"") != std::string::npos);
+}
+
 TEST_CASE("commands take what agents were seen to send: field paths, components inline, ids as strings", "[runtime][friction]") {
     app::Session s(hello_options(-1));
     REQUIRE(s.start().has_value());

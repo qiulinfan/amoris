@@ -21,7 +21,7 @@ def island(name, x, z, size, height, seed, scale):
     for k, (mesh, count, lo, hi, spacing, sway) in enumerate([
             ("tree?seed={}", 260 if size > 100 else 60, 1.4, 9.0, 3.5, 0.08),
             ("pine?seed={}", 160 if size > 100 else 30, 3.5, 14.0, 3.5, 0.05),
-            ("bush?size=0.9", 1200 if size > 100 else 260, 1.0, 11.0, 1.1, 0.07),
+            ("bush?size=0.9", 700 if size > 100 else 160, 1.0, 11.0, 1.4, 0.07),
             ("rock?size=0.8&seed={}", 80 if size > 100 else 24, 0.2, 14.0, 2.5, 0.0)]):
         scatter = {"count": count, "area": {"x": size * 0.9, "y": size * 0.9}, "seed": seed * 7 + k, "on": f"{name}",
                    "min_height": lo, "max_height": hi, "max_slope": 36 if k < 3 else 60, "spacing": spacing,
@@ -41,6 +41,7 @@ def island(name, x, z, size, height, seed, scale):
         "Terrain": {"size": {"x": size, "y": size}, "height": height, "seed": seed, "scale": scale, "octaves": 5,
                     "resolution": 193 if size > 100 else 97, "island": 1.0, "rock_slope": 40, "snow_line": 2, "layers": GROUND},
         "MeshRenderer": {"roughness": 0.95},
+        "Grass": {"layer": "grass", "min_height": 1.2, "density": 14, "height": 0.55, "reach": 45, "seed": seed},
         "RigidBody": {"kind": "static"}, "Collider": {"shape": "mesh"}},
         "children": kids}
 

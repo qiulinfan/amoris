@@ -186,11 +186,14 @@ TEST_CASE("the sun casts shadows onto the ground", "[renderer][shadows]") {
     REQUIRE(s.command("world.spawn", Json{{"name", "Cube"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}}}}).has_value());
     REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"x", -0.5}, {"y", -0.5}, {"z", 0}, {"w", 0.70710678}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1.2}}}}}}).has_value());
     REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 10}, {"z", 0.001}}}, {"rotation", Json{{"x", -0.70710678}, {"y", 0}, {"z", 0}, {"w", 0.70710678}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
-    for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.frame().has_value());
     Json stats = s.command("render.stats", Json::object()).value();
     INFO(stats.dump());
     REQUIRE(stats["shadows"] == true);
     REQUIRE(stats["shadow_draws"].get<int>() >= 1);
+    // Nothing moves: the next frame keeps the cascades it drew.
+    REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.stats", Json::object()).value()["shadow_redrawn"] == 0);
     std::string path = (root() / "build" / "test-out" / "shadows.png").string();
     Json cap = s.command("capture", Json{{"path", path}}).value();
     // The cube's shadow lands at +X on the ground; open ground at -X is lit.
@@ -1943,7 +1946,7 @@ TEST_CASE("a light's shadow faces draw only the casters it reaches", "[renderer]
     }
     REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 3}, {"z", 8}}}}}, {"Camera", Json{{"fov_degrees", 60}}}}}}).has_value());
     REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 1}, {"y", 2}, {"z", 1}}}}}, {"Light", Json{{"kind", 1}, {"intensity", 2}, {"range", 4}, {"shadows", false}}}}}}).has_value());
-    REQUIRE(s.frame().has_value());
+    for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());   // the sun's cascades drawn, then kept
     const int without = s.command("render.stats", Json::object()).value()["shadow_instances"].get<int>();
     REQUIRE(s.command("world.set", Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"shadows", true}}}}).has_value());
     REQUIRE(s.frame().has_value());
@@ -2706,6 +2709,51 @@ TEST_CASE("an ocean runs to the horizon: below it the view shows water, not the 
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("grass grows on a terrain: blades over bare brown ground turn it green, none where its rules forbid, and they are the terrain's to pick", "[renderer][terrain][grass]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", Json{{"yaw", 30}, {"pitch", -50}}}}}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    Json ground = Json::object();
+    ground["Transform"] = Json::object();
+    ground["Terrain"] = Json{{"size", Json{{"x", 40}, {"y", 40}}}, {"height", 0.05}, {"resolution", 33}, {"grass", "#806040"}};
+    ground["MeshRenderer"] = Json::object();
+    REQUIRE(s.command("world.spawn", Json{{"name", "Ground"}, {"components", ground}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1.2}, {"z", 6}}}, {"rotation", Json{{"pitch", -12}}}}}, {"Camera", Json{{"fov_degrees", 50}}}}}}).has_value());
+    // The frame's lower half, where the ground is: its mean green over its mean red.
+    auto greenness = [&]() {
+        for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+        Json points = Json::array();
+        for (int y = 70; y < 120; y += 8)
+            for (int x = 8; x < 160; x += 16) points.push_back(Json{{"x", x}, {"y", y}});
+        const Json px = s.command("capture", Json{{"pixels", points}}).value()["pixels"];
+        double r = 0, g = 0;
+        for (const Json& p : px) { r += p[0].get<double>(); g += p[1].get<double>(); }
+        return g / std::max(r, 1.0);
+    };
+    const double bare = greenness();
+    REQUIRE(s.command("world.set", Json{{"entity", "Ground"}, {"component", "Grass"}, {"value", Json{{"density", 30}, {"height", 0.4}}}}).has_value());
+    const double grown = greenness();
+    INFO("bare " << bare << " grown " << grown);
+    const Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats.value("grass_blades", 0) > 1000);
+    REQUIRE(grown > bare + 0.15);
+    // A pixel of grass picks the terrain.
+    const Json picked = s.command("render.pick", Json{{"x", 80}, {"y", 110}}).value();
+    INFO(picked.dump());
+    REQUIRE(picked["path"] == "/Ground");
+    // Grass that may grow only above the ground: none.
+    REQUIRE(s.command("world.set", Json{{"entity", "Ground"}, {"component", "Grass"}, {"value", Json{{"min_height", 5}}}}).has_value());
+    const double above = greenness();
+    INFO("above " << above);
+    REQUIRE(std::abs(above - bare) < 0.05);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("caustics: the sunlight on a bed under water gathers into lines that move with time, and none without", "[renderer][water][caustics]") {
     const std::filesystem::path ref = root() / "samples" / "playground" / ".pocket" / "test-caustics.png";
     std::filesystem::remove(ref);
@@ -3044,8 +3092,19 @@ TEST_CASE("the frame's GPU time by pass, what the camera's passes leave out, and
     spawn("Behind", Json{{"Transform", at(0, 0.5, 12)}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
     // A line of blocks running away from the camera, 150 units long: each cascade covers a stretch.
     for (int i = 0; i < 30; ++i) spawn("Block" + std::to_string(i), Json{{"Transform", at(3, 0.5, -5.0 * i)}, {"MeshRenderer", Json{{"mesh", "cube"}}}});
-    for (int i = 0; i < 12; ++i) REQUIRE(s.frame().has_value());
+    // The first frame draws every cascade; later ones keep those whose casters stand still.
+    REQUIRE(s.frame().has_value());
+    const Json first = s.command("render.stats", Json::object()).value();
+    for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(first["shadow_redrawn"] == 4);
+    REQUIRE(s.command("render.stats", Json::object()).value()["shadow_redrawn"] == 0);
+    // A block turning in front of the camera: its cascade is drawn again every frame.
+    for (int i = 0; i < 8; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Ahead"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"yaw", 10 * (i + 1)}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+    }
     const Json st = s.command("render.stats", Json::object()).value();
+    REQUIRE(st["shadow_redrawn"].get<int>() >= 1);
     INFO(st.dump());
     // The block behind the camera is left out of the camera's passes (and so not picked or seen).
     REQUIRE(st["out_of_view"].get<int>() >= 1);
@@ -3057,8 +3116,8 @@ TEST_CASE("the frame's GPU time by pass, what the camera's passes leave out, and
     // Each cascade draws the casters over its own square, not all 32 four times.
     const int cascades = st["shadow_cascades"].get<int>();
     REQUIRE(cascades == 4);
-    REQUIRE(st["shadow_instances"].get<int>() < cascades * 32);
-    REQUIRE(st["shadow_instances"].get<int>() >= 32);
+    REQUIRE(first["shadow_instances"].get<int>() < cascades * 32);
+    REQUIRE(first["shadow_instances"].get<int>() >= 32);
     // On a device with timestamps (Metal, Vulkan, D3D12, a browser that grants them), each pass's
     // milliseconds, a few frames old.
     if (st.contains("gpu")) {

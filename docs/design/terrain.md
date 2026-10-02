@@ -147,6 +147,30 @@ Levels of detail) apply to every copy on its own: the far ones draw a simpler me
 ones; the hills' bushes, stones and boulders keep a third of their triangles below a twentieth of
 the view and a tenth below a fiftieth.
 
+## Grass
+
+`Grass` on a terrain's entity grows blades over it on the GPU, none of them in the world: the ground
+round the camera is a square of cells `reach` (40) out each way, one blade a cell, `density` (16) a
+square unit, the cells locked to the world so a blade stays where it grew as the camera moves. Each
+blade's place in its cell, height (0.55 to 1.3 of `height`, 0.5), facing, lean and shade come from a
+hash of the cell and `seed`; it stands where the ground's slope is under `max_slope` (35 degrees),
+between `min_height` and `max_height` (world y: above a water line), where `terrain.paint` has not
+covered the ground more than `max_paint` (0.3: a path stays bare) and, with textured layers, where
+the layer `layer` names (the first when empty) lies, shorter where it thins. Past `thin` (12) they
+thin out, one in (thin / distance)^2 kept and as much wider, so the far field costs little; the
+`Wind` bends them by `sway` (0.6) with gusts running down it, and what walks or rolls through them
+presses them aside (characters, and dynamic bodies about their own size; the nearest eight to the
+camera). Each is a strip of seven points from `color` at the root to `tip`, lit mostly as the ground
+under it is, darker at the root, the sun shining through it when it stands against it, in the sun's
+shadows and the clouds'. They are drawn first in the scene pass and in the id pass, so water, fog
+and ambient occlusion see them and picking one picks the terrain. The session hands the renderer the
+ground (its heights, the layer's share and the paint, as a half-float texture) when the terrain
+changes. `render.stats` says `grass_blades` (the square's cells). `renderer_tests` (`[grass]`):
+grass turns bare brown ground green, a pixel of it picks the terrain, and grass allowed only above
+the ground grows none. `tests/evidence/rendering/grass.png` (`tools/scripts/dev/grass_evidence.py`):
+the hills' grass at noon and toward a low sun in the wind. A `grass` prop scattered by `Scatter`
+makes tufts that stand alone instead (`docs/design/assets.md`).
+
 ## Levels of detail
 
 A terrain of 256 cells or more across is drawn in squares of a sixteenth of it (32 to 64 cells; a

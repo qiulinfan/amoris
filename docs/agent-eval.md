@@ -54,6 +54,7 @@ checks the world through the same commands. A task passes or fails; nothing is s
 | `grey_flashback` | crates | turn the whole picture grey with a post effect, the interface untouched | `render.post`, the colours of a crate and the car |
 | `svg_coin` | hello (a copy) | draw a coin as an SVG file of its own and show it from the start as a sprite at a place | the Sprite's texture an SVG the engine reads, its place and size, gold at its middle and a darker rim |
 | `orange_ball` | hello (a copy) | a WGSL material of its own that draws the ball a flat orange, from the start | `world.lint`, the ball's colour at its centre and toward its edge |
+| `sailboat` | blank | the ground taken away, an ocean at 0, a wind of 6 toward +x, a boat named Sloop under sail alone, bow to +x | the Sloop's `Boat` (no throttle, afloat), `wind.at`, five seconds of sailing carry it 5 or more along +x |
 | `dodge` | blank | a dodge game from a brief: moves, a rock a second, a hit ends it | input, rock count and fall, `game.over`, nothing moves after |
 | `key_door` | blank | a key, a door that holds until the key is taken, an exit | the door holds, `key.taken`, `level.complete` |
 | `snake` | blank | snake on a 20 by 15 grid from a brief: segments, a cell every 0.15 s, turning but never back, food that grows it, the edge ends it | the start, `food.eaten` with the Food put ahead, five cells in 0.75 s, no reversing, a turn, `game.over` at the top edge, nothing moves after |
@@ -61,6 +62,8 @@ checks the world through the same commands. A task passes or fails; nothing is s
 | `reed_field` | hills | plant a Scatter of thin reeds on the terrain within an area, all one size, swaying 0.3 and each a collider 0.1 in radius, answer with how many stand | `world.get` on the Scatter, `scatter.copies`, `physics.raycast` onto a reed |
 | `stormy_dusk` | hills | make a windy, cloudy sunset (the atmosphere sky with clouds, the sun low in the west, the wind toward +x), answer with the red of the sun light at the ground | `world.get` on the Sky, Sun and Wind, `wind.at`, `render.stats` (`sun_light`) |
 | `snowy_evening` | hills | a snowy evening that goes on by itself (snow at 0.7 on ground already white, the time of day at 17:30 in a ten-minute day), answer with the hour after ten seconds | the first `Weather` (`snow`, `cover`), the Sky's `day_length` and `time_of_day`, `render.stats` (`weather_drops`) |
+| `sea_around` | hills | the lake made a sea to the horizon at its height, the sky's volumetric clouds over about half of it; answer with the level 400 units east | `water.height` at (400, 0) and far to the north-west, the Sky's `clouds`, `render.stats` (`clouds`) |
+| `meadow` | hills | grass on the terrain's grass layer, none below 3.5, drawn out to 30 units | the terrain's `Grass` (`layer`, `min_height`, `reach`), `render.stats` (`grass_blades`) |
 | `dirt_patch` | hills | change one textured layer's height rule and paint another in a patch, answer with its share at the centre | `world.get` on the Terrain's layers, `terrain.height` (the share there and six units out) |
 | `glass_window` | hello | spawn a pane of clear glass with an index of refraction and give the Ball a clear coat, answer with the glass the renderer drew | `world.get` on both MeshRenderers and the Transform, `render.stats` (`glass`) |
 | `night_level` | sprites | make the level night: the map and the player lit, a dark blue ambient, a warm light that goes with the player | `world.get` on the TileMap and Sprite, `render.ambient`, the lights' world positions after the player walks |
@@ -487,6 +490,21 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   read `components.toml`, the script and the sample's scenarios, found the `Weather` fields with one
   `docs_search`, made the change in four edits, watched `Weather.rain`, `Weather.wet` and two plots'
   water through a 500-tick `step` with `watch`, and ran the sample's scenarios before answering.
+- **Sixty-seven on opencode.** The sixty-two and the five added since (`glade`, `fps_shotgun`,
+  `guards_footsteps`, `snowy_evening`, `farm_rain`) went to opencode with GLM 5.3 Flash over MCP on
+  2026-10-02: 63 of 67 at the first try in 191 minutes, 30.8 million tokens, 993 tool calls
+  (`opencode-glm-full67.json`). The five passed again. Of the sixty-two both runs had, 58 passed
+  against 61, in 177 minutes against 164: three whole-game tasks (`snake`, `platformer`, `sokoban`)
+  ran to the runner's 660 seconds and were stopped, `platformer` after 13 turns (some fifty seconds
+  a turn, most of it the model's reasoning), `sokoban` after 17 and `snake` after
+  46. The run shared the machine with builds of the engine, which slowed the agents' own builds and
+checks, so its times are not the engine's alone. `reed_field` failed (a reed's collider a hundredth
+of a unit across) on the runtime copied when the run began, before `Scatter.collide` became world
+units (`docs/design/terrain.md`), the change that failure led to. Of the twenty-one failed calls,
+`world.get {field}`, `world.get {components}` and `wind.at {position}` are read as meant since
+changes made while the run went on, `world.schema` answers a name it does not have with the nearest
+(`BoxCollider`: `Collider`), and two `project.apply` calls met scripts that used SDK names
+(`onStart`) without importing them: a script error now says where such a name comes from.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

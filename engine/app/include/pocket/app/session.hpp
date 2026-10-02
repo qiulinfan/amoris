@@ -185,6 +185,7 @@ class Session {
         bool edited = false;
     };
     std::map<world::EntityId, TerrainState> terrains_;
+    std::map<world::EntityId, std::string> grass_keys_;   // the ground last sent to the renderer for each terrain's Grass
     void update_terrains();
     // Water splashes (docs/design/water.md): each water.entered event after `since` bursts its water's splash emitter.
     void splash_water(std::uint64_t since);

@@ -42,6 +42,7 @@
     X(Water) \
     X(Scatter) \
     X(Vehicle) \
+    X(Grass) \
     X(Boat) \
     X(Area2D) \
     X(Path) \

@@ -2618,6 +2618,137 @@ fn cloud_dens(q: vec3f, h01: f32, cover: f32, fine: bool) -> f32 {
     return result;
 }
 
+// Grass (docs/design/terrain.md, Grass): blades over a terrain, made in the vertex shader. The
+// ground round the camera is a square of cells (one blade a cell) locked to the world, so a blade
+// stays where it grew as the camera moves; each blade's place in its cell, height, facing, lean
+// and shade come from a hash of the cell. Its root stands on the ground as a texture of the
+// terrain gives it (the height, the share of the layer grass grows on, the paint), where the ground
+// is gentle enough, high and low enough, and unpainted. Past `thin` they thin out (one in
+// (thin / distance)^2 kept, wider) so the far field costs little; the wind bends them with gusts
+// running down it. Lit mostly as the ground under them, darker at the root, the sun shining
+// through them when they stand against it.
+struct GrassParams {
+    origin: vec4f,   // the terrain's place, the cell size
+    ground: vec4f,   // its size along x and z, cells across the drawn square, how far blades are drawn
+    blade: vec4f,    // height, width, sway, the distance from which they thin
+    limits: vec4f,   // the cosine of the steepest slope they grow on, the lowest and highest world height, the most paint
+    base: vec4f,     // the colour at the root (linear); w: the share of the layer below which none grow
+    tip: vec4f,      // the colour at the tip
+    ids: vec4u,      // the terrain's id, the seed, how many press it down
+    pressers: array<vec4f, 8>,   // what walks or rolls through it: x, y, z, radius (the nearest eight to the camera)
+};
+@group(1) @binding(40) var<uniform> grass: GrassParams;
+@group(1) @binding(41) var grass_ground: texture_2d<f32>;   // height, the grass's layer's share, paint
+@group(1) @binding(42) var grass_samp: sampler;
+struct GrassOut {
+    @builtin(position) clip: vec4f,
+    @location(0) world_pos: vec3f,
+    @location(1) normal: vec3f,
+    @location(2) color: vec3f,
+    @location(3) up: f32,          // 0 at the root, 1 at the tip
+    @location(4) cur: vec4f,       // this frame's and last frame's clip positions, unjittered (motion)
+    @location(5) prev: vec4f,
+};
+fn grass_hash(c: vec2i, k: u32) -> vec4f {
+    var v = vec4u(u32(c.x), u32(c.y), k, k ^ 0x9e3779b9u);
+    v = v * vec4u(1664525u) + vec4u(1013904223u);
+    v.x = v.x + v.y * v.w; v.y = v.y + v.z * v.x; v.z = v.z + v.x * v.y; v.w = v.w + v.y * v.z;
+    v = v ^ (v >> vec4u(16u));
+    v.x = v.x + v.y * v.w; v.y = v.y + v.z * v.x; v.z = v.z + v.x * v.y; v.w = v.w + v.y * v.z;
+    return vec4f(v & vec4u(0xffffffu)) / 16777216.0;
+}
+fn grass_ground_at(xz: vec2f) -> vec4f {
+    let uv = (xz - grass.origin.xz) / grass.ground.xy + 0.5;
+    return textureSampleLevel(grass_ground, grass_samp, uv, 0.0);
+}
+@vertex fn vs_grass(@builtin(vertex_index) vi: u32, @builtin(instance_index) blade: u32) -> GrassOut {
+    var out: GrassOut;
+    out.clip = vec4f(0.0, 0.0, 2.0, 1.0);   // a blade that does not grow: outside the view, culled
+    let cells = max(u32(grass.ground.z), 1u);
+    let size = grass.origin.w;
+    let first = vec2i(floor(frame.camera_pos.xz / size)) - vec2i(i32(cells / 2u));
+    let cell = first + vec2i(i32(blade % cells), i32(blade / cells));
+    let h = grass_hash(cell, grass.ids.y);
+    let root_xz = (vec2f(cell) + h.xy) * size;
+    let dist = distance(root_xz, frame.camera_pos.xz);
+    if (dist > grass.ground.w) { return out; }
+    var keep = 1.0;
+    if (dist > grass.blade.w) { keep = grass.blade.w / dist; keep = keep * keep; }
+    if (h.z > keep) { return out; }
+    let local = (root_xz - grass.origin.xz) / grass.ground.xy;
+    if (abs(local.x) > 0.5 || abs(local.y) > 0.5) { return out; }
+    let g = grass_ground_at(root_xz);
+    let root = vec3f(root_xz.x, grass.origin.y + g.x, root_xz.y);
+    if (g.y < grass.base.w || g.z > grass.limits.w || root.y < grass.limits.y || root.y > grass.limits.z) { return out; }
+    if (dot(root - frame.camera_pos.xyz, frame.camera_fwd.xyz) < -2.0) { return out; }
+    let e = max(size, 0.25);
+    let hx = grass_ground_at(root_xz + vec2f(e, 0.0)).x - grass_ground_at(root_xz - vec2f(e, 0.0)).x;
+    let hz = grass_ground_at(root_xz + vec2f(0.0, e)).x - grass_ground_at(root_xz - vec2f(0.0, e)).x;
+    let gn = normalize(vec3f(-hx / (2.0 * e), 1.0, -hz / (2.0 * e)));
+    if (gn.y < grass.limits.x) { return out; }
+    // The blade: seven points up a tapering strip, bent by its own lean and the wind.
+    let h2 = grass_hash(cell, grass.ids.y + 7919u);
+    let tall = grass.blade.x * (0.55 + 0.75 * h.w) * clamp(g.y * 1.6, 0.35, 1.0);
+    let yaw = h2.x * 6.2831853;
+    let face = vec3f(cos(yaw), 0.0, sin(yaw));
+    let lean = vec3f(-sin(yaw), 0.0, cos(yaw));
+    let t = select(f32(vi / 2u) / 3.0, 1.0, vi >= 6u);
+    let across = select(select(-0.5, 0.5, (vi & 1u) == 1u), 0.0, vi >= 6u);
+    let width = grass.blade.y * (1.0 - 0.85 * t) / sqrt(keep);
+    let gust = 0.5 + 0.5 * sin(dot(root_xz, vec2f(frame.wind.x, frame.wind.y)) * 0.3 - frame.clock.x * 2.1 + h2.y * 6.2831853);
+    let push = grass.blade.z * frame.wind.w * min(frame.wind.z, 10.0) * (0.35 + 0.65 * gust) * 0.25;
+    var bend = lean * (h2.z * 0.45) + vec3f(frame.wind.x, 0.0, frame.wind.y) * push;
+    // Pressed aside by what stands or moves in it: away from its middle, most near it.
+    for (var k = 0u; k < min(grass.ids.z, 8u); k = k + 1u) {
+        let pr = grass.pressers[k];
+        let d = root_xz - pr.xz;
+        let r = pr.w;
+        let dd = length(d);
+        if (dd >= r || abs(root.y - pr.y) > r + 1.5) { continue; }
+        let f = 1.0 - dd / r;
+        bend = bend + vec3f(d.x, 0.0, d.y) / max(dd, 1e-3) * (f * 1.6);
+    }
+    let p = root + face * (across * width) + vec3f(0.0, tall * t * (1.0 - 0.25 * dot(bend, bend)), 0.0) + bend * (tall * t * t);
+    out.clip = frame.view_proj * vec4f(p, 1.0);
+    out.cur = frame.cur_view_proj * vec4f(p, 1.0);
+    out.prev = frame.prev_view_proj * vec4f(p, 1.0);
+    out.world_pos = p;
+    out.normal = normalize(gn * 0.75 + cross(vec3f(0.0, 1.0, 0.0), face) * 0.25 * select(1.0, -1.0, h2.w > 0.5));
+    out.color = mix(grass.base.rgb, grass.tip.rgb, t) * (0.8 + 0.4 * h2.w);
+    out.up = t;
+    return out;
+}
+fn grass_light(in: GrassOut) -> vec3f {
+    let n = normalize(in.normal);
+    let l = normalize(-frame.sun_dir.xyz);
+    let v = normalize(frame.camera_pos.xyz - in.world_pos);
+    let lit = sun_visible(in.world_pos + l * 0.05) * cloud_shade(in.world_pos, l);
+    let wrap = clamp(dot(n, l) * 0.7 + 0.3, 0.0, 1.0);
+    // The sun through a blade seen against it.
+    let through = pow(max(dot(-v, l), 0.0), 3.0) * 0.45 * in.up;
+    var ambient = frame.ambient.rgb;
+    if (frame.env.x > 0.5) { ambient = ambient + sh_irradiance(n) * frame.env.y; }
+    let ao = mix(0.4, 1.0, in.up);
+    return in.color * (frame.sun_color.rgb * (wrap + through) * lit + ambient * ao);
+}
+@fragment fn fs_grass(in: GrassOut) -> FsOut {
+    var out: FsOut;
+    out.color = vec4f(grass_light(in), 1.0);
+    out.id = grass.ids.x;
+    return out;
+}
+@fragment fn fs_grass_color(in: GrassOut) -> @location(0) vec4f {
+    return vec4f(grass_light(in), 1.0);
+}
+@fragment fn fs_grass_id(in: GrassOut) -> IdOut {
+    var out: IdOut;
+    out.id = grass.ids.x;
+    out.velocity = (in.cur.xy / in.cur.w - in.prev.xy / in.prev.w) * vec2f(0.5, -0.5);
+    out.surface = vec4f(oct_encode(normalize(in.normal)), 0.9, 0.0);
+    out.albedo = vec4f(in.color, 1.0);
+    return out;
+}
+
 // Water (docs/design/water.md): each body a grid over its extent moved by the Gerstner waves of
 // world::water_surface (the two must change together), drawn after the solid scene. What lies
 // below shows through, bent by the waves and fading into the water's colour with the depth the
@@ -4156,6 +4287,27 @@ struct Renderer::Impl {
     WGPURenderPipeline volume_pipeline = nullptr;
     WGPUBuffer volume_uniforms = nullptr;
     WGPUTextureView volume_depth = nullptr;       // the depth view volume_bgs read
+    // Grass (docs/design/terrain.md, Grass): each terrain's ground as a texture (height, the layer's
+    // share, paint) with its uniforms and group, made again when the session's field changes, and
+    // this frame's fields to draw (the scene pass's pipeline is built with the scene pipelines).
+    struct GrassGround {
+        Renderer::GroundField field;
+        bool uploaded = false;
+        WGPUTexture tex = nullptr;
+        WGPUTextureView view = nullptr;
+        WGPUBuffer uniforms = nullptr;
+        WGPUBindGroup bg = nullptr;
+    };
+    std::map<world::EntityId, GrassGround> grass_grounds;
+    struct GrassDraw {
+        WGPUBindGroup bg = nullptr;
+        std::uint32_t blades = 0;
+    };
+    std::vector<GrassDraw> grass_draws;
+    WGPUBindGroupLayout grass_bgl = nullptr;
+    WGPUPipelineLayout grass_layout = nullptr;
+    WGPURenderPipeline grass_pipeline = nullptr, grass_id_pipeline = nullptr;
+    WGPUSampler grass_samp = nullptr;
     // Volumetric clouds (docs/design/rendering.md, Clouds): quarter-size targets in turn (this
     // frame's, last frame's), a stand-in for the sky when they are not marched, the pass (the mesh
     // module's vs_volume/fs_clouds over the scene group and its own) and the 3D noise block they are
@@ -4387,6 +4539,22 @@ struct Renderer::Impl {
     std::uint32_t probe_cursor = 0;   // where the search for a probe to capture starts (realtime ones take turns)
     bool probe_refresh = false;
     std::uint64_t frame_number = 0;
+    // The sun's cascades kept from the frame that drew them (docs/design/rendering.md, Shadows): one
+    // is drawn again when the slice it must hold has left the square it was drawn over, the sun has
+    // moved, the settings changed or what casts over its square changed; while casters there only
+    // move (a skinned pose, swaying copies), the nearest every frame, the next every second, the far
+    // two every fourth.
+    struct KeptCascade {
+        bool valid = false;
+        float vp[16]{};
+        float texel = 0, depth = 0, distance = 0;
+        Vec3 sun{0, 0, 0};
+        int count = 0;
+        std::uint64_t casters = 0, pose = 0;   // signatures of what it was drawn with, and where
+    };
+    std::array<KeptCascade, kCascades> kept_cascades{};
+    std::array<bool, kCascades> cascade_due{};
+    float shadow_clock = -1;   // the simulation clock at the last frame the cascades were considered
     WGPUTexture probe_env_tex = nullptr, probe_views_tex = nullptr, probe_depth_tex = nullptr;
     WGPUTextureView probe_env_view = nullptr, probe_views_array = nullptr, probe_depth_array = nullptr;
     WGPUTextureView probe_depth_face[6]{};       // each view's depth, kept for an irradiance probe's moments
@@ -4838,6 +5006,10 @@ struct Renderer::Impl {
         for (WGPUTexture t : {volume_tex[0], volume_tex[1], volume_none_tex}) if (t) wgpuTextureRelease(t);
         for (WGPUBindGroup g : volume_bgs) if (g) wgpuBindGroupRelease(g);
         if (volume_samp) wgpuSamplerRelease(volume_samp);
+        for (auto& [gid, gg] : grass_grounds) release_grass_ground(gg);
+        if (grass_layout) wgpuPipelineLayoutRelease(grass_layout);
+        if (grass_bgl) wgpuBindGroupLayoutRelease(grass_bgl);
+        if (grass_samp) wgpuSamplerRelease(grass_samp);
         if (cloud_uniforms) wgpuBufferRelease(cloud_uniforms);
         if (cloud_pipeline) wgpuRenderPipelineRelease(cloud_pipeline);
         if (cloud_noise_pipeline) wgpuComputePipelineRelease(cloud_noise_pipeline);
@@ -4976,6 +5148,7 @@ struct Renderer::Impl {
         if (line_shader) wgpuShaderModuleRelease(line_shader);
         if (line_buffer) wgpuBufferRelease(line_buffer);
         if (pipeline) wgpuRenderPipelineRelease(pipeline);
+        for (WGPURenderPipeline gp : {grass_pipeline, grass_id_pipeline}) if (gp) wgpuRenderPipelineRelease(gp);
         if (skinned_pipeline) wgpuRenderPipelineRelease(skinned_pipeline);
         if (blend_pipeline) wgpuRenderPipelineRelease(blend_pipeline);
         if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
@@ -5292,6 +5465,16 @@ struct Renderer::Impl {
         float march[4];          // steps, distance, start, this frame's jitter offset
         float target_size[4];
         float history[4];        // last frame's result usable (1/0), the share of this frame
+    };
+    struct GrassUniforms {
+        float origin[4];         // the terrain's place, the cell size
+        float ground[4];         // its size along x and z, cells across the drawn square, how far they are drawn
+        float blade[4];          // height, width, sway, where they start to thin
+        float limits[4];         // the cosine of the steepest slope, the lowest and highest world height, the most paint
+        float base[4];           // the root's colour (linear), w: the share below which none grow
+        float tip[4];
+        std::uint32_t ids[4];    // the terrain's id, the seed, how many press it down
+        float pressers[8][4];    // x, y, z, radius
     };
     struct CloudUniforms {
         float march[4];          // steps, this frame's share of the blend (0: no history), the jitter offset, the farthest the march looks
@@ -8687,6 +8870,10 @@ fn time() -> f32 { return fx.time.x; }
     void release_scene_pipelines() {
         if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
         sky_pipeline = nullptr;
+        for (WGPURenderPipeline* p : {&grass_pipeline, &grass_id_pipeline}) {
+            if (*p) wgpuRenderPipelineRelease(*p);
+            *p = nullptr;
+        }
         for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &particle_pipeline, &particle_add_pipeline, &weather_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
@@ -8961,9 +9148,210 @@ fn time() -> f32 { return fx.time.x; }
             sky_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &k);
             if (!sky_pipeline) return fail("gpu_pipeline_failed", "sky pipeline creation failed");
         }
+        {
+            // Grass: blades as triangle strips of seven points, both sides, written into depth; in the
+            // id pass too, so what reads its depth (water, fog, AO) sees them.
+            WGPUColorTargetState gt[2]{};
+            gt[0].format = kHdrFormat;
+            gt[0].writeMask = WGPUColorWriteMask_All;
+            gt[1].format = WGPUTextureFormat_R32Uint;
+            gt[1].writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState gfs{};
+            gfs.module = shader;
+            gfs.entryPoint = rhi::str(split ? "fs_grass_color" : "fs_grass");
+            gfs.targetCount = split ? 1 : 2;
+            gfs.targets = gt;
+            WGPUDepthStencilState gds{};
+            gds.format = device->depth_format();
+            gds.depthWriteEnabled = WGPUOptionalBool_True;
+            gds.depthCompare = WGPUCompareFunction_Less;
+            gds.stencilFront.compare = WGPUCompareFunction_Always;
+            gds.stencilBack.compare = WGPUCompareFunction_Always;
+            gds.stencilReadMask = 0xFFFFFFFF;
+            gds.stencilWriteMask = 0xFFFFFFFF;
+            WGPURenderPipelineDescriptor g{};
+            g.label = rhi::str("pocket.grass");
+            g.layout = grass_layout;
+            g.vertex.module = shader;
+            g.vertex.entryPoint = rhi::str("vs_grass");
+            g.primitive.topology = WGPUPrimitiveTopology_TriangleStrip;
+            g.primitive.frontFace = WGPUFrontFace_CCW;
+            g.primitive.cullMode = WGPUCullMode_None;
+            g.depthStencil = &gds;
+            g.multisample.count = static_cast<std::uint32_t>(samples);
+            g.multisample.mask = 0xFFFFFFFFu;
+            g.fragment = &gfs;
+            grass_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &g);
+            if (!grass_pipeline) return fail("gpu_pipeline_failed", "grass pipeline creation failed");
+            if (split) {
+                WGPUColorTargetState it[4]{};
+                it[0].format = WGPUTextureFormat_R32Uint;
+                it[1].format = kVelocityFormat;
+                it[2].format = kSurfaceFormat;
+                it[3].format = kAlbedoFormat;
+                for (auto& x : it) x.writeMask = WGPUColorWriteMask_All;
+                WGPUFragmentState ifs{};
+                ifs.module = shader;
+                ifs.entryPoint = rhi::str("fs_grass_id");
+                ifs.targetCount = 4;
+                ifs.targets = it;
+                WGPUDepthStencilState ids = gds;
+                ids.format = kPrepassDepth;
+                g.label = rhi::str("pocket.ids.grass");
+                g.depthStencil = &ids;
+                g.multisample.count = 1;
+                g.fragment = &ifs;
+                grass_id_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &g);
+                if (!grass_id_pipeline) return fail("gpu_pipeline_failed", "grass id pipeline creation failed");
+            }
+        }
         msaa_applied = samples;
         split_applied = split;
         return {};
+    }
+
+    // Grass's group: its uniforms, the ground texture and a clamped linear sampler.
+    void create_grass_layout() {
+        WGPUBindGroupLayoutEntry ge[3]{};
+        ge[0].binding = 40;
+        ge[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        ge[0].buffer.type = WGPUBufferBindingType_Uniform;
+        ge[0].buffer.minBindingSize = sizeof(GrassUniforms);
+        ge[1].binding = 41;
+        ge[1].visibility = WGPUShaderStage_Vertex;
+        ge[1].texture.sampleType = WGPUTextureSampleType_Float;
+        ge[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        ge[2].binding = 42;
+        ge[2].visibility = WGPUShaderStage_Vertex;
+        ge[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor gd{};
+        gd.label = rhi::str("pocket.grass");
+        gd.entryCount = 3;
+        gd.entries = ge;
+        grass_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &gd);
+        WGPUBindGroupLayout layouts[2] = {scene_bgl, grass_bgl};
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.grass");
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
+        grass_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUSamplerDescriptor sd{};
+        sd.label = rhi::str("pocket.grass");
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = WGPUFilterMode_Linear;
+        sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.lodMaxClamp = 1.0f;
+        sd.maxAnisotropy = 1;
+        grass_samp = wgpuDeviceCreateSampler(device->device(), &sd);
+    }
+    void release_grass_ground(GrassGround& gg) {
+        if (gg.bg) wgpuBindGroupRelease(gg.bg);
+        if (gg.view) wgpuTextureViewRelease(gg.view);
+        if (gg.tex) wgpuTextureRelease(gg.tex);
+        if (gg.uniforms) wgpuBufferRelease(gg.uniforms);
+        gg.bg = nullptr;
+        gg.view = nullptr;
+        gg.tex = nullptr;
+        gg.uniforms = nullptr;
+        gg.uploaded = false;
+    }
+    // This frame's grass: every enabled Grass on a Terrain whose ground the session has given, its
+    // texture made (again) when the ground changed, its uniforms written.
+    void gather_grass(const world::World& w) {
+        grass_draws.clear();
+        std::vector<world::EntityId> gone;
+        for (auto& [gid, gg] : grass_grounds) if (!w.alive(gid)) gone.push_back(gid);
+        for (world::EntityId gid : gone) {
+            release_grass_ground(grass_grounds[gid]);
+            grass_grounds.erase(gid);
+        }
+        // What presses the grass aside: characters (a little wider than their capsules) and dynamic
+        // bodies (their boxes' half width), the nearest eight to the camera.
+        std::vector<std::pair<Vec3, float>> pressers;
+        w.ecs().each([&](flecs::entity, const world::Character&, const world::WorldTransform& t, const world::Collider& c) {
+            pressers.emplace_back(Vec3{t.position.x, t.position.y - c.size.y - c.size.x, t.position.z}, std::max(c.size.x, 0.2f) * 2.2f);
+        });
+        w.ecs().each([&](flecs::entity, const world::RigidBody& rb, const world::WorldTransform& t, const world::Collider& c) {
+            if (rb.kind != 0 || pressers.size() > 64) return;
+            pressers.emplace_back(t.position, std::max(std::max(c.size.x, c.size.z), 0.15f) * 1.5f);
+        });
+        std::sort(pressers.begin(), pressers.end(), [&](const auto& a, const auto& b) { return length(a.first - camera.position) < length(b.first - camera.position); });
+        w.ecs().each([&](flecs::entity e, const world::Grass& gr, const world::Terrain&, const world::WorldTransform& t) {
+            if (!gr.enabled || grass_draws.size() >= 8) return;
+            auto it = grass_grounds.find(e.id());
+            if (it == grass_grounds.end() || it->second.field.n < 2) return;
+            GrassGround& gg = it->second;
+            const int n = gg.field.n;
+            if (!gg.uploaded) {
+                if (gg.bg) wgpuBindGroupRelease(gg.bg);
+                if (gg.view) wgpuTextureViewRelease(gg.view);
+                if (gg.tex) wgpuTextureRelease(gg.tex);
+                const auto un = static_cast<std::uint32_t>(n);
+                auto [tex, view] = make_target("pocket.grass.ground", un, un, WGPUTextureFormat_RGBA16Float, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
+                if (!tex) return;
+                gg.tex = tex;
+                gg.view = view;
+                std::vector<std::uint16_t> texels(static_cast<std::size_t>(n) * static_cast<std::size_t>(n) * 4);
+                for (std::size_t k = 0; k < gg.field.samples.size() && k * 4 + 3 < texels.size(); ++k) {
+                    texels[k * 4] = to_half(gg.field.samples[k][0]);
+                    texels[k * 4 + 1] = to_half(gg.field.samples[k][1]);
+                    texels[k * 4 + 2] = to_half(gg.field.samples[k][2]);
+                    texels[k * 4 + 3] = to_half(1.0f);
+                }
+                WGPUTexelCopyTextureInfo dst{};
+                dst.texture = gg.tex;
+                dst.aspect = WGPUTextureAspect_All;
+                WGPUTexelCopyBufferLayout layout{};
+                layout.bytesPerRow = un * 8;
+                layout.rowsPerImage = un;
+                const WGPUExtent3D ext{un, un, 1};
+                wgpuQueueWriteTexture(device->queue(), &dst, texels.data(), texels.size() * sizeof(std::uint16_t), &layout, &ext);
+                if (!gg.uniforms) gg.uniforms = device->create_buffer("pocket.grass", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(GrassUniforms));
+                WGPUBindGroupEntry be[3]{};
+                be[0].binding = 40;
+                be[0].buffer = gg.uniforms;
+                be[0].size = sizeof(GrassUniforms);
+                be[1].binding = 41;
+                be[1].textureView = gg.view;
+                be[2].binding = 42;
+                be[2].sampler = grass_samp;
+                WGPUBindGroupDescriptor bd{};
+                bd.label = rhi::str("pocket.grass");
+                bd.layout = grass_bgl;
+                bd.entryCount = 3;
+                bd.entries = be;
+                gg.bg = wgpuDeviceCreateBindGroup(device->device(), &bd);
+                gg.uploaded = true;
+            }
+            const float density = std::clamp(gr.density, 1.0f, 400.0f), reach = std::clamp(gr.reach, 1.0f, 400.0f);
+            const float cell = 1.0f / std::sqrt(density);
+            const auto cells = static_cast<std::uint32_t>(std::clamp(std::ceil(2.0f * reach / cell), 1.0f, 1024.0f));
+            GrassUniforms u{};
+            u.origin[0] = t.position.x; u.origin[1] = t.position.y; u.origin[2] = t.position.z; u.origin[3] = cell;
+            u.ground[0] = gg.field.size_x; u.ground[1] = gg.field.size_z; u.ground[2] = static_cast<float>(cells); u.ground[3] = reach;
+            u.blade[0] = std::max(gr.height, 0.0f); u.blade[1] = std::max(gr.width, 0.0f); u.blade[2] = std::max(gr.sway, 0.0f); u.blade[3] = std::clamp(gr.thin, 0.5f, reach);
+            u.limits[0] = std::cos(radians(std::clamp(gr.max_slope, 0.0f, 90.0f))); u.limits[1] = gr.min_height; u.limits[2] = gr.max_height; u.limits[3] = gr.max_paint;
+            u.base[0] = decode(gr.color.r); u.base[1] = decode(gr.color.g); u.base[2] = decode(gr.color.b); u.base[3] = 0.15f;
+            u.tip[0] = decode(gr.tip.r); u.tip[1] = decode(gr.tip.g); u.tip[2] = decode(gr.tip.b);
+            u.ids[0] = static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu); u.ids[1] = gr.seed * 2654435761u;
+            u.ids[2] = static_cast<std::uint32_t>(std::min<std::size_t>(pressers.size(), 8));
+            for (std::size_t k = 0; k < pressers.size() && k < 8; ++k) {
+                u.pressers[k][0] = pressers[k].first.x; u.pressers[k][1] = pressers[k].first.y; u.pressers[k][2] = pressers[k].first.z; u.pressers[k][3] = pressers[k].second;
+            }
+            device->write_buffer(gg.uniforms, 0, &u, sizeof u);
+            grass_draws.push_back({gg.bg, cells * cells});
+        });
+    }
+    void draw_grass(WGPURenderPassEncoder pass, WGPURenderPipeline pipe) {
+        if (grass_draws.empty() || !pipe) return;
+        wgpuRenderPassEncoderSetPipeline(pass, pipe);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, scene_bg, 0, nullptr);
+        for (const GrassDraw& d : grass_draws) {
+            wgpuRenderPassEncoderSetBindGroup(pass, 1, d.bg, 0, nullptr);
+            wgpuRenderPassEncoderDraw(pass, 7, d.blades, 0, 0);
+            stats.draw_calls++;
+        }
     }
 
     Status ensure_id_target(std::uint32_t w, std::uint32_t h) {
@@ -9193,6 +9581,7 @@ fn time() -> f32 { return fx.time.x; }
             if (!particle_sim_pipeline) return fail("gpu_pipeline_failed", "the GPU particles' simulation could not be created");
         }
         POCKET_TRY_VOID(create_clouds());
+        create_grass_layout();
         WGPUBindGroupLayout sky_groups[2] = {scene_bgl, cloud_sky_bgl};
         WGPUPipelineLayoutDescriptor kpld{};
         kpld.label = rhi::str("pocket.sky");
@@ -10790,6 +11179,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     im.stats.water = static_cast<std::uint32_t>(im.water_bodies.size());
     im.camera = im.find_camera(world, aspect);
     im.fit_oceans(im.camera.far);
+    im.gather_grass(world);
+    for (const auto& d : im.grass_draws) im.stats.grass_blades += d.blades;
 
     FrameUniforms fu{};
     // The cel look's bands for the lights in the mesh shader (its outlines are the post pass's).
@@ -11099,11 +11490,36 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const float sx = std::round(o.x * half) / half - o.x, sy = std::round(o.y * half) / half - o.y;
             light_proj = Mat4::translation({sx, sy, 0}) * light_proj;
             const Mat4 vp = light_proj * light_view;
-            to_array(vp, fu.cascade_vp[c]);
+            // Drawn again, or the kept one still holds every corner of this frame's slice.
+            Impl::KeptCascade& kc = im.kept_cascades[static_cast<std::size_t>(c)];
+            bool due = im.secondary || !kc.valid || kc.count != count || kc.distance != im.shadows.distance || dot(kc.sun, dir) < 0.99999f;
+            if (!due) {
+                Mat4 kvp;
+                std::memcpy(kvp.m, kc.vp, sizeof kvp.m);
+                for (const Vec3& p : pts) {
+                    const Vec4 q = kvp * Vec4{p.x, p.y, p.z, 1};
+                    if (std::fabs(q.x) > 0.97f || std::fabs(q.y) > 0.97f || q.z < 0.0f || q.z > 1.0f) { due = true; break; }
+                }
+            }
+            im.cascade_due[static_cast<std::size_t>(c)] = due;
+            if (due) {
+                to_array(vp, fu.cascade_vp[c]);
+                fu.cascade_texel[c] = 2.0f * r / static_cast<float>(kShadowMapSize);
+                fu.cascade_depth[c] = back + r + 1.0f - 0.05f;
+                std::memcpy(kc.vp, fu.cascade_vp[c], sizeof kc.vp);
+                kc.texel = fu.cascade_texel[c];
+                kc.depth = fu.cascade_depth[c];
+                kc.sun = dir;
+                kc.count = count;
+                kc.distance = im.shadows.distance;
+                kc.valid = !im.secondary;   // a secondary view's cascades are its own: the next view draws all again
+            } else {
+                std::memcpy(fu.cascade_vp[c], kc.vp, sizeof kc.vp);
+                fu.cascade_texel[c] = kc.texel;
+                fu.cascade_depth[c] = kc.depth;
+            }
             std::memcpy(slots + 256 * c, fu.cascade_vp[c], sizeof(float) * 16);
             fu.cascade_far[c] = splits[cc + 1];
-            fu.cascade_texel[c] = 2.0f * r / static_cast<float>(kShadowMapSize);
-            fu.cascade_depth[c] = back + r + 1.0f - 0.05f;
         }
         if (shadows_on) im.device->write_buffer(im.cascade_buffer, 0, slots, sizeof slots);
         fu.camera_fwd[0] = fwd.x; fu.camera_fwd[1] = fwd.y; fu.camera_fwd[2] = fwd.z; fu.camera_fwd[3] = static_cast<float>(count);
@@ -12131,8 +12547,51 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             i += run;
         }
     };
+    if (!shadows_on || draws.empty()) for (auto& kc : im.kept_cascades) kc.valid = false;   // nothing drawn: nothing to keep
+    const bool clock_moved = fu.clock[0] != im.shadow_clock;   // swaying copies move only while the simulation clock runs
+    im.shadow_clock = fu.clock[0];
     if (shadows_on && !draws.empty()) {
         for (int c = 0; c < im.stats.shadow_cascades; ++c) {
+            // What casts over its square: drawn again when that changed or moves.
+            Impl::KeptCascade& kc = im.kept_cascades[static_cast<std::size_t>(c)];
+            {
+                Mat4 kvp;
+                std::memcpy(kvp.m, fu.cascade_vp[c], sizeof kvp.m);
+                const float half_extent = std::max(fu.cascade_texel[c] * static_cast<float>(kShadowMapSize) * 0.5f, 1e-4f);
+                // What casts (meshes, cut-out materials) and where (the models), apart.
+                std::uint64_t shape = 1469598103934665603ull, pose = 1469598103934665603ull;
+                auto mix = [](std::uint64_t& h, std::uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+                bool moving = false;
+                for (const Draw& d : draws) {
+                    if (d.object.id[1] & 2u) continue;
+                    if (d.radius >= 0) {
+                        const Vec4 p = kvp * Vec4{d.center.x, d.center.y, d.center.z, 1};
+                        const float reach = 1.0f + d.radius / half_extent;
+                        if (std::fabs(p.x) > reach || std::fabs(p.y) > reach) continue;
+                    }
+                    moving = moving || d.skinned || (d.object.sway[0] != 0.0f && clock_moved);
+                    mix(shape, reinterpret_cast<std::uintptr_t>(d.gpu));
+                    mix(shape, (static_cast<std::uint64_t>(d.first) << 32) | d.count);
+                    mix(shape, d.cutout ? reinterpret_cast<std::uintptr_t>(d.material) : 1);
+                    std::uint32_t bits[16];
+                    std::memcpy(bits, d.object.model, sizeof bits);
+                    for (std::uint32_t b : bits) mix(pose, b);
+                }
+                // Casters that came, went or changed: drawn again at once. Casters that moved or move
+                // (a pose, swaying copies while the clock runs): every frame in the nearest cascade,
+                // every second in the next and every fourth in the far two while the game runs, their
+                // shadows small there; at once in a frame without a tick (paused, or an agent's frame
+                // after a change), so a still frame shows what is there.
+                bool& due = im.cascade_due[static_cast<std::size_t>(c)];
+                if (shape != kc.casters) due = true;
+                if (!due && (pose != kc.pose || moving)) due = c == 0 || !clock_moved || (im.frame_number + static_cast<std::uint64_t>(c)) % (c == 1 ? 2u : 4u) == 0;
+                if (due) {
+                    kc.casters = shape;
+                    kc.pose = pose;
+                }
+            }
+            if (!im.cascade_due[static_cast<std::size_t>(c)]) continue;
+            im.stats.shadow_redrawn++;
             WGPURenderPassDepthStencilAttachment sds{};
             sds.view = im.cascade_view[c];
             sds.depthLoadOp = WGPULoadOp_Clear;
@@ -12638,6 +13097,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         irp.depthStencilAttachment = &ids;
         WGPURenderPassEncoder ipass = im.begin_pass(frame.encoder, irp);
         set_viewport(ipass);
+        im.draw_grass(ipass, im.grass_id_pipeline);
         if (!draws.empty()) {
             wgpuRenderPassEncoderSetBindGroup(ipass, 0, im.scene_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(ipass, 1, im.object_bg, 0, nullptr);
@@ -12683,6 +13143,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         im.stats.draw_calls++;
     }
+    im.draw_grass(pass, im.grass_pipeline);   // before the meshes, so a translucent one is laid over it
     const std::function<bool(std::size_t)> solid_only = [&](std::size_t k) { return draws[k].in_view && !(glassy && draws[k].glass) && !(draws[k].blend && (oit || glassy)); };
     const std::function<bool(std::size_t)> translucent_only = [&](std::size_t k) { return draws[k].in_view && draws[k].blend; };
     const std::function<bool(std::size_t)> glass_only = [&](std::size_t k) { return draws[k].in_view && draws[k].glass; };
@@ -13179,6 +13640,12 @@ void Renderer::set_colour_vision(ColourVisionSettings s) {
 ColourVisionSettings Renderer::colour_vision() const { return impl_->colour_vision; }
 void Renderer::set_footprints(std::vector<Footprint> prints) { impl_->footprints = std::move(prints); }
 void Renderer::set_water_rings(std::vector<WaterRing> rings) { impl_->water_rings = std::move(rings); }
+void Renderer::set_ground_field(world::EntityId terrain, GroundField field) {
+    Impl::GrassGround& gg = impl_->grass_grounds[terrain];
+    if (gg.field.revision == field.revision && gg.field.n == field.n && gg.uploaded) return;
+    gg.field = std::move(field);
+    gg.uploaded = false;
+}
 
 void Renderer::set_toon(ToonSettings s) {
     s.bands = std::clamp(s.bands, 1, 16);
@@ -13208,6 +13675,7 @@ Json Renderer::describe() const {
     if (s.highlights) j["highlights"] = s.highlights;
     if (s.colour_vision > 0) j["colour_vision"] = std::array<const char*, 4>{"off", "protanopia", "deuteranopia", "tritanopia"}[static_cast<std::size_t>(s.colour_vision)];
     j["shadow_draws"] = s.shadow_draws;
+    j["shadow_redrawn"] = s.shadow_redrawn;
     j["shadow_instances"] = s.shadow_instances;
     j["shadows"] = s.shadows;
     j["shadow_cascades"] = s.shadow_cascades;
@@ -13243,6 +13711,7 @@ Json Renderer::describe() const {
     j["contact_shadows"] = s.contact_shadows;
     j["fog"] = s.fog;
     j["volumetric"] = s.volumetric;
+    if (s.grass_blades) j["grass_blades"] = s.grass_blades;
     j["clouds"] = s.clouds;
     j["taa"] = s.taa;
     j["oit"] = s.oit;

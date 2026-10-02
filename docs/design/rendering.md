@@ -194,6 +194,20 @@ reaches into the view, each draw's bounding sphere against the view's six planes
 square of the light's view, and none that do not cast. In `samples/hills` the view leaves 971 of the
 draws out and the cascades draw 2,242 casters where they drew four times 1,341.
 
+A cascade is kept from the frame that drew it while it still holds its slice (every corner of this
+frame's slice inside the square it was drawn over), the sun has not moved by more than a quarter of
+a degree, the settings are the same and what casts over its square is the same: a signature of the
+casters there (their meshes and cut-out materials) draws it again at once when one comes, goes or
+changes. Casters that moved or move (a model's place, a skinned pose, swaying copies while the
+simulation clock runs) draw the nearest cascade again every frame, the next every second frame and
+the far two every fourth while the game runs, their shadows small there; a frame without a tick
+(paused, or an agent's frame after a change) draws at once whatever moved, so a still frame shows
+what is there and two of them are the same. A still view draws no cascade at all;
+`render.stats.shadow_redrawn` says how many a frame drew. Over twenty frames of each running sample
+on this Mac: about two of the four (hills 2.0, village 2.2, farm 2.05, island 2.1). `renderer_tests`
+(`[shadows]`, `[culling]`): the first frame draws all four, the next of a still scene none, and a
+paused swaying field stays the same frame after frame.
+
 ## Light and color
 
 The scene is lit in linear light in a half-float target and turned into the 8-bit frame by one final

@@ -1497,6 +1497,91 @@ def snowy_evening_check(env, answer):
     return True, f"snow at 0.7 on ground wholly white, the day running from 17:30 (answered {answer:.2f}), {st['weather_drops']} flakes drawn"
 
 
+def sea_around_solve(env):
+    env.command("world.set", {"entity": "Lake", "component": "Water", "value": {"ocean": True}})
+    env.command("world.set", {"entity": "Sky", "component": "Sky", "value": {"clouds": 0.5}})
+    env.command("step", {"ticks": 1})
+    return env.command("water.height", {"x": 400, "z": 0})["level"]
+
+
+def sea_around_check(env, answer):
+    h = env.command("water.height", {"x": 400, "z": 0})
+    if not h.get("inside"):
+        return False, "no water 400 units east of the origin"
+    if abs(h.get("level", 0) - 3.2) > 0.01:
+        return False, f"the water there rests at {h.get('level')}, not the lake's 3.2"
+    if env.command("water.height", {"x": -900, "z": 1500}).get("inside") is not True:
+        return False, "no water far to the north-west: not a sea every way"
+    if not isinstance(answer, (int, float)) or abs(answer - 3.2) > 0.05:
+        return False, f"answered {answer!r}, the sea rests at 3.2"
+    skies = env.command("world.query", {"with": ["Sky"], "fields": ["Sky"]}).get("entities", [])
+    sky = next((e["Sky"] for e in sorted(skies, key=lambda e: e["id"]) if e["Sky"].get("enabled", True)), None)
+    if not sky or not 0.35 <= sky.get("clouds", 0) <= 0.65:
+        return False, f"the sky's clouds cover {sky and sky.get('clouds')}, not about half"
+    env.command("step", {"ticks": 1, "render": "each"})
+    st = env.command("render.stats", {})
+    if not st.get("clouds"):
+        return False, "the clouds are not marched as a volume (render.stats.clouds false)"
+    return True, f"a sea every way at 3.2 (answered {answer}), clouds over {sky['clouds']} of the sky, volumetric"
+
+
+def meadow_solve(env):
+    env.command("world.set", {"entity": "Hills", "component": "Grass", "value": {"layer": "grass", "min_height": 3.5, "reach": 30}})
+    env.command("step", {"ticks": 1, "render": "each"})
+    return None
+
+
+def meadow_check(env, answer):
+    g = env.command("world.get", {"entity": "Hills", "component": "Grass"})
+    if not isinstance(g, dict) or not g.get("enabled", True):
+        return False, "no Grass on the terrain Hills"
+    if g.get("layer", "") not in ("grass", ""):
+        return False, f"the grass grows on the layer {g.get('layer')!r}, not the grass layer"
+    if not 3.0 <= g.get("min_height", -1000) <= 4.0:
+        return False, f"the grass grows from {g.get('min_height')} up, not from about 3.5"
+    if abs(g.get("reach", 0) - 30) > 1:
+        return False, f"drawn out to {g.get('reach')}, not 30"
+    env.command("step", {"ticks": 1, "render": "each"})
+    st = env.command("render.stats", {})
+    if st.get("grass_blades", 0) <= 0:
+        return False, "no blades drawn"
+    return True, f"grass on the grass layer from {g['min_height']} up, out to {g['reach']}, {st['grass_blades']} cells round the camera"
+
+
+def sailboat_solve(env):
+    env.command("world.destroy", {"entity": "Ground"})
+    env.command("world.spawn", {"name": "Sea", "components": {"Transform": {}, "Water": {"ocean": True, "depth": 20}}})
+    env.command("world.spawn", {"name": "Breeze", "components": {"Wind": {"direction": 0, "speed": 6}}})
+    env.command("world.spawn", {"name": "Sloop", "components": {
+        "Transform": {"position": {"x": 0, "y": 0.3, "z": 0}, "rotation": {"yaw": -90}},
+        "MeshRenderer": {"mesh": "boat"},
+        "RigidBody": {"kind": "dynamic", "mass": 0.9},
+        "Collider": {"shape": "box", "size": {"x": 0.32, "y": 0.3, "z": 1.6}, "offset": {"x": 0, "y": 0.3, "z": 0}},
+        "Boat": {"sail": 1}}})
+    env.command("step", {"ticks": 1})
+    return None
+
+
+def sailboat_check(env, answer):
+    b = env.command("world.get", {"entity": "Sloop", "component": "Boat"})
+    if not isinstance(b, dict):
+        return False, "no Boat named Sloop"
+    if abs(b.get("throttle", 0)) > 1e-6:
+        return False, f"its throttle is {b.get('throttle')}: the wind alone should drive it"
+    wind = env.command("wind.at", {"x": 0, "z": 0})
+    if not wind.get("on", True) or wind.get("speed", 0) < 5.5:
+        return False, f"the wind is {wind}"
+    p0 = env.command("world.get", {"entity": "Sloop", "component": "Transform"})["position"]
+    env.command("step", {"ticks": 300})
+    p1 = env.command("world.get", {"entity": "Sloop", "component": "Transform"})["position"]
+    b = env.command("world.get", {"entity": "Sloop", "component": "Boat"})
+    if not b.get("afloat"):
+        return False, f"the boat is not afloat (at y {p1['y']:.2f})"
+    if p1["x"] - p0["x"] < 5:
+        return False, f"five seconds sailing took it {p1['x'] - p0['x']:.1f} along +x, not 5 or more"
+    return True, f"the Sloop sails before the wind: {p1['x'] - p0['x']:.1f} units along +x in five seconds, afloat"
+
+
 def spike_trap_solve(env):
     at = env.command("world.get", {"entity": "Player", "component": "Transform"})["position"]
     env.command("world.set", {"entity": "Player", "component": "Health", "value": {"current": 60, "max": 60, "invulnerable": 0.5}})
@@ -3948,6 +4033,12 @@ TASKS = [
      "task": "Plant a field of reeds that sway and block: spawn an entity named Reeds drawing thin boxes (a MeshRenderer with mesh \"cube\"; its Transform scale x 0.1, y 1.5, z 0.1) with a Scatter placing copies on the terrain named Hills over a 20 by 20 area centred on x 0, z 10, at least 100 of them standing, all the entity's own size (none bigger or smaller), whose tops sway 0.3 units in the wind, and each copy a collider 0.1 in radius. Answer with the number of reeds standing as the integer \"answer\"."},
     {"name": "stormy_dusk", "project": "hills", "ticks": 2, "solve": stormy_dusk_solve, "check": stormy_dusk_check,
      "task": "Make the hills a windy, cloudy sunset: the sky computed by the atmosphere with clouds covering 0.8 of it, the sun (the entity named Sun) standing 4 degrees above the horizon in the west (toward -x, so its light shines toward +x), and the wind (the entity named Breeze) blowing toward +x at 12 units a second. Then step one tick and answer with the red of the sun light as it reaches the ground, as the renderer reports it, as the number \"answer\"."},
+    {"name": "sea_around", "project": "hills", "ticks": 2, "solve": sea_around_solve, "check": sea_around_check,
+     "task": "Make the hills an island: turn their lake (the entity Lake) into a sea that runs to the horizon every way, resting where the lake does, and give the sky clouds over about half of it (the engine's volumetric ones). Then answer with the height the water rests at 400 units east of the origin (x 400, z 0), as the number \"answer\"."},
+    {"name": "meadow", "project": "hills", "ticks": 2, "solve": meadow_solve, "check": meadow_check,
+     "task": "Grow grass on the hills through the running game: blades of grass over the terrain (the entity Hills), on its grass layer only and none below 3.5 high (the beach), drawn out to 30 units from the camera. Answer null."},
+    {"name": "sailboat", "project": "blank", "ticks": 0, "solve": sailboat_solve, "check": sailboat_check,
+     "task": "Through the running game, put a sailing boat to sea in this blank project: an ocean at height 0 running to the horizon (the project's ground taken away), a steady wind of 6 units a second blowing toward +x, and a boat named Sloop afloat near the origin, bow toward +x, with its sail set and no engine or oars driving it, so the wind alone carries it along. Answer null."},
     {"name": "snowy_evening", "project": "hills", "ticks": 2, "solve": snowy_evening_solve, "check": snowy_evening_check,
      "task": "Make the hills a snowy winter evening that goes on by itself: snow falling at 0.7 of its heaviest onto ground already wholly white, and the sky's time of day at half past five in the afternoon with a whole day lasting ten minutes, so the sun (the entity named Sun) goes down on its own. Then step 600 ticks (ten seconds) and answer with the time of day the sky then says, in hours, as the number \"answer\"."},
     {"name": "dirt_patch", "project": "hills", "ticks": 2, "solve": dirt_patch_solve, "check": dirt_patch_check,
@@ -4185,7 +4276,7 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         env = None
         try:
             # Every task on a copy outside the repository (the reference and null runners need none).
-            outside = runner not in ("reference", "null") or t.get("script")
+            outside = runner not in ("reference", "null") or t.get("script") or t["project"] == "blank"   # a blank project is made new
             project_dir = scratch_copy(t) if outside else os.path.join(project_root or ROOT, "samples", t["project"])
             if "setup" in t:
                 # The game as the task finds it, written into the copy before the runtime starts.
