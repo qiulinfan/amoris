@@ -36,11 +36,13 @@ onStart(() => {
         const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;
         const g = terrain.height(x, z);
         if (g.height < WATER + 0.6 || g.height > info.height * 0.7 || g.normal.y < 0.9 || Math.hypot(x, z) < 6) continue;
-        const tall = 3.5 + random() * 2.5;
+        // Three of each kind, sized by their Transforms: copies of one mesh draw together.
+        const size = 0.85 + random() * 0.6;
         const kind = trees % 3 === 2 ? "pine" : "tree";
+        const tall = (kind === "pine" ? 5 : 4) * size;
         world.spawn(`Tree${trees}`, { components: {
-            Transform: { position: { x, y: g.height - 0.05, z } },
-            MeshRenderer: { mesh: `${kind}?height=${tall.toFixed(1)}&seed=${trees % 6}` },
+            Transform: { position: { x, y: g.height - 0.05, z }, scale: { x: size, y: size, z: size } },
+            MeshRenderer: { mesh: `${kind}?seed=${trees % 3}` },
             RigidBody: { kind: 1 },
             Collider: { shape: 2, size: { x: 0.2, y: tall * 0.25, z: 0.2 }, offset: { x: 0, y: tall * 0.3, z: 0 } },
         } });

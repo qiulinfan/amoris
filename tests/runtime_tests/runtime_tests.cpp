@@ -4880,7 +4880,11 @@ TEST_CASE("a click on the interface is the interface's; elsewhere it presses the
     REQUIRE(c["held"] == false);
     REQUIRE(s.command("input.state", Json::object()).value()["cursor"]["locked"] == true);
     REQUIRE_FALSE(s.command("input.cursor", Json{{"locked", "yes"}}).has_value());
-    REQUIRE(s.command("input.cursor", Json{{"visible", false}}).value() == Json{{"locked", true}, {"held", false}, {"visible", false}});
+    const Json hidden = s.command("input.cursor", Json{{"visible", false}}).value();
+    REQUIRE(hidden["locked"] == true);
+    REQUIRE(hidden["held"] == false);
+    REQUIRE(hidden["visible"] == false);
+    REQUIRE(hidden["x"].is_number());   // where the pointer is, in the window's pixels
     REQUIRE(s.finish().has_value());
 }
 

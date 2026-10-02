@@ -336,28 +336,29 @@ outdoor or village scene wants are meshes the engine makes, in a low-poly, flat-
 village: `house` (`width` 4, `depth` 3, `height` 2.6, `walls`, `roof`, `door`, `windows`; its door
 and windows on the -z side it faces), `crate` (`size` 1), `chest` (`color`, `bands`), `torch`
 (`light`, `glow` 6), `bench`, `table`, `chair` (`color`; the chair faces -z), `well` (`stone`,
-`wood`, `roof`) and `sign` (`color`, `board`). Each stands on its origin (a rock a little into the
-ground), takes its settings after `?` as the humanoid does (`"tree?height=6&leaves=autumn&seed=4"`;
-colours as `#rrggbb`, `#rgb` or a name such as leaf, autumn, wood, stone, snow) and a `seed` that
-makes another of its kind, the same on every machine. A `Collider` sized by hand (a capsule round a
-trunk, a box round a barrel) or of shape 3 (the triangles drawn) makes one solid. `world.lint` says
-a prop's setting it does not take. `assets_tests` (`[prop]`): every prop reads as a mesh standing on
-its origin with finite normals, a tall tree is tall, seeds differ and repeat, the leaves take the
-colour asked, and a wrong setting, a non-number and a non-colour are said.
-`tests/evidence/rendering/props.png` (`tools/scripts/props_evidence.py`) is the first seven on a
-ground of `pattern:grass`; `samples/village` is a game made of them (and `pocket new --from village`
-starts one): a square of cobbles round a well, seven houses, a market stall, benches, torches with
-their lights, trees, fences and rocks (written by `tools/scripts/dev/village_scene.py`), drawn in
-the toon look (`docs/design/rendering.md`, Toon); built-in humanoids stroll the square, sit on
-benches and stand to wave as the player passes, a merchant talks at the stall, and the elder by the
-well gives a quest by dialogue (`docs/design/dialogue.md`): three apples to find about the village
-and bring back, after which the village cheers. `pocket scenario village` plays the quest through
-the keys, picks an apple up by walking onto it, has a sitter greet the player and sit again, and
-keeps the strollers on the cobbles for twenty seconds; `tests/evidence/rendering/village-sample.png`
-is the elder mid-sentence. `tests/evidence/rendering/village.png`
-(`tools/scripts/village_evidence.py`) is a square of `pattern:cobble` round a well with houses, a
-table and chairs, crates, a chest, torches, a bench, a sign, trees, a fence and a slope of
-`pattern:shingles`.
+`wood`, `roof`), `sign` (`color`, `board`), `tower` (a watchtower: `height` 3, `stone`, `wood`,
+`roof`) and `crop` (a plant at `stage` 0 a sprout to 3 ripe with its fruit: `leaves`, `fruit`). Each
+stands on its origin (a rock a little into the ground), takes its settings after `?` as the humanoid
+does (`"tree?height=6&leaves=autumn&seed=4"`; colours as `#rrggbb`, `#rgb` or a name such as leaf,
+autumn, wood, stone, snow) and a `seed` that makes another of its kind, the same on every machine. A
+`Collider` sized by hand (a capsule round a trunk, a box round a barrel) or of shape 3 (the
+triangles drawn) makes one solid. `world.lint` says a prop's setting it does not take.
+`assets_tests` (`[prop]`): every prop reads as a mesh standing on its origin with finite normals, a
+tall tree is tall, seeds differ and repeat, the leaves take the colour asked, and a wrong setting, a
+non-number and a non-colour are said. `tests/evidence/rendering/props.png`
+(`tools/scripts/props_evidence.py`) is the first seven on a ground of `pattern:grass`;
+`samples/village` is a game made of them (and `pocket new --from village` starts one): a square of
+cobbles round a well, seven houses, a market stall, benches, torches with their lights, trees,
+fences and rocks (written by `tools/scripts/dev/village_scene.py`), drawn in the toon look
+(`docs/design/rendering.md`, Toon); built-in humanoids stroll the square, sit on benches and stand
+to wave as the player passes, a merchant talks at the stall, and the elder by the well gives a quest
+by dialogue (`docs/design/dialogue.md`): three apples to find about the village and bring back,
+after which the village cheers. `pocket scenario village` plays the quest through the keys, picks an
+apple up by walking onto it, has a sitter greet the player and sit again, and keeps the strollers on
+the cobbles for twelve seconds; `tests/evidence/rendering/village-sample.png` is the elder
+mid-sentence. `tests/evidence/rendering/village.png` (`tools/scripts/village_evidence.py`) is a
+square of `pattern:cobble` round a well with houses, a table and chairs, crates, a chest, torches, a
+bench, a sign, trees, a fence and a slope of `pattern:shingles`.
 
 ## Commands
 

@@ -60,6 +60,17 @@ corners stays on it without a `path.looped`, and the track answers its quarter p
 and the distance along it of a point beside it; the sprites level's patrol becomes a six-unit Path a
 guard runs along.
 
+## The defense sample
+
+`samples/defense` is a tower defense on a `Path`: raiders (built-in humanoids) follow the road as
+`PathFollower`s, each wave two more, hardier and quicker; towers (the `tower` prop) built beside the
+road by the mouse or the cursor keys for gold shoot the nearest raider in range with `combat.shoot`;
+a raider down pays gold, one that reaches the keep (its follower `finished`) costs a life.
+`pocket scenario defense` checks that a tower costs fifty gold and is refused on the road and on
+another tower, that two towers by the road's bend shoot three raiders down, and that a raider
+carried to the road's end costs a life; `tests/evidence/rendering/defense.png` is three towers at
+work.
+
 ## Not yet
 
 A speed that follows a curve along the path (slowing for corners), a path's own roll for a rail

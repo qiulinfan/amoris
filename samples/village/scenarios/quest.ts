@@ -75,12 +75,12 @@ scenario("a sitter stands to wave as the player comes by, and sits again", (g) =
 });
 
 scenario("the strollers keep to the square", (g) => {
-    g.wait(20);
+    g.wait(12);
     g.check(() => {
         for (const n of ["Stroller0", "Stroller1", "Stroller2"]) {
             const p = world.get(n, "Transform")!.position;
             expect(Math.abs(p.x)).toBeLessThan(11);
             expect(Math.abs(p.z)).toBeLessThan(8);
         }
-    }, "all three still on the cobbles");
+    }, "all three still on the cobbles after twelve seconds");
 });

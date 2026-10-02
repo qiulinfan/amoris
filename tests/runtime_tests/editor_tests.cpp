@@ -723,6 +723,30 @@ TEST_CASE("inspector steps a named code through its names", "[editor][names]") {
     REQUIRE(ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "Light"}}))["kind"] == 2);   // point -> spot
 }
 
+TEST_CASE("inspector puts a pattern on a mesh: its texture, normal map and tile in one edit", "[editor][pattern]") {
+    app::Session s(editor_options("assets"));
+    ok(s.start());
+    s.set_paused(true);
+    ok(s.command("world.spawn", Json{{"name", "Aa"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "cube"}}}}}}));
+    for (int i = 0; i < 20; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Aa")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    // The mesh's rows run past the pane: scroll down to the texture's.
+    ok(s.command("ui.wheel", Json{{"id", find_named(s, "inspector")}, {"dy", -6}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "MeshRenderer.pattern:next")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    Json mr = ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "MeshRenderer"}}));
+    INFO(mr.dump());
+    REQUIRE(mr["texture"] == "pattern:bricks");
+    REQUIRE(mr["normal_map"] == "pattern:bricks?map=normal");
+    REQUIRE(mr["texture_tile"].get<double>() == Catch::Approx(2));
+    // One edit: undone, the mesh is as it was.
+    ok(s.command("ui.key", Json{{"key", "Z"}, {"mods", Json::array({"meta"})}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "MeshRenderer"}}))["texture"] == "");
+}
+
 TEST_CASE("inspector shows list fields as JSON and takes them back", "[editor][layers]") {
     app::Session s(editor_options("assets"));
     ok(s.start());
@@ -974,6 +998,12 @@ TEST_CASE("editor places a model with a light as its node tree, from the Place b
         INFO(notice);
         REQUIRE(notice.find("imported again") != std::string::npos);
     }
+    // A built-in mesh, listed with the files, placed the same way.
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:tree")}}));
+    ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "asset:place")}}));
+    ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "tree"}, {"component", "MeshRenderer"}}))["mesh"] == "tree");
     ok(s.finish());
     std::filesystem::remove(lamp);
     std::filesystem::remove_all(root() / "samples" / "physics" / ".pocket");   // the layout file the tab click wrote

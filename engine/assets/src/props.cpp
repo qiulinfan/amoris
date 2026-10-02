@@ -173,7 +173,7 @@ std::string glb(const std::string& name, const std::vector<Part>& parts, const s
 
 bool is_prop(std::string_view path) {
     const std::string_view name = path.substr(0, path.find('?'));
-    for (std::string_view p : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign"})
+    for (std::string_view p : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign", "tower", "crop"})
         if (name == p) return true;
     return false;
 }
@@ -352,13 +352,49 @@ Result<std::string> prop_glb(const std::string& path) {
         for (const float x : {-0.7f, 0.7f}) box(parts[1], {x, 1.2f, 0}, {0.05f, 0.5f, 0.05f});
         box(parts[1], {0, 1.45f, 0}, {0.72f, 0.04f, 0.04f});
         frustum(parts[2], {0, 1.7f, 0}, 1.0f, 0.0f, 0.5f, 4, kPi / 4);
+    } else if (name == "tower") {
+        // A watchtower: a stone drum, four posts up to a plank floor with a rail, a pointed roof.
+        const float h = std::max(number("height", 3.0f), 1.0f);
+        mats = {{colour("stone", "#8c8a84"), 0.9f}, {colour("wood", "#7a5a3a"), 0.85f}, {colour("roof", "#7a3b2c"), 0.8f}};
+        parts.resize(3);
+        frustum(parts[0], {0, 0, 0}, 0.75f, 0.65f, h * 0.35f, 10);
+        for (const float x : {-0.5f, 0.5f}) for (const float z : {-0.5f, 0.5f}) box(parts[1], {x, h * 0.6f, z}, {0.06f, h * 0.25f, 0.06f});
+        box(parts[1], {0, h * 0.85f, 0}, {0.7f, 0.05f, 0.7f});
+        for (const float s : {-1.0f, 1.0f}) { box(parts[1], {0, h * 0.95f, s * 0.68f}, {0.7f, 0.04f, 0.03f}); box(parts[1], {s * 0.68f, h * 0.95f, 0}, {0.03f, 0.04f, 0.7f}); }
+        for (const float x : {-0.6f, 0.6f}) for (const float z : {-0.6f, 0.6f}) box(parts[1], {x, h * 1.0f, z}, {0.04f, h * 0.15f, 0.04f});
+        frustum(parts[2], {0, h * 1.15f, 0}, 1.0f, 0.0f, h * 0.3f, 4, kPi / 4);
+    } else if (name == "crop") {
+        // A plant at a stage of its growing: 0 a sprout, 1 leaves, 2 grown, 3 ripe with its fruit.
+        const int stage = std::clamp(static_cast<int>(number("stage", 3)), 0, 3);
+        mats = {{colour("leaves", "#4f8a35"), 0.85f}, {colour("fruit", "#e0b030"), 0.6f}};
+        parts.resize(2);
+        const float h = 0.15f + 0.25f * static_cast<float>(stage);
+        frustum(parts[0], {0, 0, 0}, 0.025f, 0.015f, h, 5);
+        const int leaves = 2 + stage * 2;
+        for (int i = 0; i < leaves; ++i) {
+            const float a = 2 * kPi * static_cast<float>(i) / static_cast<float>(leaves) + dice.in(0, 0.5f);
+            const float y = h * (0.35f + 0.6f * static_cast<float>(i) / static_cast<float>(std::max(leaves - 1, 1)));
+            const float len = 0.12f + 0.06f * static_cast<float>(stage);
+            const Vec3 base{0, y, 0}, tip{std::cos(a) * len, y + 0.05f, std::sin(a) * len};
+            const Vec3 side{-std::sin(a) * 0.04f, 0, std::cos(a) * 0.04f};
+            const Vec3 l = base + side + (tip - base) * 0.5f, r = base - side + (tip - base) * 0.5f;
+            tri(parts[0], base, tip, l);   // both faces: a leaf is seen from above and below
+            tri(parts[0], base, l, tip);
+            tri(parts[0], base, r, tip);
+            tri(parts[0], base, tip, r);
+        }
+        if (stage == 3)
+            for (int i = 0; i < 3; ++i) {
+                const float a = 2 * kPi * static_cast<float>(i) / 3.0f + 0.4f;
+                blob(parts[1], {std::cos(a) * 0.07f, h * 0.8f, std::sin(a) * 0.07f}, Vec3{0.05f, 0.06f, 0.05f}, 0.05f, dice);
+            }
     } else if (name == "sign") {
         mats = {{colour("color", "#8a6a48"), 0.85f}, {colour("board", "#c8a878"), 0.8f}};
         parts.resize(2);
         box(parts[0], {0, 0.6f, 0}, {0.04f, 0.6f, 0.04f});
         box(parts[1], {0, 1.05f, -0.05f}, {0.4f, 0.22f, 0.025f});
     } else {
-        return fail("bad_asset", "{}: no prop '{}' (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign)", path, name);
+        return fail("bad_asset", "{}: no prop '{}' (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign, tower, crop)", path, name);
     }
     for (const auto& [k, _] : set) {
         static const std::map<std::string, std::vector<std::string>> takes = {
@@ -366,7 +402,8 @@ Result<std::string> prop_glb(const std::string& path) {
             {"bush", {"size", "color", "seed"}}, {"barrel", {"color", "hoops", "seed"}}, {"lamp", {"height", "color", "light", "glow", "seed"}},
             {"fence", {"length", "color", "seed"}}, {"house", {"width", "depth", "height", "walls", "roof", "door", "windows", "seed"}}, {"crate", {"size", "color", "seed"}},
             {"chest", {"color", "bands", "seed"}}, {"torch", {"color", "light", "glow", "seed"}}, {"bench", {"color", "seed"}}, {"table", {"color", "seed"}},
-            {"chair", {"color", "seed"}}, {"well", {"stone", "wood", "roof", "seed"}}, {"sign", {"color", "board", "seed"}}};
+            {"chair", {"color", "seed"}}, {"well", {"stone", "wood", "roof", "seed"}}, {"sign", {"color", "board", "seed"}}, {"tower", {"height", "stone", "wood", "roof", "seed"}},
+            {"crop", {"stage", "leaves", "fruit", "seed"}}};
         const auto& ok = takes.at(name);
         if (std::find(ok.begin(), ok.end(), k) == ok.end() && error.empty()) {
             std::string list;

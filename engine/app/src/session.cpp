@@ -6561,7 +6561,7 @@ Result<Json> Session::world_lint(const Json& p) {
     ecs.each([&](flecs::entity e, const world::MeshRenderer& mr) {
         const bool primitive = mr.mesh.empty() || mr.mesh == "cube" || mr.mesh == "sphere" || mr.mesh == "plane" || mr.mesh == "cylinder" || mr.mesh == "quad" || mr.mesh == "capsule";
         const bool builtin = mr.mesh == "humanoid" || mr.mesh.starts_with("humanoid?") || assets::is_prop(mr.mesh);
-        if (!primitive && !builtin && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule), the built-in humanoid or a prop (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign)");
+        if (!primitive && !builtin && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule), the built-in humanoid or a prop (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign, tower, crop)");
         if (mr.mesh.starts_with("humanoid?") && assets_) {
             if (auto m = assets_->mesh(mr.mesh); !m) add("error", e.id(), "MeshRenderer", m.error().message, "skin, shirt, trousers, shoes and hair take \"#rrggbb\" or a colour's name; hair=none leaves the head bare");
         }

@@ -1188,7 +1188,7 @@ TEST_CASE("patterns are images the engine draws: wrapping, in their colours, wit
 
 TEST_CASE("props are meshes the engine makes: standing on their origin, in their colours, seeded", "[assets][prop]") {
     assets::AssetStore store(project());
-    for (const char* name : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign"}) {
+    for (const char* name : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign", "tower", "crop"}) {
         INFO(name);
         REQUIRE(assets::is_prop(name));
         auto m = store.mesh(name);

@@ -22,7 +22,11 @@ interface SchemaComponent { name: string; doc: string; serialized: boolean; fiel
 // behind tabs; a tab dragged onto another dock moves its pane there. The widths keep their first
 // names: `hierarchy` is the left dock's, `inspector` the right's.
 interface Layout { hierarchy: number; inspector: number; bottom: number; docks: Record<Dock, Pane[]>; active: Record<Dock, Pane | "">; }
-interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "vox" | "voxels" | "blender" }
+interface AssetRow { path: string; kind: "mesh" | "image" | "tilemap" | "audio" | "script" | "material" | "other"; bytes: number; loaded: boolean; importer?: "gltf" | "obj" | "stl" | "ply" | "vox" | "voxels" | "blender"; builtin?: boolean }
+// Meshes the engine makes, listed under the project's files so they are placed the same way
+// (docs/design/assets.md, Props; docs/design/animation.md, A character without a file).
+const BUILTIN_MESHES = ["humanoid", "tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign", "tower", "crop"];
+const builtinRows: AssetRow[] = BUILTIN_MESHES.map((path) => ({ path, kind: "mesh", bytes: 0, loaded: false, builtin: true }));
 type Tab = "console" | "events" | "transcript" | "assets" | "input" | "audio" | "script" | "timeline";
 const TABS: Tab[] = ["console", "events", "transcript", "assets", "input", "audio", "script", "timeline"];
 type Pane = "hierarchy" | "inspector" | Tab;
@@ -975,7 +979,7 @@ function placeAssetAt(row: AssetRow, x: number, y: number): void {
 
 /** The picked asset placed in the middle of the scene pane (the Place button). */
 function placePicked(): void {
-    const row = assetRows().find((r) => r.path === assetPick());
+    const row = [...assetRows(), ...builtinRows].find((r) => r.path === assetPick());
     if (row) placeAssetAt(row, viewportRect.x + viewportRect.w / 2, viewportRect.y + viewportRect.h / 2);
 }
 
@@ -1333,6 +1337,26 @@ function fieldInputs(entity: number, comp: ComponentName, field: SchemaField, va
             </Row>
         );
     }
+    if (comp === "MeshRenderer" && field.name === "texture") {
+        // A pattern the engine draws (docs/design/assets.md, Patterns), stepped through by name: the
+        // texture, its normal map and a world-laid tile in one edit.
+        const now = String(value ?? "");
+        const shown = now.startsWith("pattern:") ? now.slice(8).split("?")[0] : now === "" ? "none" : "file";
+        return (
+            <box key={field.name} direction="column" gap={2}>
+                <Row gap={4}>
+                    <Label text={field.name} muted />
+                    <box flex={1} />
+                    <TextInput value={now} width={120} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, "string")} />
+                </Row>
+                <Row gap={4}>
+                    <Label text="pattern" muted size={11} />
+                    <box flex={1} />
+                    <Choice value={shown} options={["none", ...PATTERNS, ...(shown === "file" ? ["file"] : [])]} width={140} name={`${comp}.pattern`} onChange={(v) => setPattern(entity, v)} />
+                </Row>
+            </box>
+        );
+    }
     return (
         <Row gap={4} key={field.name}>
             <Label text={field.name} muted />
@@ -1340,6 +1364,20 @@ function fieldInputs(entity: number, comp: ComponentName, field: SchemaField, va
             <TextInput value={typeof value === "number" ? formatNumber(value) : String(value ?? "")} width={120} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, typeof value === "number" ? "float" : "string")} />
         </Row>
     );
+}
+
+const PATTERNS = ["bricks", "tiles", "planks", "cobble", "shingles", "grid", "checker", "stripes", "concrete", "rock", "sand", "dirt", "grass", "metal", "noise"];
+
+/** A pattern on a MeshRenderer: its texture, the matching normal map, laid on from the world's axes
+ * (two units a repeat unless it had a tile), its colour white so the pattern shows; "none" clears them. */
+function setPattern(entity: number, name: string): void {
+    if (name === "file") return;
+    const before = world.get(entity, "MeshRenderer") as Record<string, unknown> | undefined;
+    if (!before) return;
+    const patch = name === "none"
+        ? { texture: "", normal_map: "", texture_tile: 0 }
+        : { texture: `pattern:${name}`, normal_map: `pattern:${name}?map=normal`, texture_tile: Number(before.texture_tile) > 0 ? before.texture_tile : 2, color: { r: 1, g: 1, b: 1, a: 1 } };
+    edit(`Pattern ${name}`, () => { world.set(entity, "MeshRenderer", patch as never); refreshSelected(); }, () => { world.set(entity, "MeshRenderer", before as never); refreshSelected(); });
 }
 
 function formatNumber(v: unknown): string {
@@ -1632,18 +1670,18 @@ function TabBody(t: Tab): VNode[] {
         const picked = assetPick();
         body = [
             <Row key="hint" gap={8} align="center">
-                <Label text={list.length === 0 ? "No files under assets/." : picked ? `${picked}: ${assetInfo()}` : "Click a file to describe it; drag one onto the scene, or pick it and Place, to put it there."} muted size={12} name="asset-info" wrap flex={1} />
+                <Label text={picked ? `${picked}: ${assetInfo()}` : `${list.length === 0 ? "No files under assets/; the built-in meshes are below. " : ""}Click one to describe it; drag it onto the scene, or pick it and Place, to put it there.`} muted size={12} name="asset-info" wrap flex={1} />
                 {picked ? <Button label="Place" small name="asset:place" onClick={placePicked} /> : null}
                 {picked && list.find((r) => r.path === picked)?.importer ? <Button label="Reimport" small name="asset:reimport" onClick={reimportPicked} /> : null}
             </Row>,
-            ...list.map((r) => (
+            ...[...list, ...builtinRows].map((r) => (
                 <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" padding={[2, 6]} gap={8} radius={3} background={picked === r.path ? theme.accent : null} onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)}>
                     {r.kind === "image" ? <box width={16} height={16} image={r.path} name={`thumb:${r.path}`} /> : null}
                     {r.kind === "mesh" && thumbFor(r.path) ? <box width={16} height={16} image={thumbFor(r.path)} name={`thumb:${r.path}`} /> : null}
                     <Label text={r.path} size={12} color={picked === r.path ? theme.accentText : theme.text} />
                     <Label text={r.kind} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
                     {r.importer && r.importer !== "gltf" ? <Label text={r.importer === "blender" ? "via Blender" : r.importer.toUpperCase()} size={12} color={picked === r.path ? theme.accentText : theme.muted} name={`importer:${r.path}`} /> : null}
-                    <Label text={r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
+                    <Label text={r.builtin ? "built in" : r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
                     {r.loaded ? <Label text="loaded" size={12} color={picked === r.path ? theme.accentText : theme.ok} /> : null}
                 </box>
             )),

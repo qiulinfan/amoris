@@ -1,0 +1,24 @@
+name = "defense"
+entry = "scripts/main.tsx"
+scene = "scene.json"
+
+[window]
+title = "Pocket: defense"
+width = 960
+height = 540
+
+# Actions instead of keys; agents hold them by name (docs/design/input.md). The mouse points at a
+# cell; the arrow keys or WASD step the cursor cell by cell.
+[input.actions]
+cursor_x = { negative = ["Left", "A", "pad:dpad_left"], positive = ["Right", "D", "pad:dpad_right"] }
+cursor_z = { negative = ["Up", "W", "pad:dpad_up"], positive = ["Down", "S", "pad:dpad_down"] }
+build = ["mouse:left", "Space", "pad:a"]
+
+[render]
+msaa = 4
+ao = true
+shadow_softness = 1.0
+toon = { outline = 1.5 }
+
+[render.tonemap]
+operator = "agx"
