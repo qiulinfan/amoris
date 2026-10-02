@@ -1250,6 +1250,7 @@ struct Behavior {
     std::vector<BehaviorState> states = {};
     std::vector<BehaviorTransition> transitions = {};
     std::uint64_t target = 0;
+    std::string targets = "";
     Vec3 home{0.0f, -1000000.0f, 0.0f};
     float sight = 15.0f;
     float fov = 360.0f;

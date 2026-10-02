@@ -180,7 +180,8 @@ onTick(({ dt }) => {
     const t = world.get("Sky", "Sky")!.time_of_day;
     if (lastHour >= 0 && t < lastHour) day.set(day() + 1);
     lastHour = t;
-    clock.set(`${String(Math.floor(t)).padStart(2, "0")}:${String(Math.floor((t % 1) * 60)).padStart(2, "0")}`);
+    const minutes = Math.floor(t * 60 + 1e-3);
+    clock.set(`${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`);
     // The weather's turn: dry, then rain easing in and out; the soil of every plot drinks it.
     spell += dt;
     if (spell >= DRY_SPELL + RAIN_SPELL) spell -= DRY_SPELL + RAIN_SPELL;

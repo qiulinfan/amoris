@@ -140,6 +140,10 @@ class Session {
     void update_footprints(float dt);
     std::vector<renderer::Renderer::Footprint> footprints_;   // pressed into lying snow, oldest first (docs/design/rendering.md, Weather)
     std::uint64_t footprints_seen_ = 0;
+    void update_water_rings(float dt);
+    std::vector<renderer::Renderer::WaterRing> water_rings_;   // spreading on water, oldest first (docs/design/water.md, Rings)
+    std::map<world::EntityId, std::pair<Vec3, float>> wakes_;
+    std::uint64_t water_rings_seen_ = 0;   // each body's place when it last left a ring, and the time since
     std::map<world::EntityId, Vec3> rig_base_;   // each camera rig's place before its shake (docs/design/cameras.md)
     std::map<world::EntityId, std::pair<Vec3, Vec3>> rig_motion_;   // each rig's targets' middle last tick and its eased velocity (look_ahead)
     // Localization (docs/design/localization.md): the language scripts' `t` uses, the project's

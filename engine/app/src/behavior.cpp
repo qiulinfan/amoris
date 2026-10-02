@@ -141,6 +141,27 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
             enter(*cur, entered_[id]);   // set from outside (a script, an agent): entered as a transition would
         }
         if (b.home.y <= -999999.0f) b.home = at;   // not given: where it stands now (the origin may be meant)
+        // Whom it attends to, picked: the nearest that matches `targets` (a component's name, else a
+        // pattern on names), every quarter second or as soon as the one it had is gone.
+        if (!b.targets.empty() && ((tick + static_cast<std::int64_t>(id % 15)) % 15 == 0 || !(b.target && w.alive(b.target)))) {
+            world::QueryOptions q;
+            if (w.known_component(b.targets)) q.with = {b.targets};
+            else q.name = b.targets;
+            q.fields = {"Transform"};
+            q.limit = 4096;
+            world::EntityId best = 0;
+            float best_d = 1e30f;
+            for (const Json& row : w.query(q).value("entities", Json::array())) {
+                const world::EntityId other = row["id"].get<world::EntityId>();
+                if (other == id || w.parent(other) == id) continue;
+                const float d = length(position_of(w, other) - at);
+                if (d < best_d) { best_d = d; best = other; }
+            }
+            if (best != b.target) {
+                w.events().emit(tick, "behavior.target", id, Json{{"target", best ? w.path(best) : std::string()}, {"path", w.path(id)}}, 0, "engine");
+                b.target = best;
+            }
+        }
         // What it perceives.
         const bool has_target = b.target && w.alive(b.target);
         const Vec3 to = has_target ? position_of(w, b.target) : at;

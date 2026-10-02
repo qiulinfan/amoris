@@ -1506,6 +1506,8 @@ export interface Behavior {
     transitions: BehaviorTransition[];
     /** What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set). */
     target: number | string;
+    /** Whom it picks to attend to: the nearest entity whose name matches this pattern (* any run, ? one: "Sheep*") or that has this component ("Health", a project's own), looked for every quarter second and written into target (each change a behavior.target event); empty, target stays as set. */
+    targets: string;
     /** Where wander roams around and home goes back to, in the world (the origin is a place like any other); the default, a million units down, takes where it stands at its first tick. */
     home: Vec3;
     /** How far it sees: sees is 0 for a target farther than this. */
@@ -1779,7 +1781,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
-    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, home: { x: 0, y: -1000000, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, seen_at: { x: 0, y: 0, z: 0 }, unseen: 0, hearing: 1, heard_at: { x: 0, y: 0, z: 0 }, unheard: 0, enabled: true, error: "" },
+    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, targets: "", home: { x: 0, y: -1000000, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, seen_at: { x: 0, y: 0, z: 0 }, unseen: 0, hearing: 1, heard_at: { x: 0, y: 0, z: 0 }, unheard: 0, enabled: true, error: "" },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, face: false, turn_speed: 540, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },
 };

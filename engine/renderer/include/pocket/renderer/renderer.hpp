@@ -235,6 +235,7 @@ struct RenderStats {
     std::uint32_t weather_drops = 0;  // rain drops and snow flakes drawn about the camera (Weather)
     std::uint32_t shelter_draws = 0;  // draws into the shelter map, the last time it was drawn (Weather)
     std::uint32_t footprints = 0;     // prints pressed into lying snow (Weather)
+    std::uint32_t water_rings = 0;    // rings spreading on water (Water)
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;       // point lights in view this frame
     std::uint32_t spot_lights = 0;        // spot lights in view this frame
@@ -372,6 +373,10 @@ class Renderer {
     // its heading (radians about +y) and how deep it still is (1 fresh .. 0 filled in). At most 64.
     struct Footprint { float x = 0, z = 0, angle = 0, depth = 1; };
     void set_footprints(std::vector<Footprint> prints);
+    // Rings spreading on water (docs/design/water.md, Rings): where something fell in or moves
+    // through it, seconds since, how strong. At most 32.
+    struct WaterRing { float x = 0, z = 0, age = 0, strength = 1; };
+    void set_water_rings(std::vector<WaterRing> rings);
     void set_render_scale(RenderScaleSettings s);
     [[nodiscard]] RenderScaleSettings render_scale() const;
     void set_dof(DofSettings s);

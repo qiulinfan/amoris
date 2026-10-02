@@ -120,6 +120,20 @@ colours and lifetimes shape the spray, and its `floor` at the water's level lets
 onto the surface. Being particles on the fixed tick, splashes are part of the simulation and replay
 alike; a script that wants a sound as well listens for `water.entered` and uses its `speed`.
 
+## Rings
+
+What falls in or moves through the water rings its surface. Each `water.entered` starts a ring at
+the point where it met the surface, stronger the faster it came; a dynamic body or a character at
+the surface (within a unit of it) that moves faster than half a unit a second leaves a small ring
+behind it every sixty centimetres or so, a wake. A ring spreads at 1.2 units a second as a short
+train of waves that fades as it goes and is gone after three and a half seconds; the newest 32 are
+drawn, bending the water's normal (so the reflection and the refraction ripple with them). While it
+rains (`docs/design/rendering.md`, Weather), drops ring the water near the camera as they ring a
+puddle. Like footprints, rings are the renderer's: the world and its hash do not hold them.
+`render.stats.water_rings` counts them. `runtime_tests` (`[water]`): a crate dropped in the lake
+rings it, and pushed along the surface leaves a wake. `tests/evidence/rendering/water-rings.png` is
+three crates fallen into the hills' lake, their rings spreading.
+
 ## Commands
 
 | Command | SDK | Purpose |
@@ -163,9 +177,10 @@ the surface at its x at about 10.5 units a second and a character walking in at 
 ## Not yet
 
 Diving and climbing out onto a ledge (a swimmer stays at the surface unless its script pushes it,
-and walks out only up a slope), wakes and rings (what floats or falls in does not disturb the
-surface it rides; a splash is spray only), caustics from the waves' own shape (the net is
-procedural, not traced from the surface), water of other shapes than a rectangle (rivers that bend,
-round ponds; the rectangle reaches under the shore instead) and turned with its entity, levels of
-detail for open sea larger than 256 cells a side can show well, and translucent meshes in front of
-the water (they are drawn before it without writing depth, so the surface covers them).
+and walks out only up a slope), waves of its own from what floats or falls in (rings and wakes bend
+the surface's light but do not raise it or move what floats on it), caustics from the waves' own
+shape (the net is procedural, not traced from the surface), water of other shapes than a rectangle
+(rivers that bend, round ponds; the rectangle reaches under the shore instead) and turned with its
+entity, levels of detail for open sea larger than 256 cells a side can show well, and translucent
+meshes in front of the water (they are drawn before it without writing depth, so the surface covers
+them).

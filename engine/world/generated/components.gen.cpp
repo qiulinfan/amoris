@@ -3831,6 +3831,7 @@ void to_json(Json& j, const Behavior& v) {
     j["transitions"] = Json::array();
     for (const auto& x : v.transitions) { Json e; to_json(e, x); j["transitions"].push_back(std::move(e)); }
     j["target"] = v.target;
+    j["targets"] = v.targets;
     vec_to_json(j["home"], v.home);
     j["sight"] = v.sight;
     j["fov"] = v.fov;
@@ -3858,6 +3859,7 @@ void from_json(const Json& j, Behavior& v) {
         for (const Json& e : j["transitions"]) { BehaviorTransition x; from_json(e, x); v.transitions.push_back(std::move(x)); }
     }
     scalar_from_json(j, "target", v.target);
+    scalar_from_json(j, "targets", v.targets);
     if (j.is_object() && j.contains("home")) vec_from_json(j["home"], v.home);
     scalar_from_json(j, "sight", v.sight);
     scalar_from_json(j, "fov", v.fov);
@@ -3881,6 +3883,7 @@ void hash_component(StateHasherRef& h, const Behavior& v) {
     h.i64(static_cast<std::int64_t>(v.transitions.size()));
     for (const auto& x : v.transitions) hash_record(h, x);
     h.entity(v.target);
+    h.str(v.targets);
     h.f32(v.home.x);
     h.f32(v.home.y);
     h.f32(v.home.z);
@@ -5366,13 +5369,14 @@ constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane.", {}},
     FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component.", {}},
 }};
-constexpr std::array<FieldInfo, 18> kBehaviorFields = {{
+constexpr std::array<FieldInfo, 19> kBehaviorFields = {{
     FieldInfo{"state", "string", "The state it is in (written by the engine); set it to switch at the next tick. Empty starts in the first.", {}},
     FieldInfo{"previous", "string", "The state it was in before (written by the engine).", {}},
     FieldInfo{"time", "f32", "Seconds in the state (written by the engine).", {}},
     FieldInfo{"states", "list:BehaviorState", "The states; the first is where it starts.", {}},
     FieldInfo{"transitions", "list:BehaviorTransition", "The ways between states, tried in order every tick.", {}},
     FieldInfo{"target", "entity", "What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set).", {}},
+    FieldInfo{"targets", "string", "Whom it picks to attend to: the nearest entity whose name matches this pattern (* any run, ? one: \"Sheep*\") or that has this component (\"Health\", a project's own), looked for every quarter second and written into target (each change a behavior.target event); empty, target stays as set.", {}},
     FieldInfo{"home", "vec3", "Where wander roams around and home goes back to, in the world (the origin is a place like any other); the default, a million units down, takes where it stands at its first tick.", {}},
     FieldInfo{"sight", "f32", "How far it sees: sees is 0 for a target farther than this.", {}},
     FieldInfo{"fov", "f32", "The angle it sees across, in degrees, about where it faces (its -Z); 360 all round.", {}},

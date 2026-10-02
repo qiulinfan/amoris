@@ -908,6 +908,37 @@ TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behi
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a Behavior's targets picks the nearest entity by name or component, and again when it goes", "[runtime][behavior][targets]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto at = [](double x) { return Json{{"position", Json{{"x", x}, {"y", 30}, {"z", 0}}}}; };
+    auto spawn = [&](const char* name, double x, Json extra = Json::object()) {
+        Json comps{{"Transform", at(x)}};
+        comps.update(extra);
+        return s.command("world.spawn", Json{{"name", name}, {"components", comps}}).value()["id"].get<world::EntityId>();
+    };
+    const auto far = spawn("Sheep1", 5), near = spawn("Sheep2", 2);
+    const Json states = Json::array({Json{{"name", "watch"}}});
+    spawn("Wolf", 0, Json{{"Behavior", Json{{"targets", "Sheep*"}, {"states", states}}}});
+    auto target = [&] { return s.command("world.get", Json{{"entity", "Wolf"}, {"component", "Behavior"}}).value()["target"].get<world::EntityId>(); };
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(target() == near);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Sheep2"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(target() == far);   // the one it had is gone: the next at once
+    const auto closer = spawn("Sheep3", -1);
+    REQUIRE(s.command("step", Json{{"ticks", 16}}).has_value());
+    REQUIRE(target() == closer);   // a nearer one, within a quarter second
+    REQUIRE(s.command("events.since", Json{{"seq", 0}, {"type", "behavior.target"}}).value()["events"].size() >= 3);
+    // By component: the nearest with Health.
+    const auto healthy = spawn("Shepherd", 8, Json{{"Health", Json{{"current", 10}, {"max", 10}}}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Wolf"}, {"component", "Behavior"}, {"value", Json{{"targets", "Health"}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 16}}).has_value());
+    REQUIRE(target() == healthy);
+}
+
 TEST_CASE("a wall between a noise and a Behavior halves how far it carries", "[runtime][behavior][noise][walls]") {
     auto o = hello_options(-1);
     o.paused = true;
@@ -7652,7 +7683,12 @@ TEST_CASE("water.height answers the moving surface, and a crate dropped in the l
     REQUIRE(s.command("water.height", Json{{"x", bx}, {"z", bz}}).value()["height"].get<double>() != Catch::Approx(w0["height"].get<double>()).margin(1e-4));
     // A crate 0.5 units a side of mass 0.1: the 0.125 cubic units of water it could displace weigh 0.25.
     REQUIRE(s.command("world.spawn", Json{{"name", "Crate"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", bx}, {"y", 5.5}, {"z", bz}}}}}, {"MeshRenderer", Json{{"mesh", "cube"}}}, {"RigidBody", Json{{"kind", 0}, {"mass", 0.1}}}, {"Collider", Json{{"shape", 0}, {"size", Json{{"x", 0.25}, {"y", 0.25}, {"z", 0.25}}}}}}}}).has_value());
-    for (int i = 0; i < 240; ++i) REQUIRE(s.frame().has_value());
+    int rings = 0;   // the most rings spreading on the lake at once (docs/design/water.md, Rings)
+    for (int i = 0; i < 240; ++i) {
+        REQUIRE(s.frame().has_value());
+        rings = std::max(rings, s.command("render.stats", Json::object()).value()["water_rings"].get<int>());
+    }
+    REQUIRE(rings >= 1);   // where it fell in
     const Json crate = s.command("world.get", Json{{"entity", "Crate"}, {"component", "Transform"}}).value();
     const double cy = crate["position"]["y"].get<double>();
     const Json here = s.command("water.height", Json{{"x", crate["position"]["x"]}, {"z", crate["position"]["z"]}}).value();
@@ -7673,6 +7709,14 @@ TEST_CASE("water.height answers the moving surface, and a crate dropped in the l
     for (const Json& pl : s.command("particles.stats", Json::object()).value()["pools"])
         if (pl["entity"].get<world::EntityId>() == splash) spawned = pl["spawned"].get<std::int64_t>();
     REQUIRE(spawned >= std::lround(24 * crate_in["speed"].get<double>() / 8));
+    // Pushed along the surface, it leaves a wake of rings behind it.
+    rings = 0;
+    for (int i = 0; i < 60; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Crate"}, {"component", "Velocity"}, {"value", Json{{"linear", Json{{"x", 2}, {"y", 0}, {"z", 0}}}}}}).has_value());
+        REQUIRE(s.frame().has_value());
+        rings = std::max(rings, s.command("render.stats", Json::object()).value()["water_rings"].get<int>());
+    }
+    REQUIRE(rings >= 2);
     REQUIRE(s.finish().has_value());
 }
 

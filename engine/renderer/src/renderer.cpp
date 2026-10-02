@@ -218,6 +218,8 @@ struct alignas(16) FrameUniforms {
     float shelter[4];            // x 1 when there is one, y its depth bias
     float prints[64][4];         // footprints in the snow: x, z, heading, depth
     float print_info[4];         // how many
+    float rings[32][4];          // rings on water: x, z, seconds since, strength
+    float ring_info[4];          // how many
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -571,6 +573,8 @@ struct Frame {
     shelter: vec4f,
     prints: array<vec4f, 64>,
     print_info: vec4f,
+    rings: array<vec4f, 32>,
+    ring_info: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -2521,6 +2525,26 @@ struct WaterFsOut {
     let dist = length(frame.camera_pos.xyz - in.world_pos);
     let rs = water_ripples(b, in.rest) * (b.misc.z / (1.0 + dist * 0.06));
     var n = normalize(water_normal(b, in.rest) - vec3f(rs.x, 0.0, rs.y));
+    // Rings (docs/design/water.md, Rings): spreading at a unit and a fifth a second from where
+    // something fell in or moves through, a short train of waves fading as it goes; and while it
+    // rains, the drops' rings as on a puddle, near the camera.
+    var rg = vec2f(0.0);
+    let ring_count = u32(frame.ring_info.x);
+    for (var i = 0u; i < ring_count; i = i + 1u) {
+        let r = frame.rings[i];
+        let d = in.world_pos.xz - r.xy;
+        let radius = r.z * 1.2;
+        let reach = radius + 0.6;
+        if (dot(d, d) > reach * reach) { continue; }
+        let dd = length(d);
+        let x = (dd - radius) * 11.0;
+        if (abs(x) > 6.2831853) { continue; }
+        rg = rg + (d / max(dd, 1e-3)) * sin(x) * (0.5 + 0.5 * cos(x * 0.5)) * exp(-r.z * 0.8) * r.w / (1.0 + radius * 0.5);
+    }
+    if (frame.weather.z > 0.0) {
+        rg = rg + ripples(in.world_pos.xz, frame.clock.x) * min(frame.weather.z / 4500.0, 1.0) * (1.0 - smoothstep(10.0, 24.0, dist)) * 0.6;
+    }
+    n = normalize(n - vec3f(rg.x, 0.0, rg.y) * 0.6);
     if (!front) { n = -n; }
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let ndv = max(dot(n, v), 1e-4);
@@ -3589,6 +3613,7 @@ struct Renderer::Impl {
     float env_overcast = 0;                          // the Weather's overcast, greying the sky's panorama
     float after_dark_lit = 1;                        // 0 by day .. 1 once the sun is down: Light and MeshRenderer after_dark
     std::vector<Renderer::Footprint> footprints;     // pressed into the snow (set_footprints)
+    std::vector<Renderer::WaterRing> water_rings;    // spreading on water (set_water_rings)
     std::uint32_t weather_drops = 0;                 // how many this frame
     WGPUBindGroupLayout particle_draw_bgl = nullptr;
     WGPUPipelineLayout particle_layout = nullptr;
@@ -10268,6 +10293,13 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         }
         fu.print_info[0] = static_cast<float>(n);
         im.stats.footprints = static_cast<std::uint32_t>(n);
+        const std::size_t r = std::min<std::size_t>(im.water_rings.size(), 32);
+        for (std::size_t i = 0; i < r; ++i) {
+            const Renderer::WaterRing& w = im.water_rings[im.water_rings.size() - r + i];   // the newest 32
+            fu.rings[i][0] = w.x; fu.rings[i][1] = w.z; fu.rings[i][2] = w.age; fu.rings[i][3] = w.strength;
+        }
+        fu.ring_info[0] = static_cast<float>(r);
+        im.stats.water_rings = static_cast<std::uint32_t>(r);
     }
     if (im.shelter_valid) {
         std::memcpy(fu.shelter_vp, im.shelter_vp, sizeof fu.shelter_vp);
@@ -12411,6 +12443,7 @@ void Renderer::set_colour_vision(ColourVisionSettings s) {
 }
 ColourVisionSettings Renderer::colour_vision() const { return impl_->colour_vision; }
 void Renderer::set_footprints(std::vector<Footprint> prints) { impl_->footprints = std::move(prints); }
+void Renderer::set_water_rings(std::vector<WaterRing> rings) { impl_->water_rings = std::move(rings); }
 
 void Renderer::set_toon(ToonSettings s) {
     s.bands = std::clamp(s.bands, 1, 16);
@@ -12490,6 +12523,7 @@ Json Renderer::describe() const {
     j["weather_drops"] = s.weather_drops;
     j["shelter_draws"] = s.shelter_draws;
     j["footprints"] = s.footprints;
+    j["water_rings"] = s.water_rings;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;

@@ -1218,6 +1218,7 @@ void Session::run_tick() {
     mark(System::Particles);
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
     update_footprints(static_cast<float>(clock_.tick_seconds));   // after the gait has planted this tick's feet
+    update_water_rings(static_cast<float>(clock_.tick_seconds));
     mark(System::Animation);
     if (assets_ && physics_) {
         if (!ragdolls_) ragdolls_ = std::make_unique<Ragdolls>();
@@ -2017,6 +2018,62 @@ void Session::update_footprints(float dt) {
         if (footprints_.size() > 64) footprints_.erase(footprints_.begin(), footprints_.end() - 64);
     }
     if (renderer_) renderer_->set_footprints(footprints_);
+}
+
+// Rings on water (docs/design/water.md, Rings): a strong one where something falls in (each
+// water.entered, by how fast it came), and a wake of small ones behind what moves through the water
+// (a dynamic body or a character at the surface moving faster than half a unit a second, one each
+// sixty centimetres or so); each spreads for three and a half seconds, the newest 32 drawn.
+// Render-only, like footprints.
+void Session::update_water_rings(float dt) {
+    world::World& w = *world_;
+    for (auto& r : water_rings_) r.age += dt;
+    std::erase_if(water_rings_, [](const renderer::Renderer::WaterRing& r) { return r.age > 3.5f; });
+    struct Pool { world::Water water; Vec3 center; };
+    std::vector<Pool> pools;
+    w.ecs().each([&](flecs::entity, const world::Water& wa, const world::WorldTransform& t) {
+        if (wa.enabled && wa.size.x > 0 && wa.size.y > 0) pools.push_back({wa, t.position});
+    });
+    if (pools.empty()) {
+        water_rings_.clear();
+        wakes_.clear();
+    } else {
+        for (const world::Event& ev : w.events().since(water_rings_seen_, 256, "water.entered")) {
+            water_rings_seen_ = ev.seq;
+            if (!ev.data.is_object() || !ev.data.contains("point")) continue;
+            const Json& pt = ev.data["point"];
+            const float speed = ev.data.value("speed", 2.0f);
+            water_rings_.push_back({pt.value("x", 0.0f), pt.value("z", 0.0f), 0.0f, std::clamp(speed / 5.0f, 0.4f, 1.5f)});
+        }
+        const auto time = static_cast<float>(w.seconds());
+        std::set<world::EntityId> seen;
+        auto wake = [&](world::EntityId id, Vec3 at) {
+            seen.insert(id);
+            for (const Pool& pool : pools) {
+                if (!world::water_covers(pool.water, pool.center, at.x, at.z)) continue;
+                const float level = world::water_at(pool.water, pool.center.y, at.x, at.z, time).position.y;
+                if (std::fabs(at.y - level) > 1.0f) continue;   // under it, or above it
+                auto [it, fresh] = wakes_.try_emplace(id, std::pair{at, 0.0f});
+                it->second.second += dt;
+                const float moved = std::hypot(at.x - it->second.first.x, at.z - it->second.first.z);
+                if (!fresh && moved > 0.6f && moved / std::max(it->second.second, 1e-3f) > 0.5f) {
+                    water_rings_.push_back({at.x, at.z, 0.0f, 0.35f});
+                    it->second = {at, 0.0f};
+                } else if (fresh || it->second.second > 1.5f) {
+                    it->second = {at, 0.0f};
+                }
+                return;
+            }
+        };
+        w.ecs().each([&](flecs::entity e, const world::RigidBody& rb, const world::WorldTransform& t) {
+            if (rb.kind == 0) wake(e.id(), t.position);   // dynamic
+        });
+        w.ecs().each([&](flecs::entity e, const world::Character&, const world::WorldTransform& t) { wake(e.id(), t.position); });
+        for (auto it = wakes_.begin(); it != wakes_.end();) it = seen.contains(it->first) ? std::next(it) : wakes_.erase(it);
+        if (water_rings_.size() > 32) water_rings_.erase(water_rings_.begin(), water_rings_.end() - 32);
+    }
+    water_rings_seen_ = std::max(water_rings_seen_, w.events().last_seq());
+    if (renderer_) renderer_->set_water_rings(water_rings_);
 }
 
 void Session::update_camera_rigs(float dt) {

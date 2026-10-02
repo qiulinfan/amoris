@@ -612,6 +612,60 @@ function endSculpt(): void {
     historyVersion.update((v) => v + 1);
 }
 
+// The hour of a Sky's day (docs/design/rendering.md, A day): a slider and the four times people
+// look at most, each an undoable edit; the sun stands where the hour puts it as soon as it is set.
+function SkyClock(props: { id: number }) {
+    const sky = world.get(props.id, "Sky");
+    if (!sky) return null;
+    const t = sky.time_of_day;
+    const setHour = (h: number) => {
+        const before = world.get(props.id, "Sky")!.time_of_day;
+        edit("time of day", () => world.set(props.id, "Sky", { time_of_day: h }), () => world.set(props.id, "Sky", { time_of_day: before }));
+        refreshSelected();
+    };
+    const minutes = Math.round(t * 60);   // to the nearest minute (a stored 18.4 is 18.39999...)
+    const clock = t < 0 ? "not set" : `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const times: Array<[string, number]> = [["dawn", 6.2], ["noon", 12], ["dusk", 18.4], ["night", 23]];
+    return (
+        <box gap={4} padding={[4, 0]} name="sky-clock">
+            <Row>
+                <Label text="Time of day" size={13} />
+                <box flex={1} />
+                <Label text={clock} muted name="sky-clock:time" />
+            </Row>
+            <Slider value={t < 0 ? 12 : t} min={0} max={24} step={0.25} width={180} name="sky-clock:hour" onInput={(v) => setHour(v)} />
+            <Row gap={4}>
+                {times.map(([label, h]) => <Button key={label} label={label} small name={`sky-clock:${label}`} onClick={() => setHour(h)} />)}
+            </Row>
+        </box>
+    );
+}
+
+// A Weather's four amounts as sliders (docs/design/rendering.md, Weather): how hard it rains and
+// snows, how wet things are and how much snow lies, each change an undoable edit.
+function WeatherSliders(props: { id: number }) {
+    const wx = world.get(props.id, "Weather");
+    if (!wx) return null;
+    const fields: Array<["rain" | "snow" | "wet" | "cover", string]> = [["rain", "rain"], ["snow", "snow"], ["wet", "wet"], ["cover", "snow lying"]];
+    const setField = (f: "rain" | "snow" | "wet" | "cover", v: number) => {
+        const before = world.get(props.id, "Weather")![f];
+        edit(`weather ${f}`, () => world.set(props.id, "Weather", { [f]: v }), () => world.set(props.id, "Weather", { [f]: before }));
+        refreshSelected();
+    };
+    return (
+        <box gap={4} padding={[4, 0]} name="weather-sliders">
+            <Label text="Weather" size={13} />
+            {fields.map(([f, label]) => (
+                <Row key={f} gap={6}>
+                    <box width={80}><Label text={label} muted /></box>
+                    <Slider value={wx[f]} min={0} max={1} step={0.05} width={140} name={`weather:${f}`} onInput={(v) => setField(f, v)} />
+                    <Label text={wx[f].toFixed(2)} muted size={11} name={`weather:${f}:value`} />
+                </Row>
+            ))}
+        </box>
+    );
+}
+
 function TerrainBrush(props: { id: number }) {
     let info;
     try {
@@ -1406,6 +1460,8 @@ function Inspector(props: { width: Dim; grow?: boolean }) {
             <Label text={`${d.path}  #${d.id}`} muted size={11} />
             {present.includes("TileMap") ? <TileBrush id={d.id} /> : null}
             {present.includes("Terrain") ? <TerrainBrush id={d.id} /> : null}
+            {present.includes("Sky") ? <SkyClock id={d.id} /> : null}
+            {present.includes("Weather") ? <WeatherSliders id={d.id} /> : null}
             {schema.filter((c) => present.includes(c.name)).map((c) => (
                 <box key={c.name} gap={4} padding={[4, 0]} borderColor={theme.border} border={0}>
                     <Row>

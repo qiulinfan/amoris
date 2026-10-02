@@ -723,6 +723,31 @@ TEST_CASE("inspector steps a named code through its names", "[editor][names]") {
     REQUIRE(ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "Light"}}))["kind"] == 2);   // point -> spot
 }
 
+TEST_CASE("inspector sets a sky's hour by its clock, and undoes it", "[editor][sky]") {
+    app::Session s(editor_options("assets"));
+    ok(s.start());
+    s.set_paused(true);
+    ok(s.command("world.spawn", Json{{"name", "Aa"}, {"components", Json{{"Sky", Json{{"mode", "atmosphere"}, {"time_of_day", 12}}}}}}));
+    for (int i = 0; i < 20; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Aa")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    auto clock = [&] { return ok(s.command("ui.describe", Json{{"id", find_named(s, "sky-clock:time")}})).dump(); };
+    REQUIRE(clock().find("12:00") != std::string::npos);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "sky-clock:dusk")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "Sky"}}))["time_of_day"].get<double>() == Catch::Approx(18.4));
+    REQUIRE(clock().find("18:24") != std::string::npos);
+    ok(s.command("ui.click", Json{{"id", find_named(s, "undo")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    REQUIRE(ok(s.command("world.get", Json{{"entity", "Aa"}, {"component", "Sky"}}))["time_of_day"].get<double>() == Catch::Approx(12));
+    // A Weather's sliders: shown with it, each amount set and undone.
+    ok(s.command("world.spawn", Json{{"name", "Ab"}, {"components", Json{{"Weather", Json{{"rain", 0.5}}}}}}));
+    for (int i = 0; i < 5; ++i) ok(s.idle_frame());
+    ok(s.command("ui.click", Json{{"id", find_named(s, "entity:Ab")}}));
+    for (int i = 0; i < 3; ++i) ok(s.idle_frame());
+    REQUIRE(ok(s.command("ui.describe", Json{{"id", find_named(s, "weather:rain:value")}})).dump().find("0.50") != std::string::npos);
+}
+
 TEST_CASE("inspector puts a pattern on a mesh: its texture, normal map and tile in one edit", "[editor][pattern]") {
     app::Session s(editor_options("assets"));
     ok(s.start());

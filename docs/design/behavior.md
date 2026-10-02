@@ -77,6 +77,18 @@ origin included: the default that means "not given" is a million units down; an 
 villagers' home to the centre of a square had them wander round where each started, when zero meant
 "not given"); `enabled: false` holds the state and leaves the agent alone.
 
+## Picking whom to attend to
+
+`target` is one entity, set in the scene or by a script. `targets` picks it instead: the nearest
+entity whose name matches a pattern (`"Sheep*"`, `*` any run of characters and `?` one) or, when it
+names a component (`"Health"`, a project's own), the nearest that has it, other than the Behavior's
+own entity and its children. It is looked for again every quarter second (each entity on its own
+tick of the fifteen) and at once when the one it had is gone, and each change is a `behavior.target`
+event (`{target, path}`). A wolf hunts whichever sheep is nearest, an enemy turns on the nearest of
+two players, a villager greets whoever walks by. `runtime_tests` (`[behavior][targets]`): a wolf
+picks the nearer of two sheep, the other at once when that one goes, a third that comes nearer
+within a quarter second, and the nearest with `Health` when told to.
+
 ## Noises
 
 A guard that only sees is easy to sneak past at a run. A `noise` event is a sound the Behaviors
@@ -133,9 +145,9 @@ behind a wall column and sees it once it is in the open.
 
 ## Not yet
 
-No nested machines or behavior trees; the sight is of one target, by distance and a ray (what it
-remembers is where it last saw the target and when), and a wall muffles a noise the same whatever it
-is made of (stone or a curtain). A field of view narrower than 360 degrees reads where the entity
-faces, so its `NavAgent` should have `face` on (it turns the entity toward where it walks) or the
-game should turn it. Facing is about the vertical, so in a 2D game a field of view does not apply
-(leave `fov` at 360).
+No nested machines or behavior trees; the sight is of one target at a time (`targets` picks it), by
+distance and a ray (what it remembers is where it last saw the target and when), and a wall muffles
+a noise the same whatever it is made of (stone or a curtain). A field of view narrower than 360
+degrees reads where the entity faces, so its `NavAgent` should have `face` on (it turns the entity
+toward where it walks) or the game should turn it. Facing is about the vertical, so in a 2D game a
+field of view does not apply (leave `fov` at 360).
