@@ -9,11 +9,13 @@ const SPEED = 6;
 const JUMP = 7;
 const WATER = 3.2;
 let player = 0;
+let body = 0;
 let trees = 0;
 let peak = { x: 0, y: 0, z: 0 };
 
 onStart(() => {
     player = world.find("Player") ?? 0;
+    body = world.find("Player/Body") ?? 0;
     const info = terrain.info();
     const half = info.size.x / 2 - 2;
     // The highest point, from a coarse look over the ground; a beacon stands on it.
@@ -28,14 +30,20 @@ onStart(() => {
     world.spawn("Smoke", { components: { Transform: { position: { x: peak.x, y: peak.y + 3.2, z: peak.z } }, ParticleEmitter: {
         rate: 14, speed: { x: 0.2, y: 0.6 }, spread: 25, lifetime: { x: 4, y: 6 }, gravity: { x: 0, y: 0.6, z: 0 }, drag: 0.8,
         size: { x: 0.5, y: 2.2 }, color: { r: 0.55, g: 0.55, b: 0.55, a: 0.55 }, color_end: { r: 0.8, g: 0.8, b: 0.8, a: 0 }, world_space: true } } });
-    // Trees on gentle grass above the water: a trunk that stops the player and a crown.
+    // Trees on gentle grass above the water, broadleaf and pine (the engine's own props,
+    // docs/design/assets.md, Props), each a trunk that stops the player.
     for (let k = 0; k < 400 && trees < 45; k++) {
         const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;
         const g = terrain.height(x, z);
         if (g.height < WATER + 0.6 || g.height > info.height * 0.7 || g.normal.y < 0.9 || Math.hypot(x, z) < 6) continue;
-        const tall = 2 + random() * 1.5;
-        world.spawn(`Tree${trees}`, { components: { Transform: { position: { x, y: g.height + tall / 2, z }, scale: { x: 0.35, y: tall, z: 0.35 } }, MeshRenderer: { mesh: "cylinder", color: { r: 0.4, g: 0.27, b: 0.16, a: 1 } }, RigidBody: { kind: 1 }, Collider: { shape: 2, size: { x: 0.18, y: tall / 2, z: 0.18 } } } });
-        world.spawn(`Crown${trees}`, { components: { Transform: { position: { x, y: g.height + tall + 0.6, z }, scale: { x: 2.2, y: 2.6, z: 2.2 } }, MeshRenderer: { mesh: "sphere", color: { r: 0.22, g: 0.42 + random() * 0.12, b: 0.18, a: 1 }, roughness: 0.9 } } });
+        const tall = 3.5 + random() * 2.5;
+        const kind = trees % 3 === 2 ? "pine" : "tree";
+        world.spawn(`Tree${trees}`, { components: {
+            Transform: { position: { x, y: g.height - 0.05, z } },
+            MeshRenderer: { mesh: `${kind}?height=${tall.toFixed(1)}&seed=${trees % 6}` },
+            RigidBody: { kind: 1 },
+            Collider: { shape: 2, size: { x: 0.2, y: tall * 0.25, z: 0.2 }, offset: { x: 0, y: tall * 0.3, z: 0 } },
+        } });
         trees++;
     }
     // The player starts on dry ground near the middle: the first place along a ray out that is above water.
@@ -63,7 +71,13 @@ onTick(({ dt }) => {
     const c = world.get(player, "Character")!;
     const jump = input.pressed("jump") && c.grounded;
     if (jump) events.emit("player.jumped", {}, { subject: player });
-    world.set(player, "Character", { velocity: { x: input.axis("move_x") * SPEED, y: jump ? JUMP : c.velocity.y, z: input.axis("move_z") * SPEED } });
+    const vx = input.axis("move_x") * SPEED, vz = input.axis("move_z") * SPEED;
+    world.set(player, "Character", { velocity: { x: vx, y: jump ? JUMP : c.velocity.y, z: vz } });
+    // The body (the built-in humanoid, walked and run by its Animator) turns to where it goes.
+    if (body && Math.hypot(vx, vz) > 0.1) {
+        const yaw = repro.atan2(-vx, -vz);
+        world.set(body, "Transform", { rotation: { x: 0, y: repro.sin(yaw / 2), z: 0, w: repro.cos(yaw / 2) } });
+    }
 });
 
 expose("trees", () => trees);

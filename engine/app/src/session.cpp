@@ -449,6 +449,11 @@ void Session::apply_project_settings() {
             }
             renderer_->set_ssr(s);
         }
+        // [render] toon = true, or [render.toon] bands, outline, outline_color, opacity.
+        if (r.contains("toon") && (r["toon"].is_boolean() || r["toon"].is_object())) {
+            const Json args = r["toon"].is_boolean() ? Json{{"enabled", r["toon"].get<bool>()}} : r["toon"];
+            if (auto done = render_command("toon", args); !done) log::warn("runtime", "[render] toon: {}", done.error().message);
+        }
         // [render] colorblind = "deuteranopia", or [render.colorblind] mode, simulate, strength.
         if (r.contains("colorblind") && (r["colorblind"].is_string() || r["colorblind"].is_object())) {
             const Json args = r["colorblind"].is_string() ? Json{{"mode", r["colorblind"]}} : r["colorblind"];
@@ -4718,6 +4723,34 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         g = renderer_->ssgi();
         return Json{{"enabled", g.enabled}, {"distance", g.distance}, {"rays", g.rays}, {"steps", g.steps}, {"thickness", g.thickness}, {"intensity", g.intensity}};
     }
+    if (op == "toon") {
+        // The cel look (docs/design/rendering.md, Toon): lights in flat bands, outlines round each entity.
+        renderer::ToonSettings t = renderer_->toon();
+        t.enabled = opt<bool>(p, "enabled", p.empty() ? t.enabled : true);
+        t.bands = opt<int>(p, "bands", t.bands);
+        t.softness = opt<float>(p, "softness", t.softness);
+        t.outline = opt<float>(p, "outline", t.outline);
+        t.opacity = opt<float>(p, "opacity", t.opacity);
+        if (p.contains("outline_color")) {
+            const Json& c = p["outline_color"];
+            if (c.is_string()) {
+                std::string s = c.get<std::string>();
+                if (s.starts_with("#")) s = s.substr(1);
+                if (s.size() == 3) s = std::string{s[0], s[0], s[1], s[1], s[2], s[2]};
+                if (s.size() != 6 || !std::all_of(s.begin(), s.end(), [](unsigned char ch) { return std::isxdigit(ch) != 0; })) return fail("bad_args", "outline_color is \"#rrggbb\" or {{r, g, b}} (0..1), not {}", c.dump());
+                for (int k = 0; k < 3; ++k) t.outline_color[k] = static_cast<float>(std::stoi(s.substr(static_cast<std::size_t>(k) * 2, 2), nullptr, 16)) / 255.0f;
+            } else if (c.is_object()) {
+                t.outline_color[0] = c.value("r", t.outline_color[0]);
+                t.outline_color[1] = c.value("g", t.outline_color[1]);
+                t.outline_color[2] = c.value("b", t.outline_color[2]);
+            } else {
+                return fail("bad_args", "outline_color is \"#rrggbb\" or {{r, g, b}} (0..1), not {}", c.dump());
+            }
+        }
+        renderer_->set_toon(t);
+        t = renderer_->toon();
+        return Json{{"enabled", t.enabled}, {"bands", t.bands}, {"softness", t.softness}, {"outline", t.outline}, {"outline_color", Json{{"r", t.outline_color[0]}, {"g", t.outline_color[1]}, {"b", t.outline_color[2]}}}, {"opacity", t.opacity}};
+    }
     if (op == "colorblind" || op == "colour_vision") {
         // Colour vision: the frame as a dichromat sees it (simulate), or corrected for them.
         renderer::ColourVisionSettings c = renderer_->colour_vision();
@@ -6500,7 +6533,7 @@ Result<Json> Session::world_lint(const Json& p) {
     ecs.each([&](flecs::entity e, const world::MeshRenderer& mr) {
         const bool primitive = mr.mesh.empty() || mr.mesh == "cube" || mr.mesh == "sphere" || mr.mesh == "plane" || mr.mesh == "cylinder" || mr.mesh == "quad" || mr.mesh == "capsule";
         const bool builtin = mr.mesh == "humanoid" || mr.mesh.starts_with("humanoid?") || assets::is_prop(mr.mesh);
-        if (!primitive && !builtin && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule), the built-in humanoid or a prop (tree, pine, rock, bush, barrel, lamp, fence)");
+        if (!primitive && !builtin && !e.has<world::Terrain>() && file_missing(mr.mesh)) add("error", e.id(), "MeshRenderer", std::format("the mesh file {} is not in the project, so nothing is drawn", mr.mesh), "import it (assets.import), fix the path, or use a primitive (cube, sphere, plane, cylinder, quad, capsule), the built-in humanoid or a prop (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign)");
         if (mr.mesh.starts_with("humanoid?") && assets_) {
             if (auto m = assets_->mesh(mr.mesh); !m) add("error", e.id(), "MeshRenderer", m.error().message, "skin, shirt, trousers, shoes and hair take \"#rrggbb\" or a colour's name; hair=none leaves the head bare");
         }
@@ -8139,10 +8172,14 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
                 if (!made) return fail(made.error().code, "until: {}", made.error().message);
                 std::function<Result<Json>()> read = std::move(*made);
                 const char* ops[] = {"equals", "above", "below", "at_least", "at_most", "changes"};
-                std::string op;
-                for (const char* o : ops) if (u.contains(o)) op = o;
+                std::string op, given;
+                for (const char* o : ops) if (u.contains(o)) op = given = o;
+                // The other names a comparison is often given (value, is, eq, gt, lt, ...).
+                static const std::pair<const char*, const char*> aliases[] = {{"value", "equals"}, {"is", "equals"}, {"eq", "equals"}, {"equal", "equals"}, {"gt", "above"}, {"greater", "above"}, {"lt", "below"}, {"less", "below"},
+                                                                             {"gte", "at_least"}, {"min", "at_least"}, {"lte", "at_most"}, {"max", "at_most"}, {"changed", "changes"}};
+                for (const auto& [alias, to] : aliases) if (op.empty() && u.contains(alias)) { op = to; given = alias; }
                 if (op.empty()) return fail("bad_args", "until compares with one of equals, above, below, at_least, at_most, changes");
-                const Json target = u[op];
+                const Json target = u[given];
                 if (op != "equals" && op != "changes" && !target.is_number()) return fail("bad_args", "until.{} is a number", op);
                 POCKET_TRY(first, read());
                 met = [read, op, target, first](Json& detail) {
@@ -8424,7 +8461,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.colorblind", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "combat.hitscan", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.preset", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.colorblind", "render.toon", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "combat.hitscan", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.preset", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

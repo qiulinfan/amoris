@@ -211,6 +211,7 @@ struct alignas(16) FrameUniforms {
     float grid_ext[4][4];        // half size, intensity
     float grid_cells[4][4];      // probes along x, y and z; 1 once every probe has been captured
     float grid_info[4];          // how many
+    float toon[4];               // a cel look (docs/design/rendering.md, Toon): x on, y light's bands, z the bands' softness
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -550,6 +551,7 @@ struct Frame {
     grid_ext: array<vec4f, 4>,
     grid_cells: array<vec4f, 4>,
     grid_info: vec4f,
+    toon: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -1065,9 +1067,17 @@ fn spec_level(object: Object) -> f32 { return 1.0 - object.spec.w; }
 // `at` for brushed metal (KHR_materials_anisotropy: anisotropic GGX with its height-correlated
 // Smith visibility), a sheen over it for cloth (KHR_materials_sheen: the Charlie distribution with
 // Neubelt's visibility, the layer below dimmed by what the sheen takes), and its clear coat.
+// A cel look (docs/design/rendering.md, Toon): the light on a surface in a few flat bands, each
+// edge softened a little so it does not crawl.
+fn toon_band(x: f32) -> f32 {
+    if (frame.toon.x < 0.5) { return x; }
+    let bands = max(frame.toon.y, 1.0);
+    let y = x * bands;
+    return (floor(y) + smoothstep(0.5 - frame.toon.z, 0.5 + frame.toon.z, fract(y))) / bands;
+}
 fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32, at: vec3f) -> vec3f {
     let h = normalize(l + v);
-    let ndl = max(dot(n, l), 0.0);
+    let ndl = toon_band(max(dot(n, l), 0.0));
     let ndv = max(dot(n, v), 1e-4);
     let ndh = max(dot(n, h), 0.0);
     let vdh = max(dot(v, h), 0.0);
@@ -2407,7 +2417,8 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 constexpr const char* kPostWgsl = R"WGSL(
 struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f,
                inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f, lut: vec4f,
-               cb: vec4f, cb0: vec4f, cb1: vec4f, cb2: vec4f };   // colour vision: on, then the matrix's rows (linear light)
+               cb: vec4f, cb0: vec4f, cb1: vec4f, cb2: vec4f,   // colour vision: on, then the matrix's rows (linear light)
+               outline: vec4f, outline2: vec4f };   // the toon look's outlines: colour and width in pixels; opacity
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
@@ -2418,6 +2429,26 @@ struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, 
 // from slice to slice), read with the encoded color, the two nearest slices blended.
 @group(0) @binding(6) var lut_tex: texture_2d<f32>;
 @group(0) @binding(7) var lut_samp: sampler;
+// The entity under each pixel (the id pass): outlines are drawn where it changes.
+@group(0) @binding(8) var ids: texture_2d<u32>;
+// Outlines (docs/design/rendering.md, Toon): how many of eight pixels `outline.w` away show another
+// entity than this one (the background is one too), as a coverage that softens the line's edge.
+fn outlined(pos: vec2f) -> f32 {
+    let w = post.outline.w;
+    if (w <= 0.0) { return 0.0; }
+    let lo = vec2i(post.viewport.xy);
+    let hi = vec2i(post.viewport.xy + post.viewport.zw) - vec2i(1);
+    let p = vec2i(pos);
+    let own = textureLoad(ids, p, 0).r;
+    let r = max(w * 0.5, 1.0);
+    var other = 0.0;
+    for (var k = 0; k < 8; k = k + 1) {
+        let a = f32(k) * 0.785398;
+        let q = clamp(p + vec2i(round(vec2f(cos(a), sin(a)) * r)), lo, hi);
+        if (textureLoad(ids, q, 0).r != own) { other = other + 1.0; }
+    }
+    return clamp(other / 3.0, 0.0, 1.0);
+}
 fn graded(e: vec3f) -> vec3f {
     let dims = textureDimensions(lut_tex);
     let n = f32(dims.y);
@@ -2556,6 +2587,7 @@ fn encode(c: vec3f) -> vec3f {
     var e = encode(clamp(c, vec3f(0.0), vec3f(1.0)));
     if (post.grade_on != 0u) { e = clamp((e - 0.5) * post.contrast + 0.5, vec3f(0.0), vec3f(1.0)); }
     if (post.lut.x > 0.5) { e = mix(e, graded(e), post.lut.y); }
+    e = mix(e, post.outline.rgb, outlined(pos.xy) * post.outline2.x);
     if (post.cb.x > 0.5) {
         // Colour vision (docs/design/rendering.md, Colour vision): the finished colours in linear
         // light through one matrix, a simulation of a dichromat's sight or its correction.
@@ -3357,6 +3389,7 @@ struct Renderer::Impl {
     std::uint32_t hdr_w = 0, hdr_h = 0;
     GradeSettings grade;
     ColourVisionSettings colour_vision;
+    ToonSettings toon;
     TonemapSettings tonemap;
     float time_step = 1.0f / 60.0f;
     WGPUShaderModule post_shader = nullptr;
@@ -3403,6 +3436,7 @@ struct Renderer::Impl {
     WGPUBindGroup meter_bg = nullptr;
     bool meter_reset = true;                      // the next metered frame snaps instead of easing
     WGPUTextureView post_depth = nullptr;         // the depth view the post group was made with
+    WGPUTextureView post_ids = nullptr;           // and the id view
     WGPUTextureView post_volume = nullptr;        // and the volume view
     WGPUTextureView post_lut = nullptr;           // and the look-up table's
     // Volumetric fog: the half-size target, a stand-in (nothing gathered, everything shows) when it
@@ -4512,6 +4546,8 @@ struct Renderer::Impl {
         float lut[4];            // on, strength
         float cb[4];             // colour vision on
         float cb_rows[12];       // its matrix, three rows of four
+        float outline[4];        // the toon look's outlines: colour (sRGB), width in pixels (0 none)
+        float outline2[4];       // their opacity
     };
     struct FxUniforms {
         float reproject[16];     // last frame's view-projection times the inverse of this frame's
@@ -4554,11 +4590,15 @@ struct Renderer::Impl {
     Status create_post() {
         POCKET_TRY(module, device->create_shader("pocket.post", kPostWgsl));
         post_shader = module;
-        WGPUBindGroupLayoutEntry be[8]{};
+        WGPUBindGroupLayoutEntry be[9]{};
         be[0].binding = 0;
         be[0].visibility = WGPUShaderStage_Fragment;
         be[0].buffer.type = WGPUBufferBindingType_Uniform;
         be[0].buffer.minBindingSize = sizeof(PostUniforms);
+        be[8].binding = 8;
+        be[8].visibility = WGPUShaderStage_Fragment;
+        be[8].texture.sampleType = WGPUTextureSampleType_Uint;
+        be[8].texture.viewDimension = WGPUTextureViewDimension_2D;
         be[6].binding = 6;
         be[6].visibility = WGPUShaderStage_Fragment;
         be[6].texture.sampleType = WGPUTextureSampleType_Float;
@@ -4587,7 +4627,7 @@ struct Renderer::Impl {
         be[3].texture.viewDimension = WGPUTextureViewDimension_2D;
         WGPUBindGroupLayoutDescriptor bd{};
         bd.label = rhi::str("pocket.post");
-        bd.entryCount = 8;
+        bd.entryCount = 9;
         bd.entries = be;
         post_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
         WGPUPipelineLayoutDescriptor pld{};
@@ -5174,9 +5214,9 @@ fn time() -> f32 { return fx.time.x; }
                 report_missing(grade.lut, img.error().message);
             }
         }
-        if (!post_bg || post_depth != depth_view || post_volume != volume_now || post_lut != lut_now) {
+        if (!post_bg || post_depth != depth_view || post_volume != volume_now || post_lut != lut_now || post_ids != id_view) {
             if (post_bg) wgpuBindGroupRelease(post_bg);
-            WGPUBindGroupEntry e[8]{};
+            WGPUBindGroupEntry e[9]{};
             e[6].binding = 6;
             e[6].textureView = lut_now;
             e[7].binding = 7;
@@ -5197,13 +5237,16 @@ fn time() -> f32 { return fx.time.x; }
             e[2].size = sizeof(float) * 4;
             e[3].binding = 3;
             e[3].textureView = depth_view;
+            e[8].binding = 8;
+            e[8].textureView = id_view;
             WGPUBindGroupDescriptor d{};
             d.label = rhi::str("pocket.post");
             d.layout = post_bgl;
-            d.entryCount = 8;
+            d.entryCount = 9;
             d.entries = e;
             post_bg = wgpuDeviceCreateBindGroup(device->device(), &d);
             post_depth = depth_view;
+            post_ids = id_view;
         }
         const bool metered = tonemap.auto_exposure;
         if (metered && !secondary) {
@@ -5309,6 +5352,11 @@ fn time() -> f32 { return fx.time.x; }
                 u.cb_rows[r * 4 + 3] = 0;
             }
             stats.colour_vision = mode;
+        }
+        if (toon.enabled && toon.outline > 0) {
+            for (int k = 0; k < 3; ++k) u.outline[k] = std::clamp(toon.outline_color[k], 0.0f, 1.0f);
+            u.outline[3] = std::clamp(toon.outline, 0.0f, 16.0f) * (secondary ? 1.0f : std::clamp(scale_now, 0.25f, 1.0f));   // window pixels, in the drawn frame's
+            u.outline2[0] = std::clamp(toon.opacity, 0.0f, 1.0f);
         }
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
         const bool effects = !secondary && std::any_of(user_effects.begin(), user_effects.end(), [](const UserEffect& e) { return e.def.enabled; });
@@ -7852,9 +7900,10 @@ fn time() -> f32 { return fx.time.x; }
         if (id_texture && id_width == w && id_height == h) return {};
         if (id_view) { wgpuTextureViewRelease(id_view); id_view = nullptr; }
         if (id_texture) { wgpuTextureRelease(id_texture); id_texture = nullptr; }
+        post_ids = nullptr;   // the post group reads it
         WGPUTextureDescriptor td{};
         td.label = rhi::str("pocket.ids");
-        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc | WGPUTextureUsage_TextureBinding;   // the toon look's outlines read it
         td.dimension = WGPUTextureDimension_2D;
         td.size = {w, h, 1};
         td.format = WGPUTextureFormat_R32Uint;
@@ -9669,6 +9718,13 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     im.camera = im.find_camera(world, aspect);
 
     FrameUniforms fu{};
+    // The cel look's bands for the lights in the mesh shader (its outlines are the post pass's).
+    if (im.toon.enabled) {
+        fu.toon[0] = 1.0f;
+        fu.toon[1] = static_cast<float>(std::clamp(im.toon.bands, 1, 16));
+        fu.toon[2] = std::clamp(im.toon.softness, 0.0f, 0.5f);
+    }
+    im.stats.toon = im.toon.enabled;
     // The bodies' boxes for the caustics on what lies below them (the first four).
     {
         const std::size_t n = std::min<std::size_t>(im.water_src.size(), 4);
@@ -11831,6 +11887,14 @@ void Renderer::set_colour_vision(ColourVisionSettings s) {
     impl_->colour_vision = s;
 }
 ColourVisionSettings Renderer::colour_vision() const { return impl_->colour_vision; }
+void Renderer::set_toon(ToonSettings s) {
+    s.bands = std::clamp(s.bands, 1, 16);
+    s.softness = std::clamp(s.softness, 0.0f, 0.5f);
+    s.outline = std::clamp(s.outline, 0.0f, 16.0f);
+    s.opacity = std::clamp(s.opacity, 0.0f, 1.0f);
+    impl_->toon = s;
+}
+ToonSettings Renderer::toon() const { return impl_->toon; }
 
 Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
@@ -11847,6 +11911,7 @@ Json Renderer::describe() const {
         j["gpu"] = Json{{"ms", std::round(s.gpu_ms * 1000.0) / 1000.0}, {"passes", passes}, {"frames_ago", s.gpu_age}, {"frames_timed", s.gpu_frames}};
     }
     if (s.render_scale < 1.0f) j["scale"] = Json{{"scale", s.render_scale}, {"width", s.render_width}, {"height", s.render_height}};
+    if (s.toon) j["toon"] = true;
     if (s.colour_vision > 0) j["colour_vision"] = std::array<const char*, 4>{"off", "protanopia", "deuteranopia", "tritanopia"}[static_cast<std::size_t>(s.colour_vision)];
     j["shadow_draws"] = s.shadow_draws;
     j["shadow_instances"] = s.shadow_instances;

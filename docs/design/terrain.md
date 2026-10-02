@@ -201,46 +201,48 @@ redo and lower, then paint sand along a drag, undo and redo it.
 `samples/hills` is a valley of noise hills 96 units across and 12 high around a lake under an
 atmosphere sky with clouds (`docs/design/rendering.md`, Atmosphere) (a `Water` body,
 `docs/design/water.md`): the script finds the highest point with `terrain.height` and stands a
-beacon on it, plants trees (a trunk that stops the player and a crown) where the ground is gentle
-grass above the water, and puts the player on the shore, from where it paints a dirt path winding up
-to the beacon with the terrain's dirt layer (`terrain.paintLayerPath`, 25 points; `on_path` in the
-state says whether the player is on it); the ground is drawn from four textured layers (grass, sand
-by the water, rock on the slopes, and the dirt that lies only where painted;
-`tests/evidence/terrain/layers.png`); two Scatters strew about nine hundred bushes over the gentle
-grass between the water and the snow and some three hundred and fifty stones leaning with the
-slopes, rock included, both off the path (`max_paint` 0.3), and a third sixty boulders that collide
-(`collide` 0.42) on gentle ground above the water; the bushes sway a little (`sway` 0.07) and lean
-with the scene's Wind; WASD or a pad walks the character over the hills. Its scenarios wander a
-random bot over the hills for eight seconds with the character never closer to the ground than its
-half height, and raise a ridge of steep rock across the player's way with `terrain.sculpt` (it holds
-the player back), then flatten it (the player walks on); a third drops a light and a heavy crate
-into the lake. `assets_tests` (`[terrain]`) pin the noise (the same seed, the same hills), the
-heights the queries answer against the mesh's own triangles and normals, and the 16-bit PNG read
-back to within a step; `[layers]` stack a slope rule and a height rule over the first layer on a
-ramp, lay painted shares over them (scaled back when they add up to more than the ground), read a
-layer map back within an 8-bit step and find the shares on the mesh's material; `runtime_tests`
-(`[layers]`) find the hills' rock on a slope over 45 degrees, sand low by the water and grass
-between, paint sand by name and rock by index (and refuse lava, naming the layers), save the
-layermap, clear it and read it back, and find no layers to paint once they are removed;
-`renderer_tests` (`[terrainlayers]`) draw a red first layer, paint a checker layer over it and find
-its light and dark squares every unit, then a green colour laid over both; `editor_tests`
-(`[terrain]`) paint rock with the brush's layer choice and undo it; `runtime_tests` (`[terrain]`)
-stand the player on it, find it with a ray, lift the player by sculpting under it, flatten and
-smooth, save and read it back, and return to the noise; `[scatter]` checks every bush's place
-against the ground's height, slope and the limits, the spacing, the same copies on a second run, a
-sculpt lifting the ones on it, and a count of 0 clearing them; `renderer_tests` (`[sway]`) sway
-reeds and find a third of a second changing the view, a paused game (frames drawn, no tick) and
-reeds without sway changing nothing, and a fade leaving out exactly the copies past its distance;
-`[collide]` finds every boulder counted by the physics and hit from above by a ray, a navigation
-path through one's centre going round it, and the player walked at one kept its two radii away,
-stopped or sent round it; `physics_tests` (`[scatter]`) stand three posts of two sizes and check a
-ray across and one from above against their radius and height, a sphere swept at one, an overlap
-naming the Scatter once, a character held at a post's side, a ball bouncing back off another, and
-nothing of this without `collide`; `[paint]` finds the player on the sample's path and the bushes
-and stones off it, paints red and sees the ground turn red where the camera looks, checks the
-brush's fall-off (full at the centre, about half halfway, none past the radius), a blue coat over
-the red, erasing, a stroke through two points covering the line between them and nothing beside it,
-the grid read and set back, the paintmap written and read back to within an 8-bit step, and the
+beacon on it, plants trees (the engine's `tree` and `pine` props, `docs/design/assets.md`, Props,
+each with a capsule round its trunk that stops the player) where the ground is gentle grass above
+the water, and puts the player on the shore, from where it paints a dirt path winding up to the
+beacon with the terrain's dirt layer (`terrain.paintLayerPath`, 25 points; `on_path` in the state
+says whether the player is on it); the ground is drawn from four textured layers (grass, sand by the
+water, rock on the slopes, and the dirt that lies only where painted;
+`tests/evidence/terrain/layers.png`); two Scatters strew about nine hundred bushes (the `bush` prop)
+over the gentle grass between the water and the snow and some three hundred and fifty stones
+(`rock`) leaning with the slopes, rock included, both off the path (`max_paint` 0.3), and a third
+sixty boulders that collide (`collide` 0.42) on gentle ground above the water; the bushes sway a
+little (`sway` 0.07) and lean with the scene's Wind; WASD or a pad walks the character, the built-in
+humanoid walked and run by its Animator and turned to where it goes, over the hills
+(`tests/evidence/rendering/hills-props.png`). Its scenarios wander a random bot over the hills for
+eight seconds with the character never closer to the ground than its half height, and raise a ridge
+of steep rock across the player's way with `terrain.sculpt` (it holds the player back), then flatten
+it (the player walks on); a third drops a light and a heavy crate into the lake. `assets_tests`
+(`[terrain]`) pin the noise (the same seed, the same hills), the heights the queries answer against
+the mesh's own triangles and normals, and the 16-bit PNG read back to within a step; `[layers]`
+stack a slope rule and a height rule over the first layer on a ramp, lay painted shares over them
+(scaled back when they add up to more than the ground), read a layer map back within an 8-bit step
+and find the shares on the mesh's material; `runtime_tests` (`[layers]`) find the hills' rock on a
+slope over 45 degrees, sand low by the water and grass between, paint sand by name and rock by index
+(and refuse lava, naming the layers), save the layermap, clear it and read it back, and find no
+layers to paint once they are removed; `renderer_tests` (`[terrainlayers]`) draw a red first layer,
+paint a checker layer over it and find its light and dark squares every unit, then a green colour
+laid over both; `editor_tests` (`[terrain]`) paint rock with the brush's layer choice and undo it;
+`runtime_tests` (`[terrain]`) stand the player on it, find it with a ray, lift the player by
+sculpting under it, flatten and smooth, save and read it back, and return to the noise; `[scatter]`
+checks every bush's place against the ground's height, slope and the limits, the spacing, the same
+copies on a second run, a sculpt lifting the ones on it, and a count of 0 clearing them;
+`renderer_tests` (`[sway]`) sway reeds and find a third of a second changing the view, a paused game
+(frames drawn, no tick) and reeds without sway changing nothing, and a fade leaving out exactly the
+copies past its distance; `[collide]` finds every boulder counted by the physics and hit from above
+by a ray, a navigation path through one's centre going round it, and the player walked at one kept
+its two radii away, stopped or sent round it; `physics_tests` (`[scatter]`) stand three posts of two
+sizes and check a ray across and one from above against their radius and height, a sphere swept at
+one, an overlap naming the Scatter once, a character held at a post's side, a ball bouncing back off
+another, and nothing of this without `collide`; `[paint]` finds the player on the sample's path and
+the bushes and stones off it, paints red and sees the ground turn red where the camera looks, checks
+the brush's fall-off (full at the centre, about half halfway, none past the radius), a blue coat
+over the red, erasing, a stroke through two points covering the line between them and nothing beside
+it, the grid read and set back, the paintmap written and read back to within an 8-bit step, and the
 paint kept through a new seed and a sculpt.
 
 ## Not yet

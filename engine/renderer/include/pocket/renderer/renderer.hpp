@@ -154,6 +154,17 @@ struct ColourVisionSettings {
     float strength = 1.0f;   // 0..1
 };
 
+// A cel look (docs/design/rendering.md, Toon): the light in flat bands and outlines round every
+// entity where the id under the pixels changes.
+struct ToonSettings {
+    bool enabled = false;
+    int bands = 3;                       // flat steps of a light's strength
+    float softness = 0.04f;              // how far each step's edge is blurred (0..0.5 of a band)
+    float outline = 2.0f;                // pixels across; 0 none
+    float outline_color[3] = {0.08f, 0.07f, 0.07f};   // sRGB
+    float opacity = 1.0f;
+};
+
 struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
@@ -179,6 +190,7 @@ struct RenderStats {
     double gpu_ms = 0;
     float render_scale = 1.0f;        // the fraction of the window's pixels the view was drawn at
     int colour_vision = 0;            // the colour vision mode applied in the final pass (0 off)
+    bool toon = false;                // the cel look drew this frame
     std::uint32_t render_width = 0, render_height = 0;   // its size in pixels
     std::uint64_t gpu_age = 0;
     std::uint64_t gpu_frames = 0;   // frames whose timings have come back so far
@@ -350,6 +362,8 @@ class Renderer {
     [[nodiscard]] SsgiSettings ssgi() const;
     void set_colour_vision(ColourVisionSettings s);
     [[nodiscard]] ColourVisionSettings colour_vision() const;
+    void set_toon(ToonSettings s);
+    [[nodiscard]] ToonSettings toon() const;
     void set_render_scale(RenderScaleSettings s);
     [[nodiscard]] RenderScaleSettings render_scale() const;
     void set_dof(DofSettings s);

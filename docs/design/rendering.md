@@ -126,6 +126,24 @@ million triangles and shadows) 4.7, 3.0 and 2.4. `runtime_tests` (`[render][scal
 projected and picked at the same window pixel whole and at half (an id target of 160 by 90 under a
 320 by 180 window), and a dynamic target no frame can meet taking the fraction down.
 
+## Toon
+
+A cel look in one setting: `render.toon {bands, softness, outline, outline_color, opacity}` (or
+`[render.toon]` in `project.toml`; `toon = true` for the defaults). The sun's and the lights' light
+on every surface comes in `bands` flat steps (3), each step's edge blurred over `softness` (0.04 of
+a band) so it does not crawl as things move; the sky's and the ambient light stay smooth, so shade
+is a colour and not black. An outline `outline` pixels across (2; 0 for none) in `outline_color`
+(near black, `"#rrggbb"` or `{r, g, b}`) at `opacity` is drawn wherever the entity under the pixels
+changes, read from the id pass in the final pass (before colour vision, after the grade): every
+entity has its silhouette against the sky, the ground and each other, and none inside itself. The
+width is in the window's pixels whatever the render scale. `render.stats` says `toon`. It suits the
+built-in props and the humanoid (`docs/design/assets.md`, Props). `runtime_tests`
+(`[render][toon]`): a row of pixels across the hello sample's ball has no outline colour, has it at
+both of the ball's edges with a magenta outline of four pixels, and has none again once it is off; a
+colour that does not read is refused. `tests/evidence/rendering/toon.png`
+(`tools/scripts/toon_evidence.py`) is a few props and a humanoid drawn plainly (left) and with
+`render.toon` (right).
+
 ## Colour vision
 
 About one man in twelve sees colours with one of the three kinds of cone missing or shifted.

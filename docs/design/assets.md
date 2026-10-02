@@ -295,15 +295,17 @@ made it.
 
 A level blocked out of cubes looks like grey cubes until someone draws textures. A texture or a
 normal map named `pattern:<name>?<settings>` is drawn by the engine instead of read from a file:
-`checker`, `stripes`, `grid` (a prototyping grid), `bricks`, `tiles`, `planks`, `noise`, `concrete`,
-`sand`, `dirt`, `rock`, `grass` and `metal`. Each wraps at its edges and is the same on every
-machine; its settings say how it looks: `color` (and `mortar` for bricks, `grout` for tiles, `line`
-for the grid, `a` and `b` for checker, stripes and noise) as `#rrggbb`, `#rgb` or a name (red, tan,
-stone, wood, brick, concrete, steel, ...), `rows` and `columns` (bricks), `count` (tiles, planks,
-checker, stripes, the grid), `scale` (the noisy ones' features across the image), `gap`, `vary` (how
-much bricks, tiles and planks differ from each other, 0.12), `seed` and `size` (512 pixels across).
-`map=normal` draws its normal map from the same heights (bricks stand out of their mortar, planks
-part at their seams), `bump` (3) saying how steep, and `map=height` the heights themselves.
+`checker`, `stripes`, `grid` (a prototyping grid), `bricks`, `tiles`, `planks`, `cobble` (rounded
+stones in mortar), `shingles` (roof tiles in rows), `noise`, `concrete`, `sand`, `dirt`, `rock`,
+`grass` and `metal`. Each wraps at its edges and is the same on every machine; its settings say how
+it looks: `color` (and `mortar` for bricks, `grout` for tiles, `line` for the grid and for cobble,
+`a` and `b` for checker, stripes and noise) as `#rrggbb`, `#rgb` or a name (red, tan, stone, wood,
+brick, concrete, steel, ...), `rows` and `columns` (bricks, shingles), `count` (tiles, planks,
+cobble, checker, stripes, the grid), `scale` (the noisy ones' features across the image), `gap`,
+`vary` (how much bricks, tiles and planks differ from each other, 0.12), `seed` and `size` (512
+pixels across). `map=normal` draws its normal map from the same heights (bricks stand out of their
+mortar, planks part at their seams), `bump` (3) saying how steep, and `map=height` the heights
+themselves.
 
 ```json
 "MeshRenderer": { "mesh": "cube", "texture": "pattern:bricks?color=#8b4a2b&rows=6",
@@ -330,16 +332,23 @@ outdoor or village scene wants are meshes the engine makes, in a low-poly, flat-
 (a trunk and a crown of lumps; `height` 4, `trunk`, `leaves`), `pine` (three tiers of cones;
 `height` 5, `trunk`, `leaves`), `rock` (`size` 1, `color`), `bush` (`size` 1, `color`), `barrel`
 (`color`, `hoops`), `lamp` (a street lamp with a glowing head; `height` 3, `color`, `light`, `glow`
-4: add a `Light` for the light it casts) and `fence` (a section `length` 2 along x; `color`). Each
-stands on its origin (a rock a little into the ground), takes its settings after `?` as the humanoid
-does (`"tree?height=6&leaves=autumn&seed=4"`; colours as `#rrggbb`, `#rgb` or a name such as leaf,
-autumn, wood, stone, snow) and a `seed` that makes another of its kind, the same on every machine. A
-`Collider` sized by hand (a capsule round a trunk, a box round a barrel) or of shape 3 (the
-triangles drawn) makes one solid. `world.lint` says a prop's setting it does not take.
-`assets_tests` (`[prop]`): every prop reads as a mesh standing on its origin with finite normals, a
-tall tree is tall, seeds differ and repeat, the leaves take the colour asked, and a wrong setting, a
-non-number and a non-colour are said. `tests/evidence/rendering/props.png`
-(`tools/scripts/props_evidence.py`) is each of them on a ground of `pattern:grass`.
+4: add a `Light` for the light it casts), `fence` (a section `length` 2 along x; `color`), and for a
+village: `house` (`width` 4, `depth` 3, `height` 2.6, `walls`, `roof`, `door`, `windows`; its door
+and windows on the -z side it faces), `crate` (`size` 1), `chest` (`color`, `bands`), `torch`
+(`light`, `glow` 6), `bench`, `table`, `chair` (`color`; the chair faces -z), `well` (`stone`,
+`wood`, `roof`) and `sign` (`color`, `board`). Each stands on its origin (a rock a little into the
+ground), takes its settings after `?` as the humanoid does (`"tree?height=6&leaves=autumn&seed=4"`;
+colours as `#rrggbb`, `#rgb` or a name such as leaf, autumn, wood, stone, snow) and a `seed` that
+makes another of its kind, the same on every machine. A `Collider` sized by hand (a capsule round a
+trunk, a box round a barrel) or of shape 3 (the triangles drawn) makes one solid. `world.lint` says
+a prop's setting it does not take. `assets_tests` (`[prop]`): every prop reads as a mesh standing on
+its origin with finite normals, a tall tree is tall, seeds differ and repeat, the leaves take the
+colour asked, and a wrong setting, a non-number and a non-colour are said.
+`tests/evidence/rendering/props.png` (`tools/scripts/props_evidence.py`) is the first seven on a
+ground of `pattern:grass`; `tests/evidence/rendering/village.png`
+(`tools/scripts/village_evidence.py`) a square of `pattern:cobble` round a well with houses, a table
+and chairs, crates, a chest, torches, a bench, a sign, trees, a fence and a slope of
+`pattern:shingles`.
 
 ## Commands
 

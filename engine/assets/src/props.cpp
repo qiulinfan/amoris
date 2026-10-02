@@ -173,7 +173,7 @@ std::string glb(const std::string& name, const std::vector<Part>& parts, const s
 
 bool is_prop(std::string_view path) {
     const std::string_view name = path.substr(0, path.find('?'));
-    for (std::string_view p : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence"})
+    for (std::string_view p : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign"})
         if (name == p) return true;
     return false;
 }
@@ -281,14 +281,92 @@ Result<std::string> prop_glb(const std::string& path) {
         parts.resize(1);
         for (const float x : {-len / 2 + 0.06f, len / 2 - 0.06f}) box(parts[0], {x, 0.5f, 0}, {0.06f, 0.5f, 0.06f});
         for (const float y : {0.35f, 0.75f}) box(parts[0], {0, y, 0}, {len / 2, 0.05f, 0.03f});
+    } else if (name == "house") {
+        // Four walls with a door and two windows on the front (-z), a pitched roof along x.
+        const float w = std::max(number("width", 4.0f), 1.0f), d = std::max(number("depth", 3.0f), 1.0f), h = std::max(number("height", 2.6f), 1.0f);
+        mats = {{colour("walls", "#d8c8a8"), 0.9f}, {colour("roof", "#9a3b2c"), 0.8f}, {colour("door", "#5a3a22"), 0.8f}, {colour("windows", "#2a3440"), 0.2f}};
+        parts.resize(4);
+        box(parts[0], {0, h / 2, 0}, {w / 2, h / 2, d / 2});
+        // The roof: two slopes and two gable ends, a little over the walls.
+        const float rise = d * 0.45f, over = 0.2f;
+        const Vec3 a{-w / 2 - over, h, -d / 2 - over}, b{w / 2 + over, h, -d / 2 - over}, c{w / 2 + over, h, d / 2 + over}, e{-w / 2 - over, h, d / 2 + over};
+        const Vec3 r0{-w / 2 - over, h + rise, 0}, r1{w / 2 + over, h + rise, 0};
+        tri(parts[1], a, r0, r1); tri(parts[1], a, r1, b);   // the front slope
+        tri(parts[1], c, r1, r0); tri(parts[1], c, r0, e);   // the back slope
+        tri(parts[1], b, r1, c); tri(parts[1], e, r0, a);    // the gables
+        tri(parts[1], a, b, c); tri(parts[1], a, c, e);      // the eaves' underside
+        box(parts[2], {0, 0.95f, -d / 2 - 0.02f}, {0.45f, 0.95f, 0.04f});
+        for (const float x : {-w * 0.3f, w * 0.3f}) box(parts[3], {x, h * 0.58f, -d / 2 - 0.02f}, {0.35f, 0.3f, 0.03f});
+    } else if (name == "crate") {
+        const float s = std::max(number("size", 1.0f), 0.1f);
+        const Vec3 wood = colour("color", "#a8763f");
+        mats = {{wood, 0.8f}, {wood * 0.6f, 0.85f}};
+        parts.resize(2);
+        box(parts[0], {0, s / 2, 0}, {s / 2 * 0.94f, s / 2 * 0.94f, s / 2 * 0.94f});
+        // Its frame: the twelve edges as battens.
+        const float t = s * 0.06f, hs = s / 2;
+        for (const float y : {t, s - t}) for (const float z : {-hs + t, hs - t}) box(parts[1], {0, y, z}, {hs, t, t});
+        for (const float y : {t, s - t}) for (const float x : {-hs + t, hs - t}) box(parts[1], {x, y, 0}, {t, t, hs});
+        for (const float x : {-hs + t, hs - t}) for (const float z : {-hs + t, hs - t}) box(parts[1], {x, hs, z}, {t, hs, t});
+    } else if (name == "chest") {
+        mats = {{colour("color", "#7a4a26"), 0.75f}, {colour("bands", "#c9a44a"), 0.35f, 0.9f}};
+        parts.resize(2);
+        box(parts[0], {0, 0.22f, 0}, {0.4f, 0.22f, 0.26f});
+        for (int i = 0; i < 6; ++i) {
+            const float a0 = kPi * static_cast<float>(i) / 6.0f, a1 = kPi * static_cast<float>(i + 1) / 6.0f;
+            const Vec3 p0{-0.4f, 0.44f + std::sin(a0) * 0.2f, -std::cos(a0) * 0.26f}, p1{-0.4f, 0.44f + std::sin(a1) * 0.2f, -std::cos(a1) * 0.26f};
+            const Vec3 q0{0.4f, p0.y, p0.z}, q1{0.4f, p1.y, p1.z};
+            tri(parts[0], p0, q1, q0); tri(parts[0], p0, p1, q1);
+            tri(parts[0], Vec3{-0.4f, 0.44f, 0}, p1, p0); tri(parts[0], Vec3{0.4f, 0.44f, 0}, q0, q1);
+        }
+        for (const float x : {-0.28f, 0.28f}) box(parts[1], {x, 0.33f, 0}, {0.03f, 0.33f, 0.27f});
+        box(parts[1], {0, 0.4f, -0.27f}, {0.05f, 0.06f, 0.02f});
+    } else if (name == "torch") {
+        PropMaterial flame{colour("light", "#ffb347"), 0.5f};
+        flame.emissive = flame.colour * std::max(number("glow", 6.0f), 0.0f);
+        mats = {{colour("color", "#5a3d26"), 0.9f}, flame};
+        parts.resize(2);
+        frustum(parts[0], {0, 0, 0}, 0.035f, 0.05f, 0.9f, 6);
+        blob(parts[1], {0, 1.0f, 0}, Vec3{0.08f, 0.14f, 0.08f}, 0.1f, dice);
+    } else if (name == "bench") {
+        mats = {{colour("color", "#8a6a48"), 0.85f}};
+        parts.resize(1);
+        box(parts[0], {0, 0.45f, 0}, {0.8f, 0.04f, 0.2f});
+        box(parts[0], {0, 0.8f, 0.17f}, {0.8f, 0.12f, 0.03f});
+        for (const float x : {-0.65f, 0.65f}) { box(parts[0], {x, 0.22f, 0}, {0.04f, 0.22f, 0.18f}); box(parts[0], {x, 0.62f, 0.17f}, {0.03f, 0.2f, 0.03f}); }
+    } else if (name == "table") {
+        mats = {{colour("color", "#8a6a48"), 0.8f}};
+        parts.resize(1);
+        box(parts[0], {0, 0.74f, 0}, {0.6f, 0.03f, 0.4f});
+        for (const float x : {-0.52f, 0.52f}) for (const float z : {-0.32f, 0.32f}) box(parts[0], {x, 0.36f, z}, {0.035f, 0.36f, 0.035f});
+    } else if (name == "chair") {
+        mats = {{colour("color", "#8a6a48"), 0.8f}};
+        parts.resize(1);
+        box(parts[0], {0, 0.45f, 0}, {0.22f, 0.03f, 0.22f});
+        box(parts[0], {0, 0.75f, 0.2f}, {0.22f, 0.27f, 0.025f});
+        for (const float x : {-0.18f, 0.18f}) for (const float z : {-0.18f, 0.18f}) box(parts[0], {x, 0.22f, z}, {0.025f, 0.22f, 0.025f});
+    } else if (name == "well") {
+        mats = {{colour("stone", "#8c8a84"), 0.9f}, {colour("wood", "#6b4a2e"), 0.85f}, {colour("roof", "#9a3b2c"), 0.8f}};
+        parts.resize(3);
+        frustum(parts[0], {0, 0, 0}, 0.8f, 0.8f, 0.7f, 10);
+        for (const float x : {-0.7f, 0.7f}) box(parts[1], {x, 1.2f, 0}, {0.05f, 0.5f, 0.05f});
+        box(parts[1], {0, 1.45f, 0}, {0.72f, 0.04f, 0.04f});
+        frustum(parts[2], {0, 1.7f, 0}, 1.0f, 0.0f, 0.5f, 4, kPi / 4);
+    } else if (name == "sign") {
+        mats = {{colour("color", "#8a6a48"), 0.85f}, {colour("board", "#c8a878"), 0.8f}};
+        parts.resize(2);
+        box(parts[0], {0, 0.6f, 0}, {0.04f, 0.6f, 0.04f});
+        box(parts[1], {0, 1.05f, -0.05f}, {0.4f, 0.22f, 0.025f});
     } else {
-        return fail("bad_asset", "{}: no prop '{}' (tree, pine, rock, bush, barrel, lamp, fence)", path, name);
+        return fail("bad_asset", "{}: no prop '{}' (tree, pine, rock, bush, barrel, lamp, fence, house, crate, chest, torch, bench, table, chair, well, sign)", path, name);
     }
     for (const auto& [k, _] : set) {
         static const std::map<std::string, std::vector<std::string>> takes = {
             {"tree", {"height", "trunk", "leaves", "seed"}}, {"pine", {"height", "trunk", "leaves", "seed"}}, {"rock", {"size", "color", "seed"}},
             {"bush", {"size", "color", "seed"}}, {"barrel", {"color", "hoops", "seed"}}, {"lamp", {"height", "color", "light", "glow", "seed"}},
-            {"fence", {"length", "color", "seed"}}};
+            {"fence", {"length", "color", "seed"}}, {"house", {"width", "depth", "height", "walls", "roof", "door", "windows", "seed"}}, {"crate", {"size", "color", "seed"}},
+            {"chest", {"color", "bands", "seed"}}, {"torch", {"color", "light", "glow", "seed"}}, {"bench", {"color", "seed"}}, {"table", {"color", "seed"}},
+            {"chair", {"color", "seed"}}, {"well", {"stone", "wood", "roof", "seed"}}, {"sign", {"color", "board", "seed"}}};
         const auto& ok = takes.at(name);
         if (std::find(ok.begin(), ok.end(), k) == ok.end() && error.empty()) {
             std::string list;

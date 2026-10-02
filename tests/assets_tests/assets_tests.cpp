@@ -1155,13 +1155,13 @@ TEST_CASE("patterns are images the engine draws: wrapping, in their colours, wit
     REQUIRE(at(*checker, 8, 8) == std::array<int, 4>{255, 0, 0, 255});
     REQUIRE(at(*checker, 40, 8) == std::array<int, 4>{0, 0, 255, 255});
     // Every pattern draws, the same twice; the noisy ones wrap: the left column is like the right.
-    for (const char* name : {"stripes", "grid", "bricks", "tiles", "planks", "noise", "concrete", "sand", "dirt", "rock", "grass", "metal"}) {
+    for (const char* name : {"stripes", "grid", "bricks", "tiles", "planks", "cobble", "shingles", "noise", "concrete", "sand", "dirt", "rock", "grass", "metal"}) {
         INFO(name);
         const std::string spec = std::string("pattern:") + name + "?size=128";
         auto a = assets::pattern_image(spec), b = assets::pattern_image(spec);
         REQUIRE(a.has_value());
         REQUIRE(a->rgba == b->rgba);
-        if (std::string_view(name) == "stripes" || std::string_view(name) == "grid" || std::string_view(name) == "bricks" || std::string_view(name) == "tiles" || std::string_view(name) == "planks") continue;   // edges on the seam, by design
+        if (std::string_view(name) == "stripes" || std::string_view(name) == "grid" || std::string_view(name) == "bricks" || std::string_view(name) == "tiles" || std::string_view(name) == "planks" || std::string_view(name) == "shingles") continue;   // edges on the seam, by design
         int far = 0;
         for (std::uint32_t y = 0; y < 128; ++y) {
             const auto l = at(&*a, 0, y), r = at(&*a, 127, y);
@@ -1188,7 +1188,7 @@ TEST_CASE("patterns are images the engine draws: wrapping, in their colours, wit
 
 TEST_CASE("props are meshes the engine makes: standing on their origin, in their colours, seeded", "[assets][prop]") {
     assets::AssetStore store(project());
-    for (const char* name : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence"}) {
+    for (const char* name : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence", "house", "crate", "chest", "torch", "bench", "table", "chair", "well", "sign"}) {
         INFO(name);
         REQUIRE(assets::is_prop(name));
         auto m = store.mesh(name);

@@ -394,6 +394,41 @@ TEST_CASE("a camera of higher priority takes the window, blending from the last 
     REQUIRE(drawn_x(1) > 100);
 }
 
+TEST_CASE("the toon look outlines each entity where the id under the pixels changes", "[runtime][render][toon]") {
+    auto o = hello_options(-1);
+    o.width = 320;
+    o.height = 180;
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}, {"render", "each"}}).has_value());
+    const Json ball = s.command("world.get", Json{{"entity", "Ball"}, {"component", "Transform"}}).value()["position"];
+    const Json at = s.command("render.project", Json{{"point", ball}}).value();
+    const int cx = static_cast<int>(at["x"].get<double>()), cy = static_cast<int>(at["y"].get<double>());
+    // A row of pixels across the ball, out past its edges on both sides.
+    auto magenta = [&] {
+        Json px = Json::array();
+        for (int x = std::max(0, cx - 60); x <= std::min(319, cx + 60); ++x) px.push_back(Json{{"x", x}, {"y", cy}});
+        const Json got = s.command("capture", Json{{"pixels", px}}).value()["pixels"];
+        int n = 0;
+        for (const Json& c : got) if (c[0].get<int>() > 200 && c[1].get<int>() < 90 && c[2].get<int>() > 200) ++n;
+        return n;
+    };
+    REQUIRE(magenta() == 0);
+    const Json set = s.command("render.toon", Json{{"outline", 4}, {"outline_color", "#ff00ff"}}).value();
+    REQUIRE(set["enabled"] == true);
+    REQUIRE(set["bands"] == 3);
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    const int lined = magenta();
+    INFO(lined);
+    REQUIRE(lined >= 2);   // the ball's two edges along the row
+    REQUIRE(s.command("render.stats", Json::object()).value()["toon"] == true);
+    REQUIRE_FALSE(s.command("render.toon", Json{{"outline_color", "pink-ish"}}).has_value());
+    REQUIRE(s.command("render.toon", Json{{"enabled", false}}).value()["enabled"] == false);
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    REQUIRE(magenta() == 0);
+}
+
 TEST_CASE("the window's view drawn at a scale is stretched to the window, its coordinates the window's", "[runtime][render][scale]") {
     auto o = hello_options(-1);
     o.width = 320;
@@ -4741,6 +4776,9 @@ TEST_CASE("a step runs until an event, a state value or a field says so", "[runt
     REQUIRE(d["until"]["met"] == false);
     REQUIRE(d["until"]["ticks"] == 20);
     REQUIRE_FALSE(s.command("step", Json{{"ticks", 5}, {"until", Json{{"state", "score"}}}}).has_value());   // no comparison
+    // The names a comparison is often given: value for equals, gt for above.
+    REQUIRE(s.command("step", Json{{"ticks", 5}, {"until", Json{{"state", "score"}, {"value", 1}}}}).value()["until"]["met"] == true);
+    REQUIRE(s.command("step", Json{{"ticks", 5}, {"until", Json{{"state", "score"}, {"gt", 5}}}}).value()["until"]["met"] == false);
     REQUIRE(s.finish().has_value());
 }
 

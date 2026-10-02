@@ -248,6 +248,53 @@ Result<Image> pattern_image(const std::string& spec) {
             }
             return Texel{c, h};
         };
+    } else if (name == "cobble") {
+        // Rounded stones of different sizes and shades with mortar between: a jittered grid's
+        // nearest and second-nearest points, wrapping.
+        const Rgb colour = s.colour("color", "#8f8a80"), mortar = s.colour("mortar", "#5b574f");
+        const int n = std::max(1, static_cast<int>(s.number("count", 8)));
+        draw = [=](float u, float v) {
+            const float x = u * static_cast<float>(n), y = v * static_cast<float>(n);
+            const int cx = static_cast<int>(std::floor(x)), cy = static_cast<int>(std::floor(y));
+            float d1 = 1e9f, d2 = 1e9f;
+            int id = 0;
+            for (int j = -1; j <= 1; ++j) {
+                for (int i = -1; i <= 1; ++i) {
+                    const int gx = ((cx + i) % n + n) % n, gy = ((cy + j) % n + n) % n;
+                    const float px = static_cast<float>(cx + i) + 0.15f + 0.7f * unit(gx, gy, seed), py = static_cast<float>(cy + j) + 0.15f + 0.7f * unit(gx, gy, seed + 1);
+                    const float d = std::hypot(px - x, py - y);
+                    if (d < d1) { d2 = d1; d1 = d; id = gy * n + gx; }
+                    else if (d < d2) d2 = d;
+                }
+            }
+            const float edge = d2 - d1;
+            const float inside = smooth(0.04f, 0.12f, edge);
+            const float tone = (unit(id, 7, seed) - 0.5f) * 2 * vary;
+            const float grain = (fbm(u, v, 32, 3, seed + 3) - 0.5f) * 0.2f;
+            const float dome = std::sqrt(std::clamp(edge * 2.5f, 0.0f, 1.0f));
+            return Texel{mix(mortar * (1 + grain), colour * (1 + tone + grain), inside), inside * (0.5f + 0.5f * dome)};
+        };
+    } else if (name == "shingles") {
+        // Rows of roof tiles, each row half a tile along from the last, rounded at the bottom, the
+        // row above's edge casting a line of shade.
+        const Rgb colour = s.colour("color", "#9a3b2c");
+        const int rows = std::max(1, static_cast<int>(s.number("rows", 8)));
+        const int cols = std::max(1, static_cast<int>(s.number("columns", 6)));
+        draw = [=](float u, float v) {
+            const float y = v * static_cast<float>(rows);
+            const int row = static_cast<int>(std::floor(y));
+            const float x = u * static_cast<float>(cols) + ((row & 1) ? 0.5f : 0.0f);
+            const int col = static_cast<int>(std::floor(x)) % cols;
+            const float fx = fract(x) - 0.5f, fy = fract(y);
+            // The tile's rounded lower edge: below it is the next row's tile, in shade.
+            const float bottom = 0.78f + 0.2f * std::sqrt(std::max(0.0f, 1.0f - 4.0f * fx * fx));
+            const float on = smooth(bottom, bottom - 0.04f, fy) * smooth(0.0f, 0.03f, 0.5f - std::fabs(fx));
+            const float shade = 0.75f + 0.25f * fy;
+            const float tone = (unit(col, row, seed) - 0.5f) * 2 * vary;
+            const float grain = (fbm(u, v, 16, 3, seed + 5) - 0.5f) * 0.18f;
+            const Rgb tile = colour * ((1 + tone + grain) * shade);
+            return Texel{mix(colour * 0.35f, tile, on), on * (0.4f + 0.6f * fy)};
+        };
     } else if (name == "metal") {
         // Brushed metal: fine streaks along u, a little broad unevenness.
         const Rgb colour = s.colour("color", "#a7abb0");
@@ -257,7 +304,7 @@ Result<Image> pattern_image(const std::string& spec) {
             return Texel{colour * (0.86f + streak * 0.16f + (broad - 0.5f) * 0.1f), 0.5f + (streak - 0.5f) * 0.2f};
         };
     } else {
-        return fail("bad_asset", "{}: no pattern '{}' (checker, stripes, grid, bricks, tiles, planks, noise, concrete, sand, dirt, rock, grass, metal)", spec, name);
+        return fail("bad_asset", "{}: no pattern '{}' (checker, stripes, grid, bricks, tiles, planks, cobble, shingles, noise, concrete, sand, dirt, rock, grass, metal)", spec, name);
     }
     const std::string map = s.text("map", "color");
     if (map != "color" && map != "normal" && map != "height") return fail("bad_asset", "{}: map={} (color, normal or height)", spec, map);
