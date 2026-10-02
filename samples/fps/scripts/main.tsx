@@ -5,10 +5,11 @@
 // shots fell one), knocks crates about and leaves a mark on the walls; every shot is a noise that
 // carries 35 units, so the raiders that hear it come to look (docs/design/behavior.md, Noises).
 // Where the player looks is its Transform's yaw and the eye's pitch, read back every tick, so an
-// agent or a scenario aims by setting the two rotations.
+// agent or a scenario aims by setting the two rotations. The sounds are the engine's own
+// (docs/design/audio.md: "sfx:shot" and the rest need no files).
 //   pocket run fps
 //   pocket scenario fps
-import { Label, combat, events, expose, input, mount, nav, onStart, onTick, particles, physics, signal, timer, world } from "pocket";
+import { Label, audio, combat, events, expose, input, mount, nav, onStart, onTick, particles, physics, signal, timer, world } from "pocket";
 import type { Entity, Vec3 } from "pocket";
 
 const SPEED = 5.5;
@@ -141,6 +142,7 @@ function fire() {
     kick = 1;
     flash = 2;
     const shot = combat.hitscan(from, dir, { damage: DAMAGE, knockback: 3, team: 1, shooter: player, range: 120 });
+    audio.play(`sfx:shot?seed=${shots % 4}`, { volume: 0.7 });
     events.emit("noise", { radius: NOISE }, { subject: player });
     // The view climbs a little with each shot.
     const p = Math.min(v.pitch + 0.012, 1.45);
@@ -195,6 +197,8 @@ onTick(({ dt }) => {
         if (reloading === 0) ammo.set(MAG);
     } else if ((input.pressed("reload") && ammo() < MAG) || (input.down("fire") && ammo() === 0)) {
         reloading = RELOAD;
+        audio.play("sfx:click");
+        timer.after(RELOAD - 0.15, () => audio.play("sfx:click?seed=2"));
         events.emit("gun.reloading", {}, { subject: player });
     } else if (input.down("fire") && cooldown === 0) {
         fire();
@@ -209,7 +213,10 @@ onTick(({ dt }) => {
 
     for (const e of events.since(seen)) {
         seen = e.seq;
-        if (e.type === "hit" && e.subject === player) health.set(Math.round((e.data as { health: number }).health));
+        if (e.type === "hit" && e.subject === player) {
+            health.set(Math.round((e.data as { health: number }).health));
+            audio.play("sfx:hurt");
+        }
         if (e.type !== "health.depleted" || !e.subject) continue;
         const who = world.describe(e.subject).name;
         if (e.subject === player) {
@@ -225,6 +232,7 @@ onTick(({ dt }) => {
             const was = world.get(t, "Transform")!;
             world.set(t, "Transform", { rotation: { x: 0, y: 0, z: 0, w: 1 }, position: { x: was.position.x, y: 0.3, z: was.position.z } });
             score.set(score() + 1);
+            audio.play("sfx:blip");
             timer.after(3, () => {
                 world.set(t, "Transform", { rotation: { x: 0.7071, y: 0, z: 0, w: 0.7071 }, position: { x: was.position.x, y: 1.5, z: was.position.z } });
                 world.set(t, "Health", { current: 1, dead: false });
@@ -240,6 +248,7 @@ onTick(({ dt }) => {
             if (fists) world.set(fists, "Hitbox", { enabled: false });
             kills.set(kills() + 1);
             score.set(score() + 5);
+            audio.play("sfx:hit", { volume: 0.8 });
             timer.after(5, () => {
                 world.destroy(r);
                 spawnRaider();

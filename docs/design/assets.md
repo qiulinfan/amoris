@@ -323,6 +323,24 @@ names, colours and maps refused. `tests/evidence/rendering/patterns.png`
 (`tools/scripts/patterns_evidence.py`) is each pattern on a cube with its normal map, on a floor of
 tiles four units a repeat.
 
+## Props
+
+Beside the humanoid (`docs/design/animation.md`, A character without a file), a few things every
+outdoor or village scene wants are meshes the engine makes, in a low-poly, flat-shaded style: `tree`
+(a trunk and a crown of lumps; `height` 4, `trunk`, `leaves`), `pine` (three tiers of cones;
+`height` 5, `trunk`, `leaves`), `rock` (`size` 1, `color`), `bush` (`size` 1, `color`), `barrel`
+(`color`, `hoops`), `lamp` (a street lamp with a glowing head; `height` 3, `color`, `light`, `glow`
+4: add a `Light` for the light it casts) and `fence` (a section `length` 2 along x; `color`). Each
+stands on its origin (a rock a little into the ground), takes its settings after `?` as the humanoid
+does (`"tree?height=6&leaves=autumn&seed=4"`; colours as `#rrggbb`, `#rgb` or a name such as leaf,
+autumn, wood, stone, snow) and a `seed` that makes another of its kind, the same on every machine. A
+`Collider` sized by hand (a capsule round a trunk, a box round a barrel) or of shape 3 (the
+triangles drawn) makes one solid. `world.lint` says a prop's setting it does not take.
+`assets_tests` (`[prop]`): every prop reads as a mesh standing on its origin with finite normals, a
+tall tree is tall, seeds differ and repeat, the leaves take the colour asked, and a wrong setting, a
+non-number and a non-colour are said. `tests/evidence/rendering/props.png`
+(`tools/scripts/props_evidence.py`) is each of them on a ground of `pattern:grass`.
+
 ## Commands
 
 | Command | Purpose |

@@ -1186,6 +1186,38 @@ TEST_CASE("patterns are images the engine draws: wrapping, in their colours, wit
     REQUIRE_FALSE(assets::pattern_image("pattern:tiles?map=rough").has_value());
 }
 
+TEST_CASE("props are meshes the engine makes: standing on their origin, in their colours, seeded", "[assets][prop]") {
+    assets::AssetStore store(project());
+    for (const char* name : {"tree", "pine", "rock", "bush", "barrel", "lamp", "fence"}) {
+        INFO(name);
+        REQUIRE(assets::is_prop(name));
+        auto m = store.mesh(name);
+        REQUIRE(m.has_value());
+        REQUIRE((*m)->importer == "builtin");
+        REQUIRE((*m)->aabb_min.y > -0.07f);   // on the ground (a rock a little into it)
+        REQUIRE((*m)->aabb_max.y > 0.5f);
+        for (const auto& v : (*m)->vertices) REQUIRE(std::isfinite(v.normal.x + v.normal.y + v.normal.z));
+    }
+    REQUIRE_FALSE(assets::is_prop("treehouse"));
+    REQUIRE_FALSE(assets::is_prop("cube"));
+    // A tall tree is tall; another seed is another tree; the same seed the same.
+    auto tall = store.mesh("tree?height=8");
+    REQUIRE(tall.has_value());
+    REQUIRE((*tall)->aabb_max.y > 7.0f);
+    REQUIRE(*assets::prop_glb("tree?seed=2") != *assets::prop_glb("tree?seed=3"));
+    REQUIRE(*assets::prop_glb("tree?seed=2") == *assets::prop_glb("tree?seed=2"));
+    // Its leaves in the colour asked (linear: #ff0000 is 1, 0, 0).
+    auto red = store.mesh("tree?leaves=#ff0000");
+    REQUIRE(red.has_value());
+    bool found = false;
+    for (const auto& mat : (*red)->materials) found = found || (mat.base_color.x > 0.99f && mat.base_color.y < 0.01f);
+    REQUIRE(found);
+    // What is wrong is said.
+    REQUIRE(assets::prop_glb("rock?leaves=red").error().message.find("rock takes size, color, seed") != std::string::npos);
+    REQUIRE(assets::prop_glb("tree?height=tall").error().message.find("not a number") != std::string::npos);
+    REQUIRE_FALSE(store.mesh("bush?color=blurple").has_value());
+}
+
 TEST_CASE("an SVG is read as an image drawn at twice its size, or at the size asked", "[assets][svg]") {
     assets::AssetStore store(project());
     auto img = store.image("assets/star.svg");

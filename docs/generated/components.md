@@ -456,6 +456,7 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 | `additive` | bool | false | Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other. |
 | `turbulence` | f32 | 0.0 | Swirling air: a curl-noise field pushes each particle by up to this many units per second squared (smoke, embers, magic); 0 for none. |
 | `turbulence_scale` | f32 | 2.0 | The size of the turbulence's swirls in units. |
+| `area` | vec3 | [0.0, 0.0, 0.0] | Half extents of a box about the entity (turned with it) that particles are born anywhere in: rain over a square, snow, dust in a room, fireflies in a glade; 0 is the entity's point. |
 | `gpu` | bool | false | Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing. |
 
 ## Trail

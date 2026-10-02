@@ -743,6 +743,7 @@ struct ParticleEmitter {
     bool additive = false;
     float turbulence = 0.0f;
     float turbulence_scale = 2.0f;
+    Vec3 area{0.0f, 0.0f, 0.0f};
     bool gpu = false;
     constexpr bool operator==(const ParticleEmitter&) const = default;
 };

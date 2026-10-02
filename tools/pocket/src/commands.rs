@@ -465,10 +465,11 @@ The engine's samples are small games that work, their logic in `scripts/`: read 
 {examples}
 ## Things to draw and hear without files
 
-- Meshes: `cube`, `sphere`, `plane`, `cylinder`, `quad`, `capsule` (`MeshRenderer.mesh`), and `humanoid`: a person with twelve clips of its own (`idle`, `walk`, `run`, `jump`, `crouch`, `wave`, `punch`, `die`, ...; `Animator.clip` plays one, and `Animator.locomotion = true` walks, runs and stands it by how fast it moves), its colours from the name (`"humanoid?shirt=red&hair=none"`; `{docs}/design/animation.md`, A character without a file).
+- Meshes: `cube`, `sphere`, `plane`, `cylinder`, `quad`, `capsule` (`MeshRenderer.mesh`), and `humanoid`: a person with twelve clips of its own (`idle`, `walk`, `run`, `jump`, `crouch`, `wave`, `punch`, `die`, ...; `Animator.clip` plays one, and `Animator.locomotion = true` walks, runs and stands it by how fast it moves), its colours from the name (`"humanoid?shirt=red&hair=none"`; `{docs}/design/animation.md`, A character without a file); props `tree`, `pine`, `rock`, `bush`, `barrel`, `lamp`, `fence` with settings and a seed (`"tree?height=6&leaves=autumn&seed=3"`; `{docs}/design/assets.md`, Props).
 - Textures: `"pattern:bricks"`, `tiles`, `planks`, `grid`, `checker`, `stripes`, `concrete`, `rock`, `sand`, `dirt`, `grass`, `metal`, `noise` as a `MeshRenderer.texture` (settings after `?`: `"pattern:bricks?color=#8b4a2b&rows=6"`), the same with `&map=normal` as its `normal_map`; `MeshRenderer.texture_tile` (units per repeat) lays them on from the world's axes, so a cube scaled into a wall keeps its bricks brick-sized (`{docs}/design/assets.md`, Patterns).
 - Shapes from numbers (`mesh.create`), voxel models written as text (`.voxels`), SVG images for sprites and textures, tile maps drawn from rows of characters (`tilemap.fromText`).
-- Sounds from a recipe (`.sfx`) and music from a score (`.song`): `{docs}/design/audio.md`.
+- Effects: `particles.preset(entity, "fire")` and smoke, sparks, explosion, rain, snow, dust, fireflies, magic (`{docs}/design/particles.md`, Presets).
+- Sounds: `"sfx:coin"`, `jump`, `hit`, `explosion`, `laser`, `powerup`, `blip`, `hurt`, `select`, `shot`, `step`, `click` as a clip (`audio.play`, `AudioSource.clip`; settings after `?`: `"sfx:jump?volume=0.2&seed=3"`), recipes of your own (`.sfx`) and music from a score (`.song`): `{docs}/design/audio.md`.
 
 ## What keeps it working
 

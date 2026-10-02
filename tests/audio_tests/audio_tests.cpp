@@ -633,6 +633,10 @@ TEST_CASE("a recipe renders a sound: its pitch, its length, a preset and its see
     const auto first = rendered("assets/coin.sfx");
     REQUIRE(first == rendered("assets/coin.sfx"));
     REQUIRE(first != rendered("assets/coin7.sfx"));
+    // The same without a file: "sfx:<preset>" with the recipe's fields after '?'.
+    REQUIRE(rendered("sfx:coin") == first);
+    REQUIRE(rendered("sfx:coin?seed=7") == rendered("assets/coin7.sfx"));
+    REQUIRE_FALSE(a->load("sfx:trumpet").has_value());
     // What is wrong in a recipe is said.
     auto bad = a->load("assets/bad.sfx");
     REQUIRE_FALSE(bad.has_value());

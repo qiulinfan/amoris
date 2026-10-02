@@ -46,7 +46,7 @@ struct Rng {
     double around(double v, double spread) { return v * (1.0 + (next() * 2.0 - 1.0) * spread); }
 };
 
-const std::vector<std::string> kPresets = {"coin", "jump", "hit", "explosion", "laser", "powerup", "blip", "hurt", "select"};
+const std::vector<std::string> kPresets = {"coin", "jump", "hit", "explosion", "laser", "powerup", "blip", "hurt", "select", "shot", "step", "click"};
 
 // A preset's voices, varied by the seed (seed 0: as listed).
 Result<std::vector<Json>> preset(const std::string& name, std::uint64_t seed) {
@@ -63,6 +63,10 @@ Result<std::vector<Json>> preset(const std::string& name, std::uint64_t seed) {
     if (name == "powerup") return std::vector<Json>{Json{{"wave", "square"}, {"frequency", f(330)}, {"to", f(660)}, {"steps", Json::array({Json{{"at", 0.08}, {"times", 1.26}}, Json{{"at", 0.16}, {"times", 1.5}}})}, {"vibrato", Json{{"depth", 0.03}, {"rate", 14}}}, {"attack", 0.005}, {"hold", f(0.24)}, {"decay", f(0.25)}, {"volume", 0.35}}};
     if (name == "blip") return std::vector<Json>{Json{{"wave", "square"}, {"frequency", f(880)}, {"attack", 0.002}, {"hold", f(0.03)}, {"decay", f(0.05)}, {"volume", 0.3}}};
     if (name == "hurt") return std::vector<Json>{Json{{"wave", "saw"}, {"frequency", f(420)}, {"to", f(140)}, {"vibrato", Json{{"depth", 0.08}, {"rate", 30}}}, {"attack", 0.002}, {"hold", f(0.05)}, {"decay", f(0.2)}, {"volume", 0.4}}};
+    if (name == "shot") return std::vector<Json>{Json{{"wave", "noise"}, {"frequency", f(4200)}, {"to", f(700)}, {"attack", 0.0005}, {"hold", 0.008}, {"decay", f(0.16)}, {"lowpass", f(7000)}, {"volume", 0.6}},
+                                                 Json{{"wave", "sine"}, {"frequency", f(150)}, {"to", f(50)}, {"attack", 0.001}, {"hold", 0.02}, {"decay", f(0.14)}, {"volume", 0.45}}};
+    if (name == "step") return std::vector<Json>{Json{{"wave", "noise"}, {"frequency", f(900)}, {"to", f(300)}, {"attack", 0.002}, {"hold", 0.01}, {"decay", f(0.07)}, {"lowpass", f(1600)}, {"volume", 0.25}}};
+    if (name == "click") return std::vector<Json>{Json{{"wave", "square"}, {"frequency", f(1800)}, {"attack", 0.0005}, {"hold", 0.004}, {"decay", f(0.02)}, {"volume", 0.25}}};
     if (name == "select") return std::vector<Json>{Json{{"wave", "triangle"}, {"frequency", f(660)}, {"steps", Json::array({Json{{"at", 0.04}, {"times", 1.5}}})}, {"attack", 0.002}, {"hold", 0.05}, {"decay", f(0.1)}, {"volume", 0.4}}};
     std::string names;
     for (const auto& n : kPresets) names += (names.empty() ? "" : ", ") + n;

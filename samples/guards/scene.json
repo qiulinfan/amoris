@@ -25,12 +25,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.36,
-        "g": 0.42,
-        "b": 0.32,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:grass?color=#56783f",
+       "normal_map": "pattern:grass?color=#56783f&map=normal",
+       "texture_tile": 3.0
       },
       "RigidBody": {
        "kind": "static"
@@ -63,12 +66,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.55,
-        "g": 0.53,
-        "b": 0.5,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3&map=normal",
+       "texture_tile": 2.0
       },
       "RigidBody": {
        "kind": "static"
@@ -101,12 +107,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.55,
-        "g": 0.53,
-        "b": 0.5,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3&map=normal",
+       "texture_tile": 2.0
       },
       "RigidBody": {
        "kind": "static"
@@ -139,12 +148,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.55,
-        "g": 0.53,
-        "b": 0.5,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3&map=normal",
+       "texture_tile": 2.0
       },
       "RigidBody": {
        "kind": "static"
@@ -177,12 +189,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.55,
-        "g": 0.53,
-        "b": 0.5,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3&map=normal",
+       "texture_tile": 2.0
       },
       "RigidBody": {
        "kind": "static"
@@ -215,12 +230,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.25,
-        "g": 0.4,
-        "b": 0.22,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:grass?color=#2f5a2a&scale=6",
+       "normal_map": "pattern:grass?color=#2f5a2a&scale=6&map=normal",
+       "texture_tile": 1.5
       },
       "RigidBody": {
        "kind": "static"
@@ -253,12 +271,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.55,
-        "g": 0.53,
-        "b": 0.5,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:planks?count=6&color=#7a5a3a",
+       "normal_map": "pattern:planks?count=6&color=#7a5a3a&map=normal",
+       "texture_tile": 2.0
       },
       "RigidBody": {
        "kind": "static"
@@ -291,12 +312,15 @@
       "MeshRenderer": {
        "mesh": "cube",
        "color": {
-        "r": 0.55,
-        "g": 0.53,
-        "b": 0.5,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 1
        },
-       "roughness": 0.85
+       "roughness": 0.85,
+       "texture": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#8d8a82&mortar=#5d5a54&rows=10&columns=3&map=normal",
+       "texture_tile": 2.0
       },
       "RigidBody": {
        "kind": "static"

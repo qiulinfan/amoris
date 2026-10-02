@@ -325,6 +325,8 @@ struct GpuEmitter {
     depth_inv: mat4x4f,
     depth_info: vec4f, // x, y the prepass's size, z 1 when there is one, w 1 when the particles collide with it
     eye: vec4f,        // where that view's camera was
+    area: vec4f,       // xyz the half extents of the box particles are born in, about the emitter (0: its point)
+    turn: vec4f,       // the emitter's rotation, which turns that box
 };
 @group(0) @binding(0) var<storage, read_write> ring: array<GpuParticle>;
 @group(0) @binding(1) var<uniform> e: GpuEmitter;
@@ -401,6 +403,13 @@ fn curl_noise(p0: vec3f, t: f32) -> vec3f {
         p.vel = (a * cz + u * (sz * cos(phi)) + v * (sz * sin(phi))) * speed;
         p.pos = mix(e.prev.xyz, e.origin.xyz, at);
         p.life = max(0.01, mix(e.ranges.z, e.ranges.w, rand(&s)));
+        if (any(e.area.xyz > vec3f(0.0))) {
+            // Somewhere in the box, turned with the emitter (drawn after the rest: the same births as before without one).
+            let off = (vec3f(rand(&s), rand(&s), rand(&s)) * 2.0 - 1.0) * e.area.xyz;
+            let q = e.turn;
+            let t2 = cross(q.xyz, off) * 2.0;
+            p.pos += off + t2 * q.w + cross(q.xyz, t2);
+        }
         p.age = 0.0;
         left = dt * (1.0 - at);
     }
@@ -1637,6 +1646,8 @@ struct GpuEmitter {
     depth_inv: mat4x4f,
     depth_info: vec4f, // x, y the prepass's size, z 1 when there is one, w 1 when the particles collide with it
     eye: vec4f,        // where that view's camera was
+    area: vec4f,       // xyz the half extents of the box particles are born in, about the emitter (0: its point)
+    turn: vec4f,       // the emitter's rotation, which turns that box
 };
 @group(3) @binding(2) var<storage, read> gpu_ring: array<GpuParticle>;
 @group(3) @binding(3) var<uniform> gpu_emitter: GpuEmitter;
@@ -3278,6 +3289,7 @@ struct Renderer::Impl {
         float origin[4], prev[4], axis[4], gravity[4], ranges[4], ground[4], look[4], color0[4], color1[4], place[4];
         std::uint32_t counts[4], extra[4];
         float depth_vp[16], depth_inv[16], depth_info[4], eye[4];
+        float area[4], turn[4];
     };
     struct GpuEmitter {
         WGPUBuffer ring = nullptr, params = nullptr;
@@ -10581,6 +10593,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                     gp.depth_info[2] = deep && im.particle_view ? 1.0f : 0.0f;
                     gp.depth_info[3] = deep && im.particle_view && e->collide ? 1.0f : 0.0f;
                     put(gp.eye, im.particle_eye, 0.0f);
+                    put(gp.area, Vec3{std::max(e->area.x, 0.0f), std::max(e->area.y, 0.0f), std::max(e->area.z, 0.0f)}, 0.0f);
+                    const Quat turn = wt ? wt->rotation : Quat{};
+                    gp.turn[0] = turn.x; gp.turn[1] = turn.y; gp.turn[2] = turn.z; gp.turn[3] = turn.w;
                     ge.due = dt > 0.0 || born > 0;
                     im.device->write_buffer(ge.params, 0, &gp, sizeof gp);
                 }

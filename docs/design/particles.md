@@ -13,6 +13,33 @@ const sparks = world.spawn("Sparks", { components: { Transform: { position }, Pa
 particles.burst(sparks, 30);
 ```
 
+Particles are born at the entity's place, or with `area` (half extents of a box about the entity,
+turned with it) anywhere in that box: rain over a square, snow, dust in a room, fireflies in a
+glade.
+
+## Presets
+
+Good-looking fire takes a dozen numbers that agree with each other.
+`particles.preset {entity, name, set}` (`particles.preset(entity, name, set)` in a script) writes a
+tuned emitter onto the entity, adding the component when it has none: `fire` (rising, additive,
+swirling), `smoke` (slow, grey, growing), `sparks` and `explosion` (not emitting: burst them),
+`rain` and `snow` (over a 30 by 30 square below the entity's height, on the GPU), `dust` (motes
+drifting in a six by three by six box), `fireflies` and `magic`. `set` changes fields over the
+preset (`{rate: 20}`), and the answer is the emitter as it now is: plain fields the game or an agent
+changes from there, as on any other.
+
+```ts
+const camp = world.spawn("Campfire", { components: { Transform: { position }, Light: { kind: "point", color: { r: 1, g: 0.6, b: 0.25, a: 1 }, intensity: 6, range: 7 } } });
+particles.preset(camp, "fire");
+particles.preset(world.spawn("Weather", { components: { Transform: { position: { x: 0, y: 12, z: 0 } } } }), "rain");
+```
+
+`runtime_tests` (`[particles][preset]`): fire on an entity without an emitter adds one, rising and
+additive, at the rate asked, and emits; dust's particles are born across its box, not at its point;
+an unknown name lists the ones there are. `tests/evidence/rendering/presets.png`
+(`tools/scripts/presets_evidence.py`) is a campfire (fire, smoke and a point light) among built-in
+props, with fireflies, magic and rain.
+
 ## How it runs
 
 - The simulation lives in `engine/renderer/particles.cpp` and steps on the fixed tick right after

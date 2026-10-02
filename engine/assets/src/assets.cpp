@@ -2087,6 +2087,14 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
         }
         parsed = parse_gltf(*glb, project_dir_, path);
         if (parsed) parsed->importer = "builtin";
+    } else if (is_prop(path)) {
+        auto glb = prop_glb(path);
+        if (!glb) {
+            failures_["mesh:" + path] = glb.error().message;
+            return fail(glb.error());
+        }
+        parsed = parse_gltf(*glb, project_dir_, path);
+        if (parsed) parsed->importer = "builtin";
     }
     std::filesystem::path full;
     std::string ext;
@@ -2429,7 +2437,7 @@ Json AssetStore::describe(const std::string& path, int ascii_width) {
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     Json j;
     j["path"] = path;
-    if (!model_importer(ext).empty() || path == "humanoid" || path.starts_with("humanoid?")) {
+    if (!model_importer(ext).empty() || path == "humanoid" || path.starts_with("humanoid?") || is_prop(path)) {
         auto m = mesh(path);
         if (!m) { j["error"] = m.error().to_string(); return j; }
         j = (*m)->describe();

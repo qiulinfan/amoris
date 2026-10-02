@@ -1,6 +1,7 @@
 // Particles: emitters are the ParticleEmitter component; these calls reach the simulation directly
 // (docs/design/particles.md). Everything is a command, so agents see the same numbers.
 import { command, type EntityRef, type Vec3 } from "./world";
+import type { Components } from "./generated/components";
 
 export interface ParticleStats {
     emitters: number;
@@ -28,7 +29,18 @@ export interface ParticleList {
     mean_age?: number;
 }
 
+/** The tuned looks particles.preset gives an emitter. */
+export type ParticlePreset = "fire" | "smoke" | "sparks" | "explosion" | "rain" | "snow" | "dust" | "fireflies" | "magic";
+
 export const particles = {
+    /**
+     * Make an entity's ParticleEmitter one of the tuned looks (docs/design/particles.md, Presets):
+     * fire, smoke, sparks and explosion (burst those two), rain and snow over a 30 by 30 square,
+     * dust, fireflies, magic; `set` changes fields over it. Answers the emitter as it now is.
+     */
+    preset(entity: EntityRef, name: ParticlePreset, set: Partial<Components["ParticleEmitter"]> = {}): Components["ParticleEmitter"] {
+        return command("particles.preset", { entity, name, set }) as Components["ParticleEmitter"];
+    },
     /**
      * Emit count particles at once from an entity with a ParticleEmitter (emitting or not): from the
      * emitter, or from the world point `at`, their speeds times `speed` (default 1).

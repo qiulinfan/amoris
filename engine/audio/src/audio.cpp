@@ -199,10 +199,40 @@ struct Audio::Impl {
 
     Result<const Clip*> clip(const std::string& path) {
         if (auto it = clips.find(path); it != clips.end()) return it->second.get();
-        POCKET_TRY(full, resolve(path));
-        POCKET_TRY(bytes, fs::read_bytes(full));
-        std::string ext = full.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        std::vector<std::uint8_t> bytes;
+        std::string ext;
+        if (path.starts_with("sfx:")) {
+            // A preset recipe without a file (docs/design/audio.md, Sounds from a recipe):
+            // "sfx:coin?volume=0.3&seed=2" is {"preset": "coin", "volume": 0.3, "seed": 2}.
+            const std::string body = path.substr(4);
+            const std::size_t q = body.find('?');
+            Json recipe{{"preset", body.substr(0, q)}};
+            if (q != std::string::npos) {
+                const std::string rest = body.substr(q + 1);
+                std::size_t at = 0;
+                while (at < rest.size()) {
+                    const std::size_t amp = rest.find('&', at);
+                    const std::string kv = rest.substr(at, amp == std::string::npos ? std::string::npos : amp - at);
+                    at = amp == std::string::npos ? rest.size() : amp + 1;
+                    if (kv.empty()) continue;
+                    const std::size_t eq = kv.find('=');
+                    const std::string k = kv.substr(0, eq), v = eq == std::string::npos ? std::string() : kv.substr(eq + 1);
+                    char* end = nullptr;
+                    const double num = std::strtod(v.c_str(), &end);
+                    if (!v.empty() && end && *end == '\0') recipe[k] = num;
+                    else recipe[k] = v;
+                }
+            }
+            const std::string text = recipe.dump();
+            bytes.assign(text.begin(), text.end());
+            ext = ".sfx";
+        } else {
+            POCKET_TRY(full, resolve(path));
+            POCKET_TRY(read, fs::read_bytes(full));
+            bytes = std::move(read);
+            ext = full.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        }
         SDL_AudioSpec spec{};
         std::vector<std::uint8_t> pcm;   // the file's samples, in `spec`
         if (ext == ".ogg") {

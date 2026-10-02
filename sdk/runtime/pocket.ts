@@ -50,7 +50,7 @@ export type { StickOptions, ButtonOptions, Anchor } from "./touch";
 export type { WindowInfo } from "./display";
 export type { MeshData, MadeMesh } from "./mesh";
 export type { ClipInfo, PoseJoint, PlayAnimationOptions } from "./animation";
-export type { ParticleStats } from "./particles";
+export type { ParticlePreset, ParticleStats } from "./particles";
 export type { SpriteClip, PlayClipOptions } from "./sprites";
 export { audio } from "./audio";
 export { terrain } from "./terrain";

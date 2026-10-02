@@ -156,6 +156,7 @@ constexpr CommandHelp kHelp[] = {
     {"sprite.play", "entity, clip?, loop?, speed?, fps?, restart?, cause?", "Play a sprite clip on an entity."},
     {"sprite.stop", "entity, reset?, cause?", "Stop an entity's sprite clip."},
     {"particles.stats", "", "Live particles per emitter."},
+    {"particles.preset", "entity, name, set?", "Make an entity's ParticleEmitter one of the tuned looks: fire, smoke, sparks (burst them), explosion (burst it), rain, snow (both over a 30 by 30 square, on the GPU), dust, fireflies, magic; `set` changes fields over it ({rate: 20, color: {...}}). Answers the emitter, whose fields are then the game's to change."},
     {"particles.burst", "entity, count?, at?, speed?", "Emit a burst from an emitter: from its place, or from the world point `at` ([x, y, z] or {x, y, z}); particle speeds times `speed` (default 1)."},
     {"particles.clear", "entity?", "Remove live particles."},
     {"particles.list", "entity?, limit?", "An emitter's live particles summed up (how many, the box they fill, their mean speed and age) and the first `limit` of them (10) with positions, velocities and ages."},

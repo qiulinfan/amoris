@@ -78,6 +78,12 @@ void Particles::spawn(EmitterPool& pool, const world::ParticleEmitter& e, const 
         p.velocity = dir * speed;
         p.position = e.world_space ? t.position : Vec3{0, 0, 0};
         p.life = std::max(0.01f, e.lifetime.x + (e.lifetime.y - e.lifetime.x) * r.next_float());
+        if (e.area.x > 0 || e.area.y > 0 || e.area.z > 0) {
+            // Somewhere in the box about the emitter, turned with it (drawn last: an emitter without
+            // one takes the same numbers as before).
+            const float ax = r.next_float() * 2 - 1, ay = r.next_float() * 2 - 1, az = r.next_float() * 2 - 1;
+            p.position = p.position + t.rotation.rotate(Vec3{ax * std::max(e.area.x, 0.0f), ay * std::max(e.area.y, 0.0f), az * std::max(e.area.z, 0.0f)});
+        }
         p.age = 0;
         pool.alive.push_back(p);
         pool.spawned++;

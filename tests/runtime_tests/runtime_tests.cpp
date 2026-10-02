@@ -1902,6 +1902,34 @@ TEST_CASE("a ragdoll makes a character's bones into bodies that fall, and gives 
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("particle presets give an emitter a tuned look, and an area spreads where particles are born", "[runtime][particles][preset]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Campfire"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}}}}).has_value());
+    // Fire on an entity with no emitter: one is added, rising, additive, with a smaller rate asked.
+    Json fire = s.command("particles.preset", Json{{"entity", "Campfire"}, {"name", "fire"}, {"set", Json{{"rate", 40}}}}).value();
+    REQUIRE(fire["additive"] == true);
+    REQUIRE(fire["rate"].get<double>() == 40);
+    REQUIRE(fire["gravity"]["y"].get<double>() > 0);
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    REQUIRE(s.command("particles.list", Json{{"entity", "Campfire"}}).value()["alive"].get<int>() > 5);
+    // Dust over a room: particles born across its six by three by six box, not at one point.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Room"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 10}, {"y", 2}, {"z", 0}}}}}}}}).has_value());
+    REQUIRE(s.command("particles.preset", Json{{"entity", "Room"}, {"name", "dust"}, {"set", Json{{"rate", 200}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    const Json dust = s.command("particles.list", Json{{"entity", "Room"}, {"limit", 0}}).value();
+    INFO(dust.dump());
+    REQUIRE(dust["bounds"]["max"]["x"].get<double>() - dust["bounds"]["min"]["x"].get<double>() > 4.0);
+    REQUIRE(dust["bounds"]["max"]["z"].get<double>() - dust["bounds"]["min"]["z"].get<double>() > 4.0);
+    REQUIRE(dust["bounds"]["min"]["x"].get<double>() > 6.5);
+    // An unknown name is said with the ones there are.
+    auto bad = s.command("particles.preset", Json{{"entity", "Room"}, {"name", "lava"}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("fireflies") != std::string::npos);
+}
+
 TEST_CASE("a hitscan shot hurts the first collider or character along it, the shooter's own left out", "[runtime][combat][hitscan]") {
     auto o = hello_options(-1);
     o.paused = true;

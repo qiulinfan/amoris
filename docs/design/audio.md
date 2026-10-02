@@ -145,16 +145,20 @@ from `frequency` to `to` over the sound and changes by `steps` (`[{at: 0.06, tim
 `decay` (seconds), at `volume`, through a one-pole `lowpass` (Hz), starting after `delay`. `layers`
 mixes several voices (an explosion's noise, its low thud and a crack), each taking the recipe's
 other fields as defaults. `preset` starts from a common game sound, `coin`, `jump`, `hit`,
-`explosion`, `laser`, `powerup`, `blip`, `hurt` or `select`, with the recipe's other fields over its
-first voice (`{"preset": "jump", "volume": 0.2}`); `seed` varies a preset's pitches and times a
-little, so ten coins need not sound alike. The same recipe renders the same samples everywhere (the
-noise comes from a generator of its own), and a sound that would pass full scale is brought down to
-it. A recipe that cannot be read is refused with what is wrong in it, a field a voice does not have
-included (`'reverb' is not a field of a voice`: reverb, echo and pan belong to the bus, the room or
-`audio.play`). `samples/audio` plays `assets/coin.sfx` (`{"preset": "coin"}`) on C and
-`assets/blast.sfx` (three layers) on B. `audio_tests` (`[synth]`): half a second of a 440 Hz sine
-lasts half a second and crosses zero 440 times, a preset renders the same samples in two sessions
-and other ones with a seed, and a wave that does not exist is named.
+`explosion`, `laser`, `powerup`, `blip`, `hurt`, `select`, `shot` (a gun's crack and thump), `step`
+(a footfall) or `click`, with the recipe's other fields over its first voice
+(`{"preset": "jump", "volume": 0.2}`); `seed` varies a preset's pitches and times a little, so ten
+coins need not sound alike. The same recipe renders the same samples everywhere (the noise comes
+from a generator of its own), and a sound that would pass full scale is brought down to it. A recipe
+that cannot be read is refused with what is wrong in it, a field a voice does not have included
+(`'reverb' is not a field of a voice`: reverb, echo and pan belong to the bus, the room or
+`audio.play`). A preset needs no file at all: a clip named `sfx:<preset>` is that recipe, with the
+recipe's fields after `?` (`"sfx:coin"`, `"sfx:jump?volume=0.2&seed=3"`, wherever a clip goes:
+`audio.play`, `AudioSource.clip`). `samples/audio` plays `assets/coin.sfx` (`{"preset": "coin"}`) on
+C and `assets/blast.sfx` (three layers) on B. `audio_tests` (`[synth]`): half a second of a 440 Hz
+sine lasts half a second and crosses zero 440 times, a preset renders the same samples in two
+sessions and other ones with a seed, `sfx:coin` and `sfx:coin?seed=7` render as their files do, and
+a wave that does not exist is named.
 
 ## Music from a score
 

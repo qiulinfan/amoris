@@ -2124,6 +2124,7 @@ void to_json(Json& j, const ParticleEmitter& v) {
     j["additive"] = v.additive;
     j["turbulence"] = v.turbulence;
     j["turbulence_scale"] = v.turbulence_scale;
+    vec_to_json(j["area"], v.area);
     j["gpu"] = v.gpu;
 }
 
@@ -2155,6 +2156,7 @@ void from_json(const Json& j, ParticleEmitter& v) {
     scalar_from_json(j, "additive", v.additive);
     scalar_from_json(j, "turbulence", v.turbulence);
     scalar_from_json(j, "turbulence_scale", v.turbulence_scale);
+    if (j.is_object() && j.contains("area")) vec_from_json(j["area"], v.area);
     scalar_from_json(j, "gpu", v.gpu);
 }
 
@@ -2199,6 +2201,9 @@ void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
     h.u8(v.additive ? 1 : 0);
     h.f32(v.turbulence);
     h.f32(v.turbulence_scale);
+    h.f32(v.area.x);
+    h.f32(v.area.y);
+    h.f32(v.area.z);
     h.u8(v.gpu ? 1 : 0);
 }
 
@@ -2240,6 +2245,10 @@ std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out)
     if (path == "stretch") { *out = &v.stretch; return 1; }
     if (path == "turbulence") { *out = &v.turbulence; return 1; }
     if (path == "turbulence_scale") { *out = &v.turbulence_scale; return 1; }
+    if (path == "area") { *out = &v.area.x; return 3; }
+    if (path == "area.x") { *out = &v.area.x; return 1; }
+    if (path == "area.y") { *out = &v.area.y; return 1; }
+    if (path == "area.z") { *out = &v.area.z; return 1; }
     return 0;
 }
 
@@ -4888,7 +4897,7 @@ constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine).", {}},
     FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick).", {}},
 }};
-constexpr std::array<FieldInfo, 28> kParticleEmitterFields = {{
+constexpr std::array<FieldInfo, 29> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft round spots (streaks when stretched).", {}},
     FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate.", {}},
     FieldInfo{"rate", "f32", "Particles per second while emitting.", {}},
@@ -4916,6 +4925,7 @@ constexpr std::array<FieldInfo, 28> kParticleEmitterFields = {{
     FieldInfo{"additive", "bool", "Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other.", {}},
     FieldInfo{"turbulence", "f32", "Swirling air: a curl-noise field pushes each particle by up to this many units per second squared (smoke, embers, magic); 0 for none.", {}},
     FieldInfo{"turbulence_scale", "f32", "The size of the turbulence's swirls in units.", {}},
+    FieldInfo{"area", "vec3", "Half extents of a box about the entity (turned with it) that particles are born anywhere in: rain over a square, snow, dust in a room, fireflies in a glade; 0 is the entity's point.", {}},
     FieldInfo{"gpu", "bool", "Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing.", {}},
 }};
 constexpr std::array<FieldInfo, 12> kTrailFields = {{

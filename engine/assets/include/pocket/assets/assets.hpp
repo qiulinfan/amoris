@@ -406,6 +406,11 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
 // `query` sets its colours ("shirt=#c33&hair=none"); its clips are idle, walk, run, walk_back,
 // strafe_left, strafe_right, crouch, crouch_walk, jump, wave, punch and die.
 Result<std::string> humanoid_glb(const std::string& query);
+// Props without files (docs/design/assets.md, Props): "tree", "pine", "rock", "bush", "barrel",
+// "lamp" and "fence", each with settings after '?' ("tree?height=5&leaves=autumn&seed=3"), as a
+// glTF binary; is_prop says whether a mesh name is one of them.
+bool is_prop(std::string_view path);
+Result<std::string> prop_glb(const std::string& path);
 // Tangents made from the uvs for the vertices whose file gave none (every mesh the store loads,
 // and terrains).
 void fill_tangents(Mesh& mesh);
