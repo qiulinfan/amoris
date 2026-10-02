@@ -680,6 +680,12 @@ export interface Animator {
     root_rotation: boolean;
     /** The root's yaw change this tick in radians while root_rotation is on (written by the engine). */
     root_delta_yaw: number;
+    /** The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A clip played over them (a punch, a wave) plays out first; die stays (docs/design/animation.md, Locomotion). */
+    locomotion: boolean;
+    /** Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace. */
+    walk_speed: number;
+    /** Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs. */
+    run_speed: number;
 }
 
 /** Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays. */
@@ -1650,7 +1656,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true, lit: false, shadows: false },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0 },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0, locomotion: false, walk_speed: 1.4, run_speed: 4 },
     Attach: { target: "", joint: "", offset: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, found: false },
     Ragdoll: { active: false, mass: 70, follow: true, bodies: 0, root: "" },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },

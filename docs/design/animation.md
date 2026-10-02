@@ -282,10 +282,13 @@ the clip is there again after a reload, and a missing file is refused.
 
 A game wants people in it before anyone has drawn them. `MeshRenderer.mesh = "humanoid"` is a figure
 the engine makes itself: boxes on eleven joints named as Mixamo names them (`Hips`, `Spine`, `Head`,
-`LeftUpLeg` ... `RightForeArm`), two metres tall standing on its origin and facing +Z, skinned
-rigidly, in five materials, with twelve clips of its own: `idle`, `walk`, `run`, `walk_back`,
-`strafe_left`, `strafe_right`, `crouch`, `crouch_walk`, `jump`, `wave`, `punch` and `die` (the last
-held where it ends, played with `loop` off). A query sets its colours,
+`LeftUpLeg` ... `RightForeArm`), two metres tall standing on its origin and facing -Z, the engine's
+forward, so `NavAgent.face` walks it face first and a `Behavior`'s field of view looks where its
+face does (a model from a file faces +Z as glTF has it, and is turned half round under its entity,
+as the walker's hero is; the humanoid is built that way and turned by a `Root` node above its
+`Hips`), skinned rigidly, in five materials, with twelve clips of its own: `idle`, `walk`, `run`,
+`walk_back`, `strafe_left`, `strafe_right`, `crouch`, `crouch_walk`, `jump`, `wave`, `punch` and
+`die` (the last held where it ends, played with `loop` off). A query sets its colours,
 `"humanoid?shirt=red&trousers=navy&skin=#8d5524&hair=none"`: `skin`, `shirt`, `trousers`, `shoes`
 and `hair` take `"#rrggbb"`, `"#rgb"` or a plain name (red, green, blue, yellow, orange, purple,
 pink, brown, black, white, grey, tan, navy, teal, olive), `hair=none` leaves the head bare, and a
@@ -300,6 +303,23 @@ idling, walking, running, waving, punching and lying where they fell. `assets_te
 (`[assets][humanoid]`): its skin of eleven joints and its twelve clips, standing on the origin two
 metres and a hair tall, a red shirt in linear light, no hair two boxes fewer, an unknown part and an
 unreadable colour refused.
+
+## Locomotion
+
+`Animator.locomotion = true` lets the engine choose the clip from how fast the entity crosses the
+ground, so a character that moves by any means (a `Character`, a `NavAgent`, a `Behavior`, a
+`Velocity`, a script writing its `Transform`) walks, runs and stands still without a graph: its
+horizontal speed each tick (smoothed over about an eighth of a second) is `idle` below 0.15 units a
+second, `run` above halfway from `walk_speed` (1.4) to `run_speed` (4), and `walk` between, with a
+tenth of a margin either side so a speed near a threshold does not flicker. A change cross-fades in
+a fifth of a second, and the walk and the run are played at the pace of the speed (the speed over
+`walk_speed` or `run_speed`, within half and twice), so the feet keep up. The clips are the mesh's
+own of those names (the built-in humanoid has them; a model from a file needs them named so), and a
+missing run falls back to the walk. A clip played over them
+(`animation.play {clip: "wave", loop: false}`) plays out and then the gait takes over again; `die`
+stays. An entity with an enabled `AnimationGraph` is the graph's. `runtime_tests` (`[locomotion]`):
+a humanoid at rest idles, at 1.4 a second walks at its own pace, at 4.5 runs at 1.12 of it, waves
+and then idles, and once dead stays dead while it slides.
 
 ## Cues
 

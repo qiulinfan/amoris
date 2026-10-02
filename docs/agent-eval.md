@@ -98,7 +98,7 @@ afterwards.
 
 ### Whole games
 
-Seven tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
+Eight tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
 brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
 units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and
 `time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key,
@@ -110,17 +110,20 @@ exposed) and `breakout` (a paddle, a ball moved by its `Velocity`, thirty-two br
 contract), `platformer` (a tile map drawn from eight rows given in the brief, a `Body2D` player that
 walks at 6 and jumps at 11, a pit that kills, a flag that ends the level; the runner draws its own
 tiles) and `sokoban` (six rows, two boxes, pushes stopped by walls and by a second box, an `undo`
-action, `level.solved` with the move count). The brief is a contract: the names of the entities, the
-actions and their keys, the events with their data, the exposed values, and that the game reads
-positions from the Transforms every tick, so the check can move things with `world.set`. The check
-is hidden in the harness and plays the game: it holds `move_x` for a second and measures the move,
-counts the rocks and times one's fall, puts a rock on the player and waits for `game.over`, then
-holds the actions again and expects nothing to move; for the door it starts the player between the
-key and the door and walks it into the door, puts it on the key, and walks it to the exit; the menu
-it clicks through by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen
-and reading `time`; the breakout it plays by setting the ball's place and velocity: up into a brick,
-into a wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past
-the paddle three times; the platformer it reads back as solid rows (`tilemap.rows`), walks, follows
+action, `level.solved` with the move count) and `villagers` (five of the engine's built-in humanoids
+in five looks wandering a square, walking when they move, one that stops, faces the player and waves
+when it comes near; the brief names neither the humanoid's clips nor what would walk them, so the
+agent finds them). The brief is a contract: the names of the entities, the actions and their keys,
+the events with their data, the exposed values, and that the game reads positions from the
+Transforms every tick, so the check can move things with `world.set`. The check is hidden in the
+harness and plays the game: it holds `move_x` for a second and measures the move, counts the rocks
+and times one's fall, puts a rock on the player and waits for `game.over`, then holds the actions
+again and expects nothing to move; for the door it starts the player between the key and the door
+and walks it into the door, puts it on the key, and walks it to the exit; the menu it clicks through
+by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and reading
+`time`; the breakout it plays by setting the ball's place and velocity: up into a brick, into a
+wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past the
+paddle three times; the platformer it reads back as solid rows (`tilemap.rows`), walks, follows
 through a jump with `step {watch}`, drops into the pit and walks onto the flag; the puzzle it plays
 by presses only (the game may keep its own grid), into a wall, into two boxes, a move and its undo,
 a push into a wall, and the four moves that solve it. None of it is in the brief beyond the
@@ -395,6 +398,15 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   two were `pocket_scenario` calls cut off by the MCP client's minute because the tool, installed
   before it honoured `POCKET_RUNTIME`, was building the engine from the checkout being edited (the
   agent ran the same scenario through the shell in seconds).
+- **Three new tasks.** `platformer`, `sokoban` and `watchman` went to opencode with GLM 5.3 Flash
+  over MCP on 2026-10-02: 3 of 3 at the first try (`opencode-glm-new3.json`). The platformer took
+  311 seconds and 41 calls: the agent drew its tiles as an SVG and laid the level with
+  `tilemap.fromText`, having read the sprites sample's script after guessing its file's name wrong
+  twice (the project guide now gives each sample's entry and scene). The puzzle took 482 seconds and
+  27 calls, keeping its own grid as the brief allowed, and the watchman 453 and 48 with a `Behavior`
+  of two states; its one failed call applied a `scene.json` that was not JSON, which `project.apply`
+  answered without saying where (a scene or prefab that does not parse is now answered with the
+  line, the column, the reason and the line itself).
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

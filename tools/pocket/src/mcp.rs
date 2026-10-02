@@ -219,7 +219,8 @@ impl<'a> McpServer<'a> {
         };
         let bundle = crate::commands::bundle_project(self.ws, &dir, None)?;
         let mut cmd = crate::commands::runtime_command(self.ws, &exe);
-        cmd.arg("--project").arg(&dir).arg("--bundle").arg(&bundle.out).args(["--serve", "0", "--paused", "--json", "--log-level", "warn"]);
+        // --exit-with-parent: the runtime ends with this server, so an agent that never stops it leaves nothing serving.
+        cmd.arg("--project").arg(&dir).arg("--bundle").arg(&bundle.out).args(["--serve", "0", "--paused", "--json", "--log-level", "warn", "--exit-with-parent"]);
         if args.get("editor").and_then(|e| e.as_bool()).unwrap_or(false) {
             // The editor beside the project: its panes show up in ui_snapshot and its buttons
             // answer ui_click, so an agent can operate it exactly like a person.

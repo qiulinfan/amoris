@@ -627,6 +627,9 @@ struct Animator {
     Vec3 root_delta{0.0f, 0.0f, 0.0f};
     bool root_rotation = false;
     float root_delta_yaw = 0.0f;
+    bool locomotion = false;
+    float walk_speed = 1.4f;
+    float run_speed = 4.0f;
     constexpr bool operator==(const Animator&) const = default;
 };
 void to_json(Json& j, const Animator& v);

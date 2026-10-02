@@ -1745,6 +1745,9 @@ void to_json(Json& j, const Animator& v) {
     vec_to_json(j["root_delta"], v.root_delta);
     j["root_rotation"] = v.root_rotation;
     j["root_delta_yaw"] = v.root_delta_yaw;
+    j["locomotion"] = v.locomotion;
+    j["walk_speed"] = v.walk_speed;
+    j["run_speed"] = v.run_speed;
 }
 
 void from_json(const Json& j, Animator& v) {
@@ -1775,6 +1778,9 @@ void from_json(const Json& j, Animator& v) {
     if (j.is_object() && j.contains("root_delta")) vec_from_json(j["root_delta"], v.root_delta);
     scalar_from_json(j, "root_rotation", v.root_rotation);
     scalar_from_json(j, "root_delta_yaw", v.root_delta_yaw);
+    scalar_from_json(j, "locomotion", v.locomotion);
+    scalar_from_json(j, "walk_speed", v.walk_speed);
+    scalar_from_json(j, "run_speed", v.run_speed);
 }
 
 void hash_component(StateHasherRef& h, const Animator& v) {
@@ -1801,6 +1807,9 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.f32(v.root_delta.z);
     h.u8(v.root_rotation ? 1 : 0);
     h.f32(v.root_delta_yaw);
+    h.u8(v.locomotion ? 1 : 0);
+    h.f32(v.walk_speed);
+    h.f32(v.run_speed);
 }
 
 std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
@@ -1830,6 +1839,8 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
     if (path == "root_delta.y") { *out = &v.root_delta.y; return 1; }
     if (path == "root_delta.z") { *out = &v.root_delta.z; return 1; }
     if (path == "root_delta_yaw") { *out = &v.root_delta_yaw; return 1; }
+    if (path == "walk_speed") { *out = &v.walk_speed; return 1; }
+    if (path == "run_speed") { *out = &v.run_speed; return 1; }
     return 0;
 }
 
@@ -4680,7 +4691,7 @@ constexpr std::array<FieldInfo, 7> kTimelineFields = {{
     FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine).", {}},
 }};
 constexpr std::string_view kAnimator_root_motionNames[] = {"off", "move", "report"};
-constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 21> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose).", {}},
     FieldInfo{"playing", "bool", "Whether time advances.", {}},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished).", {}},
@@ -4699,6 +4710,9 @@ constexpr std::array<FieldInfo, 18> kAnimatorFields = {{
     FieldInfo{"root_delta", "vec3", "The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine).", {}},
     FieldInfo{"root_rotation", "bool", "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion).", {}},
     FieldInfo{"root_delta_yaw", "f32", "The root's yaw change this tick in radians while root_rotation is on (written by the engine).", {}},
+    FieldInfo{"locomotion", "bool", "The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A clip played over them (a punch, a wave) plays out first; die stays (docs/design/animation.md, Locomotion).", {}},
+    FieldInfo{"walk_speed", "f32", "Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace.", {}},
+    FieldInfo{"run_speed", "f32", "Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs.", {}},
 }};
 constexpr std::array<FieldInfo, 5> kAttachFields = {{
     FieldInfo{"target", "string", "The entity whose model has the joint, by name or path.", {}},

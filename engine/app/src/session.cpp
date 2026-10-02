@@ -968,6 +968,27 @@ void Session::bind_natives() {
     });
 }
 
+namespace {
+// Where a file stops being JSON, for the one who wrote it: the parser's line, column and reason, and
+// that line of the file ("line 4, column 9: syntax error ... near `"Transform": {"pos" 1}`").
+std::string json_problem(const std::string& text) {
+    try {
+        (void)Json::parse(text);
+    } catch (const Json::parse_error& e) {
+        std::string why = e.what();
+        if (const auto at = why.find("parse error at "); at != std::string::npos) why = why.substr(at + 15);
+        std::size_t line_start = 0, line_no = 1;
+        const std::size_t byte = std::min<std::size_t>(e.byte > 0 ? e.byte - 1 : 0, text.size());
+        for (std::size_t i = 0; i < byte; ++i) if (text[i] == '\n') { line_start = i + 1; ++line_no; }
+        std::string line = text.substr(line_start, text.find('\n', line_start) - line_start);
+        if (line.size() > 160) line = line.substr(0, 160) + "...";
+        return std::format("{} (line {}: `{}`)", why, line_no, line);
+    } catch (...) {
+    }
+    return "not valid JSON";
+}
+}  // namespace
+
 // Scene from project.toml `scene = "..."` (relative to the project directory).
 Status Session::load_scene_file() {
     std::string scene_rel = project_.contains("scene") && project_["scene"].is_string() ? project_["scene"].get<std::string>() : "";
@@ -975,7 +996,7 @@ Status Session::load_scene_file() {
     std::filesystem::path scene_path = options_.project_dir / scene_rel;
     POCKET_TRY(text, fs::read_text(scene_path));
     Json scene = Json::parse(text, nullptr, false);
-    if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON", scene_path.string());
+    if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON: {}", scene_path.string(), json_problem(text));
     POCKET_TRY_VOID(world_->load(scene));
     log::info("runtime", "loaded scene {} ({} entities)", scene_rel, world_->entity_count());
     return {};
@@ -6855,7 +6876,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             if (bi != base.end()) return fail("forbidden", "{} is outside the project directory", path);
             POCKET_TRY(text, fs::read_text(full));
             scene = Json::parse(text, nullptr, false);
-            if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON", path);
+            if (scene.is_discarded()) return fail("bad_scene", "{} is not valid JSON: {}", path, json_problem(text));
         }
         if (scene.contains("meshes") && scene["meshes"].is_object())
             for (const auto& [mname, spec] : scene["meshes"].items()) POCKET_TRY_VOID(make_mesh(mname, spec));
@@ -6876,7 +6897,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             if (it == prefab_cache_.end()) {
                 POCKET_TRY(text, fs::read_text(full));
                 Json parsed = Json::parse(text, nullptr, false);
-                if (parsed.is_discarded()) return fail("bad_scene", "{} is not valid JSON", prefab);
+                if (parsed.is_discarded()) return fail("bad_scene", "{} is not valid JSON: {}", prefab, json_problem(text));
                 it = prefab_cache_.emplace(prefab, std::move(parsed)).first;
             }
             fragment = it->second;

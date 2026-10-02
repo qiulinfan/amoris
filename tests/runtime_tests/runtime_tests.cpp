@@ -278,6 +278,15 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
     REQUIRE(s.command("input.release", Json{{"key", "D"}}).value()["released"] == Json::array({"D"}));
     REQUIRE(s.command("input.release", Json::object()).value()["released"].empty());
+    // A scene that is not JSON says where and why.
+    const auto broken = root() / "samples" / "hello" / "broken_scene.json";
+    REQUIRE(fs::write_text(broken, "{\"format\": \"pocket-scene\",\n \"entities\": [\n  {\"name\": \"A\" \"components\": {}}\n ]}\n").has_value());
+    auto load = s.command("world.load", Json{{"path", "broken_scene.json"}});
+    std::filesystem::remove(broken);
+    REQUIRE_FALSE(load.has_value());
+    INFO(load.error().message);
+    REQUIRE(load.error().message.find("line 3") != std::string::npos);
+    REQUIRE(load.error().message.find("\"name\": \"A\" \"components\"") != std::string::npos);
 }
 
 TEST_CASE("the window's view drawn at a scale is stretched to the window, its coordinates the window's", "[runtime][render][scale]") {
@@ -313,6 +322,41 @@ TEST_CASE("the window's view drawn at a scale is stretched to the window, its co
     REQUIRE(s.command("step", Json{{"ticks", 200}, {"render", "each"}}).has_value());
     const Json rs = s.command("render.stats", Json::object()).value();
     if (rs.contains("gpu")) REQUIRE(s.command("render.scale", Json::object()).value()["drawn"]["scale"].get<double>() < 1.0);
+}
+
+TEST_CASE("the built-in humanoid walks, runs and stands by its speed; a one-shot plays out, die stays", "[runtime][animation][locomotion]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Walker"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "humanoid?shirt=red"}}}, {"Animator", Json{{"locomotion", true}}}, {"Velocity", Json{{"linear", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}}}}).has_value());
+    auto anim = [&] { return s.command("world.get", Json{{"entity", "Walker"}, {"component", "Animator"}}).value(); };
+    auto go = [&](double v, int ticks) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Velocity"}, {"value", Json{{"linear", Json{{"x", 0}, {"y", 0}, {"z", v}}}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", ticks}}).has_value());
+    };
+    go(0, 10);
+    REQUIRE(anim()["clip"] == "idle");
+    go(1.4, 40);
+    Json a = anim();
+    REQUIRE(a["clip"] == "walk");
+    REQUIRE(a["speed"].get<double>() == Catch::Approx(1.0).margin(0.05));   // at the walk's own pace
+    go(4.5, 40);
+    a = anim();
+    REQUIRE(a["clip"] == "run");
+    REQUIRE(a["speed"].get<double>() == Catch::Approx(4.5 / 4.0).margin(0.05));
+    // A wave played over the run plays out, then the gait takes over again.
+    REQUIRE(s.command("animation.play", Json{{"entity", "Walker"}, {"clip", "wave"}, {"loop", false}}).has_value());
+    go(0, 10);
+    REQUIRE(anim()["clip"] == "wave");
+    go(0, 90);
+    REQUIRE(anim()["clip"] == "idle");
+    // Die stays where it falls, moving or not.
+    REQUIRE(s.command("animation.play", Json{{"entity", "Walker"}, {"clip", "die"}, {"loop", false}}).has_value());
+    go(1.4, 120);
+    a = anim();
+    REQUIRE(a["clip"] == "die");
+    REQUIRE(a["finished"] == true);
 }
 
 TEST_CASE("a reload after a script error drops the old handlers before the new bundle's join", "[runtime][reload]") {

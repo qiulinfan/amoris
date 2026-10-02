@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The built-in humanoid's evidence (docs/design/animation.md, A character without a file): six of
-them in six looks, each playing a clip of its own (idle, walk, run, wave, punch, die), photographed
+them in six looks, turned to face the camera (they face -Z), each playing a clip of its own (idle,
+walk, run, wave, punch, die), photographed
 after fifty frames (tests/evidence/rendering/humanoids.png).
 
     python3 tools/scripts/humanoid_evidence.py
@@ -35,7 +36,7 @@ def main():
         r.rpc("world.spawn", {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89}}, "Light": {"kind": 0, "intensity": 1.5, "shadows": True}}})
         r.rpc("world.spawn", {"name": "Sky", "components": {"Sky": {"mode": "atmosphere"}}})
         for i, (look, clip) in enumerate(zip(LOOKS, CLIPS)):
-            r.rpc("world.spawn", {"name": f"H{i}", "components": {"Transform": {"position": {"x": -6.25 + i * 2.5, "y": 0, "z": 0}}, "MeshRenderer": {"mesh": look}, "Animator": {"clip": clip, "loop": clip != "die"}}})
+            r.rpc("world.spawn", {"name": f"H{i}", "components": {"Transform": {"position": {"x": -6.25 + i * 2.5, "y": 0, "z": 0}, "rotation": {"x": 0, "y": 1, "z": 0, "w": 0}}, "MeshRenderer": {"mesh": look}, "Animator": {"clip": clip, "loop": clip != "die"}}})
         pitch = math.radians(-8) / 2
         r.rpc("world.spawn", {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 2.2, "z": 9}, "rotation": {"x": math.sin(pitch), "y": 0, "z": 0, "w": math.cos(pitch)}}, "Camera": {"fov_degrees": 50}}})
         r.rpc("render.msaa", {"samples": 4})

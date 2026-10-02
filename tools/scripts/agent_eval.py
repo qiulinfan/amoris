@@ -2400,6 +2400,119 @@ def sokoban_check(env, answer):
     return True, "walls and two boxes in a row stop a move, a move and its undo, a push, a box against a wall, solved in 4 moves"
 
 
+VILLAGERS_TS = """import { input, nav, onStart, onTick, repro, world } from "pocket";
+const SHIRTS = ["red", "green", "yellow", "purple", "orange"];
+const villagers: number[] = [];
+let player = 0;
+onStart(() => {
+    nav.bake({ min: { x: -12, y: -1, z: -12 }, max: { x: 12, y: 2, z: 12 }, cell: 0.5 });
+    SHIRTS.forEach((shirt, i) => {
+        const a = (i / SHIRTS.length) * Math.PI * 2;
+        villagers.push(world.spawn(`Villager_${i + 1}`, { components: {
+            Transform: { position: { x: Math.cos(a) * 3, y: 0, z: Math.sin(a) * 3 } },
+            MeshRenderer: { mesh: `humanoid?shirt=${shirt}` },
+            Animator: { locomotion: true },
+            NavAgent: { speed: 1.3, face: true },
+            Behavior: {
+                target: "Player",
+                states: [{ name: "wander", move: "wander", radius: 2.5, speed: 1.3, clip: "idle" }, { name: "greet", move: "stay", clip: "wave" }],
+                transitions: [{ from: "wander", to: "greet", when: "distance < 3" }, { from: "greet", to: "wander", when: "distance > 4" }],
+            },
+        } }));
+    });
+    player = world.find("Player") ?? 0;
+});
+onTick((t) => {
+    const p = world.get(player, "Transform")!.position;
+    world.set(player, "Transform", { position: { x: p.x + input.axis("move_x") * 4 * t.dt, y: p.y, z: p.z + input.axis("move_z") * 4 * t.dt } });
+    for (const v of villagers) {
+        if (world.get(v, "Behavior")!.state !== "greet") continue;
+        const q = world.get(v, "Transform")!.position;
+        const yaw = repro.atan2(-(p.x - q.x), -(p.z - q.z));   // its -Z toward the player
+        world.set(v, "Transform", { rotation: { x: 0, y: repro.sin(yaw / 2), z: 0, w: repro.cos(yaw / 2) } });
+    }
+});
+"""
+
+
+def villagers_solve(env, project_dir):
+    write_game(project_dir, "villagers", VILLAGERS_TS)
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write(json.dumps({"format": "pocket-scene", "entities": [
+            {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube"}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
+            {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0, "z": 15}}, "MeshRenderer": {"mesh": "capsule"}}},
+            {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 12, "z": 14}, "rotation": {"x": -0.33, "y": 0, "z": 0, "w": 0.94}}, "Camera": {}}},
+            {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89}}, "Light": {"kind": 0}}}]}, indent=1))
+    return None
+
+
+def villagers_check(env, answer):
+    import math
+
+    def get(name, comp):
+        try:
+            return env.command("world.get", {"entity": name, "component": comp})
+        except Exception:   # noqa: BLE001 (missing: said below)
+            return None
+    names = [f"Villager_{i}" for i in range(1, 6)]
+    meshes = []
+    for n in names:
+        mr = get(n, "MeshRenderer")
+        if not mr or not str(mr.get("mesh", "")).startswith("humanoid"):
+            return False, f"{n} is not drawn by the built-in humanoid ({mr and mr.get('mesh')})"
+        meshes.append(mr["mesh"])
+    if len(set(meshes)) < 5:
+        return False, f"the villagers' looks are not all different: {meshes}"
+    if get("Player", "Transform") is None:
+        return False, "no Player with a Transform"
+    put_player = lambda x, z: env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": x, "y": 0, "z": z}}})  # noqa: E731
+    put_player(20, 20)
+    start = {n: entity_pos(env, n) for n in names}
+    for n, p in start.items():
+        if math.hypot(p["x"], p["z"]) > 4.2:
+            return False, f"{n} starts at {p}, not within 4 of the centre"
+    walking, moved = set(), set()
+    for _ in range(8):
+        env.command("step", {"ticks": 45})
+        for n in names:
+            a = get(n, "Animator") or {}
+            if a.get("clip") in ("walk", "run"):
+                walking.add(n)
+            p = entity_pos(env, n)
+            if math.hypot(p["x"], p["z"]) > 6.3:
+                return False, f"{n} wandered to {p}, more than 6 from the centre"
+            if math.hypot(p["x"] - start[n]["x"], p["z"] - start[n]["z"]) > 0.5:
+                moved.add(n)
+    if len(moved) < 4 or len(walking) < 4:
+        return False, f"in six seconds {len(moved)} villagers moved and {len(walking)} played a walk ({sorted(walking)})"
+    # The player beside one: it stops, faces the player and waves.
+    v = entity_pos(env, "Villager_1")
+    put_player(v["x"] + 1.5, v["z"] + 1.0)
+    env.command("step", {"ticks": 40})
+    a = get("Villager_1", "Animator") or {}
+    here = entity_pos(env, "Villager_1")
+    env.command("step", {"ticks": 30})
+    there = entity_pos(env, "Villager_1")
+    if a.get("clip") != "wave":
+        return False, f"with the Player 1.8 away Villager_1 plays {a.get('clip')!r}, not wave"
+    if math.hypot(there["x"] - here["x"], there["z"] - here["z"]) > 0.3:
+        return False, f"waving, Villager_1 still walks ({here} -> {there})"
+    rot = (get("Villager_1", "Transform") or {}).get("rotation", {})
+    x, y, z, w = rot.get("x", 0), rot.get("y", 0), rot.get("z", 0), rot.get("w", 1)
+    fwd = (-(2 * (x * z + w * y)), -(1 - 2 * (x * x + y * y)))   # the rotation applied to -Z, in XZ
+    pl = entity_pos(env, "Player")
+    to = (pl["x"] - there["x"], pl["z"] - there["z"])
+    cosang = (fwd[0] * to[0] + fwd[1] * to[1]) / max(1e-6, math.hypot(*fwd) * math.hypot(*to))
+    if cosang < math.cos(math.radians(35)):
+        return False, f"Villager_1 faces {fwd}, not the Player at {to} from it (within 35 degrees)"
+    put_player(20, 20)
+    env.command("step", {"ticks": 150})
+    a = get("Villager_1", "Animator") or {}
+    if a.get("clip") == "wave":
+        return False, "with the Player gone Villager_1 still waves"
+    return True, f"five humanoids in five looks wander within 6 ({len(walking)} walking), one stops, faces the Player and waves, then wanders again"
+
+
 def watchman_check(env, answer):
     def get(name, comp):
         try:
@@ -3288,6 +3401,8 @@ TASKS = [
      "task": "Make a 2D platformer in this blank project, replacing its example. In the XY plane (x right, y up), one unit a tile: a tile map entity named Level, its top-left corner at (0, 0), made from these rows ('#' a solid tile, '.' empty, 'P' where the Player starts and 'F' the flag, each at its cell's center), drawn with tiles of your own: " + json.dumps(PLATFORMER_ROWS) + ". A Player with a Body2D (half extents 0.4 by 0.45, the default gravity) that move_x (A/D and the arrows) walks at 6 units a second; a jump action (Space, W, Up) leaves the ground at 11 units a second. Below y -12 the Player dies: emit player.died with {deaths} and put it back at the start. Coming within 0.8 of the flag's center emits level.complete once, and the Player answers no more input. Expose deaths and complete. A camera follows the Player. Answer null."},
     {"name": "sokoban", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": sokoban_solve, "check": sokoban_check,
      "task": "Make a Sokoban puzzle in this blank project, replacing its example. In the XY plane, one unit a cell: the cell in column c and row r (rows counting down) is centered at (c, -r). The level is these rows ('#' a wall, '.' floor, '@' the Player, '$' a box, 'x' a goal): " + json.dumps(SOKOBAN_ROWS) + ". The Player and the boxes are entities named Player, Box_0, Box_1 (boxes in reading order) at their cells' centers. Each press of move_x or move_y (A/D/W/S and the arrows) moves the Player one cell, unless a wall is there; a box in the way is pushed one cell when the cell past it is free (not a wall, not a box), else nothing moves. A move adds one to moves and emits player.moved with {moves}. When every box is on a goal, emit level.solved with {moves} once. An undo action (Z) takes back the last move (and its count). Expose moves and solved. Answer null."},
+    {"name": "villagers", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": villagers_solve, "check": villagers_check,
+     "task": "Make a village square in this blank project, replacing its example: a ground at y 0 and five villagers, entities named Villager_1 to Villager_5, each the engine's built-in humanoid with a shirt of its own colour, standing within 4 units of (0, 0, 0) at the start. They wander at walking pace (about 1.3 units a second), never more than 6 units from the centre, walking when they move and standing idle when they stop. A Player entity (drawn however you like, its feet at y 0) moves with move_x and move_z at 4 units a second. When the Player comes within 3 units of a villager, that villager stops, turns to face the Player and waves; once the Player is more than 4 units away it wanders again. Answer null."},
     {"name": "watchman", "project": "blank", "ticks": 0, "script": True, "solve": watchman_solve, "check": watchman_check,
      "task": "In this blank project, replacing its example, add a guard with the engine's Behavior component. Bake a navigation grid over the ground at the start (x and z from -10 to 10). An entity named Watchman starting at (-6, 0, 6) walks back and forth between (-6, 0, 6) and (6, 0, 6), a Path named Beat, at 2 units a second; when it sees the Player within 6 units it runs after it at 4 units a second; when it has not seen the Player for 2 seconds it goes back to walking its beat. Keep an entity named Player that the game does not move by itself (it may stand still): it is moved with world.set. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,

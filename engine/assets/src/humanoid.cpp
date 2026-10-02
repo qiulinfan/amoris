@@ -1,7 +1,9 @@
 // The built-in humanoid (docs/design/animation.md, A character without a file): boxes on eleven
 // joints in five materials, skinned rigidly, with a library of clips made from poses. It is written
 // as a glTF binary and read by the same reader as a file, so it is drawn, posed, blended and
-// attached to exactly as a model from Blender or Mixamo is.
+// attached to exactly as a model from Blender or Mixamo is. It is built facing +Z, as glTF models
+// are, under a root turned half round, so it faces -Z: the engine's forward, the way NavAgent.face
+// turns an entity and a Behavior's field of view looks.
 #include <pocket/assets/assets.hpp>
 
 #include <pocket/core/json.hpp>
@@ -296,14 +298,16 @@ Result<std::string> humanoid_glb(const std::string& query) {
         ibm.insert(ibm.end(), {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -w.x, -w.y, -w.z, 1});
     }
     const int ibm_acc = accessor(add(ibm.data(), ibm.size() * 4, 0), 5126, kJoints.size(), "MAT4");
-    // Nodes: the mesh's, then the joints (node j + 1).
-    Json nodes = Json::array({Json{{"name", "Humanoid"}, {"mesh", 0}, {"skin", 0}}});
+    // Nodes: the mesh's, the root turned half round about +Y (the joints' rest stays unturned in the
+    // inverse binds, so the turn carries the figure), then the joints (node j + 2).
+    constexpr int kFirstJoint = 2;
+    Json nodes = Json::array({Json{{"name", "Humanoid"}, {"mesh", 0}, {"skin", 0}}, Json{{"name", "Root"}, {"rotation", {0, 1, 0, 0}}, {"children", {kFirstJoint}}}});
     for (const Joint& jt : kJoints) nodes.push_back(Json{{"name", jt.name}, {"translation", {jt.at.x, jt.at.y, jt.at.z}}});
     for (std::size_t j = 0; j < kJoints.size(); ++j) {
         Json kids = Json::array();
         for (std::size_t k = 0; k < kJoints.size(); ++k)
-            if (kJoints[k].parent == static_cast<int>(j)) kids.push_back(k + 1);
-        if (!kids.empty()) nodes[j + 1]["children"] = kids;
+            if (kJoints[k].parent == static_cast<int>(j)) kids.push_back(k + kFirstJoint);
+        if (!kids.empty()) nodes[j + kFirstJoint]["children"] = kids;
     }
     // The clips, each sampled at its keys, linear between them: the hips' height and every joint a pose turns.
     Json animations = Json::array();
@@ -320,7 +324,7 @@ Result<std::string> humanoid_glb(const std::string& query) {
         std::vector<float> hips;
         for (const Pose& p : poses) hips.insert(hips.end(), {0.0f, p.hips, 0.0f});
         samplers.push_back(Json{{"input", t}, {"output", accessor(add(hips.data(), hips.size() * 4, 0), 5126, poses.size(), "VEC3")}, {"interpolation", "LINEAR"}});
-        channels.push_back(Json{{"sampler", 0}, {"target", {{"node", joint("Hips") + 1}, {"path", "translation"}}}});
+        channels.push_back(Json{{"sampler", 0}, {"target", {{"node", joint("Hips") + kFirstJoint}, {"path", "translation"}}}});
         std::map<std::string, bool> turned;
         for (const Pose& p : poses) for (const auto& [n, tv] : p.turns) turned[n] = true;
         for (const auto& [n, _] : turned) {
@@ -331,7 +335,7 @@ Result<std::string> humanoid_glb(const std::string& query) {
                 q.insert(q.end(), {r.x, r.y, r.z, r.w});
             }
             samplers.push_back(Json{{"input", t}, {"output", accessor(add(q.data(), q.size() * 4, 0), 5126, poses.size(), "VEC4")}, {"interpolation", "LINEAR"}});
-            channels.push_back(Json{{"sampler", samplers.size() - 1}, {"target", {{"node", joint(n) + 1}, {"path", "rotation"}}}});
+            channels.push_back(Json{{"sampler", samplers.size() - 1}, {"target", {{"node", joint(n) + kFirstJoint}, {"path", "rotation"}}}});
         }
         animations.push_back(Json{{"name", c.name}, {"samplers", samplers}, {"channels", channels}});
     }
@@ -342,7 +346,7 @@ Result<std::string> humanoid_glb(const std::string& query) {
         materials.push_back(Json{{"name", m.name}, {"pbrMetallicRoughness", {{"baseColorFactor", {lin.x, lin.y, lin.z, 1.0}}, {"metallicFactor", 0}, {"roughnessFactor", m.roughness}}}});
     }
     Json skin_joints = Json::array();
-    for (std::size_t j = 0; j < kJoints.size(); ++j) skin_joints.push_back(j + 1);
+    for (std::size_t j = 0; j < kJoints.size(); ++j) skin_joints.push_back(j + kFirstJoint);
     while (buf.size() % 4) buf.push_back('\0');
     const Json doc{{"asset", {{"version", "2.0"}, {"generator", "pocket humanoid"}}},
                    {"scene", 0},

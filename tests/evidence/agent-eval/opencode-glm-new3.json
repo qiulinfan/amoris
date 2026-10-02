@@ -1,0 +1,158 @@
+{
+  "runner": "python3 tools/scripts/runners/opencode_agent.py --via mcp",
+  "passed": 3,
+  "total": 3,
+  "seconds": 1246.1,
+  "tasks": [
+    {
+      "name": "platformer",
+      "project": "blank",
+      "ok": true,
+      "seconds": 311.4,
+      "detail": "the level's solid cells, standing at the start, walking at 6, a jump of 2.43, a death in the pit, the flag",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 310.4,
+        "turns": 27,
+        "tool_calls": 41,
+        "tools": {
+          "read": 16,
+          "pocket_runtime_commands": 1,
+          "grep": 6,
+          "bash": 4,
+          "edit": 2,
+          "write": 1,
+          "pocket_pocket_check": 1,
+          "pocket_runtime_command": 8,
+          "pocket_runtime_help": 2
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 79436,
+          "output": 5226,
+          "reasoning": 10788,
+          "cache_read": 1285760,
+          "total": 1381210
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 27,
+        "tokens": 1370422,
+        "calls": 41,
+        "read_kb": 78.8,
+        "failed_calls": 2,
+        "calls_before_edit": 24,
+        "calls_after_edit": 16,
+        "stuck": false
+      }
+    },
+    {
+      "name": "sokoban",
+      "project": "blank",
+      "ok": true,
+      "seconds": 481.8,
+      "detail": "walls and two boxes in a row stop a move, a move and its undo, a push, a box against a wall, solved in 4 moves",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 481.5,
+        "turns": 19,
+        "tool_calls": 27,
+        "tools": {
+          "read": 6,
+          "grep": 2,
+          "edit": 2,
+          "write": 2,
+          "pocket_project_apply": 2,
+          "pocket_world_tree": 1,
+          "pocket_capture": 3,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 2,
+          "pocket_events_since": 2,
+          "pocket_world_query": 3,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 118554,
+          "output": 4352,
+          "reasoning": 12506,
+          "cache_read": 790912,
+          "total": 926324
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 19,
+        "tokens": 913818,
+        "calls": 27,
+        "read_kb": 38.8,
+        "failed_calls": 0,
+        "calls_before_edit": 8,
+        "calls_after_edit": 18,
+        "stuck": true
+      }
+    },
+    {
+      "name": "watchman",
+      "project": "blank",
+      "ok": true,
+      "seconds": 453.0,
+      "detail": "walks its beat at 2, chases at 4 what it sees, back on the beat after the Player is out of sight 2 s (2 states)",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 452.7,
+        "turns": 42,
+        "tool_calls": 48,
+        "tools": {
+          "read": 14,
+          "glob": 1,
+          "grep": 1,
+          "write": 1,
+          "pocket_project_apply": 3,
+          "pocket_runtime_command": 13,
+          "pocket_runtime_help": 1,
+          "pocket_step": 11,
+          "edit": 2,
+          "pocket_capture": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 145898,
+          "output": 4376,
+          "reasoning": 9817,
+          "cache_read": 1980288,
+          "total": 2140379
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 42,
+        "tokens": 2130562,
+        "calls": 48,
+        "read_kb": 63.5,
+        "failed_calls": 1,
+        "calls_before_edit": 15,
+        "calls_after_edit": 32,
+        "stuck": true
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0,
+    "tokens": 4447913,
+    "tool_calls": 116
+  }
+}

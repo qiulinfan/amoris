@@ -969,6 +969,13 @@ struct Work {
     Locals locals;
     std::uint64_t stamp = 0;
 };
+// Locomotion: where an entity was last tick and its speed across the ground, smoothed.
+struct Gait {
+    Vec3 last{0, 0, 0};
+    float speed = 0;
+    bool primed = false;
+    std::uint64_t stamp = 0;
+};
 }  // namespace
 
 struct Animation::Kept {
@@ -984,12 +991,71 @@ struct Animation::Kept {
     std::map<world::EntityId, Fade> fades;
     std::unordered_map<world::EntityId, CompiledGraph> graphs;
     std::vector<world::EntityId> posed;
+    std::unordered_map<world::EntityId, Gait> gaits;   // locomotion's
 };
+
+namespace {
+
+// Locomotion (docs/design/animation.md, Locomotion): the clip an Animator plays from how fast its
+// entity crosses the ground, cross-faded on a change, its pace following the speed. Entities a
+// graph drives are the graph's.
+void step_locomotion(world::World& world, assets::AssetStore& assets, float dt, std::unordered_map<world::EntityId, Gait>& gaits, std::uint64_t stamp) {
+    if (dt <= 0) return;
+    world.ecs().each([&](flecs::entity e, world::Animator& a, const world::MeshRenderer& mr, const world::WorldTransform& t) {
+        if (!a.locomotion) return;
+        if (const auto* g = e.try_get<world::AnimationGraph>(); g && g->enabled && !g->states.empty()) return;
+        auto m = assets.mesh(mr.mesh);
+        if (!m) return;
+        const assets::Mesh& mesh = **m;
+        Gait& gait = gaits[e.id()];
+        gait.stamp = stamp;
+        const Vec3 at = t.position;
+        float raw = 0;
+        if (gait.primed) raw = std::hypot(at.x - gait.last.x, at.z - gait.last.z) / dt;
+        gait.last = at;
+        gait.primed = true;
+        gait.speed += (raw - gait.speed) * std::min(1.0f, dt * 8.0f);
+        // What it may take over: nothing playing, its own three, or a one-shot played out (not die).
+        const bool own = a.clip.empty() || a.clip == "idle" || a.clip == "walk" || a.clip == "run";
+        if (!own && !(a.finished && a.clip != "die")) return;
+        const bool has_walk = mesh.clip("walk") != nullptr, has_run = mesh.clip("run") != nullptr, has_idle = mesh.clip("idle") != nullptr;
+        const float walk = std::max(a.walk_speed, 0.05f), run = std::max(a.run_speed, walk + 0.05f);
+        const float s = gait.speed;
+        // Thresholds with a margin either side, so a speed near one does not flicker between clips.
+        const float still = 0.15f, mid = (walk + run) * 0.5f;
+        std::string want = a.clip == "walk" || a.clip == "run" ? a.clip : "idle";
+        if (want == "idle" && s > still * 1.3f) want = s > mid * 1.1f ? "run" : "walk";
+        else if (want == "walk" && s < still) want = "idle";
+        else if (want == "walk" && s > mid * 1.1f) want = "run";
+        else if (want == "run" && s < mid * 0.9f) want = s < still ? "idle" : "walk";
+        if (want == "run" && !has_run) want = "walk";
+        if (want == "walk" && !has_walk) want = "idle";
+        if (want == "idle" && !has_idle) want.clear();
+        if (want != a.clip) {
+            if (!a.clip.empty() && !want.empty()) {
+                a.from_clip = a.clip;
+                a.from_time = a.time;
+                a.fade = 0.2f;
+                a.fade_time = 0;
+            }
+            a.clip = want;
+            a.time = 0;
+            a.loop = true;
+            a.playing = true;
+            a.finished = false;
+        }
+        a.speed = want == "walk" ? std::clamp(s / walk, 0.5f, 2.0f) : want == "run" ? std::clamp(s / run, 0.6f, 1.8f) : 1.0f;
+    });
+    for (auto it = gaits.begin(); it != gaits.end();) it = it->second.stamp == stamp ? std::next(it) : gaits.erase(it);
+}
+
+}  // namespace
 
 void Animation::step(world::World& world, assets::AssetStore& assets, float dt) {
     if (!kept_) kept_ = std::make_shared<Kept>();
     Kept& kept = *kept_;
     const std::uint64_t stamp = ++ticks_;
+    step_locomotion(world, assets, dt, kept.gaits, stamp);
     step_graphs(world, assets, dt, kept.graphs, stamp);
     struct Finish { world::EntityId id; std::string clip; int layer = -1; };
     std::vector<Finish> finished;

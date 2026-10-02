@@ -351,6 +351,9 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `root_delta` | vec3 | [0.0, 0.0, 0.0] | The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine). |
 | `root_rotation` | bool | false | With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion). |
 | `root_delta_yaw` | f32 | 0.0 | The root's yaw change this tick in radians while root_rotation is on (written by the engine). |
+| `locomotion` | bool | false | The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A clip played over them (a punch, a wave) plays out first; die stays (docs/design/animation.md, Locomotion). |
+| `walk_speed` | f32 | 1.4 | Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace. |
+| `run_speed` | f32 | 4.0 | Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs. |
 
 ## Attach
 

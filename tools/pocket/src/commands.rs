@@ -427,7 +427,16 @@ fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()>
     let samples_dir = root.join("samples");
     let mut samples: Vec<PathBuf> = std::fs::read_dir(&samples_dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.join("project.toml").exists()).collect()).unwrap_or_default();
     samples.sort();
-    let examples: String = samples.iter().map(|p| format!("- `{}`: {}\n", p.display(), project_summary(p))).collect();
+    // Each with its script's entry and its scene, as project.toml names them, so nobody guesses a path.
+    let examples: String = samples
+        .iter()
+        .map(|p| {
+            let toml = std::fs::read_to_string(p.join("project.toml")).unwrap_or_default().parse::<toml::Table>().unwrap_or_default();
+            let entry = toml.get("entry").and_then(|v| v.as_str()).unwrap_or("scripts/main.ts");
+            let scene = toml.get("scene").and_then(|v| v.as_str()).map(|s| format!(", `{s}`")).unwrap_or_default();
+            format!("- `{}` (`{entry}`{scene}): {}\n", p.display(), project_summary(p))
+        })
+        .collect();
     let guide = format!(
         r#"# {title}
 
@@ -454,6 +463,12 @@ A game made with Pocket, an engine meant to be driven by agents as much as by pe
 The engine's samples are small games that work, their logic in `scripts/`: read the one nearest what you need (a menu, a platformer, a character, a dialogue, ...) for how it is done, rather than the engine's sources. `{tool} new <name> --from <sample>` starts a project from one.
 
 {examples}
+## Things to draw and hear without files
+
+- Meshes: `cube`, `sphere`, `plane`, `cylinder`, `quad`, `capsule` (`MeshRenderer.mesh`), and `humanoid`: a person with twelve clips of its own (`idle`, `walk`, `run`, `jump`, `crouch`, `wave`, `punch`, `die`, ...; `Animator.clip` plays one, and `Animator.locomotion = true` walks, runs and stands it by how fast it moves), its colours from the name (`"humanoid?shirt=red&hair=none"`; `{docs}/design/animation.md`, A character without a file).
+- Shapes from numbers (`mesh.create`), voxel models written as text (`.voxels`), SVG images for sprites and textures, tile maps drawn from rows of characters (`tilemap.fromText`).
+- Sounds from a recipe (`.sfx`) and music from a score (`.song`): `{docs}/design/audio.md`.
+
 ## What keeps it working
 
 - Keep the game's state on entities: a component in `components.toml` rather than a variable in a script, so the world, saves, replays and agents can see it.
@@ -482,7 +497,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::create_dir_all(project.join("scripts"))?;
     std::fs::create_dir_all(project.join("assets"))?;
     std::fs::create_dir_all(project.join("prefabs"))?;
-    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n\n# How it looks (docs/design/rendering.md): smoothed edges, corners darkened where light from all\n# around cannot reach, soft-edged shadows, and a filmic curve that keeps bright light from clipping.\n[render]\nmsaa = 4\nao = true\nshadow_softness = 1.0\n\n[render.tonemap]\noperator = \"agx\"\n\n# Actions instead of keys: keyboard and gamepad both work, and agents can hold an action by name.\n[input.actions]\nmove_x = {{ negative = [\"A\", \"Left\", \"pad:dpad_left\"], positive = [\"D\", \"Right\", \"pad:dpad_right\"], axis = [\"pad:leftx\"] }}\nmove_z = {{ negative = [\"W\", \"Up\", \"pad:dpad_up\"], positive = [\"S\", \"Down\", \"pad:dpad_down\"], axis = [\"pad:lefty\"] }}\ndrop = [\"Space\", \"pad:a\"]\n"))?;
+    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n\n# How it looks (docs/design/rendering.md): smoothed edges, corners darkened where light from all\n# around cannot reach, soft-edged shadows, and a filmic curve that keeps bright light from clipping.\n[render]\nmsaa = 4\nao = true\nshadow_softness = 1.0\n\n# On a weak GPU or a dense screen the view is drawn at fewer pixels to keep the frame under 12 ms.\n[render.scale]\ndynamic = true\n\n[render.tonemap]\noperator = \"agx\"\n\n# Actions instead of keys: keyboard and gamepad both work, and agents can hold an action by name.\n[input.actions]\nmove_x = {{ negative = [\"A\", \"Left\", \"pad:dpad_left\"], positive = [\"D\", \"Right\", \"pad:dpad_right\"], axis = [\"pad:leftx\"] }}\nmove_z = {{ negative = [\"W\", \"Up\", \"pad:dpad_up\"], positive = [\"S\", \"Down\", \"pad:dpad_down\"], axis = [\"pad:lefty\"] }}\ndrop = [\"Space\", \"pad:a\"]\n"))?;
     std::fs::write(project.join("scene.json"), r#"{
   "format": "pocket-scene",
   "entities": [

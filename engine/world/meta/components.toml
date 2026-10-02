@@ -437,6 +437,9 @@ fields = [
     { name = "root_delta", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine)." },
     { name = "root_rotation", type = "bool", default = false, doc = "With root_motion on, the root's yaw (its rotation about the asset's +Y) is root motion too: pinned to the clip's first frame in the pose, its change turns the entity (mode 1) or is reported in root_delta_yaw (mode 2), and root_delta is taken relative to the root's heading so a turning walk follows its arc (docs/design/animation.md, Root motion)." },
     { name = "root_delta_yaw", type = "f32", default = 0.0, doc = "The root's yaw change this tick in radians while root_rotation is on (written by the engine)." },
+    { name = "locomotion", type = "bool", default = false, doc = "The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A clip played over them (a punch, a wave) plays out first; die stays (docs/design/animation.md, Locomotion)." },
+    { name = "walk_speed", type = "f32", default = 1.4, doc = "Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace." },
+    { name = "run_speed", type = "f32", default = 4.0, doc = "Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs." },
 ]
 
 [[component]]

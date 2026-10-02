@@ -75,9 +75,12 @@ never taken. `home` is where the entity stood at its first tick unless it was gi
 chases the player it sees within 7 units across 150 degrees of where it faces (its `NavAgent` has
 `face` on), goes to where it last saw it once it has lost sight of it (`seek`), and after 4 seconds
 without seeing it (`unseen > 4`) goes back to its round; a guard that reaches the player sends it
-back to the start, and the vault at the north wall ends the level. `pocket scenario guards` checks
-that the guards keep their rounds while the player hides, that one chases and catches a player that
-walks into view, and that the vault ends the level.
+back to the start, and the vault at the north wall ends the level. The guards and the player are the
+built-in humanoid (`docs/design/animation.md`, A character without a file), red shirts and a blue
+one, each with `Animator.locomotion` on, so they walk on their rounds and run in the chase with no
+clip chosen by the script; the player's body is turned toward where it walks.
+`pocket scenario guards` checks that the guards keep their rounds while the player hides, that one
+chases and catches a player that walks into view, and that the vault ends the level.
 
 ## Checking
 
