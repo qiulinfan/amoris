@@ -23,7 +23,6 @@ class Behaviors {
     struct Compiled {
         std::vector<world::BehaviorTransition> transitions;   // what the programs were read from
         std::vector<ConditionProgram> programs;
-        bool reads_sees = false;
         std::string error;
     };
     std::map<world::EntityId, Compiled> compiled_;

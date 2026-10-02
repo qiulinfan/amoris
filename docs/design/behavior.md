@@ -31,8 +31,9 @@ the target; `flee` walks to `radius` away from the target and again whenever the
 half of that of where it was going; `wander` walks to a point within `radius` of home, chosen from
 the run's seed, and to another on arriving; `home` walks back to `home`; `patrol` walks the points
 of the `Path` named by `path` (`docs/design/paths.md`) in turn, looping, `waypoint` saying which it
-heads for. `speed`, when not 0, is the agent's speed in the state. A state that moves an entity
-without a `NavAgent` says so in `error` and moves nothing.
+heads for; `seek` walks to `seen_at`, where it last saw the target. `speed`, when not 0, is the
+agent's speed in the state. A state that moves an entity without a `NavAgent` says so in `error` and
+moves nothing.
 
 Entering a state (the first at the start, one a transition goes to, or one written into `state` from
 outside) emits `behavior.changed` with `{from, to}` and the entity as its subject, emits the state's
@@ -50,6 +51,8 @@ taken; at most one a tick. A condition is written as an `AnimationGraph`'s is (c
 - `sees`: 1 when the target is within `sight`, within `fov` degrees of where the entity faces (its
   -Z, turned about the vertical), and no collider stands on the line between `eye` above the two
   origins (the two themselves, their children and triggers aside);
+- `unseen`: seconds since it last saw the target (since it started, when it never has), kept in
+  `unseen` with where the target was, `seen_at`; so "not seen for 2 seconds" is `unseen > 2`;
 - `time`: seconds in the state;
 - `health`, `health_max`: its `Health` (0 without one);
 - `hit`: 1 when a hitbox hit it since the last tick (`docs/design/combat.md`);
@@ -64,6 +67,16 @@ A condition that does not read, or a transition to a state that is not there, is
 never taken. `home` is where the entity stood at its first tick unless it was given;
 `enabled: false` holds the state and leaves the agent alone.
 
+## The sample
+
+`samples/guards` is a walled courtyard with three guards, each a `Behavior` that patrols a `Path`,
+chases the player it sees within 7 units across 150 degrees of where it faces (its `NavAgent` has
+`face` on), goes to where it last saw it once it has lost sight of it (`seek`), and after 4 seconds
+without seeing it (`unseen > 4`) goes back to its round; a guard that reaches the player sends it
+back to the start, and the vault at the north wall ends the level. `pocket scenario guards` checks
+that the guards keep their rounds while the player hides, that one chases and catches a player that
+walks into view, and that the vault ends the level.
+
 ## Checking
 
 `runtime_tests` (`[behavior]`), on the playground's grid: a guard wanders within 2 of home, chases a
@@ -76,6 +89,6 @@ point, then its second once there.
 ## Not yet
 
 No nested machines or behavior trees; the perception is of one target, by distance and a ray (no
-hearing radius, no memory of where the target was last seen); facing is the entity's rotation, which
-the agents do not turn, so a field of view narrower than 360 degrees wants the game to turn the
-entity as it walks.
+hearing radius; what it remembers is where it last saw the target and when). A field of view
+narrower than 360 degrees reads where the entity faces, so its `NavAgent` should have `face` on (it
+turns the entity toward where it walks) or the game should turn it.

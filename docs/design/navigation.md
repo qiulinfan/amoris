@@ -152,8 +152,11 @@ physics:
    physics integrates it), and by writing `Transform.position` otherwise. On a ground grid a moved
    transform rises and falls with the floor it walks onto, keeping its height over the floor (so an
    entity whose origin is at its middle stays at its middle): up a ramp, down the stairs, onto the
-   deck. Agents push nothing but each other, and nothing but agents and obstacles steers them, so a
-   body with a `RigidBody` still collides through the physics, which carries it up the stairs.
+   deck. With `face` the agent turns the entity about the vertical toward where it walks, at most
+   `turn_speed` degrees a second (540), its -Z forward, so a guard looks where it goes (a
+   `Behavior`'s field of view reads that facing; `docs/design/behavior.md`). Agents push nothing but
+   each other, and nothing but agents and obstacles steers them, so a body with a `RigidBody` still
+   collides through the physics, which carries it up the stairs.
 
 The agent writes `state` (1 moving, 2 arrived, 3 stuck: the goal is unreachable and the agent stands
 at the end of the path it found, or the target is gone), `velocity`, `corner`, `distance` (the

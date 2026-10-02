@@ -51,5 +51,6 @@
     X(AudioSource) \
     X(AudioListener) \
     X(NavObstacle) \
+    X(Behavior) \
     X(NavAgent) \
     X(Morph)

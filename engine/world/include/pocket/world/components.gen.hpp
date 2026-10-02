@@ -1194,6 +1194,8 @@ struct Behavior {
     float fov = 360.0f;
     float eye = 1.0f;
     std::int32_t waypoint = 0;
+    Vec3 seen_at{0.0f, 0.0f, 0.0f};
+    float unseen = 0.0f;
     bool enabled = true;
     std::string error = "";
     constexpr bool operator==(const Behavior&) const = default;
@@ -1215,6 +1217,8 @@ struct NavAgent {
     std::int32_t replan = 10;
     float avoidance = 1.0f;
     float queue = 0.0f;
+    bool face = false;
+    float turn_speed = 540.0f;
     std::int32_t priority = 0;
     std::int32_t state = 0;
     Vec3 velocity{0.0f, 0.0f, 0.0f};

@@ -6054,7 +6054,26 @@ Result<Json> Session::world_lint(const Json& p) {
     // Physics: parts that need each other.
     ecs.each([&](flecs::entity e, const world::Collider& col) {
         if (!e.has<world::RigidBody>() && !e.has<world::Character>()) add("warning", e.id(), "Collider", "a Collider without a RigidBody is ignored by the physics: nothing stands on it or hits it", "add a RigidBody (kind 1 for something that never moves) or remove the Collider");
+        // A box or sphere collider far from the size of the cube or sphere drawn with it: Collider.size
+        // is half extents in world units, which the Transform's scale does not stretch.
+        if ((col.shape == 0 || col.shape == 1) && !col.is_trigger) {
+            const auto* mr = e.try_get<world::MeshRenderer>();
+            const auto* tr = e.try_get<world::Transform>();
+            if (mr && tr && (mr->mesh == (col.shape == 0 ? "cube" : "sphere"))) {
+                const Vec3 drawn{std::fabs(tr->scale.x) * 0.5f, std::fabs(tr->scale.y) * 0.5f, std::fabs(tr->scale.z) * 0.5f};
+                const Vec3 shape = col.shape == 0 ? col.size : Vec3{col.size.x, col.size.x, col.size.x};
+                bool off = false;
+                for (int k = 0; k < 3; ++k) {
+                    const float d = (&drawn.x)[k], s = (&shape.x)[k];
+                    if (d > 0 && (s < d / 3 || s > d * 3)) off = true;
+                }
+                if (off) add("warning", e.id(), "Collider", std::format("its collider ({} {:.2f} x {:.2f} x {:.2f} half extents) is far from the {} drawn ({:.2f} x {:.2f} x {:.2f}): Collider.size is in world units and the Transform's scale does not stretch it", col.shape == 0 ? "box" : "sphere", shape.x, shape.y, shape.z, mr->mesh, drawn.x, drawn.y, drawn.z), std::format("set Collider.size to {{x: {:.2f}, y: {:.2f}, z: {:.2f}}}", drawn.x, drawn.y, drawn.z));
+            }
+        }
         if (col.shape == 3 && !col.mesh.empty() && file_missing(col.mesh)) add("error", e.id(), "Collider", std::format("the mesh collider's file {} is not in the project", col.mesh), "import it (assets.import) or point Collider.mesh at a file that is there");
+    });
+    ecs.each([&](flecs::entity e, const world::Behavior& b) {
+        if (!b.error.empty()) add("warning", e.id(), "Behavior", b.error, "docs/design/behavior.md says what a Behavior reads and needs");
     });
     ecs.each([&](flecs::entity e, const world::RigidBody& rb) {
         if (!e.has<world::Collider>()) add("warning", e.id(), "RigidBody", rb.kind == 0 ? "a dynamic RigidBody without a Collider falls through everything and nothing can touch it" : "a RigidBody without a Collider does nothing", "add a Collider (a box, sphere or capsule the size of what is drawn)");

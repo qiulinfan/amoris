@@ -176,8 +176,8 @@ export interface Point2D {
 export interface BehaviorState {
     /** What transitions and Behavior.state call it. */
     name: string;
-    /** How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn. */
-    move: number;
+    /** How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at). */
+    move: number | "stay" | "follow" | "flee" | "wander" | "home" | "patrol" | "seek";
     /** Its NavAgent's speed in this state; 0 leaves the agent's own. */
     speed: number;
     /** How far wander roams from home and flee runs from the target. */
@@ -196,7 +196,7 @@ export interface BehaviorTransition {
     from: string;
     /** The state it goes to. */
     to: string;
-    /** A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true. */
+    /** A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, unseen (seconds since it last saw the target), time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true. */
     when: string;
     /** An event type: the transition also needs one of that type since the last tick (from anything), and heard is 1 when there was. */
     on: string;
@@ -309,7 +309,7 @@ export interface CameraRig {
     /** The entity followed, by name or path; empty leaves the camera alone. */
     target: string;
     /** 0 chase: behind the target's heading, swinging round as it turns; 1 orbit: at `yaw` and `pitch` round the target; 2 offset: at `offset` from it in the world, never turning. */
-    mode: number;
+    mode: number | "chase" | "orbit" | "offset";
     /** Chase and orbit: how far from the pivot. */
     distance: number;
     /** The pivot, the point it looks at, this high above the target's origin. */
@@ -347,7 +347,7 @@ export interface CameraRig {
 /** A light source. kind 0 = directional (shines along -Z of the entity), 1 = point, 2 = spot (a cone along -Z of the entity). Any number of point and spot lights (docs/design/rendering.md, Many lights). */
 export interface Light {
     /** 0 directional, 1 point, 2 spot. */
-    kind: number;
+    kind: number | "directional" | "point" | "spot";
     /** Color as a color picker shows it (sRGB), decoded to linear light; alpha unused. */
     color: Color;
     /** Multiplier applied to color. */
@@ -443,7 +443,7 @@ export interface Fog {
 /** The sky around the scene (docs/design/rendering.md, Sky and environment light): drawn behind everything, and the light the scene gets from all around: surfaces are lit by it (diffuse) and glossy ones mirror it (specular), in place of the flat ambient. The first enabled one counts; a 2D game leaves it out. */
 export interface Sky {
     /** 1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off. */
-    mode: number;
+    mode: number | "off" | "procedural" | "image" | "atmosphere";
     /** For mode 2: project-relative path of the panorama (2:1, the horizon across the middle). */
     image: string;
     /** Procedural: the color straight up. */
@@ -671,7 +671,7 @@ export interface Animator {
     /** Moments of the clips announced as animation.cue events {name, clip, time} as the base clip passes them, every loop (docs/design/animation.md, Cues). */
     cues: AnimationCue[];
     /** 0 off; 1 the root node's translation is pinned to the clip's first frame and its change moves the entity's Transform, so a walk cycle carries the character; 2 pins the root and only reports root_delta for the script to apply (docs/design/animation.md, Root motion). */
-    root_motion: number;
+    root_motion: number | "off" | "move" | "report";
     /** The node whose translation is the root motion; empty picks the clip's topmost node with a translation track. */
     root: string;
     /** The root's translation change this tick while root_motion is on, in the asset's space, or relative to the root's heading when root_rotation is on (written by the engine). */
@@ -809,7 +809,7 @@ export interface ParticleEmitter {
     /** Draws each particle stretched along its velocity by this many seconds of travel (rain streaks, sparks); 0 draws a square. */
     stretch: number;
     /** An entity with a ParticleEmitter that bursts `child_count` particles where each of this emitter's particles dies (fireworks, a splash); 0 for none. */
-    child: number;
+    child: number | string;
     /** Particles the child emits at each death. */
     child_count: number;
     /** Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md). */
@@ -829,7 +829,7 @@ export interface Bounds {
 /** Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. A dynamic or kinematic body's Transform is its place in the world (the solver writes it back), so those should be roots; a static body under a parent (a node of an instantiated level) stands where its parents put it. */
 export interface RigidBody {
     /** 0 dynamic, 1 static, 2 kinematic. */
-    kind: number;
+    kind: number | "dynamic" | "static" | "kinematic";
     /** Kilograms; ignored for static bodies. */
     mass: number;
     /** Bounciness 0..1. */
@@ -853,7 +853,7 @@ export interface RigidBody {
 /** Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed). */
 export interface Joint {
     /** 0 distance (rod, or rope when rope is set, or spring when stiffness is set), 1 ball (anchors pinned together), 2 hinge (pinned, turning about axis only), 3 slider (prismatic: moving along axis only, no rotation relative to the target). */
-    kind: number;
+    kind: number | "distance" | "ball" | "hinge" | "slider";
     /** Path or name of the other entity (a body, or any entity as an immovable point); empty pins to the world point target_anchor. */
     target: string;
     /** Attachment point on this body, in its local frame. */
@@ -927,7 +927,7 @@ export interface Body2D {
     /** The height a grounded body climbs over a solid edge without jumping, and drops without leaving the ground (stairs, the top and the foot of a slope). */
     step: number;
     /** The body this one stands on and moves with, a platform or another dynamic body; 0 when none (written by the engine). */
-    riding: number;
+    riding: number | string;
     /** 1 standing on a floor rising to the right, -1 rising to the left, 0 flat or in the air (written by the engine). */
     on_slope: number;
     /** Weight against other dynamic bodies: two that overlap sideways each give way by the other's share of the mass and exchange their speeds into each other as a collision of the two masses, so a sliding crate takes the one it hits along and a heavy crate barely moves when a light body runs into it (docs/design/tilemaps.md, Bodies against bodies). */
@@ -967,7 +967,7 @@ export interface Character {
     /** The floor's normal where it stands (written by the engine). */
     ground_normal: Vec3;
     /** The collider it stands on; 0 in the air (written by the engine). */
-    ground: number;
+    ground: number | string;
     /** Stopped by a wall or too-steep ground this tick (written by the engine). */
     on_wall: boolean;
     /** That wall's normal (written by the engine). */
@@ -1025,7 +1025,7 @@ export interface Cloth {
     /** Squares across and down (each rounded and held to 1..48). */
     segments: Vec2;
     /** What holds it: 0 the top edge (a curtain, a banner), 1 the two top corners (a hammock, washing on a line), 2 the left edge (a flag on its pole), 3 nothing (it falls). */
-    pin: number;
+    pin: number | "top" | "corners" | "left" | "none";
     /** How much of their stretch the threads take back each pass, 0..1. */
     stiffness: number;
     /** Fraction of its speed a particle loses each tick (air). */
@@ -1203,9 +1203,9 @@ export interface PathFollower {
     /** How far along it is (written by the engine; write it to put it elsewhere). */
     distance: number;
     /** 0 once (stops at the end, finished), 1 loop (round again; a closed path goes on round), 2 pingpong (back and forth). */
-    mode: number;
+    mode: number | "once" | "loop" | "pingpong";
     /** 0 leaves its rotation alone, 1 turns its -Z (forward) along the path with Y up, 2 turns it about Z so its +X points along (2D). */
-    orient: number;
+    orient: number | "none" | "forward" | "flat";
     /** Added to the point on the path (in world units, not turned). */
     offset: Vec3;
     /** false holds it where it is. */
@@ -1217,7 +1217,7 @@ export interface PathFollower {
 /** A 2D rigid body in the XY plane (docs/design/physics2d.md), simulated by Box2D: it turns about Z, and its Collider2D shapes collide with every other 2D rigid body and with the solid tiles of TileMaps, stacking, rolling and sliding with friction and bounce. The engine writes the Transform's X, Y and its turn about Z, and the velocities, after every step; a script that writes the Transform moves the body there, and one that writes a velocity sets it. Keep it a root. Not for an entity with a Body2D or TopDown2D (they move the Transform their own way). */
 export interface RigidBody2D {
     /** 0 dynamic (falls, is pushed), 1 static (never moves), 2 kinematic (moves by its velocity alone, pushes dynamic bodies). */
-    kind: number;
+    kind: number | "dynamic" | "static" | "kinematic";
     /** Units per second (written by the engine; write it to set it). */
     velocity: Vec2;
     /** Radians per second, counter-clockwise (written by the engine; write it to set it). */
@@ -1241,7 +1241,7 @@ export interface RigidBody2D {
 /** A 2D shape for the entity's RigidBody2D (docs/design/physics2d.md), or, on an entity without one, a static body of its own (a wall, a ramp, a sensor in the level). Sizes are in the entity's own units, multiplied by its Transform's scale. */
 export interface Collider2D {
     /** 0 box (size), 1 circle (radius), 2 capsule (two circles of radius along Y, size.y apart from the center each way), 3 polygon (points, convex, at most 8). */
-    shape: number;
+    shape: number | "box" | "circle" | "capsule" | "polygon";
     /** Half extents of a box; a capsule's half length along Y in size.y. */
     size: Vec2;
     /** A circle's or capsule's radius; a box or polygon's rounding of its corners. */
@@ -1269,9 +1269,9 @@ export interface Collider2D {
 /** Two 2D rigid bodies held together (docs/design/physics2d.md): this entity's RigidBody2D and `body` (or a point fixed in the world when it names none). A hinge for a door or a wheel, a rope's length, a slider, a weld; a motor drives a hinge or a slider, a spring softens a weld or a length, and a joint pulled past `break_force` breaks. */
 export interface Joint2D {
     /** 0 revolute (a hinge at the anchors), 1 distance (the anchors kept `length` apart, or between min_length and max_length), 2 prismatic (slides along `axis`), 3 weld (held fast, or springy with `hertz`), 4 wheel (slides along `axis` on a spring and turns freely: a car's wheel). */
-    kind: number;
+    kind: number | "revolute" | "distance" | "prismatic" | "weld" | "wheel";
     /** The other body; 0 (or none) holds this one to the world at `other_anchor`. */
-    body: number;
+    body: number | string;
     /** Where it holds on this body, in its own space. */
     anchor: Vec2;
     /** Where it holds on the other body, in its own space; in the world when there is no other body. */
@@ -1329,7 +1329,7 @@ export interface TopDown2D {
 /** Collision shape centered on the entity (plus offset). Box half extents come from size; spheres use size.x as radius. Triggers report overlaps but do not push. */
 export interface Collider {
     /** 0 box, 1 sphere, 2 capsule (a segment along local Y with round ends), 3 mesh (the triangles of a glTF asset, scaled by the Transform; for level geometry, mesh colliders do not collide with each other). */
-    shape: number;
+    shape: number | "box" | "sphere" | "capsule" | "mesh";
     /** Box half extents; radius in x for spheres; radius in x and half length of the straight part in y for capsules. */
     size: Vec3;
     /** Local offset of the shape center. */
@@ -1411,7 +1411,7 @@ export interface Behavior {
     /** The ways between states, tried in order every tick. */
     transitions: BehaviorTransition[];
     /** What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set). */
-    target: number;
+    target: number | string;
     /** Where wander roams around and home goes back to; zero is where it stands at its first tick. */
     home: Vec3;
     /** How far it sees: sees is 0 for a target farther than this. */
@@ -1422,6 +1422,10 @@ export interface Behavior {
     eye: number;
     /** In a patrol, the index of the point it heads for (written by the engine). */
     waypoint: number;
+    /** Where the target was when it last saw it, where seek goes (written by the engine). */
+    seen_at: Vec3;
+    /** Seconds since it last saw the target, or since it started when it never has (written by the engine). */
+    unseen: number;
     /** false stops it: the state holds and nothing moves the agent. */
     enabled: boolean;
     /** What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine). */
@@ -1431,11 +1435,11 @@ export interface Behavior {
 /** A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions. */
 export interface NavAgent {
     /** 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations). */
-    mode: number;
+    mode: number | "idle" | "walk" | "follow" | "formation";
     /** The point to reach in mode 1. */
     goal: Vec3;
     /** The entity to follow in mode 2, or the leader whose slot to keep in mode 3. */
-    target: number;
+    target: number | string;
     /** In mode 3, the slot relative to the leader: x along the leader's heading (negative is behind it), z (y on an XY grid) to its right. The heading is the way the leader last moved; until it moves, the world axes. */
     offset: Vec3;
     /** Top speed, units per second. */
@@ -1450,10 +1454,14 @@ export interface NavAgent {
     avoidance: number;
     /** How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning. */
     queue: number;
+    /** Turn the entity about the vertical to face where it walks (its -Z forward, as a Behavior's field of view and a camera read it), at turn_speed; its pitch and roll are set to none. Ground grids only. */
+    face: boolean;
+    /** With face: how fast it turns, in degrees a second. */
+    turn_speed: number;
     /** Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it. */
     priority: number;
     /** 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). */
-    state: number;
+    state: number | "idle" | "moving" | "arrived" | "stuck";
     /** The velocity chosen this tick (written by the engine). */
     velocity: Vec3;
     /** The point the agent is heading for: the next corner of its path, or the goal (written by the engine). */
@@ -1664,8 +1672,8 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
-    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, home: { x: 0, y: 0, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, enabled: true, error: "" },
-    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
+    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, home: { x: 0, y: 0, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, seen_at: { x: 0, y: 0, z: 0 }, unseen: 0, enabled: true, error: "" },
+    NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, face: false, turn_speed: 540, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },
 };
 

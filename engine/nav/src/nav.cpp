@@ -1109,6 +1109,19 @@ void Nav::step(world::World& w, float dt) {
             if (plane != 0) t.position.y = next.y;
             w.set_typed<world::Transform>(it.id, t);
         }
+        // Facing where it walks: the yaw turned toward the velocity, at most turn_speed a second.
+        if (a.face && plane == 0 && len2(vel) > 0.05f) {
+            world::Transform t = *w.try_get<world::Transform>(it.id);
+            const Vec3 f = t.rotation.rotate({0, 0, -1});
+            const float now = repro::atan2(-f.x, -f.z), want = repro::atan2(-vel.u, -vel.v);
+            float turn = want - now;
+            while (turn > kPi) turn -= 2 * kPi;
+            while (turn < -kPi) turn += 2 * kPi;
+            const float most = std::max(a.turn_speed, 0.0f) * kPi / 180.0f * dt;
+            const float yaw = now + std::clamp(turn, -most, most);
+            t.rotation = Quat{0, repro::sin(yaw * 0.5f), 0, repro::cos(yaw * 0.5f)};
+            w.set_typed<world::Transform>(it.id, t);
+        }
         w.set_typed<world::NavAgent>(it.id, a);
         if (a.state == 2 && old_state != 2) w.events().emit(w.tick_index(), "nav.arrived", it.id, Json{{"path", w.path(it.id)}, {"goal", json_of_vec(pl.goal)}}, 0, "nav");
         if (a.state == 3 && old_state != 3) w.events().emit(w.tick_index(), "nav.stuck", it.id, Json{{"path", w.path(it.id)}, {"reason", pl.has_goal ? "no path" : "no target"}}, 0, "nav");

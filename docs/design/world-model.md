@@ -60,10 +60,13 @@ components start from the metadata defaults. Vectors accept `{x,y,z}` objects or
   heightmaps, paint maps, a sky's panorama), names that name nothing (a Scatter's `on`, a
   CameraRig's or a Joint's target), a timeline track that does not apply, a zero scale, a position
   too far out for float precision, no active camera where something is drawn, more than one Sky,
-  Wind or active Camera, and the scripts' errors. An agent that has just built something asks it
-  before looking at pixels; `runtime_tests` (`[lint]`) make each problem and fix it, and hold every
-  sample to no errors and no warnings (the assets sample's `Missing`, which shows the renderer's
-  fallback for a missing file, is its one deliberate error).
+  Wind or active Camera, a box or sphere collider far from the size of the cube or sphere drawn with
+  it (its `size` is half extents in world units, which the scale does not stretch: a floor drawn 20
+  wide over a collider left at its default is ground the size of a crate), a Behavior's `error`, and
+  the scripts' errors. An agent that has just built something asks it before looking at pixels;
+  `runtime_tests` (`[lint]`) make each problem and fix it, and hold every sample to no errors and no
+  warnings (the assets sample's `Missing`, which shows the renderer's fallback for a missing file,
+  is its one deliberate error).
 
 ## What changed: marks and diffs
 

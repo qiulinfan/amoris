@@ -497,7 +497,7 @@ void to_json(Json& j, const BehaviorState& v) {
 
 void from_json(const Json& j, BehaviorState& v) {
     scalar_from_json(j, "name", v.name);
-    enum_from_json(j, "move", v.move, {"stay", "follow", "flee", "wander", "home", "patrol"});
+    enum_from_json(j, "move", v.move, {"stay", "follow", "flee", "wander", "home", "patrol", "seek"});
     scalar_from_json(j, "speed", v.speed);
     scalar_from_json(j, "radius", v.radius);
     scalar_from_json(j, "path", v.path);
@@ -3619,6 +3619,8 @@ void to_json(Json& j, const Behavior& v) {
     j["fov"] = v.fov;
     j["eye"] = v.eye;
     j["waypoint"] = v.waypoint;
+    vec_to_json(j["seen_at"], v.seen_at);
+    j["unseen"] = v.unseen;
     j["enabled"] = v.enabled;
     j["error"] = v.error;
 }
@@ -3641,6 +3643,8 @@ void from_json(const Json& j, Behavior& v) {
     scalar_from_json(j, "fov", v.fov);
     scalar_from_json(j, "eye", v.eye);
     scalar_from_json(j, "waypoint", v.waypoint);
+    if (j.is_object() && j.contains("seen_at")) vec_from_json(j["seen_at"], v.seen_at);
+    scalar_from_json(j, "unseen", v.unseen);
     scalar_from_json(j, "enabled", v.enabled);
     scalar_from_json(j, "error", v.error);
 }
@@ -3661,6 +3665,10 @@ void hash_component(StateHasherRef& h, const Behavior& v) {
     h.f32(v.fov);
     h.f32(v.eye);
     h.i64(static_cast<std::int64_t>(v.waypoint));
+    h.f32(v.seen_at.x);
+    h.f32(v.seen_at.y);
+    h.f32(v.seen_at.z);
+    h.f32(v.unseen);
     h.u8(v.enabled ? 1 : 0);
     h.str(v.error);
 }
@@ -3685,6 +3693,11 @@ std::size_t numeric_span(Behavior& v, std::string_view path, float** out) {
     if (path == "sight") { *out = &v.sight; return 1; }
     if (path == "fov") { *out = &v.fov; return 1; }
     if (path == "eye") { *out = &v.eye; return 1; }
+    if (path == "seen_at") { *out = &v.seen_at.x; return 3; }
+    if (path == "seen_at.x") { *out = &v.seen_at.x; return 1; }
+    if (path == "seen_at.y") { *out = &v.seen_at.y; return 1; }
+    if (path == "seen_at.z") { *out = &v.seen_at.z; return 1; }
+    if (path == "unseen") { *out = &v.unseen; return 1; }
     return 0;
 }
 
@@ -3700,6 +3713,8 @@ void to_json(Json& j, const NavAgent& v) {
     j["replan"] = v.replan;
     j["avoidance"] = v.avoidance;
     j["queue"] = v.queue;
+    j["face"] = v.face;
+    j["turn_speed"] = v.turn_speed;
     j["priority"] = v.priority;
     j["state"] = v.state;
     vec_to_json(j["velocity"], v.velocity);
@@ -3720,6 +3735,8 @@ void from_json(const Json& j, NavAgent& v) {
     scalar_from_json(j, "replan", v.replan);
     scalar_from_json(j, "avoidance", v.avoidance);
     scalar_from_json(j, "queue", v.queue);
+    scalar_from_json(j, "face", v.face);
+    scalar_from_json(j, "turn_speed", v.turn_speed);
     scalar_from_json(j, "priority", v.priority);
     enum_from_json(j, "state", v.state, {"idle", "moving", "arrived", "stuck"});
     if (j.is_object() && j.contains("velocity")) vec_from_json(j["velocity"], v.velocity);
@@ -3744,6 +3761,8 @@ void hash_component(StateHasherRef& h, const NavAgent& v) {
     h.i64(static_cast<std::int64_t>(v.replan));
     h.f32(v.avoidance);
     h.f32(v.queue);
+    h.u8(v.face ? 1 : 0);
+    h.f32(v.turn_speed);
     h.i64(static_cast<std::int64_t>(v.priority));
     h.i64(static_cast<std::int64_t>(v.state));
     h.f32(v.velocity.x);
@@ -3772,6 +3791,7 @@ std::size_t numeric_span(NavAgent& v, std::string_view path, float** out) {
     if (path == "arrive") { *out = &v.arrive; return 1; }
     if (path == "avoidance") { *out = &v.avoidance; return 1; }
     if (path == "queue") { *out = &v.queue; return 1; }
+    if (path == "turn_speed") { *out = &v.turn_speed; return 1; }
     if (path == "velocity") { *out = &v.velocity.x; return 3; }
     if (path == "velocity.x") { *out = &v.velocity.x; return 1; }
     if (path == "velocity.y") { *out = &v.velocity.y; return 1; }
@@ -4409,10 +4429,10 @@ constexpr std::array<FieldInfo, 2> kPoint2DFields = {{
     FieldInfo{"x", "f32", "Across.", {}},
     FieldInfo{"y", "f32", "Up.", {}},
 }};
-constexpr std::string_view kBehaviorState_moveNames[] = {"stay", "follow", "flee", "wander", "home", "patrol"};
+constexpr std::string_view kBehaviorState_moveNames[] = {"stay", "follow", "flee", "wander", "home", "patrol", "seek"};
 constexpr std::array<FieldInfo, 7> kBehaviorStateFields = {{
     FieldInfo{"name", "string", "What transitions and Behavior.state call it.", {}},
-    FieldInfo{"move", "i32", "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn.", kBehaviorState_moveNames},
+    FieldInfo{"move", "i32", "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at).", kBehaviorState_moveNames},
     FieldInfo{"speed", "f32", "Its NavAgent's speed in this state; 0 leaves the agent's own.", {}},
     FieldInfo{"radius", "f32", "How far wander roams from home and flee runs from the target.", {}},
     FieldInfo{"path", "string", "For patrol: the entity with the Path whose points it walks, by name or path.", {}},
@@ -4422,7 +4442,7 @@ constexpr std::array<FieldInfo, 7> kBehaviorStateFields = {{
 constexpr std::array<FieldInfo, 4> kBehaviorTransitionFields = {{
     FieldInfo{"from", "string", "The state it leaves; * any state but the one it goes to.", {}},
     FieldInfo{"to", "string", "The state it goes to.", {}},
-    FieldInfo{"when", "string", "A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true.", {}},
+    FieldInfo{"when", "string", "A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, unseen (seconds since it last saw the target), time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true.", {}},
     FieldInfo{"on", "string", "An event type: the transition also needs one of that type since the last tick (from anything), and heard is 1 when there was.", {}},
 }};
 constexpr std::array<FieldInfo, 3> kTransformFields = {{
@@ -5036,7 +5056,7 @@ constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane.", {}},
     FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component.", {}},
 }};
-constexpr std::array<FieldInfo, 13> kBehaviorFields = {{
+constexpr std::array<FieldInfo, 15> kBehaviorFields = {{
     FieldInfo{"state", "string", "The state it is in (written by the engine); set it to switch at the next tick. Empty starts in the first.", {}},
     FieldInfo{"previous", "string", "The state it was in before (written by the engine).", {}},
     FieldInfo{"time", "f32", "Seconds in the state (written by the engine).", {}},
@@ -5048,12 +5068,14 @@ constexpr std::array<FieldInfo, 13> kBehaviorFields = {{
     FieldInfo{"fov", "f32", "The angle it sees across, in degrees, about where it faces (its -Z); 360 all round.", {}},
     FieldInfo{"eye", "f32", "The height of its eyes, and the target's middle, above their origins, for the line of sight.", {}},
     FieldInfo{"waypoint", "i32", "In a patrol, the index of the point it heads for (written by the engine).", {}},
+    FieldInfo{"seen_at", "vec3", "Where the target was when it last saw it, where seek goes (written by the engine).", {}},
+    FieldInfo{"unseen", "f32", "Seconds since it last saw the target, or since it started when it never has (written by the engine).", {}},
     FieldInfo{"enabled", "bool", "false stops it: the state holds and nothing moves the agent.", {}},
     FieldInfo{"error", "string", "What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine).", {}},
 }};
 constexpr std::string_view kNavAgent_modeNames[] = {"idle", "walk", "follow", "formation"};
 constexpr std::string_view kNavAgent_stateNames[] = {"idle", "moving", "arrived", "stuck"};
-constexpr std::array<FieldInfo, 17> kNavAgentFields = {{
+constexpr std::array<FieldInfo, 19> kNavAgentFields = {{
     FieldInfo{"mode", "i32", "0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations).", kNavAgent_modeNames},
     FieldInfo{"goal", "vec3", "The point to reach in mode 1.", {}},
     FieldInfo{"target", "entity", "The entity to follow in mode 2, or the leader whose slot to keep in mode 3.", {}},
@@ -5064,6 +5086,8 @@ constexpr std::array<FieldInfo, 17> kNavAgentFields = {{
     FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once.", {}},
     FieldInfo{"avoidance", "f32", "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others.", {}},
     FieldInfo{"queue", "f32", "How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning.", {}},
+    FieldInfo{"face", "bool", "Turn the entity about the vertical to face where it walks (its -Z forward, as a Behavior's field of view and a camera read it), at turn_speed; its pitch and roll are set to none. Ground grids only.", {}},
+    FieldInfo{"turn_speed", "f32", "With face: how fast it turns, in degrees a second.", {}},
     FieldInfo{"priority", "i32", "Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it.", {}},
     FieldInfo{"state", "i32", "0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine).", kNavAgent_stateNames},
     FieldInfo{"velocity", "vec3", "The velocity chosen this tick (written by the engine).", {}},

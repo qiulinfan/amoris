@@ -432,6 +432,15 @@ TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behi
     REQUIRE(state() == "watch");
     mark(-4.5, -6.5);
     REQUIRE(state() == "alarm");
+    // Where it last saw the mark, and how long since: seen_at stays put, unseen counts up.
+    Json b = s.command("world.get", Json{{"entity", "Guard"}, {"component", "Behavior"}}).value();
+    REQUIRE(b["seen_at"]["z"].get<double>() == Catch::Approx(-6.5).margin(0.01));
+    REQUIRE(b["unseen"].get<double>() < 0.05);
+    mark(-4.5, 8.0);
+    REQUIRE(s.command("step", Json{{"ticks", 58}}).has_value());
+    b = s.command("world.get", Json{{"entity", "Guard"}, {"component", "Behavior"}}).value();
+    REQUIRE(b["unseen"].get<double>() == Catch::Approx(1.0).margin(0.05));
+    REQUIRE(b["seen_at"]["z"].get<double>() == Catch::Approx(-6.5).margin(0.01));
     REQUIRE(s.finish().has_value());
 }
 
@@ -451,13 +460,20 @@ TEST_CASE("a Behavior patrols a Path's points in turn", "[runtime][behavior][pat
     REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
     REQUIRE(s.command("world.spawn", Json{{"name", "Route"}, {"components", Json{{"Transform", Json::object()}, {"Path", Json{{"points", Json::array({Json{{"x", -7}, {"y", 0}, {"z", -7}}, Json{{"x", -7}, {"y", 0}, {"z", -4}}})}}}}}}).has_value());
     const Json behavior{{"states", Json::array({Json{{"name", "rounds"}, {"move", "patrol"}, {"path", "Route"}, {"speed", 4}}})}};
-    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -6}, {"y", 0}, {"z", -6}}}}}, {"NavAgent", Json::object()}, {"Behavior", behavior}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -6}, {"y", 0}, {"z", -6}}}}}, {"NavAgent", Json{{"face", true}}}, {"Behavior", behavior}}}}).has_value());
     auto goal_z = [&] { return s.command("world.get", Json{{"entity", "Guard"}, {"component", "NavAgent"}}).value()["goal"]["z"].get<double>(); };
     REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
     REQUIRE(goal_z() == Catch::Approx(-7).margin(0.01));
     REQUIRE(s.command("step", Json{{"ticks", 120}}).has_value());   // there, and on to the next
     REQUIRE(goal_z() == Catch::Approx(-4).margin(0.01));
     REQUIRE(s.command("world.get", Json{{"entity", "Guard"}, {"component", "Behavior"}}).value()["waypoint"] == 1);
+    // Facing where it walks (NavAgent.face): toward +z, the second point, a quarter second on.
+    REQUIRE(s.command("step", Json{{"ticks", 15}}).has_value());
+    const Json q = s.command("world.get", Json{{"entity", "Guard"}, {"component", "Transform"}}).value()["rotation"];
+    const double yaw = 2 * std::atan2(q["y"].get<double>(), q["w"].get<double>());
+    INFO(q.dump());
+    REQUIRE(-std::cos(yaw) > 0.7);   // its -Z forward, turned: (-sin yaw, 0, -cos yaw)
+    REQUIRE(std::abs(q["x"].get<double>()) < 1e-6);
     REQUIRE(s.finish().has_value());
 }
 
@@ -7227,6 +7243,12 @@ TEST_CASE("world.lint names what is likely wrong, says how to fix it, and every 
         spawn("Flat", flat);
         spawn("Strewn", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "sphere"}}}, {"Scatter", Json{{"on", "Nobody"}, {"count", 5}}}});
         spawn("Eye", Json{{"Transform", Json::object()}, {"Camera", Json{{"active", false}}}, {"CameraRig", Json{{"target", "Nobody"}}}});
+        Json slab = Json::object();   // a floor drawn 20 wide over a collider left at its default 1
+        slab["Transform"]["scale"] = Json{{"x", 20}, {"y", 1}, {"z", 20}};
+        slab["MeshRenderer"]["mesh"] = "cube";
+        slab["RigidBody"]["kind"] = 1;
+        slab["Collider"]["shape"] = 0;
+        spawn("Slab", slab);
         auto lint = [&]() { return s.command("world.lint", Json::object()).value(); };
         auto has = [](const Json& l, const char* path, const char* component, const char* severity) {
             for (const Json& q : l["problems"]) {
@@ -7243,6 +7265,7 @@ TEST_CASE("world.lint names what is likely wrong, says how to fix it, and every 
         REQUIRE(has(l, "/Flat", "Transform", "warning"));
         REQUIRE(has(l, "/Strewn", "Scatter", "error"));
         REQUIRE(has(l, "/Eye", "CameraRig", "error"));
+        REQUIRE(has(l, "/Slab", "Collider", "warning"));
         bool camera = false;
         for (const Json& q : l["problems"]) camera = camera || (q["component"] == "Camera" && q["severity"] == "error");
         REQUIRE(camera);   // a camera, none active
@@ -7253,6 +7276,7 @@ TEST_CASE("world.lint names what is likely wrong, says how to fix it, and every 
         REQUIRE(s.command("world.set", Json{{"entity", "Ghost"}, {"component", "MeshRenderer"}, {"value", Json{{"mesh", "cube"}}}}).has_value());
         REQUIRE(s.command("world.set", Json{{"entity", "Flat"}, {"component", "Transform"}, {"value", Json{{"scale", Json{{"x", 1}, {"y", 1}, {"z", 1}}}}}}).has_value());
         REQUIRE(s.command("world.set", Json{{"entity", "Strewn"}, {"component", "Scatter"}, {"value", Json{{"on", ""}}}}).has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "Slab"}, {"component", "Collider"}, {"value", Json{{"size", Json{{"x", 10}, {"y", 0.5}, {"z", 10}}}}}}).has_value());
         REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "Camera"}, {"value", Json{{"active", true}}}}).has_value());
         REQUIRE(s.command("world.set", Json{{"entity", "Eye"}, {"component", "CameraRig"}, {"value", Json{{"target", "Flat"}}}}).has_value());
         l = lint();

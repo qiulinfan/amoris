@@ -862,6 +862,8 @@ A state machine for what a non-player character does (docs/design/behavior.md): 
 | `fov` | f32 | 360.0 | The angle it sees across, in degrees, about where it faces (its -Z); 360 all round. |
 | `eye` | f32 | 1.0 | The height of its eyes, and the target's middle, above their origins, for the line of sight. |
 | `waypoint` | i32 | 0 | In a patrol, the index of the point it heads for (written by the engine). |
+| `seen_at` | vec3 | [0.0, 0.0, 0.0] | Where the target was when it last saw it, where seek goes (written by the engine). |
+| `unseen` | f32 | 0.0 | Seconds since it last saw the target, or since it started when it never has (written by the engine). |
 | `enabled` | bool | true | false stops it: the state holds and nothing moves the agent. |
 | `error` | string | "" | What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine). |
 
@@ -881,6 +883,8 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 | `replan` | i32 | 10 | Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once. |
 | `avoidance` | f32 | 1.0 | Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. |
 | `queue` | f32 | 0.0 | How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning. |
+| `face` | bool | false | Turn the entity about the vertical to face where it walks (its -Z forward, as a Behavior's field of view and a camera read it), at turn_speed; its pitch and roll are set to none. Ground grids only. |
+| `turn_speed` | f32 | 540.0 | With face: how fast it turns, in degrees a second. |
 | `priority` | i32 | 0 | Agents with a lower priority get out of this one's way: its avoidance ignores them while theirs avoids it. |
 | `state` | i32: 0 `idle`, 1 `moving`, 2 `arrived`, 3 `stuck` | 0 | 0 idle, 1 moving, 2 arrived, 3 stuck: the goal cannot be reached or the target is gone (written by the engine). |
 | `velocity` | vec3 | [0.0, 0.0, 0.0] | The velocity chosen this tick (written by the engine). |
@@ -1056,7 +1060,7 @@ One state of a Behavior (docs/design/behavior.md): how the entity moves while in
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | string | "" | What transitions and Behavior.state call it. |
-| `move` | i32: 0 `stay`, 1 `follow`, 2 `flee`, 3 `wander`, 4 `home`, 5 `patrol` | 0 | How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn. |
+| `move` | i32: 0 `stay`, 1 `follow`, 2 `flee`, 3 `wander`, 4 `home`, 5 `patrol`, 6 `seek` | 0 | How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at). |
 | `speed` | f32 | 0.0 | Its NavAgent's speed in this state; 0 leaves the agent's own. |
 | `radius` | f32 | 5.0 | How far wander roams from home and flee runs from the target. |
 | `path` | string | "" | For patrol: the entity with the Path whose points it walks, by name or path. |
@@ -1071,6 +1075,6 @@ A way from one state of a Behavior to another, taken (the first of those that ho
 |---|---|---|---|
 | `from` | string | "*" | The state it leaves; * any state but the one it goes to. |
 | `to` | string | "" | The state it goes to. |
-| `when` | string | "" | A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true. |
+| `when` | string | "" | A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, unseen (seconds since it last saw the target), time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true. |
 | `on` | string | "" | An event type: the transition also needs one of that type since the last tick (from anything), and heard is 1 when there was. |
 

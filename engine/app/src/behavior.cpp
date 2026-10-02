@@ -1,6 +1,8 @@
 // Behaviors (docs/design/behavior.md).
 #include "behavior.hpp"
 
+#include <pocket/core/repro.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -12,8 +14,8 @@ namespace pocket::app {
 namespace {
 
 // What a transition's condition may read, in this order.
-constexpr std::array<std::string_view, 11> kNames = {"distance", "sees", "time", "health", "health_max", "hit", "arrived", "stuck", "random", "has_target", "heard"};
-enum Var : std::size_t { Distance, Sees, Time, Hp, HpMax, Hit, Arrived, Stuck, Random, HasTarget, Heard };
+constexpr std::array<std::string_view, 12> kNames = {"distance", "sees", "unseen", "time", "health", "health_max", "hit", "arrived", "stuck", "random", "has_target", "heard"};
+enum Var : std::size_t { Distance, Sees, Unseen, Time, Hp, HpMax, Hit, Arrived, Stuck, Random, HasTarget, Heard };
 
 std::uint64_t mix(std::uint64_t x) {
     x += 0x9e3779b97f4a7c15ull;
@@ -70,7 +72,6 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
                 c.programs.push_back(t.when.empty() ? ConditionProgram{} : read_condition(t.when, kNames));
                 const ConditionProgram& p = c.programs.back();
                 if (!p.error.empty() && c.error.empty()) c.error = "'" + t.when + "': " + p.error;
-                if (std::find(p.reads.begin(), p.reads.end(), Sees) != p.reads.end()) c.reads_sees = true;
             }
         }
         std::string error = c.error;
@@ -114,14 +115,15 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
         const bool has_target = b.target && w.alive(b.target);
         const Vec3 to = has_target ? position_of(w, b.target) : at;
         const float distance = has_target ? length(to - at) : 1e9f;
+        // Sight is looked for whenever a target is in range: unseen and seen_at go by it.
         double sees = 0;
-        if (has_target && c.reads_sees && distance <= b.sight) {
+        if (has_target && distance <= b.sight) {
             bool facing = true;
             if (b.fov < 360.0f && distance > 1e-4f) {
                 const auto* wt = w.try_get<world::WorldTransform>(id);
                 const Vec3 fwd = wt ? wt->rotation.rotate({0, 0, -1}) : Vec3{0, 0, -1};
                 const Vec3 dir = (to - at) * (1.0f / distance);
-                facing = dot(normalize(Vec3{fwd.x, 0, fwd.z}), normalize(Vec3{dir.x, 0, dir.z})) >= std::cos(b.fov * 0.5f * kPi / 180.0f);
+                facing = dot(normalize(Vec3{fwd.x, 0, fwd.z}), normalize(Vec3{dir.x, 0, dir.z})) >= repro::cos(b.fov * 0.5f * kPi / 180.0f);
             }
             bool clear = true;
             if (facing && physics) {
@@ -138,10 +140,14 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
             }
             sees = facing && clear ? 1 : 0;
         }
+        if (sees != 0) {
+            b.unseen = 0;
+            b.seen_at = to;
+        }
         const auto* hp = w.try_get<world::Health>(id);
         const auto* agent = w.try_get<world::NavAgent>(id);
         const std::array<double, kNames.size()> values = {
-            static_cast<double>(distance), sees, static_cast<double>(b.time),
+            static_cast<double>(distance), sees, static_cast<double>(b.unseen), static_cast<double>(b.time),
             hp ? static_cast<double>(hp->current) : 0.0, hp ? static_cast<double>(hp->max) : 0.0,
             hit.contains(id) ? 1.0 : 0.0,
             agent && agent->state == 2 ? 1.0 : 0.0, agent && agent->state == 3 ? 1.0 : 0.0,
@@ -193,10 +199,11 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
                     break;
                 case 3:   // wander: a point within radius of home, another on arriving
                     if (fresh || done || a.mode != 1) {
-                        const double ang = unit(seed, id, tick, 1) * 2.0 * 3.14159265358979;
-                        const double r = std::sqrt(unit(seed, id, tick, 2)) * cur->radius;
+                        // repro's sine and cosine: the same point on every machine (docs/design/networking.md, Determinism).
+                        const float ang = static_cast<float>(unit(seed, id, tick, 1)) * 2.0f * kPi;
+                        const float r = std::sqrt(static_cast<float>(unit(seed, id, tick, 2))) * cur->radius;
                         a.mode = 1;
-                        a.goal = Vec3{b.home.x + static_cast<float>(std::cos(ang) * r), b.home.y, b.home.z + static_cast<float>(std::sin(ang) * r)};
+                        a.goal = Vec3{b.home.x + repro::cos(ang) * r, b.home.y, b.home.z + repro::sin(ang) * r};
                     }
                     break;
                 case 4:   // home
@@ -221,6 +228,10 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
                     a.goal = pwt ? pwt->position + pwt->rotation.rotate(Vec3{local.x * pwt->scale.x, local.y * pwt->scale.y, local.z * pwt->scale.z}) : local;
                     break;
                 }
+                case 6:   // seek: where it last saw the target
+                    a.mode = 1;
+                    a.goal = b.seen_at;
+                    break;
                 default:   // stay
                     a.mode = 0;
                     break;
@@ -230,6 +241,7 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
             error = "state '" + cur->name + "' moves, and the entity has no NavAgent to move it";
         }
         b.time += dt;
+        if (sees == 0) b.unseen += dt;
         b.error = error;
         if (!(b == before)) w.set_typed<world::Behavior>(id, b);
     }
