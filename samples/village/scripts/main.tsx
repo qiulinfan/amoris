@@ -36,7 +36,7 @@ onStart(() => {
         world.spawn(`Stroller${i}`, { components: {
             Transform: { position: { x, y: 0, z } },
             MeshRenderer: { mesh: look(shirt) },
-            Animator: { locomotion: true, walk_speed: 1.3, run_speed: 3.8 },
+            Animator: { locomotion: true, walk_speed: 1.3, run_speed: 3.8, footsteps: "sfx:step?volume=0.5" },
             NavAgent: { speed: 1.2, face: true },
             Behavior: {
                 states: [

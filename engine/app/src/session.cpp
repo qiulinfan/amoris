@@ -1217,6 +1217,7 @@ void Session::run_tick() {
     particles_->step(*world_, static_cast<float>(clock_.tick_seconds));
     mark(System::Particles);
     if (assets_) animation_->step(*world_, *assets_, static_cast<float>(clock_.tick_seconds));
+    update_footprints(static_cast<float>(clock_.tick_seconds));   // after the gait has planted this tick's feet
     mark(System::Animation);
     if (assets_ && physics_) {
         if (!ragdolls_) ragdolls_ = std::make_unique<Ragdolls>();
@@ -1981,6 +1982,41 @@ void Session::update_weather(float dt) {
         w.cover = cover;
         world_->set_typed<world::Weather>(id, w);
     }
+}
+
+// Footprints in lying snow (docs/design/rendering.md, Weather): each footfall (animation.footstep)
+// where snow lies leaves a print a little to its side of the walker, along its heading; prints fill
+// in over a minute and a half, faster while it snows, and the newest 64 are kept. Render-only: the
+// world and its hash do not hold them.
+void Session::update_footprints(float dt) {
+    world::World& w = *world_;
+    world::EntityId wid = 0;
+    world::Weather wx;
+    w.ecs().each([&](flecs::entity e, const world::Weather& x) {
+        if (x.enabled && (!wid || e.id() < wid)) { wid = e.id(); wx = x; }
+    });
+    const float fill = dt * (1.0f / 90.0f + std::clamp(wx.snow, 0.0f, 1.0f) / 15.0f);
+    for (auto& f : footprints_) f.depth -= fill;
+    std::erase_if(footprints_, [](const renderer::Renderer::Footprint& f) { return f.depth <= 0; });
+    if (!wid || wx.cover < 0.15f) {
+        footprints_seen_ = w.events().last_seq();
+        if (!wid) footprints_.clear();
+    } else {
+        for (const world::Event& e : w.events().since(footprints_seen_, 256, "animation.footstep")) {
+            footprints_seen_ = e.seq;
+            const auto* wt = w.alive(e.subject) ? w.try_get<world::WorldTransform>(e.subject) : nullptr;
+            if (!wt) continue;
+            const Vec3 fwd = wt->rotation.rotate({0, 0, -1});
+            const float len = std::hypot(fwd.x, fwd.z);
+            if (len < 1e-4f) continue;
+            const float fx = fwd.x / len, fz = fwd.z / len;
+            const float side = e.data.value("foot", "") == "left" ? -0.11f : 0.11f;   // right of the heading is (-fz, fx)
+            footprints_.push_back({wt->position.x - fz * side, wt->position.z + fx * side, std::atan2(fx, fz), std::min(1.0f, wx.cover)});
+        }
+        footprints_seen_ = std::max(footprints_seen_, w.events().last_seq());
+        if (footprints_.size() > 64) footprints_.erase(footprints_.begin(), footprints_.end() - 64);
+    }
+    if (renderer_) renderer_->set_footprints(footprints_);
 }
 
 void Session::update_camera_rigs(float dt) {
@@ -5920,6 +5956,22 @@ bool Session::place_voice(std::uint32_t voice, world::EntityId entity, float bas
 // AudioSource components start their voices; voices report back; finished voices clear `playing`.
 void Session::tick_audio(double dt) {
     world::World& w = *world_;
+    // Footsteps (Animator.footsteps): each footfall's sound from where its entity stands, a little
+    // varied (pitch and, for an sfx: recipe, its seed, by the event's number), louder running.
+    for (const world::Event& e : w.events().since(footsteps_seen_, 256, "animation.footstep")) {
+        footsteps_seen_ = e.seq;
+        const std::string sound = e.data.value("sound", "");
+        if (sound.empty() || !w.alive(e.subject)) continue;
+        const bool run = e.data.value("clip", "") == "run";
+        audio::PlayOptions o;
+        o.volume = run ? 0.7f : 0.45f;
+        o.pitch = 0.92f + 0.16f * static_cast<float>(e.seq % 7) / 6.0f;
+        o.entity = e.subject;
+        o.tag = "footstep";
+        const std::string clip = sound.starts_with("sfx:") && sound.find("seed=") == std::string::npos ? sound + (sound.find('?') == std::string::npos ? "?" : "&") + "seed=" + std::to_string(e.seq % 5) : sound;
+        if (auto id = audio_->play(clip, o)) place_voice(*id, e.subject, o.volume, 2.0f, 25.0f, 0.0f, 1.0f, nullptr, o.pitch, 0.0f, dt);
+    }
+    footsteps_seen_ = std::max(footsteps_seen_, w.events().last_seq());
     // The weather's sound: its rain and wind beds looping as loud as it rains and snows, started
     // when it begins and stopped when it ends (Weather.sound false leaves them to the game).
     {

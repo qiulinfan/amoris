@@ -355,26 +355,30 @@ each a drop at its own place and time whose ring widens and fades over six tenth
 turn, bending the water's normal, gone by sixteen units off where a ring would be finer than the
 pixels. `cover` (0 to 1) lays snow on what faces up: where a two-octave noise is under the cover, so
 about that share of flat ground, in patches while there is little and everywhere at full, white and
-matte; walls stay bare. Both build up and go by themselves, written back each tick: `wet` runs
-toward `rain` (fully wet after 15 seconds of a downpour, dry 90 seconds after it stops) and `cover`
-builds while it snows (full after 40 seconds at `snow` 1) and melts in four minutes once it stops,
-faster in rain; a game sets either to start wet or white. `overcast` (negative follows the weather:
-seven tenths of the rain or snow) dims the sun's direct light by up to four fifths, under an
-atmosphere clouds the sky over at least that much, and greys the sky's own light toward its
-brightness (the panorama the reflections and the ambient light come from), so wet ground under a
-clouded sky mirrors grey rather than blue. Rain and snow keep off what is under cover: a shelter
-map, one more layer of the shadow map, holds the topmost surface over each spot of a square 64 units
-across about the camera, drawn from straight above as a cascade is (what casts no shadow does not
-shelter either, and characters are left out so the ground under one walking in the rain does not dry
-in its shape). A surface is wet or white only where the sky is open over a point a fifth of a unit
-out from it along its normal (so a wall in the open takes the rain its side does and the floor under
-eaves stays dry), and a drop under a roof, a tree or a bridge is not drawn. The map is drawn again
-when the camera crosses into another two-unit square, when what stands over the square moves or
-changes (its draws' places and meshes, to a centimetre), and every eight frames; with no weather it
-is not drawn at all. It sounds too: with `sound` (on by default) the engine's sound beds loop under
-the scene as hard as it rains and snows, `sfx:rain` at up to six tenths for the rain and `sfx:wind`
-at up to a third for the snow (`docs/design/audio.md`), started when it begins, following it and
-stopped when it ends; off, the sound is the game's.
+matte; walls stay bare. A walker whose footfalls are known (`Animator.footsteps` or
+`footstep_noise`, `docs/design/animation.md`) leaves prints in it: each footfall where snow lies
+presses a sole's oval a tenth of a unit to that foot's side along the heading, greyer the deeper;
+prints fill in over a minute and a half, faster while it snows, and the newest 64 are drawn
+(`render.stats.footprints`; `tests/evidence/rendering/footprints.png`). Both build up and go by
+themselves, written back each tick: `wet` runs toward `rain` (fully wet after 15 seconds of a
+downpour, dry 90 seconds after it stops) and `cover` builds while it snows (full after 40 seconds at
+`snow` 1) and melts in four minutes once it stops, faster in rain; a game sets either to start wet
+or white. `overcast` (negative follows the weather: seven tenths of the rain or snow) dims the sun's
+direct light by up to four fifths, under an atmosphere clouds the sky over at least that much, and
+greys the sky's own light toward its brightness (the panorama the reflections and the ambient light
+come from), so wet ground under a clouded sky mirrors grey rather than blue. Rain and snow keep off
+what is under cover: a shelter map, one more layer of the shadow map, holds the topmost surface over
+each spot of a square 64 units across about the camera, drawn from straight above as a cascade is
+(what casts no shadow does not shelter either, and characters are left out so the ground under one
+walking in the rain does not dry in its shape). A surface is wet or white only where the sky is open
+over a point a fifth of a unit out from it along its normal (so a wall in the open takes the rain
+its side does and the floor under eaves stays dry), and a drop under a roof, a tree or a bridge is
+not drawn. The map is drawn again when the camera crosses into another two-unit square, when what
+stands over the square moves or changes (its draws' places and meshes, to a centimetre), and every
+eight frames; with no weather it is not drawn at all. It sounds too: with `sound` (on by default)
+the engine's sound beds loop under the scene as hard as it rains and snows, `sfx:rain` at up to six
+tenths for the rain and `sfx:wind` at up to a third for the snow (`docs/design/audio.md`), started
+when it begins, following it and stopped when it ends; off, the sound is the game's.
 
 `render.stats.weather_drops` counts what is drawn and `render.stats.shelter_draws` what the shelter
 map last drew. `runtime_tests` (`[weather]`): seven and a half seconds of a downpour wet things

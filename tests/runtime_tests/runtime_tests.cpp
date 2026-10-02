@@ -677,6 +677,58 @@ TEST_CASE("the built-in humanoid walks, runs and stands by its speed; a one-shot
     REQUIRE(a["finished"] == true);
 }
 
+TEST_CASE("footsteps: a walker's gait plants a foot twice a stride, each an event and a sound from where it stands", "[runtime][animation][footsteps]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Walker"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "humanoid"}}}, {"Animator", Json{{"locomotion", true}, {"footsteps", "sfx:step"}}}, {"Velocity", Json{{"linear", Json{{"x", 0}, {"y", 0}, {"z", 1.4}}}}}}}}).has_value());
+    const std::uint64_t seq = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
+    const int plays = s.command("audio.stats", Json::object()).value()["plays"].get<int>();
+    REQUIRE(s.command("step", Json{{"ticks", 180}}).has_value());
+    const Json steps = s.command("events.since", Json{{"seq", seq}, {"type", "animation.footstep"}}).value()["events"];
+    INFO(steps.dump());
+    // Three seconds at the walk's own pace (a stride a second, two feet): about six, left and right in turn.
+    REQUIRE(steps.size() >= 5);
+    REQUIRE(steps.size() <= 7);
+    for (std::size_t i = 1; i < steps.size(); ++i) REQUIRE(steps[i]["data"]["foot"] != steps[i - 1]["data"]["foot"]);
+    REQUIRE(steps[0]["data"]["sound"] == "sfx:step");
+    REQUIRE(s.command("audio.stats", Json::object()).value()["plays"].get<int>() - plays == static_cast<int>(steps.size()));   // a sound each
+    // Standing still: none.
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Velocity"}, {"value", Json{{"linear", Json{{"x", 0}, {"y", 0}, {"z", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    const std::uint64_t still = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    REQUIRE(s.command("events.since", Json{{"seq", still}, {"type", "animation.footstep"}}).value()["events"].empty());
+    // footstep_noise: each footfall a noise the Behaviors hear, half as far again running.
+    REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Animator"}, {"value", Json{{"footstep_noise", 4}}}}).has_value());
+    auto noises = [&](double speed) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Walker"}, {"component", "Velocity"}, {"value", Json{{"linear", Json{{"x", 0}, {"y", 0}, {"z", speed}}}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 40}}).has_value());
+        const std::uint64_t from = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
+        REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+        return s.command("events.since", Json{{"seq", from}, {"type", "noise"}}).value()["events"];
+    };
+    const Json walking = noises(1.4);
+    REQUIRE(walking.size() >= 2);
+    REQUIRE(walking[0]["data"]["radius"].get<double>() == Catch::Approx(4));
+    REQUIRE(walking[0]["subject"] == s.command("world.find", Json{{"path", "Walker"}}).value());
+    const Json running = noises(4.5);
+    REQUIRE(running.size() >= 2);
+    REQUIRE(running[0]["data"]["radius"].get<double>() == Catch::Approx(6));
+    // In lying snow each footfall leaves a print; with none lying, none.
+    auto prints = [&] {
+        REQUIRE(s.command("step", Json{{"ticks", 60}, {"render", "each"}}).has_value());
+        return s.command("render.stats", Json::object()).value()["footprints"].get<int>();
+    };
+    REQUIRE(prints() == 0);
+    REQUIRE(s.command("world.spawn", Json{{"name", "Weather"}, {"components", Json{{"Weather", Json{{"cover", 1}}}}}}).has_value());
+    REQUIRE(prints() >= 2);
+    REQUIRE(s.command("world.set", Json{{"entity", "Weather"}, {"component", "Weather"}, {"value", Json{{"cover", 0}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 5400}}).has_value());   // ninety seconds: filled in
+    REQUIRE(prints() == 0);
+}
+
 TEST_CASE("a reload after a script error drops the old handlers before the new bundle's join", "[runtime][reload]") {
     app::Session s(hello_options(-1));
     REQUIRE(s.start().has_value());
@@ -849,6 +901,29 @@ TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behi
     REQUIRE(b["unseen"].get<double>() == Catch::Approx(1.0).margin(0.05));
     REQUIRE(b["seen_at"]["z"].get<double>() == Catch::Approx(-6.5).margin(0.01));
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a wall between a noise and a Behavior halves how far it carries", "[runtime][behavior][noise][walls]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    const Json behavior{
+        {"states", Json::array({Json{{"name", "idle"}}, Json{{"name", "listen"}}})},
+        {"transitions", Json::array({Json{{"from", "idle"}, {"to", "listen"}, {"when", "noise"}}, Json{{"from", "listen"}, {"to", "idle"}, {"when", "time > 0.2"}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Listener"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 20}, {"z", 0}}}}}, {"Behavior", behavior}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Wall"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 5}, {"y", 21}, {"z", 0}}}}}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"shape", "box"}, {"size", Json{{"x", 0.2}, {"y", 2}, {"z", 3}}}}}}}}).has_value());
+    auto hears = [&](double radius) {
+        REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());   // back to idle
+        REQUIRE(s.command("events.emit", Json{{"type", "noise"}, {"data", Json{{"at", Json{{"x", 10}, {"y", 20}, {"z", 0}}}, {"radius", radius}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+        return s.command("world.get", Json{{"entity", "Listener"}, {"component", "Behavior"}}).value()["state"] == "listen";
+    };
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE_FALSE(hears(12));   // ten away behind the wall: twelve would carry it in the open, not through
+    REQUIRE(hears(25));         // twenty-five carries it through (half of it is more than ten)
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Wall"}}).has_value());
+    REQUIRE(hears(12));         // in the open, twelve does
 }
 
 TEST_CASE("a Behavior hears a noise within its reach and goes to where it was made", "[runtime][behavior][noise]") {

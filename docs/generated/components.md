@@ -367,6 +367,8 @@ Plays a glTF animation clip of the entity's MeshRenderer asset: every tick the e
 | `locomotion` | bool | false | The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A one-shot played over them (a punch) plays out first, a looping one (a wave) is kept while the entity stands and given up once it has moved a third of a second, and die stays (docs/design/animation.md, Locomotion). |
 | `walk_speed` | f32 | 1.4 | Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace. |
 | `run_speed` | f32 | 4.0 | Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs. |
+| `footsteps` | string | "" | A sound at each foot plant of the gait ("sfx:step", or a clip of the project's), from where the entity stands, louder running than walking; each is an animation.footstep event too ({foot, clip, sound}). The built-in humanoid's gait clips (walk, run, walk_back, crouch_walk, strafe_left, strafe_right) plant a foot a quarter and three quarters of the way through; empty, none. |
+| `footstep_noise` | f32 | 0.0 | Each footfall is also a noise this many units across, half as far again running, that Behaviors hear (docs/design/behavior.md, Noises): a guard hears the player walk. Works without a footsteps sound; 0, none. |
 
 ## Attach
 

@@ -216,6 +216,8 @@ struct alignas(16) FrameUniforms {
     float weather[4];            // the Weather: wet, snow lying, drops of rain drawn, flakes of snow drawn
     float shelter_vp[16];        // the view from above the shelter map was drawn from
     float shelter[4];            // x 1 when there is one, y its depth bias
+    float prints[64][4];         // footprints in the snow: x, z, heading, depth
+    float print_info[4];         // how many
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -567,6 +569,8 @@ struct Frame {
     weather: vec4f,
     shelter_vp: mat4x4f,
     shelter: vec4f,
+    prints: array<vec4f, 64>,
+    print_info: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -836,7 +840,22 @@ fn weathered(p: vec3f, surface: Painted) -> Painted {
         // of it at full cover.
         let patches = weather_noise(p.xz * 0.9) * 0.65 + weather_noise(p.xz * 3.7) * 0.35;
         let lie = smoothstep(-0.05, 0.05, up * cover * 1.12 - patches);
-        out.albedo = mix(out.albedo, vec3f(0.8, 0.83, 0.88), lie);
+        // Footprints: the snow pressed down where a foot came, a sole's oval along its heading,
+        // greyer the deeper it still is.
+        var pressed = 0.0;
+        let count = u32(frame.print_info.x);
+        for (var i = 0u; i < count; i = i + 1u) {
+            let f = frame.prints[i];
+            let d = p.xz - f.xy;
+            if (dot(d, d) > 0.04) { continue; }
+            let c = cos(f.z);
+            let s = sin(f.z);
+            let local = vec2f(c * d.x - s * d.y, s * d.x + c * d.y);   // the sole's frame: x across, y along
+            let r = length(local / vec2f(0.07, 0.15));
+            pressed = max(pressed, (1.0 - smoothstep(0.7, 1.0, r)) * f.w);
+        }
+        let snow = mix(vec3f(0.8, 0.83, 0.88), vec3f(0.36, 0.41, 0.53), pressed);
+        out.albedo = mix(out.albedo, snow, lie);
         out.roughness = mix(out.roughness, 0.65, lie);
         out.metallic = mix(out.metallic, 0.0, lie);
     }
@@ -3569,6 +3588,7 @@ struct Renderer::Impl {
     WGPURenderPipeline weather_pipeline = nullptr;   // rain and snow about the camera (docs/design/rendering.md, Weather)
     float env_overcast = 0;                          // the Weather's overcast, greying the sky's panorama
     float after_dark_lit = 1;                        // 0 by day .. 1 once the sun is down: Light and MeshRenderer after_dark
+    std::vector<Renderer::Footprint> footprints;     // pressed into the snow (set_footprints)
     std::uint32_t weather_drops = 0;                 // how many this frame
     WGPUBindGroupLayout particle_draw_bgl = nullptr;
     WGPUPipelineLayout particle_layout = nullptr;
@@ -10232,6 +10252,15 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         }
     }
     im.stats.shelter_draws = im.shelter_valid ? im.shelter_draws : 0;
+    {
+        const std::size_t n = std::min<std::size_t>(im.footprints.size(), 64);
+        for (std::size_t i = 0; i < n; ++i) {
+            const Renderer::Footprint& f = im.footprints[im.footprints.size() - n + i];   // the newest 64
+            fu.prints[i][0] = f.x; fu.prints[i][1] = f.z; fu.prints[i][2] = f.angle; fu.prints[i][3] = std::clamp(f.depth, 0.0f, 1.0f);
+        }
+        fu.print_info[0] = static_cast<float>(n);
+        im.stats.footprints = static_cast<std::uint32_t>(n);
+    }
     if (im.shelter_valid) {
         std::memcpy(fu.shelter_vp, im.shelter_vp, sizeof fu.shelter_vp);
         fu.shelter[0] = 1;
@@ -12373,6 +12402,8 @@ void Renderer::set_colour_vision(ColourVisionSettings s) {
     impl_->colour_vision = s;
 }
 ColourVisionSettings Renderer::colour_vision() const { return impl_->colour_vision; }
+void Renderer::set_footprints(std::vector<Footprint> prints) { impl_->footprints = std::move(prints); }
+
 void Renderer::set_toon(ToonSettings s) {
     s.bands = std::clamp(s.bands, 1, 16);
     s.softness = std::clamp(s.softness, 0.0f, 0.5f);
@@ -12450,6 +12481,7 @@ Json Renderer::describe() const {
     j["debug_lines"] = s.debug_lines;
     j["weather_drops"] = s.weather_drops;
     j["shelter_draws"] = s.shelter_draws;
+    j["footprints"] = s.footprints;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;

@@ -77,7 +77,7 @@ props += [prop(f"Rock{i}", f"rock?size={s}&seed={i}", x, z) for i, (x, z, s) in 
 player = {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0.9, "z": 9}}, "Character": {}, "RigidBody": {"kind": "kinematic"},
                                            "Collider": {"shape": "capsule", "size": {"x": 0.3, "y": 0.6, "z": 0.3}}},
           "children": [{"name": "Body", "components": {"Transform": {"position": {"x": 0, "y": -0.9, "z": 0}, "rotation": {"x": 0, "y": 1, "z": 0, "w": 0}},
-                                                       "MeshRenderer": {"mesh": "humanoid?shirt=#3a78d8&trousers=#4a3a2a&hair=brown"}, "Animator": {"locomotion": True}}}]}
+                                                       "MeshRenderer": {"mesh": "humanoid?shirt=#3a78d8&trousers=#4a3a2a&hair=brown"}, "Animator": {"locomotion": True, "footsteps": "sfx:step"}}}]}
 camera = {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 6, "z": 17}}, "Camera": {"fov_degrees": 55},
                                            "CameraRig": {"target": "Player", "mode": 1, "distance": 9, "height": 1.0, "pitch": -24, "follow": 0.25, "orbit_x": "turn", "orbit_speed": 90}}}
 entities = [

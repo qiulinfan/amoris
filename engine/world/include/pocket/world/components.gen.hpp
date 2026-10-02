@@ -644,6 +644,8 @@ struct Animator {
     bool locomotion = false;
     float walk_speed = 1.4f;
     float run_speed = 4.0f;
+    std::string footsteps = "";
+    float footstep_noise = 0.0f;
     constexpr bool operator==(const Animator&) const = default;
 };
 void to_json(Json& j, const Animator& v);

@@ -137,6 +137,9 @@ class Session {
     void update_camera_rigs(float dt);
     void update_day(float dt);
     void update_weather(float dt);
+    void update_footprints(float dt);
+    std::vector<renderer::Renderer::Footprint> footprints_;   // pressed into lying snow, oldest first (docs/design/rendering.md, Weather)
+    std::uint64_t footprints_seen_ = 0;
     std::map<world::EntityId, Vec3> rig_base_;   // each camera rig's place before its shake (docs/design/cameras.md)
     std::map<world::EntityId, std::pair<Vec3, Vec3>> rig_motion_;   // each rig's targets' middle last tick and its eased velocity (look_ahead)
     // Localization (docs/design/localization.md): the language scripts' `t` uses, the project's
@@ -237,6 +240,7 @@ class Session {
     bool listener_prev_set_ = false;
     std::uint32_t weather_voice_[2] = {0, 0};   // the Weather's rain and wind beds while they play (docs/design/rendering.md, Weather)
     float weather_volume_[2] = {0, 0};
+    std::uint64_t footsteps_seen_ = 0;   // the last animation.footstep event played (Animator.footsteps)
     std::unique_ptr<Journal> journal_;
     std::unique_ptr<ui::Font> font_;
     struct NamedFont { std::string name, path; std::unique_ptr<ui::Font> font; };

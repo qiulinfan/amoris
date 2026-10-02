@@ -9,6 +9,7 @@
 #include <format>
 #include <functional>
 #include <optional>
+#include <set>
 #include <unordered_map>
 
 namespace pocket::renderer {
@@ -1069,6 +1070,8 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
     std::vector<Finish> finished;
     struct Cue { world::EntityId id; std::string name, clip; float time; };
     std::vector<Cue> cues;
+    struct Step { world::EntityId id; std::string foot, clip, sound; float noise; };
+    std::vector<Step> steps;   // footfalls this tick (Animator.footsteps)
     struct Move { world::EntityId id; Vec3 delta; float yaw = 0; };
     std::vector<Move> moves;  // root motion to apply to transforms after the query
     // The locals of every posed entity: the clips land first, then IK and look-at turn joints,
@@ -1133,6 +1136,14 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
                     if (forward) passed = wrapped ? (c.time > old_time || c.time <= a.time) : (c.time > old_time && c.time <= a.time);
                     else passed = wrapped ? (c.time < old_time || c.time >= a.time) : (c.time < old_time && c.time >= a.time);
                     if (passed) cues.push_back({e.id(), c.name, a.clip, c.time});
+                }
+            }
+            // Footfalls: a gait clip plants a foot a quarter and three quarters through.
+            static const std::set<std::string> gait = {"walk", "run", "walk_back", "crouch_walk", "strafe_left", "strafe_right"};
+            if ((!a.footsteps.empty() || a.footstep_noise > 0) && clip->duration > 0 && a.time != old_time && gait.contains(a.clip) && a.speed * rate > 0) {
+                for (const auto& [at, foot] : {std::pair{0.25f, "left"}, std::pair{0.75f, "right"}}) {
+                    const float t = at * clip->duration;
+                    if (wrapped ? (t > old_time || t <= a.time) : (t > old_time && t <= a.time)) steps.push_back({e.id(), foot, a.clip, a.footsteps, a.footstep_noise * (a.clip == "run" ? 1.5f : 1.0f)});
                 }
             }
         }
@@ -1324,6 +1335,10 @@ void Animation::step(world::World& world, assets::AssetStore& assets, float dt) 
         world.set_typed<world::Transform>(mv.id, moved);
     }
     for (const Cue& c : cues) world.events().emit(world.tick_index(), "animation.cue", c.id, Json{{"name", c.name}, {"clip", c.clip}, {"time", c.time}, {"path", world.path(c.id)}});
+    for (const Step& st : steps) {
+        const std::uint64_t seq = world.events().emit(world.tick_index(), "animation.footstep", st.id, Json{{"foot", st.foot}, {"clip", st.clip}, {"sound", st.sound}, {"path", world.path(st.id)}});
+        if (st.noise > 0) world.events().emit(world.tick_index(), "noise", st.id, Json{{"radius", st.noise}, {"from", "footstep"}}, seq);   // heard by Behaviors
+    }
     for (const Finish& f : finished) {
         Json data{{"path", world.path(f.id)}, {"clip", f.clip}};
         if (f.layer >= 0) data["layer"] = f.layer;

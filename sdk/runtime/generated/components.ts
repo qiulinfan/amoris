@@ -714,6 +714,10 @@ export interface Animator {
     walk_speed: number;
     /** Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs. */
     run_speed: number;
+    /** A sound at each foot plant of the gait ("sfx:step", or a clip of the project's), from where the entity stands, louder running than walking; each is an animation.footstep event too ({foot, clip, sound}). The built-in humanoid's gait clips (walk, run, walk_back, crouch_walk, strafe_left, strafe_right) plant a foot a quarter and three quarters of the way through; empty, none. */
+    footsteps: string;
+    /** Each footfall is also a noise this many units across, half as far again running, that Behaviors hear (docs/design/behavior.md, Noises): a guard hears the player walk. Works without a footsteps sound; 0, none. */
+    footstep_noise: number;
 }
 
 /** Holds the entity at a joint of an animated model (docs/design/animation.md, Attachments): a sword in a hand, a hat on a head, a lantern on a belt. Every tick, after the animation, its Transform is set so it sits at `offset`, turned by `rotation`, in the joint's frame; its own scale stays. */
@@ -1745,7 +1749,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     TileMap: { map: "", layer: "", tile_size: 1, color: { r: 1, g: 1, b: 1, a: 1 }, order: -10, visible: true, lit: false, shadows: false },
     AnimationGraph: { states: [], transitions: [], params: [], state: "", state_time: 0, error: "", enabled: true },
     Timeline: { path: "", time: 0, playing: true, speed: 1, loop: false, finished: false, error: "" },
-    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0, locomotion: false, walk_speed: 1.4, run_speed: 4 },
+    Animator: { clip: "", playing: true, loop: true, speed: 1, time: 0, finished: false, blends: [], fade: 0, fade_time: 0, from_clip: "", from_time: 0, layers: [], cues: [], root_motion: 0, root: "", root_delta: { x: 0, y: 0, z: 0 }, root_rotation: false, root_delta_yaw: 0, locomotion: false, walk_speed: 1.4, run_speed: 4, footsteps: "", footstep_noise: 0 },
     Attach: { target: "", joint: "", offset: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, found: false },
     Ragdoll: { active: false, mass: 70, follow: true, bodies: 0, root: "" },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },

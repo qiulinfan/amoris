@@ -234,6 +234,7 @@ struct RenderStats {
     std::uint32_t debug_lines = 0;    // debug lines drawn over the scene
     std::uint32_t weather_drops = 0;  // rain drops and snow flakes drawn about the camera (Weather)
     std::uint32_t shelter_draws = 0;  // draws into the shelter map, the last time it was drawn (Weather)
+    std::uint32_t footprints = 0;     // prints pressed into lying snow (Weather)
     std::uint32_t meshes = 0;
     std::uint32_t point_lights = 0;       // point lights in view this frame
     std::uint32_t spot_lights = 0;        // spot lights in view this frame
@@ -367,6 +368,10 @@ class Renderer {
     [[nodiscard]] ColourVisionSettings colour_vision() const;
     void set_toon(ToonSettings s);
     [[nodiscard]] ToonSettings toon() const;
+    // Prints pressed into lying snow (docs/design/rendering.md, Weather): where each foot came down,
+    // its heading (radians about +y) and how deep it still is (1 fresh .. 0 filled in). At most 64.
+    struct Footprint { float x = 0, z = 0, angle = 0, depth = 1; };
+    void set_footprints(std::vector<Footprint> prints);
     void set_render_scale(RenderScaleSettings s);
     [[nodiscard]] RenderScaleSettings render_scale() const;
     void set_dof(DofSettings s);

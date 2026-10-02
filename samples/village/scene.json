@@ -1856,7 +1856,8 @@
        "mesh": "humanoid?shirt=#3a78d8&trousers=#4a3a2a&hair=brown"
       },
       "Animator": {
-       "locomotion": true
+       "locomotion": true,
+       "footsteps": "sfx:step"
       }
      }
     }

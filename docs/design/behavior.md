@@ -83,9 +83,12 @@ A guard that only sees is easy to sneak past at a run. A `noise` event is a soun
 hear: made where `data.at` says (`{x, y, z}`), or where its subject stands, and carrying
 `data.radius` units (10 by default). Each Behavior within the radius times its `hearing` (1; 0 is
 deaf), other than the subject itself, hears it that tick: `noise` is 1 in its conditions, `heard_at`
-is where it was made and `unheard` starts again from 0. Walls do not stop a noise. A script makes
-them as the game has it: footsteps while running, a door slammed, a stone thrown to draw a guard
-away.
+is where it was made and `unheard` starts again from 0. A wall between (a collider that is not a
+trigger, nor the noise's maker or the listener, across the line from the noise to the listener's
+eyes) halves how far the noise carries: through it, only from nearer. `Animator.footstep_noise`
+makes one at each footfall of a walking character (`docs/design/animation.md`, Footsteps). A script
+makes others as the game has it: footsteps while running, a door slammed, a stone thrown to draw a
+guard away.
 
 ```ts
 if (input.down("sprint")) events.emit("noise", { radius: 10 }, { subject: player });
@@ -98,9 +101,10 @@ events.emit("noise", { at: stone, radius: 6 });   // where a thrown stone lands
 { "from": "listen", "to": "patrol", "when": "(arrived and time > 1) or unheard > 6" }
 ```
 
-`runtime_tests` (`[behavior][noise]`): a guard does not hear a noise 12 units away that carries 8,
-hears one that carries 14 and walks to it, while a deaf one (`hearing: 0`) stays; a noise with a
-subject and no `at` is heard where the subject stands.
+`runtime_tests` (`[behavior][noise]`): ten units off behind a wall, a noise that carries 12 is not
+heard and one that carries 25 is, and with the wall gone 12 is; a guard does not hear a noise 12
+units away that carries 8, hears one that carries 14 and walks to it, while a deaf one
+(`hearing: 0`) stays; a noise with a subject and no `at` is heard where the subject stands.
 
 ## The sample
 
@@ -130,7 +134,8 @@ behind a wall column and sees it once it is in the open.
 ## Not yet
 
 No nested machines or behavior trees; the sight is of one target, by distance and a ray (what it
-remembers is where it last saw the target and when), and noises carry through walls as through the
-open. A field of view narrower than 360 degrees reads where the entity faces, so its `NavAgent`
-should have `face` on (it turns the entity toward where it walks) or the game should turn it. Facing
-is about the vertical, so in a 2D game a field of view does not apply (leave `fov` at 360).
+remembers is where it last saw the target and when), and a wall muffles a noise the same whatever it
+is made of (stone or a curtain). A field of view narrower than 360 degrees reads where the entity
+faces, so its `NavAgent` should have `face` on (it turns the entity toward where it walks) or the
+game should turn it. Facing is about the vertical, so in a 2D game a field of view does not apply
+(leave `fov` at 360).

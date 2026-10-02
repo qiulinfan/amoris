@@ -175,10 +175,25 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
             b.unseen = 0;
             b.seen_at = to;
         }
-        // What it hears: the latest noise made within its reach, not its own.
+        // What it hears: the latest noise made within its reach, not its own. A wall (any collider
+        // that is not a trigger, the noise's maker or the listener) between the noise and its ears
+        // halves how far the noise carries: heard through a wall only from nearer.
         double noise = 0;
         for (const Noise& n : noises) {
-            if (n.subject == id || b.hearing <= 0 || length(n.at - at) > n.radius * b.hearing) continue;
+            if (n.subject == id || b.hearing <= 0) continue;
+            const float d = length(n.at - at), reach = n.radius * b.hearing;
+            if (d > reach) continue;
+            if (d > reach * 0.5f && physics) {
+                const Vec3 ear{at.x, at.y + b.eye, at.z}, from{n.at.x, n.at.y + 0.5f, n.at.z};
+                const float span = length(ear - from);
+                if (span > 1e-4f) {
+                    const world::EntityId self = id, maker = n.subject;
+                    auto wall = physics->raycast(w, from, (ear - from) * (1.0f / span), span, [&](world::EntityId e, const world::RigidBody&, const world::Collider& col) {
+                        return e != self && !col.is_trigger && w.parent(e) != self && (maker == 0 || (e != maker && w.parent(e) != maker));
+                    });
+                    if (wall) continue;   // muffled: only within half the reach
+                }
+            }
             noise = 1;
             b.heard_at = n.at;
             b.unheard = 0;

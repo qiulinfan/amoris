@@ -86,7 +86,7 @@ bushes = [prop(f"Bush{i}", f"bush?seed={i}", x, z) for i, (x, z) in enumerate([(
 player = {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0.9, "z": 4.5}}, "Character": {}, "RigidBody": {"kind": "kinematic"},
                                            "Collider": {"shape": "capsule", "size": {"x": 0.3, "y": 0.6, "z": 0.3}}},
           "children": [{"name": "Body", "components": {"Transform": {"position": {"x": 0, "y": -0.9, "z": 0}, "rotation": {"x": 0, "y": 1, "z": 0, "w": 0}},
-                                                       "MeshRenderer": {"mesh": "humanoid?shirt=#5a8a3a&trousers=#3a4a6a&hair=brown"}, "Animator": {"locomotion": True}}}]}
+                                                       "MeshRenderer": {"mesh": "humanoid?shirt=#5a8a3a&trousers=#3a4a6a&hair=brown"}, "Animator": {"locomotion": True, "footsteps": "sfx:step"}}}]}
 camera = {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 7, "z": 13}}, "Camera": {"fov_degrees": 55},
                                            "CameraRig": {"target": "Player", "mode": 1, "distance": 9, "height": 1.0, "pitch": -30, "follow": 0.25, "orbit_x": "turn", "orbit_speed": 90}}}
 entities = [

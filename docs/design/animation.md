@@ -332,6 +332,22 @@ waved from a `Behavior` state and walks off walks; two benchmark agents' village
 1.12 of it, waves once and then idles, keeps a looping wave standing and walks once moved, and once
 dead stays dead while it slides.
 
+### Footsteps
+
+`Animator.footsteps` names a sound (`"sfx:step"`, a recipe with settings, or a clip of the
+project's) for each foot the gait plants: the built-in humanoid's gait clips (`walk`, `run`,
+`walk_back`, `crouch_walk`, `strafe_left`, `strafe_right`) plant one a quarter and the other three
+quarters of the way through, so a walker at its own pace steps twice a second and a runner faster.
+Each footfall is an `animation.footstep` event (`{foot, clip, sound, path}`, the entity as subject),
+for a script or an agent to count; with `footstep_noise` (units, half as far again running) each is
+a `noise` event as well, which Behaviors hear (`docs/design/behavior.md`, Noises), so a guard hears
+the player walk without a script. Its sound plays from where the entity stands (fading over 25
+units, panned), louder running than walking, its pitch and, for an `sfx:` recipe without one, its
+seed varied by the event's number so no two steps repeat. Empty, the default, none. The village's
+and the farm's players and the village's strollers step so. `runtime_tests` (`[footsteps]`): three
+seconds of walking at its own pace plant six feet, left and right in turn, each a sound; standing
+still none; with `footstep_noise` 4 walking makes noises of 4 and running of 6.
+
 ## Cues
 
 An `Animator`'s `cues` are moments of its clips to be announced: `{clip, time, name}` (an empty

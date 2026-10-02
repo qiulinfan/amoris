@@ -1805,6 +1805,8 @@ void to_json(Json& j, const Animator& v) {
     j["locomotion"] = v.locomotion;
     j["walk_speed"] = v.walk_speed;
     j["run_speed"] = v.run_speed;
+    j["footsteps"] = v.footsteps;
+    j["footstep_noise"] = v.footstep_noise;
 }
 
 void from_json(const Json& j, Animator& v) {
@@ -1838,6 +1840,8 @@ void from_json(const Json& j, Animator& v) {
     scalar_from_json(j, "locomotion", v.locomotion);
     scalar_from_json(j, "walk_speed", v.walk_speed);
     scalar_from_json(j, "run_speed", v.run_speed);
+    scalar_from_json(j, "footsteps", v.footsteps);
+    scalar_from_json(j, "footstep_noise", v.footstep_noise);
 }
 
 void hash_component(StateHasherRef& h, const Animator& v) {
@@ -1867,6 +1871,8 @@ void hash_component(StateHasherRef& h, const Animator& v) {
     h.u8(v.locomotion ? 1 : 0);
     h.f32(v.walk_speed);
     h.f32(v.run_speed);
+    h.str(v.footsteps);
+    h.f32(v.footstep_noise);
 }
 
 std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
@@ -1898,6 +1904,7 @@ std::size_t numeric_span(Animator& v, std::string_view path, float** out) {
     if (path == "root_delta_yaw") { *out = &v.root_delta_yaw; return 1; }
     if (path == "walk_speed") { *out = &v.walk_speed; return 1; }
     if (path == "run_speed") { *out = &v.run_speed; return 1; }
+    if (path == "footstep_noise") { *out = &v.footstep_noise; return 1; }
     return 0;
 }
 
@@ -4939,7 +4946,7 @@ constexpr std::array<FieldInfo, 7> kTimelineFields = {{
     FieldInfo{"error", "string", "What is wrong: the file, or the first track that cannot apply (written by the engine).", {}},
 }};
 constexpr std::string_view kAnimator_root_motionNames[] = {"off", "move", "report"};
-constexpr std::array<FieldInfo, 21> kAnimatorFields = {{
+constexpr std::array<FieldInfo, 23> kAnimatorFields = {{
     FieldInfo{"clip", "string", "Clip name from the asset (animation.clips lists them); empty plays nothing (bind pose).", {}},
     FieldInfo{"playing", "bool", "Whether time advances.", {}},
     FieldInfo{"loop", "bool", "Wrap at the end (else stop on the last frame and emit animation.finished).", {}},
@@ -4961,6 +4968,8 @@ constexpr std::array<FieldInfo, 21> kAnimatorFields = {{
     FieldInfo{"locomotion", "bool", "The engine picks the clip from how fast the entity moves across the ground: idle, walk, run (the clips of those names), cross-faded, played at the pace of its speed. A one-shot played over them (a punch) plays out first, a looping one (a wave) is kept while the entity stands and given up once it has moved a third of a second, and die stays (docs/design/animation.md, Locomotion).", {}},
     FieldInfo{"walk_speed", "f32", "Locomotion: the speed, in units a second, the walk clip's steps cover at its own pace.", {}},
     FieldInfo{"run_speed", "f32", "Locomotion: the speed the run clip covers at its own pace; above halfway from walk_speed it runs.", {}},
+    FieldInfo{"footsteps", "string", "A sound at each foot plant of the gait (\"sfx:step\", or a clip of the project's), from where the entity stands, louder running than walking; each is an animation.footstep event too ({foot, clip, sound}). The built-in humanoid's gait clips (walk, run, walk_back, crouch_walk, strafe_left, strafe_right) plant a foot a quarter and three quarters of the way through; empty, none.", {}},
+    FieldInfo{"footstep_noise", "f32", "Each footfall is also a noise this many units across, half as far again running, that Behaviors hear (docs/design/behavior.md, Noises): a guard hears the player walk. Works without a footsteps sound; 0, none.", {}},
 }};
 constexpr std::array<FieldInfo, 5> kAttachFields = {{
     FieldInfo{"target", "string", "The entity whose model has the joint, by name or path.", {}},
