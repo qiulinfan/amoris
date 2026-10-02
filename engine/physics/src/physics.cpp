@@ -76,6 +76,7 @@ struct Body {
     bool lock_rotation = false;
     bool sleeping = false;
     std::optional<world::Transform> frame;   // a kinematic child's parent frame when gathered (write_back's way home)
+    bool character = false;                  // a Character's own body: its triggers are the character pass's
     bool ccd = false;      // sweep along the motion before integrating (fast small bodies)
     bool swept = false;    // this step's motion was already applied by the sweep
     int group = 0;         // same negative group: never collide; same positive: always; 0: the layers decide
@@ -1082,6 +1083,7 @@ struct Physics::Impl {
             }
             b.trigger = col.is_trigger;
             if (rb.kind == 2 && e.parent().is_valid()) b.frame = parent_frame(e);
+            b.character = e.has<world::Character>();
             b.layer = col.layer;
             b.mask = col.mask;
             b.group = col.group;
@@ -1660,9 +1662,14 @@ void Physics::step(world::World& w, double dt_d) {
         for (std::size_t j = i + 1; j < order.size(); ++j) {
             const Body& b = im.bodies[order[j]];
             if (b.aabb_min.x > a.aabb_max.x) break;
-            if (a.kind != 0 && b.kind != 0) continue;  // nothing dynamic
+            // A trigger that is not dynamic (a bullet, a zone) and a kinematic body (an enemy walked by
+            // its agent, a lift) still meet, moving or not: there is nothing to solve, only the touch
+            // (a character's own body leaves its triggers to the character pass).
+            auto sensed = [](const Body& t, const Body& o) { return t.trigger && t.kind != 0 && !o.trigger && o.kind == 2 && !o.character; };
+            const bool sensing = sensed(a, b) || sensed(b, a);
+            if (a.kind != 0 && b.kind != 0 && !sensing) continue;  // nothing dynamic
             auto moving = [](const Body& x) { return (x.kind == 0 && !x.sleeping) || (x.kind == 2 && (x.velocity.x != 0 || x.velocity.y != 0 || x.velocity.z != 0)); };
-            if (!moving(a) && !moving(b)) continue;
+            if (!sensing && !moving(a) && !moving(b)) continue;
             if (!aabb_overlap(a, b)) continue;
             if (!allowed(a, b)) { im.stats.ignored++; continue; }  // layers, groups, exceptions or a joint keep them apart
             im.stats.pairs++;
@@ -3127,7 +3134,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
         e.set<world::Transform>(tr);
         e.set<world::Character>(c);
         // The triggers it is in now, against those it was in: trigger.enter and trigger.exit, as a
-        // rigid body's would be (a kinematic body is not paired with static triggers by the step).
+        // rigid body's would be (a character's own kinematic body is not paired with triggers by the step).
         std::set<EntityId> inside;
         const Body at = capsule(pos, 0);
         for (const Body& b : triggers) {

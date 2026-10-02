@@ -17,7 +17,7 @@ Particles are born at the entity's place, or with `area` (half extents of a box 
 turned with it) anywhere in that box: rain over a square, snow, dust in a room, fireflies in a
 glade.
 
-## Presets
+## Presets: fire, smoke, sparks, explosions, rain, snow
 
 Good-looking fire takes a dozen numbers that agree with each other.
 `particles.preset {entity, name, set}` (`particles.preset(entity, name, set)` in a script) writes a

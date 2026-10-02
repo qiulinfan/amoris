@@ -1334,6 +1334,7 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["texture_tile"] = v.texture_tile;
     j["unlit"] = v.unlit;
     j["visible"] = v.visible;
+    vec_to_json(j["highlight"], v.highlight);
     j["cast_shadows"] = v.cast_shadows;
     j["lods"] = Json::array();
     for (const auto& x : v.lods) { Json e; to_json(e, x); j["lods"].push_back(std::move(e)); }
@@ -1365,6 +1366,7 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "texture_tile", v.texture_tile);
     scalar_from_json(j, "unlit", v.unlit);
     scalar_from_json(j, "visible", v.visible);
+    if (j.is_object() && j.contains("highlight")) vec_from_json(j["highlight"], v.highlight);
     scalar_from_json(j, "cast_shadows", v.cast_shadows);
     if (j.is_object() && j.contains("lods") && j["lods"].is_array()) {
         v.lods.clear();
@@ -1410,6 +1412,10 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.texture_tile);
     h.u8(v.unlit ? 1 : 0);
     h.u8(v.visible ? 1 : 0);
+    h.f32(v.highlight.r);
+    h.f32(v.highlight.g);
+    h.f32(v.highlight.b);
+    h.f32(v.highlight.a);
     h.u8(v.cast_shadows ? 1 : 0);
     h.i64(static_cast<std::int64_t>(v.lods.size()));
     for (const auto& x : v.lods) hash_record(h, x);
@@ -1451,6 +1457,11 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "material_params.z") { *out = &v.material_params.z; return 1; }
     if (path == "material_params.w") { *out = &v.material_params.w; return 1; }
     if (path == "texture_tile") { *out = &v.texture_tile; return 1; }
+    if (path == "highlight") { *out = &v.highlight.r; return 4; }
+    if (path == "highlight.r") { *out = &v.highlight.r; return 1; }
+    if (path == "highlight.g") { *out = &v.highlight.g; return 1; }
+    if (path == "highlight.b") { *out = &v.highlight.b; return 1; }
+    if (path == "highlight.a") { *out = &v.highlight.a; return 1; }
     if (path.starts_with("lods.")) {
         std::string_view rest = path.substr(5);
         std::size_t index = 0;
@@ -4747,7 +4758,7 @@ constexpr std::array<FieldInfo, 15> kSkyFields = {{
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units.", {}},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it.", {}},
 }};
-constexpr std::array<FieldInfo, 27> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 28> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials).", {}},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole.", {}},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent.", {}},
@@ -4772,6 +4783,7 @@ constexpr std::array<FieldInfo, 27> kMeshRendererFields = {{
     FieldInfo{"texture_tile", "f32", "World units per repeat of its texture and normal map laid on from the world's axes (each face from the axis it faces most), so a box scaled to a wall or a floor keeps bricks their size; 0 uses the mesh's own uvs.", {}},
     FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too.", {}},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn.", {}},
+    FieldInfo{"highlight", "color", "An outline round the entity in this colour, its alpha the strength (0 none): what the player can pick up, talk to or open, the target in sight (docs/design/rendering.md, Highlights; up to 32 at once).", {}},
     FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass.", {}},
     FieldInfo{"lods", "list:MeshLod", "Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own.", {}},
     FieldInfo{"cull_screen", "f32", "Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small.", {}},

@@ -101,8 +101,13 @@ export const input = {
     showCursor(visible = true): void {
         cmd("input.cursor", { visible });
     },
-    /** `locked`: what the game asked for; `held`: captured now (false after Escape until the next click, and always headless or in the editor). */
-    cursor(): { locked: boolean; held: boolean; visible: boolean } {
+    /** `locked`: what the game asked for; `held`: captured now (false after Escape until the next click, and always headless or in the editor); `x`, `y`: where the pointer is, in the window's pixels. */
+    cursor(): { locked: boolean; held: boolean; visible: boolean; x: number; y: number } {
         return cmd("input.cursor", {});
+    },
+    /** Where the pointer is in the window's pixels: what render.unproject takes to find the ground under it (aiming a top-down shooter, placing a building). */
+    pointer(): { x: number; y: number } {
+        const c = cmd<{ x: number; y: number }>("input.cursor", {});
+        return { x: c.x, y: c.y };
     },
 };

@@ -252,6 +252,8 @@ constexpr const char* kDotTexture = "pocket:dot";
 constexpr std::uint32_t kLayerSize = 512, kLayerLevels = 10;
 constexpr std::uint32_t kShadowMapSize = 2048;
 
+constexpr std::size_t kMaxHighlights = 32;   // entities the post pass outlines in their own colour
+
 struct alignas(16) ObjectUniforms {
     float model[16];
     float normal[16];
@@ -2418,7 +2420,8 @@ constexpr const char* kPostWgsl = R"WGSL(
 struct Post { exposure: f32, op: u32, auto_on: u32, grade_on: u32, tint: vec4f, temperature: f32, contrast: f32, saturation: f32, vignette: f32, viewport: vec4f,
                inv_view_proj: mat4x4f, camera: vec4f, fog_color: vec4f, fog: vec4f, fog2: vec4f, lut: vec4f,
                cb: vec4f, cb0: vec4f, cb1: vec4f, cb2: vec4f,   // colour vision: on, then the matrix's rows (linear light)
-               outline: vec4f, outline2: vec4f };   // the toon look's outlines: colour and width in pixels; opacity
+               outline: vec4f, outline2: vec4f,   // the toon look's outlines: colour and width in pixels; opacity, the highlights' width and count
+               highlight_ids: array<vec4u, 8>, highlight_colors: array<vec4f, 32> };   // entities outlined in a colour of their own
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> metered: array<f32, 4>;   // [0] the exposure the meter settled on, in EV
@@ -2448,6 +2451,36 @@ fn outlined(pos: vec2f) -> f32 {
         if (textureLoad(ids, q, 0).r != own) { other = other + 1.0; }
     }
     return clamp(other / 3.0, 0.0, 1.0);
+}
+// Highlights (MeshRenderer.highlight): the entity's colour round it, on the pixels just outside it.
+fn highlight_of(id: u32) -> i32 {
+    let n = i32(post.outline2.z);
+    for (var k = 0; k < n; k = k + 1) {
+        if (post.highlight_ids[k / 4][k % 4] == id) { return k; }
+    }
+    return -1;
+}
+fn highlighted(pos: vec2f) -> vec4f {
+    if (post.outline2.z < 0.5) { return vec4f(0.0); }
+    let lo = vec2i(post.viewport.xy);
+    let hi = vec2i(post.viewport.xy + post.viewport.zw) - vec2i(1);
+    let p = vec2i(pos);
+    let own = textureLoad(ids, p, 0).r;
+    let r = max(post.outline2.y, 1.0);
+    var best = vec4f(0.0);
+    var hits = 0.0;
+    for (var k = 0; k < 8; k = k + 1) {
+        let a = f32(k) * 0.785398;
+        let q = clamp(p + vec2i(round(vec2f(cos(a), sin(a)) * r)), lo, hi);
+        let id = textureLoad(ids, q, 0).r;
+        if (id == own) { continue; }
+        let h = highlight_of(id);
+        if (h >= 0) {
+            best = post.highlight_colors[h];
+            hits = hits + 1.0;
+        }
+    }
+    return vec4f(best.rgb, best.a * clamp(hits / 2.0, 0.0, 1.0));
 }
 fn graded(e: vec3f) -> vec3f {
     let dims = textureDimensions(lut_tex);
@@ -2588,6 +2621,8 @@ fn encode(c: vec3f) -> vec3f {
     if (post.grade_on != 0u) { e = clamp((e - 0.5) * post.contrast + 0.5, vec3f(0.0), vec3f(1.0)); }
     if (post.lut.x > 0.5) { e = mix(e, graded(e), post.lut.y); }
     e = mix(e, post.outline.rgb, outlined(pos.xy) * post.outline2.x);
+    let lit = highlighted(pos.xy);
+    e = mix(e, lit.rgb, clamp(lit.a, 0.0, 1.0));
     if (post.cb.x > 0.5) {
         // Colour vision (docs/design/rendering.md, Colour vision): the finished colours in linear
         // light through one matrix, a simulation of a dichromat's sight or its correction.
@@ -3390,6 +3425,7 @@ struct Renderer::Impl {
     GradeSettings grade;
     ColourVisionSettings colour_vision;
     ToonSettings toon;
+    std::vector<std::pair<std::uint32_t, std::array<float, 4>>> highlights;   // this frame's (MeshRenderer.highlight)
     TonemapSettings tonemap;
     float time_step = 1.0f / 60.0f;
     WGPUShaderModule post_shader = nullptr;
@@ -4547,7 +4583,9 @@ struct Renderer::Impl {
         float cb[4];             // colour vision on
         float cb_rows[12];       // its matrix, three rows of four
         float outline[4];        // the toon look's outlines: colour (sRGB), width in pixels (0 none)
-        float outline2[4];       // their opacity
+        float outline2[4];       // their opacity; y the highlights' width in pixels, z how many
+        std::uint32_t highlight_ids[kMaxHighlights];   // highlighted entities (MeshRenderer.highlight), low 32 bits
+        float highlight_colors[kMaxHighlights][4];     // their colours (sRGB) and strength
     };
     struct FxUniforms {
         float reproject[16];     // last frame's view-projection times the inverse of this frame's
@@ -5357,6 +5395,16 @@ fn time() -> f32 { return fx.time.x; }
             for (int k = 0; k < 3; ++k) u.outline[k] = std::clamp(toon.outline_color[k], 0.0f, 1.0f);
             u.outline[3] = std::clamp(toon.outline, 0.0f, 16.0f) * (secondary ? 1.0f : std::clamp(scale_now, 0.25f, 1.0f));   // window pixels, in the drawn frame's
             u.outline2[0] = std::clamp(toon.opacity, 0.0f, 1.0f);
+        }
+        {
+            const std::size_t n = std::min(highlights.size(), kMaxHighlights);
+            for (std::size_t k = 0; k < n; ++k) {
+                u.highlight_ids[k] = highlights[k].first;
+                std::copy(highlights[k].second.begin(), highlights[k].second.end(), u.highlight_colors[k]);
+            }
+            u.outline2[1] = 3.0f * (secondary ? 1.0f : std::clamp(scale_now, 0.25f, 1.0f));
+            u.outline2[2] = static_cast<float>(n);
+            stats.highlights = static_cast<std::uint32_t>(n);
         }
         device->write_buffer(post_uniforms, 0, &u, sizeof u);
         const bool effects = !secondary && std::any_of(user_effects.begin(), user_effects.end(), [](const UserEffect& e) { return e.def.enabled; });
@@ -9725,6 +9773,12 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         fu.toon[2] = std::clamp(im.toon.softness, 0.0f, 0.5f);
     }
     im.stats.toon = im.toon.enabled;
+    // Highlighted entities, nearest first when there are more than the post pass holds.
+    im.highlights.clear();
+    world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr) {
+        if (mr.highlight.a <= 0.0f || !mr.visible) return;
+        im.highlights.push_back({static_cast<std::uint32_t>(e.id() & 0xFFFFFFFFu), {mr.highlight.r, mr.highlight.g, mr.highlight.b, std::min(mr.highlight.a, 1.0f)}});
+    });
     // The bodies' boxes for the caustics on what lies below them (the first four).
     {
         const std::size_t n = std::min<std::size_t>(im.water_src.size(), 4);
@@ -11912,6 +11966,7 @@ Json Renderer::describe() const {
     }
     if (s.render_scale < 1.0f) j["scale"] = Json{{"scale", s.render_scale}, {"width", s.render_width}, {"height", s.render_height}};
     if (s.toon) j["toon"] = true;
+    if (s.highlights) j["highlights"] = s.highlights;
     if (s.colour_vision > 0) j["colour_vision"] = std::array<const char*, 4>{"off", "protanopia", "deuteranopia", "tritanopia"}[static_cast<std::size_t>(s.colour_vision)];
     j["shadow_draws"] = s.shadow_draws;
     j["shadow_instances"] = s.shadow_instances;

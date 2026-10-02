@@ -191,6 +191,7 @@ struct RenderStats {
     float render_scale = 1.0f;        // the fraction of the window's pixels the view was drawn at
     int colour_vision = 0;            // the colour vision mode applied in the final pass (0 off)
     bool toon = false;                // the cel look drew this frame
+    std::uint32_t highlights = 0;     // entities outlined by MeshRenderer.highlight
     std::uint32_t render_width = 0, render_height = 0;   // its size in pixels
     std::uint64_t gpu_age = 0;
     std::uint64_t gpu_frames = 0;   // frames whose timings have come back so far

@@ -61,6 +61,7 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket scenario fps                                         # first person: mouse look, hitscan shots, targets, raiders that hear and chase (docs/design/combat.md, Hitscan)
 ./.pocket/pocket scenario guards                                      # stealth: guards that patrol, see, hear a running player and search (docs/design/behavior.md)
 ./.pocket/pocket scenario village                                     # a 3D village without files: props, patterns, toon look, villagers, the elder's quest by dialogue
+./.pocket/pocket scenario topdown                                     # top-down action: waves of raiders, aiming by mouse or stick, bullets from combat.shoot
 ./.pocket/pocket run arena -- --net-host 7777   # and, elsewhere, -- --net-join HOST:7777: a lockstep two-player game (docs/design/networking.md)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)
 # time travel: run with --history 600, then recorder.at {tick} / recorder.diff {from, to} / recorder.track {entity, component, field}; events.why {seq} explains an event

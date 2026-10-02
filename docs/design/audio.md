@@ -127,7 +127,7 @@ half the peak, a muted one silent while its voice plays on, a low-passed one smo
 under a line of dialogue half way down a quarter second in, at a quarter after half a second and
 back in full half a second after the line stops.
 
-## Sounds from a recipe
+## Sounds from a recipe: sound effects without files
 
 A `.sfx` file is a sound written as JSON, which the engine renders to samples (at the mixer's rate)
 the first time it is played or loaded, and which `audio.play`, `AudioSource.clip` and everything

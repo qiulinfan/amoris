@@ -514,6 +514,7 @@ struct MeshRenderer {
     float texture_tile = 0.0f;
     bool unlit = false;
     bool visible = true;
+    Color4 highlight{0.0f, 0.0f, 0.0f, 0.0f};
     bool cast_shadows = true;
     std::vector<MeshLod> lods = {};
     float cull_screen = 0.0f;

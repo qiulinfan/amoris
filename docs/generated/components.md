@@ -249,6 +249,7 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `texture_tile` | f32 | 0.0 | World units per repeat of its texture and normal map laid on from the world's axes (each face from the axis it faces most), so a box scaled to a wall or a floor keeps bricks their size; 0 uses the mesh's own uvs. |
 | `unlit` | bool | false | Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. |
 | `visible` | bool | true | Whether the mesh is drawn. |
+| `highlight` | color | [0.0, 0.0, 0.0, 0.0] | An outline round the entity in this colour, its alpha the strength (0 none): what the player can pick up, talk to or open, the target in sight (docs/design/rendering.md, Highlights; up to 32 at once). |
 | `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |
 | `lods` | list:MeshLod | [] | Levels of detail, simpler meshes for when the entity is small on screen, from the largest `screen` down (docs/design/rendering.md, Levels of detail); each copy of a Scatter picks its own. |
 | `cull_screen` | f32 | 0.0 | Not drawn, nor its shadow, when its bounds cover less than this fraction of the view's height; 0 draws it however small. |

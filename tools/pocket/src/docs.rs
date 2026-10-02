@@ -18,8 +18,9 @@ struct Section {
 
 const STOP: &[&str] = &["the", "a", "an", "of", "to", "in", "and", "or", "how", "what", "is", "for", "on", "with", "do", "i", "it", "its", "by", "be", "can", "from", "at", "as", "that", "this"];
 
-// The query's words, lowercased and cut to a stem (an ending of -ing, -ed, -es, -s or -e dropped:
-// they match as substrings, so "saving" and "save" both find "saves"), and a dotted name
+// The query's words, lowercased and cut to a stem (an ending of -ing, -ed, -es or -s dropped, and
+// -e from words of six letters or more: they match as substrings, so "saving" and "save" both find
+// "saves"), and a dotted name
 // ("Animator.locomotion") both whole and in its parts.
 fn terms(query: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![];
@@ -32,7 +33,9 @@ fn terms(query: &str) -> Vec<String> {
         for p in parts {
             let mut p = p;
             for end in ["ing", "ed", "es", "s", "e"] {
-                if p.len() > end.len() + 2 && p.ends_with(end) && !p.ends_with("ss") {
+                // A short word keeps its -e: "fire" cut to "fir" would find "first", "tree" "street".
+                let least = if end == "e" { 6 } else { end.len() + 3 };
+                if p.len() >= least && p.ends_with(end) && !p.ends_with("ss") {
                     p.truncate(p.len() - end.len());
                     break;
                 }

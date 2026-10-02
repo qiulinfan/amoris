@@ -144,6 +144,18 @@ colour that does not read is refused. `tests/evidence/rendering/toon.png`
 (`tools/scripts/toon_evidence.py`) is a few props and a humanoid drawn plainly (left) and with
 `render.toon` (right).
 
+## Highlights: outlining what the player can use
+
+What the player can pick up, talk to or open, or the enemy in the sights, wants a line round it.
+`MeshRenderer.highlight` is a colour whose alpha is the line's strength (0, the default, none): the
+final pass draws it on the pixels just outside the entity (three window pixels out, read from the id
+pass as the toon look's outlines are), for up to 32 entities at once, with or without the toon look.
+A script sets it when the player comes near and clears it when it leaves; `render.stats` says how
+many `highlights` were drawn. `runtime_tests` (`[render][highlight]`): a row across the hello
+sample's ball has green just outside both of its edges once the ball's highlight is green, and none
+before or after. The village sample outlines the elder in gold while the player is near enough to
+talk to him.
+
 ## Colour vision
 
 About one man in twelve sees colours with one of the three kinds of cone missing or shifted.

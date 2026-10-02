@@ -1,0 +1,957 @@
+{
+ "format": "pocket-scene",
+ "entities": [
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {
+     "mode": "atmosphere",
+     "haze": 1.4
+    }
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": {
+      "x": -0.42,
+      "y": 0.28,
+      "z": 0.14,
+      "w": 0.85
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 0.9,
+     "color": {
+      "r": 1,
+      "g": 0.92,
+      "b": 0.82,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Arena",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Floor",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": -0.5,
+        "z": 0
+       },
+       "scale": {
+        "x": 30,
+        "y": 1.0,
+        "z": 30
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:tiles?count=2&color=#8a8478&grout=#4e4a44",
+       "normal_map": "pattern:tiles?count=2&color=#8a8478&grout=#4e4a44&map=normal",
+       "texture_tile": 2.5,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 15,
+        "y": 0.5,
+        "z": 15
+       }
+      }
+     }
+    },
+    {
+     "name": "WallNorth",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 1,
+        "z": -15.5
+       },
+       "scale": {
+        "x": 32,
+        "y": 3.0,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3&map=normal",
+       "texture_tile": 2,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 16,
+        "y": 1.5,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "WallSouth",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 1,
+        "z": 15.5
+       },
+       "scale": {
+        "x": 32,
+        "y": 3.0,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3&map=normal",
+       "texture_tile": 2,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 16,
+        "y": 1.5,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "WallWest",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -15.5,
+        "y": 1,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 3.0,
+        "z": 30
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3&map=normal",
+       "texture_tile": 2,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 1.5,
+        "z": 15
+       }
+      }
+     }
+    },
+    {
+     "name": "WallEast",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 15.5,
+        "y": 1,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 3.0,
+        "z": 30
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3",
+       "normal_map": "pattern:bricks?color=#6e6a64&mortar=#3e3b37&rows=10&columns=3&map=normal",
+       "texture_tile": 2,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 1.5,
+        "z": 15
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -7,
+        "y": 1.5,
+        "z": -7
+       },
+       "scale": {
+        "x": 1.4,
+        "y": 3.0,
+        "z": 1.4
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.7,
+        "y": 1.5,
+        "z": 0.7
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 7,
+        "y": 1.5,
+        "z": -7
+       },
+       "scale": {
+        "x": 1.4,
+        "y": 3.0,
+        "z": 1.4
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.7,
+        "y": 1.5,
+        "z": 0.7
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -7,
+        "y": 1.5,
+        "z": 7
+       },
+       "scale": {
+        "x": 1.4,
+        "y": 3.0,
+        "z": 1.4
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.7,
+        "y": 1.5,
+        "z": 0.7
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 7,
+        "y": 1.5,
+        "z": 7
+       },
+       "scale": {
+        "x": 1.4,
+        "y": 3.0,
+        "z": 1.4
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5,
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       }
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.7,
+        "y": 1.5,
+        "z": 0.7
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -3,
+        "y": 0,
+        "z": -10
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?seed=0"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.5,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 4,
+        "y": 0,
+        "z": -11
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?seed=1"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.5,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -11,
+        "y": 0,
+        "z": 2
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?seed=2"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.5,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 11,
+        "y": 0,
+        "z": -2
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?seed=3"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.5,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate4",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 2,
+        "y": 0,
+        "z": 10
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?seed=4"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.5,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate5",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -4,
+        "y": 0,
+        "z": 9
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "crate?seed=5"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.5,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Barrel0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -10,
+        "y": 0,
+        "z": -11
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "barrel"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "capsule",
+       "size": {
+        "x": 0.36,
+        "y": 0.2,
+        "z": 0.36
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Barrel1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 10,
+        "y": 0,
+        "z": 11
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "barrel"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "capsule",
+       "size": {
+        "x": 0.36,
+        "y": 0.2,
+        "z": 0.36
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Barrel2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 12,
+        "y": 0,
+        "z": -12
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "barrel"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "capsule",
+       "size": {
+        "x": 0.36,
+        "y": 0.2,
+        "z": 0.36
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Barrel3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -12,
+        "y": 0,
+        "z": 12
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "barrel"
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "capsule",
+       "size": {
+        "x": 0.36,
+        "y": 0.2,
+        "z": 0.36
+       },
+       "offset": {
+        "x": 0,
+        "y": 0.45,
+        "z": 0
+       }
+      }
+     }
+    },
+    {
+     "name": "Torch0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -14,
+        "y": 0,
+        "z": -14
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "torch"
+      }
+     },
+     "children": [
+      {
+       "name": "Flame",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 1.05,
+          "z": 0
+         }
+        },
+        "Light": {
+         "kind": "point",
+         "color": {
+          "r": 1,
+          "g": 0.6,
+          "b": 0.3,
+          "a": 1
+         },
+         "intensity": 4,
+         "range": 8
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Torch1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 14,
+        "y": 0,
+        "z": -14
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "torch"
+      }
+     },
+     "children": [
+      {
+       "name": "Flame",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 1.05,
+          "z": 0
+         }
+        },
+        "Light": {
+         "kind": "point",
+         "color": {
+          "r": 1,
+          "g": 0.6,
+          "b": 0.3,
+          "a": 1
+         },
+         "intensity": 4,
+         "range": 8
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Torch2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -14,
+        "y": 0,
+        "z": 14
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "torch"
+      }
+     },
+     "children": [
+      {
+       "name": "Flame",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 1.05,
+          "z": 0
+         }
+        },
+        "Light": {
+         "kind": "point",
+         "color": {
+          "r": 1,
+          "g": 0.6,
+          "b": 0.3,
+          "a": 1
+         },
+         "intensity": 4,
+         "range": 8
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Torch3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 14,
+        "y": 0,
+        "z": 14
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "torch"
+      }
+     },
+     "children": [
+      {
+       "name": "Flame",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 1.05,
+          "z": 0
+         }
+        },
+        "Light": {
+         "kind": "point",
+         "color": {
+          "r": 1,
+          "g": 0.6,
+          "b": 0.3,
+          "a": 1
+         },
+         "intensity": 4,
+         "range": 8
+        }
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Player",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.9,
+      "z": 0
+     }
+    },
+    "Character": {},
+    "RigidBody": {
+     "kind": "kinematic"
+    },
+    "Collider": {
+     "shape": "capsule",
+     "size": {
+      "x": 0.3,
+      "y": 0.6,
+      "z": 0.3
+     }
+    },
+    "Health": {
+     "current": 100,
+     "max": 100,
+     "team": 1,
+     "invulnerable": 0.5
+    }
+   },
+   "children": [
+    {
+     "name": "Body",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": -0.9,
+        "z": 0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "humanoid?shirt=#2e86de&trousers=#2c3e50&hair=black"
+      },
+      "Animator": {
+       "locomotion": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Camera",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 12,
+      "z": 8
+     }
+    },
+    "Camera": {
+     "fov_degrees": 50
+    },
+    "CameraRig": {
+     "target": "Player",
+     "mode": 2,
+     "offset": {
+      "x": 0,
+      "y": 12,
+      "z": 7.5
+     },
+     "height": 0.5,
+     "follow": 0.2
+    }
+   }
+  },
+  {
+   "name": "Bursts",
+   "components": {
+    "Transform": {}
+   }
+  }
+ ]
+}

@@ -150,7 +150,9 @@ onTick(() => {
     const c = world.get(player, "Character")!;
     const p = world.get(player, "Transform")!.position;
     const e = world.get(elder, "Transform")!.position;
-    near.set(Math.hypot(e.x - p.x, e.z - p.z) < REACH);
+    const close = Math.hypot(e.x - p.x, e.z - p.z) < REACH;
+    if (close !== near()) world.set(elder, "MeshRenderer", { highlight: close ? { r: 1, g: 0.85, b: 0.3, a: 0.9 } : { r: 0, g: 0, b: 0, a: 0 } });   // the one to talk to, outlined
+    near.set(close);
     if (talking) {
         world.set(player, "Character", { velocity: { x: 0, y: c.velocity.y, z: 0 } });
         return;   // the box has the keys while the elder talks

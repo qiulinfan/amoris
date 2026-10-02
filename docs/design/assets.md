@@ -291,7 +291,7 @@ so a generated level saves and loads whole. A made mesh holds at most a million 
 rests on it), its bounds known without a frame, carried by a saved scene into a session that never
 made it.
 
-## Patterns
+## Patterns: textures without files
 
 A level blocked out of cubes looks like grey cubes until someone draws textures. A texture or a
 normal map named `pattern:<name>?<settings>` is drawn by the engine instead of read from a file:
@@ -325,7 +325,7 @@ names, colours and maps refused. `tests/evidence/rendering/patterns.png`
 (`tools/scripts/patterns_evidence.py`) is each pattern on a cube with its normal map, on a floor of
 tiles four units a repeat.
 
-## Props
+## Props: trees, rocks, houses and furniture without files
 
 Beside the humanoid (`docs/design/animation.md`, A character without a file), a few things every
 outdoor or village scene wants are meshes the engine makes, in a low-poly, flat-shaded style: `tree`

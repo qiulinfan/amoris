@@ -429,6 +429,35 @@ TEST_CASE("the toon look outlines each entity where the id under the pixels chan
     REQUIRE(magenta() == 0);
 }
 
+TEST_CASE("a highlighted entity is outlined in its colour, and nothing else is", "[runtime][render][highlight]") {
+    auto o = hello_options(-1);
+    o.width = 320;
+    o.height = 180;
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}, {"render", "each"}}).has_value());
+    const Json ball = s.command("world.get", Json{{"entity", "Ball"}, {"component", "Transform"}}).value()["position"];
+    const Json at = s.command("render.project", Json{{"point", ball}}).value();
+    const int cx = static_cast<int>(at["x"].get<double>()), cy = static_cast<int>(at["y"].get<double>());
+    auto green = [&] {
+        Json px = Json::array();
+        for (int x = std::max(0, cx - 60); x <= std::min(319, cx + 60); ++x) px.push_back(Json{{"x", x}, {"y", cy}});
+        int n = 0;
+        for (const Json& c : s.command("capture", Json{{"pixels", px}}).value()["pixels"]) if (c[1].get<int>() > 220 && c[0].get<int>() < 60 && c[2].get<int>() < 60) ++n;
+        return n;
+    };
+    REQUIRE(green() == 0);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"highlight", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 1}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    INFO(green());
+    REQUIRE(green() >= 2);   // just outside both of its edges along the row
+    REQUIRE(s.command("render.stats", Json::object()).value()["highlights"] == 1);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"highlight", Json{{"r", 0}, {"g", 1}, {"b", 0}, {"a", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    REQUIRE(green() == 0);
+}
+
 TEST_CASE("the window's view drawn at a scale is stretched to the window, its coordinates the window's", "[runtime][render][scale]") {
     auto o = hello_options(-1);
     o.width = 320;
@@ -2014,6 +2043,27 @@ TEST_CASE("a hitscan shot hurts the first collider or character along it, the sh
     REQUIRE(shot["target_path"] == "/Robot");
     REQUIRE(shot["health"].get<double>() == 0);
     REQUIRE(s.command("events.since", Json{{"seq", 0}, {"type", "health.depleted"}}).value()["events"].size() == 1);
+}
+
+TEST_CASE("a bullet hits a kinematic body and a zone notices one moved by hand", "[runtime][combat][kinematic]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto at = [](double x, double y, double z) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}}; };
+    // An enemy as a walking agent's body is: kinematic, moved by its Transform, no Velocity.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Enemy"}, {"components", Json{{"Transform", at(0, 1, -5)}, {"RigidBody", Json{{"kind", "kinematic"}}}, {"Collider", Json{{"shape", "capsule"}, {"size", Json{{"x", 0.4}, {"y", 0.5}, {"z", 0.4}}}}}, {"Health", Json{{"current", 30}, {"max", 30}, {"team", 2}}}}}}).has_value());
+    REQUIRE(s.command("script.eval", Json{{"source", "combat.shoot({x: 0, y: 1, z: 3}, {x: 0, y: 0, z: -1}, {speed: 20, damage: 12, team: 1}); 0"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 40}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Enemy"}, {"component", "Health"}}).value()["current"].get<double>() == Catch::Approx(18));
+    // A zone (a static trigger) and that body walked into it by its Transform.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Zone"}, {"components", Json{{"Transform", at(4, 1, -5)}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"size", Json{{"x", 1}, {"y", 1}, {"z", 1}}}, {"is_trigger", true}}}}}}).has_value());
+    const std::uint64_t seq = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
+    REQUIRE(s.command("world.set", Json{{"entity", "Enemy"}, {"component", "Transform"}, {"value", at(4, 1, -5)}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    const Json entered = s.command("events.since", Json{{"seq", seq}, {"type", "trigger.enter"}}).value()["events"];
+    INFO(entered.dump());
+    REQUIRE(entered.size() == 1);
 }
 
 TEST_CASE("a hitbox on a 3D trigger hurts a character that walks into it", "[runtime][combat]") {

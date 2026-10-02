@@ -111,7 +111,7 @@ constexpr CommandHelp kHelp[] = {
     {"input.pad", "pad?, button | axis, pressed?, value?", "A gamepad button or axis."},
     {"input.rumble", "pad?, low?, high?, ms?, pattern?, repeat?, stop?", "Shake a gamepad's motors: one step, or a pattern of {low, high, ms} steps played in turn (repeat times); stop silences it. Each step is an input.rumble world event."},
     {"input.state", "", "What is down now: keys, actions and their values, fingers, pads, held keys, gesture settings, the cursor."},
-    {"input.cursor", "locked?, visible?", "Capture the pointer (locked: hidden, held in the window, motion as mouse:x/y however far) or hide it; Escape lets it go and a click takes it again. Answers locked (asked for), held (captured now; never headless or in the editor) and visible."},
+    {"input.cursor", "locked?, visible?", "Capture the pointer (locked: hidden, held in the window, motion as mouse:x/y however far) or hide it; Escape lets it go and a click takes it again. Answers locked (asked for), held (captured now; never headless or in the editor), visible, and x and y: where the pointer is, in the window's pixels (what render.unproject and render.pick take)."},
     {"audio.play", "clip, volume?, pitch?, pan?, lowpass?, reverb?, loop?, entity?, tag?, bus?, spatial?, near?, range?, occlusion?, doppler?", "Start a clip (project-relative WAV, Ogg or MP3) on a bus (main by default); answers the voice id. A spatial voice follows its entity: volume and pan by where it is, pitch by how it moves (doppler)."},
     {"audio.stop", "voice | clip | tag | bus | all", "Stop voices; answers how many."},
     {"audio.set", "voice, volume?, pitch?, pan?, lowpass?, reverb?, loop?, bus?", "Change a playing voice (or move it to another bus)."},

@@ -4170,7 +4170,7 @@ Result<Json> Session::particles_command(std::string_view op, const Json& p) {
         if (name == "fire") e = {{"emitting", true}, {"rate", 70}, {"max", 300}, {"lifetime", v2(0.45, 0.9)}, {"speed", v2(0.6, 1.4)}, {"direction", v3(0, 1, 0)}, {"spread", 12}, {"gravity", v3(0, 1.6, 0)}, {"drag", 0.6}, {"size", v2(0.55, 0.08)}, {"color", c(1, 0.78, 0.32, 1)}, {"color_end", c(0.85, 0.18, 0.04, 0)}, {"additive", true}, {"turbulence", 0.7}, {"turbulence_scale", 1.2}, {"area", v3(0.22, 0.02, 0.22)}, {"stretch", 0}};
         else if (name == "smoke") e = {{"emitting", true}, {"rate", 14}, {"max", 120}, {"lifetime", v2(2.5, 4.0)}, {"speed", v2(0.35, 0.8)}, {"direction", v3(0, 1, 0)}, {"spread", 18}, {"gravity", v3(0, 0.35, 0)}, {"drag", 0.35}, {"size", v2(0.45, 1.8)}, {"color", c(0.32, 0.32, 0.32, 0.55)}, {"color_end", c(0.55, 0.55, 0.55, 0)}, {"additive", false}, {"turbulence", 0.45}, {"turbulence_scale", 2.0}, {"area", v3(0.15, 0, 0.15)}, {"stretch", 0}};
         else if (name == "sparks") e = {{"emitting", false}, {"rate", 0}, {"max", 300}, {"lifetime", v2(0.2, 0.55)}, {"speed", v2(3, 7)}, {"direction", v3(0, 1, 0)}, {"spread", 65}, {"gravity", v3(0, -9, 0)}, {"drag", 0.2}, {"size", v2(0.05, 0.01)}, {"color", c(1, 0.82, 0.4, 1)}, {"color_end", c(1, 0.3, 0.08, 0)}, {"additive", true}, {"turbulence", 0}, {"stretch", 0.04}, {"area", v3(0, 0, 0)}};
-        else if (name == "explosion") e = {{"emitting", false}, {"rate", 0}, {"max", 400}, {"lifetime", v2(0.35, 0.9)}, {"speed", v2(2.5, 8)}, {"direction", v3(0, 1, 0)}, {"spread", 180}, {"gravity", v3(0, -1.5, 0)}, {"drag", 2.2}, {"size", v2(0.9, 0.15)}, {"color", c(1, 0.85, 0.45, 1)}, {"color_end", c(0.6, 0.12, 0.02, 0)}, {"additive", true}, {"turbulence", 0.8}, {"turbulence_scale", 1.5}, {"stretch", 0}, {"area", v3(0.2, 0.2, 0.2)}};
+        else if (name == "explosion") e = {{"emitting", false}, {"rate", 0}, {"max", 400}, {"lifetime", v2(0.3, 0.75)}, {"speed", v2(3, 9)}, {"direction", v3(0, 1, 0)}, {"spread", 180}, {"gravity", v3(0, -1.5, 0)}, {"drag", 2.5}, {"size", v2(1.2, 0.2)}, {"color", c(1, 0.95, 0.7, 1)}, {"color_end", c(1, 0.45, 0.1, 0)}, {"additive", true}, {"turbulence", 0.8}, {"turbulence_scale", 1.5}, {"stretch", 0}, {"area", v3(0.2, 0.2, 0.2)}};
         else if (name == "rain") e = {{"emitting", true}, {"rate", 900}, {"max", 6000}, {"lifetime", v2(0.9, 1.1)}, {"speed", v2(12, 14)}, {"direction", v3(0.05, -1, 0)}, {"spread", 2}, {"gravity", v3(0, -4, 0)}, {"drag", 0}, {"size", v2(0.025, 0.025)}, {"color", c(0.72, 0.78, 0.88, 0.45)}, {"color_end", c(0.72, 0.78, 0.88, 0.3)}, {"additive", false}, {"turbulence", 0}, {"stretch", 0.06}, {"area", v3(15, 0, 15)}, {"gpu", true}};
         else if (name == "snow") e = {{"emitting", true}, {"rate", 260}, {"max", 4000}, {"lifetime", v2(6, 9)}, {"speed", v2(0.3, 0.7)}, {"direction", v3(0, -1, 0)}, {"spread", 25}, {"gravity", v3(0, -0.5, 0)}, {"drag", 0.6}, {"size", v2(0.07, 0.06)}, {"color", c(1, 1, 1, 0.9)}, {"color_end", c(1, 1, 1, 0.7)}, {"additive", false}, {"turbulence", 0.5}, {"turbulence_scale", 3.0}, {"stretch", 0}, {"area", v3(15, 0, 15)}, {"gpu", true}};
         else if (name == "dust") e = {{"emitting", true}, {"rate", 10}, {"max", 200}, {"lifetime", v2(3, 6)}, {"speed", v2(0.03, 0.15)}, {"direction", v3(0, 1, 0)}, {"spread", 180}, {"gravity", v3(0, 0, 0)}, {"drag", 0.2}, {"size", v2(0.035, 0.035)}, {"color", c(0.95, 0.9, 0.75, 0.35)}, {"color_end", c(0.95, 0.9, 0.75, 0)}, {"additive", true}, {"turbulence", 0.25}, {"turbulence_scale", 2.5}, {"stretch", 0}, {"area", v3(3, 1.5, 3)}};
@@ -4482,7 +4482,32 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         // The world ray under a pixel, and where it meets an axis plane: "xy" at z = at (2D scenes),
         // "xz" at y = at (a ground plane), "yz" at x = at.
         Vec3 origin, dir;
-        if (!renderer_->unproject(opt<float>(p, "x", 0.0f), opt<float>(p, "y", 0.0f), origin, dir)) return fail("no_view", "nothing has been drawn yet, so there is no camera view to unproject with");
+        const float px = opt<float>(p, "x", 0.0f), py = opt<float>(p, "y", 0.0f);
+        if (!renderer_->unproject(px, py, origin, dir)) {
+            // Nothing drawn yet (a script's first tick): the window's camera as the scene has it,
+            // the active one of highest priority, over the whole window.
+            world::EntityId cam_id = 0;
+            world::Camera cam;
+            world_->ecs().each([&](flecs::entity e, const world::Camera& c) {
+                if (c.active && c.target.empty() && (cam_id == 0 || c.priority > cam.priority)) { cam_id = e.id(); cam = c; }
+            });
+            const auto* wt = cam_id ? world_->try_get<world::WorldTransform>(cam_id) : nullptr;
+            const auto* t = cam_id ? world_->try_get<world::Transform>(cam_id) : nullptr;
+            const float w = static_cast<float>(std::max(device_->width(), 1u)), h = static_cast<float>(std::max(device_->height(), 1u));
+            if (!cam_id || (!wt && !t)) return fail("no_view", "no camera to unproject with: the scene has no active Camera");
+            const Vec3 at = wt ? wt->position : t->position;
+            const Quat turn = wt ? wt->rotation : t->rotation;
+            const float nx = px / w * 2.0f - 1.0f, ny = 1.0f - py / h * 2.0f;
+            const Vec3 right = turn.rotate({1, 0, 0}), up = turn.rotate({0, 1, 0}), fwd = turn.rotate({0, 0, -1});
+            if (cam.orthographic) {
+                origin = at + right * (nx * cam.ortho_size * w / h) + up * (ny * cam.ortho_size);
+                dir = fwd;
+            } else {
+                const float k = std::tan(radians(cam.fov_degrees) * 0.5f);
+                origin = at;
+                dir = normalize(fwd + right * (nx * k * w / h) + up * (ny * k));
+            }
+        }
         Json j;
         j["origin"] = json_of(origin);
         j["direction"] = json_of(dir);
@@ -5426,7 +5451,10 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         // takes it again (docs/design/input.md, The cursor).
         for (const char* k : {"locked", "visible"}) if (p.contains(k) && !p[k].is_boolean()) return fail("bad_args", "{} is true or false", k);
         if (p.contains("locked") || p.contains("visible")) set_cursor(opt<bool>(p, "locked", cursor_locked_), opt<bool>(p, "visible", cursor_visible_));
-        return Json{{"locked", cursor_locked_}, {"held", cursor_held()}, {"visible", cursor_visible_}};
+        // Where the pointer is, in the window's pixels (render.unproject and render.pick take them).
+        float w = 0, h = 0, scale = 1;
+        ui_size(w, h, scale);
+        return Json{{"locked", cursor_locked_}, {"held", cursor_held()}, {"visible", cursor_visible_}, {"x", platform_->input().mouse_x * scale}, {"y", platform_->input().mouse_y * scale}};
     }
     if (op == "state") {
         Json j;

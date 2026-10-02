@@ -80,6 +80,16 @@ floor, cover and crates dressed in patterns (`docs/design/assets.md`, Patterns; 
 of them on the GPU, in release on the evidence machine); `tools/scripts/dev/fps_scene.py` writes its
 scene.
 
+`samples/topdown` is a top-down action game on bullets: a walled yard of stone flags with cover,
+waves of raiders (built-in humanoids walked at the player by their agents, two more each wave and a
+little faster) whose fists are a trigger `Hitbox`, and a gun that fires `combat.shoot` bullets where
+the player aims: at the ground under the pointer (`input.pointer()` and `render.unproject`), or by
+direction with the arrow keys or the right stick. A raider falls to two bullets in a burst of the
+`explosion` preset; a cleared wave brings the next after two seconds; at no health the run is over.
+`pocket scenario topdown` checks that an aimed burst shoots a raider down, that a cleared wave
+brings five more, that a raider in reach hurts the player and that the run ends at no health;
+`tests/evidence/rendering/topdown.png` is the yard mid-fight.
+
 An agent asks the same way: `step {ticks: 600, until: {event: "health.depleted"}}` runs until
 something dies, `events.why {seq}` says what killed it.
 
