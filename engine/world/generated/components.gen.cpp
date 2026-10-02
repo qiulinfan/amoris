@@ -2083,6 +2083,9 @@ void to_json(Json& j, const ParticleEmitter& v) {
     j["child_count"] = v.child_count;
     j["collide"] = v.collide;
     j["additive"] = v.additive;
+    j["turbulence"] = v.turbulence;
+    j["turbulence_scale"] = v.turbulence_scale;
+    j["gpu"] = v.gpu;
 }
 
 void from_json(const Json& j, ParticleEmitter& v) {
@@ -2111,6 +2114,9 @@ void from_json(const Json& j, ParticleEmitter& v) {
     scalar_from_json(j, "child_count", v.child_count);
     scalar_from_json(j, "collide", v.collide);
     scalar_from_json(j, "additive", v.additive);
+    scalar_from_json(j, "turbulence", v.turbulence);
+    scalar_from_json(j, "turbulence_scale", v.turbulence_scale);
+    scalar_from_json(j, "gpu", v.gpu);
 }
 
 void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
@@ -2152,6 +2158,9 @@ void hash_component(StateHasherRef& h, const ParticleEmitter& v) {
     h.i64(static_cast<std::int64_t>(v.child_count));
     h.u8(v.collide ? 1 : 0);
     h.u8(v.additive ? 1 : 0);
+    h.f32(v.turbulence);
+    h.f32(v.turbulence_scale);
+    h.u8(v.gpu ? 1 : 0);
 }
 
 std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out) {
@@ -2190,6 +2199,8 @@ std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out)
     if (path == "bounce") { *out = &v.bounce; return 1; }
     if (path == "floor_friction") { *out = &v.floor_friction; return 1; }
     if (path == "stretch") { *out = &v.stretch; return 1; }
+    if (path == "turbulence") { *out = &v.turbulence; return 1; }
+    if (path == "turbulence_scale") { *out = &v.turbulence_scale; return 1; }
     return 0;
 }
 
@@ -4730,7 +4741,7 @@ constexpr std::array<FieldInfo, 9> kLookAtFields = {{
     FieldInfo{"angle", "f32", "The turn applied this tick in degrees, after the limit and the weight (written by the engine).", {}},
     FieldInfo{"aim", "vec3", "The direction the node aims along, in the entity's space, before max_angle and weight (written by the engine; zero until the first tick).", {}},
 }};
-constexpr std::array<FieldInfo, 25> kParticleEmitterFields = {{
+constexpr std::array<FieldInfo, 28> kParticleEmitterFields = {{
     FieldInfo{"texture", "string", "Project-relative image; empty draws soft round spots (streaks when stretched).", {}},
     FieldInfo{"emitting", "bool", "Whether particles spawn continuously at rate.", {}},
     FieldInfo{"rate", "f32", "Particles per second while emitting.", {}},
@@ -4756,6 +4767,9 @@ constexpr std::array<FieldInfo, 25> kParticleEmitterFields = {{
     FieldInfo{"child_count", "i32", "Particles the child emits at each death.", {}},
     FieldInfo{"collide", "bool", "Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md).", {}},
     FieldInfo{"additive", "bool", "Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other.", {}},
+    FieldInfo{"turbulence", "f32", "Swirling air: a curl-noise field pushes each particle by up to this many units per second squared (smoke, embers, magic); 0 for none.", {}},
+    FieldInfo{"turbulence_scale", "f32", "The size of the turbulence's swirls in units.", {}},
+    FieldInfo{"gpu", "bool", "Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner.", {}},

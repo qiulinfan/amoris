@@ -444,6 +444,9 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 | `child_count` | i32 | 8 | Particles the child emits at each death. |
 | `collide` | bool | false | Particles hit the physics bodies and the solid tiles of orthogonal maps: each tick a ray from where a particle was to where it goes, and on a hit it bounces off the surface with `bounce` of its speed, or rests on it once the bounce is spent and the surface faces up. Costs a ray per particle per tick (docs/design/particles.md). |
 | `additive` | bool | false | Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other. |
+| `turbulence` | f32 | 0.0 | Swirling air: a curl-noise field pushes each particle by up to this many units per second squared (smoke, embers, magic); 0 for none. |
+| `turbulence_scale` | f32 | 2.0 | The size of the turbulence's swirls in units. |
+| `gpu` | bool | false | Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing. |
 
 ## Bounds
 

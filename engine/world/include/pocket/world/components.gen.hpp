@@ -730,6 +730,9 @@ struct ParticleEmitter {
     std::int32_t child_count = 8;
     bool collide = false;
     bool additive = false;
+    float turbulence = 0.0f;
+    float turbulence_scale = 2.0f;
+    bool gpu = false;
     constexpr bool operator==(const ParticleEmitter&) const = default;
 };
 void to_json(Json& j, const ParticleEmitter& v);

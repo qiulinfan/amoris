@@ -8,6 +8,42 @@
 
 namespace pocket::renderer {
 
+namespace {
+
+// A lattice point's value in -1..1 (the same integer hash the GPU's particles use).
+float lattice(int x, int y, int z, std::uint32_t seed) {
+    std::uint32_t h = (static_cast<std::uint32_t>(x) * 0x8da6b343u) ^ (static_cast<std::uint32_t>(y) * 0xd8163841u) ^ (static_cast<std::uint32_t>(z) * 0xcb1ab31fu) ^ (seed * 0x9e3779b9u);
+    h ^= h >> 16;
+    h *= 0x7feb352du;
+    h ^= h >> 15;
+    h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return static_cast<float>(h >> 8) / 16777216.0f * 2.0f - 1.0f;
+}
+
+float value_noise(Vec3 p, std::uint32_t seed) {
+    const float fx = std::floor(p.x), fy = std::floor(p.y), fz = std::floor(p.z);
+    const int x = static_cast<int>(fx), y = static_cast<int>(fy), z = static_cast<int>(fz);
+    auto fade = [](float t) { return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f); };
+    const float u = fade(p.x - fx), v = fade(p.y - fy), w = fade(p.z - fz);
+    auto mix = [](float a, float b, float k) { return a + (b - a) * k; };
+    const float x00 = mix(lattice(x, y, z, seed), lattice(x + 1, y, z, seed), u), x10 = mix(lattice(x, y + 1, z, seed), lattice(x + 1, y + 1, z, seed), u);
+    const float x01 = mix(lattice(x, y, z + 1, seed), lattice(x + 1, y, z + 1, seed), u), x11 = mix(lattice(x, y + 1, z + 1, seed), lattice(x + 1, y + 1, z + 1, seed), u);
+    return mix(mix(x00, x10, v), mix(x01, x11, v), w);
+}
+
+}  // namespace
+
+Vec3 curl_noise(Vec3 p, float t) {
+    p.y += t * 0.25f;   // the field drifts up through the particles, so still air still swirls
+    auto field = [](Vec3 q) { return Vec3{value_noise(q, 1u), value_noise(q, 2u), value_noise(q, 3u)}; };
+    const float e = 0.05f;
+    const Vec3 dx = (field(p + Vec3{e, 0, 0}) - field(p - Vec3{e, 0, 0})) * (0.5f / e);
+    const Vec3 dy = (field(p + Vec3{0, e, 0}) - field(p - Vec3{0, e, 0})) * (0.5f / e);
+    const Vec3 dz = (field(p + Vec3{0, 0, e}) - field(p - Vec3{0, 0, e})) * (0.5f / e);
+    return Vec3{dy.z - dz.y, dz.x - dx.z, dx.y - dy.x};
+}
+
 EmitterPool& Particles::pool_for(world::EntityId id, const world::ParticleEmitter& e) {
     auto it = pools_.find(id);
     if (it == pools_.end()) {
@@ -56,6 +92,21 @@ void Particles::step(const world::World& world, float dt) {
     world.ecs().each([&](flecs::entity ent, const world::ParticleEmitter& e, const world::WorldTransform& t) {
         EmitterPool& pool = pool_for(ent.id(), e);
         pool.seen = true;
+        if (e.gpu != pool.gpu) {
+            pool.alive.clear();   // a switch between the two keeps nothing of the other's
+            pool.gpu = e.gpu;
+        }
+        if (e.gpu) {
+            // The renderer simulates them: the tick owes it the seconds and the particles.
+            pool.gpu_seconds += dt;
+            if (e.emitting && e.rate > 0) {
+                pool.carry += e.rate * dt;
+                const auto n = static_cast<std::uint64_t>(pool.carry);
+                pool.carry -= static_cast<float>(n);
+                pool.spawned += n;
+            }
+            return;
+        }
         if (e.emitting && e.rate > 0) {
             pool.carry += e.rate * dt;
             int n = static_cast<int>(pool.carry);
@@ -78,12 +129,14 @@ void Particles::step(const world::World& world, float dt) {
                 continue;
             }
             const Vec3 was = p.position;
+            Vec3 push = e.gravity;
+            if (e.turbulence != 0.0f) push += curl_noise((p.position + origin) * (1.0f / std::max(e.turbulence_scale, 1e-3f)), wind_t) * e.turbulence;
             if (wind.on && e.drag > 0) {
                 const Vec3 at = p.position + origin;
                 const Vec3 air = world::wind_velocity(wind, at.x, at.z, wind_t);
-                p.velocity = air + (p.velocity + e.gravity * dt - air) * keep;
+                p.velocity = air + (p.velocity + push * dt - air) * keep;
             } else {
-                p.velocity = (p.velocity + e.gravity * dt) * keep;
+                p.velocity = (p.velocity + push * dt) * keep;
             }
             p.position += p.velocity * dt;
             // Bodies: a ray from where the particle was to where it goes; on a hit it is put on the
@@ -167,6 +220,12 @@ Status Particles::burst(const world::World& world, world::EntityId emitter, int 
     if (!(speed >= 0)) return fail("bad_args", "burst speed must be at least 0");
     EmitterPool& pool = pool_for(emitter, *e);
     pool.seen = true;
+    if (e->gpu) {
+        // The GPU's emitter spawns them at its place in the frame's window (`at` and `speed` are the CPU's).
+        pool.gpu = true;
+        pool.spawned += static_cast<std::uint64_t>(count);
+        return {};
+    }
     const std::size_t before = pool.alive.size();
     spawn(pool, *e, wt, count);
     for (std::size_t k = before; k < pool.alive.size(); ++k) {
@@ -194,7 +253,8 @@ Json Particles::stats() const {
     for (const auto& [id, pool] : pools_) {
         spawned += pool.spawned;
         died += pool.died;
-        per.push_back(Json{{"entity", id}, {"alive", pool.alive.size()}, {"spawned", pool.spawned}, {"died", pool.died}, {"landed", pool.landed}});
+        if (pool.gpu) per.push_back(Json{{"entity", id}, {"gpu", true}, {"spawned", pool.spawned}});
+        else per.push_back(Json{{"entity", id}, {"alive", pool.alive.size()}, {"spawned", pool.spawned}, {"died", pool.died}, {"landed", pool.landed}});
     }
     j["spawned"] = spawned;
     j["died"] = died;
@@ -217,6 +277,7 @@ std::uint64_t Particles::hash(const world::World& world) const {
     // Summed, so the pools' order (by id) does not matter.
     std::uint64_t sum = 0;
     for (const auto& [id, pool] : pools_) {
+        if (pool.gpu) continue;   // visual only
         StateHasher h;
         h.str(world.path(id));
         h.u32(static_cast<std::uint32_t>(pool.alive.size()));

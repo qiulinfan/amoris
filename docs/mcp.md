@@ -98,7 +98,7 @@ mistyped command is answered with the names it is close to; and where a command 
 and no `path`, a `path` stands for it. `world.set` without a `value` object (or a `component`) says
 what it needs. The fields themselves are checked the same way in `world.set`,
 `world.spawn {components}` and `world.instantiate {components}`: a key that is not a field of the
-component is refused with the nearest one (`Light has no field 'colour'; did you mean 'color'?`), a
+component is refused with the nearest one (`Light has no field 'colr'; did you mean 'color'?`), a
 value of the wrong type with the type it should be, and nothing of the call is applied; inside a
 list field the element is named (`Animator.layers[0] has no field 'wieght'`). Integer codes have
 names a write may use instead (`Light.kind: "point"`, `RigidBody.kind: "kinematic"`,

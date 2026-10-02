@@ -97,7 +97,7 @@ TEST_CASE("a component write is checked field by field, takes value names and an
         INFO(r.error().message);
         REQUIRE(r.error().message.find(needle) != std::string::npos);
     };
-    refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"colour", Json{{"r", 1}}}}}}, "did you mean 'color'");
+    refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"colr", Json{{"r", 1}}}}}}, "did you mean 'color'");   // colour is taken as color (world.set renamed)
     refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"kind", "spotlight"}}}}, "one of directional, point, spot");
     refused(Json{{"entity", "Lamp"}, {"component", "Light"}, {"value", Json{{"intensity", "bright"}}}}, "Light.intensity is a number");
     refused(Json{{"entity", "Lamp"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 1}, {"q", 2}}}}}}, "Transform.position is a vec3 with the parts xyz, not 'q'");
@@ -278,6 +278,41 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
     REQUIRE(s.command("input.release", Json{{"key", "D"}}).value()["released"] == Json::array({"D"}));
     REQUIRE(s.command("input.release", Json::object()).value()["released"].empty());
+}
+
+TEST_CASE("the window's view drawn at a scale is stretched to the window, its coordinates the window's", "[runtime][render][scale]") {
+    auto o = hello_options(-1);
+    o.width = 320;
+    o.height = 180;
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}, {"render", "each"}}).has_value());
+    const Json ball = s.command("world.get", Json{{"entity", "Ball"}, {"component", "Transform"}}).value()["position"];
+    const Json full = s.command("render.project", Json{{"point", ball}}).value();
+    REQUIRE(s.command("render.pick", Json{{"x", full["x"]}, {"y", full["y"]}}).value()["name"] == "Ball");
+    const Json set = s.command("render.scale", Json{{"scale", 0.5}}).value();
+    REQUIRE(set["scale"] == 0.5);
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    const Json drawn = s.command("render.stats", Json::object()).value()["scale"];
+    INFO(drawn.dump());
+    REQUIRE(drawn["width"] == 160);
+    REQUIRE(drawn["height"] == 90);
+    // The ball where it was in window pixels, and picked there; the picture the window's size.
+    const Json half = s.command("render.project", Json{{"point", ball}}).value();
+    REQUIRE(half["x"].get<double>() == Catch::Approx(full["x"].get<double>()).margin(1.0));
+    REQUIRE(half["y"].get<double>() == Catch::Approx(full["y"].get<double>()).margin(1.0));
+    REQUIRE(s.command("render.pick", Json{{"x", half["x"]}, {"y", half["y"]}}).value()["name"] == "Ball");
+    REQUIRE(s.command("capture", Json{{"pixel", Json{{"x", 319}, {"y", 179}}}}).has_value());
+    // Back to the whole window: nothing drawn small.
+    REQUIRE(s.command("render.scale", Json{{"scale", 1}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+    REQUIRE_FALSE(s.command("render.stats", Json::object()).value().contains("scale"));
+    // Dynamic: a GPU target no frame can meet takes the fraction down to its least.
+    REQUIRE(s.command("render.scale", Json{{"dynamic", true}, {"target_ms", 0.5}, {"least", 0.5}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 200}, {"render", "each"}}).has_value());
+    const Json rs = s.command("render.stats", Json::object()).value();
+    if (rs.contains("gpu")) REQUIRE(s.command("render.scale", Json::object()).value()["drawn"]["scale"].get<double>() < 1.0);
 }
 
 TEST_CASE("a reload after a script error drops the old handlers before the new bundle's join", "[runtime][reload]") {
@@ -941,6 +976,63 @@ TEST_CASE("particles spawn, draw, burst and hash deterministically", "[runtime][
     }
     REQUIRE(a.command("state", Json::object()).value()["state_hash"] == b.command("state", Json::object()).value()["state_hash"]);
     REQUIRE(a.command("particles.stats", Json::object()).value()["alive"].get<int>() > 0);
+}
+
+TEST_CASE("particles on the GPU are drawn from their ring, owed by the ticks; turbulence stirs them", "[runtime][particles][gpu]") {
+    auto make = [] {
+        app::Options o;
+        o.project_dir = root() / "samples" / "playground";
+        o.bundle = root() / "build" / "ts" / "playground.js";
+        o.project_config = o.bundle.string() + ".project.json";
+        o.headless = true;
+        o.paused = true;
+        o.frames = 100000;
+        o.width = 320;
+        o.height = 180;
+        o.seed = 5;
+        o.log_level = "warn";
+        return o;
+    };
+    // The fountain's column, sampled where the particles rise, with the fountain on the GPU or still.
+    auto column = [&](bool gpu) {
+        app::Session s(make());
+        REQUIRE(s.start().has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "/Level/Fountain"}, {"component", "ParticleEmitter"}, {"value", Json{{"gpu", true}, {"emitting", gpu}, {"rate", 3000}, {"max", 20000}, {"size", Json::array({0.15, 0.1})}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+        const Json stats = s.command("particles.stats", Json::object()).value();
+        const Json rs = s.command("render.stats", Json::object()).value();
+        INFO(stats.dump());
+        REQUIRE(rs["particles"] == 0);   // none of them through the CPU's quads
+        bool pooled = false;
+        for (const Json& p : stats["pools"]) if (p.value("gpu", false)) pooled = p["spawned"].get<int>() == (gpu ? 3000 : 0);
+        REQUIRE(pooled);
+        std::vector<double> lum;
+        for (float y = 0.6f; y <= 2.2f; y += 0.2f) {
+            const Json pr = s.command("render.project", Json{{"point", {{"x", -4.0}, {"y", y}, {"z", -4.0}}}}).value();
+            for (int dx = -4; dx <= 4; dx += 2) {
+                const Json px = s.command("capture", Json{{"pixel", Json{{"x", pr["x"].get<double>() + dx}, {"y", pr["y"].get<double>()}}}}).value()["pixel"];
+                lum.push_back(px[0].get<double>() + px[1].get<double>() + px[2].get<double>());
+            }
+        }
+        return lum;
+    };
+    const std::vector<double> on = column(true), off = column(false);
+    double changed = 0;
+    for (std::size_t i = 0; i < on.size(); ++i) changed += std::fabs(on[i] - off[i]);
+    REQUIRE(changed > 1.0);
+    // Turbulence on the CPU: the same fountain's particles spread sideways further when stirred.
+    auto spread = [&](float turbulence) {
+        app::Session s(make());
+        REQUIRE(s.start().has_value());
+        REQUIRE(s.command("world.set", Json{{"entity", "/Level/Fountain"}, {"component", "ParticleEmitter"}, {"value", Json{{"turbulence", turbulence}, {"spread", 0}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+        double far = 0;
+        const Json list = s.command("particles.list", Json{{"entity", "/Level/Fountain"}, {"limit", 200}}).value()["particles"];
+        for (const Json& p : list) far += std::hypot(p["position"]["x"].get<double>() + 4.0, p["position"]["z"].get<double>() + 4.0);
+        return list.empty() ? 0.0 : far / static_cast<double>(list.size());
+    };
+    REQUIRE(spread(0.0f) < 0.05);
+    REQUIRE(spread(8.0f) > 0.1);
 }
 
 TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime][joints]") {

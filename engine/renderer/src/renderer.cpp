@@ -297,6 +297,208 @@ struct VsOut {
 }
 )WGSL";
 
+// GPU particles (docs/design/particles.md, On the GPU): one thread a slot of an emitter's ring. The
+// window's births take the slots after the last ones, each born at its own moment of the window
+// where the emitter was then; every live particle is moved through what is left of the window in
+// steps of at most a sixtieth of a second: gravity, drag, turbulence, and the floor.
+constexpr const char* kParticleSimWgsl = R"WGSL(
+struct GpuParticle {
+    pos: vec3f,
+    age: f32,
+    vel: vec3f,
+    life: f32,
+};
+struct GpuEmitter {
+    origin: vec4f,     // xyz where the emitter is at the window's end (0 for a local one), w the window's seconds
+    prev: vec4f,       // xyz where it was at the window's start, w the seconds simulated before the window
+    axis: vec4f,       // xyz the cone's axis in the world, w cos(spread)
+    gravity: vec4f,    // xyz, w drag
+    ranges: vec4f,     // speed least and most, life least and most
+    ground: vec4f,     // x the floor in the particles' space, y bounce, z floor friction, w turbulence
+    look: vec4f,       // x size at birth, y at death, z stretch, w one over the turbulence's scale
+    color0: vec4f,     // linear, at birth
+    color1: vec4f,     // at death
+    place: vec4f,      // xyz added to every particle (a local emitter's position), w 1 for billboards
+    counts: vec4u,     // x the ring's first new slot, y particles born in the window, z the ring's size, w seed
+    extra: vec4u,      // x particles born before the window, y the entity's id
+    depth_vp: mat4x4f, // the view the depth prepass was drawn from (last frame's, for the compute pass)
+    depth_inv: mat4x4f,
+    depth_info: vec4f, // x, y the prepass's size, z 1 when there is one, w 1 when the particles collide with it
+    eye: vec4f,        // where that view's camera was
+};
+@group(0) @binding(0) var<storage, read_write> ring: array<GpuParticle>;
+@group(0) @binding(1) var<uniform> e: GpuEmitter;
+@group(0) @binding(2) var depth_tex: texture_depth_2d;
+
+// A texel of the depth prepass back into the world.
+fn depth_point(px: vec2i, z: f32) -> vec3f {
+    let uv = (vec2f(px) + 0.5) / e.depth_info.xy;
+    let w = e.depth_inv * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
+    return w.xyz / w.w;
+}
+
+fn mixed(x: u32) -> u32 {
+    var h = x;
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return h;
+}
+fn rand(s: ptr<function, u32>) -> f32 {
+    *s = mixed(*s + 0x9e3779b9u);
+    return f32(*s >> 8u) / 16777216.0;
+}
+// The same field as the CPU's particles (renderer/src/particles.cpp).
+fn lattice(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+    let h = mixed((bitcast<u32>(x) * 0x8da6b343u) ^ (bitcast<u32>(y) * 0xd8163841u) ^ (bitcast<u32>(z) * 0xcb1ab31fu) ^ (seed * 0x9e3779b9u));
+    return f32(h >> 8u) / 16777216.0 * 2.0 - 1.0;
+}
+fn value_noise(p: vec3f, seed: u32) -> f32 {
+    let f = floor(p);
+    let i = vec3i(f);
+    let t = p - f;
+    let w = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    let x00 = mix(lattice(i.x, i.y, i.z, seed), lattice(i.x + 1, i.y, i.z, seed), w.x);
+    let x10 = mix(lattice(i.x, i.y + 1, i.z, seed), lattice(i.x + 1, i.y + 1, i.z, seed), w.x);
+    let x01 = mix(lattice(i.x, i.y, i.z + 1, seed), lattice(i.x + 1, i.y, i.z + 1, seed), w.x);
+    let x11 = mix(lattice(i.x, i.y + 1, i.z + 1, seed), lattice(i.x + 1, i.y + 1, i.z + 1, seed), w.x);
+    return mix(mix(x00, x10, w.y), mix(x01, x11, w.y), w.z);
+}
+fn field(q: vec3f) -> vec3f {
+    return vec3f(value_noise(q, 1u), value_noise(q, 2u), value_noise(q, 3u));
+}
+fn curl_noise(p0: vec3f, t: f32) -> vec3f {
+    let p = p0 + vec3f(0.0, t * 0.25, 0.0);
+    let h = 0.05;
+    let dx = (field(p + vec3f(h, 0.0, 0.0)) - field(p - vec3f(h, 0.0, 0.0))) * (0.5 / h);
+    let dy = (field(p + vec3f(0.0, h, 0.0)) - field(p - vec3f(0.0, h, 0.0))) * (0.5 / h);
+    let dz = (field(p + vec3f(0.0, 0.0, h)) - field(p - vec3f(0.0, 0.0, h))) * (0.5 / h);
+    return vec3f(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
+}
+
+@compute @workgroup_size(64) fn simulate(@builtin(global_invocation_id) gid: vec3u) {
+    let n = e.counts.z;
+    let i = gid.x;
+    if (i >= n) { return; }
+    let dt = e.origin.w;
+    let born_now = e.counts.y;
+    var p = ring[i];
+    var left = dt;
+    let d = (i + n - e.counts.x) % n;   // which of the window's births this slot takes
+    if (d < born_now) {
+        var s = mixed(e.counts.w ^ mixed(e.extra.x + d));
+        let a = e.axis.xyz;
+        let cz = mix(1.0, e.axis.w, rand(&s));   // uniform over the cone's cap
+        let sz = sqrt(max(0.0, 1.0 - cz * cz));
+        let phi = 6.28318530718 * rand(&s);
+        let helper = select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), abs(a.y) < 0.99);
+        let u = normalize(cross(helper, a));
+        let v = cross(a, u);
+        let speed = mix(e.ranges.x, e.ranges.y, rand(&s));
+        let at = (f32(d) + 0.5) / f32(born_now);
+        p.vel = (a * cz + u * (sz * cos(phi)) + v * (sz * sin(phi))) * speed;
+        p.pos = mix(e.prev.xyz, e.origin.xyz, at);
+        p.life = max(0.01, mix(e.ranges.z, e.ranges.w, rand(&s)));
+        p.age = 0.0;
+        left = dt * (1.0 - at);
+    }
+    if (p.life > 0.0 && p.age < p.life && left > 0.0) {
+        let steps = u32(clamp(ceil(left * 60.0), 1.0, 8.0));
+        let h = left / f32(steps);
+        let keep = max(0.0, 1.0 - e.gravity.w * h);
+        let slide = max(0.0, 1.0 - e.ground.z * h);
+        var t = e.prev.w + dt - left;
+        for (var k = 0u; k < steps; k++) {
+            var push = e.gravity.xyz;
+            if (e.ground.w != 0.0) { push += curl_noise((p.pos + e.place.xyz) * e.look.w, t) * e.ground.w; }
+            p.vel = (p.vel + push * h) * keep;
+            let was = p.pos;
+            p.pos += p.vel * h;
+            if (e.depth_info.w > 0.5) {
+                // What is drawn: a particle that went behind the surface the prepass saw, by no more
+                // than it moved (measured across the surface, so a glancing view does not let it
+                // through), is put back and bounces off it (or slides along it).
+                let wp = p.pos + e.place.xyz;
+                let c = e.depth_vp * vec4f(wp, 1.0);
+                if (c.w > 1e-4) {
+                    let ndc = c.xyz / c.w;
+                    let size = vec2i(e.depth_info.xy);
+                    if (abs(ndc.x) < 1.0 && abs(ndc.y) < 1.0 && ndc.z > 0.0 && ndc.z < 1.0) {
+                        let px = clamp(vec2i(vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * e.depth_info.xy), vec2i(0), size - vec2i(2));
+                        let z = textureLoad(depth_tex, px, 0);
+                        if (z < 1.0 && ndc.z > z) {
+                            let surface = depth_point(px, z);
+                            let a = depth_point(px + vec2i(1, 0), textureLoad(depth_tex, px + vec2i(1, 0), 0));
+                            let b = depth_point(px + vec2i(0, 1), textureLoad(depth_tex, px + vec2i(0, 1), 0));
+                            var n = cross(b - surface, a - surface);
+                            if (dot(n, n) > 1e-12) {
+                                n = normalize(n);
+                                if (dot(n, e.eye.xyz - surface) < 0.0) { n = -n; }
+                                let behind = -dot(wp - surface, n);
+                                if (behind < length(p.vel) * h * 1.5 + 0.05) {
+                                    p.pos = was;
+                                    let into = -dot(p.vel, n);
+                                    if (into > 0.0) {
+                                        if (into * e.ground.y > 0.05) {
+                                            p.vel += n * (into * (1.0 + e.ground.y));
+                                        } else {
+                                            p.vel = (p.vel + n * into) * slide;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (p.pos.y < e.ground.x) {
+                p.pos.y = e.ground.x;
+                let into = -p.vel.y;
+                if (into > 0.0 && into * e.ground.y > 0.05) {
+                    p.vel.y = into * e.ground.y;
+                } else {
+                    p.vel.y = 0.0;
+                    p.vel.x *= slide;
+                    p.vel.z *= slide;
+                }
+            }
+            t += h;
+        }
+        p.age += left;
+    }
+    ring[i] = p;
+}
+)WGSL";
+
+// Render scale (docs/design/rendering.md, Render scale): the view drawn small, stretched up to the
+// window by bilinear filtering and sharpened against its four neighbours, held within their range
+// so edges do not ring.
+constexpr const char* kUpscaleWgsl = R"WGSL(
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var<uniform> up: vec4f;   // x sharpen, y unused, zw one over the window's size
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let uv = pos.xy * up.zw;
+    let c = textureSampleLevel(src, samp, uv, 0.0).rgb;
+    if (up.x <= 0.0) { return vec4f(c, 1.0); }
+    let t = 1.0 / vec2f(textureDimensions(src));
+    let n = textureSampleLevel(src, samp, uv + vec2f(0.0, -t.y), 0.0).rgb;
+    let s = textureSampleLevel(src, samp, uv + vec2f(0.0, t.y), 0.0).rgb;
+    let e = textureSampleLevel(src, samp, uv + vec2f(t.x, 0.0), 0.0).rgb;
+    let w = textureSampleLevel(src, samp, uv + vec2f(-t.x, 0.0), 0.0).rgb;
+    let lo = min(min(min(n, s), min(e, w)), c);
+    let hi = max(max(max(n, s), max(e, w)), c);
+    let sharp = c + (c - (n + s + e + w) * 0.25) * (up.x * 2.0);
+    return vec4f(clamp(sharp, lo, hi), 1.0);
+}
+)WGSL";
+
 constexpr const char* kMeshWgsl = R"WGSL(
 struct Frame {
     view_proj: mat4x4f,
@@ -1386,6 +1588,83 @@ fn sky_color(ndc: vec2f) -> vec3f {
 }
 
 // Sprites: no lighting, alpha blended, transparent pixels leave no id behind.
+// GPU particles (docs/design/particles.md, On the GPU): drawn from the ring the compute pass keeps,
+// six vertices a slot, a quad facing the camera (or flat in XY) sized and tinted by age, through the
+// sprites' unlit fragment. A dead slot's quad is behind the near plane.
+struct GpuParticle {
+    pos: vec3f,
+    age: f32,
+    vel: vec3f,
+    life: f32,
+};
+struct GpuEmitter {
+    origin: vec4f,     // xyz where the emitter is at the window's end (0 for a local one), w the window's seconds
+    prev: vec4f,       // xyz where it was at the window's start, w the seconds simulated before the window
+    axis: vec4f,       // xyz the cone's axis in the world, w cos(spread)
+    gravity: vec4f,    // xyz, w drag
+    ranges: vec4f,     // speed least and most, life least and most
+    ground: vec4f,     // x the floor in the particles' space, y bounce, z floor friction, w turbulence
+    look: vec4f,       // x size at birth, y at death, z stretch, w one over the turbulence's scale
+    color0: vec4f,     // linear, at birth
+    color1: vec4f,     // at death
+    place: vec4f,      // xyz added to every particle (a local emitter's position), w 1 for billboards
+    counts: vec4u,     // x the ring's first new slot, y particles born in the window, z the ring's size, w seed
+    extra: vec4u,      // x particles born before the window, y the entity's id
+    depth_vp: mat4x4f, // the view the depth prepass was drawn from (last frame's, for the compute pass)
+    depth_inv: mat4x4f,
+    depth_info: vec4f, // x, y the prepass's size, z 1 when there is one, w 1 when the particles collide with it
+    eye: vec4f,        // where that view's camera was
+};
+@group(3) @binding(2) var<storage, read> gpu_ring: array<GpuParticle>;
+@group(3) @binding(3) var<uniform> gpu_emitter: GpuEmitter;
+@group(3) @binding(4) var gpu_depth: texture_depth_2d;
+@vertex fn vs_particle(@builtin(vertex_index) vid: u32, @builtin(instance_index) slot: u32) -> VsOut {
+    var out: VsOut;
+    let p = gpu_ring[slot];
+    let e = gpu_emitter;
+    if (p.life <= 0.0 || p.age >= p.life) {
+        out.clip = vec4f(0.0, 0.0, -2.0, 1.0);
+        return out;
+    }
+    let k = clamp(p.age / p.life, 0.0, 1.0);
+    let size = mix(e.look.x, e.look.y, k);
+    var corners = array<vec2f, 6>(vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5));
+    let c = corners[vid % 6u];
+    var r = vec3f(1.0, 0.0, 0.0);
+    var u = vec3f(0.0, 1.0, 0.0);
+    if (e.place.w > 0.5) {
+        // The camera's right and up in the world, from the inverse of its view and projection.
+        let o4 = frame.inv_view_proj * vec4f(0.0, 0.0, 0.5, 1.0);
+        let r4 = frame.inv_view_proj * vec4f(1.0, 0.0, 0.5, 1.0);
+        let u4 = frame.inv_view_proj * vec4f(0.0, 1.0, 0.5, 1.0);
+        let o = o4.xyz / o4.w;
+        r = normalize(r4.xyz / r4.w - o);
+        u = normalize(u4.xyz / u4.w - o);
+    }
+    var along = size;
+    if (e.look.z > 0.0) {
+        // Stretched along its motion as seen: in the camera's plane, or in XY.
+        let f = cross(r, u);
+        let seen = p.vel - f * dot(p.vel, f);
+        let l = length(seen);
+        if (l > 1e-4) {
+            r = seen / l;
+            u = cross(f, r);
+            along = size + e.look.z * l;
+        }
+    }
+    let world = vec4f(e.place.xyz + p.pos + r * (c.x * along) + u * (c.y * size), 1.0);
+    out.clip = frame.view_proj * world;
+    out.cur = frame.cur_view_proj * world;
+    out.prev = frame.prev_view_proj * world;
+    out.world_pos = world.xyz;
+    out.normal = cross(r, u);
+    out.uv = vec2f(c.x + 0.5, 0.5 - c.y);
+    out.color = mix(e.color0, e.color1, k);
+    out.id = e.extra.y;
+    return out;
+}
+
 fn unlit(in: VsOut) -> vec4f {
     return textureSample(base_tex, base_samp, in.uv) * in.color;
 }
@@ -1399,6 +1678,34 @@ fn unlit(in: VsOut) -> vec4f {
 }
 @fragment fn fs_unlit_color(in: VsOut) -> @location(0) vec4f {
     let base = unlit(in);
+    if (base.a < 0.02) { discard; }
+    return base;
+}
+// GPU particles fade where they near what is behind them (by the depth prepass, when there is one),
+// so a plume meets the ground softly instead of along a line.
+fn particle_base(in: VsOut) -> vec4f {
+    var base = unlit(in);
+    if (gpu_emitter.depth_info.z > 0.5) {
+        let z = textureLoad(gpu_depth, vec2i(in.clip.xy), 0);
+        if (z < 1.0) {
+            let uv = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
+            let w = frame.inv_view_proj * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
+            let gap = dot(w.xyz / w.w - in.world_pos, frame.camera_fwd.xyz);
+            base.a *= clamp(gap / max(gpu_emitter.look.x, 0.02), 0.0, 1.0);
+        }
+    }
+    return base;
+}
+@fragment fn fs_particle(in: VsOut) -> FsOut {
+    let base = particle_base(in);
+    if (base.a < 0.02) { discard; }
+    var out: FsOut;
+    out.color = base;
+    out.id = in.id;
+    return out;
+}
+@fragment fn fs_particle_color(in: VsOut) -> @location(0) vec4f {
+    let base = particle_base(in);
     if (base.a < 0.02) { discard; }
     return base;
 }
@@ -2927,6 +3234,45 @@ struct Renderer::Impl {
     const Animation* animation = nullptr;  // poses for the frame being drawn
     WGPURenderPipeline sprite_pipeline = nullptr;
     WGPURenderPipeline sprite_add_pipeline = nullptr;   // additive sprites and particles
+    // GPU particles (docs/design/particles.md, On the GPU): each emitter's ring, the compute pass
+    // that moves it, and the pipelines that draw it through the sprites' fragment.
+    WGPURenderPipeline particle_pipeline = nullptr;
+    WGPURenderPipeline particle_add_pipeline = nullptr;
+    WGPUBindGroupLayout particle_draw_bgl = nullptr;
+    WGPUPipelineLayout particle_layout = nullptr;
+    WGPUShaderModule particle_sim_shader = nullptr;
+    WGPUBindGroupLayout particle_sim_bgl = nullptr;
+    WGPUPipelineLayout particle_sim_layout = nullptr;
+    WGPUComputePipeline particle_sim_pipeline = nullptr;
+    struct GpuEmitterParams {
+        float origin[4], prev[4], axis[4], gravity[4], ranges[4], ground[4], look[4], color0[4], color1[4], place[4];
+        std::uint32_t counts[4], extra[4];
+        float depth_vp[16], depth_inv[16], depth_info[4], eye[4];
+    };
+    struct GpuEmitter {
+        WGPUBuffer ring = nullptr, params = nullptr;
+        WGPUBindGroup sim = nullptr, draw = nullptr;
+        std::uint32_t size = 0, head = 0;
+        double seconds = 0;          // the pool's seconds simulated so far
+        std::uint64_t spawned = 0;   // the pool's particles born so far
+        Vec3 last{0, 0, 0};          // where the emitter was at the last window's end
+        bool primed = false;
+        bool due = false;            // to be moved this frame
+        bool seen = false;
+        WGPUTextureView depth = nullptr;   // the depth its groups were made with
+        void release() {
+            if (sim) wgpuBindGroupRelease(sim);
+            if (draw) wgpuBindGroupRelease(draw);
+            if (ring) wgpuBufferRelease(ring);
+            if (params) wgpuBufferRelease(params);
+            sim = draw = nullptr;
+            ring = params = nullptr;
+        }
+    };
+    std::map<world::EntityId, GpuEmitter> gpu_emitters;
+    Mat4 particle_vp, particle_inv;   // the last frame's view, which drew the prepass the compute pass reads
+    Vec3 particle_eye{0, 0, 0};
+    bool particle_view = false;
     WGPURenderPipeline sprite_lit_pipeline = nullptr;   // lit sprites and tile maps: the meshes' shading, alpha blended
     AmbientSettings ambient;
     WGPURenderPipeline line_pipeline = nullptr;
@@ -3449,6 +3795,142 @@ struct Renderer::Impl {
     Viewport viewport;   // requested
     Viewport applied;    // used by the last frame
     std::uint32_t last_width = 0, last_height = 0;
+    // Render scale (docs/design/rendering.md, Render scale): the window's view drawn into these at a
+    // fraction of its size, then stretched into the frame.
+    RenderScaleSettings scale_settings;
+    float scale_now = 1.0f;                       // the fraction drawn at (dynamic moves it)
+    float window_sx = 1.0f, window_sy = 1.0f;     // window pixels per drawn pixel, last frame
+    std::uint32_t scaled_w = 0, scaled_h = 0;
+    WGPUTexture scaled_color = nullptr, scaled_depth = nullptr;
+    WGPUTextureView scaled_color_view = nullptr, scaled_depth_view = nullptr;
+    WGPUShaderModule upscale_shader = nullptr;
+    WGPUBindGroupLayout upscale_bgl = nullptr;
+    WGPUPipelineLayout upscale_layout = nullptr;
+    WGPURenderPipeline upscale_pipeline = nullptr;
+    WGPUSampler upscale_sampler = nullptr;
+    WGPUBuffer upscale_params = nullptr;
+    WGPUBindGroup upscale_bg = nullptr;
+    std::vector<double> scale_samples;            // dynamic: the GPU's frames since the last change
+    std::uint64_t scale_seen = 0;                 // the gpu_frames count last looked at
+
+    void release_scaled() {
+        if (upscale_bg) wgpuBindGroupRelease(upscale_bg);
+        if (scaled_color_view) wgpuTextureViewRelease(scaled_color_view);
+        if (scaled_depth_view) wgpuTextureViewRelease(scaled_depth_view);
+        if (scaled_color) wgpuTextureRelease(scaled_color);
+        if (scaled_depth) wgpuTextureRelease(scaled_depth);
+        upscale_bg = nullptr;
+        scaled_color_view = scaled_depth_view = nullptr;
+        scaled_color = scaled_depth = nullptr;
+        scaled_w = scaled_h = 0;
+    }
+
+    Status ensure_scaled(std::uint32_t w, std::uint32_t h) {
+        if (!upscale_pipeline) {
+            POCKET_TRY(mod, device->create_shader("pocket.upscale", kUpscaleWgsl));
+            upscale_shader = mod;
+            WGPUBindGroupLayoutEntry e[3]{};
+            e[0].binding = 0;
+            e[0].visibility = WGPUShaderStage_Fragment;
+            e[0].texture.sampleType = WGPUTextureSampleType_Float;
+            e[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+            e[1].binding = 1;
+            e[1].visibility = WGPUShaderStage_Fragment;
+            e[1].sampler.type = WGPUSamplerBindingType_Filtering;
+            e[2].binding = 2;
+            e[2].visibility = WGPUShaderStage_Fragment;
+            e[2].buffer.type = WGPUBufferBindingType_Uniform;
+            WGPUBindGroupLayoutDescriptor bd{};
+            bd.label = rhi::str("pocket.upscale");
+            bd.entryCount = 3;
+            bd.entries = e;
+            upscale_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+            WGPUPipelineLayoutDescriptor pld{};
+            pld.label = rhi::str("pocket.upscale");
+            pld.bindGroupLayoutCount = 1;
+            pld.bindGroupLayouts = &upscale_bgl;
+            upscale_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+            WGPUColorTargetState target{};
+            target.format = device->color_format();
+            target.writeMask = WGPUColorWriteMask_All;
+            WGPUFragmentState fs{};
+            fs.module = upscale_shader;
+            fs.entryPoint = rhi::str("fs");
+            fs.targetCount = 1;
+            fs.targets = &target;
+            WGPURenderPipelineDescriptor rpd{};
+            rpd.label = rhi::str("pocket.upscale");
+            rpd.layout = upscale_layout;
+            rpd.vertex.module = upscale_shader;
+            rpd.vertex.entryPoint = rhi::str("vs");
+            rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+            rpd.multisample.count = 1;
+            rpd.multisample.mask = 0xFFFFFFFF;
+            rpd.fragment = &fs;
+            upscale_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            if (!upscale_pipeline) return fail("gpu_pipeline_failed", "the render scale's stretch could not be created");
+            WGPUSamplerDescriptor sd{};
+            sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_ClampToEdge;
+            sd.magFilter = sd.minFilter = WGPUFilterMode_Linear;
+            sd.maxAnisotropy = 1;
+            sd.lodMaxClamp = 32.0f;
+            upscale_sampler = wgpuDeviceCreateSampler(device->device(), &sd);
+            upscale_params = device->create_buffer("pocket.upscale", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 4);
+        }
+        if (scaled_w == w && scaled_h == h && scaled_color) return {};
+        release_scaled();
+        auto [ct, cv] = make_target("pocket.scaled.color", w, h, device->color_format(), WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst);
+        auto [dt, dv] = make_target("pocket.scaled.depth", w, h, device->depth_format(), WGPUTextureUsage_RenderAttachment);
+        if (!ct || !dt) return fail("gpu_texture_failed", "cannot create the scaled view {}x{}", w, h);
+        scaled_color = ct;
+        scaled_color_view = cv;
+        scaled_depth = dt;
+        scaled_depth_view = dv;
+        scaled_w = w;
+        scaled_h = h;
+        WGPUBindGroupEntry be[3]{};
+        be[0].binding = 0;
+        be[0].textureView = scaled_color_view;
+        be[1].binding = 1;
+        be[1].sampler = upscale_sampler;
+        be[2].binding = 2;
+        be[2].buffer = upscale_params;
+        be[2].size = sizeof(float) * 4;
+        WGPUBindGroupDescriptor bgd{};
+        bgd.label = rhi::str("pocket.upscale");
+        bgd.layout = upscale_bgl;
+        bgd.entryCount = 3;
+        bgd.entries = be;
+        upscale_bg = wgpuDeviceCreateBindGroup(device->device(), &bgd);
+        return {};
+    }
+
+    // Dynamic scale: every half second of frames timed, the fraction that brings the GPU's frame to
+    // its target (the GPU's time going with the pixels drawn, so with the square of the fraction),
+    // down at once when over, up a step at a time when well under, in steps of a twentieth.
+    void steer_scale() {
+        const RenderScaleSettings& s = scale_settings;
+        const float most = std::clamp(s.scale, 0.25f, 1.0f);
+        if (!s.dynamic) {
+            scale_now = most;
+            return;
+        }
+        if (stats.gpu_frames > scale_seen && stats.gpu_ms > 0) {
+            scale_seen = stats.gpu_frames;
+            scale_samples.push_back(stats.gpu_ms);
+        }
+        if (scale_samples.size() < 30) return;
+        std::vector<double> v = scale_samples;
+        scale_samples.clear();
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
+        const double ms = v[v.size() / 2];
+        const float least = std::clamp(s.least, 0.25f, most);
+        float next = scale_now;
+        if (ms > s.target_ms) next = scale_now * static_cast<float>(std::sqrt(s.target_ms / ms)) * 0.95f;
+        else if (ms < s.target_ms * 0.6) next = scale_now + 0.05f;
+        next = std::clamp(std::round(next * 20.0f) / 20.0f, least, most);
+        scale_now = next;
+    }
     std::vector<std::uint8_t> object_staging;
 
     void release_texture(GpuTexture& t) {
@@ -3540,6 +4022,13 @@ struct Renderer::Impl {
         if (volume_samp) wgpuSamplerRelease(volume_samp);
         if (ao_white_view) wgpuTextureViewRelease(ao_white_view);
         if (ao_white_tex) wgpuTextureRelease(ao_white_tex);
+        release_scaled();
+        if (upscale_pipeline) wgpuRenderPipelineRelease(upscale_pipeline);
+        if (upscale_layout) wgpuPipelineLayoutRelease(upscale_layout);
+        if (upscale_bgl) wgpuBindGroupLayoutRelease(upscale_bgl);
+        if (upscale_shader) wgpuShaderModuleRelease(upscale_shader);
+        if (upscale_sampler) wgpuSamplerRelease(upscale_sampler);
+        if (upscale_params) wgpuBufferRelease(upscale_params);
         if (prepass_view) wgpuTextureViewRelease(prepass_view);
         if (prepass_tex) wgpuTextureRelease(prepass_tex);
         if (velocity_view) wgpuTextureViewRelease(velocity_view);
@@ -3642,6 +4131,15 @@ struct Renderer::Impl {
         if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
         if (sprite_add_pipeline) wgpuRenderPipelineRelease(sprite_add_pipeline);
         if (sprite_lit_pipeline) wgpuRenderPipelineRelease(sprite_lit_pipeline);
+        for (auto& [id, ge] : gpu_emitters) ge.release();
+        if (particle_pipeline) wgpuRenderPipelineRelease(particle_pipeline);
+        if (particle_add_pipeline) wgpuRenderPipelineRelease(particle_add_pipeline);
+        if (particle_layout) wgpuPipelineLayoutRelease(particle_layout);
+        if (particle_draw_bgl) wgpuBindGroupLayoutRelease(particle_draw_bgl);
+        if (particle_sim_pipeline) wgpuComputePipelineRelease(particle_sim_pipeline);
+        if (particle_sim_layout) wgpuPipelineLayoutRelease(particle_sim_layout);
+        if (particle_sim_bgl) wgpuBindGroupLayoutRelease(particle_sim_bgl);
+        if (particle_sim_shader) wgpuShaderModuleRelease(particle_sim_shader);
         if (line_pipeline) wgpuRenderPipelineRelease(line_pipeline);
         if (line_layout) wgpuPipelineLayoutRelease(line_layout);
         if (line_shader) wgpuShaderModuleRelease(line_shader);
@@ -6975,7 +7473,7 @@ fn time() -> f32 { return fx.time.x; }
     void release_scene_pipelines() {
         if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
         sky_pipeline = nullptr;
-        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
+        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &particle_pipeline, &particle_add_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
         }
@@ -7082,6 +7580,23 @@ fn time() -> f32 { return fx.time.x; }
         rpd.label = rhi::str("pocket.sprite.add");
         sprite_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
         if (!sprite_add_pipeline) return fail("gpu_pipeline_failed", "additive sprite pipeline creation failed");
+        // GPU particles: the sprites' states, their quads made from the ring (no vertex buffer).
+        {
+            WGPURenderPipelineDescriptor prpd = rpd;
+            WGPUFragmentState pfs = fs;
+            pfs.entryPoint = rhi::str(split ? "fs_particle_color" : "fs_particle");
+            prpd.fragment = &pfs;
+            prpd.layout = particle_layout;
+            prpd.vertex.entryPoint = rhi::str("vs_particle");
+            prpd.vertex.bufferCount = 0;
+            prpd.vertex.buffers = nullptr;
+            prpd.label = rhi::str("pocket.particles.add");
+            particle_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &prpd);
+            targets[0].blend = &blend;
+            prpd.label = rhi::str("pocket.particles");
+            particle_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &prpd);
+            if (!particle_pipeline || !particle_add_pipeline) return fail("gpu_pipeline_failed", "GPU particle pipeline creation failed");
+        }
         targets[0].blend = &blend;
         // Lit sprites and tile maps: the meshes' shading (the lights, the sun, the ambient and a
         // normal map) over the sprite's state, alpha blended.
@@ -7388,6 +7903,62 @@ fn time() -> f32 { return fx.time.x; }
         pld.bindGroupLayoutCount = 3;
         pld.bindGroupLayouts = bgls;
         layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        {
+            // GPU particles: the ring and its emitter's uniform, read where the quads are made
+            // (group 3, beside the meshes' three) and written by the compute pass.
+            WGPUBindGroupLayoutEntry pe[3]{};
+            pe[0].binding = 2;
+            pe[0].visibility = WGPUShaderStage_Vertex;
+            pe[0].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+            pe[1].binding = 3;
+            pe[1].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+            pe[1].buffer.type = WGPUBufferBindingType_Uniform;
+            pe[2].binding = 4;
+            pe[2].visibility = WGPUShaderStage_Fragment;
+            pe[2].texture.sampleType = WGPUTextureSampleType_Depth;
+            pe[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+            WGPUBindGroupLayoutDescriptor pd{};
+            pd.label = rhi::str("pocket.particles.draw");
+            pd.entryCount = 3;
+            pd.entries = pe;
+            particle_draw_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &pd);
+            WGPUBindGroupLayout pbgls[4] = {scene_bgl, object_bgl, material_bgl, particle_draw_bgl};
+            WGPUPipelineLayoutDescriptor ppld{};
+            ppld.label = rhi::str("pocket.particles.draw");
+            ppld.bindGroupLayoutCount = 4;
+            ppld.bindGroupLayouts = pbgls;
+            particle_layout = wgpuDeviceCreatePipelineLayout(device->device(), &ppld);
+            WGPUBindGroupLayoutEntry se[3]{};
+            se[0].binding = 0;
+            se[0].visibility = WGPUShaderStage_Compute;
+            se[0].buffer.type = WGPUBufferBindingType_Storage;
+            se[1].binding = 1;
+            se[1].visibility = WGPUShaderStage_Compute;
+            se[1].buffer.type = WGPUBufferBindingType_Uniform;
+            se[2].binding = 2;
+            se[2].visibility = WGPUShaderStage_Compute;
+            se[2].texture.sampleType = WGPUTextureSampleType_Depth;
+            se[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+            WGPUBindGroupLayoutDescriptor sd{};
+            sd.label = rhi::str("pocket.particles.simulate");
+            sd.entryCount = 3;
+            sd.entries = se;
+            particle_sim_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &sd);
+            WGPUPipelineLayoutDescriptor spl{};
+            spl.label = rhi::str("pocket.particles.simulate");
+            spl.bindGroupLayoutCount = 1;
+            spl.bindGroupLayouts = &particle_sim_bgl;
+            particle_sim_layout = wgpuDeviceCreatePipelineLayout(device->device(), &spl);
+            POCKET_TRY(psim, device->create_shader("pocket.particles.simulate", kParticleSimWgsl));
+            particle_sim_shader = psim;
+            WGPUComputePipelineDescriptor cpd{};
+            cpd.label = rhi::str("pocket.particles.simulate");
+            cpd.layout = particle_sim_layout;
+            cpd.compute.module = particle_sim_shader;
+            cpd.compute.entryPoint = rhi::str("simulate");
+            particle_sim_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
+            if (!particle_sim_pipeline) return fail("gpu_pipeline_failed", "the GPU particles' simulation could not be created");
+        }
         WGPUPipelineLayoutDescriptor kpld{};
         kpld.label = rhi::str("pocket.sky");
         kpld.bindGroupLayoutCount = 1;
@@ -8789,6 +9360,67 @@ Renderer::ImageView Renderer::image_view(const std::string& path) {
 
 Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug, const RenderView* view) {
     Impl& im = *impl_;
+    // Render scale (docs/design/rendering.md, Render scale): the window's one view is drawn into a
+    // smaller frame of its own and stretched into the window's; cameras with viewports or targets of
+    // their own are drawn whole.
+    im.steer_scale();
+    const float scale = view ? 1.0f : im.scale_now;
+    if (scale >= 0.999f || frame.width < 8 || frame.height < 8) {
+        im.window_sx = im.window_sy = 1.0f;
+        POCKET_TRY_VOID(render_scene(frame, world, clear, particles, animation, debug, view));
+        im.stats.render_scale = 1.0f;
+        im.stats.render_width = frame.width;
+        im.stats.render_height = frame.height;
+        return {};
+    }
+    const auto w = std::max(1u, static_cast<std::uint32_t>(std::lround(static_cast<float>(frame.width) * scale)));
+    const auto h = std::max(1u, static_cast<std::uint32_t>(std::lround(static_cast<float>(frame.height) * scale)));
+    POCKET_TRY_VOID(im.ensure_scaled(w, h));
+    rhi::Frame inner = frame;
+    inner.color = im.scaled_color_view;
+    inner.color_texture = im.scaled_color;
+    inner.depth = im.scaled_depth_view;
+    inner.width = w;
+    inner.height = h;
+    // A viewport asked of the window, in the smaller frame's pixels.
+    const float sx = static_cast<float>(w) / static_cast<float>(frame.width), sy = static_cast<float>(h) / static_cast<float>(frame.height);
+    const Viewport asked = im.viewport;
+    if (asked.w > 0 && asked.h > 0) {
+        im.viewport = Viewport{static_cast<std::int32_t>(std::lround(asked.x * sx)), static_cast<std::int32_t>(std::lround(asked.y * sy)),
+                               std::max(1u, static_cast<std::uint32_t>(std::lround(asked.w * sx))), std::max(1u, static_cast<std::uint32_t>(std::lround(asked.h * sy)))};
+    }
+    const Status drawn = render_scene(inner, world, clear, particles, animation, debug, view);
+    im.viewport = asked;
+    POCKET_TRY_VOID(drawn);
+    im.window_sx = static_cast<float>(frame.width) / static_cast<float>(w);
+    im.window_sy = static_cast<float>(frame.height) / static_cast<float>(h);
+    im.stats.render_scale = scale;
+    im.stats.render_width = w;
+    im.stats.render_height = h;
+    // Stretched into the window's frame, sharpened.
+    const float up[4] = {std::clamp(im.scale_settings.sharpen, 0.0f, 1.0f), 0.0f, 1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height)};
+    im.device->write_buffer(im.upscale_params, 0, up, sizeof up);
+    WGPURenderPassColorAttachment ca{};
+    ca.view = frame.color;
+    ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    ca.loadOp = WGPULoadOp_Clear;
+    ca.storeOp = WGPUStoreOp_Store;
+    ca.clearValue = {0, 0, 0, 1};
+    WGPURenderPassDescriptor rp{};
+    rp.label = rhi::str("pocket.upscale");
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &ca;
+    WGPURenderPassEncoder enc = im.begin_pass(frame.encoder, rp);
+    wgpuRenderPassEncoderSetPipeline(enc, im.upscale_pipeline);
+    wgpuRenderPassEncoderSetBindGroup(enc, 0, im.upscale_bg, 0, nullptr);
+    wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(enc);
+    wgpuRenderPassEncoderRelease(enc);
+    return {};
+}
+
+Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug, const RenderView* view) {
+    Impl& im = *impl_;
     // A secondary view: the first view's frame-to-frame state kept aside and put back after, TAA and
     // the volume's history off for this one.
     im.secondary = view && view->secondary;
@@ -9574,6 +10206,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         bool additive = false;           // adds its light to what is behind (Sprite.additive, ParticleEmitter.additive)
         Impl::SpriteMaterial* user = nullptr;   // a material the project wrote (Sprite.material)
         bool lit = false;                // shaded by the scene's lights (Sprite.lit, TileMap.lit)
+        Impl::GpuEmitter* gpu = nullptr; // a GPU emitter's ring instead of one quad
     };
     std::vector<SpriteDraw> sprites;
     std::uint32_t tile_layers = 0, image_layers = 0, image_quads = 0;
@@ -9692,8 +10325,104 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
         const Mat4& view = im.camera.view;
         const Vec3 right{view.at(0, 0), view.at(1, 0), view.at(2, 0)};
         const Vec3 up{view.at(0, 1), view.at(1, 1), view.at(2, 1)};
+        for (auto& [gid, ge] : im.gpu_emitters) ge.seen = false;
         for (const auto& [id, pool] : particles->pools()) {
             const auto* e = world.try_get<world::ParticleEmitter>(id);
+            if (e && e->gpu && pool.gpu) {
+                // On the GPU (docs/design/particles.md, On the GPU): the window since the last
+                // frame is moved by the compute pass (the first view's), the ring drawn by every view.
+                Impl::GpuEmitter& ge = im.gpu_emitters[id];
+                ge.seen = true;
+                const auto size = static_cast<std::uint32_t>(std::clamp(e->max, 1, 1 << 20));
+                const bool deep = im.prepass_view && im.split_applied;
+                WGPUTextureView depth = deep ? im.prepass_view : im.no_depth_view;
+                if (ge.size != size || !ge.ring || ge.depth != depth) {
+                    if (ge.size != size || !ge.ring) {
+                        ge.release();
+                        ge.size = size;
+                        ge.head = 0;
+                        ge.ring = im.device->create_buffer("pocket.particles.ring", WGPUBufferUsage_Storage, static_cast<std::uint64_t>(size) * sizeof(float) * 8);
+                        ge.params = im.device->create_buffer("pocket.particles.emitter", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(Impl::GpuEmitterParams));
+                    }
+                    if (ge.sim) wgpuBindGroupRelease(ge.sim);
+                    if (ge.draw) wgpuBindGroupRelease(ge.draw);
+                    ge.depth = depth;
+                    WGPUBindGroupEntry be[3]{};
+                    be[0].binding = 0;
+                    be[0].buffer = ge.ring;
+                    be[0].size = WGPU_WHOLE_SIZE;
+                    be[1].binding = 1;
+                    be[1].buffer = ge.params;
+                    be[1].size = WGPU_WHOLE_SIZE;
+                    be[2].binding = 2;
+                    be[2].textureView = depth;
+                    WGPUBindGroupDescriptor bd{};
+                    bd.label = rhi::str("pocket.particles.simulate");
+                    bd.layout = im.particle_sim_bgl;
+                    bd.entryCount = 3;
+                    bd.entries = be;
+                    ge.sim = wgpuDeviceCreateBindGroup(im.device->device(), &bd);
+                    be[0].binding = 2;
+                    be[1].binding = 3;
+                    be[2].binding = 4;
+                    bd.label = rhi::str("pocket.particles.draw");
+                    bd.layout = im.particle_draw_bgl;
+                    ge.draw = wgpuDeviceCreateBindGroup(im.device->device(), &bd);
+                }
+                const auto* wt = world.try_get<world::WorldTransform>(id);
+                const Vec3 at = wt ? wt->position : Vec3{0, 0, 0};
+                if (!im.secondary) {
+                    // The window: the seconds and births the ticks owe, no longer than a particle lives.
+                    double dt = std::max(0.0, pool.gpu_seconds - ge.seconds);
+                    std::uint64_t born = pool.spawned >= ge.spawned ? pool.spawned - ge.spawned : 0;
+                    const double longest = std::max(e->lifetime.x, e->lifetime.y) + 0.1;
+                    if (dt > longest) {
+                        born = static_cast<std::uint64_t>(std::llround(static_cast<double>(born) * longest / dt));
+                        dt = longest;
+                    }
+                    const std::uint64_t serial = pool.spawned - std::min(pool.spawned, born);
+                    born = std::min<std::uint64_t>(born, size);
+                    ge.seconds = pool.gpu_seconds;
+                    ge.spawned = pool.spawned;
+                    Impl::GpuEmitterParams gp{};
+                    const Vec3 origin = e->world_space ? at : Vec3{0, 0, 0};
+                    const Vec3 start = e->world_space && ge.primed ? ge.last : origin;
+                    ge.last = origin;
+                    ge.primed = true;
+                    const Vec3 axis = (wt ? wt->rotation : Quat{}).rotate(length(e->direction) > 1e-6f ? normalize(e->direction) : Vec3{0, 1, 0});
+                    auto put = [](float* d, Vec3 v, float w) { d[0] = v.x; d[1] = v.y; d[2] = v.z; d[3] = w; };
+                    put(gp.origin, origin, static_cast<float>(dt));
+                    put(gp.prev, start, static_cast<float>(pool.gpu_seconds - dt));
+                    put(gp.axis, normalize(axis), std::cos(radians(std::clamp(e->spread, 0.0f, 180.0f))));
+                    put(gp.gravity, e->gravity, e->drag);
+                    gp.ranges[0] = e->speed.x; gp.ranges[1] = e->speed.y; gp.ranges[2] = e->lifetime.x; gp.ranges[3] = e->lifetime.y;
+                    gp.ground[0] = e->world_space ? e->floor : e->floor - at.y;
+                    gp.ground[1] = e->bounce; gp.ground[2] = e->floor_friction; gp.ground[3] = e->turbulence;
+                    gp.look[0] = e->size.x; gp.look[1] = e->size.y; gp.look[2] = e->stretch; gp.look[3] = 1.0f / std::max(e->turbulence_scale, 1e-3f);
+                    gp.color0[0] = decode(e->color.r); gp.color0[1] = decode(e->color.g); gp.color0[2] = decode(e->color.b); gp.color0[3] = e->color.a;
+                    gp.color1[0] = decode(e->color_end.r); gp.color1[1] = decode(e->color_end.g); gp.color1[2] = decode(e->color_end.b); gp.color1[3] = e->color_end.a;
+                    put(gp.place, e->world_space ? Vec3{0, 0, 0} : at, e->billboard ? 1.0f : 0.0f);
+                    gp.counts[0] = ge.head; gp.counts[1] = static_cast<std::uint32_t>(born); gp.counts[2] = size;
+                    gp.counts[3] = static_cast<std::uint32_t>(id * 0x9E3779B1u) ^ static_cast<std::uint32_t>(e->seed);
+                    gp.extra[0] = static_cast<std::uint32_t>(serial); gp.extra[1] = static_cast<std::uint32_t>(id & 0xFFFFFFFFu);
+                    ge.head = static_cast<std::uint32_t>((ge.head + born) % size);
+                    // The prepass the compute pass reads is last frame's: its view, its size, whether to collide.
+                    to_array(im.particle_vp, gp.depth_vp);
+                    to_array(im.particle_inv, gp.depth_inv);
+                    gp.depth_info[0] = static_cast<float>(std::max(1u, im.prepass_w));
+                    gp.depth_info[1] = static_cast<float>(std::max(1u, im.prepass_h));
+                    gp.depth_info[2] = deep && im.particle_view ? 1.0f : 0.0f;
+                    gp.depth_info[3] = deep && im.particle_view && e->collide ? 1.0f : 0.0f;
+                    put(gp.eye, im.particle_eye, 0.0f);
+                    ge.due = dt > 0.0 || born > 0;
+                    im.device->write_buffer(ge.params, 0, &gp, sizeof gp);
+                }
+                const Vec3 d = at - im.camera.position;
+                SpriteDraw sd{e->texture, im.texture_for(e->texture.empty() ? std::string(kDotTexture) : e->texture, false), e->layer, d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z, ObjectUniforms{}, nullptr, 0, 0, 0, e->additive};
+                sd.gpu = &ge;
+                sprites.push_back(std::move(sd));
+                continue;
+            }
             if (!e || pool.alive.empty()) continue;
             const auto* wt = world.try_get<world::WorldTransform>(id);
             const Vec3 origin = (!e->world_space && wt) ? wt->position : Vec3{0, 0, 0};
@@ -10236,12 +10965,24 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 wgpuRenderPassEncoderSetIndexBuffer(pass, quad.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = &quad;
             }
+            if (s.gpu) {
+                // A GPU emitter's ring (the colour passes only): six vertices a slot.
+                if (materials && s.gpu->draw) {
+                    use(s.additive ? im.particle_add_pipeline : im.particle_pipeline);
+                    wgpuRenderPassEncoderSetBindGroup(pass, 2, s.material, 0, nullptr);
+                    wgpuRenderPassEncoderSetBindGroup(pass, 3, s.gpu->draw, 0, nullptr);
+                    wgpuRenderPassEncoderDraw(pass, 6, s.gpu->size, 0, 0);
+                    counter++;
+                }
+                ++i;
+                continue;
+            }
             Impl::SpriteMaterial* user = materials ? s.user : nullptr;
             WGPURenderPipeline chosen = user ? im.sprite_material_pipeline(*user, s.additive) : nullptr;
             if (!chosen) chosen = s.additive ? add : s.lit && lit ? lit : pipe;
             use(chosen);
             std::size_t run = 1;
-            while (i + run < sprites.size() && !sprites[i + run].mesh && sprites[i + run].material == sprites[i].material && sprites[i + run].additive == s.additive && sprites[i + run].lit == s.lit && (!materials || sprites[i + run].user == s.user)) ++run;
+            while (i + run < sprites.size() && !sprites[i + run].mesh && !sprites[i + run].gpu && sprites[i + run].material == sprites[i].material && sprites[i + run].additive == s.additive && sprites[i + run].lit == s.lit && (!materials || sprites[i + run].user == s.user)) ++run;
             wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
             wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
             counter++;
@@ -10254,6 +10995,35 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             wgpuRenderPassEncoderSetScissorRect(pass, static_cast<std::uint32_t>(im.applied.x), static_cast<std::uint32_t>(im.applied.y), im.applied.w, im.applied.h);
         }
     };
+    // GPU particles move before anything draws them (docs/design/particles.md, On the GPU).
+    if (!im.secondary) {
+        bool any = false;
+        for (auto& [gid, ge] : im.gpu_emitters) any = any || (ge.seen && ge.due);
+        if (any) {
+            WGPUComputePassDescriptor cpd{};
+            cpd.label = rhi::str("pocket.particles");
+            WGPUComputePassEncoder cp = im.begin_compute(frame.encoder, cpd);
+            wgpuComputePassEncoderSetPipeline(cp, im.particle_sim_pipeline);
+            for (auto& [gid, ge] : im.gpu_emitters) {
+                if (!ge.seen || !ge.due) continue;
+                wgpuComputePassEncoderSetBindGroup(cp, 0, ge.sim, 0, nullptr);
+                wgpuComputePassEncoderDispatchWorkgroups(cp, (ge.size + 63) / 64, 1, 1);
+                ge.due = false;
+            }
+            wgpuComputePassEncoderEnd(cp);
+            wgpuComputePassEncoderRelease(cp);
+        }
+        for (auto it = im.gpu_emitters.begin(); it != im.gpu_emitters.end();) {
+            if (it->second.seen) { ++it; continue; }
+            it->second.release();
+            it = im.gpu_emitters.erase(it);
+        }
+        // This frame's view draws the prepass the next frame's particles collide with.
+        im.particle_vp = im.camera.proj * im.camera.view;
+        im.particle_inv = im.particle_vp.inverse();
+        im.particle_eye = im.camera.position;
+        im.particle_view = true;
+    }
     if (split) {
         // The id pass first: single-sample ids and the frame's own depth buffer, no lines.
         WGPURenderPassColorAttachment ica{};
@@ -10553,6 +11323,9 @@ Result<IdImage> Renderer::read_ids() {
 
 Result<world::EntityId> Renderer::pick(std::uint32_t x, std::uint32_t y) {
     POCKET_TRY(img, read_ids());
+    // A window pixel, in the drawn frame's pixels when the view was drawn at a scale.
+    x = static_cast<std::uint32_t>(static_cast<float>(x) / impl_->window_sx);
+    y = static_cast<std::uint32_t>(static_cast<float>(y) / impl_->window_sy);
     if (x >= img.width || y >= img.height) return fail("bad_args", "pixel ({}, {}) outside {}x{}", x, y, img.width, img.height);
     return static_cast<world::EntityId>(img.ids[static_cast<std::size_t>(y) * img.width + x]);
 }
@@ -10563,6 +11336,8 @@ const CameraView& Renderer::camera() const { return impl_->camera; }
 bool Renderer::unproject(float px, float py, Vec3& origin, Vec3& direction) const {
     const Impl& im = *impl_;
     if (im.applied.w == 0 || im.applied.h == 0) return false;
+    px /= im.window_sx;   // window pixels to the drawn frame's
+    py /= im.window_sy;
     const float nx = ((px - static_cast<float>(im.applied.x)) / static_cast<float>(im.applied.w)) * 2.0f - 1.0f;
     const float ny = 1.0f - ((py - static_cast<float>(im.applied.y)) / static_cast<float>(im.applied.h)) * 2.0f;
     const Mat4 inv = (im.camera.proj * im.camera.view).inverse();
@@ -10584,8 +11359,8 @@ bool Renderer::project(Vec3 world_pos, float& out_x, float& out_y) const {
     Vec4 clip = (im.camera.proj * im.camera.view) * Vec4{world_pos.x, world_pos.y, world_pos.z, 1};
     if (clip.w <= 0) return false;
     float nx = clip.x / clip.w, ny = clip.y / clip.w;
-    out_x = static_cast<float>(im.applied.x) + (nx * 0.5f + 0.5f) * static_cast<float>(im.applied.w);
-    out_y = static_cast<float>(im.applied.y) + (1.0f - (ny * 0.5f + 0.5f)) * static_cast<float>(im.applied.h);
+    out_x = (static_cast<float>(im.applied.x) + (nx * 0.5f + 0.5f) * static_cast<float>(im.applied.w)) * im.window_sx;
+    out_y = (static_cast<float>(im.applied.y) + (1.0f - (ny * 0.5f + 0.5f)) * static_cast<float>(im.applied.h)) * im.window_sy;
     return true;
 }
 
@@ -10779,7 +11554,22 @@ void Renderer::set_assets(assets::AssetStore* store) { impl_->assets = store; }
 std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>> Renderer::take_new_bounds() { return std::exchange(impl_->new_bounds, {}); }
 void Renderer::drop_asset_cache() { impl_->release_assets(); }
 Viewport Renderer::viewport() const { return impl_->viewport; }
-Viewport Renderer::applied_viewport() const { return impl_->applied; }
+Viewport Renderer::applied_viewport() const {
+    const Impl& im = *impl_;
+    if (im.window_sx == 1.0f && im.window_sy == 1.0f) return im.applied;
+    return Viewport{static_cast<std::int32_t>(std::lround(im.applied.x * im.window_sx)), static_cast<std::int32_t>(std::lround(im.applied.y * im.window_sy)),
+                    static_cast<std::uint32_t>(std::lround(im.applied.w * im.window_sx)), static_cast<std::uint32_t>(std::lround(im.applied.h * im.window_sy))};
+}
+void Renderer::set_render_scale(RenderScaleSettings s) {
+    s.scale = std::clamp(s.scale, 0.25f, 1.0f);
+    s.least = std::clamp(s.least, 0.25f, s.scale);
+    s.target_ms = std::max(s.target_ms, 0.5f);
+    s.sharpen = std::clamp(s.sharpen, 0.0f, 1.0f);
+    impl_->scale_settings = s;
+    impl_->scale_now = s.scale;   // dynamic starts from the most
+    impl_->scale_samples.clear();
+}
+RenderScaleSettings Renderer::render_scale() const { return impl_->scale_settings; }
 
 Json Renderer::describe() const {
     const RenderStats& s = impl_->stats;
@@ -10795,6 +11585,7 @@ Json Renderer::describe() const {
         for (const auto& [name, ms] : sorted) passes.push_back(Json{{"pass", name}, {"ms", std::round(ms * 1000.0) / 1000.0}});
         j["gpu"] = Json{{"ms", std::round(s.gpu_ms * 1000.0) / 1000.0}, {"passes", passes}, {"frames_ago", s.gpu_age}, {"frames_timed", s.gpu_frames}};
     }
+    if (s.render_scale < 1.0f) j["scale"] = Json{{"scale", s.render_scale}, {"width", s.render_width}, {"height", s.render_height}};
     j["shadow_draws"] = s.shadow_draws;
     j["shadow_instances"] = s.shadow_instances;
     j["shadows"] = s.shadows;

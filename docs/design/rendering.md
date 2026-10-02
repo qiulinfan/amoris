@@ -99,6 +99,30 @@ blended, `lut_strength` mixing it in (a picture of any other shape is refused an
 `{pixels: [...]}` reads pixels of the frame; `render.stats` reports `draw_calls`, `shadow_draws`,
 `instances`, `sprites`, lights and assets; `perf` reports the render time beside the other phases.
 
+## Render scale
+
+A dense screen (a laptop's at twice its points, a phone's at three times) or a weak GPU (a browser
+on integrated graphics) can make a game pay for pixels nobody sees. `render.scale {scale}` (or
+`[render] scale = 0.75`) draws the window's view at that fraction of its width and height (0.25 to
+1) into a frame of its own, every pass at that size, and stretches the finished picture into the
+window by bilinear filtering, sharpened against each pixel's four neighbours and held within their
+range so edges do not ring (`sharpen`, 0 to 1, 0.25). The interface is painted afterwards at the
+window's own size, so text stays crisp. Coordinates stay the window's: `render.project`,
+`render.unproject`, `render.pick` and `capture {pixel}` take and answer window pixels, while
+`render.ids` and `render.visible` read the smaller id target. `dynamic: true`
+(`[render.scale] dynamic = true, target_ms = 12, least = 0.5`) moves the fraction: every thirty
+frames whose GPU time came back, if the median is over `target_ms` the fraction drops to what should
+bring it there (the time going with the pixels, so with the square of the fraction), and if it is
+under six tenths of it the fraction rises a twentieth, between `least` and `scale`, in twentieths,
+so the targets are not made again every frame. It needs the GPU's timestamps (Where the time goes,
+below): without them the fraction holds. `render.stats.scale` says the fraction and size drawn when
+it is under 1. Cameras with viewports or targets of their own (split screens, minimaps) are drawn
+whole. At 1920 by 1080 on this machine the showcase's GPU frame took 5.8 ms whole, 3.6 at three
+quarters and 1.9 at a half; the hills (bound more by their 1.1 million triangles and shadows) 4.7,
+3.0 and 2.4. `runtime_tests` (`[render][scale]`): the hello ball projected and picked at the same
+window pixel whole and at half (an id target of 160 by 90 under a 320 by 180 window), and a dynamic
+target no frame can meet taking the fraction down.
+
 ## Where the time goes
 
 `render.stats.gpu` says what the frame cost the GPU: `ms` from the first pass's start to the last's

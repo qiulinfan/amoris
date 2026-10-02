@@ -40,7 +40,16 @@ struct EmitterPool {
     std::uint64_t spawned = 0;
     std::uint64_t died = 0;
     std::uint64_t landed = 0;    // particles that met the floor
+    // On the GPU (ParticleEmitter.gpu): the simulation is the renderer's; the tick only counts the
+    // seconds that passed and the particles owed (in `spawned`), which the renderer catches up on.
+    bool gpu = false;
+    double gpu_seconds = 0;
 };
+
+// The swirl of air turbulence pushes a particle with at `p` (in swirls) and time `t`: the curl of a
+// value-noise field, so it neither gathers nor spreads particles; about unit size. The GPU's
+// particles use the same field (docs/design/particles.md).
+Vec3 curl_noise(Vec3 p, float t);
 
 class Particles {
    public:

@@ -133,6 +133,17 @@ struct GradeSettings {
     float lut_strength = 1.0f;   // how much of the table's look (0 none .. 1 all)
 };
 
+// Render scale (docs/design/rendering.md, Render scale): the window's view drawn at a fraction of its
+// pixels and stretched up to fill it, sharpened; `dynamic` moves the fraction between `least` and
+// `scale` to keep the GPU's frame under `target_ms`.
+struct RenderScaleSettings {
+    float scale = 1.0f;       // 0.25..1 of the window's width and height (the most, when dynamic)
+    bool dynamic = false;
+    float target_ms = 12.0f;  // dynamic: the GPU's frame it keeps under
+    float least = 0.5f;       // dynamic: the smallest fraction it goes to
+    float sharpen = 0.25f;    // 0..1: how much the stretched picture is sharpened
+};
+
 struct RenderStats {
     std::uint32_t draw_calls = 0;     // instanced draws issued in the scene pass
     std::uint32_t shadow_draws = 0;   // instanced draws in the shadow pass
@@ -156,6 +167,8 @@ struct RenderStats {
     // two after it was drawn (gpu_age frames ago); empty where the device has no timestamps.
     std::vector<std::pair<std::string, double>> gpu_passes;
     double gpu_ms = 0;
+    float render_scale = 1.0f;        // the fraction of the window's pixels the view was drawn at
+    std::uint32_t render_width = 0, render_height = 0;   // its size in pixels
     std::uint64_t gpu_age = 0;
     std::uint64_t gpu_frames = 0;   // frames whose timings have come back so far
     bool gpu_timing = false;
@@ -322,6 +335,8 @@ class Renderer {
     [[nodiscard]] SsrSettings ssr() const;
     void set_ssgi(SsgiSettings s);
     [[nodiscard]] SsgiSettings ssgi() const;
+    void set_render_scale(RenderScaleSettings s);
+    [[nodiscard]] RenderScaleSettings render_scale() const;
     void set_dof(DofSettings s);
     [[nodiscard]] DofSettings dof() const;
     void set_motion_blur(MotionBlurSettings s);
@@ -369,6 +384,8 @@ class Renderer {
 
    private:
     Renderer();
+    // One view drawn whole into `frame` (render() draws the window's at a scale through it).
+    Status render_scene(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles, const Animation* animation, const DebugDraw* debug, const RenderView* view);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

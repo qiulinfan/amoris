@@ -816,6 +816,12 @@ export interface ParticleEmitter {
     collide: boolean;
     /** Particles add their light to what is behind (sparks, fire, magic): crowded ones glow brighter instead of covering each other. */
     additive: boolean;
+    /** Swirling air: a curl-noise field pushes each particle by up to this many units per second squared (smoke, embers, magic); 0 for none. */
+    turbulence: number;
+    /** The size of the turbulence's swirls in units. */
+    turbulence_scale: number;
+    /** Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing. */
+    gpu: boolean;
 }
 
 /** Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. */
@@ -1649,7 +1655,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Ragdoll: { active: false, mass: 70, follow: true, bodies: 0, root: "" },
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
-    ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false, additive: false },
+    ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false, additive: false, turbulence: 0, turbulence_scale: 2, gpu: false },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
