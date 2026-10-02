@@ -1,6 +1,10 @@
 # Navigation
 
-Things that move on their own need to know where they can go. `engine/nav` bakes a walkability grid, answers paths over it, keeps moving obstacles out of them, and walks the entities that ask it to, for scripts that steer enemies and for agents that ask "can it get there" and "which way" without looking. Every call is a runtime command (`nav.*`), so it is journaled, replays, and is the same from a script, over MCP and in a test.
+Things that move on their own need to know where they can go. `engine/nav` bakes a walkability grid,
+answers paths over it, keeps moving obstacles out of them, and walks the entities that ask it to,
+for scripts that steer enemies and for agents that ask "can it get there" and "which way" without
+looking. Every call is a runtime command (`nav.*`), so it is journaled, replays, and is the same
+from a script, over MCP and in a test.
 
 ```ts
 nav.bake({ min: { x: -9.5, y: -1, z: -9.5 }, max: { x: 9.5, y: 2, z: 9.5 }, cell: 0.5, agent_radius: 0.35 });
@@ -13,48 +17,201 @@ world.set(cart, "NavObstacle", { radius: 0.8 });                          // and
 
 ## Grids
 
-A grid is a rectangle of square cells in one plane, each walkable or not, with a ground height per cell on ground grids.
+A grid is a rectangle of square cells in one plane, each walkable or not, with a ground height per
+cell on ground grids.
 
-- **From the colliders** (`nav.bake {min, max, cell, agent_radius, agent_height, max_step, max_slope, diagonal, layers}`): the XZ rectangle between `min` and `max` is sampled at `cell`; a cell is walkable where a ray straight down finds a static collider (`RigidBody.kind = 1`, not a trigger; a mesh collider's triangles count, so modelled terrain bakes like boxes do) flatter than `max_slope` inside the height band, and spheres of `agent_radius` over the agent's feet (lifted by `max_step`, so the riser of the next stair does not take a stair away) and at its head hit nothing static but that ground. The ground height is kept per cell; two neighbouring cells connect only when their heights differ by at most `max_step`, so a ledge or a pillar's top is walkable ground of its own that no path climbs, and a staircase of boxes is a way up. Dynamic bodies and triggers are not obstacles: the grid is the level, not the moment.
-- **Floors over floors**: a column can hold up to `layers` cells (4 by default, 1 for the top surface only), one per floor a ray meets going down it: a bridge's deck and the road under it, a building's storeys. Below the top one a floor also needs `agent_height` of open air above it, so the underside of the deck is not a ceiling the agent walks on and a crawlspace too low to stand in is not ground. Neighbouring cells connect floor to floor by the step rule, so a path along the road stays under the bridge and a path onto the deck climbs the stairs or the ramp to it. A point picks its floor by its height (the highest floor at most a step above its feet, else the lowest one over it), so `nav.path`, `nav.nearest` and the agents keep to the floor they stand on; `nav.info.layers` says how many floors the busiest column has (the grid stores no more), and `render.debug {nav: true}` and `nav.mesh` show each at its height.
-- **From a tile map** (`nav.bake {entity, mode, agent_height, jump_height, jump_range, max_drop, diagonal}`): the map's own cells in its XY plane. `topdown` walks every empty cell (with `agent_height` empty cells above it); `platformer` walks empty cells with something to stand on below (solid or one-way) and adds directed links between them: jumps up to `jump_height` cells that cross up to `jump_range` sideways, gaps across the same row, and drops of up to `max_drop` cells, each only where the cells along the way are empty. A link costs its length plus one, so walking is preferred where it exists. Isometric, staggered and hexagonal maps bake too (`topdown` only: `platformer` needs rows of floor): the grid keeps the map's lattice and its cells sit where the map draws them, neighbours follow the shape (a hexagon's six across its edges; a staggered diamond's four, plus the corner-touching ones with `diagonal` when both flanking cells are free; an isometric map's eight), a step costs the distance between the centers, and the navmesh is not built over them, so their paths are cell paths, smoothed. `nav.info.layout` says which.
+- **From the colliders**
+  (`nav.bake {min, max, cell, agent_radius, agent_height, max_step, max_slope, diagonal, layers}`):
+  the XZ rectangle between `min` and `max` is sampled at `cell`; a cell is walkable where a ray
+  straight down finds a static collider (`RigidBody.kind = 1`, not a trigger; a mesh collider's
+  triangles count, so modelled terrain bakes like boxes do) flatter than `max_slope` inside the
+  height band, and spheres of `agent_radius` over the agent's feet (lifted by `max_step`, so the
+  riser of the next stair does not take a stair away) and at its head hit nothing static but that
+  ground. The ground height is kept per cell; two neighbouring cells connect only when their heights
+  differ by at most `max_step`, so a ledge or a pillar's top is walkable ground of its own that no
+  path climbs, and a staircase of boxes is a way up. Dynamic bodies and triggers are not obstacles:
+  the grid is the level, not the moment.
+- **Floors over floors**: a column can hold up to `layers` cells (4 by default, 1 for the top
+  surface only), one per floor a ray meets going down it: a bridge's deck and the road under it, a
+  building's storeys. Below the top one a floor also needs `agent_height` of open air above it, so
+  the underside of the deck is not a ceiling the agent walks on and a crawlspace too low to stand in
+  is not ground. Neighbouring cells connect floor to floor by the step rule, so a path along the
+  road stays under the bridge and a path onto the deck climbs the stairs or the ramp to it. A point
+  picks its floor by its height (the highest floor at most a step above its feet, else the lowest
+  one over it), so `nav.path`, `nav.nearest` and the agents keep to the floor they stand on;
+  `nav.info.layers` says how many floors the busiest column has (the grid stores no more), and
+  `render.debug {nav: true}` and `nav.mesh` show each at its height.
+- **From a tile map**
+  (`nav.bake {entity, mode, agent_height, jump_height, jump_range, max_drop, diagonal}`): the map's
+  own cells in its XY plane. `topdown` walks every empty cell (with `agent_height` empty cells above
+  it); `platformer` walks empty cells with something to stand on below (solid or one-way) and adds
+  directed links between them: jumps up to `jump_height` cells that cross up to `jump_range`
+  sideways, gaps across the same row, and drops of up to `max_drop` cells, each only where the cells
+  along the way are empty. A link costs its length plus one, so walking is preferred where it
+  exists. Isometric, staggered and hexagonal maps bake too (`topdown` only: `platformer` needs rows
+  of floor): the grid keeps the map's lattice and its cells sit where the map draws them, neighbours
+  follow the shape (a hexagon's six across its edges; a staggered diamond's four, plus the
+  corner-touching ones with `diagonal` when both flanking cells are free; an isometric map's eight),
+  a step costs the distance between the centers, and the navmesh is not built over them, so their
+  paths are cell paths, smoothed. `nav.info.layout` says which.
 
-`nav.info` describes the grid (plane, size, cell, walkable and link counts, source, the tick it was baked); `nav.clear` drops it. Baking is explicit: a script bakes at start and again after it edits the level (`tilemap.set`, moved walls); a `nav.baked` event marks each bake. One grid per session.
+`nav.info` describes the grid (plane, size, cell, walkable and link counts, source, the tick it was
+baked); `nav.clear` drops it. Baking is explicit: a script bakes at start and again after it edits
+the level (`tilemap.set`, moved walls); a `nav.baked` event marks each bake. One grid per session.
 
 ## Paths
 
-`nav.path {from, to, smooth}` runs A* between the cells under two points or entities: orthogonal and diagonal moves (diagonals never cut a corner between two blocked cells), the step rule on ground grids, the links on platformer grids; ties break deterministically. A point off walkable ground, or just outside the grid, is moved to the nearest walkable cell within two cells (`snapped: true`); a point farther out is an error (`outside`, `blocked`). When the goal cannot be reached the path ends at the closest cell A* saw (`partial: true`), which is still where a chaser should head. `smooth` (the default) string-pulls the cell path: a corner stays only where the next cell is out of sight of the last kept one, sight being sampled every quarter cell on walkable ground within the step rule; platformer paths are not smoothed, since their links are jumps. The answer carries the points (with the ground height, or the map's plane), the length, the cells before smoothing, the nodes expanded and the two flags. `nav.reachable` is strict: both points on walkable cells and a complete path. `nav.nearest {point, radius}` finds walkable ground near a point, counting the height difference on ground grids.
+`nav.path {from, to, smooth}` runs A* between the cells under two points or entities: orthogonal and
+diagonal moves (diagonals never cut a corner between two blocked cells), the step rule on ground
+grids, the links on platformer grids; ties break deterministically. A point off walkable ground, or
+just outside the grid, is moved to the nearest walkable cell within two cells (`snapped: true`); a
+point farther out is an error (`outside`, `blocked`). When the goal cannot be reached the path ends
+at the closest cell A* saw (`partial: true`), which is still where a chaser should head. `smooth`
+(the default) string-pulls the cell path: a corner stays only where the next cell is out of sight of
+the last kept one, sight being sampled every quarter cell on walkable ground within the step rule;
+platformer paths are not smoothed, since their links are jumps. The answer carries the points (with
+the ground height, or the map's plane), the length, the cells before smoothing, the nodes expanded
+and the two flags. `nav.reachable` is strict: both points on walkable cells and a complete path.
+`nav.nearest {point, radius}` finds walkable ground near a point, counting the height difference on
+ground grids.
 
-`render.debug {nav: true}` draws the walkable cells as small crosses (orange under an obstacle), the last sixteen paths asked for as yellow polylines, and each moving agent's velocity and next corner in green, into captures and the editor's scene pane like the other overlays.
+`render.debug {nav: true}` draws the walkable cells as small crosses (orange under an obstacle), the
+last sixteen paths asked for as yellow polylines, and each moving agent's velocity and next corner
+in green, into captures and the editor's scene pane like the other overlays.
 
 ## Navmesh
 
-A grid answers every question but makes long paths expensive: A* over a large open floor expands thousands of cells to cross it. So every bake also builds a navmesh over the grid: the walkable cells are covered by rectangles, greedily row by row (as wide as the row allows, then as tall as every column allows, each cell within a step of its neighbours in the rectangle), and a portal runs along every stretch of a rectangle's side that touches another rectangle within a step. An open floor is one rectangle; a floor with pillars is a few dozen. Each rectangle lies on one floor; portals join rectangles a step apart, so a deck's rectangles connect to the stairs and not to the road beneath. `nav.path` searches the rectangles first (A* over them, the cost to a rectangle being the distance walked to the middle of the portal it is entered by) and pulls the shortest way through the sequence of portals with the funnel algorithm, so the path has corners only where it must turn and crosses open ground in a straight line. A portal's end where the ground does not go on past it (a wall's corner, a riser too tall to climb, the edge of a drop) is drawn in by half a cell first, so a way round it keeps off the corner rather than grazing it; the corners take the height of the floor the way is on, followed along each leg, so a straight leg up a staircase ends on the deck; `mesh: true` and `polys` in the answer say so, and `expanded` counts polygons. The cells decide instead, and the answer says `mesh: false`, when the start and the goal lie in rectangles no portals connect (a ledge above the step; the cells give the partial path), when an obstacle stands on the mesh path (sampled every quarter cell, so obstacles are honoured exactly), when `smooth: false` or `mesh: false` is asked, and on platformer grids, whose links are jumps and not floor. `nav.mesh` lists the rectangles in world space with their neighbours, `nav.info.mesh` counts them, and `render.debug {nav: true}` draws their outlines in violet. Agents plan over the mesh like any other caller.
+A grid answers every question but makes long paths expensive: A* over a large open floor expands
+thousands of cells to cross it. So every bake also builds a navmesh over the grid: the walkable
+cells are covered by rectangles, greedily row by row (as wide as the row allows, then as tall as
+every column allows, each cell within a step of its neighbours in the rectangle), and a portal runs
+along every stretch of a rectangle's side that touches another rectangle within a step. An open
+floor is one rectangle; a floor with pillars is a few dozen. Each rectangle lies on one floor;
+portals join rectangles a step apart, so a deck's rectangles connect to the stairs and not to the
+road beneath. `nav.path` searches the rectangles first (A* over them, the cost to a rectangle being
+the distance walked to the middle of the portal it is entered by) and pulls the shortest way through
+the sequence of portals with the funnel algorithm, so the path has corners only where it must turn
+and crosses open ground in a straight line. A portal's end where the ground does not go on past it
+(a wall's corner, a riser too tall to climb, the edge of a drop) is drawn in by half a cell first,
+so a way round it keeps off the corner rather than grazing it; the corners take the height of the
+floor the way is on, followed along each leg, so a straight leg up a staircase ends on the deck;
+`mesh: true` and `polys` in the answer say so, and `expanded` counts polygons. The cells decide
+instead, and the answer says `mesh: false`, when the start and the goal lie in rectangles no portals
+connect (a ledge above the step; the cells give the partial path), when an obstacle stands on the
+mesh path (sampled every quarter cell, so obstacles are honoured exactly), when `smooth: false` or
+`mesh: false` is asked, and on platformer grids, whose links are jumps and not floor. `nav.mesh`
+lists the rectangles in world space with their neighbours, `nav.info.mesh` counts them, and
+`render.debug {nav: true}` draws their outlines in violet. Agents plan over the mesh like any other
+caller.
 
 ## Obstacles
 
-A thing that moves through the level and should not be walked through gets a `NavObstacle`. Every tick, before the agents move, the engine blocks the cells whose center lies within its `radius` plus the grid's agent radius of the entity's position, and `nav.path`, `nav.reachable`, `nav.nearest` and the agents treat those cells as walls until the obstacle moves on. Nothing is rebaked: the grid stays the level, the obstacles are the moment. `enabled = false` lifts an obstacle without removing it. An obstacle is a disc in the grid's plane; a long cart is a disc as wide as its length, or two obstacles on child entities. `nav.info` counts `obstacles` and `blocked` cells.
+A thing that moves through the level and should not be walked through gets a `NavObstacle`. Every
+tick, before the agents move, the engine blocks the cells whose center lies within its `radius` plus
+the grid's agent radius of the entity's position, and `nav.path`, `nav.reachable`, `nav.nearest` and
+the agents treat those cells as walls until the obstacle moves on. Nothing is rebaked: the grid
+stays the level, the obstacles are the moment. `enabled = false` lifts an obstacle without removing
+it. An obstacle is a disc in the grid's plane; a long cart is a disc as wide as its length, or two
+obstacles on child entities. `nav.info` counts `obstacles` and `blocked` cells.
 
-An obstacle that moves is met where it will be: the agents' avoidance (below) takes its velocity, the entity's `Velocity.linear` when it has one and otherwise where it went since the last tick (a cart moved by a script or a tween), into the collision test, so an agent crossing a cart's path steps aside before the cart arrives instead of when its cells turn blocked, and an agent walking ahead of one going the same way keeps ahead rather than being run over. The blocked cells are still the moment (the planner routes around where the obstacle stands now); the anticipation is in the local avoidance. `nav.info` counts `moving_obstacles`.
+An obstacle that moves is met where it will be: the agents' avoidance (below) takes its velocity,
+the entity's `Velocity.linear` when it has one and otherwise where it went since the last tick (a
+cart moved by a script or a tween), into the collision test, so an agent crossing a cart's path
+steps aside before the cart arrives instead of when its cells turn blocked, and an agent walking
+ahead of one going the same way keeps ahead rather than being run over. The blocked cells are still
+the moment (the planner routes around where the obstacle stands now); the anticipation is in the
+local avoidance. `nav.info` counts `moving_obstacles`.
 
 ## Agents
 
-An entity with a `NavAgent` walks on its own. Scripts set where it goes (`mode` 1 with a `goal` point, 2 with a `target` entity; 0 leaves the entity alone), its `speed`, `radius`, `arrive` distance and how often it replans (`replan` ticks; a goal that moved by half a cell or a corner that got blocked replans at once), and the engine does the rest every tick, after the scripts and the physics:
+An entity with a `NavAgent` walks on its own. Scripts set where it goes (`mode` 1 with a `goal`
+point, 2 with a `target` entity; 0 leaves the entity alone), its `speed`, `radius`, `arrive`
+distance and how often it replans (`replan` ticks; a goal that moved by half a cell or a corner that
+got blocked replans at once), and the engine does the rest every tick, after the scripts and the
+physics:
 
-1. it plans a path to the goal over the grid, around the obstacles, and heads for the next corner, then for the goal itself, slowing to stop `arrive` away; it turns for the corner after next only once that is in sight over walkable ground (or the corner is reached), so it does not cut a corner off the floor, and an agent that is off walkable ground walks back onto it first. On a stack of floors the goal counts as reached only on its own floor, so an agent under the goal's deck keeps walking to the stairs; without a grid it heads straight for the goal;
-2. it picks the velocity: the desired one when nothing is near, otherwise the candidate (turns of 22.5 degrees either way at full and half speed, or standing still) that scores best on deviating least from the desired velocity, colliding latest with the other agents and the obstacles within the next second, and staying on walkable ground, the collision term weighed by `avoidance`; every agent turns the same way first, so two that meet head-on pass on the same side; agents that overlap anyway are pushed apart. `queue` adds slowed candidates along the desired direction and, while another agent ahead goes this agent's way or stands there, makes stepping aside cost more than slowing (four times more per unit of `queue`), so the agent falls in behind instead of passing, creeps up when the gap opens and stops short of the one in front; crossing and oncoming agents are still avoided by turning, and a `queue` of 0, the default, passes whenever it can. `priority` orders who yields: an agent's avoidance ignores agents of lower priority, who avoid it, so a boss walks a straight line through a crowd that parts;
-3. it moves the entity through `Velocity.linear` when it has a `Velocity` (the motion system or the physics integrates it), and by writing `Transform.position` otherwise. On a ground grid a moved transform rises and falls with the floor it walks onto, keeping its height over the floor (so an entity whose origin is at its middle stays at its middle): up a ramp, down the stairs, onto the deck. Agents push nothing but each other, and nothing but agents and obstacles steers them, so a body with a `RigidBody` still collides through the physics, which carries it up the stairs.
+1. it plans a path to the goal over the grid, around the obstacles, and heads for the next corner,
+   then for the goal itself, slowing to stop `arrive` away; it turns for the corner after next only
+   once that is in sight over walkable ground (or the corner is reached), so it does not cut a
+   corner off the floor, and an agent that is off walkable ground walks back onto it first. On a
+   stack of floors the goal counts as reached only on its own floor, so an agent under the goal's
+   deck keeps walking to the stairs; without a grid it heads straight for the goal;
+2. it picks the velocity: the desired one when nothing is near, otherwise the candidate (turns of
+   22.5 degrees either way at full and half speed, or standing still) that scores best on deviating
+   least from the desired velocity, colliding latest with the other agents and the obstacles within
+   the next second, and staying on walkable ground, the collision term weighed by `avoidance`; every
+   agent turns the same way first, so two that meet head-on pass on the same side; agents that
+   overlap anyway are pushed apart. `queue` adds slowed candidates along the desired direction and,
+   while another agent ahead goes this agent's way or stands there, makes stepping aside cost more
+   than slowing (four times more per unit of `queue`), so the agent falls in behind instead of
+   passing, creeps up when the gap opens and stops short of the one in front; crossing and oncoming
+   agents are still avoided by turning, and a `queue` of 0, the default, passes whenever it can.
+   `priority` orders who yields: an agent's avoidance ignores agents of lower priority, who avoid
+   it, so a boss walks a straight line through a crowd that parts;
+3. it moves the entity through `Velocity.linear` when it has a `Velocity` (the motion system or the
+   physics integrates it), and by writing `Transform.position` otherwise. On a ground grid a moved
+   transform rises and falls with the floor it walks onto, keeping its height over the floor (so an
+   entity whose origin is at its middle stays at its middle): up a ramp, down the stairs, onto the
+   deck. Agents push nothing but each other, and nothing but agents and obstacles steers them, so a
+   body with a `RigidBody` still collides through the physics, which carries it up the stairs.
 
-The agent writes `state` (1 moving, 2 arrived, 3 stuck: the goal is unreachable and the agent stands at the end of the path it found, or the target is gone), `velocity`, `corner`, `distance` (the remaining path), `neighbours` and `queued` (it slowed behind someone this tick), and emits `nav.arrived` and `nav.stuck` on the transitions. `nav.agents` lists every agent with its plan. What the others avoid is each agent's velocity of the previous tick, so the result does not depend on the order of the entities, and the whole crowd is in the state hash. `nav.info` counts `agents`, `moving`, `arrived`, `stuck`, `replans`, `avoiding` (agents whose velocity deviated this tick) `queuing` (agents that slowed behind another) and `detours` (followers pathing to a slot out of sight). `nav.agents` reports each agent's `offset` too.
+The agent writes `state` (1 moving, 2 arrived, 3 stuck: the goal is unreachable and the agent stands
+at the end of the path it found, or the target is gone), `velocity`, `corner`, `distance` (the
+remaining path), `neighbours` and `queued` (it slowed behind someone this tick), and emits
+`nav.arrived` and `nav.stuck` on the transitions. `nav.agents` lists every agent with its plan. What
+the others avoid is each agent's velocity of the previous tick, so the result does not depend on the
+order of the entities, and the whole crowd is in the state hash. `nav.info` counts `agents`,
+`moving`, `arrived`, `stuck`, `replans`, `avoiding` (agents whose velocity deviated this tick)
+`queuing` (agents that slowed behind another) and `detours` (followers pathing to a slot out of
+sight). `nav.agents` reports each agent's `offset` too.
 
 ## Formations
 
-Mode 3 keeps an agent in a slot beside a leader: `target` names the leader (any entity that moves, an agent or not) and `offset` the slot in the leader's frame, `x` along the leader's heading (negative is behind it) and `z` (`y` on an XY grid) to its right, where the heading is the way the leader last moved and, until it moves, the world axes. A follower with its slot in sight (a straight line over walkable ground between them, or no grid) does not path to it: every tick it takes the leader's velocity plus a pull toward the slot (four per second of the distance), capped at its own `speed`, and the avoidance and the obstacles act on that velocity as on any other, so a group walks as one, closes up when the leader stops and reports `state` 2 only then, once in place. A slot out of sight, behind a wall or a pillar the leader went around, is walked to along a path like a goal, replanned as the slot moves, so a formation goes around what it meets and re-forms on the far side (`nav.info` counts such followers as `detours`); a slot inside a wall, a leader hugging one, is a partial path to the nearest walkable cell and `state` 3 there. A leader's own avoidance ignores its followers (they keep their slots; a leader that fled the ones catching up behind it would stall), while the followers avoid it and each other. The SDK's `nav.walk(entity, goal)`, `nav.follow(entity, target)`, `nav.slot(entity, leader, {forward, side})` and `nav.stop(entity)` set the modes, and `nav.formation(leader, members, {shape, spacing})` hands out slots for a `column` (one behind the other), a `line` (beside the leader, right then left), a `wedge` (a V behind it) or a `circle` around it.
+Mode 3 keeps an agent in a slot beside a leader: `target` names the leader (any entity that moves,
+an agent or not) and `offset` the slot in the leader's frame, `x` along the leader's heading
+(negative is behind it) and `z` (`y` on an XY grid) to its right, where the heading is the way the
+leader last moved and, until it moves, the world axes. A follower with its slot in sight (a straight
+line over walkable ground between them, or no grid) does not path to it: every tick it takes the
+leader's velocity plus a pull toward the slot (four per second of the distance), capped at its own
+`speed`, and the avoidance and the obstacles act on that velocity as on any other, so a group walks
+as one, closes up when the leader stops and reports `state` 2 only then, once in place. A slot out
+of sight, behind a wall or a pillar the leader went around, is walked to along a path like a goal,
+replanned as the slot moves, so a formation goes around what it meets and re-forms on the far side
+(`nav.info` counts such followers as `detours`); a slot inside a wall, a leader hugging one, is a
+partial path to the nearest walkable cell and `state` 3 there. A leader's own avoidance ignores its
+followers (they keep their slots; a leader that fled the ones catching up behind it would stall),
+while the followers avoid it and each other. The SDK's `nav.walk(entity, goal)`,
+`nav.follow(entity, target)`, `nav.slot(entity, leader, {forward, side})` and `nav.stop(entity)` set
+the modes, and `nav.formation(leader, members, {shape, spacing})` hands out slots for a `column`
+(one behind the other), a `line` (beside the leader, right then left), a `wedge` (a V behind it) or
+a `circle` around it.
 
 ## The sample
 
-`samples/playground` has a static ground and four pillars (colliders in `scene.json`); the script bakes the grid at start, spawns every enemy as a `NavAgent` following the player, and sends a cart with a `NavObstacle` back and forth across the south half, so the paths bend around the pillars and around the cart wherever it is. The exposed `nav.cells` is the walkable count, `nav.detours` counts enemy ticks spent heading for a path corner rather than straight at the player, `nav.blocked` the cells under the cart, and `nav.min_gap` the closest two enemies have come. `samples/playground/scenarios/crowd.ts` checks that the enemies reach the player without overlapping.
+`samples/playground` has a static ground and four pillars (colliders in `scene.json`); the script
+bakes the grid at start, spawns every enemy as a `NavAgent` following the player, and sends a cart
+with a `NavObstacle` back and forth across the south half, so the paths bend around the pillars and
+around the cart wherever it is. The exposed `nav.cells` is the walkable count, `nav.detours` counts
+enemy ticks spent heading for a path corner rather than straight at the player, `nav.blocked` the
+cells under the cart, and `nav.min_gap` the closest two enemies have come.
+`samples/playground/scenarios/crowd.ts` checks that the enemies reach the player without
+overlapping.
 
 ## Limits
 
-One grid per session; the navmesh is rectangles over the grid's cells, not polygons fitted to the geometry, so its edges are the cells' and a diagonal wall stays a staircase of rectangles, and it covers square lattices only (hexagonal, staggered and isometric maps path over their cells); no slopes on tile grids; the platformer jump links are geometric (empty cells along an L), not simulated, so a jump that works on the grid may still need the jump speed the game has; agents on platformer grids walk the links as if they were floor. Obstacles are discs and block whole cells, so a thin obstacle blocks more than its outline. The avoidance samples velocities and looks one second ahead, so a dense crowd of agents without `queue` jostles in a narrow corridor; `queue` is a preference in the scoring, not a lane, so a queuing agent still steps aside when the one ahead stops for good and something else pulls harder, and no agent avoids moving bodies that are not obstacles. A moving obstacle's velocity is assumed constant for the second ahead, so one that turns sharply is dodged a tick late. Floors are found by rays down each column's center, so a floor narrower than a cell can be missed and one that overhangs a column by less than half a cell is not seen there. `tests/nav_tests` (hand-built grids, a baked arena with a wall and a ledge, a bridge over a road with stairs up to it, the sprites level top-down and as a platformer, obstacles and agents) and `runtime_tests` (`[nav]`, the playground) are the reference.
+One grid per session; the navmesh is rectangles over the grid's cells, not polygons fitted to the
+geometry, so its edges are the cells' and a diagonal wall stays a staircase of rectangles, and it
+covers square lattices only (hexagonal, staggered and isometric maps path over their cells); no
+slopes on tile grids; the platformer jump links are geometric (empty cells along an L), not
+simulated, so a jump that works on the grid may still need the jump speed the game has; agents on
+platformer grids walk the links as if they were floor. Obstacles are discs and block whole cells, so
+a thin obstacle blocks more than its outline. The avoidance samples velocities and looks one second
+ahead, so a dense crowd of agents without `queue` jostles in a narrow corridor; `queue` is a
+preference in the scoring, not a lane, so a queuing agent still steps aside when the one ahead stops
+for good and something else pulls harder, and no agent avoids moving bodies that are not obstacles.
+A moving obstacle's velocity is assumed constant for the second ahead, so one that turns sharply is
+dodged a tick late. Floors are found by rays down each column's center, so a floor narrower than a
+cell can be missed and one that overhangs a column by less than half a cell is not seen there.
+`tests/nav_tests` (hand-built grids, a baked arena with a wall and a ledge, a bridge over a road
+with stairs up to it, the sprites level top-down and as a platformer, obstacles and agents) and
+`runtime_tests` (`[nav]`, the playground) are the reference.

@@ -1,6 +1,11 @@
 # The Pocket editor
 
-`pocket editor <project>` opens a project in a window with the scene, its hierarchy, an inspector, and a console. The editor is not a separate application: it is a TypeScript program (`editor/`) built on Pocket UI that runs beside the project in the same runtime, in its own script context. It sees the world through the commands every script and agent has, so nothing it shows is privileged, and an agent can operate it with `ui_snapshot` and `ui_click` the way a person operates it with the mouse.
+`pocket editor <project>` opens a project in a window with the scene, its hierarchy, an inspector,
+and a console. The editor is not a separate application: it is a TypeScript program (`editor/`)
+built on Pocket UI that runs beside the project in the same runtime, in its own script context. It
+sees the world through the commands every script and agent has, so nothing it shows is privileged,
+and an agent can operate it with `ui_snapshot` and `ui_click` the way a person operates it with the
+mouse.
 
 ```bash
 ./.pocket/pocket editor physics                       # window
@@ -26,17 +31,40 @@
 | Assets tab: every file under the project's `assets/` with its kind (mesh, image, tilemap, audio), size and whether it is loaded, images with a thumbnail, a model with a thumbnail drawn by `assets.preview` into the project's `.pocket/thumbs` (once a session, again on Reimport), and for a model read by an importer of its own which one (OBJ, STL, via Blender for `.blend`, `.fbx` and the other formats Blender reads, `docs/design/assets.md`); a click describes it (vertices, nodes, clips, lights and cameras, and for a Blender-read file where its conversion is kept; pixel size; layers); a row dragged onto the scene pane becomes an entity under the pointer, and Place puts the picked file in the middle of the pane, one undoable edit: a mesh as a `MeshRenderer` where the ray meets the ground plane, an image as a `Sprite` (one unit on its longer side, the aspect kept) and a map as a `TileMap` where it meets the XY plane, a sound as an `AudioSource`; a model that carries lights or cameras (a Blender scene with its lamp and camera) comes in as its node tree instead, so they come along (the lights lit, the cameras inactive), and undo takes the whole tree away; Reimport reads a picked model from its file again (a Blender-read one converted anew) | `assets.list`, `assets.describe`, `assets.import`, `render.unproject`, `world.spawn`, `world.instantiate {mesh}` |
 | Timeline tab: the selected entity's `Timeline` file (`docs/design/timelines.md`) as a row per track (its entity, component and field) with its keys as marks on a ruler of the file's duration and a red playhead; the playhead's slider scrubs (`timeline.seek` applies the tracks at that time without a tick, so the scene shows the moment), Play and Stop play it; a mark picked shows its key (Go to it, Delete key); Key on a track keys its field's value now at the playhead (replacing a key already there); a new track (entity, component, field) starts with the field's value now; Remove drops a track. Every change writes the file, which the Timeline reads again, and is one undo step; with no Timeline selected the tab lists the entities that have one, and a Timeline naming a missing file offers to create it | `timeline.seek`, `timeline.play`/`stop`, `project.read`, `project.write` |
 
-Keyboard (when no text input has focus): Space plays or pauses, Delete removes the selection, Escape clears it, Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z or Ctrl+Y redoes, Cmd/Ctrl+D duplicates, Cmd/Ctrl+A selects everything, Cmd/Ctrl+S saves the scene.
+Keyboard (when no text input has focus): Space plays or pauses, Delete removes the selection, Escape
+clears it, Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z or Ctrl+Y redoes, Cmd/Ctrl+D duplicates, Cmd/Ctrl+A
+selects everything, Cmd/Ctrl+S saves the scene.
 
 ## Undo
 
-Every edit the editor makes (a field, a rename, adding or removing a component, spawning, deleting, duplicating, a gizmo drag) is one entry in `editor/history.ts` with its inverse; deleted entities come back from a `world.save {entity}` fragment with their children, and entities that return get new ids, which later entries follow. Play clears the history because Stop restores the whole scene anyway.
+Every edit the editor makes (a field, a rename, adding or removing a component, spawning, deleting,
+duplicating, a gizmo drag) is one entry in `editor/history.ts` with its inverse; deleted entities
+come back from a `world.save {entity}` fragment with their children, and entities that return get
+new ids, which later entries follow. Play clears the history because Stop restores the whole scene
+anyway.
 
-`pocket editor <project> --watch` (and `pocket run <project> --watch` without the editor) keeps the window open and hot reloads the project's scripts whenever a source file under the project changes: the tool rebundles, then calls `project.reload` over the control server, which also reads `project.toml`'s settings again (the input map, audio buses and room, render and physics settings, sprite clips), so an edited action or bus takes effect without a restart. A changed file under `assets/` (a picture, a map, a sound, a model, a `.blend` saved from Blender) needs no bundle: the tool calls `assets.reload`, so the runtime forgets its decoded copy and the next frame draws the file as it is now, and instances of a changed model are made again in place (`docs/design/assets.md`, Live models), with the scripts and the world left running. Under the editor the scene on disk is left alone and a dormant project stays dormant; without the editor the scene is reloaded too and the project starts again. A bundle error is printed and the previous scripts keep running.
+`pocket editor <project> --watch` (and `pocket run <project> --watch` without the editor) keeps the
+window open and hot reloads the project's scripts whenever a source file under the project changes:
+the tool rebundles, then calls `project.reload` over the control server, which also reads
+`project.toml`'s settings again (the input map, audio buses and room, render and physics settings,
+sprite clips), so an edited action or bus takes effect without a restart. A changed file under
+`assets/` (a picture, a map, a sound, a model, a `.blend` saved from Blender) needs no bundle: the
+tool calls `assets.reload`, so the runtime forgets its decoded copy and the next frame draws the
+file as it is now, and instances of a changed model are made again in place
+(`docs/design/assets.md`, Live models), with the scripts and the world left running. Under the
+editor the scene on disk is left alone and a dormant project stays dormant; without the editor the
+scene is reloaded too and the project starts again. A bundle error is printed and the previous
+scripts keep running.
 
 ## Play and Stop
 
-When the editor opens a project, the runtime evaluates the project's bundle (so its handlers are registered) but does not start it: no ticks run, `onStart` has not fired, and the scene is exactly what `scene.json` says. Play snapshots the scene (`world.save`), starts the project context (`script.start`) and resumes the simulation. Stop pauses, unloads the project's handlers and interface, evaluates its bundle again, and loads the snapshot back (`world.load`), so edits made before Play survive and everything the game spawned is gone. The project's own interface (mounted with `mount()`) appears inside the scene pane while it runs.
+When the editor opens a project, the runtime evaluates the project's bundle (so its handlers are
+registered) but does not start it: no ticks run, `onStart` has not fired, and the scene is exactly
+what `scene.json` says. Play snapshots the scene (`world.save`), starts the project context
+(`script.start`) and resumes the simulation. Stop pauses, unloads the project's handlers and
+interface, evaluates its bundle again, and loads the snapshot back (`world.load`), so edits made
+before Play survive and everything the game spawned is gone. The project's own interface (mounted
+with `mount()`) appears inside the scene pane while it runs.
 
 ## Agents
 
@@ -47,8 +75,21 @@ Everything in the editor is reachable without a window:
 ./build/debug/bin/pocket_runtime --project samples/physics --bundle build/ts/physics.js --editor build/ts/editor.js --headless --serve 4711 --paused --json
 ```
 
-Then `ui.snapshot` lists the panes and their elements by name (`play`, `undo`, `entity:Ramp`, `Transform.position.x`, `gizmo:x`, `gizmo:rotate`, `split:hierarchy`, `tab:transcript`, `tab:assets`, `asset:assets/bowl.glb`, `tab:script`, `script:scripts/main.ts`, `script:text`), `ui.click {id, mods}` presses buttons and selects rows (`mods: ["shift"]` extends), `ui.type` / `ui.key` edit inspector fields (`ui.key {key: "Z", mods: ["meta"]}` undoes), `ui.drag {id, dx, dy}` pulls a gizmo handle (`gizmo:x`, `gizmo:rotate_x`, `gizmo:scale_z`, ...) or a splitter, drops a hierarchy row on another, an asset row on the scene pane or a tab (`tab:audio`) on another dock, and `capture` shows the result. `pocket mcp` exposes the same through `runtime_start {project, editor: true}` and the `ui_*` tools. `tests/evidence/editor/session.md` is one such session, and `tests/runtime_tests/editor_tests.cpp` does the same in-process.
+Then `ui.snapshot` lists the panes and their elements by name (`play`, `undo`, `entity:Ramp`,
+`Transform.position.x`, `gizmo:x`, `gizmo:rotate`, `split:hierarchy`, `tab:transcript`,
+`tab:assets`, `asset:assets/bowl.glb`, `tab:script`, `script:scripts/main.ts`, `script:text`),
+`ui.click {id, mods}` presses buttons and selects rows (`mods: ["shift"]` extends), `ui.type` /
+`ui.key` edit inspector fields (`ui.key {key: "Z", mods: ["meta"]}` undoes), `ui.drag {id, dx, dy}`
+pulls a gizmo handle (`gizmo:x`, `gizmo:rotate_x`, `gizmo:scale_z`, ...) or a splitter, drops a
+hierarchy row on another, an asset row on the scene pane or a tab (`tab:audio`) on another dock, and
+`capture` shows the result. `pocket mcp` exposes the same through
+`runtime_start {project, editor: true}` and the `ui_*` tools. `tests/evidence/editor/session.md` is
+one such session, and `tests/runtime_tests/editor_tests.cpp` does the same in-process.
 
 ## Not yet
 
-Tabbed docking beyond resizable panes, errors marked in the script's text itself (they are listed under it, from a watched save; nothing checks while typing), thumbnails for tile maps in the asset list (images and models have them). Each is an editor-side feature on the existing commands. A gizmo drag under a parent with shear (a non-uniform scale under a rotation) is close, not exact: moves and turns are expressed in the parent's frame as a rotation and a scale.
+Tabbed docking beyond resizable panes, errors marked in the script's text itself (they are listed
+under it, from a watched save; nothing checks while typing), thumbnails for tile maps in the asset
+list (images and models have them). Each is an editor-side feature on the existing commands. A gizmo
+drag under a parent with shear (a non-uniform scale under a rotation) is close, not exact: moves and
+turns are expressed in the parent's frame as a rotation and a scale.

@@ -109,6 +109,7 @@ class World {
     [[nodiscard]] std::string_view component_name(std::uint32_t component) const;
     [[nodiscard]] std::size_t component_count() const;
     [[nodiscard]] bool known_component(std::string_view component) const;
+    [[nodiscard]] bool has_field(std::string_view component, std::string_view field) const;   // a top-level field of the component
     // The project's own components (its components.toml, as the tool hands it over: [{name, doc,
     // fields: [{name, type, default?, doc?, names?}]}]), beside the engine's; declaring again
     // replaces the list. Their values are JSON objects kept to the declared types (docs/decisions/0007).

@@ -374,20 +374,20 @@ fn sh_at(b: u32, n: vec3f) -> vec3f {
         + probe_sh[b + 8u].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
 }
 // How much a grid probe sees of a point `dist` away along `dir` (from the probe): the probe kept,
-// per texel of an 8 by 8 octahedral map after every slot's harmonics, the mean distance it saw to the
+// per texel of a 16 by 16 octahedral map after every slot's harmonics, the mean distance it saw to the
 // nearest surface and the mean of its square; a point past the mean is weighed by Chebyshev's bound
 // on its being in sight, cubed (a probe beyond a wall saw the wall short of the point).
 fn probe_sees(probe: u32, dir: vec3f, dist: f32) -> f32 {
-    let base = u32(frame.grid_info.y) + probe * 32u;
-    let uv = clamp((oct_encode(dir) * 0.5 + 0.5) * 8.0 - 0.5, vec2f(0.0), vec2f(7.0));
+    let base = u32(frame.grid_info.y) + probe * 128u;
+    let uv = clamp((oct_encode(dir) * 0.5 + 0.5) * 16.0 - 0.5, vec2f(0.0), vec2f(15.0));
     let t0 = vec2u(floor(uv));
-    let t1 = min(t0 + vec2u(1u), vec2u(7u));
+    let t1 = min(t0 + vec2u(1u), vec2u(15u));
     let f = uv - floor(uv);
     var m = vec2f(0.0);
     for (var k = 0u; k < 4u; k = k + 1u) {
         let t = vec2u(select(t0.x, t1.x, (k & 1u) == 1u), select(t0.y, t1.y, (k & 2u) == 2u));
         let w = select(1.0 - f.x, f.x, (k & 1u) == 1u) * select(1.0 - f.y, f.y, (k & 2u) == 2u);
-        let i = t.y * 8u + t.x;
+        let i = t.y * 16u + t.x;
         let v = probe_sh[base + i / 2u];
         m = m + select(v.xy, v.zw, (i & 1u) == 1u) * w;
     }
@@ -2457,7 +2457,7 @@ struct GridFill { faces: array<mat4x4f, 6>, center: vec4f, misc: vec4f };
 @group(0) @binding(3) var<storage, read_write> all_sh: array<vec4f>;
 @group(0) @binding(4) var depths: texture_depth_2d_array;
 var<workgroup> part: array<array<vec3f, 9>, 64>;
-var<workgroup> moments: array<vec2f, 64>;
+var<workgroup> moments: array<vec2f, 256>;
 // The views' depth range (probe_views: near 0.05, far 1000).
 const NEAR = 0.05;
 const FAR = 1000.0;
@@ -2514,16 +2514,19 @@ fn look(d: vec3f) -> vec3f {
         c[8] = c[8] + l * (0.546274 * (d.x * d.x - d.y * d.y));
     }
     for (var k = 0; k < 9; k = k + 1) { part[li][k] = c[k]; }
-    // This thread's texel of the 8 by 8 octahedral map: the mean distance seen over it (4 by 4
-    // directions) and the mean of its square.
-    let texel = vec2f(f32(li % 8u), f32(li / 8u));
-    var m = vec2f(0.0);
-    for (var s = 0u; s < 16u; s = s + 1u) {
-        let e = (texel + (vec2f(f32(s % 4u), f32(s / 4u)) + 0.5) / 4.0) / 8.0 * 2.0 - 1.0;
-        let r = seen(oct_dir(e));
-        m = m + vec2f(r, r * r);
+    // This thread's four texels of the 16 by 16 octahedral map: the mean distance seen over each
+    // (3 by 3 directions) and the mean of its square.
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let t = li * 4u + k;
+        let texel = vec2f(f32(t % 16u), f32(t / 16u));
+        var m = vec2f(0.0);
+        for (var s = 0u; s < 9u; s = s + 1u) {
+            let e = (texel + (vec2f(f32(s % 3u), f32(s / 3u)) + 0.5) / 3.0) / 16.0 * 2.0 - 1.0;
+            let r = seen(oct_dir(e));
+            m = m + vec2f(r, r * r);
+        }
+        moments[t] = m / 9.0;
     }
-    moments[li] = m / 16.0;
     workgroupBarrier();
     for (var stride = 32u; stride > 0u; stride = stride / 2u) {
         if (li < stride) {
@@ -2535,7 +2538,10 @@ fn look(d: vec3f) -> vec3f {
         var a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
         for (var k = 0; k < 9; k = k + 1) { all_sh[u32(pf.misc.x) + u32(k)] = vec4f(part[0][k] * a[k], 0.0); }
     }
-    if (li < 32u) { all_sh[u32(pf.misc.y) + li] = vec4f(moments[li * 2u], moments[li * 2u + 1u]); }
+    for (var k = 0u; k < 2u; k = k + 1u) {
+        let v = li * 2u + k;
+        all_sh[u32(pf.misc.y) + v] = vec4f(moments[v * 2u], moments[v * 2u + 1u]);
+    }
 }
 )WGSL";
 
@@ -7600,8 +7606,8 @@ fn time() -> f32 { return fx.time.x; }
         sbe[12].binding = 12;
         sbe[12].textureView = probe_env_view;
         {
-            // Every slot's harmonics (sixteen vec4s), then each grid probe's moments (thirty-two).
-            const std::vector<float> zero(4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 32 * kMaxGridProbes, 0.0f);
+            // Every slot's harmonics (sixteen vec4s), then each grid probe's moments (128).
+            const std::vector<float> zero(4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 128 * kMaxGridProbes, 0.0f);
             probe_sh_buffer = device->create_buffer("pocket.probes.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, zero.size() * sizeof(float), zero.data());
             const std::vector<std::uint32_t> none(2 * kClusters + kMaxLights, 0u);
             probe_cluster_buffer = device->create_buffer("pocket.probes.lights", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, none.size() * sizeof(std::uint32_t), none.data());
@@ -7609,7 +7615,7 @@ fn time() -> f32 { return fx.time.x; }
         }
         sbe[13].binding = 13;
         sbe[13].buffer = probe_sh_buffer;
-        sbe[13].size = sizeof(float) * (4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 32 * kMaxGridProbes);
+        sbe[13].size = sizeof(float) * (4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 128 * kMaxGridProbes);
         POCKET_TRY_VOID(create_decals());
         POCKET_TRY_VOID(create_timer());
         sbe[14].binding = 14;
@@ -10085,7 +10091,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             for (int f = 0; f < 6; ++f) to_array(views[static_cast<std::size_t>(f)], fill.data() + 16 * f);
             fill[96] = at.x; fill[97] = at.y; fill[98] = at.z;
             fill[100] = static_cast<float>(16 * (kMaxProbes + g.first + probe));
-            fill[101] = static_cast<float>(16 * (kMaxProbes + kMaxGridProbes) + 32 * (g.first + probe));
+            fill[101] = static_cast<float>(16 * (kMaxProbes + kMaxGridProbes) + 128 * (g.first + probe));
             // The moments stop at twice the widest gap between probes: farther is in sight.
             const float gap = std::max({g.size.x / static_cast<float>(g.nx - 1), g.size.y / static_cast<float>(g.ny - 1), g.size.z / static_cast<float>(g.nz - 1)});
             fill[102] = 2.0f * gap;
@@ -10100,7 +10106,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ge[2].sampler = im.env_sampler;
             ge[3].binding = 3;
             ge[3].buffer = im.probe_sh_buffer;
-            ge[3].size = sizeof(float) * (4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 32 * kMaxGridProbes);
+            ge[3].size = sizeof(float) * (4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 128 * kMaxGridProbes);
             ge[4].binding = 4;
             ge[4].textureView = im.probe_depth_array;
             WGPUBindGroupDescriptor gd{};

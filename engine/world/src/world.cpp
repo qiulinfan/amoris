@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <functional>
 #include <sstream>
 #include <unordered_map>
@@ -753,6 +754,13 @@ std::size_t World::entity_count() const {
     return n;
 }
 
+bool World::has_field(std::string_view component, std::string_view field) const {
+    for (const auto& info : impl_->infos)
+        if (info.name == component)
+            for (const auto& f : info.fields) if (f.name == field) return true;
+    return false;
+}
+
 bool World::known_component(std::string_view component) const { return impl_->find(component) != nullptr; }
 
 bool World::has(EntityId id, std::string_view component) const {
@@ -962,12 +970,50 @@ Json World::query(const QueryOptions& options) const {
         if (!op) return Json{{"error", "unknown component " + n}};
         without.push_back(op);
     }
+    // A field is a component (all of it), a component's field ("Transform.position", deeper with
+    // more dots), or a bare field name that one of the `with` components has.
+    struct Part { const ComponentOps* op; std::vector<std::string> path; };
+    std::vector<Part> parts;
+    auto has_field = [&](std::string_view comp, std::string_view field) {
+        for (const auto& info : impl_->infos)
+            if (info.name == comp)
+                for (const auto& f : info.fields) if (f.name == field) return true;
+        return false;
+    };
     for (const auto& n : options.fields) {
-        const ComponentOps* op = impl_->find(n);
-        if (!op) return Json{{"error", "unknown component " + n}};
-        fields.push_back(op);
+        if (const ComponentOps* op = impl_->find(n)) {
+            fields.push_back(op);
+            continue;
+        }
+        std::vector<std::string> path;
+        for (std::size_t at = 0; at <= n.size();) {
+            const std::size_t dot = std::min(n.find('.', at), n.size());
+            path.push_back(n.substr(at, dot - at));
+            at = dot + 1;
+        }
+        const ComponentOps* op = path.size() > 1 ? impl_->find(path.front()) : nullptr;
+        if (op) {
+            path.erase(path.begin());
+            if (!has_field(op->name, path.front())) return Json{{"error", std::format("{} has no field '{}' ({})", op->name, path.front(), n)}};
+            parts.push_back({op, path});
+            continue;
+        }
+        if (path.size() == 1) {
+            std::vector<const ComponentOps*> owners;
+            for (const auto* w : with) if (has_field(w->name, n)) owners.push_back(w);
+            if (owners.size() == 1) {
+                parts.push_back({owners.front(), path});
+                continue;
+            }
+            std::string where;
+            for (const auto& info : impl_->infos)
+                for (const auto& f : info.fields)
+                    if (f.name == n) where += (where.empty() ? "" : ", ") + std::string(info.name) + "." + n;
+            if (!where.empty()) return Json{{"error", std::format("unknown component {}: fields name a component or one of its fields ({}); {}", n, where, owners.empty() ? "name the component" : "more than one of the with components has it")}};
+        }
+        return Json{{"error", "unknown component " + (path.size() > 1 ? path.front() : n) + " (fields name a component, or a component's field as \"Transform.position\")"}};
     }
-    if (fields.empty()) fields = with;
+    if (fields.empty() && parts.empty()) fields = with;
     std::vector<EntityId> starts = options.under ? children(options.under) : roots();
     int count = 0;
     bool truncated = false;
@@ -985,6 +1031,19 @@ Json World::query(const QueryOptions& options) const {
             row["path"] = path(id);
             for (auto* op : fields) {
                 if (op->has(e)) row[std::string(op->name)] = op->get(e);
+            }
+            for (const Part& part : parts) {
+                if (!part.op->has(e)) continue;
+                const Json all = part.op->get(e);
+                const Json* v = &all;
+                for (const auto& seg : part.path) {
+                    if (!v->is_object() || !v->contains(seg)) { v = nullptr; break; }
+                    v = &(*v)[seg];
+                }
+                if (!v) continue;
+                Json* at = &row[std::string(part.op->name)];
+                for (std::size_t i = 0; i + 1 < part.path.size(); ++i) at = &(*at)[part.path[i]];
+                (*at)[part.path.back()] = *v;
             }
             results.push_back(std::move(row));
             ++count;

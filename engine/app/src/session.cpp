@@ -5158,6 +5158,29 @@ Result<Json> Session::input_command(std::string_view op, const Json& p) {
         j["actions"] = input_map_.snapshot();
         return j;
     }
+    if (op == "release") {
+        // Let go now of what input.hold holds: a key, an action's keys both ways, or every key held.
+        std::vector<std::string> keys;
+        if (p.contains("key") && p["key"].is_string()) keys.push_back(p["key"].get<std::string>());
+        else if (p.contains("action") && p["action"].is_string()) {
+            const std::string action = p["action"].get<std::string>();
+            if (!input_map_.has_action(action)) return fail("no_such_action", "no action named '{}'", action);
+            for (int sign : {1, -1}) for (const auto& k : input_map_.keys_of(action, sign)) keys.push_back(k);
+        } else {
+            for (const auto& [k, until] : held_keys_) keys.push_back(k);
+        }
+        std::vector<platform::Event> ups;
+        Json released = Json::array();
+        for (const auto& k : keys) {
+            if (!held_keys_.contains(k)) continue;
+            held_keys_.erase(k);
+            ups.push_back(press_event(k, false));
+            released.push_back(k);
+        }
+        std::erase_if(pending_holds_, [&](const PendingHold& h) { return std::find(keys.begin(), keys.end(), h.key) != keys.end(); });
+        if (!ups.empty()) inject_events(std::move(ups));
+        return Json{{"released", released}, {"actions", input_map_.snapshot()}};
+    }
     return fail("unknown_command", "unknown input command '{}'", op);
 }
 
@@ -5986,7 +6009,15 @@ Status Session::finish() {
 world::EntityId Session::resolve_entity(const Json& v) const {
     if (v.is_number_unsigned() || v.is_number_integer()) return v.get<world::EntityId>();
     if (v.is_number()) return static_cast<world::EntityId>(v.get<double>());
-    if (v.is_string()) return world_->find(v.get<std::string>());
+    if (v.is_string()) {
+        const std::string s = v.get<std::string>();
+        if (const world::EntityId id = world_->find(s)) return id;
+        // An id written as a string ("492"), when no entity is named so.
+        if (!s.empty() && s.size() <= 20 && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+            const world::EntityId id = std::stoull(s);
+            if (world_->alive(id)) return id;
+        }
+    }
     return 0;
 }
 
@@ -6405,13 +6436,45 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     if (op == "get") {
         POCKET_TRY(id, need_entity("entity"));
         std::string comp = opt<std::string>(p, "component", "");
+        if (comp.empty()) {
+            // Without a component: every component the entity has, by name.
+            Json all = Json::object();
+            for (const world::ComponentInfo& info : w.component_infos_all()) {
+                const std::string n(info.name);
+                if (w.has(id, n)) {
+                    POCKET_TRY(v, w.get(id, n));
+                    all[n] = v;
+                }
+            }
+            return all;
+        }
         if (!w.known_component(comp)) return fail("unknown_component", "unknown component '{}'", comp);
         if (!w.has(id, comp)) return nullptr;
         return w.get(id, comp);
     }
+    if (op == "set" && p.contains("components")) {
+        // Several components at once, each a patch as `value` is for one: all checked before any is set.
+        POCKET_TRY(id, need_entity("entity"));
+        if (!p["components"].is_object() || p["components"].empty()) return fail("bad_args", "components is an object of component name -> the fields to change, e.g. {{Transform: {{position: {{x: 1}}}}, MeshRenderer: {{color: \"#ff0000\"}}}}");
+        Json comps = p["components"];
+        if (p.contains("component") && p.contains("value")) comps[p["component"].get<std::string>()] = p["value"];
+        for (auto& [cname, cvalue] : comps.items()) {
+            if (!cvalue.is_object()) return fail("bad_args", "components.{}: the fields to change as an object", cname);
+            POCKET_TRY_VOID(name_entities(cname, cvalue));
+            POCKET_TRY_VOID(w.check_patch(cname, cvalue));
+        }
+        Json values = Json::object();
+        for (const auto& [cname, cvalue] : comps.items()) POCKET_TRY_VOID(w.set(id, cname, cvalue, cause));
+        if (opt<bool>(p, "quiet", false)) return source == "script" ? Json() : Json{{"ok", true}};
+        for (const auto& [cname, cvalue] : comps.items()) {
+            POCKET_TRY(now, w.get(id, cname));
+            values[cname] = now;
+        }
+        return Json{{"ok", true}, {"values", values}};
+    }
     if (op == "set") {
         POCKET_TRY(id, need_entity("entity"));
-        if (!p.contains("value") || !p["value"].is_object()) return fail("bad_args", "world.set needs value: the fields to change as an object, e.g. {{entity: \"Ball\", component: \"MeshRenderer\", value: {{color: {{r: 0, g: 1, b: 0, a: 1}}}}}}");
+        if (!p.contains("value") || !p["value"].is_object()) return fail("bad_args", "world.set needs value: the fields to change as an object, e.g. {{entity: \"Ball\", component: \"MeshRenderer\", value: {{color: {{r: 0, g: 1, b: 0, a: 1}}}}}} (or components: {{MeshRenderer: {{...}}, Transform: {{...}}}} for several)");
         if (!p.contains("component") || !p["component"].is_string()) return fail("bad_args", "world.set needs component: the component's name, e.g. \"MeshRenderer\" (world.schema lists them)");
         const std::string comp = p["component"].get<std::string>();
         Json value = p["value"];
@@ -6424,6 +6487,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     }
     if (op == "remove") {
         POCKET_TRY(id, need_entity("entity"));
+        if (opt<std::string>(p, "component", "").empty()) return fail("bad_args", "world.remove takes a component off an entity (component: \"Velocity\"); world.destroy removes the entity itself");
         POCKET_TRY_VOID(w.remove(id, opt<std::string>(p, "component", ""), cause));
         return Json{{"ok", true}};
     }
@@ -7155,6 +7219,10 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
     const Json* chosen = &given;
     const CommandHelp* h = command_help(name);
     if (!h) {
+        // A function of the scripts' SDK asked for as a command (dialogue.check): it runs in a script.
+        for (const SdkHelp& s : sdk_helps()) {
+            if (s.name == name) return fail("unknown_command", "{} is a script function, not a command: call it through script.eval, e.g. {{source: \"{}(...)\"}} ({})", name, name, s.signature);
+        }
         // Every command has help (runtime_tests [help] holds it to that), so a name without is unknown.
         const std::vector<std::string> near = command_suggestions(name);
         return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");
@@ -7167,6 +7235,36 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
             adjusted["entity"] = adjusted["path"];
             adjusted.erase("path");
             chosen = &adjusted;
+        }
+        // The other names a parameter is often given.
+        if (name == "log.tail" && chosen->contains("lines") && !chosen->contains("n")) {
+            if (chosen != &adjusted) adjusted = given;
+            adjusted["n"] = adjusted["lines"];
+            adjusted.erase("lines");
+            chosen = &adjusted;
+        }
+        // world.set given the component the way world.spawn takes it ({entity, Transform: {...}}),
+        // or a component's fields beside it ({entity, component: "Transform", position: {...}}).
+        if (name == "world.set" && world_) {
+            Json moved = Json::object(), fields = Json::object();
+            const std::string comp = chosen->contains("component") && (*chosen)["component"].is_string() ? (*chosen)["component"].get<std::string>() : "";
+            for (const auto& [k, v] : chosen->items()) {
+                if (takes(k) || k == "cause") continue;
+                if (world_->known_component(k) && v.is_object()) moved[k] = v;
+                else if (!comp.empty() && !chosen->contains("value") && world_->has_field(comp, k)) fields[k] = v;
+            }
+            if (!moved.empty() || !fields.empty()) {
+                if (chosen != &adjusted) adjusted = given;
+                for (const auto& [k, v] : moved.items()) {
+                    adjusted["components"][k] = v;
+                    adjusted.erase(k);
+                }
+                if (!fields.empty()) {
+                    adjusted["value"] = fields;
+                    for (const auto& [k, v] : fields.items()) adjusted.erase(k);
+                }
+                chosen = &adjusted;
+            }
         }
         if (!command_params_open(h->params)) {
             for (const auto& [k, v] : chosen->items()) {
@@ -7785,7 +7883,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

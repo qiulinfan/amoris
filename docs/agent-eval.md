@@ -1,10 +1,16 @@
 # The agent benchmark
 
-`tools/scripts/agent_eval.py` measures the thing the engine is built for: whether a program can change a running project through the engine's own interface, given a task in words and the documentation. It is the "agent-first" claim (`docs/agent-first.md`) turned into a number that any model, tool or script can be scored on.
+`tools/scripts/agent_eval.py` measures the thing the engine is built for: whether a program can
+change a running project through the engine's own interface, given a task in words and the
+documentation. It is the "agent-first" claim (`docs/agent-first.md`) turned into a number that any
+model, tool or script can be scored on.
 
 ## What a task is
 
-Each task starts one of the samples paused in a headless runtime with the JSON-RPC server (`docs/mcp.md`, the same interface `pocket mcp` exposes), runs the simulation to a point where the task is real (enemies about, a hit that needs explaining), hands the runner the task text, and then checks the world through the same commands. A task passes or fails; nothing is scored on style.
+Each task starts one of the samples paused in a headless runtime with the JSON-RPC server
+(`docs/mcp.md`, the same interface `pocket mcp` exposes), runs the simulation to a point where the
+task is real (enemies about, a hit that needs explaining), hands the runner the task text, and then
+checks the world through the same commands. A task passes or fails; nothing is scored on style.
 
 | Task | Sample | Asks the runner to | Checked by |
 |---|---|---|---|
@@ -64,15 +70,73 @@ Each task starts one of the samples paused in a headless runtime with the JSON-R
 | `festival_flags` | blank (a slow level) | a festival whose ticks take too long: make them four times faster through the scene, the flags the same and still flying | the flags' places, sizes, pins, weights and colours against the slow level's, their weave no coarser than 8 by 5, each reaching 1.2 past its pole, and `perf`'s tick against the slow level's |
 | `sinking_crate` | blank (a broken level) | a crate falls through the floor: find why, fix the scene, and answer the field that was wrong | the crate resting where it fell, the others as they were, the ghost still drifting through the floor, the floor untouched, the answer |
 
-Sixteen tasks change the world through commands (`night_lamp` then answers from what the renderer reports about the frame it drew; `hill_raise` reshapes a terrain within a bound and answers with the height; `flowers` strews a Scatter within a slope limit; `car_speed` tunes a Vehicle and drives it through the game's own action, since the script sets the throttle every tick; `raft` floats a body on the lake, `calm_lake` changes the water; `sand_road`, `reed_field`, `stormy_dusk` and `dirt_patch` paint, plant, light and layer the hills; `glass_window` answers with the glass the renderer drew), three ask a question about it, and ten ask for a change to the project's files: three a line or two of TypeScript, two a mechanic the runner has to design (where the jump counter lives and when it clears; what a coin is, where it was, how to bring it back later), with a check that plays the result rather than reads the source, and five that span files: a sprint that needs an action in `project.toml` and the speed it picks in the script, a sound the runner has to make and play and a prefab it has to write and instantiate, where the check reads the file through the runtime and then looks at what the world does with it, a new language (`locales/fa.json` and its name in every locale file, read back by switching the interface to it) and a level the runner makes by driving Blender headless (`assets/level.blend`, whose objects' custom properties become components when the check instantiates it again). The question tasks take their truth from the same commands at check time, so a runner that reads the world correctly passes them and one that guesses does not. The script tasks run on a copy of the sample (`pocket new --from`, under `build/agent-eval/`): the runner gets `project_dir` and edits the project there (its entry script, `scripts/main.ts` or `scripts/main.tsx` for the sprites sample, or the files the task names), and when it returns the harness bundles the copy again with the tool, reloads the project (`project.reload`: `project.toml`'s settings read again, a fresh world from the scene, the edited script started over it) and steps two ticks before the check. The copy and its bundle are removed afterwards.
+Sixteen tasks change the world through commands (`night_lamp` then answers from what the renderer
+reports about the frame it drew; `hill_raise` reshapes a terrain within a bound and answers with the
+height; `flowers` strews a Scatter within a slope limit; `car_speed` tunes a Vehicle and drives it
+through the game's own action, since the script sets the throttle every tick; `raft` floats a body
+on the lake, `calm_lake` changes the water; `sand_road`, `reed_field`, `stormy_dusk` and
+`dirt_patch` paint, plant, light and layer the hills; `glass_window` answers with the glass the
+renderer drew), three ask a question about it, and ten ask for a change to the project's files:
+three a line or two of TypeScript, two a mechanic the runner has to design (where the jump counter
+lives and when it clears; what a coin is, where it was, how to bring it back later), with a check
+that plays the result rather than reads the source, and five that span files: a sprint that needs an
+action in `project.toml` and the speed it picks in the script, a sound the runner has to make and
+play and a prefab it has to write and instantiate, where the check reads the file through the
+runtime and then looks at what the world does with it, a new language (`locales/fa.json` and its
+name in every locale file, read back by switching the interface to it) and a level the runner makes
+by driving Blender headless (`assets/level.blend`, whose objects' custom properties become
+components when the check instantiates it again). The question tasks take their truth from the same
+commands at check time, so a runner that reads the world correctly passes them and one that guesses
+does not. The script tasks run on a copy of the sample (`pocket new --from`, under
+`build/agent-eval/`): the runner gets `project_dir` and edits the project there (its entry script,
+`scripts/main.ts` or `scripts/main.tsx` for the sprites sample, or the files the task names), and
+when it returns the harness bundles the copy again with the tool, reloads the project
+(`project.reload`: `project.toml`'s settings read again, a fresh world from the scene, the edited
+script started over it) and steps two ticks before the check. The copy and its bundle are removed
+afterwards.
 
 ### Whole games
 
-Five tasks start from a blank project (`pocket new` without a sample, outside the repository) and a brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6 units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and `time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key, `key.taken` and `level.complete`, `has_key` exposed), `snake` (a grid, growing on food, never straight back, `game.over` at the edge), `pause_menu` (a title screen with a `start` button, a `pause` action that stops the game and shows `resume` and `restart` buttons, `screen` and `time` exposed) and `breakout` (a paddle, a ball moved by its `Velocity`, thirty-two bricks, lives, `level.clear` and `game.over`; at 203 words its brief is the longest, the geometry being part of the contract). The brief is a contract: the names of the entities, the actions and their keys, the events with their data, the exposed values, and that the game reads positions from the Transforms every tick, so the check can move things with `world.set`. The check is hidden in the harness and plays the game: it holds `move_x` for a second and measures the move, counts the rocks and times one's fall, puts a rock on the player and waits for `game.over`, then holds the actions again and expects nothing to move; for the door it starts the player between the key and the door and walks it into the door, puts it on the key, and walks it to the exit; the menu it clicks through by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and reading `time`; the breakout it plays by setting the ball's place and velocity: up into a brick, into a wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past the paddle three times. None of it is in the brief beyond the contract.
+Five tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
+brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
+units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and
+`time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key,
+`key.taken` and `level.complete`, `has_key` exposed), `snake` (a grid, growing on food, never
+straight back, `game.over` at the edge), `pause_menu` (a title screen with a `start` button, a
+`pause` action that stops the game and shows `resume` and `restart` buttons, `screen` and `time`
+exposed) and `breakout` (a paddle, a ball moved by its `Velocity`, thirty-two bricks, lives,
+`level.clear` and `game.over`; at 203 words its brief is the longest, the geometry being part of the
+contract). The brief is a contract: the names of the entities, the actions and their keys, the
+events with their data, the exposed values, and that the game reads positions from the Transforms
+every tick, so the check can move things with `world.set`. The check is hidden in the harness and
+plays the game: it holds `move_x` for a second and measures the move, counts the rocks and times
+one's fall, puts a rock on the player and waits for `game.over`, then holds the actions again and
+expects nothing to move; for the door it starts the player between the key and the door and walks it
+into the door, puts it on the key, and walks it to the exit; the menu it clicks through by the
+buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and reading `time`; the
+breakout it plays by setting the ball's place and velocity: up into a brick, into a wall, onto the
+paddle, past it, into the last brick left, and, after `project.reload`, past the paddle three times.
+None of it is in the brief beyond the contract.
 
 ### Diagnose and fix
 
-Five tasks hand the runner something broken and a report of what a player sees, not of the cause: the game writes itself into a blank project before the runtime starts (a task's `setup`), and the check compares the fixed game with the broken one where they ought to agree, both measured in the same runtime (the broken one before the runner starts, by its `before`). `slow_swarm` is a swarm whose every bee queries every flower every tick, so the time goes on commands; a fix has to keep the game the same tick for tick, including a flower that moves in the middle of a tick, and bring the scripts' time a tick under a quarter (`script.profile` names the handler and the 120 queries a tick). `leaky_cannon` sweeps away pellets below the ground while a landed pellet rests on it, so they pile up: thirty seconds leave 300 of them where 14 are in the air. `sinking_crate` puts the crate in the floor's negative collision group, which the ghost shares to drift through on purpose, so the fix is the crate's group and not the floor's. `frozen_coins` lights the next coin after each one taken and so, after the last, a coin past the end: the script error that stops the game names `glow@scripts/main.ts:20` called from `scripts/main.ts:33` (docs/sdk.md, Errors and cost), and the fix must keep the glow. `festival_flags` is the one whose time is not the scripts': twenty-four cloth flags woven 48 by 30, which `perf`'s `systems` puts first; a weave of 16 by 10 flies the same flags for about an eighth of the cost (5.9 ms a tick against 0.7 in the reference run, with the sheets on several threads).
+Five tasks hand the runner something broken and a report of what a player sees, not of the cause:
+the game writes itself into a blank project before the runtime starts (a task's `setup`), and the
+check compares the fixed game with the broken one where they ought to agree, both measured in the
+same runtime (the broken one before the runner starts, by its `before`). `slow_swarm` is a swarm
+whose every bee queries every flower every tick, so the time goes on commands; a fix has to keep the
+game the same tick for tick, including a flower that moves in the middle of a tick, and bring the
+scripts' time a tick under a quarter (`script.profile` names the handler and the 120 queries a
+tick). `leaky_cannon` sweeps away pellets below the ground while a landed pellet rests on it, so
+they pile up: thirty seconds leave 300 of them where 14 are in the air. `sinking_crate` puts the
+crate in the floor's negative collision group, which the ghost shares to drift through on purpose,
+so the fix is the crate's group and not the floor's. `frozen_coins` lights the next coin after each
+one taken and so, after the last, a coin past the end: the script error that stops the game names
+`glow@scripts/main.ts:20` called from `scripts/main.ts:33` (docs/sdk.md, Errors and cost), and the
+fix must keep the glow. `festival_flags` is the one whose time is not the scripts': twenty-four
+cloth flags woven 48 by 30, which `perf`'s `systems` puts first; a weave of 16 by 10 flies the same
+flags for about an eighth of the cost (5.9 ms a tick against 0.7 in the reference run, with the
+sheets on several threads).
 
 ## Runners
 
@@ -82,33 +146,92 @@ python3 tools/scripts/agent_eval.py --runner null             # does nothing: th
 python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,recolor --json
 ```
 
-`reference` is the harness checking itself: every solution is one or two commands, which is the point. `null` sets the floor. Any other value is a shell command run once per task with the task as JSON on stdin (`task`, `project`, `rpc_url`, `docs`, `notes`); it may print a JSON object with an `answer` as its last line, and `POCKET_RPC_URL` is in its environment. A runner that wraps a model gives it the docs listed and the RPC; what it does in between is its own business. `--json` prints the report (`runner`, `passed`, `total`, per task `ok`, `seconds`, `detail`, `answer`, `error`), and the exit code is 0 only for a full pass.
+`reference` is the harness checking itself: every solution is one or two commands, which is the
+point. `null` sets the floor. Any other value is a shell command run once per task with the task as
+JSON on stdin (`task`, `project`, `rpc_url`, `docs`, `notes`); it may print a JSON object with an
+`answer` as its last line, and `POCKET_RPC_URL` is in its environment. A runner that wraps a model
+gives it the docs listed and the RPC; what it does in between is its own business. `--json` prints
+the report (`runner`, `passed`, `total`, per task `ok`, `seconds`, `detail`, `answer`, `error`), and
+the exit code is 0 only for a full pass.
 
-`tests/evidence/agent-eval/reference.json` and `null.json` are the two built-in runners' reports; coding agents with a model are below.
+`tests/evidence/agent-eval/reference.json` and `null.json` are the two built-in runners' reports;
+coding agents with a model are below.
 
-**Out of the repository.** For any runner but the two built-in ones, every task runs on a copy of its sample in a directory of its own under the system's temporary directory, with a copy of the documentation set and an index of it (`docs/INDEX.md` there: a line a file, its title, what it covers and its size); the copy's `AGENTS.md` points at those docs, and `docs` in the task lists them. The harness itself holds every check, and the checks are the answers: an agent that found it could replay a check instead of reading the engine's docs. Until 2026-10-01 the script tasks' copies were made under the repository's `build/`, and the traces of that day's run show two agents doing exactly that: on `coin_respawn` the agent searched the repository for the word, found the check in `agent_eval.py` and followed it step by step, and on `walker_sprint` it read the reference solution. Those two passes, and the times and costs of the script tasks in the runs before that date, measured the harness as much as the engine. The agent can still reach the repository by an absolute path (the tool it runs is there), so `pi_agent.py` reports any call that touches the harness or the evidence under `peeked`, and the harness prints it beside the task's result.
+**Out of the repository.** For any runner but the two built-in ones, every task runs on a copy of
+its sample in a directory of its own under the system's temporary directory, with a copy of the
+documentation set and an index of it (`docs/INDEX.md` there: a line a file, its title, what it
+covers and its size); the copy's `AGENTS.md` points at those docs, and `docs` in the task lists
+them. The harness itself holds every check, and the checks are the answers: an agent that found it
+could replay a check instead of reading the engine's docs. Until 2026-10-01 the script tasks' copies
+were made under the repository's `build/`, and the traces of that day's run show two agents doing
+exactly that: on `coin_respawn` the agent searched the repository for the word, found the check in
+`agent_eval.py` and followed it step by step, and on `walker_sprint` it read the reference solution.
+Those two passes, and the times and costs of the script tasks in the runs before that date, measured
+the harness as much as the engine. The agent can still reach the repository by an absolute path (the
+tool it runs is there), so `pi_agent.py` reports any call that touches the harness or the evidence
+under `peeked`, and the harness prints it beside the task's result.
 
 ## Coding agents
 
-`tools/scripts/runners/pi_agent.py` hands each task to a pi-family coding agent, oh-my-pi (`omp`) or pi, with the model it is set up for or the one `--model` names, and prints the answer with what the task cost: tokens, dollars, tool calls by tool, turns and seconds; the harness adds them up as `totals`. `--via` says how the agent reaches the engine: `mcp` through the `pocket` MCP server (`docs/mcp.md`), declared in a `.mcp.json` the runner writes where the agent starts; `shell` through `pocket rpc`; `extension` through pi's `pocket` and `pocket_look` tools (`integrations/pi/pocket.ts`). The agent starts in the project copy for a task that edits files and in an empty directory otherwise, never in the repository, so nothing it writes can land in the engine's sources. `--env-file` loads a provider's key file into the agent's environment without printing it, and `POCKET_EVAL_RUNTIME` names a copy of the runtime for the harness to start, so builds made while a long run goes on do not change what it measures. The harness passes the same copy to the agent as `POCKET_RUNTIME`, which the MCP server's `runtime_start` launches instead of building the checkout: in the run of fifty-five, an agent's `runtime_start` built the engine while it was being edited, failed to compile, and the agent spent four calls waiting for the sources to settle.
+`tools/scripts/runners/pi_agent.py` hands each task to a pi-family coding agent, oh-my-pi (`omp`) or
+pi, with the model it is set up for or the one `--model` names, and prints the answer with what the
+task cost: tokens, dollars, tool calls by tool, turns and seconds; the harness adds them up as
+`totals`. `--via` says how the agent reaches the engine: `mcp` through the `pocket` MCP server
+(`docs/mcp.md`), declared in a `.mcp.json` the runner writes where the agent starts; `shell` through
+`pocket rpc`; `extension` through pi's `pocket` and `pocket_look` tools
+(`integrations/pi/pocket.ts`). The agent starts in the project copy for a task that edits files and
+in an empty directory otherwise, never in the repository, so nothing it writes can land in the
+engine's sources. `--env-file` loads a provider's key file into the agent's environment without
+printing it, and `POCKET_EVAL_RUNTIME` names a copy of the runtime for the harness to start, so
+builds made while a long run goes on do not change what it measures. The harness passes the same
+copy to the agent as `POCKET_RUNTIME`, which the MCP server's `runtime_start` launches instead of
+building the checkout: in the run of fifty-five, an agent's `runtime_start` built the engine while
+it was being edited, failed to compile, and the agent spent four calls waiting for the sources to
+settle.
 
-Copy the runtime to a new file for `POCKET_EVAL_RUNTIME` (`rm` the old copy first: macOS kills a signed binary that was overwritten in place, and every task then fails with the runtime gone before it listened), and pass `--rows <file>` to keep each task's result as it finishes, so a run cut short keeps what it did:
+Copy the runtime to a new file for `POCKET_EVAL_RUNTIME` (`rm` the old copy first: macOS kills a
+signed binary that was overwritten in place, and every task then fails with the runtime gone before
+it listened), and pass `--rows <file>` to keep each task's result as it finishes, so a run cut short
+keeps what it did:
 
 ```bash
 POCKET_EVAL_RUNTIME=build/eval-runtime/pocket_runtime python3 tools/scripts/agent_eval.py --timeout 900 --json --rows build/eval-rows.jsonl \
     --runner "python3 tools/scripts/runners/pi_agent.py --agent pi --via extension --model deepseek/deepseek-flash --env-file ~/.omp/agent/.env"
 ```
 
-`tools/scripts/runners/opencode_agent.py` does the same with opencode (`opencode run --format json --auto`), by default with GLM 5.3 Flash on the Z.ai coding plan (`zai-coding-plan/glm-5.3-flash`, `--model` for another), the agent used for gameplay runs from 2026-10-01 on. `--via mcp` declares the `pocket` MCP server in an `opencode.json` the runner writes where the agent starts (opencode merges it over the user's own configuration, which is left alone); `--via shell` gives `pocket rpc`. opencode waits on a piped stdin for more of the message, so the runner closes it. On a subscription plan the cost it reports is 0; tokens, turns and tool calls by tool are counted from its `step_finish` and `tool_use` events.
+`tools/scripts/runners/opencode_agent.py` does the same with opencode
+(`opencode run --format json --auto`), by default with GLM 5.3 Flash on the Z.ai coding plan
+(`zai-coding-plan/glm-5.3-flash`, `--model` for another), the agent used for gameplay runs from
+2026-10-01 on. `--via mcp` declares the `pocket` MCP server in an `opencode.json` the runner writes
+where the agent starts (opencode merges it over the user's own configuration, which is left alone);
+`--via shell` gives `pocket rpc`. opencode waits on a piped stdin for more of the message, so the
+runner closes it. On a subscription plan the cost it reports is 0; tokens, turns and tool calls by
+tool are counted from its `step_finish` and `tool_use` events.
 
 ```bash
 POCKET_EVAL_RUNTIME=build/eval-runtime/pocket_runtime python3 tools/scripts/agent_eval.py --timeout 900 --json \
     --runner "python3 tools/scripts/runners/opencode_agent.py --via mcp"
 ```
 
-With `POCKET_EVAL_TARGET=ios-sim` (and `POCKET_EVAL_DEVICE`, a simulator's name) the game runs as an app in the iOS Simulator instead (`IosEnv` in `sdk/python/pocket_env.py`: `pocket run <project> --ios`, paused, its control server on a free port of the Mac), and the runner and the checks talk to it from the Mac as they talk to a desktop runtime. The app carries its own copy of the game, so the tasks that edit the project's files are left out. On 2026-10-01 the reference solutions passed all thirty of the others on a simulated iPhone 18 Pro (iOS 27) in 143 seconds, the renderer's checks among them (glass, the grey post effect, the lamp's shadows), and hello's state after 60 ticks there was the desktop's and Linux's to the last digit.
+With `POCKET_EVAL_TARGET=ios-sim` (and `POCKET_EVAL_DEVICE`, a simulator's name) the game runs as an
+app in the iOS Simulator instead (`IosEnv` in `sdk/python/pocket_env.py`:
+`pocket run <project> --ios`, paused, its control server on a free port of the Mac), and the runner
+and the checks talk to it from the Mac as they talk to a desktop runtime. The app carries its own
+copy of the game, so the tasks that edit the project's files are left out. On 2026-10-01 the
+reference solutions passed all thirty of the others on a simulated iPhone 18 Pro (iOS 27) in 143
+seconds, the renderer's checks among them (glass, the grey post effect, the lamp's shadows), and
+hello's state after 60 ticks there was the desktop's and Linux's to the last digit.
 
-With `POCKET_AGENT_TRACES=<dir>` the runners keep each task's event stream there, and `tools/scripts/trace_report.py <dir>` says what the agents spent their context on: per task the turns, tokens and calls and the largest output, and over the run the tools' output by tool and command, the files read and how much of them, and the calls that failed (`--task <name>` lists one task's calls in order). Most of what this file's Results report about reading and about where an agent got stuck came from it. The harness keeps the same summary in each task's row (`trace`: turns, tokens, calls, KB read, failed calls, and the calls before and after the first edit) and marks it `stuck` when the agent made at least fifteen calls after its first edit and more than twice as many as before it: the shape of a fix that did not take for a reason the agent had to dig for, as `frozen_coins` had before a reload dropped the old handlers.
+With `POCKET_AGENT_TRACES=<dir>` the runners keep each task's event stream there, and
+`tools/scripts/trace_report.py <dir>` says what the agents spent their context on: per task the
+turns, tokens and calls and the largest output, and over the run the tools' output by tool and
+command, the files read and how much of them, and the calls that failed (`--task <name>` lists one
+task's calls in order). Most of what this file's Results report about reading and about where an
+agent got stuck came from it. The harness keeps the same summary in each task's row (`trace`: turns,
+tokens, calls, KB read, failed calls, and the calls before and after the first edit) and marks it
+`stuck` when the agent made at least fifteen calls after its first edit and more than twice as many
+as before it: the shape of a fix that did not take for a reason the agent had to dig for, as
+`frozen_coins` had before a reload dropped the old handlers.
 
 ## Results
 
@@ -125,49 +248,318 @@ With `POCKET_AGENT_TRACES=<dir>` the runners keep each task's event stream there
 | oh-my-pi 18.4.3 | DeepSeek Flash (`deepseek/deepseek-flash`) | the pi extension, all thirty-nine tasks, every one outside the repository, 2026-10-01 | 38/39 | 31 min | 14.8 M | $0.32 | 612 | `omp-deepseek-full-3.json` |
 | oh-my-pi 18.4.3 | DeepSeek Flash (`deepseek/deepseek-flash`) | the pi extension, all forty-five tasks, 2026-10-01 | 44/45 | 43 min | 21.0 M | $0.44 | 815 | `omp-deepseek-full-4.json` |
 
-A cheap model passes every task through the engine's commands and docs, for a few cents a task: the claim of `docs/agent-first.md` measured instead of asserted. What the runs showed:
+A cheap model passes every task through the engine's commands and docs, for a few cents a task: the
+claim of `docs/agent-first.md` measured instead of asserted. What the runs showed:
 
-- **The cost is in design, not in commands.** In the last two runs every command task and one-line edit took between 4 and 35 seconds and at most three cents. The two mechanics and the two file tasks took most of the time and money (oh-my-pi 588 of 759 seconds and $0.16 of $0.22; pi 323 of 501 seconds and $0.09 of $0.15): the agent reads the game's script, decides where the state goes, edits, and plays the result, often more than once. The coin that comes back after three seconds was the most expensive task in all three runs.
-- **The first failure was the engine's.** In the first run oh-my-pi destroyed the playground's enemies correctly, the game's own script then touched one, and the runtime exited under the harness. A served runtime now keeps serving after a script error (the simulation stops, `state` says why), and the task passes in every later run.
-- **Watching the agents changed the interface.** Before these runs a first trace had an agent pass `world.set` its fields under the wrong key, be told `{"ok": true}`, and spend a dozen calls reading the engine's C++ to learn why nothing changed. Commands now refuse a parameter they do not take and name the ones they do, and every command explains itself (`help`, `commands {usage: true}`; `docs/mcp.md`). In these runs the agents still read files in the command tasks (25 to 45 reads, greps and shell calls beside 41 to 56 engine calls), mostly the docs the task lists.
-- **Lighting through commands.** `night_lamp` came after these runs, with the spot lights, the clustered lights and their shadows; both agents passed it at the first try, pi in 13 seconds for half a cent without opening a file (all 13 of its calls went to the engine) and oh-my-pi in 18 seconds for a cent after reading two (`night-lamp-pi.json`, `night-lamp-omp.json`).
-- **A bigger engine did not cost more.** The last run came after the renderer grew clustered lights, their shadows, volumetric fog, reflections, TAA and the rest, with their commands and docs (the agent's documentation set gained `docs/design/rendering.md`): pi passed all sixteen tasks in about the same time and for the same fifteen cents, with fewer tool calls. The two mechanics and the two file tasks were again most of it (395 of 529 seconds, $0.10 of $0.15).
-- **New features from the docs alone.** The three tasks on the terrain, scattering and vehicles went to pi the day those features landed, with nothing but the documentation set (which gained `docs/design/terrain.md` and `docs/design/networking.md`): it passed all three at the first try in 75 seconds for under three cents (`pi-deepseek-new-features.json`). It raised the hill with repeated `terrain.sculpt` calls checked against `terrain.height`, strewed 1092 flowers with a `Scatter` within the slope limit, and drove the car through the game's `throttle` action rather than the Vehicle's field, which the script overwrites every tick.
-- **Water, the same way.** The two tasks on water went to oh-my-pi with the extension the day water landed (the documentation set gained `docs/design/water.md`): 2 of 2 at the first try in 69 seconds for a cent and a half (`omp-deepseek-water.json`). The raft needed a mass the lake could hold up, which the task does not give: the default mass sinks a board of that size in water of the default density, and the agent chose a lighter one from the component's docs; the lake was stilled, cleared and raised with `world.set` and its surface read back with `water.height`.
-- **Painting and planting.** The two tasks on terrain painting and scattered copies that sway and collide went to oh-my-pi with the extension the day those features landed (2026-09-29): 2 of 2 at the first try in two minutes for two cents (`omp-deepseek-terrain-paint.json`). The road took 26 seconds and eight calls: one stroke of `terrain.paint` through points along the line, checked with `terrain.height`. The reed field took 98 seconds and 32 calls, most of them reading how a copy's size and `collide` combine; it fixed the copies' size range so each collider is exactly 0.1 across, which the task asks for and does not spell out.
-- **Weather.** `stormy_dusk` (the atmosphere sky, its clouds, the sun set low in the west and the Wind) went to oh-my-pi the day the atmosphere landed: passed at the first try in 40 seconds and 18 calls for under a cent (`omp-deepseek-stormy-dusk.json`); it turned the sun from the component's docs and read the reddened sun light back from `render.stats`, the same 0.55, 0.28, 0.05 the reference gets.
-- **Layers and glass.** The two tasks on terrain texture layers and glass went to oh-my-pi with the extension the day those features landed: 2 of 2 at the first try in a minute and a half for under three cents (`omp-deepseek-layers-glass.json`). The dirt patch took 82 seconds and 19 calls: it read the Terrain's layers, changed the sand's height rule and wrote them back whole (a list field is set whole), painted the dirt by name with `terrain.paint {layer}` and read its share back from `terrain.height`. The window took 13 seconds and 7 calls, with `transmission`, `ior` and `clearcoat` found in the MeshRenderer's documentation and `render.stats.glass` read after a tick.
-- **Languages and levels.** The two tasks that span files beyond the script went to oh-my-pi with the extension the day after right-to-left text and components from Blender landed: 2 of 2 at the first try in five minutes for three cents (`omp-deepseek-locale-blender.json`). The Persian language took 226 seconds and 45 calls (22 in the shell, 15 file reads, one file written and three edited): the check found every English key translated, Persian's own letters rather than the Arabic file copied, the language named in all four files, and the score drawn as `امتیاز ۰` in Persian digits through the `{score, number}` placeholder. The Blender level took 72 seconds and 26 calls (20 in the shell, one file written): the saved `.blend` gave a static floor a ball rests on at 1.5 (the agent answered 1.495) and a pillar with its static body, its 0.5 by 1.5 by 0.5 box and 50 health, all from custom properties.
-- **All twenty-five at once.** The full set went to oh-my-pi with the extension after the weather work: 24 of 25 in 33 minutes for 22 cents (`omp-deepseek-full.json`). The twenty command tasks took 15 minutes and 16 cents together; the two mechanics took 15 minutes and six cents, the coin that comes back again the dearest at nearly ten minutes and five cents. The one failure was the reed field, which the same agent had passed the day before: this time it gave `Scatter.collide` 0.1 on an entity scaled 0.1 across, so each collider came out a hundredth of a unit, since the radius is in the entity's own units. The field's documentation said so in four words; it now says what the scale does to it with an example, which is the kind of fix these runs are for.
-- **After the agent tools.** The full set went to oh-my-pi again on 2026-10-01, after `project.apply`, `step {until}`, `project.brief`, the field checks on component writes and the release runtime for agent runs (ADR 0006) had landed: 29 of 29 in 24 minutes for 23 cents (`omp-deepseek-full-2.json`). On the twenty-five tasks both runs share, it took 1108 seconds against 1990, 17.7 cents against 21.6 and 439 tool calls against 514, and passed the one the earlier run failed; the coin that comes back took 203 seconds against 573. One run each, and runs of the same set have differed by up to twice, so this says the change did not cost anything rather than how much it saved. The run also showed how oh-my-pi reaches an extension's tool: as a device, a `write` to `xd://pocket` whose content is the tool's arguments (and a `read` of it for its description), so the runner's counts before this date list those calls as `write` and `read`; it now counts them as `pocket`, and `POCKET_AGENT_TRACES=<dir>` keeps every task's event stream. In the traces an agent that wanted two answers at once sent two commands through `curl` in one shell call; the `pocket` tool (and the MCP `runtime_command`) now takes `calls: [{method, params}, ...]` and answers each in order.
-- **Forty-eight.** The full set with the eight tasks added since `full-4` went to oh-my-pi again late on 2026-10-01, after the press fix, the incremental world, the irradiance volumes and the ragdolls: 47 of 48 in 38 minutes for 44 cents, 765 calls (`omp-deepseek-full-5.json`). The failure was the checker's: that agent's merchant asks again after a sale, and the checker, taking the buying choice whenever it was offered, bought two potions in one talk. It now buys one a talk and leaves.
-- **Forty-eight on opencode.** The full set went to opencode with GLM 5.3 Flash over MCP on 2026-10-01 (the agent used for gameplay runs from that day): 48 of 48 at the first try in 112 minutes, 549 tool calls against oh-my-pi's 765 on the same set, 16.7 million tokens, no call into the harness (`opencode-glm-full.json`; the coding plan reports no cost). It was slower than oh-my-pi with DeepSeek (38 minutes): `snake` alone took 22 minutes for 14 calls, the model's turns being long rather than many.
-- **Fifty-five on opencode.** The full set went to opencode with GLM 5.3 Flash over MCP again late on 2026-10-01, with the iOS, Linux, compressed-model, voxel and diagnose work in: 52 of 55 in 122 minutes, 22.3 million tokens, 753 tool calls (`opencode-glm-full55.json`). The three failures were one engine bug, one ambiguous brief and one checker bug. In `guard_view` the agent passed `tilemap.fov` a point as `[x, y]`; a JSON type error deep in the handler ended the runtime. A value of the wrong type is now a `bad_args` answer from any command, and sight and field of view take `[x, y]`. The same agent's `runtime_start` had built the engine from the checkout while it was being edited and failed to compile; the harness now hands its runtime copy to the agent's tools as `POCKET_RUNTIME`. In `snake` the agent laid the grid on XZ, where the brief gave cells as (x, y) without naming the plane; the brief now names it, as `key_door`'s does. In `voxel_house` the house stood at (10, 0, 0) as asked, but the checker read the local `Transform` of a part under the instantiated root; it reads the world position now. Run again after the fixes, the three passed: `guard_view` in 30 seconds and 9 calls against 660 and 39, `snake` in 661 and 22, `voxel_house` in 179 and 14 (`opencode-glm-rerun3.json`). The traces showed two more things worth an engine change: `merchant_talk` spent twenty-five calls pressing Space and clicking choices to see each branch of the conversation it wrote, which `dialogue.routes` now answers in one `script.eval` (`docs/design/dialogue.md`, Trying it); and `ui.click {id: "start"}`, a name where an id goes, was read as no element at all, though the dialogue documentation said it worked; names now stand for elements in every `ui.*` command.
-- **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33 calls; the agent read the interface documentation, went looking for an example and read the UI sample's script, wrote the game, and clicked through it by the buttons' names. The breakout took 661 seconds and 36 calls: the runner's eleven minutes ran out while the agent was still testing a finished game, having just destroyed all but one brick to see `level.clear` come.
-- **opencode with GLM 5.3 Flash.** The first two tasks given to `opencode_agent.py` over MCP (2026-10-01): `spawn_named` in 35 seconds and 5 calls, `merchant_talk` (a dialogue script written and wired into the game) in 271 seconds and 26 calls, both at the first try.
-- **Cloth.** `yard_flag` went to opencode with GLM 5.3 Flash the day cloth landed (2026-10-01): passed at the first try in 186 seconds and 14 calls, the flag streaming 1.51 past its pole (answered 1.53) (`opencode-glm-yard-flag.json`).
-- **Going limp.** `knockout` (health, and a ragdoll when it runs out) went to oh-my-pi the day ragdolls landed (2026-10-01): passed at the first try in 78 seconds and 33 calls for a cent and a half (`omp-deepseek-knockout.json`).
-- **Reading less.** The traces of the forty-eight on opencode showed `docs/generated/sdk.md` (75 KB) read whole in `dodge`, `key_door` and `snake`, at 53 KB a read, and every later turn carrying it. After a new project's AGENTS.md gave its size and said to search it (and `commands {text: true}` became an index), `key_door`, `dodge` and `merchant_talk` went to opencode with GLM 5.3 Flash again (2026-10-01): 3 of 3 (`opencode-glm-reading.json`). In both games the agent searched the reference with `grep` and read only parts of it (35 and 44 KB read in all, against 84 and 66), and the tasks took 0.61 and 0.65 million tokens against 1.67 and 1.56, in 16 and 17 turns against 28 and 34. `merchant_talk`, which never opened those files, read the same 15 KB both times and took 1.70 million tokens against 0.92, in 51 turns against 29: one run each says the reading changed and how much runs vary, not by how much the change saves.
-- **A frozen game, and an engine bug.** `frozen_coins` went to opencode with GLM 5.3 Flash the day it landed (2026-10-01) and passed, but not cleanly: 660 seconds and 46 calls, the agent cut off at its ten minutes (`opencode-glm-frozen-coins.json`). It held `move_x`, stepped until `level.complete`, read the error that stopped the game (`glow@scripts/main.ts:20`, called from line 33) and fixed the line in its ninth call. Then `project.apply` failed with the same error, and the next 35 calls went on finding out why, until it deleted the script context from the registry by hand through `script.eval`. The engine was wrong: a script error stops the simulation, and nothing is dispatched to the scripts while one stands, including the unload a reload sends before loading the bundle again; the old handlers stayed, the new bundle's joined them, and the old tick threw again. A reload now clears the errors before the unload (`runtime_tests` `[reload]`). Run again after the change, `frozen_coins` took 60 seconds, 10 calls and 0.22 million tokens against 660, 46 and 1.78 (`opencode-glm-reload-voxels.json`). The same trace showed `script.eval` answering an error with its frames only (JavaScriptCore keeps the message out of `stack`) and without the SDK in reach (`Can't find variable: world`); it now answers the message too, and the SDK's exports are names there.
-- **A house of voxels.** `voxel_house` went to opencode with GLM 5.3 Flash the day voxel models landed: passed at the first try in 186 seconds and 16 calls, a house 10 by 10 cells and 8 high in three colours (96 triangles), which it looked at with `asset_preview` before placing it (`opencode-glm-reload-voxels.json`).
-- **The slow festival.** `festival_flags` went to opencode with GLM 5.3 Flash the day it landed (2026-10-01): passed at the first try in 155 seconds and 17 calls, a tick 5.99 ms before and 0.43 after (`opencode-glm-festival.json`). It needed no measuring command: it read the scene, saw cloth woven 48 by 30 on every flag, searched the Cloth's documentation, lowered the weave, applied it and compared a capture before with one after.
-- **Diagnosing.** The three diagnose-and-fix tasks went to opencode with GLM 5.3 Flash the day they and `script.profile` landed (2026-10-01): 3 of 3 at the first try in 12 minutes, 43 calls (`opencode-glm-diagnose.json`). On `slow_swarm` (468 seconds, 18 calls) the agent read the script, searched the command list for "profil", found `script.profile` and measured with it before its first edit and after each of the next four, ending at 0.23 ms of script a tick against the broken game's 20.14 (measured while other work loaded the machine) with the swarm the same tick for tick. `leaky_cannon` (192 seconds, 17 calls) it found by counting `Pellet_*` entities and reading the landing events, then changed the sweep's condition in one edit. `sinking_crate` (62 seconds, 8 calls) it found by reading the scene and the physics documentation, and answered `Collider.group`.
-- **Conversations as text.** `merchant_talk` went to oh-my-pi the day dialogue landed (2026-10-01): passed at the first try, but in 336 seconds and 85 calls for five cents (`omp-deepseek-merchant-talk-1.json`). The script and the wiring were done in a dozen calls; the rest went on playing the conversation to see it work. Pressing Space once a tick left the line where it was, because `input.press` of a key still down from the last press only held it longer, and `ui.key` did nothing, because the box looked for keys held and `ui.key` lets the key up before the next tick; the agent read the engine's input code to find out why. Presses a tick apart are now two presses and the box acts on keys that went down since the last tick; rerun, the task passed in 84 seconds and 38 calls for under a cent and a half (`omp-deepseek-merchant-talk-2.json`).
-- **Levels as text.** `vault_level` went to oh-my-pi the day maps in characters landed: passed at the first try in 35 seconds and 15 calls for under a cent, the vault drawn in rows of characters through `tilemap.text` (`omp-deepseek-vault-level.json`).
-- **Music as text.** `theme_song` went to oh-my-pi the day scores landed: passed at the first try in 55 seconds and 26 calls for under a cent (`omp-deepseek-theme-song.json`), with a four-track tune close to the documentation's example. Its score gave one instrument a `reverb`, which the synthesizer then passed over; recipes now refuse a field they do not have, naming the ones they do (and where reverb lives).
-- **Sound as text.** `coin_chime` (a `.sfx` recipe of the agent's own, played on every coin) went to oh-my-pi the day recipes landed (2026-10-01): passed at the first try in 158 seconds and 41 calls for under two cents (`omp-deepseek-coin-chime.json`).
-- **Art as text.** `svg_coin` (an SVG file the agent writes, shown as a sprite) went to oh-my-pi with the extension the day SVG images landed (2026-10-01): passed at the first try in 30 seconds and 17 calls for half a cent (`omp-deepseek-svg-coin.json`).
-- **A third game.** `snake` (a grid, segments named from the head, food the checker places by its Transform) went to oh-my-pi with the extension on 2026-10-01: passed at the first try in 273 seconds and 73 calls for under five cents (`omp-deepseek-snake.json`).
-- **Light and sight.** The two tasks on lit 2D and tile-map sight went to oh-my-pi with the extension the day those landed (2026-10-01): 2 of 2 at the first try, `night_level` in 68 seconds and 21 calls, `guard_view` in 37 seconds and 10 calls, two cents together (`omp-deepseek-light-sight.json`).
-- **Forty-five.** The full set with the six tasks added since (light and sight, snake, the SVG coin, the sound recipe and the score) went to oh-my-pi again later on 2026-10-01: 44 of 45 in 43 minutes for 44 cents (`omp-deepseek-full-4.json`); on the thirty-nine tasks both runs share it took 1935 seconds against 1863, 33.6 cents against 32.0 and 623 calls against 612: the same, one run each. The failure was `coin_chime`, and again the run's state was the cause: the agent had left `move_x` held for hundreds of ticks while testing, a hold outlives `project.reload`, and the restarted game walked into a coin before the check had pressed anything, so the chime "played before any coin". A restart now lets go of held actions and stops the last run's sounds, as a fresh run would start; rerun, the task passed (`omp-deepseek-full-4-reruns.json`). The run also caught an agent reading the harness: the copy of `walker_sprint` was named after the task, and the agent searched the repository for that name and read its check. Copies now have names that say nothing of their task; rerun, it passed without looking.
-- **Thirty-nine, outside the repository.** The full set went to oh-my-pi again later on 2026-10-01, with the ten tasks added since (hitboxes, own components, waiting, meshes and maps by code, 2D physics, shaders and the two games) and every task on a copy outside the repository: 38 of 39 in 31 minutes for 32 cents (`omp-deepseek-full-3.json`), no harness file read. On the twenty-nine tasks both full runs share it took 1189 seconds against 1461, 20.3 cents against 23.1 and 413 tool calls against 578 (the Persian locale and the double jump each in under half the time), one run each. The ten new tasks took eleven minutes and twelve cents. The one failure was `dodge`, and it was the check's: the game the agent wrote was right, but after the agent's own session the harness reloaded the project, which did not seed the random numbers again, so the rocks fell in other places than in a fresh run and one struck the Player before the check looked at a falling rock; the frozen game then read as a rock that did not fall. The same files, rebuilt from the trace and checked on a fresh runtime, pass. Two changes followed: a restart (`project.reload` of the scene and the scripts) now seeds `random()` and `Math.random` again, as a fresh run would, and the check moves the Player out of the rocks' columns (the brief has the game read its Transform) before it watches them.
-- **Hits, own components, waiting.** The three tasks on hitboxes, a project's own components and `step {until}` went to oh-my-pi with the extension the day those landed: 3 of 3 at the first try in a minute for just over a cent (`omp-deepseek-combat-components.json`). In the trace of the coin task the agent read `project.brief` first, sent its questions three at a time through `calls`, and finished with one call holding the action and stepping until the coin event; the spike trap took ten calls to the engine and no file but the docs.
-- **Things made by code and 2D physics.** Three tasks came with meshes and maps made by code and the 2D rigid bodies, and went to oh-my-pi with the extension the day those landed, the first run with every task outside the repository (2026-10-01): 3 of 3 at the first try in four minutes for eight cents, none peeking at the harness (`omp-deepseek-made-physics2d.json`). The roof took 25 seconds and 14 calls: `mesh.create` with a base it chose to add (six triangles). The walled room took 57 seconds and 17 calls: `tilemap.create`, four `tilemap.fill` strips and a pebble that came to rest on the floor at -6.75. The bridge took 152 seconds and 27 calls, most of them spent on the one thing the task does not say: an entity holds one `Joint2D`, and six hinges hold five planks between two points, so the agent spawned a sixth static body at the far bank to carry the last hinge, and followed the five planks' heights through two seconds with one `step {watch}`. It found the planks' ids by counting on from `world.roots`; entity fields now take names.
-- **Shaders.** The two tasks on WGSL came with post effects and materials and went to oh-my-pi the same day: 2 of 2 at the first try in about a minute each for just over a cent each (`omp-deepseek-shaders.json`). The grey flashback took 62 seconds and 19 calls, one `render.post` with code. The orange ball took 68 seconds and 30 calls: a material file and the ball's spawn in the script given it, the colour coming out exactly #ff6600 on screen (255, 102, 0), so the agent wrote the orange in linear light, as the material's docs say its output is.
-- **Whole games from a brief.** The two game tasks went to oh-my-pi with the extension on 2026-10-01: 2 of 2 at the first try, `dodge` in 155 seconds and 43 calls for five and a half cents, `key_door` in 262 seconds and 54 calls for nine cents (`omp-deepseek-games.json`). Each wrote its `project.toml` actions, an empty scene and the script, and applied and played it through the engine (the dodge agent stepped the game and looked at a capture of it before answering). Both reached into the repository: the dodge agent read the tool's sources to see how `"pocket"` resolves for types, the door agent listed `tests/evidence/components` for an example of a project's components; neither touched the harness or its evidence (`pi_agent.py` now counts only those as `peeked`). The door agent applied its script nine times with `pocket_apply`, editing between them. Twice an agent passed a command's name as a key (`{"help": true}`); the pi tool now takes that as the command.
-- **A guide in the project.** Since `pocket new` writes an `AGENTS.md` into every project (how to run, read, change and check the game), the copies the script tasks work on carry one, and oh-my-pi reads it on starting there. The eight script tasks went to it again the same day: 8 of 8 in 477 seconds against 615 in the full run before (`omp-deepseek-script-guide.json`); every one that edited a script then applied it with `pocket_apply` rather than restarting anything. The double jump took 67 seconds against 217, the sprint 75 against 47: one run each, so the guide is not shown to save time, only to cost none.
-- **Context is the bill.** Over nine tenths of every run's tokens are cache reads of the conversation so far, so what an agent carries into each turn decides the cost. Started at the repository root, oh-my-pi also took in its guidance files and wandered into the engine's source (it once wrote a stray file there); started outside, the same agent and model finished everything in under half the time for three quarters of the cost. pi with the two-tool extension carried the least and was the cheapest and fastest.
+- **The cost is in design, not in commands.** In the last two runs every command task and one-line
+  edit took between 4 and 35 seconds and at most three cents. The two mechanics and the two file
+  tasks took most of the time and money (oh-my-pi 588 of 759 seconds and $0.16 of $0.22; pi 323 of
+  501 seconds and $0.09 of $0.15): the agent reads the game's script, decides where the state goes,
+  edits, and plays the result, often more than once. The coin that comes back after three seconds
+  was the most expensive task in all three runs.
+- **The first failure was the engine's.** In the first run oh-my-pi destroyed the playground's
+  enemies correctly, the game's own script then touched one, and the runtime exited under the
+  harness. A served runtime now keeps serving after a script error (the simulation stops, `state`
+  says why), and the task passes in every later run.
+- **Watching the agents changed the interface.** Before these runs a first trace had an agent pass
+  `world.set` its fields under the wrong key, be told `{"ok": true}`, and spend a dozen calls
+  reading the engine's C++ to learn why nothing changed. Commands now refuse a parameter they do not
+  take and name the ones they do, and every command explains itself (`help`,
+  `commands {usage: true}`; `docs/mcp.md`). In these runs the agents still read files in the command
+  tasks (25 to 45 reads, greps and shell calls beside 41 to 56 engine calls), mostly the docs the
+  task lists.
+- **Lighting through commands.** `night_lamp` came after these runs, with the spot lights, the
+  clustered lights and their shadows; both agents passed it at the first try, pi in 13 seconds for
+  half a cent without opening a file (all 13 of its calls went to the engine) and oh-my-pi in 18
+  seconds for a cent after reading two (`night-lamp-pi.json`, `night-lamp-omp.json`).
+- **A bigger engine did not cost more.** The last run came after the renderer grew clustered lights,
+  their shadows, volumetric fog, reflections, TAA and the rest, with their commands and docs (the
+  agent's documentation set gained `docs/design/rendering.md`): pi passed all sixteen tasks in about
+  the same time and for the same fifteen cents, with fewer tool calls. The two mechanics and the two
+  file tasks were again most of it (395 of 529 seconds, $0.10 of $0.15).
+- **New features from the docs alone.** The three tasks on the terrain, scattering and vehicles went
+  to pi the day those features landed, with nothing but the documentation set (which gained
+  `docs/design/terrain.md` and `docs/design/networking.md`): it passed all three at the first try in
+  75 seconds for under three cents (`pi-deepseek-new-features.json`). It raised the hill with
+  repeated `terrain.sculpt` calls checked against `terrain.height`, strewed 1092 flowers with a
+  `Scatter` within the slope limit, and drove the car through the game's `throttle` action rather
+  than the Vehicle's field, which the script overwrites every tick.
+- **Water, the same way.** The two tasks on water went to oh-my-pi with the extension the day water
+  landed (the documentation set gained `docs/design/water.md`): 2 of 2 at the first try in 69
+  seconds for a cent and a half (`omp-deepseek-water.json`). The raft needed a mass the lake could
+  hold up, which the task does not give: the default mass sinks a board of that size in water of the
+  default density, and the agent chose a lighter one from the component's docs; the lake was
+  stilled, cleared and raised with `world.set` and its surface read back with `water.height`.
+- **Painting and planting.** The two tasks on terrain painting and scattered copies that sway and
+  collide went to oh-my-pi with the extension the day those features landed (2026-09-29): 2 of 2 at
+  the first try in two minutes for two cents (`omp-deepseek-terrain-paint.json`). The road took 26
+  seconds and eight calls: one stroke of `terrain.paint` through points along the line, checked with
+  `terrain.height`. The reed field took 98 seconds and 32 calls, most of them reading how a copy's
+  size and `collide` combine; it fixed the copies' size range so each collider is exactly 0.1
+  across, which the task asks for and does not spell out.
+- **Weather.** `stormy_dusk` (the atmosphere sky, its clouds, the sun set low in the west and the
+  Wind) went to oh-my-pi the day the atmosphere landed: passed at the first try in 40 seconds and 18
+  calls for under a cent (`omp-deepseek-stormy-dusk.json`); it turned the sun from the component's
+  docs and read the reddened sun light back from `render.stats`, the same 0.55, 0.28, 0.05 the
+  reference gets.
+- **Layers and glass.** The two tasks on terrain texture layers and glass went to oh-my-pi with the
+  extension the day those features landed: 2 of 2 at the first try in a minute and a half for under
+  three cents (`omp-deepseek-layers-glass.json`). The dirt patch took 82 seconds and 19 calls: it
+  read the Terrain's layers, changed the sand's height rule and wrote them back whole (a list field
+  is set whole), painted the dirt by name with `terrain.paint {layer}` and read its share back from
+  `terrain.height`. The window took 13 seconds and 7 calls, with `transmission`, `ior` and
+  `clearcoat` found in the MeshRenderer's documentation and `render.stats.glass` read after a tick.
+- **Languages and levels.** The two tasks that span files beyond the script went to oh-my-pi with
+  the extension the day after right-to-left text and components from Blender landed: 2 of 2 at the
+  first try in five minutes for three cents (`omp-deepseek-locale-blender.json`). The Persian
+  language took 226 seconds and 45 calls (22 in the shell, 15 file reads, one file written and three
+  edited): the check found every English key translated, Persian's own letters rather than the
+  Arabic file copied, the language named in all four files, and the score drawn as `امتیاز ۰` in
+  Persian digits through the `{score, number}` placeholder. The Blender level took 72 seconds and 26
+  calls (20 in the shell, one file written): the saved `.blend` gave a static floor a ball rests on
+  at 1.5 (the agent answered 1.495) and a pillar with its static body, its 0.5 by 1.5 by 0.5 box and
+  50 health, all from custom properties.
+- **All twenty-five at once.** The full set went to oh-my-pi with the extension after the weather
+  work: 24 of 25 in 33 minutes for 22 cents (`omp-deepseek-full.json`). The twenty command tasks
+  took 15 minutes and 16 cents together; the two mechanics took 15 minutes and six cents, the coin
+  that comes back again the dearest at nearly ten minutes and five cents. The one failure was the
+  reed field, which the same agent had passed the day before: this time it gave `Scatter.collide`
+  0.1 on an entity scaled 0.1 across, so each collider came out a hundredth of a unit, since the
+  radius is in the entity's own units. The field's documentation said so in four words; it now says
+  what the scale does to it with an example, which is the kind of fix these runs are for.
+- **After the agent tools.** The full set went to oh-my-pi again on 2026-10-01, after
+  `project.apply`, `step {until}`, `project.brief`, the field checks on component writes and the
+  release runtime for agent runs (ADR 0006) had landed: 29 of 29 in 24 minutes for 23 cents
+  (`omp-deepseek-full-2.json`). On the twenty-five tasks both runs share, it took 1108 seconds
+  against 1990, 17.7 cents against 21.6 and 439 tool calls against 514, and passed the one the
+  earlier run failed; the coin that comes back took 203 seconds against 573. One run each, and runs
+  of the same set have differed by up to twice, so this says the change did not cost anything rather
+  than how much it saved. The run also showed how oh-my-pi reaches an extension's tool: as a device,
+  a `write` to `xd://pocket` whose content is the tool's arguments (and a `read` of it for its
+  description), so the runner's counts before this date list those calls as `write` and `read`; it
+  now counts them as `pocket`, and `POCKET_AGENT_TRACES=<dir>` keeps every task's event stream. In
+  the traces an agent that wanted two answers at once sent two commands through `curl` in one shell
+  call; the `pocket` tool (and the MCP `runtime_command`) now takes `calls: [{method, params}, ...]`
+  and answers each in order.
+- **Forty-eight.** The full set with the eight tasks added since `full-4` went to oh-my-pi again
+  late on 2026-10-01, after the press fix, the incremental world, the irradiance volumes and the
+  ragdolls: 47 of 48 in 38 minutes for 44 cents, 765 calls (`omp-deepseek-full-5.json`). The failure
+  was the checker's: that agent's merchant asks again after a sale, and the checker, taking the
+  buying choice whenever it was offered, bought two potions in one talk. It now buys one a talk and
+  leaves.
+- **Forty-eight on opencode.** The full set went to opencode with GLM 5.3 Flash over MCP on
+  2026-10-01 (the agent used for gameplay runs from that day): 48 of 48 at the first try in 112
+  minutes, 549 tool calls against oh-my-pi's 765 on the same set, 16.7 million tokens, no call into
+  the harness (`opencode-glm-full.json`; the coding plan reports no cost). It was slower than
+  oh-my-pi with DeepSeek (38 minutes): `snake` alone took 22 minutes for 14 calls, the model's turns
+  being long rather than many.
+- **Fifty-five on opencode.** The full set went to opencode with GLM 5.3 Flash over MCP again late
+  on 2026-10-01, with the iOS, Linux, compressed-model, voxel and diagnose work in: 52 of 55 in 122
+  minutes, 22.3 million tokens, 753 tool calls (`opencode-glm-full55.json`). The three failures were
+  one engine bug, one ambiguous brief and one checker bug. In `guard_view` the agent passed
+  `tilemap.fov` a point as `[x, y]`; a JSON type error deep in the handler ended the runtime. A
+  value of the wrong type is now a `bad_args` answer from any command, and sight and field of view
+  take `[x, y]`. The same agent's `runtime_start` had built the engine from the checkout while it
+  was being edited and failed to compile; the harness now hands its runtime copy to the agent's
+  tools as `POCKET_RUNTIME`. In `snake` the agent laid the grid on XZ, where the brief gave cells as
+  (x, y) without naming the plane; the brief now names it, as `key_door`'s does. In `voxel_house`
+  the house stood at (10, 0, 0) as asked, but the checker read the local `Transform` of a part under
+  the instantiated root; it reads the world position now. Run again after the fixes, the three
+  passed: `guard_view` in 30 seconds and 9 calls against 660 and 39, `snake` in 661 and 22,
+  `voxel_house` in 179 and 14 (`opencode-glm-rerun3.json`). The traces showed two more things worth
+  an engine change: `merchant_talk` spent twenty-five calls pressing Space and clicking choices to
+  see each branch of the conversation it wrote, which `dialogue.routes` now answers in one
+  `script.eval` (`docs/design/dialogue.md`, Trying it); and `ui.click {id: "start"}`, a name where
+  an id goes, was read as no element at all, though the dialogue documentation said it worked; names
+  now stand for elements in every `ui.*` command.
+- **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
+  were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
+  calls; the agent read the interface documentation, went looking for an example and read the UI
+  sample's script, wrote the game, and clicked through it by the buttons' names. The breakout took
+  661 seconds and 36 calls: the runner's eleven minutes ran out while the agent was still testing a
+  finished game, having just destroyed all but one brick to see `level.clear` come.
+- **The five games again.** After a new project's guide began listing the engine's samples
+  (2026-10-01), the five whole-game tasks went to opencode with GLM 5.3 Flash once more: 3 of 5
+  (`opencode-glm-games5.json`). `dodge` passed in 314 seconds and 21 calls (382 and 29 in the run of
+  fifty-five), `snake` in 541 and 34, `pause_menu` in 503 and 49 (274 and 33 the day before: one run
+  each says how much runs vary). The menu's agent opened the UI sample from the guide's list rather
+  than guessing its path, then still read the SDK's sources to learn how its JSX works. `breakout`
+  failed on the game: a ball sent up into a brick broke it and the one above, and the runner's
+  eleven minutes ran out. `key_door` failed on the checker: the agent's player stopped at the door's
+  center, x 8, and the check wanted it short of 7.9, which the brief never said (it gives the door's
+  place, not its width); the check now allows up to 8.05.
+- **opencode with GLM 5.3 Flash.** The first two tasks given to `opencode_agent.py` over MCP
+  (2026-10-01): `spawn_named` in 35 seconds and 5 calls, `merchant_talk` (a dialogue script written
+  and wired into the game) in 271 seconds and 26 calls, both at the first try.
+- **Cloth.** `yard_flag` went to opencode with GLM 5.3 Flash the day cloth landed (2026-10-01):
+  passed at the first try in 186 seconds and 14 calls, the flag streaming 1.51 past its pole
+  (answered 1.53) (`opencode-glm-yard-flag.json`).
+- **Going limp.** `knockout` (health, and a ragdoll when it runs out) went to oh-my-pi the day
+  ragdolls landed (2026-10-01): passed at the first try in 78 seconds and 33 calls for a cent and a
+  half (`omp-deepseek-knockout.json`).
+- **Reading less.** The traces of the forty-eight on opencode showed `docs/generated/sdk.md` (75 KB)
+  read whole in `dodge`, `key_door` and `snake`, at 53 KB a read, and every later turn carrying it.
+  After a new project's AGENTS.md gave its size and said to search it (and `commands {text: true}`
+  became an index), `key_door`, `dodge` and `merchant_talk` went to opencode with GLM 5.3 Flash
+  again (2026-10-01): 3 of 3 (`opencode-glm-reading.json`). In both games the agent searched the
+  reference with `grep` and read only parts of it (35 and 44 KB read in all, against 84 and 66), and
+  the tasks took 0.61 and 0.65 million tokens against 1.67 and 1.56, in 16 and 17 turns against 28
+  and 34. `merchant_talk`, which never opened those files, read the same 15 KB both times and took
+  1.70 million tokens against 0.92, in 51 turns against 29: one run each says the reading changed
+  and how much runs vary, not by how much the change saves.
+- **A frozen game, and an engine bug.** `frozen_coins` went to opencode with GLM 5.3 Flash the day
+  it landed (2026-10-01) and passed, but not cleanly: 660 seconds and 46 calls, the agent cut off at
+  its ten minutes (`opencode-glm-frozen-coins.json`). It held `move_x`, stepped until
+  `level.complete`, read the error that stopped the game (`glow@scripts/main.ts:20`, called from
+  line 33) and fixed the line in its ninth call. Then `project.apply` failed with the same error,
+  and the next 35 calls went on finding out why, until it deleted the script context from the
+  registry by hand through `script.eval`. The engine was wrong: a script error stops the simulation,
+  and nothing is dispatched to the scripts while one stands, including the unload a reload sends
+  before loading the bundle again; the old handlers stayed, the new bundle's joined them, and the
+  old tick threw again. A reload now clears the errors before the unload (`runtime_tests`
+  `[reload]`). Run again after the change, `frozen_coins` took 60 seconds, 10 calls and 0.22 million
+  tokens against 660, 46 and 1.78 (`opencode-glm-reload-voxels.json`). The same trace showed
+  `script.eval` answering an error with its frames only (JavaScriptCore keeps the message out of
+  `stack`) and without the SDK in reach (`Can't find variable: world`); it now answers the message
+  too, and the SDK's exports are names there.
+- **A house of voxels.** `voxel_house` went to opencode with GLM 5.3 Flash the day voxel models
+  landed: passed at the first try in 186 seconds and 16 calls, a house 10 by 10 cells and 8 high in
+  three colours (96 triangles), which it looked at with `asset_preview` before placing it
+  (`opencode-glm-reload-voxels.json`).
+- **The slow festival.** `festival_flags` went to opencode with GLM 5.3 Flash the day it landed
+  (2026-10-01): passed at the first try in 155 seconds and 17 calls, a tick 5.99 ms before and 0.43
+  after (`opencode-glm-festival.json`). It needed no measuring command: it read the scene, saw cloth
+  woven 48 by 30 on every flag, searched the Cloth's documentation, lowered the weave, applied it
+  and compared a capture before with one after.
+- **Diagnosing.** The three diagnose-and-fix tasks went to opencode with GLM 5.3 Flash the day they
+  and `script.profile` landed (2026-10-01): 3 of 3 at the first try in 12 minutes, 43 calls
+  (`opencode-glm-diagnose.json`). On `slow_swarm` (468 seconds, 18 calls) the agent read the script,
+  searched the command list for "profil", found `script.profile` and measured with it before its
+  first edit and after each of the next four, ending at 0.23 ms of script a tick against the broken
+  game's 20.14 (measured while other work loaded the machine) with the swarm the same tick for tick.
+  `leaky_cannon` (192 seconds, 17 calls) it found by counting `Pellet_*` entities and reading the
+  landing events, then changed the sweep's condition in one edit. `sinking_crate` (62 seconds, 8
+  calls) it found by reading the scene and the physics documentation, and answered `Collider.group`.
+- **Conversations as text.** `merchant_talk` went to oh-my-pi the day dialogue landed (2026-10-01):
+  passed at the first try, but in 336 seconds and 85 calls for five cents
+  (`omp-deepseek-merchant-talk-1.json`). The script and the wiring were done in a dozen calls; the
+  rest went on playing the conversation to see it work. Pressing Space once a tick left the line
+  where it was, because `input.press` of a key still down from the last press only held it longer,
+  and `ui.key` did nothing, because the box looked for keys held and `ui.key` lets the key up before
+  the next tick; the agent read the engine's input code to find out why. Presses a tick apart are
+  now two presses and the box acts on keys that went down since the last tick; rerun, the task
+  passed in 84 seconds and 38 calls for under a cent and a half
+  (`omp-deepseek-merchant-talk-2.json`).
+- **Levels as text.** `vault_level` went to oh-my-pi the day maps in characters landed: passed at
+  the first try in 35 seconds and 15 calls for under a cent, the vault drawn in rows of characters
+  through `tilemap.text` (`omp-deepseek-vault-level.json`).
+- **Music as text.** `theme_song` went to oh-my-pi the day scores landed: passed at the first try in
+  55 seconds and 26 calls for under a cent (`omp-deepseek-theme-song.json`), with a four-track tune
+  close to the documentation's example. Its score gave one instrument a `reverb`, which the
+  synthesizer then passed over; recipes now refuse a field they do not have, naming the ones they do
+  (and where reverb lives).
+- **Sound as text.** `coin_chime` (a `.sfx` recipe of the agent's own, played on every coin) went to
+  oh-my-pi the day recipes landed (2026-10-01): passed at the first try in 158 seconds and 41 calls
+  for under two cents (`omp-deepseek-coin-chime.json`).
+- **Art as text.** `svg_coin` (an SVG file the agent writes, shown as a sprite) went to oh-my-pi
+  with the extension the day SVG images landed (2026-10-01): passed at the first try in 30 seconds
+  and 17 calls for half a cent (`omp-deepseek-svg-coin.json`).
+- **A third game.** `snake` (a grid, segments named from the head, food the checker places by its
+  Transform) went to oh-my-pi with the extension on 2026-10-01: passed at the first try in 273
+  seconds and 73 calls for under five cents (`omp-deepseek-snake.json`).
+- **Light and sight.** The two tasks on lit 2D and tile-map sight went to oh-my-pi with the
+  extension the day those landed (2026-10-01): 2 of 2 at the first try, `night_level` in 68 seconds
+  and 21 calls, `guard_view` in 37 seconds and 10 calls, two cents together
+  (`omp-deepseek-light-sight.json`).
+- **Forty-five.** The full set with the six tasks added since (light and sight, snake, the SVG coin,
+  the sound recipe and the score) went to oh-my-pi again later on 2026-10-01: 44 of 45 in 43 minutes
+  for 44 cents (`omp-deepseek-full-4.json`); on the thirty-nine tasks both runs share it took 1935
+  seconds against 1863, 33.6 cents against 32.0 and 623 calls against 612: the same, one run each.
+  The failure was `coin_chime`, and again the run's state was the cause: the agent had left `move_x`
+  held for hundreds of ticks while testing, a hold outlives `project.reload`, and the restarted game
+  walked into a coin before the check had pressed anything, so the chime "played before any coin". A
+  restart now lets go of held actions and stops the last run's sounds, as a fresh run would start;
+  rerun, the task passed (`omp-deepseek-full-4-reruns.json`). The run also caught an agent reading
+  the harness: the copy of `walker_sprint` was named after the task, and the agent searched the
+  repository for that name and read its check. Copies now have names that say nothing of their task;
+  rerun, it passed without looking.
+- **Thirty-nine, outside the repository.** The full set went to oh-my-pi again later on 2026-10-01,
+  with the ten tasks added since (hitboxes, own components, waiting, meshes and maps by code, 2D
+  physics, shaders and the two games) and every task on a copy outside the repository: 38 of 39 in
+  31 minutes for 32 cents (`omp-deepseek-full-3.json`), no harness file read. On the twenty-nine
+  tasks both full runs share it took 1189 seconds against 1461, 20.3 cents against 23.1 and 413 tool
+  calls against 578 (the Persian locale and the double jump each in under half the time), one run
+  each. The ten new tasks took eleven minutes and twelve cents. The one failure was `dodge`, and it
+  was the check's: the game the agent wrote was right, but after the agent's own session the harness
+  reloaded the project, which did not seed the random numbers again, so the rocks fell in other
+  places than in a fresh run and one struck the Player before the check looked at a falling rock;
+  the frozen game then read as a rock that did not fall. The same files, rebuilt from the trace and
+  checked on a fresh runtime, pass. Two changes followed: a restart (`project.reload` of the scene
+  and the scripts) now seeds `random()` and `Math.random` again, as a fresh run would, and the check
+  moves the Player out of the rocks' columns (the brief has the game read its Transform) before it
+  watches them.
+- **Hits, own components, waiting.** The three tasks on hitboxes, a project's own components and
+  `step {until}` went to oh-my-pi with the extension the day those landed: 3 of 3 at the first try
+  in a minute for just over a cent (`omp-deepseek-combat-components.json`). In the trace of the coin
+  task the agent read `project.brief` first, sent its questions three at a time through `calls`, and
+  finished with one call holding the action and stepping until the coin event; the spike trap took
+  ten calls to the engine and no file but the docs.
+- **Things made by code and 2D physics.** Three tasks came with meshes and maps made by code and the
+  2D rigid bodies, and went to oh-my-pi with the extension the day those landed, the first run with
+  every task outside the repository (2026-10-01): 3 of 3 at the first try in four minutes for eight
+  cents, none peeking at the harness (`omp-deepseek-made-physics2d.json`). The roof took 25 seconds
+  and 14 calls: `mesh.create` with a base it chose to add (six triangles). The walled room took 57
+  seconds and 17 calls: `tilemap.create`, four `tilemap.fill` strips and a pebble that came to rest
+  on the floor at -6.75. The bridge took 152 seconds and 27 calls, most of them spent on the one
+  thing the task does not say: an entity holds one `Joint2D`, and six hinges hold five planks
+  between two points, so the agent spawned a sixth static body at the far bank to carry the last
+  hinge, and followed the five planks' heights through two seconds with one `step {watch}`. It found
+  the planks' ids by counting on from `world.roots`; entity fields now take names.
+- **Shaders.** The two tasks on WGSL came with post effects and materials and went to oh-my-pi the
+  same day: 2 of 2 at the first try in about a minute each for just over a cent each
+  (`omp-deepseek-shaders.json`). The grey flashback took 62 seconds and 19 calls, one `render.post`
+  with code. The orange ball took 68 seconds and 30 calls: a material file and the ball's spawn in
+  the script given it, the colour coming out exactly #ff6600 on screen (255, 102, 0), so the agent
+  wrote the orange in linear light, as the material's docs say its output is.
+- **Whole games from a brief.** The two game tasks went to oh-my-pi with the extension on
+  2026-10-01: 2 of 2 at the first try, `dodge` in 155 seconds and 43 calls for five and a half
+  cents, `key_door` in 262 seconds and 54 calls for nine cents (`omp-deepseek-games.json`). Each
+  wrote its `project.toml` actions, an empty scene and the script, and applied and played it through
+  the engine (the dodge agent stepped the game and looked at a capture of it before answering). Both
+  reached into the repository: the dodge agent read the tool's sources to see how `"pocket"`
+  resolves for types, the door agent listed `tests/evidence/components` for an example of a
+  project's components; neither touched the harness or its evidence (`pi_agent.py` now counts only
+  those as `peeked`). The door agent applied its script nine times with `pocket_apply`, editing
+  between them. Twice an agent passed a command's name as a key (`{"help": true}`); the pi tool now
+  takes that as the command.
+- **A guide in the project.** Since `pocket new` writes an `AGENTS.md` into every project (how to
+  run, read, change and check the game), the copies the script tasks work on carry one, and oh-my-pi
+  reads it on starting there. The eight script tasks went to it again the same day: 8 of 8 in 477
+  seconds against 615 in the full run before (`omp-deepseek-script-guide.json`); every one that
+  edited a script then applied it with `pocket_apply` rather than restarting anything. The double
+  jump took 67 seconds against 217, the sprint 75 against 47: one run each, so the guide is not
+  shown to save time, only to cost none.
+- **Context is the bill.** Over nine tenths of every run's tokens are cache reads of the
+  conversation so far, so what an agent carries into each turn decides the cost. Started at the
+  repository root, oh-my-pi also took in its guidance files and wandered into the engine's source
+  (it once wrote a stray file there); started outside, the same agent and model finished everything
+  in under half the time for three quarters of the cost. pi with the two-tool extension carried the
+  least and was the cheapest and fastest.
 
 ## Limits
 
-Thirty-nine tasks (`grey_flashback` and `orange_ball` are shaders an agent writes; `dodge` and `key_door` whole games from a brief; `roof_mesh`, `walled_room` and `plank_bridge` came with meshes and maps made by code and the 2D rigid bodies; `spike_trap`, `brute_enemies` and `wait_for_coin` with hitboxes, a project's own components and `step {until}`; the first three runs above were on the first fifteen, the fourth on sixteen; `walker_sprint` came with the 3D characters, `hill_raise`, `flowers` and `car_speed` with the terrain, scattering and vehicles, `raft` and `calm_lake` with water, `sand_road` and `reed_field` with terrain painting and colliding, swaying copies, `stormy_dusk` with the wind and the atmosphere, `dirt_patch` and `glass_window` with terrain layers, glass and clear coats, `persian_locale` with right-to-left text and fallback fonts, `blender_level` with components from Blender): nineteen edits or reads through commands, three one-line script edits, two mechanics, four files made beside the script (a sound, a prefab, a language, and a Blender level made by driving Blender) and one edit across `project.toml` and the script; none is timed, and none needs art drawn, a level laid out or a scene composed by eye. A model scored here is scored on reading the docs and making the right call or the right edit, which is the first thing an agent must do and far from the last.
+Thirty-nine tasks (`grey_flashback` and `orange_ball` are shaders an agent writes; `dodge` and
+`key_door` whole games from a brief; `roof_mesh`, `walled_room` and `plank_bridge` came with meshes
+and maps made by code and the 2D rigid bodies; `spike_trap`, `brute_enemies` and `wait_for_coin`
+with hitboxes, a project's own components and `step {until}`; the first three runs above were on the
+first fifteen, the fourth on sixteen; `walker_sprint` came with the 3D characters, `hill_raise`,
+`flowers` and `car_speed` with the terrain, scattering and vehicles, `raft` and `calm_lake` with
+water, `sand_road` and `reed_field` with terrain painting and colliding, swaying copies,
+`stormy_dusk` with the wind and the atmosphere, `dirt_patch` and `glass_window` with terrain layers,
+glass and clear coats, `persian_locale` with right-to-left text and fallback fonts, `blender_level`
+with components from Blender): nineteen edits or reads through commands, three one-line script
+edits, two mechanics, four files made beside the script (a sound, a prefab, a language, and a
+Blender level made by driving Blender) and one edit across `project.toml` and the script; none is
+timed, and none needs art drawn, a level laid out or a scene composed by eye. A model scored here is
+scored on reading the docs and making the right call or the right edit, which is the first thing an
+agent must do and far from the last.

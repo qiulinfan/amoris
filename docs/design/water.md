@@ -1,44 +1,124 @@
 # Water
 
-A lake, a harbour or a flooded cellar is one component: a rectangle of surface at the entity's height, moved by waves. The same waves are drawn by the renderer, float the physics' bodies and answer `water.height`, so a crate an agent drops in rides the swell it is drawn on, and a script that asks where the surface is gets the place the player sees.
+A lake, a harbour or a flooded cellar is one component: a rectangle of surface at the entity's
+height, moved by waves. The same waves are drawn by the renderer, float the physics' bodies and
+answer `water.height`, so a crate an agent drops in rides the swell it is drawn on, and a script
+that asks where the surface is gets the place the player sees.
 
 ## The component
 
-`Water` on an entity makes a surface `size.x` by `size.y` (x by z, 40 by 40) centred on the entity at its height, not turned or scaled with it, reaching `depth` (4) below. `enabled` false stops it being drawn and floating things. Up to eight bodies are drawn at once (the first by id); overlapping bodies each draw and each buoy.
+`Water` on an entity makes a surface `size.x` by `size.y` (x by z, 40 by 40) centred on the entity
+at its height, not turned or scaled with it, reaching `depth` (4) below. `enabled` false stops it
+being drawn and floating things. Up to eight bodies are drawn at once (the first by id); overlapping
+bodies each draw and each buoy.
 
-The waves are four Gerstner waves summed (`engine/world/src/water.cpp`, mirrored in the renderer's shader): the largest `wave_length` long (8) and `wave_height` high crest over trough (0.3), running toward `wave_direction` (degrees about +y from +x, 0), and three smaller ones crossing it (0.62, 0.38 and 0.24 as long, a half, 0.28 and 0.16 as tall, turned 26, -34 and 63 degrees). Each runs at the speed of deep-water waves of its length (angular speed the square root of g times its wave number), so long swells roll slowly and short chop hurries. `choppiness` (0.5, up to 1) moves the water sideways toward the crests as well as up, sharpening them without letting the surface fold over. `flow` (x, z in units a second) is a current: the waves and the ripples drift with it and it carries what floats. Time is the world's simulated time (the tick times its length), so the same tick shows the same waves on every run and replays match.
+The waves are four Gerstner waves summed (`engine/world/src/water.cpp`, mirrored in the renderer's
+shader): the largest `wave_length` long (8) and `wave_height` high crest over trough (0.3), running
+toward `wave_direction` (degrees about +y from +x, 0), and three smaller ones crossing it (0.62,
+0.38 and 0.24 as long, a half, 0.28 and 0.16 as tall, turned 26, -34 and 63 degrees). Each runs at
+the speed of deep-water waves of its length (angular speed the square root of g times its wave
+number), so long swells roll slowly and short chop hurries. `choppiness` (0.5, up to 1) moves the
+water sideways toward the crests as well as up, sharpening them without letting the surface fold
+over. `flow` (x, z in units a second) is a current: the waves and the ripples drift with it and it
+carries what floats. Time is the world's simulated time (the tick times its length), so the same
+tick shows the same waves on every run and replays match.
 
-`water.height` finds the surface over a point by undoing the sideways motion (Newton's method on the map from rest points to moved ones, a few steps).
+`water.height` finds the surface over a point by undoing the sideways motion (Newton's method on the
+map from rest points to moved ones, a few steps).
 
 ## Drawing it
 
-Each body is a grid of its extent, four vertices along the smallest wave (a cell every sixteenth of `wave_length`, up to 256 a side; still water a cell every four units), moved in the vertex shader; the rim moves only up and down so the water keeps meeting the shore. The fragment takes its normal from the waves at its rest point, bent by `ripples` (1): two layers of noise drifting apart and with the current, fading with distance.
+Each body is a grid of its extent, four vertices along the smallest wave (a cell every sixteenth of
+`wave_length`, up to 256 a side; still water a cell every four units), moved in the vertex shader;
+the rim moves only up and down so the water keeps meeting the shore. The fragment takes its normal
+from the waves at its rest point, bent by `ripples` (1): two layers of noise drifting apart and with
+the current, fading with distance.
 
-The water is drawn after the solid and translucent meshes. The scene so far and the depth prepass are copied, and the surface shades from them:
+The water is drawn after the solid and translucent meshes. The scene so far and the depth prepass
+are copied, and the surface shades from them:
 
-- **What lies below** shows through, shifted along the waves' slope (up to 4% of the view's height, less where the water is thinner than a unit, never onto something in front of the water), and fades into the water with the distance the view crosses to it: at `clarity` units (4) about 5% of it is left, taking on the hue of `color` on the way, and the rest is the light the water scatters back, its `color` lit by the sky's irradiance from above (or a reflection probe's) and half the sun at its elevation, shadowed. Shallows show their bed; deep water is its colour.
-- **Reflections**: the sky's panorama (or a probe's, box-projected) along the mirror direction, weighed by Fresnel (a dielectric's 0.04 at normal incidence, nearly all at a glance). The water writes its normal and a roughness of 0.04 to the surface target, so screen-space reflections, when on, trace the same direction and put the shore and what floats in place of the sky.
+- **What lies below** shows through, shifted along the waves' slope (up to 4% of the view's height,
+  less where the water is thinner than a unit, never onto something in front of the water), and
+  fades into the water with the distance the view crosses to it: at `clarity` units (4) about 5% of
+  it is left, taking on the hue of `color` on the way, and the rest is the light the water scatters
+  back, its `color` lit by the sky's irradiance from above (or a reflection probe's) and half the
+  sun at its elevation, shadowed. Shallows show their bed; deep water is its colour.
+- **Reflections**: the sky's panorama (or a probe's, box-projected) along the mirror direction,
+  weighed by Fresnel (a dielectric's 0.04 at normal incidence, nearly all at a glance). The water
+  writes its normal and a roughness of 0.04 to the surface target, so screen-space reflections, when
+  on, trace the same direction and put the shore and what floats in place of the sky.
 - **The sun** glints off it (GGX at roughness 0.12, through the cascades).
-- **Caustics**: what lies below the surface (and within the body's `depth`) gets its sunlight gathered into a moving net of bright lines, as a wavy surface focuses it: two warped nets of thin lines drifting apart on the world's clock, found where the sun's way down through the water crossed the surface (a little slanted by the refraction), strongest in the shallows and washing out with depth (to a third at about three units), multiplying the sun's light on the bed times `caustics` (1; 0 for none). They are drawn with every lit surface in the scene pass, so a stone, a shipwreck or the player's feet under water catch them too.
-- **Foam** gathers where the ground is within `foam` units below the surface (0.5; thinning with the square of the depth) and on crests in the top 40% of the waves' height (more with choppiness), broken into drifting patches by noise.
+- **Caustics**: what lies below the surface (and within the body's `depth`) gets its sunlight
+  gathered into a moving net of bright lines, as a wavy surface focuses it: two warped nets of thin
+  lines drifting apart on the world's clock, found where the sun's way down through the water
+  crossed the surface (a little slanted by the refraction), strongest in the shallows and washing
+  out with depth (to a third at about three units), multiplying the sun's light on the bed times
+  `caustics` (1; 0 for none). They are drawn with every lit surface in the scene pass, so a stone, a
+  shipwreck or the player's feet under water catch them too.
+- **Foam** gathers where the ground is within `foam` units below the surface (0.5; thinning with the
+  square of the depth) and on crests in the top 40% of the waves' height (more with choppiness),
+  broken into drifting patches by noise.
 
-Seen from below, the surface shows the world above inside Snell's window (about 48 degrees from straight up) and the water's own light outside it, through the water between the eye and the surface. A camera under a surface (within a body's extent, below its surface and above its bottom) sees everything through the water: it fades into the water's colour with distance just as the bed does from above. `render.stats.water` reports the `bodies` drawn and whether the camera is `underwater`.
+Seen from below, the surface shows the world above inside Snell's window (about 48 degrees from
+straight up) and the water's own light outside it, through the water between the eye and the
+surface. A camera under a surface (within a body's extent, below its surface and above its bottom)
+sees everything through the water: it fades into the water's colour with distance just as the bed
+does from above. `render.stats.water` reports the `bodies` drawn and whether the camera is
+`underwater`.
 
-The water writes its entity's id, so `render.pick` and the editor select it; its depth goes into the frame's depth (sprites and debug lines behind it are hidden) and into the prepass, so fog, volumetric light, TAA, depth of field and screen-space reflections see the surface rather than the bed. A scene with water always has the prepass. With MSAA the water pass comes after the scene pass, sprites and lines included, and tests against the prepass, so a sprite or line behind the surface shows through it.
+The water writes its entity's id, so `render.pick` and the editor select it; its depth goes into the
+frame's depth (sprites and debug lines behind it are hidden) and into the prepass, so fog,
+volumetric light, TAA, depth of field and screen-space reflections see the surface rather than the
+bed. A scene with water always has the prepass. With MSAA the water pass comes after the scene pass,
+sprites and lines included, and tests against the prepass, so a sprite or line behind the surface
+shows through it.
 
 ## Floating
 
-In the physics step (after the forces, before the contacts), each dynamic body is cut into cells: 27 across its box, or those of them inside its sphere or capsule, each an equal share of its volume. A cell under the surface (found where the cell is, at the step's time) displaces its volume times how far under it is (ramping over the cell's own size), and is pushed up, against gravity, by `density` times g times that, at the cell's place: so a body lighter than the water it can displace finds the level where the two weigh the same (a unit cube of mass 1 in water of `density` 2 floats half under), a flat raft rights itself, and a body on a slope of the swell is tipped by it. Each cell is also dragged toward the water's own motion there (the waves' circling and the current): along the surface by `drag` (1, about that fraction of its speed a second, relative to the water) and up and down more strongly (`drag` plus 6), as the waves a bobbing body makes carry its motion off; floating things then settle instead of bouncing. The drag never takes more than 90% of a body's speed in a step.
+In the physics step (after the forces, before the contacts), each dynamic body is cut into cells: 27
+across its box, or those of them inside its sphere or capsule, each an equal share of its volume. A
+cell under the surface (found where the cell is, at the step's time) displaces its volume times how
+far under it is (ramping over the cell's own size), and is pushed up, against gravity, by `density`
+times g times that, at the cell's place: so a body lighter than the water it can displace finds the
+level where the two weigh the same (a unit cube of mass 1 in water of `density` 2 floats half
+under), a flat raft rights itself, and a body on a slope of the swell is tipped by it. Each cell is
+also dragged toward the water's own motion there (the waves' circling and the current): along the
+surface by `drag` (1, about that fraction of its speed a second, relative to the water) and up and
+down more strongly (`drag` plus 6), as the waves a bobbing body makes carry its motion off; floating
+things then settle instead of bouncing. The drag never takes more than 90% of a body's speed in a
+step.
 
-Bodies in water with waves or a current never sleep; in still water they settle and sleep like any other. Static and kinematic bodies, triggers and mesh colliders are not buoyed.
+Bodies in water with waves or a current never sleep; in still water they settle and sleep like any
+other. Static and kinematic bodies, triggers and mesh colliders are not buoyed.
 
 ## Swimming
 
-A `Character` (`docs/design/physics.md`, Characters) in water whose surface is more than a fifth of its height above its centre swims (and keeps swimming until the surface is less than a tenth above it, so it does not flicker at the edge): gravity gives way to a damped spring holding its centre a fifth of its height under the surface, head and shoulders out, rising and falling with the waves; it moves across at `swim_speed` (0.6) of the velocity its script sets, plus the water's own motion there (the current, and the waves' circling); a script setting `velocity.y` pushes it up or down against the spring. Walking into the water it wades until the water is over its chest, then swims; swimming toward a shore that rises gently it finds its feet and walks out (a steep bank holds it in the water, as a wall would). `Character.swimming` says whether it swims and `submerged` how much of its height is under the surface (0 to 1); it emits `water.entered` and `water.left` with `character: true`. A body entering a water emits `water.entered` (`{path, water, point, speed}`: where it met the surface, and how fast it was going) and one leaving it `water.left` (`{path, water}`), for splashes and sounds; `physics.stats.floating` counts the bodies buoyed this step.
+A `Character` (`docs/design/physics.md`, Characters) in water whose surface is more than a fifth of
+its height above its centre swims (and keeps swimming until the surface is less than a tenth above
+it, so it does not flicker at the edge): gravity gives way to a damped spring holding its centre a
+fifth of its height under the surface, head and shoulders out, rising and falling with the waves; it
+moves across at `swim_speed` (0.6) of the velocity its script sets, plus the water's own motion
+there (the current, and the waves' circling); a script setting `velocity.y` pushes it up or down
+against the spring. Walking into the water it wades until the water is over its chest, then swims;
+swimming toward a shore that rises gently it finds its feet and walks out (a steep bank holds it in
+the water, as a wall would). `Character.swimming` says whether it swims and `submerged` how much of
+its height is under the surface (0 to 1); it emits `water.entered` and `water.left` with
+`character: true`. A body entering a water emits `water.entered` (`{path, water, point, speed}`:
+where it met the surface, and how fast it was going) and one leaving it `water.left`
+(`{path, water}`), for splashes and sounds; `physics.stats.floating` counts the bodies buoyed this
+step.
 
 ## Splashes
 
-A Water's `splash` names an entity with a `ParticleEmitter` (`docs/design/particles.md`), usually not emitting on its own. Whatever enters the water, a body falling in or a character walking or jumping in, bursts it at the point where it met the surface: `splash_count` particles (24) for an entry at 8 units a second, in proportion to the speed up to twice as many, and their speeds scaled the same way between a half and one and a half times; slower than a unit a second (a body set down in the water, a wave washing over a resting one) there is no splash. The emitter's cone, gravity, colours and lifetimes shape the spray, and its `floor` at the water's level lets the drops fall back onto the surface. Being particles on the fixed tick, splashes are part of the simulation and replay alike; a script that wants a sound as well listens for `water.entered` and uses its `speed`.
+A Water's `splash` names an entity with a `ParticleEmitter` (`docs/design/particles.md`), usually
+not emitting on its own. Whatever enters the water, a body falling in or a character walking or
+jumping in, bursts it at the point where it met the surface: `splash_count` particles (24) for an
+entry at 8 units a second, in proportion to the speed up to twice as many, and their speeds scaled
+the same way between a half and one and a half times; slower than a unit a second (a body set down
+in the water, a wave washing over a resting one) there is no splash. The emitter's cone, gravity,
+colours and lifetimes shape the spray, and its `floor` at the water's level lets the drops fall back
+onto the surface. Being particles on the fixed tick, splashes are part of the simulation and replay
+alike; a script that wants a sound as well listens for `water.entered` and uses its `speed`.
 
 ## Commands
 
@@ -47,14 +127,45 @@ A Water's `splash` names an entity with a `ParticleEmitter` (`docs/design/partic
 | `water.height {x, z, entity?}` | `water.height(x, z)` | The surface over world x, z now, of the first Water (by id) whose extent covers it, or of the one given: its `height`, the `point` and `normal` there, the water's `velocity` there (the waves' and the current's), the rest `level` and the `bottom`, and whether the point is `inside` the extent. Where no water covers the point, `entity` is null and `inside` false. |
 | | `water.under(point)` | Whether a point is under some water's surface and above its bottom. |
 
-The component itself is read and set like any other (`world.set {entity, component: "Water", value}`); the editor's inspector shows its fields.
+The component itself is read and set like any other
+(`world.set {entity, component: "Water", value}`); the editor's inspector shows its fields.
 
 ## The sample
 
-`samples/hills` has its lake as a Water body 96 units across at height 3.2 in the valleys of its terrain, with a light swell from 30 degrees, a blue-green colour that hides the bed at about two and a half units, foam along the shores, and a `Splash` emitter throwing white drops where something falls or walks in. Its lake scenario (`pocket scenario hills`) finds the deepest water with `terrain.height`, checks `water.height` there, drops a crate of mass 0.1 and one of 0.5 (both 0.5 across, so 0.125 cubic units weighing 0.25 of water), and four seconds later finds the light one riding within 0.3 of the moving surface and the heavy one on the bed, under it; another puts the player down in the deepest water and two seconds later finds it swimming with the top of its capsule over the surface.
+`samples/hills` has its lake as a Water body 96 units across at height 3.2 in the valleys of its
+terrain, with a light swell from 30 degrees, a blue-green colour that hides the bed at about two and
+a half units, foam along the shores, and a `Splash` emitter throwing white drops where something
+falls or walks in. Its lake scenario (`pocket scenario hills`) finds the deepest water with
+`terrain.height`, checks `water.height` there, drops a crate of mass 0.1 and one of 0.5 (both 0.5
+across, so 0.125 cubic units weighing 0.25 of water), and four seconds later finds the light one
+riding within 0.3 of the moving surface and the heavy one on the bed, under it; another puts the
+player down in the deepest water and two seconds later finds it swimming with the top of its capsule
+over the surface.
 
-`physics_tests` (`[water]`) walk a character down a 20 degree beach into water 3 deep, where it swims at 0.36 under the surface (0.7 submerged) at 0.6 of its pace and back up the beach onto its feet, float a unit cube half under at the surface, sink a heavy one to the bottom, float a light ball mostly out, right a tipped raft, count `water.entered` and `water.left` when a floater is lifted out and dropped back, let a disabled water drop everything, find the surface over points with choppy waves to a thousandth of a unit, keep a light cork within 0.45 of 0.8-high waves (0.16 above the surface on average, as its draft predicts), and drift it at the current's speed. `renderer_tests` (`[caustics]`) find the brightness over a bed a unit under still water varying half again as much with caustics as without, and a third of a second changing four tenths of the view (`tests/evidence/water/caustics.png`: the hills' shallows without and with them); (`[water]`) look down at sand two units under water that clears at two (red 255 dry, 27 wet; blue-green), sand a fifth of a unit under (still showing), the far water at a glance (the sky's blue rather than the sand), pick the water, and see the bed through the water from under the surface. `runtime_tests` (`[water]`) ask `water.height` in the hills lake (inside, at its level within the waves' height, moving from tick to tick; null outside) and float a crate there, finding where and how fast it came in and the splash it threw; `physics_tests` (`[water]`) find a cork dropped from six units meeting the surface at its x at about 10.5 units a second and a character walking in at its pace of 4.
+`physics_tests` (`[water]`) walk a character down a 20 degree beach into water 3 deep, where it
+swims at 0.36 under the surface (0.7 submerged) at 0.6 of its pace and back up the beach onto its
+feet, float a unit cube half under at the surface, sink a heavy one to the bottom, float a light
+ball mostly out, right a tipped raft, count `water.entered` and `water.left` when a floater is
+lifted out and dropped back, let a disabled water drop everything, find the surface over points with
+choppy waves to a thousandth of a unit, keep a light cork within 0.45 of 0.8-high waves (0.16 above
+the surface on average, as its draft predicts), and drift it at the current's speed.
+`renderer_tests` (`[caustics]`) find the brightness over a bed a unit under still water varying half
+again as much with caustics as without, and a third of a second changing four tenths of the view
+(`tests/evidence/water/caustics.png`: the hills' shallows without and with them); (`[water]`) look
+down at sand two units under water that clears at two (red 255 dry, 27 wet; blue-green), sand a
+fifth of a unit under (still showing), the far water at a glance (the sky's blue rather than the
+sand), pick the water, and see the bed through the water from under the surface. `runtime_tests`
+(`[water]`) ask `water.height` in the hills lake (inside, at its level within the waves' height,
+moving from tick to tick; null outside) and float a crate there, finding where and how fast it came
+in and the splash it threw; `physics_tests` (`[water]`) find a cork dropped from six units meeting
+the surface at its x at about 10.5 units a second and a character walking in at its pace of 4.
 
 ## Not yet
 
-Diving and climbing out onto a ledge (a swimmer stays at the surface unless its script pushes it, and walks out only up a slope), wakes and rings (what floats or falls in does not disturb the surface it rides; a splash is spray only), caustics from the waves' own shape (the net is procedural, not traced from the surface), water of other shapes than a rectangle (rivers that bend, round ponds; the rectangle reaches under the shore instead) and turned with its entity, levels of detail for open sea larger than 256 cells a side can show well, and translucent meshes in front of the water (they are drawn before it without writing depth, so the surface covers them).
+Diving and climbing out onto a ledge (a swimmer stays at the surface unless its script pushes it,
+and walks out only up a slope), wakes and rings (what floats or falls in does not disturb the
+surface it rides; a splash is spray only), caustics from the waves' own shape (the net is
+procedural, not traced from the surface), water of other shapes than a rectangle (rivers that bend,
+round ponds; the rectangle reaches under the shore instead) and turned with its entity, levels of
+detail for open sea larger than 256 cells a side can show well, and translucent meshes in front of
+the water (they are drawn before it without writing depth, so the surface covers them).

@@ -1,6 +1,7 @@
 # Status (2026-09-18)
 
-What exists on the `master` branch, how to verify it, and what is next. Everything listed builds and passes `pocket test` on macOS (Apple silicon) in the sanitized debug configuration.
+What exists on the `master` branch, how to verify it, and what is next. Everything listed builds and
+passes `pocket test` on macOS (Apple silicon) in the sanitized debug configuration.
 
 ## Built
 
@@ -39,7 +40,7 @@ What exists on the `master` branch, how to verify it, and what is next. Everythi
 | Perception instruments: `events.why` (cause chains as a story), the frame recorder (`--history N`, `recorder.at/diff/track/first`: time travel over every entity's components), `render.visible` and `render.ids` with per-entity coverage, bounds and centers | `engine/world/recorder.hpp`, `engine/app/src/session.cpp`, `docs/design/agent-perception.md` | `world_tests` (`[recorder]`, `[events]`), `runtime_tests` (`[recorder]`) |
 | SDK: `pocket` module (lifecycle, expose, log, onFrame), `world` (with prefabs: instantiate/savePrefab/loadScene), `events`, `render`, `physics`, `audio`, `ui`, `transcript`, in-engine `test` | `sdk/runtime` | `tests/ts` |
 | Typed arrays: `world.pack` / `world.unpack` share Float32/Float64 buffers with scripts for per-tick updates of thousands of entities; `samples/swarm` reports the cost of both paths (release: 0.35 ms against 16 ms a tick for 3000 entities, `tests/evidence/swarm/README.md`) | `engine/world`, `sdk/runtime/world.ts` | `tests/ts/world.test.ts`, `docs/evidence/swarm.md` |
-| Authoring: `pocket new <name>` scaffolds a runnable project (scene, crate prefab, WASD script with exposed state, and an `AGENTS.md` with a `CLAUDE.md` pointing at it that tells a coding agent how to run, read, change and check the game, and lists the engine's samples by path with the first sentence of each, to read for how something is done), and `pocket new <name> --from <sample>` copies a sample (scene, scripts, assets, prefabs, scenarios; the name and window title replaced; `--list` names the samples) as a start; prefabs and scene files by path through `world.instantiate` / `world.save_prefab` / `world.load {path}` | `tools/pocket/src/commands.rs`, `engine/world` | `runtime_tests` (`[prefab]`), `tests/ts/world.test.ts` |
+| Authoring: `pocket new <name>` scaffolds a runnable project (scene, crate prefab, WASD script with exposed state, and an `AGENTS.md` with a `CLAUDE.md` pointing at it that tells a coding agent how to run, read, change and check the game, and lists the engine's samples by path with the first sentence of each, to read for how something is done; its scene has an atmosphere sky over a ground reaching the horizon, and its `project.toml` turns on MSAA, ambient occlusion, soft shadows and the AgX curve), and `pocket new <name> --from <sample>` copies a sample (scene, scripts, assets, prefabs, scenarios; the name and window title replaced; `--list` names the samples) as a start; prefabs and scene files by path through `world.instantiate` / `world.save_prefab` / `world.load {path}` | `tools/pocket/src/commands.rs`, `engine/world` | `runtime_tests` (`[prefab]`), `tests/ts/world.test.ts` |
 | Pocket UI: FreeType text (Noto Sans CJK), batched 2D painter, retained element tree with Yoga flexbox, hit testing, focus and text input, scrolling, text snapshots and synthetic input for agents, scene viewport; TSX with signals and a diffing reconciler; script contexts for editor + project | `engine/ui`, `sdk/runtime/ui.ts`, `docs/design/pocket-ui.md` | `ui_tests`, `tests/ts/ui.test.tsx`, `tests/evidence/ui/` |
 | Hot reload: `pocket run <project> --watch` and `pocket editor <project> --watch` rebundle on source changes and call `project.reload` over the control server (which reads `project.toml`'s live settings again: input map, audio, render, physics, sprite clips); a bundle error keeps the previous scripts | `tools/pocket/src/watch.rs`, `project.reload` in `engine/app` | manual session in `tests/evidence/editor/watch.txt`, `runtime_tests` (`[reload][settings]`) |
 | Editor: `pocket editor <project>`; a TSX program in its own script context with toolbar (play/pause/step/stop, save, spawn, delete), hierarchy, scene pane (pick, orbit, zoom), schema-driven inspector, console/events/transcript; operable headless by agents | `editor/`, `docs/editor.md` | `runtime_tests` (`[editor]`), `tests/evidence/editor/` |
@@ -85,6 +86,7 @@ What exists on the `master` branch, how to verify it, and what is next. Everythi
 | Navigation grids on hexagonal, staggered and isometric maps: cells where the map draws them, neighbours by shape (six across a hexagon's edges, a diamond's four and its corners with `diagonal`), steps costing the distance between centers, `nav.info.layout` | `engine/nav/src/nav.cpp`, `docs/design/navigation.md` | `nav_tests` (`[hexgrid]`: four layouts, every center mapping back to its cell, a path around a wall in neighbour-sized steps) |
 | Floors over floors: `nav.bake {layers}` (4 by default) keeps every floor a column's rays meet that has the agent's height of open air (a bridge's deck and the road under it, a building's storeys), joined by the step rule; points pick their floor by height (`cell_at`), the navmesh's rectangles lie on one floor each, mesh corners follow the floor along each leg; stairs built of boxes bake (the feet probe clears a step); a portal's hard ends (a wall's corner, a riser, a drop) drawn in by half a cell; agents moved by their transform rise and fall with the floor, turn for the next corner only once it is in sight, and arrive only on the goal's floor; `nav.info.layers` | `engine/nav/src/nav.cpp`, `docs/design/navigation.md` | `nav_tests` (`[layers]`: a bridge over a road with stairs, paths under and onto it on cells and on the mesh, an agent walking up onto the deck, the top floor alone with `layers: 1`) |
 | Screen-space global illumination: `render.ssgi` / `[render] ssgi` gathers light bounced once off what is on screen at half size (cosine-weighted rays marched through the depth, a PCG hash per pixel, frame and ray, blended over frames where the depth agrees) and adds albedo times it to the frame (a depth-aware gather, none on metals and unlit sprites); `render.stats.ssgi`; about 1.1 ms at 1080p in the showcase | `engine/renderer/src/renderer.cpp`, `docs/design/rendering.md` | `renderer_tests` (`[ssgi]`); `tests/evidence/rendering/ssgi.png` |
+| Probes that see: `IrradianceVolume.visibility` (on by default) keeps, per grid probe, a 16 by 16 octahedral map of the mean distance it saw and its square (from the capture views' depth, now a six-layer array) after the harmonics in the same buffer, and weighs a probe by Chebyshev's bound on its seeing the point (cubed), so light no longer comes through a wall a volume crosses | `engine/renderer/src/renderer.cpp`, `engine/world/meta/components.toml`, `docs/design/rendering.md` | `renderer_tests` (`[visibility]`: the dark room's floor by the wall 0 with it, 111 without); `tests/evidence/rendering/irradiance-walls.png` |
 | Nine-slice images: `slice` on an image box keeps the corners, stretches the edges and fills the middle, for frames and panels drawn from small art | `engine/ui`, `sdk/runtime/ui.ts`, `docs/design/pocket-ui.md` | `runtime_tests` (`[ui][image][slice]`) |
 | Text areas: `multiline` inputs take Return as a new line (the modifier commits), move by lines, keep the caret's line in view and grow with their lines | `engine/ui/src/document.cpp`, `sdk/runtime/ui.ts`, `docs/design/pocket-ui.md` | `ui_tests` (`[multiline]`) |
 | Editor Script tab: the project's scripts listed (`assets.list` kind `script`), opened in a text area, saved with the button or Cmd/Ctrl+Return; `--watch` rebuilds and reloads after a save | `editor/main.tsx`, `engine/assets/src/assets.cpp`, `docs/editor.md` | `runtime_tests` (`[editor][script]`) |
@@ -240,20 +242,46 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # only when Xcode its
 ./.pocket/pocket run ui -- --headless --serve 4711 --paused --json   # then POST ui.snapshot / ui.click to /rpc
 ```
 
-The `transcript` field of any report, `GET /tree` on a served runtime, and the `world_tree`/`transcript` MCP tools are the quickest way to see what "agent-first" means in practice.
+The `transcript` field of any report, `GET /tree` on a served runtime, and the
+`world_tree`/`transcript` MCP tools are the quickest way to see what "agent-first" means in
+practice.
 
 ## Deviations from the plan
 
-- JavaScriptCore instead of V8 on macOS (ADR 0005), on iOS (the system's), and on Linux (WebKitGTK's, which keeps the same C API, since 2026-10-01); V8 stays the plan for Windows.
+- JavaScriptCore instead of V8 on macOS (ADR 0005), on iOS (the system's), and on Linux
+  (WebKitGTK's, which keeps the same C API, since 2026-10-01); V8 stays the plan for Windows.
 - Ninja as a subprocess instead of embedded n2.
 - Physics is a new implementation, not a port of the aipocket reference branch.
-- CI runs on GitHub (macOS job green through the HarfBuzz commit); from the shadow-map commit on, GitHub declines to start jobs on this account until its spending limit is raised, so later runs are unverified there. The `web` job (Ubuntu + Emscripten) was added while that block was in place and has not run yet.
+- CI runs on GitHub (macOS job green through the HarfBuzz commit); from the shadow-map commit on,
+  GitHub declines to start jobs on this account until its spending limit is raised, so later runs
+  are unverified there. The `web` job (Ubuntu + Emscripten) was added while that block was in place
+  and has not run yet.
 
 ## Next
 
-The working plan is `docs/research/2026-10-01-next-phase.md`: for agents, a step that watches values and answers only the keys asked for, the SDK's API as a generated index, a world diff since a mark, and whole games built from a brief as benchmark tasks; for reach, a project's own fonts and richer text, meshes and maps made by code, general 2D physics, materials written as shaders, several cameras, paths, the window and touch, and an animation library; for the CPU, a cheaper command path from scripts, a broad phase for physics queries, transforms and bounds only where something changed, and a name index. The plan before it was `docs/research/2026-09-30-next-phase.md` (performance, reach and agents, ranked by value for effort; all but item 11 landed by 2026-10-01, see its first paragraph): one call that applies a script edit (`pocket apply`), scenarios and benches in parallel, the release runtime for agent-facing runs, discovery commands that fit an agent's tools, drawing only when someone looks (a headless `step` already draws only its last tick), cursor lock and mouse buttons as actions, a seeded `Math.random` and npm packages, a cheaper world hash, opaque pipelines without `discard`, refusing unknown component fields and accepting enum names, shading against the prepass depth, and gameplay components declared by the project. Older items:
+The working plan is `docs/research/2026-10-01-next-phase.md`: for agents, a step that watches values
+and answers only the keys asked for, the SDK's API as a generated index, a world diff since a mark,
+and whole games built from a brief as benchmark tasks; for reach, a project's own fonts and richer
+text, meshes and maps made by code, general 2D physics, materials written as shaders, several
+cameras, paths, the window and touch, and an animation library; for the CPU, a cheaper command path
+from scripts, a broad phase for physics queries, transforms and bounds only where something changed,
+and a name index. The plan before it was `docs/research/2026-09-30-next-phase.md` (performance,
+reach and agents, ranked by value for effort; all but item 11 landed by 2026-10-01, see its first
+paragraph): one call that applies a script edit (`pocket apply`), scenarios and benches in parallel,
+the release runtime for agent-facing runs, discovery commands that fit an agent's tools, drawing
+only when someone looks (a headless `step` already draws only its last tick), cursor lock and mouse
+buttons as actions, a seeded `Math.random` and npm packages, a cheaper world hash, opaque pipelines
+without `discard`, refusing unknown component fields and accepting enum names, shading against the
+prepass depth, and gameplay components declared by the project. Older items:
 
-1. Web build: JSPI as the default once the browsers without it are the exception; the download is the runtime, and dropping unused modules would save about a tenth (docs/web.md, Costs), so the next size win is a slimmer session and flecs build.
-2. Physics: an exact cast against a turning body; navigation: a navmesh fitted to geometry rather than cells; animation: a hinge axis that follows a clip's twist (the axis is fixed in the bone above).
-3. The agent benchmark past its twenty-nine tasks: work judged by eye (a level laid out, a scene composed), timed tasks, and more models and agents beside the pi-family runs (docs/agent-eval.md, Results).
-4. Platformer bodies on isometric and hexagonal maps (top-down movers work there); the navmesh over hexagons.
+1. Web build: JSPI as the default once the browsers without it are the exception; the download is
+   the runtime, and dropping unused modules would save about a tenth (docs/web.md, Costs), so the
+   next size win is a slimmer session and flecs build.
+2. Physics: an exact cast against a turning body; navigation: a navmesh fitted to geometry rather
+   than cells; animation: a hinge axis that follows a clip's twist (the axis is fixed in the bone
+   above).
+3. The agent benchmark past its twenty-nine tasks: work judged by eye (a level laid out, a scene
+   composed), timed tasks, and more models and agents beside the pi-family runs (docs/agent-eval.md,
+   Results).
+4. Platformer bodies on isometric and hexagonal maps (top-down movers work there); the navmesh over
+   hexagons.

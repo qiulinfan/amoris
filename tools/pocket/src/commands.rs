@@ -258,9 +258,40 @@ fn project_summary(project: &Path) -> String {
         .and_then(|t| toml::from_str::<crate::ts::ProjectFile>(&t).ok())
         .and_then(|pf| pf.entry)
         .unwrap_or_else(|| "scripts/main.ts".into());
+    // The script's opening comment, to the end of its first sentence.
     std::fs::read_to_string(project.join(entry))
         .ok()
-        .and_then(|s| s.lines().next().map(|l| l.trim_start_matches('/').trim().to_string()))
+        .map(|s| {
+            let mut text = String::new();
+            for line in s.lines() {
+                let t = line.trim();
+                if !t.starts_with("//") {
+                    break;
+                }
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(t.trim_start_matches('/').trim());
+                if let Some(i) = text.find(". ") {
+                    text.truncate(i + 1);
+                    break;
+                }
+                if text.ends_with('.') || text.len() > 160 {
+                    break;
+                }
+            }
+            // At most about a line and a half, cut between words.
+            if text.len() > 160 {
+                let mut cut = 160;
+                while !text.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                let at = text[..cut].rfind(' ').unwrap_or(cut);
+                text.truncate(at);
+                text.push_str(" ...");
+            }
+            text
+        })
         .unwrap_or_default()
 }
 
@@ -380,6 +411,11 @@ fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()>
     let kb = |p: PathBuf| std::fs::metadata(p).map(|m| m.len() / 1024).unwrap_or(0);
     let sdk_kb = kb(docs.join("generated").join("sdk.md"));
     let rendering_kb = kb(docs.join("design").join("rendering.md"));
+    // The samples, one line each: games that work, to read for how something is done.
+    let samples_dir = root.join("samples");
+    let mut samples: Vec<PathBuf> = std::fs::read_dir(&samples_dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.join("project.toml").exists()).collect()).unwrap_or_default();
+    samples.sort();
+    let examples: String = samples.iter().map(|p| format!("- `{}`: {}\n", p.display(), project_summary(p))).collect();
     let guide = format!(
         r#"# {title}
 
@@ -401,6 +437,11 @@ A game made with Pocket, an engine meant to be driven by agents as much as by pe
 - `prefabs/` and `assets/`: what the scripts instantiate and draw.
 - `scenarios/*.ts`, when there are some: plays of the game with checks, run with `{tool} scenario {name}`.
 
+## Examples
+
+The engine's samples are small games that work, their logic in `scripts/`: read the one nearest what you need (a menu, a platformer, a character, a dialogue, ...) for how it is done, rather than the engine's sources. `{tool} new <name> --from <sample>` starts a project from one.
+
+{examples}
 ## What keeps it working
 
 - Keep the game's state on entities: a component in `components.toml` rather than a variable in a script, so the world, saves, replays and agents can see it.
@@ -429,13 +470,14 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::create_dir_all(project.join("scripts"))?;
     std::fs::create_dir_all(project.join("assets"))?;
     std::fs::create_dir_all(project.join("prefabs"))?;
-    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n\n# Actions instead of keys: keyboard and gamepad both work, and agents can hold an action by name.\n[input.actions]\nmove_x = {{ negative = [\"A\", \"Left\", \"pad:dpad_left\"], positive = [\"D\", \"Right\", \"pad:dpad_right\"], axis = [\"pad:leftx\"] }}\nmove_z = {{ negative = [\"W\", \"Up\", \"pad:dpad_up\"], positive = [\"S\", \"Down\", \"pad:dpad_down\"], axis = [\"pad:lefty\"] }}\ndrop = [\"Space\", \"pad:a\"]\n"))?;
+    std::fs::write(project.join("project.toml"), format!("name = \"{name}\"\nentry = \"scripts/main.ts\"\nscene = \"scene.json\"\n\n[window]\nwidth = 960\nheight = 540\ntitle = \"{name}\"\n\n[physics]\ngravity = [0.0, -9.8, 0.0]\n\n# How it looks (docs/design/rendering.md): smoothed edges, corners darkened where light from all\n# around cannot reach, soft-edged shadows, and a filmic curve that keeps bright light from clipping.\n[render]\nmsaa = 4\nao = true\nshadow_softness = 1.0\n\n[render.tonemap]\noperator = \"agx\"\n\n# Actions instead of keys: keyboard and gamepad both work, and agents can hold an action by name.\n[input.actions]\nmove_x = {{ negative = [\"A\", \"Left\", \"pad:dpad_left\"], positive = [\"D\", \"Right\", \"pad:dpad_right\"], axis = [\"pad:leftx\"] }}\nmove_z = {{ negative = [\"W\", \"Up\", \"pad:dpad_up\"], positive = [\"S\", \"Down\", \"pad:dpad_down\"], axis = [\"pad:lefty\"] }}\ndrop = [\"Space\", \"pad:a\"]\n"))?;
     std::fs::write(project.join("scene.json"), r#"{
   "format": "pocket-scene",
   "entities": [
-    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 20, "y": 1, "z": 20 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.35, "g": 0.4, "b": 0.32, "a": 1 } }, "RigidBody": { "kind": "static" }, "Collider": { "shape": "box" } } },
+    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 400, "y": 1, "z": 400 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.35, "g": 0.42, "b": 0.3, "a": 1 }, "roughness": 0.9 }, "RigidBody": { "kind": "static" }, "Collider": { "shape": "box" } } },
     { "name": "Player", "components": { "Transform": { "position": { "x": 0, "y": 0.5, "z": 0 } }, "MeshRenderer": { "mesh": "sphere", "color": { "r": 0.2, "g": 0.6, "b": 0.9, "a": 1 } }, "Health": { "current": 100, "max": 100 } } },
     { "name": "Sun", "components": { "Transform": { "rotation": { "x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89 } }, "Light": { "kind": 0, "intensity": 1.2 } } },
+    { "name": "Sky", "components": { "Sky": { "mode": "atmosphere", "haze": 1.5 } } },
     { "name": "Camera", "components": { "Transform": { "position": { "x": 0, "y": 6, "z": 10 }, "rotation": { "x": -0.26, "y": 0, "z": 0, "w": 0.97 } }, "Camera": {} } }
   ]
 }

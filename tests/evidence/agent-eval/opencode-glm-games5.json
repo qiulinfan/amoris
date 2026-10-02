@@ -1,0 +1,246 @@
+{
+  "runner": "python3 tools/scripts/runners/opencode_agent.py --via mcp",
+  "passed": 3,
+  "total": 5,
+  "seconds": 2310.7,
+  "tasks": [
+    {
+      "name": "dodge",
+      "project": "blank",
+      "ok": true,
+      "seconds": 313.9,
+      "detail": "moves at 6, rocks fall at 4 one a second, a hit ends it at 4.05",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 311.4,
+        "turns": 17,
+        "tool_calls": 21,
+        "tools": {
+          "read": 5,
+          "grep": 3,
+          "write": 2,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_step": 1,
+          "pocket_world_query": 2,
+          "pocket_world_describe": 1,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 4
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 65061,
+          "output": 2765,
+          "reasoning": 6787,
+          "cache_read": 520512,
+          "total": 595125
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 17,
+        "tokens": 588338,
+        "calls": 21,
+        "read_kb": 24.0,
+        "failed_calls": 0,
+        "calls_before_edit": 8,
+        "calls_after_edit": 12,
+        "stuck": false
+      }
+    },
+    {
+      "name": "snake",
+      "project": "blank",
+      "ok": true,
+      "seconds": 541.1,
+      "detail": "starts right, eats and grows to 4, a cell every 0.15 s, no reversing, turns, ends at the top edge",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 540.7,
+        "turns": 27,
+        "tool_calls": 34,
+        "tools": {
+          "pocket_runtime_command": 12,
+          "read": 6,
+          "grep": 7,
+          "write": 2,
+          "edit": 1,
+          "pocket_project_apply": 3,
+          "pocket_step": 2,
+          "pocket_capture": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 128517,
+          "output": 4976,
+          "reasoning": 14768,
+          "cache_read": 1275520,
+          "total": 1423781
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 27,
+        "tokens": 1409013,
+        "calls": 34,
+        "read_kb": 61.3,
+        "failed_calls": 1,
+        "calls_before_edit": 13,
+        "calls_after_edit": 20,
+        "stuck": false
+      }
+    },
+    {
+      "name": "pause_menu",
+      "project": "blank",
+      "ok": true,
+      "seconds": 502.7,
+      "detail": "title, start, a second of play (4 units, 1 s), pause holding the Box and the clock, resume, restart at (0, 0)",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 502.3,
+        "turns": 38,
+        "tool_calls": 49,
+        "tools": {
+          "read": 13,
+          "pocket_runtime_command": 13,
+          "grep": 11,
+          "glob": 3,
+          "edit": 2,
+          "write": 2,
+          "pocket_events_since": 2,
+          "pocket_runtime_commands": 1,
+          "pocket_step": 2
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 70901,
+          "output": 4683,
+          "reasoning": 10074,
+          "cache_read": 1955648,
+          "total": 2041306
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 38,
+        "tokens": 2031232,
+        "calls": 49,
+        "read_kb": 92.9,
+        "failed_calls": 1,
+        "calls_before_edit": 26,
+        "calls_after_edit": 22,
+        "stuck": false
+      }
+    },
+    {
+      "name": "breakout",
+      "project": "blank",
+      "ok": false,
+      "seconds": 660.4,
+      "detail": "after the hit: brick.broken {'score': 20}, state {'score': 20, 'lives': 3, 'bricks': 30}",
+      "answer": null,
+      "error": "runner exited 247: opencode exited -9",
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 660.0,
+        "turns": 19,
+        "tool_calls": 30,
+        "tools": {
+          "read": 9,
+          "grep": 8,
+          "write": 1,
+          "pocket_pocket_check": 1,
+          "pocket_project_apply": 1,
+          "pocket_world_tree": 1,
+          "pocket_step": 5,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 3
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 88965,
+          "output": 3986,
+          "reasoning": 19874,
+          "cache_read": 830144,
+          "total": 942969
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 19,
+        "tokens": 923095,
+        "calls": 30,
+        "read_kb": 48.6,
+        "failed_calls": 0,
+        "calls_before_edit": 17,
+        "calls_after_edit": 12,
+        "stuck": false
+      }
+    },
+    {
+      "name": "key_door",
+      "project": "blank",
+      "ok": false,
+      "seconds": 292.7,
+      "detail": "without the key the Player walked through the door to x 8.00",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 292.3,
+        "turns": 14,
+        "tool_calls": 18,
+        "tools": {
+          "read": 4,
+          "pocket_runtime_command": 6,
+          "grep": 3,
+          "write": 2,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_runtime_commands": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 61625,
+          "output": 2944,
+          "reasoning": 7662,
+          "cache_read": 382976,
+          "total": 455207
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 14,
+        "tokens": 447545,
+        "calls": 18,
+        "read_kb": 10.5,
+        "failed_calls": 0,
+        "calls_before_edit": 8,
+        "calls_after_edit": 9,
+        "stuck": false
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0,
+    "tokens": 5458388,
+    "tool_calls": 152
+  }
+}

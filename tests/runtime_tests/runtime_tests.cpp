@@ -223,6 +223,53 @@ TEST_CASE("script.eval has the SDK's exports as names and answers an error with 
     REQUIRE(s.command("script.eval", Json{{"source", "kept"}}).value() == 41);
 }
 
+TEST_CASE("commands take what agents were seen to send: field paths, components inline, ids as strings", "[runtime][friction]") {
+    app::Session s(hello_options(-1));
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json ball = s.command("world.find", Json{{"path", "Ball"}}).value();
+    REQUIRE(ball.is_number());
+    // world.query: a component's field, a field inside it, a bare field one `with` component has.
+    Json q = s.command("world.query", Json{{"name", "Ball"}, {"fields", Json::array({"Transform.position"})}}).value();
+    REQUIRE(q["entities"][0]["Transform"].size() == 1);
+    REQUIRE(q["entities"][0]["Transform"]["position"].contains("y"));
+    q = s.command("world.query", Json{{"name", "Ball"}, {"fields", Json::array({"Transform.position.y"})}}).value();
+    REQUIRE(q["entities"][0]["Transform"]["position"].size() == 1);
+    q = s.command("world.query", Json{{"name", "Ball"}, {"with", Json::array({"Transform"})}, {"fields", Json::array({"position"})}}).value();
+    REQUIRE(q["entities"][0]["Transform"].contains("position"));
+    auto bare = s.command("world.query", Json{{"name", "Ball"}, {"fields", Json::array({"position"})}});
+    REQUIRE_FALSE(bare.has_value());
+    REQUIRE(bare.error().message.find("Transform.position") != std::string::npos);
+    // world.set: the component as world.spawn takes it, its fields beside it, several at once.
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"Transform", Json{{"position", Json{{"x", 1.5}}}}}}).value()["values"]["Transform"]["position"]["x"] == 1.5);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"position", Json{{"x", 2.5}}}}).value()["value"]["position"]["x"] == 2.5);
+    Json both = s.command("world.set", Json{{"entity", "Ball"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3.5}}}}}, {"MeshRenderer", Json{{"roughness", 0.25}}}}}}).value();
+    REQUIRE(both["values"]["Transform"]["position"]["x"] == 3.5);
+    REQUIRE(both["values"]["MeshRenderer"]["roughness"] == 0.25);
+    // A field named by its start is suggested whole.
+    auto pos = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"pos", Json{{"x", 1}}}}}});
+    REQUIRE_FALSE(pos.has_value());
+    REQUIRE(pos.error().message.find("did you mean 'position'") != std::string::npos);
+    // world.get without a component: all of them; an id as a string; world.remove without one.
+    Json all = s.command("world.get", Json{{"entity", "Ball"}}).value();
+    REQUIRE(all.contains("Transform"));
+    REQUIRE(all.contains("MeshRenderer"));
+    REQUIRE(s.command("world.describe", Json{{"entity", std::to_string(ball.get<std::uint64_t>())}}).has_value());
+    auto rm = s.command("world.remove", Json{{"entity", "Ball"}});
+    REQUIRE_FALSE(rm.has_value());
+    REQUIRE(rm.error().message.find("world.destroy") != std::string::npos);
+    // A script function asked for as a command, and a parameter by its other name.
+    auto fn = s.command("dialogue.check", Json{{"source", "x.json"}});
+    REQUIRE_FALSE(fn.has_value());
+    REQUIRE(fn.error().message.find("script.eval") != std::string::npos);
+    REQUIRE(s.command("log.tail", Json{{"lines", 5}}).has_value());
+    // input.release lets a hold go at once, and only what was held.
+    REQUIRE(s.command("input.hold", Json{{"key", "D"}, {"ticks", 600}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(s.command("input.release", Json{{"key", "D"}}).value()["released"] == Json::array({"D"}));
+    REQUIRE(s.command("input.release", Json::object()).value()["released"].empty());
+}
+
 TEST_CASE("a reload after a script error drops the old handlers before the new bundle's join", "[runtime][reload]") {
     app::Session s(hello_options(-1));
     REQUIRE(s.start().has_value());
@@ -5628,8 +5675,8 @@ TEST_CASE("the engine says how to call its commands and refuses parameters they 
     REQUIRE(s.command("help", Json{{"sdk", ""}}).value()["parts"]["world"].size() > 10);
     REQUIRE_FALSE(s.command("help", Json{{"sdk", "nothing.like.this"}}).has_value());
     Json set = s.command("help", Json{{"command", "world.set"}}).value();
-    REQUIRE(set["usage"] == "world.set {entity, component, value, cause?, quiet?}");
-    REQUIRE(set["params"] == Json::array({"entity", "component", "value", "cause", "quiet"}));
+    REQUIRE(set["usage"] == "world.set {entity, component, value, components?, cause?, quiet?}");
+    REQUIRE(set["params"] == Json::array({"entity", "component", "value", "components", "cause", "quiet"}));
     Json usage = s.command("commands", Json{{"usage", true}}).value();
     REQUIRE(usage.size() == listed.size());
     // Narrowed for an agent's context: a family, a word, one line each, one component's schema.

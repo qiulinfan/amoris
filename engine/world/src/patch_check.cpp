@@ -33,6 +33,19 @@ std::size_t edit_distance(std::string_view a, std::string_view b) {
 // The closest of `options` to `name`, when close enough to be what was meant.
 template <class Range, class Name>
 std::string nearest(std::string_view name, const Range& options, Name name_of) {
+    // A name that only one option starts with ('pos' for 'position') is that one.
+    if (name.size() >= 2) {
+        std::string only;
+        int starts = 0;
+        for (const auto& o : options) {
+            const std::string_view n = name_of(o);
+            if (n.size() > name.size() && n.substr(0, name.size()) == name) {
+                only = std::string(n);
+                ++starts;
+            }
+        }
+        if (starts == 1) return only;
+    }
     std::string best;
     std::size_t best_d = std::max<std::size_t>(2, name.size() / 3) + 1;
     for (const auto& o : options) {

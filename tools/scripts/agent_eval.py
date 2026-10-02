@@ -1685,7 +1685,8 @@ def key_door_check(env, answer):
     env.command("input.hold", {"action": "move_x", "ticks": 90})
     env.command("step", {"ticks": 90})
     p = entity_pos(env, "Player")
-    if p["x"] > 7.9:
+    # Into the door is not past it: the brief gives the door's place, not its width.
+    if p["x"] > 8.05:
         return False, f"without the key the Player walked through the door to x {p['x']:.2f}"
     if p["x"] < 6.5:
         return False, f"the Player did not walk up to the door (x {p['x']:.2f})"

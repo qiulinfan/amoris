@@ -29,6 +29,7 @@ Lua is not used. CMake is not used for our own code (it may be invoked by `pocke
 8. Commit only when asked. AI-authored commits end with the agent's co-author trailer.
 9. Code that changes the world during a tick (physics, water, characters, rigs, timelines, navigation, particles, the SDK's tweens) takes sin, cos, atan2, exp, pow and the like from `pocket::repro` (C++) or `repro` (SDK), not `<cmath>` or `Math`: a native and a web peer of a lockstep game must compute the same bits (`docs/design/networking.md`, Determinism). Drawing may use either.
 10. Shaders are WGSL compiled by naga natively and by Tint in browsers, and Tint is stricter (it wants parentheses where `*` meets `^` or `&&` meets `||`, uniform control flow around `textureSample`): after changing a shader, pack a sample with `--web` and load it (`docs/web.md`) before calling it done; a module Tint rejects draws nothing.
+11. Docs under `docs/` are prose wrapped at 100 columns (tables, code and generated files aside): agents read them by searching, and a match returns its line, so a paragraph on one line came back whole for every word in it. After writing a doc, run `python3 tools/scripts/dev/wrap_docs.py <files>` (it changes only where lines break).
 
 ## Daily commands
 

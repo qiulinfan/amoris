@@ -1,6 +1,7 @@
 # Packaging
 
-`pocket pack <project>` turns a project into a folder that runs on another Mac without the repository, the toolchain or the TypeScript sources:
+`pocket pack <project>` turns a project into a folder that runs on another Mac without the
+repository, the toolchain or the TypeScript sources:
 
 ```
 dist/<name>/
@@ -22,8 +23,20 @@ dist/<name>/
 ./dist/assets/assets --serve 4711 --paused    # agents talk to a packed game too
 ```
 
-The packed runtime is the same executable the repository runs, so every command, report and capture works unchanged; only the sources are absent. Nothing is signed or notarized: distributing outside a machine you control needs Apple's tooling on top of this. On Linux the same command packs the Linux runtime (checked in the container of [the build system](build-system.md), Linux: the packed hello runs headless on Vulkan); the machine it goes to needs WebKitGTK's JavaScriptCore (`libjavascriptcoregtk-4.1`) and a Vulkan driver. Windows packs arrive with Windows.
+The packed runtime is the same executable the repository runs, so every command, report and capture
+works unchanged; only the sources are absent. Nothing is signed or notarized: distributing outside a
+machine you control needs Apple's tooling on top of this. On Linux the same command packs the Linux
+runtime (checked in the container of [the build system](build-system.md), Linux: the packed hello
+runs headless on Vulkan); the machine it goes to needs WebKitGTK's JavaScriptCore
+(`libjavascriptcoregtk-4.1`) and a Vulkan driver. Windows packs arrive with Windows.
 
-`pocket pack <project> --ios` makes an app for the iOS Simulator, `dist/ios/<name>.app`: the runtime built for the simulator as its executable, the same files as above under `game/`, an `Info.plist` and an ad hoc signature. `pocket run <project> --ios` packs it, installs it on a simulated iPhone and starts it, passing what follows `--` (`-- --serve 4711` opens its control server to the Mac); see [the build system](build-system.md), iOS.
+`pocket pack <project> --ios` makes an app for the iOS Simulator, `dist/ios/<name>.app`: the runtime
+built for the simulator as its executable, the same files as above under `game/`, an `Info.plist`
+and an ad hoc signature. `pocket run <project> --ios` packs it, installs it on a simulated iPhone
+and starts it, passing what follows `--` (`-- --serve 4711` opens its control server to the Mac);
+see [the build system](build-system.md), iOS.
 
-`pocket pack <project> --web` makes the browser version instead: `dist/web/<name>/` with `index.html`, the wasm runtime and the project packaged into a virtual file system, to host on any static server. The page exposes the same commands through `window.pocket`; see [the web build](web.md).
+`pocket pack <project> --web` makes the browser version instead: `dist/web/<name>/` with
+`index.html`, the wasm runtime and the project packaged into a virtual file system, to host on any
+static server. The page exposes the same commands through `window.pocket`; see [the web
+build](web.md).
