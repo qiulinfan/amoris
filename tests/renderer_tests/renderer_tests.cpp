@@ -2242,6 +2242,62 @@ TEST_CASE("water shows the bed through it, deep water its colour, the sky at a g
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("the weather: wet surfaces darken, snow whitens what faces up, rain and snow are drawn, overcast dims the sun", "[renderer][weather]") {
+    // The scene stands 200 units along x from the assets sample's, seen by its camera, lit by its sun.
+    app::Session s(assets_options());
+    REQUIRE(s.start().has_value());
+    auto spawn = [&](const char* name, Json components) { REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", components}}).has_value()); };
+    auto xyz = [](double x, double y, double z) { return Json{{"x", x + 200}, {"y", y}, {"z", z}}; };
+    auto v3 = [](double x, double y, double z) { return Json{{"x", x}, {"y", y}, {"z", z}}; };
+    auto rgba = [](double r, double g, double b, double a = 1) { return Json{{"r", r}, {"g", g}, {"b", b}, {"a", a}}; };
+    spawn("Floor", Json{{"Transform", Json{{"position", xyz(0, -0.1, 0)}, {"scale", v3(20, 0.2, 20)}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", rgba(0.5, 0.45, 0.4)}, {"roughness", 1.0}}}});
+    spawn("Block", Json{{"Transform", Json{{"position", xyz(0.55, 0.4, 0.55)}, {"scale", v3(0.8, 0.8, 0.8)}}}, {"MeshRenderer", Json{{"mesh", "cube"}, {"color", rgba(0.3, 0.5, 0.3)}, {"roughness", 1.0}}}});
+    REQUIRE(s.command("world.set", Json{{"entity", "Sun"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", -0.6}, {"y", 0.2}, {"z", 0.1}, {"w", 0.77}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", xyz(1.5, 4, 4)}, {"rotation", Json{{"x", -0.34}, {"y", 0.12}, {"z", 0.04}, {"w", 0.93}}}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Camera"}, {"value", Json{{"fov_degrees", 50}}}}).has_value());
+    auto pixel_at = [&](double x, double y, double z) {
+        Json at = s.command("render.project", Json{{"point", xyz(x, y, z)}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    auto weather = [&](Json value) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Weather"}, {"component", "Weather"}, {"value", value}}).has_value());
+        REQUIRE(s.frame().has_value());
+    };
+    REQUIRE(s.frame().has_value());
+    const auto dry = pixel_at(-1.0, 0, -0.5);
+    const auto dry_side = pixel_at(0.55, 0.4, 0.95);   // the block's face toward the camera
+    const double sun_dry = s.command("render.stats", Json::object()).value()["sun_light"]["r"].get<double>();
+    spawn("Weather", Json{{"Weather", Json{{"wet", 1.0}}}});
+    REQUIRE(s.frame().has_value());
+    const auto wet = pixel_at(-1.0, 0, -0.5);
+    weather(Json{{"wet", 0.0}, {"cover", 1.0}});
+    const auto white = pixel_at(-1.0, 0, -0.5);
+    const auto white_side = pixel_at(0.55, 0.4, 0.95);
+    const auto white_top = pixel_at(0.55, 0.8, 0.55);
+    REQUIRE(s.command("capture", Json{{"path", (root() / "build" / "test-out" / "weather-snow.png").string()}}).has_value());
+    INFO("dry " << dry[0] << "," << dry[1] << "," << dry[2] << " wet " << wet[0] << "," << wet[1] << "," << wet[2] << " white " << white[0] << "," << white[1] << "," << white[2]
+         << " side " << dry_side[1] << " -> " << white_side[1] << " top " << white_top[0] << "," << white_top[1] << "," << white_top[2]);
+    REQUIRE(wet[0] < dry[0] * 0.85);                                // wet: darker
+    REQUIRE(white[2] > dry[2] + 50);                                // snow lying: white on the floor
+    REQUIRE(std::abs(white[0] - white[2]) < 30);
+    REQUIRE(white_top[0] > white_side[0] + 30);                     // and on the block's top, not its side
+    REQUIRE(std::abs(white_side[1] - dry_side[1]) < 20);
+    // Rain and snow are drawn about the camera, as many as they are hard (and the density says).
+    weather(Json{{"cover", 0.0}, {"rain", 1.0}, {"snow", 0.5}});
+    Json stats = s.command("render.stats", Json::object()).value();
+    REQUIRE(stats["weather_drops"] == 9000 + 3500);
+    REQUIRE(s.command("capture", Json{{"path", (root() / "build" / "test-out" / "weather-rain.png").string()}}).has_value());
+    weather(Json{{"density", 0.5}});
+    REQUIRE(s.command("render.stats", Json::object()).value()["weather_drops"] == 4500 + 1750);
+    // Overcast follows the weather (seven tenths of the rain here) and dims the sun's direct light.
+    const double sun_wet = s.command("render.stats", Json::object()).value()["sun_light"]["r"].get<double>();
+    INFO("sun " << sun_dry << " -> " << sun_wet);
+    REQUIRE(sun_wet == Catch::Approx(sun_dry * (1 - 0.8 * 0.7)).epsilon(0.02));
+    weather(Json{{"overcast", 0.0}});
+    REQUIRE(s.command("render.stats", Json::object()).value()["sun_light"]["r"].get<double>() == Catch::Approx(sun_dry).epsilon(0.02));
+}
+
 TEST_CASE("decals paint the surfaces in their boxes, facing the projection, in order, and glow", "[renderer][decals]") {
     // The assets project for its checker image; the test's scene stands 200 units along x from the
     // sample's (whose script keeps running), seen by the sample's camera and lit by its sun.
@@ -2473,11 +2529,15 @@ TEST_CASE("the atmosphere: a blue day, a warm low sun that reddens its own light
     INFO("sun light low " << low[0] << "," << low[1] << "," << low[2]);
     REQUIRE(low[0] > 2 * low[2]);   // reddened
     REQUIRE(low[0] < noon[0]);      // and dimmed
-    // Night: the sun gone below, the sky overhead nearly black and the sun light out.
+    // Night: the sun gone below, the sky overhead a deep blue, and the key light the moon's: cool and dim.
     sun_at(-6);
     const auto night = look(0, 80);
     INFO("night " << night[0] << "," << night[1] << "," << night[2]);
-    REQUIRE(sun_light()[0] == 0);
+    const auto moon = sun_light();
+    INFO("moon light " << moon[0] << "," << moon[1] << "," << moon[2]);
+    REQUIRE(moon[2] > moon[0]);
+    REQUIRE(moon[2] < noon[2] / 5);
+    REQUIRE(night[2] > night[0]);
     REQUIRE(night[0] + night[1] + night[2] < (zenith[0] + zenith[1] + zenith[2]) / 6);
     // Haze whitens the day sky: the gap between blue and red closes.
     sun_at(60);

@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <format>
 
 #ifdef __EMSCRIPTEN__
@@ -60,6 +61,9 @@ struct Device::Impl {
     bool timestamps = false;
     float timestamp_period = 1;
     std::uint64_t completed = 0;   // frames the GPU has finished (their submitted work done)
+#ifndef __EMSCRIPTEN__
+    std::deque<WGPUSubmissionIndex> in_flight;   // the frames submitted and not yet waited for, oldest first
+#endif
     WGPUInstance instance = nullptr;
     WGPUAdapter adapter = nullptr;
     WGPUDevice device = nullptr;
@@ -505,18 +509,28 @@ Status Device::end_frame(Frame& frame) {
         }
     }
     WGPUCommandBuffer cb = wgpuCommandEncoderFinish(frame.encoder, nullptr);
+#ifndef __EMSCRIPTEN__
+    im.in_flight.push_back(wgpuQueueSubmitForIndex(im.queue, 1, &cb));
+#else
     wgpuQueueSubmit(im.queue, 1, &cb);
+#endif
     wgpuCommandBufferRelease(cb);
 #ifndef __EMSCRIPTEN__
-    // At most three frames in flight: without a display to pace it (headless, or a hidden window)
-    // the CPU would run a hundred frames ahead of the GPU, holding their resources and making
-    // anything read back from the GPU that old. The browser paces its frames itself.
+    // At most two frames queued behind this one: without a display to pace it (headless, or a
+    // hidden window) the CPU would run a hundred frames ahead of the GPU, holding their resources
+    // and making anything read back from the GPU that old. Only the oldest is waited for, so the GPU
+    // keeps working on the next while the CPU builds another (a wait with no submission named waits
+    // for everything queued, and left the GPU idle while the CPU caught up: 6.6 ms a frame where
+    // the GPU's own work was 3.6). The browser paces its frames itself.
     WGPUQueueWorkDoneCallbackInfo done{};
     done.mode = WGPUCallbackMode_AllowSpontaneous;
     done.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void* u1, void*) { ++static_cast<Impl*>(u1)->completed; };
     done.userdata1 = &im;
     wgpuQueueOnSubmittedWorkDone(im.queue, done);
-    while (im.frame_index + 1 > im.completed + 3) device_progress(im.instance, im.device, true);
+    while (im.in_flight.size() > 2) {
+        wgpuDevicePoll(im.device, true, &im.in_flight.front());
+        im.in_flight.pop_front();
+    }
 #endif
     wgpuCommandEncoderRelease(frame.encoder);
     frame.encoder = nullptr;

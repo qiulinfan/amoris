@@ -372,6 +372,8 @@ export interface Light {
     inner_angle: number;
     /** Spot: the half-angle in degrees where it has faded out (at most 89.5). */
     outer_angle: number;
+    /** Point and spot lights: lit only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below (always lit without one): lamps, torches and windows under a Sky's running day (docs/design/rendering.md, A day). */
+    after_dark: boolean;
     /** Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'. */
     shadows: boolean;
 }
@@ -484,6 +486,12 @@ export interface Sky {
     cloud_height: number;
     /** Mode 3: the size of the clouds' features, in units. */
     cloud_scale: number;
+    /** Hours, 0 to 24: the engine puts the first directional light (the sun) where the sun is at that hour, rising in the east (+x) at 6, highest to the south (+z) at 12, setting in the west at 18, under the horizon at night (docs/design/rendering.md, A day); negative leaves the light where it is. */
+    time_of_day: number;
+    /** Seconds of game time a whole day takes, time_of_day running on by itself (0: the hour stands). */
+    day_length: number;
+    /** Degrees above the horizon the sun climbs at noon. */
+    sun_height: number;
     /** false turns the sky off without removing it. */
     enabled: boolean;
 }
@@ -1116,6 +1124,24 @@ export interface Wind {
     enabled: boolean;
 }
 
+/** Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the first enabled Weather by id. They fall in a box about the camera, slanted by the Wind; what they fall on gets wet (darker, glossier, most where it faces up) or white where snow lies, both building up while they fall and going after; an overcast sky dims the sun and, under an atmosphere, clouds it over. */
+export interface Weather {
+    /** How hard it rains, 0 to 1 (1: a downpour of some nine thousand drops about the camera). */
+    rain: number;
+    /** How hard it snows, 0 to 1. */
+    snow: number;
+    /** How wet things are now, 0 to 1: it rises toward `rain` (fully wet after 15 seconds of a downpour) and dries over 90 seconds once the rain eases; set it for a world that starts wet. */
+    wet: number;
+    /** How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white. */
+    cover: number;
+    /** How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more). */
+    overcast: number;
+    /** Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged). */
+    density: number;
+    /** False: no weather (the next enabled Weather by id, if any). */
+    enabled: boolean;
+}
+
 /** A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere. */
 export interface Water {
     /** The surface's extent along x and z, centred on the entity. */
@@ -1583,6 +1609,7 @@ export interface Components {
     Terrain: Terrain;
     Cloth: Cloth;
     Wind: Wind;
+    Weather: Weather;
     Water: Water;
     Scatter: Scatter;
     Vehicle: Vehicle;
@@ -1640,6 +1667,7 @@ export interface ComponentEnums {
     Terrain: {};
     Cloth: { pin: "top" | "corners" | "left" | "none" };
     Wind: {};
+    Weather: {};
     Water: {};
     Scatter: {};
     Vehicle: {};
@@ -1663,9 +1691,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Weather" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Weather", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1675,7 +1703,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     Health: [["current", "n"], ["max", "n"], ["team", "n"], ["invulnerable", "n"], ["guard", "n"], ["dead", "b"]],
     Hitbox: [["damage", "n"], ["knockback", "n"], ["team", "n"], ["repeat", "n"], ["destroy", "b"], ["enabled", "b"], ["hits", "n"]],
     Lifetime: [["seconds", "n"]],
-    Light: [["kind", "n"], ["color", "c"], ["intensity", "n"], ["range", "n"], ["inner_angle", "n"], ["outer_angle", "n"], ["shadows", "b"]],
+    Light: [["kind", "n"], ["color", "c"], ["intensity", "n"], ["range", "n"], ["inner_angle", "n"], ["outer_angle", "n"], ["after_dark", "b"], ["shadows", "b"]],
     ReflectionProbe: [["size", "v3"], ["intensity", "n"], ["box_projection", "b"], ["realtime", "b"], ["enabled", "b"]],
     IrradianceVolume: [["size", "v3"], ["probes", "v3"], ["intensity", "n"], ["visibility", "b"], ["enabled", "b"]],
     Fog: [["color", "c"], ["density", "n"], ["height", "n"], ["falloff", "n"], ["start", "n"], ["max_opacity", "n"], ["enabled", "b"], ["volumetric", "b"], ["anisotropy", "n"], ["steps", "n"], ["distance", "n"]],
@@ -1683,6 +1711,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     RigidBody: [["kind", "n"], ["mass", "n"], ["restitution", "n"], ["friction", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["gravity_scale", "n"], ["sleeping", "b"], ["lock_rotation", "b"], ["ccd", "b"]],
     Cloth: [["size", "v2"], ["segments", "v2"], ["pin", "n"], ["stiffness", "n"], ["damping", "n"], ["weight", "n"], ["wind", "n"], ["collide", "b"], ["thickness", "n"], ["enabled", "b"]],
     Wind: [["direction", "n"], ["speed", "n"], ["gusts", "n"], ["gust_length", "n"], ["enabled", "b"]],
+    Weather: [["rain", "n"], ["snow", "n"], ["wet", "n"], ["cover", "n"], ["overcast", "n"], ["density", "n"], ["enabled", "b"]],
     Area2D: [["size", "v2"], ["offset", "v2"], ["enabled", "b"], ["inside", "n"]],
     RigidBody2D: [["kind", "n"], ["velocity", "v2"], ["angular_velocity", "n"], ["gravity_scale", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["fixed_rotation", "b"], ["bullet", "b"], ["awake", "b"], ["enabled", "b"]],
     AudioListener: [["enabled", "b"]],
@@ -1700,12 +1729,12 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Lifetime: { seconds: 1 },
     Camera: { fov_degrees: 60, orthographic: false, ortho_size: 5, near: 0.1, far: 1000, active: true, viewport: { x: 0, y: 0, z: 1, w: 1 }, order: 0, target: "", target_size: { x: 256, y: 256 }, priority: 0, blend: 0 },
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0, targets: "", margin: 1.5, rail: "", look_ahead: 0 },
-    Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
+    Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, after_dark: false, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
     IrradianceVolume: { size: { x: 10, y: 4, z: 10 }, probes: { x: 4, y: 2, z: 4 }, intensity: 1, visibility: true, enabled: true },
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
-    Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },
+    Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, time_of_day: -1, day_length: 0, sun_height: 60, enabled: true },
     MeshRenderer: { mesh: "cube", node: "", color: { r: 0.8, g: 0.8, b: 0.8, a: 1 }, texture: "", metallic: -1, roughness: -1, emissive: { r: 0, g: 0, b: 0, a: 1 }, cutoff: 0, normal_map: "", transmission: -1, ior: -1, thickness: -1, clearcoat: -1, clearcoat_roughness: -1, sheen: { r: 0, g: 0, b: 0, a: 1 }, sheen_roughness: -1, specular: -1, anisotropy: -1, anisotropy_rotation: 0, material: "", material_params: { x: 0, y: 0, z: 0, w: 0 }, texture_tile: 0, unlit: false, visible: true, highlight: { r: 0, g: 0, b: 0, a: 0 }, cast_shadows: true, lods: [], cull_screen: 0 },
     Sprite: { texture: "", size: { x: 1, y: 1 }, color: { r: 1, g: 1, b: 1, a: 1 }, anchor: { x: 0.5, y: 0.5 }, layer: 0, uv: { x: 0, y: 0, z: 1, w: 1 }, flip_x: false, flip_y: false, filter: "linear", visible: true, sort_y: false, material: "", params: { x: 0, y: 0, z: 0, w: 0 }, additive: false, lit: false, normal_map: "" },
     SpriteAnimation: { clip: "", playing: true, loop: true, speed: 1, fps: 0, frame: 0, time: 0, finished: false },
@@ -1727,6 +1756,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
     Cloth: { size: { x: 1.5, y: 1 }, segments: { x: 12, y: 8 }, pin: 0, stiffness: 0.9, damping: 0.02, weight: 0.4, wind: 1, collide: true, thickness: 0.02, enabled: true },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
+    Weather: { rain: 0, snow: 0, wet: 0, cover: 0, overcast: -1, density: 1, enabled: true },
     Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },

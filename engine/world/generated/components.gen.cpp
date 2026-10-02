@@ -969,6 +969,7 @@ void to_json(Json& j, const Light& v) {
     j["range"] = v.range;
     j["inner_angle"] = v.inner_angle;
     j["outer_angle"] = v.outer_angle;
+    j["after_dark"] = v.after_dark;
     j["shadows"] = v.shadows;
 }
 
@@ -979,6 +980,7 @@ void from_json(const Json& j, Light& v) {
     scalar_from_json(j, "range", v.range);
     scalar_from_json(j, "inner_angle", v.inner_angle);
     scalar_from_json(j, "outer_angle", v.outer_angle);
+    scalar_from_json(j, "after_dark", v.after_dark);
     scalar_from_json(j, "shadows", v.shadows);
 }
 
@@ -992,6 +994,7 @@ void hash_component(StateHasherRef& h, const Light& v) {
     h.f32(v.range);
     h.f32(v.inner_angle);
     h.f32(v.outer_angle);
+    h.u8(v.after_dark ? 1 : 0);
     h.u8(v.shadows ? 1 : 0);
 }
 
@@ -1231,6 +1234,9 @@ void to_json(Json& j, const Sky& v) {
     j["clouds"] = v.clouds;
     j["cloud_height"] = v.cloud_height;
     j["cloud_scale"] = v.cloud_scale;
+    j["time_of_day"] = v.time_of_day;
+    j["day_length"] = v.day_length;
+    j["sun_height"] = v.sun_height;
     j["enabled"] = v.enabled;
 }
 
@@ -1249,6 +1255,9 @@ void from_json(const Json& j, Sky& v) {
     scalar_from_json(j, "clouds", v.clouds);
     scalar_from_json(j, "cloud_height", v.cloud_height);
     scalar_from_json(j, "cloud_scale", v.cloud_scale);
+    scalar_from_json(j, "time_of_day", v.time_of_day);
+    scalar_from_json(j, "day_length", v.day_length);
+    scalar_from_json(j, "sun_height", v.sun_height);
     scalar_from_json(j, "enabled", v.enabled);
 }
 
@@ -1276,6 +1285,9 @@ void hash_component(StateHasherRef& h, const Sky& v) {
     h.f32(v.clouds);
     h.f32(v.cloud_height);
     h.f32(v.cloud_scale);
+    h.f32(v.time_of_day);
+    h.f32(v.day_length);
+    h.f32(v.sun_height);
     h.u8(v.enabled ? 1 : 0);
 }
 
@@ -1305,6 +1317,9 @@ std::size_t numeric_span(Sky& v, std::string_view path, float** out) {
     if (path == "clouds") { *out = &v.clouds; return 1; }
     if (path == "cloud_height") { *out = &v.cloud_height; return 1; }
     if (path == "cloud_scale") { *out = &v.cloud_scale; return 1; }
+    if (path == "time_of_day") { *out = &v.time_of_day; return 1; }
+    if (path == "day_length") { *out = &v.day_length; return 1; }
+    if (path == "sun_height") { *out = &v.sun_height; return 1; }
     return 0;
 }
 
@@ -2935,6 +2950,48 @@ std::size_t numeric_span(Wind& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Weather& v) {
+    j = Json::object();
+    j["rain"] = v.rain;
+    j["snow"] = v.snow;
+    j["wet"] = v.wet;
+    j["cover"] = v.cover;
+    j["overcast"] = v.overcast;
+    j["density"] = v.density;
+    j["enabled"] = v.enabled;
+}
+
+void from_json(const Json& j, Weather& v) {
+    scalar_from_json(j, "rain", v.rain);
+    scalar_from_json(j, "snow", v.snow);
+    scalar_from_json(j, "wet", v.wet);
+    scalar_from_json(j, "cover", v.cover);
+    scalar_from_json(j, "overcast", v.overcast);
+    scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "enabled", v.enabled);
+}
+
+void hash_component(StateHasherRef& h, const Weather& v) {
+    h.f32(v.rain);
+    h.f32(v.snow);
+    h.f32(v.wet);
+    h.f32(v.cover);
+    h.f32(v.overcast);
+    h.f32(v.density);
+    h.u8(v.enabled ? 1 : 0);
+}
+
+std::size_t numeric_span(Weather& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "rain") { *out = &v.rain; return 1; }
+    if (path == "snow") { *out = &v.snow; return 1; }
+    if (path == "wet") { *out = &v.wet; return 1; }
+    if (path == "cover") { *out = &v.cover; return 1; }
+    if (path == "overcast") { *out = &v.overcast; return 1; }
+    if (path == "density") { *out = &v.density; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const Water& v) {
     j = Json::object();
     vec_to_json(j["size"], v.size);
@@ -4143,11 +4200,12 @@ std::size_t read_numbers(const Light& v, double* out) {
     out[6] = static_cast<double>(v.range);
     out[7] = static_cast<double>(v.inner_angle);
     out[8] = static_cast<double>(v.outer_angle);
-    out[9] = static_cast<double>(v.shadows);
-    return 10;
+    out[9] = static_cast<double>(v.after_dark);
+    out[10] = static_cast<double>(v.shadows);
+    return 11;
 }
 bool write_numbers(Light& v, const double* in, std::size_t n) {
-    if (n != 10) return false;
+    if (n != 11) return false;
     v.kind = static_cast<std::int32_t>(in[0]);
     v.color.r = static_cast<float>(in[1]);
     v.color.g = static_cast<float>(in[2]);
@@ -4157,7 +4215,8 @@ bool write_numbers(Light& v, const double* in, std::size_t n) {
     v.range = static_cast<float>(in[6]);
     v.inner_angle = static_cast<float>(in[7]);
     v.outer_angle = static_cast<float>(in[8]);
-    v.shadows = in[9] != 0;
+    v.after_dark = in[9] != 0;
+    v.shadows = in[10] != 0;
     return true;
 }
 
@@ -4397,6 +4456,28 @@ bool write_numbers(Wind& v, const double* in, std::size_t n) {
     v.gusts = static_cast<float>(in[2]);
     v.gust_length = static_cast<float>(in[3]);
     v.enabled = in[4] != 0;
+    return true;
+}
+
+std::size_t read_numbers(const Weather& v, double* out) {
+    out[0] = static_cast<double>(v.rain);
+    out[1] = static_cast<double>(v.snow);
+    out[2] = static_cast<double>(v.wet);
+    out[3] = static_cast<double>(v.cover);
+    out[4] = static_cast<double>(v.overcast);
+    out[5] = static_cast<double>(v.density);
+    out[6] = static_cast<double>(v.enabled);
+    return 7;
+}
+bool write_numbers(Weather& v, const double* in, std::size_t n) {
+    if (n != 7) return false;
+    v.rain = static_cast<float>(in[0]);
+    v.snow = static_cast<float>(in[1]);
+    v.wet = static_cast<float>(in[2]);
+    v.cover = static_cast<float>(in[3]);
+    v.overcast = static_cast<float>(in[4]);
+    v.density = static_cast<float>(in[5]);
+    v.enabled = in[6] != 0;
     return true;
 }
 
@@ -4692,13 +4773,14 @@ constexpr std::array<FieldInfo, 22> kCameraRigFields = {{
     FieldInfo{"look_ahead", "f32", "Seconds of the target's motion the view leads by: a runner sees what it runs into (0 for none).", {}},
 }};
 constexpr std::string_view kLight_kindNames[] = {"directional", "point", "spot"};
-constexpr std::array<FieldInfo, 7> kLightFields = {{
+constexpr std::array<FieldInfo, 8> kLightFields = {{
     FieldInfo{"kind", "i32", "0 directional, 1 point, 2 spot.", kLight_kindNames},
     FieldInfo{"color", "color", "Color as a color picker shows it (sRGB), decoded to linear light; alpha unused.", {}},
     FieldInfo{"intensity", "f32", "Multiplier applied to color.", {}},
     FieldInfo{"range", "f32", "Point and spot light range in meters: the light fades to nothing there.", {}},
     FieldInfo{"inner_angle", "f32", "Spot: the half-angle of the cone in degrees inside which the light is full.", {}},
     FieldInfo{"outer_angle", "f32", "Spot: the half-angle in degrees where it has faded out (at most 89.5).", {}},
+    FieldInfo{"after_dark", "bool", "Point and spot lights: lit only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below (always lit without one): lamps, torches and windows under a Sky's running day (docs/design/rendering.md, A day).", {}},
     FieldInfo{"shadows", "bool", "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'.", {}},
 }};
 constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
@@ -4741,7 +4823,7 @@ constexpr std::array<FieldInfo, 11> kFogFields = {{
     FieldInfo{"distance", "f32", "Volumetric: how far along each ray the fog is marched; the sky counts as that far.", {}},
 }};
 constexpr std::string_view kSky_modeNames[] = {"off", "procedural", "image", "atmosphere"};
-constexpr std::array<FieldInfo, 15> kSkyFields = {{
+constexpr std::array<FieldInfo, 18> kSkyFields = {{
     FieldInfo{"mode", "i32", "1 procedural (a gradient from the zenith to the horizon, a ground below, a glow and a disc where the sun light points), 2 an image (an equirectangular panorama: .hdr for real light levels, or .png/.jpg), 3 the atmosphere (the air's scattering of the sun's light: blue by day, red at a low sun, dark at night, with haze and clouds; it colours the sun light itself), 0 off.", kSky_modeNames},
     FieldInfo{"image", "string", "For mode 2: project-relative path of the panorama (2:1, the horizon across the middle).", {}},
     FieldInfo{"zenith", "color", "Procedural: the color straight up.", {}},
@@ -4756,6 +4838,9 @@ constexpr std::array<FieldInfo, 15> kSkyFields = {{
     FieldInfo{"clouds", "f32", "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md).", {}},
     FieldInfo{"cloud_height", "f32", "Mode 3: the clouds' height above the camera's ground, in units.", {}},
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units.", {}},
+    FieldInfo{"time_of_day", "f32", "Hours, 0 to 24: the engine puts the first directional light (the sun) where the sun is at that hour, rising in the east (+x) at 6, highest to the south (+z) at 12, setting in the west at 18, under the horizon at night (docs/design/rendering.md, A day); negative leaves the light where it is.", {}},
+    FieldInfo{"day_length", "f32", "Seconds of game time a whole day takes, time_of_day running on by itself (0: the hour stands).", {}},
+    FieldInfo{"sun_height", "f32", "Degrees above the horizon the sun climbs at noon.", {}},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it.", {}},
 }};
 constexpr std::array<FieldInfo, 28> kMeshRendererFields = {{
@@ -5076,6 +5161,15 @@ constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind.", {}},
     FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any).", {}},
 }};
+constexpr std::array<FieldInfo, 7> kWeatherFields = {{
+    FieldInfo{"rain", "f32", "How hard it rains, 0 to 1 (1: a downpour of some nine thousand drops about the camera).", {}},
+    FieldInfo{"snow", "f32", "How hard it snows, 0 to 1.", {}},
+    FieldInfo{"wet", "f32", "How wet things are now, 0 to 1: it rises toward `rain` (fully wet after 15 seconds of a downpour) and dries over 90 seconds once the rain eases; set it for a world that starts wet.", {}},
+    FieldInfo{"cover", "f32", "How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white.", {}},
+    FieldInfo{"overcast", "f32", "How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more).", {}},
+    FieldInfo{"density", "f32", "Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged).", {}},
+    FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
+}};
 constexpr std::array<FieldInfo, 17> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity.", {}},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed.", {}},
@@ -5318,7 +5412,7 @@ constexpr std::array<RecordInfo, 15> kRecords = {{
     RecordInfo{"BehaviorTransition", kBehaviorTransitionFields},
 }};
 
-constexpr std::array<ComponentInfo, 53> kComponents = {{
+constexpr std::array<ComponentInfo, 54> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -5355,6 +5449,7 @@ constexpr std::array<ComponentInfo, 53> kComponents = {{
     ComponentInfo{"Terrain", "Ground shaped by a height field (docs/design/terrain.md): a grid of heights across size.x by size.y (x by z) centred on the entity, from a greyscale heightmap image or from fractal noise, drawn with the entity's MeshRenderer (grass, rock on the slopes, snow up high) and collided with as a mesh by a Collider of shape 3; characters walk it, nav.bake maps it, and terrain.sculpt reshapes it.", true, kTerrainFields},
     ComponentInfo{"Cloth", "A sheet of cloth hanging from the entity (docs/design/physics.md, Cloth): a flag, a cape, a curtain, a banner. Particles in a grid held to each other at their rest distances (along the weave, across it and two apart, so it bends but does not stretch), the pinned ones carried by the entity's transform, the rest pulled down by gravity, blown by the Wind and kept out of the colliders of the bodies around it. Drawn by the entity's MeshRenderer (its colour, texture and material) as a mesh the engine makes every tick, seen from both sides.", true, kClothFields},
     ComponentInfo{"Wind", "The air's motion (docs/design/wind.md), one for the whole world: the first enabled Wind by id. Rigid bodies' linear_damping and particles' drag pull them toward the wind's velocity rather than to rest, so light things drift and smoke streams downwind; scattered copies that sway lean with it. Gusts run along it at its speed, the same on every run and every peer.", true, kWindFields},
+    ComponentInfo{"Weather", "Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the first enabled Weather by id. They fall in a box about the camera, slanted by the Wind; what they fall on gets wet (darker, glossier, most where it faces up) or white where snow lies, both building up while they fall and going after; an overcast sky dims the sun and, under an atmosphere, clouds it over.", true, kWeatherFields},
     ComponentInfo{"Water", "A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.", true, kWaterFields},
     ComponentInfo{"Scatter", "Many copies of the entity's MeshRenderer strewn over the ground below it (docs/design/terrain.md, Scattering): grass, stones, flowers. From `seed`, `count` places are tried across `area` around the entity; each is dropped onto the static colliders under it (only `on`'s when set) and kept when the ground there is no steeper than max_slope, within min_height..max_height and at least `spacing` from the others; each gets a turn, a size and a shade of its own. The copies are drawn (and cast shadows) but are not entities and do not collide. Placed again when these settings, the entity's position or a terrain change.", true, kScatterFields},
     ComponentInfo{"Vehicle", "A car on raycast wheels (docs/design/physics.md, Vehicles): on a dynamic RigidBody with a Collider, each Wheel's suspension is a spring cast down from its mount; wheels on the ground push the body up, drive it by `throttle`, turn it by `steer`, slow it by `brake` and keep it from sliding sideways by `grip`. Scripts set the controls; the engine writes speed and the wheels.", true, kVehicleFields},

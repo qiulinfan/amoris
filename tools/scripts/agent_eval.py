@@ -1409,6 +1409,40 @@ def stormy_dusk_check(env, answer):
     return True, f"a cloudy sunset from the west, the sun light {light['r']:.2f}, {light['g']:.2f}, {light['b']:.2f}, a wind of 12 toward +x"
 
 
+def snowy_evening_solve(env):
+    env.command("world.spawn", {"name": "Weather", "components": {"Weather": {"snow": 0.7, "cover": 1}}})
+    env.command("world.set", {"entity": "Sky", "component": "Sky", "value": {"time_of_day": 17.5, "day_length": 600}})
+    env.command("step", {"ticks": 600})
+    return env.command("world.get", {"entity": "Sky", "component": "Sky"})["time_of_day"]
+
+
+def snowy_evening_check(env, answer):
+    # The first enabled Weather by id is the world's.
+    found = env.command("world.query", {"with": ["Weather"], "fields": ["Weather"]}).get("entities", [])
+    weathers = sorted((e for e in found if e["Weather"].get("enabled", True)), key=lambda e: e["id"])
+    if not weathers:
+        return False, "no Weather in the world"
+    w = weathers[0]["Weather"]
+    if abs(w.get("snow", 0) - 0.7) > 0.01 or w.get("rain", 0) > 0.01:
+        return False, f"the weather is {w}"
+    if w.get("cover", 0) < 0.95:
+        return False, f"the snow lies {w.get('cover')} deep, not wholly white"
+    skies = env.command("world.query", {"with": ["Sky"], "fields": ["Sky"]}).get("entities", [])
+    sky = next((e["Sky"] for e in sorted(skies, key=lambda e: e["id"]) if e["Sky"].get("enabled", True)), None)
+    if not sky or abs(sky.get("day_length", 0) - 600) > 0.5:
+        return False, f"the sky's day is {sky and sky.get('day_length')} seconds long"
+    # Started at 17.5 and run ten seconds of a ten-minute day: 0.4 of an hour on.
+    if not isinstance(answer, (int, float)) or abs(answer - 17.9) > 0.06:
+        return False, f"answered {answer!r}; ten seconds from 17.5 in a ten-minute day is 17.9"
+    if sky["time_of_day"] < answer - 0.01:
+        return False, f"the sky says {sky['time_of_day']:.2f}, before the answer {answer}"
+    env.command("step", {"ticks": 1, "render": "each"})
+    st = env.command("render.stats", {})
+    if st.get("weather_drops", 0) != 4900:
+        return False, f"{st.get('weather_drops')} flakes drawn, not 4900 (0.7 of 7000)"
+    return True, f"snow at 0.7 on ground wholly white, the day running from 17:30 (answered {answer:.2f}), {st['weather_drops']} flakes drawn"
+
+
 def spike_trap_solve(env):
     at = env.command("world.get", {"entity": "Player", "component": "Transform"})["position"]
     env.command("world.set", {"entity": "Player", "component": "Health", "value": {"current": 60, "max": 60, "invulnerable": 0.5}})
@@ -3699,6 +3733,8 @@ TASKS = [
      "task": "Plant a field of reeds that sway and block: spawn an entity named Reeds drawing thin boxes (a MeshRenderer with mesh \"cube\"; its Transform scale x 0.1, y 1.5, z 0.1) with a Scatter placing copies on the terrain named Hills over a 20 by 20 area centred on x 0, z 10, at least 100 of them standing, all the entity's own size (none bigger or smaller), whose tops sway 0.3 units in the wind, and each copy a collider 0.1 in radius. Answer with the number of reeds standing as the integer \"answer\"."},
     {"name": "stormy_dusk", "project": "hills", "ticks": 2, "solve": stormy_dusk_solve, "check": stormy_dusk_check,
      "task": "Make the hills a windy, cloudy sunset: the sky computed by the atmosphere with clouds covering 0.8 of it, the sun (the entity named Sun) standing 4 degrees above the horizon in the west (toward -x, so its light shines toward +x), and the wind (the entity named Breeze) blowing toward +x at 12 units a second. Then step one tick and answer with the red of the sun light as it reaches the ground, as the renderer reports it, as the number \"answer\"."},
+    {"name": "snowy_evening", "project": "hills", "ticks": 2, "solve": snowy_evening_solve, "check": snowy_evening_check,
+     "task": "Make the hills a snowy winter evening that goes on by itself: snow falling at 0.7 of its heaviest onto ground already wholly white, and the sky's time of day at half past five in the afternoon with a whole day lasting ten minutes, so the sun (the entity named Sun) goes down on its own. Then step 600 ticks (ten seconds) and answer with the time of day the sky then says, in hours, as the number \"answer\"."},
     {"name": "dirt_patch", "project": "hills", "ticks": 2, "solve": dirt_patch_solve, "check": dirt_patch_check,
      "task": "The terrain named Hills is drawn from four textured layers (grass, sand, rock, dirt). Make its sand layer lie only below 0.2 of the terrain's height instead of where it lies now, leaving the other layers as they are, and paint its dirt layer at full strength in a patch of radius 4 around x 10, z -10. Answer with the dirt layer's share of the ground at x 10, z -10 as the number \"answer\"."},
     {"name": "glass_window", "project": "hello", "ticks": 0, "solve": glass_window_solve, "check": glass_window_check,

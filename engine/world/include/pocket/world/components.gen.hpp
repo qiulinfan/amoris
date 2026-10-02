@@ -389,6 +389,7 @@ struct Light {
     float range = 10.0f;
     float inner_angle = 20.0f;
     float outer_angle = 30.0f;
+    bool after_dark = false;
     bool shadows = false;
     constexpr bool operator==(const Light&) const = default;
 };
@@ -480,6 +481,9 @@ struct Sky {
     float clouds = 0.0f;
     float cloud_height = 1500.0f;
     float cloud_scale = 900.0f;
+    float time_of_day = -1.0f;
+    float day_length = 0.0f;
+    float sun_height = 60.0f;
     bool enabled = true;
     constexpr bool operator==(const Sky&) const = default;
 };
@@ -949,6 +953,22 @@ void from_json(const Json& j, Wind& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(Wind& v, std::string_view path, float** out);
 
+/// Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the first enabled Weather by id. They fall in a box about the camera, slanted by the Wind; what they fall on gets wet (darker, glossier, most where it faces up) or white where snow lies, both building up while they fall and going after; an overcast sky dims the sun and, under an atmosphere, clouds it over.
+struct Weather {
+    float rain = 0.0f;
+    float snow = 0.0f;
+    float wet = 0.0f;
+    float cover = 0.0f;
+    float overcast = -1.0f;
+    float density = 1.0f;
+    bool enabled = true;
+    constexpr bool operator==(const Weather&) const = default;
+};
+void to_json(Json& j, const Weather& v);
+void from_json(const Json& j, Weather& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Weather& v, std::string_view path, float** out);
+
 /// A body of water (docs/design/water.md): a surface size.x by size.y (x by z) centred on the entity at its height, not turned with it, moved by waves; drawn after the solid scene, which shows through it bent by the waves and fading into its colour with depth, with the sky, the probes and the scene reflected at glancing angles and foam where it meets the shore. What floats in it (dynamic rigid bodies) is buoyed up and slowed, riding the same waves; water.height gives the surface anywhere.
 struct Water {
     Vec2 size{40.0f, 40.0f};
@@ -1344,6 +1364,7 @@ void hash_component(struct StateHasherRef& h, const Character& v);
 void hash_component(struct StateHasherRef& h, const Terrain& v);
 void hash_component(struct StateHasherRef& h, const Cloth& v);
 void hash_component(struct StateHasherRef& h, const Wind& v);
+void hash_component(struct StateHasherRef& h, const Weather& v);
 void hash_component(struct StateHasherRef& h, const Water& v);
 void hash_component(struct StateHasherRef& h, const Scatter& v);
 void hash_component(struct StateHasherRef& h, const Vehicle& v);
@@ -1438,6 +1459,8 @@ std::size_t read_numbers(const Cloth& v, double* out);
 bool write_numbers(Cloth& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Wind& v, double* out);
 bool write_numbers(Wind& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Weather& v, double* out);
+bool write_numbers(Weather& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Water& v, double* out);
 bool write_numbers(Water& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Scatter& v, double* out);

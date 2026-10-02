@@ -212,6 +212,8 @@ struct alignas(16) FrameUniforms {
     float grid_cells[4][4];      // probes along x, y and z; 1 once every probe has been captured
     float grid_info[4];          // how many
     float toon[4];               // a cel look (docs/design/rendering.md, Toon): x on, y light's bands, z the bands' softness
+    float night[4];              // under an atmosphere, how far into the night (0 by day, 1 deep in it): the stars
+    float weather[4];            // the Weather: wet, snow lying, drops of rain drawn, flakes of snow drawn
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -554,6 +556,8 @@ struct Frame {
     grid_cells: array<vec4f, 4>,
     grid_info: vec4f,
     toon: vec4f,
+    night: vec4f,
+    weather: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -748,6 +752,44 @@ fn paint_decals(p: vec3f, n: vec3f, dp1: vec3f, dp2: vec3f, surface: Painted) ->
             let bent = normalize(out.normal * max(m.z, 0.05) + (tx * m.x - tz * m.y) * d.extra.x);
             out.normal = normalize(mix(out.normal, bent, a));
         }
+    }
+    return weathered(p, out);
+}
+// Weather on a surface (docs/design/rendering.md, Weather): wet, it darkens as porous things do
+// and takes a damp sheen, most where it faces up, less on walls, metal not darkened; on what is
+// flat, water stands in puddles (where a broad noise is high, more of them the wetter), dark and
+// mirror-smooth. Snow lies on what faces up, in patches while there is little of it, white and matte.
+fn weather_noise(q: vec2f) -> f32 {
+    let i = floor(q);
+    let f = fract(q);
+    let u = f * f * (3.0 - 2.0 * f);
+    let h = vec4f(dot(i, vec2f(127.1, 311.7)), dot(i + vec2f(1.0, 0.0), vec2f(127.1, 311.7)), dot(i + vec2f(0.0, 1.0), vec2f(127.1, 311.7)), dot(i + vec2f(1.0, 1.0), vec2f(127.1, 311.7)));
+    let r = fract(sin(h) * 43758.5453);
+    return mix(mix(r.x, r.y, u.x), mix(r.z, r.w, u.x), u.y);
+}
+fn weathered(p: vec3f, surface: Painted) -> Painted {
+    var out = surface;
+    let wet = frame.weather.x;
+    let cover = frame.weather.y;
+    if (wet <= 0.0 && cover <= 0.0) { return out; }
+    let up = smoothstep(0.25, 0.9, out.normal.y);
+    if (wet > 0.0) {
+        let soak = wet * mix(0.45, 1.0, up);
+        out.albedo = out.albedo * mix(1.0, 0.6, soak * (1.0 - out.metallic));
+        out.roughness = mix(out.roughness, min(out.roughness, 0.3), soak);
+        let puddle = smoothstep(0.7 - 0.25 * wet, 0.76 - 0.25 * wet, weather_noise(p.xz * 0.3 + vec2f(17.0, 3.0))) * smoothstep(0.85, 0.97, out.normal.y) * smoothstep(0.3, 0.7, wet);
+        out.albedo = out.albedo * mix(1.0, 0.55, puddle);
+        out.roughness = mix(out.roughness, 0.03, puddle);
+        out.metallic = mix(out.metallic, 0.0, puddle);
+    }
+    if (cover > 0.0) {
+        // Lying where the patches' noise is under the cover (so about that much of flat ground), all
+        // of it at full cover.
+        let patches = weather_noise(p.xz * 0.9) * 0.65 + weather_noise(p.xz * 3.7) * 0.35;
+        let lie = smoothstep(-0.05, 0.05, up * cover * 1.12 - patches);
+        out.albedo = mix(out.albedo, vec3f(0.8, 0.83, 0.88), lie);
+        out.roughness = mix(out.roughness, 0.65, lie);
+        out.metallic = mix(out.metallic, 0.0, lie);
     }
     return out;
 }
@@ -1184,7 +1226,11 @@ fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
     if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 1.0; }
     let bias = frame.shadow.y * (1.0 + 2.0 * (1.0 - ndl));
     let receiver = ndc.z - bias;
-    if (frame.shadow_soft.x <= 0.0) {
+    let texel = frame.cascade_texel[c];
+    let search = clamp(frame.shadow_soft.x * frame.shadow_soft.z / texel, 1.0, 24.0);
+    // Hard shadows, and a soft sun's in a cascade so coarse its widest penumbra is under a texel and
+    // a half (far from the camera): a 3x3 comparison filter.
+    if (frame.shadow_soft.x <= 0.0 || search < 1.5) {
         var lit = 0.0;
         for (var j = -1; j <= 1; j = j + 1) {
             for (var i = -1; i <= 1; i = i + 1) {
@@ -1196,16 +1242,18 @@ fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
     // A sun of some size (docs/design/rendering.md, Soft shadows): the mean depth of what stands in
     // front of the point, looked for over the widest penumbra the sun's size allows, then a filter
     // as wide as the penumbra at that distance, so a shadow is sharp where it touches its caster
-    // and soft far from it. Both on a spiral turned by the point, which TAA smooths.
-    let texel = frame.cascade_texel[c];
+    // and soft far from it. Both on a spiral turned by the point, which TAA smooths; each step of
+    // the spiral turns the last by the golden angle (a rotation, not a sine and cosine a tap).
     let dims = vec2i(textureDimensions(shadow_map));
-    let search = clamp(frame.shadow_soft.x * frame.shadow_soft.z / texel, 1.0, 24.0);
     let spin = fract(sin(dot(world_pos, vec3f(12.9898, 78.233, 37.719))) * 43758.547) * 6.2831853;
+    let first = vec2f(cos(spin), sin(spin));
+    let golden = mat2x2f(-0.7373688, 0.6754903, -0.6754903, -0.7373688);
+    var dir = first;
     var blockers = 0.0;
     var sum = 0.0;
     for (var i = 0; i < 16; i = i + 1) {
-        let a = f32(i) * 2.39996 + spin;
-        let at = suv + vec2f(cos(a), sin(a)) * (sqrt((f32(i) + 0.5) / 16.0) * search * frame.shadow.x);
+        let at = suv + dir * (sqrt((f32(i) + 0.5) / 16.0) * search * frame.shadow.x);
+        dir = golden * dir;
         let q = clamp(vec2i(at * vec2f(dims)), vec2i(0), dims - vec2i(1));
         let d = textureLoad(shadow_map, q, c, 0);
         if (d < receiver) { blockers = blockers + 1.0; sum = sum + d; }
@@ -1214,9 +1262,10 @@ fn cascade_lit(c: i32, world_pos: vec3f, gn: vec3f, ndl: f32) -> f32 {
     let gap = (receiver - sum / blockers) * frame.cascade_depth[c];
     let radius = clamp(gap * frame.shadow_soft.x / texel, 1.0, 24.0);
     var lit = 0.0;
+    dir = first;
     for (var i = 0; i < 16; i = i + 1) {
-        let a = f32(i) * 2.39996 + spin;
-        let at = suv + vec2f(cos(a), sin(a)) * (sqrt((f32(i) + 0.5) / 16.0) * radius * frame.shadow.x);
+        let at = suv + dir * (sqrt((f32(i) + 0.5) / 16.0) * radius * frame.shadow.x);
+        dir = golden * dir;
         lit = lit + textureSampleCompareLevel(shadow_map, shadow_samp, at, c, receiver);
     }
     return lit / 16.0;
@@ -1609,6 +1658,27 @@ fn clouded(d: vec3f, c: vec3f) -> vec3f {
     let body = frame.sun_color.rgb * (0.25 * clamp(s.y * 3.0 + 0.3, 0.0, 1.0) + 0.6 * forward) * (1.0 - 0.5 * density) + sky_light * 1.4;
     return mix(c, body, density * smoothstep(0.0, 0.15, d.y) * 0.95);
 }
+// The stars (docs/design/rendering.md, A day): a grid over the directions, a few cells in a thousand
+// holding one at a point of their own, each as bright and as warm or cool as its hash says, all
+// twinkling a little; they sink into the haze toward the horizon.
+fn star_hash(c: vec3i) -> u32 {
+    var h = (u32(c.x) * 73856093u) ^ (u32(c.y) * 19349663u) ^ (u32(c.z) * 83492791u);
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    return h ^ (h >> 16u);
+}
+fn stars(d: vec3f) -> vec3f {
+    let g = d * 220.0;
+    let cell = floor(g);
+    let h = star_hash(vec3i(cell));
+    if ((h & 1023u) > 7u) { return vec3f(0.0); }
+    let at = cell + 0.2 + 0.6 * vec3f(f32((h >> 10u) & 63u), f32((h >> 16u) & 63u), f32((h >> 22u) & 63u)) / 63.0;
+    let r = f32((h >> 28u) & 15u) / 15.0;
+    let bright = 0.5 + 3.0 * r * r * r;
+    let twinkle = 0.75 + 0.25 * sin(frame.clock.x * (2.0 + 3.0 * r) + f32(h & 255u));
+    let tint = mix(vec3f(1.0, 0.82, 0.66), vec3f(0.72, 0.84, 1.0), f32((h >> 3u) & 7u) / 7.0);
+    return tint * bright * twinkle * smoothstep(0.38, 0.0, length(g - at)) * smoothstep(0.02, 0.25, d.y);
+}
 fn sky_color(ndc: vec2f) -> vec3f {
     let far = frame.inv_view_proj * vec4f(ndc, 1.0, 1.0);
     let near = frame.inv_view_proj * vec4f(ndc, 0.0, 1.0);
@@ -1619,6 +1689,7 @@ fn sky_color(ndc: vec2f) -> vec3f {
         let edge = frame.sky.y;
         c = c + frame.sun_color.rgb * frame.sky.z * smoothstep(edge, edge + (1.0 - edge) * 0.2, mu);
     }
+    if (frame.night.x > 0.0) { c = c + stars(d) * frame.night.x; }
     return clouded(d, c);
 }
 @fragment fn fs_sky(in: SkyOut) -> FsOut {
@@ -1753,6 +1824,95 @@ fn particle_base(in: VsOut) -> vec4f {
 @fragment fn fs_particle_color(in: VsOut) -> @location(0) vec4f {
     let base = particle_base(in);
     if (base.a < 0.02) { discard; }
+    return base;
+}
+// Rain and snow (docs/design/rendering.md, Weather): made in the vertex stage from each drop's
+// number and the time, with no state kept. A drop's place is a hash in a box 36 by 22 by 36 units
+// that its fall (slanted by the Wind) slides it through, wrapped about the camera: the box goes
+// with the camera while each drop keeps falling where it is in the world. Rain is a thin streak
+// along its fall, snow a round flake swaying as it drifts; both take the sky's light from above and
+// some of the sun's, and fade up close and toward the box's edge. The first frame.weather.z
+// instances are rain, the rest snow.
+const WEATHER_BOX = vec3f(36.0, 22.0, 36.0);
+fn drop_hash(i: u32) -> vec4f {
+    var h = i * 747796405u + 2891336453u;
+    var o = vec4f(0.0);
+    for (var k = 0; k < 4; k = k + 1) {
+        h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+        h = (h >> 22u) ^ h;
+        o[k] = f32(h >> 8u) / 16777216.0;
+        h = h + 2654435769u;
+    }
+    return o;
+}
+@vertex fn vs_weather(@builtin(vertex_index) vid: u32, @builtin(instance_index) i: u32) -> VsOut {
+    var out: VsOut;
+    let snow = f32(i) >= frame.weather.z;
+    let h = drop_hash(i);
+    let t = frame.clock.x;
+    let wind = select(vec2f(0.0), frame.wind.xy * frame.wind.z, frame.wind.w > 0.5);
+    var fall = vec3f(wind.x * 0.3, -8.5 - 3.0 * h.w, wind.y * 0.3);
+    if (snow) { fall = vec3f(wind.x * 0.7, -1.0 - 0.6 * h.w, wind.y * 0.7); }
+    let cam = frame.camera_pos.xyz;
+    var p = h.xyz * WEATHER_BOX + fall * t;
+    p = cam + (fract((p - cam) / WEATHER_BOX + 0.5) - 0.5) * WEATHER_BOX;
+    if (snow) {
+        p.x = p.x + sin(t * (0.7 + h.w) + h.x * 40.0) * 0.3;
+        p.z = p.z + cos(t * (0.6 + h.y) + h.z * 40.0) * 0.3;
+    }
+    let to_cam = cam - p;
+    let dist = length(to_cam);
+    let f = to_cam / max(dist, 1e-3);
+    var corners = array<vec2f, 6>(vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5));
+    let c = corners[vid % 6u];
+    var along = normalize(fall);
+    var across = cross(along, f);
+    across = select(vec3f(1.0, 0.0, 0.0), normalize(across), dot(across, across) > 1e-8);
+    var size = vec2f(0.014, length(fall) * 0.025);   // across, along: a streak of a fortieth of a second
+    if (snow) {
+        let o4 = frame.inv_view_proj * vec4f(0.0, 0.0, 0.5, 1.0);
+        let r4 = frame.inv_view_proj * vec4f(1.0, 0.0, 0.5, 1.0);
+        let u4 = frame.inv_view_proj * vec4f(0.0, 1.0, 0.5, 1.0);
+        across = normalize(r4.xyz / r4.w - o4.xyz / o4.w);
+        along = normalize(u4.xyz / u4.w - o4.xyz / o4.w);
+        size = vec2f(0.045 + 0.03 * h.w);
+    }
+    let world = vec4f(p + across * (c.x * size.x) + along * (c.y * size.y), 1.0);
+    out.clip = frame.view_proj * world;
+    out.cur = frame.cur_view_proj * world;
+    out.prev = frame.prev_view_proj * world;
+    out.world_pos = world.xyz;
+    out.normal = vec3f(select(0.0, 1.0, snow), 0.0, 0.0);
+    out.uv = vec2f(c.x + 0.5, 0.5 - c.y);
+    let fade = smoothstep(0.4, 1.6, dist) * (1.0 - smoothstep(WEATHER_BOX.x * 0.3, WEATHER_BOX.x * 0.5, dist));
+    if (snow) {
+        out.color = vec4f(frame.sun_color.rgb * 0.35, 0.9 * fade);
+    } else {
+        out.color = vec4f(frame.sun_color.rgb * 0.12, 0.36 * fade);
+    }
+    out.id = 0u;
+    return out;
+}
+fn weather_base(in: VsOut) -> vec4f {
+    let snow = in.normal.x > 0.5;
+    var sky = frame.ambient.rgb;
+    if (frame.env.x > 0.5) { sky = sky + sh_irradiance(vec3f(0.0, 1.0, 0.0)) * max(frame.env.y, 0.5); }
+    let q = in.uv * 2.0 - 1.0;
+    var a = (1.0 - abs(q.x)) * (1.0 - q.y * q.y);
+    if (snow) { a = 1.0 - smoothstep(0.35, 1.0, length(q)); }
+    return vec4f(in.color.rgb + sky * select(0.8, 0.9, snow), in.color.a * a);
+}
+@fragment fn fs_weather(in: VsOut) -> FsOut {
+    let base = weather_base(in);
+    if (base.a < 0.01) { discard; }
+    var out: FsOut;
+    out.color = base;
+    out.id = 0u;
+    return out;
+}
+@fragment fn fs_weather_color(in: VsOut) -> @location(0) vec4f {
+    let base = weather_base(in);
+    if (base.a < 0.01) { discard; }
     return base;
 }
 @fragment fn fs_unlit_id(in: VsOut) -> IdOut {
@@ -2640,7 +2800,7 @@ fn encode(c: vec3f) -> vec3f {
 // the level above, the lobe widened by what that level already has), `irradiance` projects a small
 // level onto nine spherical harmonics for the diffuse light.
 constexpr const char* kSkyWgsl = R"WGSL(
-struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f, atmo: vec4f };
+struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f, atmo: vec4f, moon: vec4f, moon_color: vec4f };
 @group(0) @binding(0) var<uniform> sp: SkyParams;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
@@ -2688,7 +2848,7 @@ fn to_sphere(o: vec3f, d: vec3f, r: f32) -> f32 {
     if (disc < 0.0) { return -1.0; }
     return -b + sqrt(disc);
 }
-fn air(d: vec3f, s: vec3f) -> vec3f {
+fn air(d: vec3f, s: vec3f, light: vec3f) -> vec3f {
     let o = vec3f(0.0, R_GROUND + 2.0, 0.0);
     let haze = max(sp.atmo.x, 0.0);
     let len = to_sphere(o, d, R_TOP);
@@ -2731,15 +2891,22 @@ fn air(d: vec3f, s: vec3f) -> vec3f {
     let phase_r = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
     let g = 0.76;
     let phase_m = 3.0 / (8.0 * PI) * ((1.0 - g * g) * (1.0 + mu * mu)) / ((2.0 + g * g) * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-    return SUN_LIGHT * sp.sun_color.rgb * (sum_r * BETA_R * phase_r + sum_m * BETA_M * haze * phase_m);
+    return SUN_LIGHT * light * (sum_r * BETA_R * phase_r + sum_m * BETA_M * haze * phase_m);
+}
+// The air along d, lit by the sun and, by night, the moon: the same scattering, a dimmer light.
+fn lit_air(d: vec3f) -> vec3f {
+    var c = air(d, sp.sun.xyz, sp.sun_color.rgb);
+    if (sp.moon.w > 0.5) { c = c + air(d, sp.moon.xyz, sp.moon_color.rgb); }
+    return c;
 }
 fn atmosphere(d: vec3f) -> vec3f {
     if (sp.sun.w < 0.5) { return vec3f(0.0); }
     let s = sp.sun.xyz;
-    if (d.y >= 0.0) { return air(normalize(vec3f(d.x, max(d.y, 0.02), d.z)), s); }
-    // Below the horizon: the ground, lit by the sun and the sky, fading from the horizon's air.
-    let horizon = air(normalize(vec3f(d.x, 0.02, d.z)), s);
-    let lit = sp.ground.rgb * sp.sun_color.rgb * (0.05 + 0.25 * max(s.y, 0.0));
+    if (d.y >= 0.0) { return lit_air(normalize(vec3f(d.x, max(d.y, 0.02), d.z))); }
+    // Below the horizon: the ground, lit by the sun (or the moon) and the sky, fading from the horizon's air.
+    let horizon = lit_air(normalize(vec3f(d.x, 0.02, d.z)));
+    var lit = sp.ground.rgb * sp.sun_color.rgb * (0.05 + 0.25 * max(s.y, 0.0));
+    if (sp.moon.w > 0.5) { lit = lit + sp.ground.rgb * sp.moon_color.rgb * (0.05 + 0.25 * max(sp.moon.y, 0.0)); }
     return mix(horizon, lit, smoothstep(0.0, 0.08, -d.y));
 }
 @compute @workgroup_size(8, 8) fn fill(@builtin(global_invocation_id) id: vec3u) {
@@ -3346,6 +3513,8 @@ struct Renderer::Impl {
     // that moves it, and the pipelines that draw it through the sprites' fragment.
     WGPURenderPipeline particle_pipeline = nullptr;
     WGPURenderPipeline particle_add_pipeline = nullptr;
+    WGPURenderPipeline weather_pipeline = nullptr;   // rain and snow about the camera (docs/design/rendering.md, Weather)
+    std::uint32_t weather_drops = 0;                 // how many this frame
     WGPUBindGroupLayout particle_draw_bgl = nullptr;
     WGPUPipelineLayout particle_layout = nullptr;
     WGPUShaderModule particle_sim_shader = nullptr;
@@ -4279,6 +4448,7 @@ struct Renderer::Impl {
         for (auto& [id, ge] : gpu_emitters) ge.release();
         if (particle_pipeline) wgpuRenderPipelineRelease(particle_pipeline);
         if (particle_add_pipeline) wgpuRenderPipelineRelease(particle_add_pipeline);
+        if (weather_pipeline) wgpuRenderPipelineRelease(weather_pipeline);
         if (particle_layout) wgpuPipelineLayoutRelease(particle_layout);
         if (particle_draw_bgl) wgpuBindGroupLayoutRelease(particle_draw_bgl);
         if (particle_sim_pipeline) wgpuComputePipelineRelease(particle_sim_pipeline);
@@ -5443,6 +5613,8 @@ fn time() -> f32 { return fx.time.x; }
         float misc[4];         // mode, rotation (radians), GGX alpha for a prefilter level, intensity
         float size[4];         // the level's width and height
         float atmo[4];         // mode 3: haze
+        float moon[4];         // mode 3 by night: toward the moon, w: up
+        float moon_color[4];
     };
     static constexpr std::uint32_t kSkySlot = 256;
 
@@ -5667,7 +5839,7 @@ fn time() -> f32 { return fx.time.x; }
 
     // Rebuild the environment when what it is made of changed: the sky's settings, its image, and
     // for a procedural sky the sun's direction and color. False when the image is unavailable.
-    bool update_environment(rhi::Frame& frame, const world::Sky& sky, bool have_sun, Vec3 toward_sun, Vec3 sun_linear) {
+    bool update_environment(rhi::Frame& frame, const world::Sky& sky, bool have_sun, Vec3 toward_sun, Vec3 sun_linear, Vec3 toward_moon = {}, Vec3 moon_linear = {}) {
         const bool image = sky.mode == 2;
         if (image) {
             if (sky.image.empty()) return false;
@@ -5689,7 +5861,13 @@ fn time() -> f32 { return fx.time.x; }
             }
         }
         char key[512];
-        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%g,%g,%g|%g", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, toward_sun.x, toward_sun.y, toward_sun.z, sun_linear.x, sun_linear.y, sun_linear.z, sky.mode == 3 ? sky.haze : 0.0f);
+        const bool moon = sky.mode == 3 && (moon_linear.x > 0 || moon_linear.y > 0 || moon_linear.z > 0);
+        // Under a running day the sun moves every frame: the panorama follows it in steps of about a
+        // fifth of a degree and of its light to three figures, finer than shows and far fewer
+        // rebuilds (each is a few tenths of a millisecond).
+        auto way = [](Vec3 v) { return Vec3{std::round(v.x * 256) / 256, std::round(v.y * 256) / 256, std::round(v.z * 256) / 256}; };
+        const Vec3 ks = way(toward_sun), km = way(toward_moon);
+        std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%.3g,%.3g,%.3g|%g|%g,%g,%g|%.3g,%.3g,%.3g", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, ks.x, ks.y, ks.z, sun_linear.x, sun_linear.y, sun_linear.z, sky.mode == 3 ? sky.haze : 0.0f, km.x, km.y, km.z, moon_linear.x, moon_linear.y, moon_linear.z);
         if (env_key == key) return true;
         SkyParams p{};
         auto color = [](float* out, const world::Color4& c) { out[0] = decode(c.r); out[1] = decode(c.g); out[2] = decode(c.b); out[3] = 1; };
@@ -5702,6 +5880,10 @@ fn time() -> f32 { return fx.time.x; }
         p.misc[1] = radians(sky.rotation);
         p.misc[3] = std::max(sky.intensity, 0.0f);
         p.atmo[0] = std::max(sky.haze, 0.0f);
+        if (moon) {
+            p.moon[0] = toward_moon.x; p.moon[1] = toward_moon.y; p.moon[2] = toward_moon.z; p.moon[3] = 1;
+            p.moon_color[0] = moon_linear.x; p.moon_color[1] = moon_linear.y; p.moon_color[2] = moon_linear.z; p.moon_color[3] = 1;
+        }
         std::vector<std::uint8_t> slots(static_cast<std::size_t>(kSkySlot) * kEnvLevels, 0);
         float prev_alpha = 0;
         for (std::uint32_t l = 0; l < kEnvLevels; ++l) {
@@ -7683,7 +7865,7 @@ fn time() -> f32 { return fx.time.x; }
     void release_scene_pipelines() {
         if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
         sky_pipeline = nullptr;
-        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &particle_pipeline, &particle_add_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
+        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &particle_pipeline, &particle_add_pipeline, &weather_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
             if (*p) wgpuRenderPipelineRelease(*p);
             *p = nullptr;
         }
@@ -7806,6 +7988,24 @@ fn time() -> f32 { return fx.time.x; }
             prpd.label = rhi::str("pocket.particles");
             particle_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &prpd);
             if (!particle_pipeline || !particle_add_pipeline) return fail("gpu_pipeline_failed", "GPU particle pipeline creation failed");
+        }
+        // Rain and snow: the sprites' blending and depth test, quads made from each drop's number
+        // (no vertex buffer), the ids behind them left as they were.
+        {
+            WGPURenderPipelineDescriptor wrpd = rpd;
+            WGPUColorTargetState wtargets[2] = {targets[0], targets[1]};
+            wtargets[0].blend = &blend;
+            wtargets[1].writeMask = WGPUColorWriteMask_None;
+            WGPUFragmentState wfs = fs;
+            wfs.entryPoint = rhi::str(split ? "fs_weather_color" : "fs_weather");
+            wfs.targets = wtargets;
+            wrpd.fragment = &wfs;
+            wrpd.vertex.entryPoint = rhi::str("vs_weather");
+            wrpd.vertex.bufferCount = 0;
+            wrpd.vertex.buffers = nullptr;
+            wrpd.label = rhi::str("pocket.weather");
+            weather_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &wrpd);
+            if (!weather_pipeline) return fail("gpu_pipeline_failed", "weather pipeline creation failed");
         }
         targets[0].blend = &blend;
         // Lit sprites and tile maps: the meshes' shading (the lights, the sun, the ambient and a
@@ -9842,6 +10042,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     fu.sun_color[0] = 0; fu.sun_color[1] = 0; fu.sun_color[2] = 0;
     bool have_sun = false;
     im.light_staging.clear();
+    std::vector<std::size_t> after_dark;   // the staged lights lit only once the sun is down
     world.ecs().each([&](flecs::entity, const world::Light& l, const world::WorldTransform& t) {
         if (l.kind == 0) {
             if (have_sun) return;
@@ -9863,6 +10064,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             g.color_kind[2] = decode(l.color.b) * l.intensity;
             g.color_kind[3] = l.kind == 2 ? 2.0f : 1.0f;
             g.cone[1] = l.shadows ? 0.0f : -1.0f;   // asks for shadows; the face comes with the clustering
+            if (l.after_dark) after_dark.push_back(im.light_staging.size());
             if (l.kind == 2) {
                 const Vec3 dir = normalize(t.rotation.rotate({0, 0, -1}));
                 const float outer = std::clamp(l.outer_angle, 0.5f, 89.5f);
@@ -9874,10 +10076,69 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             im.light_staging.push_back(g);
         }
     });
+    if (!after_dark.empty() && have_sun) {
+        // Lit as the sun goes down: from four degrees above the horizon to two below.
+        const float k = std::clamp((0.07f - im.sun_toward.y) / 0.105f, 0.0f, 1.0f);
+        const float lit = k * k * (3 - 2 * k);
+        if (lit <= 0) {
+            // By day they are not there at all: no clustering, no shadow faces.
+            for (auto it = after_dark.rbegin(); it != after_dark.rend(); ++it) im.light_staging.erase(im.light_staging.begin() + static_cast<std::ptrdiff_t>(*it));
+        } else {
+            for (std::size_t i : after_dark)
+                for (int c = 0; c < 3; ++c) im.light_staging[i].color_kind[c] *= lit;
+        }
+    }
     if (!have_sun) {
         // Default key light so a scene without lights is still visible.
         fu.sun_color[0] = decode(0.9f); fu.sun_color[1] = decode(0.88f); fu.sun_color[2] = decode(0.85f);
     }
+    // Night under an atmosphere (docs/design/rendering.md, A day): once the sun is down the key light
+    // is the moon's, across the sky from it and lifted so it never lies along the ground (some thirty
+    // degrees up at dusk and dawn), cool and a tenth as bright, rising as the sun's glow goes; the air
+    // keeps the sun's afterglow and takes the moon's light besides (a deep blue sky), and the stars
+    // come out once the sun is some degrees down.
+    bool moon_up = false;
+    Vec3 sun_way = im.sun_toward, sun_light{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]};
+    if (have_sun) {
+        int sky_mode = 0;
+        world.ecs().each([&](flecs::entity, const world::Sky& s) {
+            if (!sky_mode && s.enabled && s.mode >= 1 && s.mode <= 3) sky_mode = s.mode;
+        });
+        if (sky_mode == 3 && im.sun_toward.y < 0) {
+            moon_up = true;
+            const float k = std::clamp(-im.sun_toward.y / 0.1f, 0.0f, 1.0f);
+            const float rise = k * k * (3 - 2 * k);
+            constexpr float kMoon[3] = {0.05f, 0.06f, 0.1f};
+            im.sun_toward = normalize(Vec3{-sun_way.x, 0.6f - sun_way.y, -sun_way.z});
+            for (int i = 0; i < 3; ++i) fu.sun_color[i] *= kMoon[i] * rise;
+            fu.sun_dir[0] = -im.sun_toward.x; fu.sun_dir[1] = -im.sun_toward.y; fu.sun_dir[2] = -im.sun_toward.z;
+            const float dark = std::clamp((-sun_way.y - 0.05f) / 0.2f, 0.0f, 1.0f);
+            fu.night[0] = dark * dark * (3 - 2 * dark);
+        }
+    }
+    // The weather (docs/design/rendering.md, Weather): the first enabled by id.
+    float overcast = 0;
+    im.weather_drops = 0;
+    {
+        world::EntityId wid = 0;
+        world::Weather wx;
+        world.ecs().each([&](flecs::entity e, const world::Weather& x) {
+            if (x.enabled && (!wid || e.id() < wid)) { wid = e.id(); wx = x; }
+        });
+        if (wid) {
+            const float rain = std::clamp(wx.rain, 0.0f, 1.0f), snow = std::clamp(wx.snow, 0.0f, 1.0f);
+            const float density = std::clamp(wx.density, 0.0f, 4.0f);
+            const auto rain_n = static_cast<std::uint32_t>(rain * 9000.0f * density);
+            const auto snow_n = static_cast<std::uint32_t>(snow * 7000.0f * density);
+            fu.weather[0] = std::clamp(wx.wet, 0.0f, 1.0f);
+            fu.weather[1] = std::clamp(wx.cover, 0.0f, 1.0f);
+            fu.weather[2] = static_cast<float>(rain_n);
+            fu.weather[3] = static_cast<float>(snow_n);
+            im.weather_drops = rain_n + snow_n;
+            overcast = std::clamp(wx.overcast >= 0 ? wx.overcast : 0.7f * std::max(rain, snow), 0.0f, 1.0f);
+        }
+    }
+    im.stats.weather_drops = im.weather_drops;
     im.cluster_lights(fu);
     im.stats.has_sun = have_sun;
     // The sun's orthographic view fits a sphere around everything with Bounds.
@@ -9982,7 +10243,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     bool env_on = false;
     if (has_sky) {
         const Vec3 toward = normalize(Vec3{-fu.sun_dir[0], -fu.sun_dir[1], -fu.sun_dir[2]});
-        env_on = im.update_environment(frame, sky, have_sun, toward, Vec3{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]});
+        const Vec3 key_light{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]};
+        env_on = moon_up ? im.update_environment(frame, sky, have_sun, sun_way, sun_light, toward, key_light)
+                         : im.update_environment(frame, sky, have_sun, toward, key_light);
         if (!env_on) has_sky = false;
         im.fog_from_sky = env_on && sky.mode == 3;
         if (im.fog_from_sky) {
@@ -9991,7 +10254,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const Vec3 sun_now{fu.sun_color[0], fu.sun_color[1], fu.sun_color[2]};
             for (int k = 0; k < 8; ++k) {
                 const float a = static_cast<float>(k) * std::numbers::pi_v<float> / 4;
-                sum += have_sun ? atmosphere_air(normalize(Vec3{std::cos(a), 0.05f, std::sin(a)}), toward, sky.haze, sun_now) : Vec3{0, 0, 0};
+                const Vec3 d = normalize(Vec3{std::cos(a), 0.05f, std::sin(a)});
+                if (!have_sun) continue;
+                sum += moon_up ? atmosphere_air(d, sun_way, sky.haze, sun_light) + atmosphere_air(d, toward, sky.haze, sun_now) : atmosphere_air(d, toward, sky.haze, sun_now);
             }
             im.fog_sky = sum * (std::max(sky.intensity, 0.0f) / 8.0f);
         }
@@ -10003,12 +10268,13 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             fu.sun_color[1] *= tint.y;
             fu.sun_color[2] *= tint.z;
         }
-        if (env_on && sky.mode == 3 && sky.clouds > 0) {
-            // Clouds drift with the Wind (six times faster up there), or at 12 along +x without one.
+        if (env_on && sky.mode == 3 && std::max(sky.clouds, overcast) > 0) {
+            // Clouds drift with the Wind (six times faster up there), or at 12 along +x without one;
+            // an overcast Weather covers the sky at least as much as it is overcast.
             const auto t = static_cast<float>(world.seconds());
             const world::WindField wf = world::wind_field(world);
             const Vec3 v = wf.on ? Vec3{wf.dir_x * wf.speed * 6, 0, wf.dir_z * wf.speed * 6} : Vec3{12, 0, 0};
-            fu.clouds[0] = std::clamp(sky.clouds, 0.0f, 1.0f);
+            fu.clouds[0] = std::clamp(std::max(sky.clouds, overcast), 0.0f, 1.0f);
             fu.clouds[1] = std::max(sky.cloud_height, 1.0f);
             fu.clouds[2] = 1.0f / std::max(sky.cloud_scale, 1.0f);
             fu.clouds[3] = 1;
@@ -10016,6 +10282,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             fu.cloud_drift[1] = -v.z * t;
         }
     }
+    // Overcast, the sun's direct light is dimmed (the sky's own light, built from it above, is not).
+    for (int k = 0; k < 3; ++k) fu.sun_color[k] *= 1.0f - 0.8f * overcast;
     to_array((im.camera.proj * im.camera.view).inverse(), fu.inv_view_proj);
     for (int k = 0; k < 3; ++k) im.stats.sun_light[k] = have_sun ? fu.sun_color[k] : 0.0f;
     fu.env[0] = env_on && (sky.diffuse > 0 || sky.specular > 0) ? 1.0f : 0.0f;
@@ -11570,6 +11838,14 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         set_viewport(pass);
     }
     if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.sprite_add_pipeline, im.stats.draw_calls, true, im.sprite_lit_pipeline);
+    if (im.weather_drops > 0 && im.weather_pipeline) {
+        wgpuRenderPassEncoderSetPipeline(pass, im.weather_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 2, im.texture_for(""), 0, nullptr);
+        wgpuRenderPassEncoderDraw(pass, 6, im.weather_drops, 0, 0);
+        im.stats.draw_calls++;
+    }
     if (debug && !debug->vertices().empty()) {
         const auto& verts = debug->vertices();
         if (verts.size() > im.line_capacity) {
@@ -12016,6 +12292,7 @@ Json Renderer::describe() const {
     j["motion_blur"] = s.motion_blur;
     j["id_draws"] = s.id_draws;
     j["debug_lines"] = s.debug_lines;
+    j["weather_drops"] = s.weather_drops;
     j["materials"] = s.materials;
     j["meshes"] = s.meshes;
     j["point_lights"] = s.point_lights;

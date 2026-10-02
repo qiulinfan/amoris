@@ -129,6 +129,7 @@ fields = [
     { name = "range", type = "f32", default = 10.0, doc = "Point and spot light range in meters: the light fades to nothing there." },
     { name = "inner_angle", type = "f32", default = 20.0, doc = "Spot: the half-angle of the cone in degrees inside which the light is full." },
     { name = "outer_angle", type = "f32", default = 30.0, doc = "Spot: the half-angle in degrees where it has faded out (at most 89.5)." },
+    { name = "after_dark", type = "bool", default = false, doc = "Point and spot lights: lit only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below (always lit without one): lamps, torches and windows under a Sky's running day (docs/design/rendering.md, A day)." },
     { name = "shadows", type = "bool", default = false, doc = "Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'." },
 ]
 
@@ -205,6 +206,9 @@ fields = [
     { name = "clouds", type = "f32", default = 0.0, doc = "Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md)." },
     { name = "cloud_height", type = "f32", default = 1500.0, doc = "Mode 3: the clouds' height above the camera's ground, in units." },
     { name = "cloud_scale", type = "f32", default = 900.0, doc = "Mode 3: the size of the clouds' features, in units." },
+    { name = "time_of_day", type = "f32", default = -1.0, doc = "Hours, 0 to 24: the engine puts the first directional light (the sun) where the sun is at that hour, rising in the east (+x) at 6, highest to the south (+z) at 12, setting in the west at 18, under the horizon at night (docs/design/rendering.md, A day); negative leaves the light where it is." },
+    { name = "day_length", type = "f32", default = 0.0, doc = "Seconds of game time a whole day takes, time_of_day running on by itself (0: the hour stands)." },
+    { name = "sun_height", type = "f32", default = 60.0, doc = "Degrees above the horizon the sun climbs at noon." },
     { name = "enabled", type = "bool", default = true, doc = "false turns the sky off without removing it." },
 ]
 
@@ -723,6 +727,19 @@ fields = [
     { name = "gusts", type = "f32", default = 0.3, doc = "How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong)." },
     { name = "gust_length", type = "f32", default = 20.0, doc = "Units from one gust to the next along the wind." },
     { name = "enabled", type = "bool", default = true, doc = "False: no wind (the next enabled Wind by id, if any)." },
+]
+
+[[component]]
+name = "Weather"
+doc = "Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the first enabled Weather by id. They fall in a box about the camera, slanted by the Wind; what they fall on gets wet (darker, glossier, most where it faces up) or white where snow lies, both building up while they fall and going after; an overcast sky dims the sun and, under an atmosphere, clouds it over."
+fields = [
+    { name = "rain", type = "f32", default = 0.0, doc = "How hard it rains, 0 to 1 (1: a downpour of some nine thousand drops about the camera)." },
+    { name = "snow", type = "f32", default = 0.0, doc = "How hard it snows, 0 to 1." },
+    { name = "wet", type = "f32", default = 0.0, doc = "How wet things are now, 0 to 1: it rises toward `rain` (fully wet after 15 seconds of a downpour) and dries over 90 seconds once the rain eases; set it for a world that starts wet." },
+    { name = "cover", type = "f32", default = 0.0, doc = "How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white." },
+    { name = "overcast", type = "f32", default = -1.0, doc = "How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more)." },
+    { name = "density", type = "f32", default = 1.0, doc = "Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged)." },
+    { name = "enabled", type = "bool", default = true, doc = "False: no weather (the next enabled Weather by id, if any)." },
 ]
 
 [[component]]

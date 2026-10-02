@@ -6,7 +6,9 @@
    "components": {
     "Sky": {
      "mode": "atmosphere",
-     "haze": 1.2
+     "haze": 1.2,
+     "time_of_day": 16.5,
+     "day_length": 300
     }
    }
   },
@@ -735,7 +737,8 @@
           "a": 1
          },
          "intensity": 3,
-         "range": 6
+         "range": 6,
+         "after_dark": true
         }
        }
       }
@@ -781,7 +784,8 @@
           "a": 1
          },
          "intensity": 3,
-         "range": 6
+         "range": 6,
+         "after_dark": true
         }
        }
       }
@@ -827,7 +831,8 @@
           "a": 1
          },
          "intensity": 3,
-         "range": 6
+         "range": 6,
+         "after_dark": true
         }
        }
       }
@@ -873,7 +878,8 @@
           "a": 1
          },
          "intensity": 3,
-         "range": 6
+         "range": 6,
+         "after_dark": true
         }
        }
       }

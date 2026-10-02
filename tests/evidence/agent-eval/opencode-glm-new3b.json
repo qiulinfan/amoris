@@ -1,0 +1,149 @@
+{
+  "runner": "python3 tools/scripts/runners/opencode_agent.py --via mcp",
+  "passed": 3,
+  "total": 3,
+  "seconds": 530.7,
+  "tasks": [
+    {
+      "name": "fps_shotgun",
+      "project": "fps",
+      "ok": true,
+      "seconds": 143.2,
+      "detail": "one shot is 6 pellet hits of 8 spread over 6 points; six shots to a magazine",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 142.8,
+        "turns": 11,
+        "tool_calls": 12,
+        "tools": {
+          "read": 3,
+          "grep": 2,
+          "edit": 5,
+          "pocket_project_apply": 1,
+          "todowrite": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 62141,
+          "output": 3261,
+          "reasoning": 3229,
+          "cache_read": 302080,
+          "total": 370711
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 11,
+        "tokens": 367482,
+        "calls": 12,
+        "read_kb": 19.6,
+        "failed_calls": 1,
+        "calls_before_edit": 4,
+        "calls_after_edit": 7,
+        "stuck": false
+      }
+    },
+    {
+      "name": "guards_footsteps",
+      "project": "guards",
+      "ok": true,
+      "seconds": 82.8,
+      "detail": "walking makes noises that carry [4.0] and a guard three away comes; standing makes none",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 82.5,
+        "turns": 12,
+        "tool_calls": 12,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "pocket_project_apply": 1,
+          "pocket_runtime_commands": 1,
+          "pocket_runtime_command": 7
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 30369,
+          "output": 982,
+          "reasoning": 1351,
+          "cache_read": 307584,
+          "total": 340286
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 12,
+        "tokens": 338935,
+        "calls": 12,
+        "read_kb": 6.4,
+        "failed_calls": 0,
+        "calls_before_edit": 2,
+        "calls_after_edit": 9,
+        "stuck": false
+      }
+    },
+    {
+      "name": "glade",
+      "project": "blank",
+      "ok": true,
+      "seconds": 304.7,
+      "detail": "a grass ground, 6 trees and 11 rocks without files, a campfire with a point light, glowing flames and smoke, a sound and sparks on stoke",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 304.4,
+        "turns": 23,
+        "tool_calls": 35,
+        "tools": {
+          "read": 4,
+          "pocket_runtime_command": 7,
+          "pocket_docs_search": 5,
+          "pocket_world_schema": 3,
+          "pocket_runtime_help": 1,
+          "bash": 1,
+          "write": 2,
+          "edit": 6,
+          "pocket_project_apply": 2,
+          "pocket_world_tree": 1,
+          "pocket_capture": 2,
+          "pocket_step": 1
+        },
+        "tool_errors": 0,
+        "tokens": {
+          "input": 52794,
+          "output": 4897,
+          "reasoning": 8526,
+          "cache_read": 936128,
+          "total": 1002345
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 23,
+        "tokens": 993819,
+        "calls": 35,
+        "read_kb": 4.3,
+        "failed_calls": 0,
+        "calls_before_edit": 15,
+        "calls_after_edit": 19,
+        "stuck": false
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0,
+    "tokens": 1713342,
+    "tool_calls": 59
+  }
+}

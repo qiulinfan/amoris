@@ -184,14 +184,15 @@ overlapped (a tiler shades one's pixels under the next one's vertices), so each 
 are what it adds: how much later it finishes than every pass before it. They are the place to look
 when a scene is slow, and `render.stats.triangles` and the draw counts say what it drew.
 
-The CPU keeps at most three frames ahead of the GPU: a native build waits on the queue's submitted
-work when it would run further (headless, or with a hidden window, nothing else paces it), so what
-it reads back from the GPU is at most that old and a headless run's frame time is the GPU's. The
-camera's passes (the scene, the ids, glass and translucency) draw only what reaches into the view,
-each draw's bounding sphere against the view's six planes (`render.stats.out_of_view` counts the
-rest); a sun cascade draws only the casters over its own square of the light's view, and none that
-do not cast. In `samples/hills` the view leaves 971 of the draws out and the cascades draw 2,242
-casters where they drew four times 1,341.
+The CPU keeps at most two frames queued behind the one it builds: a native build waits for the
+oldest submission when it would run further (headless, or with a hidden window, nothing else paces
+it), so what it reads back from the GPU is at most that old and a headless run's frame time is the
+GPU's. It waits for that one submission only: a wait for everything queued left the GPU idle while
+the CPU caught up. The camera's passes (the scene, the ids, glass and translucency) draw only what
+reaches into the view, each draw's bounding sphere against the view's six planes
+(`render.stats.out_of_view` counts the rest); a sun cascade draws only the casters over its own
+square of the light's view, and none that do not cast. In `samples/hills` the view leaves 971 of the
+draws out and the cascades draw 2,242 casters where they drew four times 1,341.
 
 ## Light and color
 
@@ -256,18 +257,45 @@ once on its way through a planet's air to the eye (after Nishita), by the air it
 scattering, which takes out and spreads the blue) and by `haze` (Mie scattering from dust and water,
 white and thrown forward around the sun), both thinning with height over a planet 6360 km across.
 The same sun then gives a blue day with a pale horizon, a yellow afternoon, the orange and gold of a
-sunset, and a sky that goes dark once the sun is below the horizon, with the afterglow along it;
-moving the sun (a script, a timeline) is all a day needs. The view's own path through the air counts
-half its thickness, standing in for the light scattered more than once, which keeps a noon horizon
-white rather than orange. The panorama is rebuilt from it when the sun turns (the environment light
-follows), and below the horizon the `ground` colour lit by the sun fades up into it.
+sunset, and a sky that darkens once the sun is below the horizon, with the afterglow along it, into
+the night below; moving the sun (a script, a timeline) is all a day needs. The view's own path
+through the air counts half its thickness, standing in for the light scattered more than once, which
+keeps a noon horizon white rather than orange. The panorama is rebuilt from it when the sun turns
+(the environment light follows), and below the horizon the `ground` colour lit by the sun fades up
+into it.
 
 The air colours the sun light too: the directional light reaches the ground through it, so its
 colour is multiplied by the air's transmittance toward the sun over that straight up (a light high
 in the sky is as authored, a low one redder and dimmer, one below the horizon out, fading as its
-disc sinks). `render.stats.sun_light` reports what reaches the ground. A `Fog` under an atmosphere
-takes the sky's colour around the horizon (the mean of eight directions a little above it) instead
-of its own, so distance fades into the sky at noon, into gold at sunset and into the dark at night.
+disc sinks). `render.stats.sun_light` reports what reaches the ground. Once the sun is below the
+horizon the directional light is the moon instead: across the sky from the sun and lifted thirty
+degrees or so (at dusk and dawn it is well up, not lying along the ground), cool, a tenth as bright,
+and rising from nothing as the sun sinks its first six degrees so nothing jumps. The air takes the
+moon's light as it takes the sun's, besides the sun's afterglow: the same scattering at a tenth the
+light is a deep blue night sky, and the environment light and the fog follow it. Stars come out as
+the sun goes from three to fourteen degrees down: a grid over the directions with a star in a few
+cells in a thousand, each as bright and as warm or cool as its hash says, twinkling a little and
+sinking into the haze toward the horizon; clouds cover them. A `Fog` under an atmosphere takes the
+sky's colour around the horizon (the mean of eight directions a little above it) instead of its own,
+so distance fades into the sky at noon, into gold at sunset and into the dark at night.
+
+### A day
+
+`Sky.time_of_day` (hours, 0 to 24; negative, the default, leaves the light alone) stands the first
+directional light where the sun is at that hour: rising in the east (+x) at 6, at `sun_height`
+degrees (60) to the south (+z) at noon, setting in the west at 18, under the ground at night. With
+`day_length` (seconds of game time for a whole day; 0, the hour stands) the hour runs on by itself
+and is written back into the `Sky`, so it is saved, hashed and read like any other field. Under an
+atmosphere that is a whole day: a blue noon, a gold evening, a moonlit night under the stars with
+the game's own lights warm in it (the village's lamps; `tests/evidence/rendering/village-day.png`:
+noon, half past five, dusk, eleven at night and its stars). A point or spot light with `after_dark`
+is lit only once the sun is down: it fades in as the first directional light sinks from four degrees
+above the horizon to two below and is not there at all by day (no clustering, no shadow faces);
+without a directional light it is always lit. The village's lamps are. `runtime_tests`
+(`[sky][day]`): at noon the sunlight shines down, at 6 west along the ground, at midnight up from
+below, and a day of 24 seconds moves the hour on by one in a second; `renderer_tests`
+(`[atmosphere]`): with the sun six degrees down the light is cool and dim and the sky overhead a
+dark blue.
 
 `clouds` (0..1) lays a layer of clouds over it at `cloud_height` (1500 units above the camera) with
 features `cloud_scale` (900) across: five octaves of value noise drawn in the sky pass, thinning
@@ -284,8 +312,10 @@ settings or the image, each next level importance-sampled from the one above wit
 by what that level lacks), and nine spherical-harmonic coefficients of its light for diffuse
 lighting (a compute reduction over a small level, convolved with the cosine lobe). It is rebuilt
 only when something it is made of changes (its settings, its image, and for a procedural sky the
-sun's direction and color); `render.stats.env_updates` counts the rebuilds and `render.stats.sky`
-says which sky is drawn (`none`, `procedural`, `image`, `atmosphere`).
+sun's direction and color, in steps of about a fifth of a degree and of its light to three figures,
+so a running day rebuilds it some eight times a second of a five-minute day rather than every
+frame); `render.stats.env_updates` counts the rebuilds and `render.stats.sky` says which sky is
+drawn (`none`, `procedural`, `image`, `atmosphere`).
 
 A surface then gets from the sky, in place of the flat ambient: diffuse light from the harmonics in
 its normal's direction (times `diffuse`), and specular light from the prefiltered level matching its
@@ -301,6 +331,41 @@ front of the camera white-hot, no rebuild on a frame where nothing changed, a mi
 in its top and ground in its bottom, a rough white ball lit bluish from above by the sky alone and
 black with the sky's light at 0, and a generated `.hdr` panorama (red above at twice white, green
 below at half) behind the scene and in the mirror.
+
+### Weather
+
+A `Weather` (one for the whole world: the first enabled by id) makes it rain or snow. `rain` and
+`snow` (0 to 1) say how hard; drops and flakes fall in a box 36 by 22 by 36 units about the camera,
+up to nine thousand drops and seven thousand flakes (times `density`), slanted by the `Wind`. They
+are made in the vertex stage from each one's number and the simulated time, with nothing kept from
+frame to frame: a drop's place is a hash in the box, slid along its fall and wrapped about the
+camera, so the box goes with the camera while each drop keeps falling where it is in the world. Rain
+is a thin streak along its fall, snow a round flake swaying as it drifts down; both are lit by the
+sky from above and a little by the sun, fade up close and toward the box's edge, and are drawn after
+the sprites without writing ids, so picking and outlines see through them.
+
+What it falls on changes, in the same step that paints decals, so the id pass's roughness (and the
+reflections traced from it) agree. `wet` (0 to 1) darkens surfaces as porous things darken and gives
+them a damp sheen, most where they face up, metal not darkened; on flat ground water stands in
+puddles where a broad noise is high, more of them the wetter, dark and mirror-smooth. `cover` (0 to 1)
+lays snow on what faces up: where a two-octave noise is under the cover, so about that share of flat
+ground, in patches while there is little and everywhere at full, white and matte; walls stay bare.
+Both build up and go by themselves, written back each tick: `wet` runs toward `rain` (fully wet
+after 15 seconds of a downpour, dry 90 seconds after it stops) and `cover` builds while it snows
+(full after 40 seconds at `snow` 1) and melts in four minutes once it stops, faster in rain; a game
+sets either to start wet or white. `overcast` (negative follows the weather: seven tenths of the
+rain or snow) dims the sun's direct light by up to four fifths and, under an atmosphere, clouds the
+sky over at least that much; the sky's own light is left as it was. It does not know what is under a
+roof: the inside of a house open to the sky gets wet too, and rain falls through ceilings onto a
+camera indoors. Pair it with the sound beds (`sfx:rain`, `sfx:wind`; `docs/design/audio.md`).
+
+`render.stats.weather_drops` counts what is drawn. `runtime_tests` (`[weather]`): seven and a half
+seconds of a downpour wet things halfway, nine dry seconds take a tenth off, ten seconds of snow lay
+a quarter, ten after melt a twenty-fourth and rain takes the rest. `renderer_tests` (`[weather]`): a
+wet floor is darker, snow lying whitens the floor and a block's top but not its side, the drops
+drawn are as many as the rain, the snow and the density say, and the sun's light falls with the
+overcast. `tests/evidence/rendering/weather.png` is the village in a downpour and under snow lying a
+quarter, half and wholly.
 
 ## Ambient occlusion and fog
 
@@ -341,7 +406,10 @@ units away (sixteen depth reads on a spiral turned by the point), takes their me
 filters with sixteen comparisons over a disc as wide as the penumbra at that distance, one to
 twenty-four texels (percentage-closer soft shadows); a point with nothing in front of it is lit
 without the second step. The spiral's turn changes from point to point, which TAA smooths. At 0 the
-sharp 3x3 filter stays as it was.
+sharp 3x3 filter stays as it was, and so does a cascade so coarse that the widest penumbra is under
+a texel and a half (far from the camera, where the spiral's thirty-two reads would change nothing
+seen). Each step of the spiral turns the last by the golden angle with a 2x2 rotation rather than a
+sine and a cosine.
 
 Contact shadows (`contact`, `[render] contact_shadows = true`) catch what the maps are too coarse to
 see: a foot on the ground, a cup on a table, a pebble. They are marched in the ambient-occlusion

@@ -136,6 +136,7 @@ A light source. kind 0 = directional (shines along -Z of the entity), 1 = point,
 | `range` | f32 | 10.0 | Point and spot light range in meters: the light fades to nothing there. |
 | `inner_angle` | f32 | 20.0 | Spot: the half-angle of the cone in degrees inside which the light is full. |
 | `outer_angle` | f32 | 30.0 | Spot: the half-angle in degrees where it has faded out (at most 89.5). |
+| `after_dark` | bool | false | Point and spot lights: lit only once the sun is down, fading in as the first directional light sinks from four degrees above the horizon to two below (always lit without one): lamps, torches and windows under a Sky's running day (docs/design/rendering.md, A day). |
 | `shadows` | bool | false | Point and spot lights: cast shadows. A spot takes one face of the shadow atlas and a point light six (a cube); 64 faces a frame, given to the nearest shadowed lights first. The sun's shadows are render.shadows'. |
 
 ## ReflectionProbe
@@ -217,6 +218,9 @@ The sky around the scene (docs/design/rendering.md, Sky and environment light): 
 | `clouds` | f32 | 0.0 | Mode 3: how much of the sky clouds cover, 0 to 1; they drift with the Wind (docs/design/wind.md). |
 | `cloud_height` | f32 | 1500.0 | Mode 3: the clouds' height above the camera's ground, in units. |
 | `cloud_scale` | f32 | 900.0 | Mode 3: the size of the clouds' features, in units. |
+| `time_of_day` | f32 | -1.0 | Hours, 0 to 24: the engine puts the first directional light (the sun) where the sun is at that hour, rising in the east (+x) at 6, highest to the south (+z) at 12, setting in the west at 18, under the horizon at night (docs/design/rendering.md, A day); negative leaves the light where it is. |
+| `day_length` | f32 | 0.0 | Seconds of game time a whole day takes, time_of_day running on by itself (0: the hour stands). |
+| `sun_height` | f32 | 60.0 | Degrees above the horizon the sun climbs at noon. |
 | `enabled` | bool | true | false turns the sky off without removing it. |
 
 ## MeshRenderer
@@ -637,6 +641,20 @@ The air's motion (docs/design/wind.md), one for the whole world: the first enabl
 | `gusts` | f32 | 0.3 | How much the speed rises and falls, as a fraction of itself (0 steady, 1 from still to twice as strong). |
 | `gust_length` | f32 | 20.0 | Units from one gust to the next along the wind. |
 | `enabled` | bool | true | False: no wind (the next enabled Wind by id, if any). |
+
+## Weather
+
+Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the first enabled Weather by id. They fall in a box about the camera, slanted by the Wind; what they fall on gets wet (darker, glossier, most where it faces up) or white where snow lies, both building up while they fall and going after; an overcast sky dims the sun and, under an atmosphere, clouds it over.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `rain` | f32 | 0.0 | How hard it rains, 0 to 1 (1: a downpour of some nine thousand drops about the camera). |
+| `snow` | f32 | 0.0 | How hard it snows, 0 to 1. |
+| `wet` | f32 | 0.0 | How wet things are now, 0 to 1: it rises toward `rain` (fully wet after 15 seconds of a downpour) and dries over 90 seconds once the rain eases; set it for a world that starts wet. |
+| `cover` | f32 | 0.0 | How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white. |
+| `overcast` | f32 | -1.0 | How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more). |
+| `density` | f32 | 1.0 | Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged). |
+| `enabled` | bool | true | False: no weather (the next enabled Weather by id, if any). |
 
 ## Water
 

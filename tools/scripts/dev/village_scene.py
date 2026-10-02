@@ -56,7 +56,7 @@ for i, (x, z, deg) in enumerate(benches):
 torches = [(-9.5, -6.5), (9.5, -6.5), (-9.5, 6.5), (9.5, 6.5)]
 for i, (x, z) in enumerate(torches):
     t = prop(f"Torch{i}", "torch", x, z)
-    t["children"] = [{"name": "Flame", "components": {"Transform": {"position": {"x": 0, "y": 1.05, "z": 0}}, "Light": {"kind": "point", "color": {"r": 1, "g": 0.62, "b": 0.3, "a": 1}, "intensity": 3, "range": 6}}}]
+    t["children"] = [{"name": "Flame", "components": {"Transform": {"position": {"x": 0, "y": 1.05, "z": 0}}, "Light": {"kind": "point", "color": {"r": 1, "g": 0.62, "b": 0.3, "a": 1}, "intensity": 3, "range": 6, "after_dark": True}}}]
     level.append(t)
 trees = []
 for i in range(16):
@@ -79,7 +79,7 @@ player = {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y
 camera = {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 6, "z": 17}}, "Camera": {"fov_degrees": 55},
                                            "CameraRig": {"target": "Player", "mode": 1, "distance": 9, "height": 1.0, "pitch": -24, "follow": 0.25, "orbit_x": "turn", "orbit_speed": 90}}}
 entities = [
-    {"name": "Sky", "components": {"Sky": {"mode": "atmosphere", "haze": 1.2}}},
+    {"name": "Sky", "components": {"Sky": {"mode": "atmosphere", "haze": 1.2, "time_of_day": 16.5, "day_length": 300}}},   # five minutes a day, from late afternoon
     {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.36, "y": 0.34, "z": 0.14, "w": 0.86}}, "Light": {"kind": 0, "intensity": 1.1, "color": {"r": 1, "g": 0.95, "b": 0.86, "a": 1}}}},
     {"name": "Village", "components": {"Transform": {}}, "children": level + trees + fences + props},
     player,

@@ -38,6 +38,7 @@
     X(Terrain) \
     X(Cloth) \
     X(Wind) \
+    X(Weather) \
     X(Water) \
     X(Scatter) \
     X(Vehicle) \

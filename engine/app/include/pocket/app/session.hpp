@@ -135,6 +135,8 @@ class Session {
     std::unique_ptr<Timelines> timelines_;
     Result<Json> timeline_command(std::string_view op, const Json& p);
     void update_camera_rigs(float dt);
+    void update_day(float dt);
+    void update_weather(float dt);
     std::map<world::EntityId, Vec3> rig_base_;   // each camera rig's place before its shake (docs/design/cameras.md)
     std::map<world::EntityId, std::pair<Vec3, Vec3>> rig_motion_;   // each rig's targets' middle last tick and its eased velocity (look_ahead)
     // Localization (docs/design/localization.md): the language scripts' `t` uses, the project's

@@ -1208,6 +1208,8 @@ void Session::run_tick() {
     mark(System::Navigation);
     update_camera_rigs(static_cast<float>(clock_.tick_seconds));   // after everything that moves what they follow
     mark(System::Cameras);
+    update_day(static_cast<float>(clock_.tick_seconds));
+    update_weather(static_cast<float>(clock_.tick_seconds));
     perf_physics_.add(sw.ms());
     sw = Stopwatch{};
     world_->tick(clock_.tick_seconds);
@@ -1917,6 +1919,70 @@ Result<Json> Session::locale_command(std::string_view op, const Json& p) {
 // Camera rigs (docs/design/cameras.md): each camera with a CameraRig is moved with its target after
 // the bodies, the characters and the agents moved: to where its mode puts it, eased there, in
 // front of walls between it and the pivot, looking at the pivot, shaken by its trauma.
+// A day (docs/design/rendering.md, A day): the first enabled Sky with a time of day runs it on by its
+// day length and stands the first directional light where the sun is at that hour: up in the east at
+// 6, at `sun_height` degrees to the south (+z) at 12, down in the west at 18, under the ground at
+// night (an atmosphere goes dark with it). repro's sine and cosine: the same sun on every machine.
+void Session::update_day(float dt) {
+    world::EntityId sky_id = 0;
+    world::Sky sky;
+    world_->ecs().each([&](flecs::entity e, const world::Sky& s) {
+        if (!sky_id && s.enabled && s.time_of_day >= 0.0f) { sky_id = e.id(); sky = s; }
+    });
+    if (!sky_id) return;
+    if (sky.day_length > 0.0f) {
+        sky.time_of_day = std::fmod(sky.time_of_day + dt * 24.0f / sky.day_length, 24.0f);
+        world_->set_typed<world::Sky>(sky_id, sky);
+    }
+    world::EntityId sun = 0;
+    world_->ecs().each([&](flecs::entity e, const world::Light& l) {
+        if (!sun && l.kind == 0) sun = e.id();
+    });
+    const auto* t = sun ? world_->try_get<world::Transform>(sun) : nullptr;
+    if (!t) return;
+    const float a = (std::fmod(sky.time_of_day, 24.0f) - 6.0f) / 12.0f * kPi;   // 0 at sunrise, pi at sunset
+    const float tilt = std::clamp(sky.sun_height, 1.0f, 90.0f) * kPi / 180.0f;
+    const Vec3 to_sun = normalize(Vec3{repro::cos(a), repro::sin(a) * repro::sin(tilt), repro::sin(a) * repro::cos(tilt)});
+    // The light's -Z along the sunlight (away from the sun): the turn that takes -Z there.
+    const Vec3 from{0, 0, -1}, to = to_sun * -1.0f;
+    const float d = dot(from, to);
+    Quat q;
+    if (d < -0.9999f) {
+        q = Quat{0, 1, 0, 0};
+    } else {
+        const Vec3 c = cross(from, to);
+        q = normalize(Quat{c.x, c.y, c.z, 1.0f + d});
+    }
+    if (!(q == t->rotation)) {
+        world::Transform nt = *t;
+        nt.rotation = q;
+        world_->set_typed<world::Transform>(sun, nt);
+    }
+}
+
+// The weather's lasting part (docs/design/rendering.md, Weather): the first enabled Weather's
+// wetness runs toward its rain (up in 15 seconds, down in 90) and its snow lying builds while it
+// snows (in 40 seconds at full) and melts in four minutes once it stops, faster in rain; both are
+// written back, so they are saved, hashed and read like any other field.
+void Session::update_weather(float dt) {
+    world::EntityId id = 0;
+    world::Weather w;
+    world_->ecs().each([&](flecs::entity e, const world::Weather& x) {
+        if (x.enabled && (!id || e.id() < id)) { id = e.id(); w = x; }
+    });
+    if (!id) return;
+    const float rain = std::clamp(w.rain, 0.0f, 1.0f), snow = std::clamp(w.snow, 0.0f, 1.0f);
+    float wet = std::clamp(w.wet, 0.0f, 1.0f), cover = std::clamp(w.cover, 0.0f, 1.0f);
+    wet = wet < rain ? std::min(rain, wet + dt / 15.0f) : std::max(rain, wet - dt / 90.0f);
+    if (snow > 0) cover = std::min(1.0f, cover + dt * snow / 40.0f);
+    else cover = std::max(0.0f, cover - dt * (1.0f / 240.0f + rain / 30.0f));
+    if (wet != w.wet || cover != w.cover) {
+        w.wet = wet;
+        w.cover = cover;
+        world_->set_typed<world::Weather>(id, w);
+    }
+}
+
 void Session::update_camera_rigs(float dt) {
     std::vector<world::EntityId> ids;
     world_->ecs().each([&](flecs::entity e, const world::CameraRig&, const world::Transform&) { ids.push_back(e.id()); });
@@ -6932,6 +6998,51 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         }
         value = std::move(out);
     };
+    // A key that is a path into a field ("layers.1.height", "position.y") changes only that part:
+    // the field is read as it is now (or from the patch, when it sets the field too), the path walked
+    // through objects and lists (a number is an index), the part set, and the whole field written.
+    auto paths = [&](world::EntityId id, const std::string& comp, Json& value) -> Status {
+        if (!value.is_object()) return {};
+        std::vector<std::string> dotted;
+        for (const auto& [k, v] : value.items()) if (k.find('.') != std::string::npos) dotted.push_back(k);
+        if (dotted.empty()) return {};
+        Json now = Json::object();
+        if (w.known_component(comp) && w.has(id, comp)) {
+            POCKET_TRY(got, w.get(id, comp));
+            now = got;
+        }
+        for (const std::string& key : dotted) {
+            std::vector<std::string> parts;
+            for (std::size_t at = 0; at <= key.size();) {
+                const std::size_t dot = std::min(key.find('.', at), key.size());
+                parts.push_back(key.substr(at, dot - at));
+                at = dot + 1;
+            }
+            const std::string& top = parts.front();
+            Json field = value.contains(top) ? value[top] : now.value(top, Json());
+            if (field.is_null()) return fail("bad_args", "{}.{}: {} has no field '{}' to go into", comp, key, comp, top);
+            Json* at = &field;
+            for (std::size_t i = 1; i < parts.size(); ++i) {
+                const std::string& part = parts[i];
+                if (at->is_array()) {
+                    const bool number = !part.empty() && std::all_of(part.begin(), part.end(), [](char c) { return c >= '0' && c <= '9'; });
+                    if (!number) return fail("bad_args", "{}.{}: '{}' is a list; a number picks one of its {}", comp, key, part, at->size());
+                    const std::size_t n = std::stoul(part);
+                    if (n >= at->size()) return fail("bad_args", "{}.{}: the list has {} (0 to {})", comp, key, at->size(), at->size() == 0 ? 0 : at->size() - 1);
+                    at = &(*at)[n];
+                } else if (at->is_object() || at->is_null()) {
+                    at = &(*at)[part];
+                } else {
+                    return fail("bad_args", "{}.{}: '{}' is a value, not something with parts", comp, key, parts[i - 1]);
+                }
+            }
+            if (at->is_object() && value[key].is_object()) at->update(value[key]);
+            else *at = value[key];
+            value[top] = field;
+            value.erase(key);
+        }
+        return {};
+    };
     auto name_entities = [&](const std::string& comp, Json& value) -> Status {
         expand(comp, value);
         if (!value.is_object()) return {};
@@ -6997,6 +7108,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         if (p.contains("component") && p.contains("value")) comps[p["component"].get<std::string>()] = p["value"];
         for (auto& [cname, cvalue] : comps.items()) {
             if (!cvalue.is_object()) return fail("bad_args", "components.{}: the fields to change as an object", cname);
+            POCKET_TRY_VOID(paths(id, cname, cvalue));
             POCKET_TRY_VOID(name_entities(cname, cvalue));
             POCKET_TRY_VOID(w.check_patch(cname, cvalue));
         }
@@ -7017,6 +7129,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         if (!p.contains("component") || !p["component"].is_string()) return fail("bad_args", "world.set needs component: the component's name, e.g. \"MeshRenderer\" (world.schema lists them)");
         const std::string comp = p["component"].get<std::string>();
         Json value = p["value"];
+        POCKET_TRY_VOID(paths(id, comp, value));
         POCKET_TRY_VOID(name_entities(comp, value));
         POCKET_TRY_VOID(w.check_patch(comp, value));
         POCKET_TRY_VOID(w.set(id, comp, value, cause));
@@ -7756,6 +7869,8 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
     // Reading a tile map under the names agents reach for first: tilemap.get (a cell when given one,
     // else the map as rows) and tilemap.text {entity} (the map as rows).
     if (name == "tilemap.get") name = given.contains("tile_x") || given.contains("x") ? "tilemap.tile" : "tilemap.rows";
+    // Adding a component under the name agents reach for: world.set adds it when it is missing.
+    else if (name == "world.add") name = "world.set";
     else if (name == "tilemap.text" && given.contains("entity") && !given.contains("rows")) name = "tilemap.rows";
     // A parameter an agent got wrong is said at once: a key a command does not take is refused with
     // the command's parameters (it would otherwise be ignored and the call look like it worked), and
@@ -7784,8 +7899,15 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
     {
         const std::vector<std::string>& keys = command_param_names(*h);
         auto takes = [&](const std::string& k) { return std::find(keys.begin(), keys.end(), k) != keys.end(); };
-        if (given.contains("path") && !given.contains("entity") && takes("entity") && !takes("path")) {
+        if (given.contains("id") && !given.contains("seq") && takes("seq") && !takes("id")) {
+            // An event's id is its seq (events.why {id: 33}).
             adjusted = given;
+            adjusted["seq"] = adjusted["id"];
+            adjusted.erase("id");
+            chosen = &adjusted;
+        }
+        if (chosen->contains("path") && !chosen->contains("entity") && takes("entity") && !takes("path")) {
+            if (chosen != &adjusted) adjusted = given;
             adjusted["entity"] = adjusted["path"];
             adjusted.erase("path");
             chosen = &adjusted;
@@ -7809,10 +7931,24 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
                 break;
             }
         }
-        if (name == "log.tail" && chosen->contains("lines") && !chosen->contains("n")) {
+        for (const char* alias : {"lines", "limit", "count"}) {
+            if (name != "log.tail" || !chosen->contains(alias) || chosen->contains("n")) continue;
             if (chosen != &adjusted) adjusted = given;
-            adjusted["n"] = adjusted["lines"];
-            adjusted.erase("lines");
+            adjusted["n"] = adjusted[alias];
+            adjusted.erase(alias);
+            chosen = &adjusted;
+        }
+        // events.why {event: "campfire.stoked"} (or type): the latest event of that type, or of a type
+        // it starts ("coin.").
+        for (const char* alias : {"event", "type"}) {
+            if (name != "events.why" || !world_ || !chosen->contains(alias) || !(*chosen)[alias].is_string() || chosen->contains("seq")) continue;
+            const std::string prefix = (*chosen)[alias].get<std::string>();
+            std::uint64_t seq = 0;
+            for (const world::Event& e : world_->events().recent(100000)) if (e.type.starts_with(prefix)) seq = std::max(seq, e.seq);
+            if (!seq) return fail("not_found", "events.why: no event of type {} in the log (events.histogram counts the types there are)", prefix);
+            if (chosen != &adjusted) adjusted = given;
+            adjusted["seq"] = seq;
+            adjusted.erase(alias);
             chosen = &adjusted;
         }
         // world.set given the component the way world.spawn takes it ({entity, Transform: {...}}),
@@ -7820,15 +7956,30 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         if (name == "world.set" && world_) {
             Json moved = Json::object(), fields = Json::object();
             const std::string comp = chosen->contains("component") && (*chosen)["component"].is_string() ? (*chosen)["component"].get<std::string>() : "";
+            // A component's name in another case ("transform", "mesh_renderer") is that component.
+            auto component_named = [&](const std::string& k) -> std::string {
+                if (world_->known_component(k)) return k;
+                std::string pascal;
+                bool up = true;
+                for (char c : k) {
+                    if (c == '_' || c == '-') { up = true; continue; }
+                    pascal += up ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c;
+                    up = false;
+                }
+                return world_->known_component(pascal) ? pascal : std::string();
+            };
+            std::vector<std::pair<std::string, std::string>> named;   // the key given, the component
             for (const auto& [k, v] : chosen->items()) {
                 if (takes(k) || k == "cause") continue;
-                if (world_->known_component(k) && v.is_object()) moved[k] = v;
-                else if (!comp.empty() && !chosen->contains("value") && world_->has_field(comp, k)) fields[k] = v;
+                if (const std::string c = component_named(k); !c.empty() && v.is_object()) {
+                    moved[c] = v;
+                    named.emplace_back(k, c);
+                } else if (!comp.empty() && !chosen->contains("value") && world_->has_field(comp, k)) fields[k] = v;
             }
             if (!moved.empty() || !fields.empty()) {
                 if (chosen != &adjusted) adjusted = given;
-                for (const auto& [k, v] : moved.items()) {
-                    adjusted["components"][k] = v;
+                for (const auto& [k, c] : named) {
+                    adjusted["components"][c] = moved[c];
                     adjusted.erase(k);
                 }
                 if (!fields.empty()) {
@@ -7840,7 +7991,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         }
         if (!command_params_open(h->params)) {
             for (const auto& [k, v] : chosen->items()) {
-                if (k == "cause" || takes(k)) continue;
+                if (k == "cause" || k == "quiet" || takes(k)) continue;   // quiet asks for less back: nothing to refuse where there is no less
                 return fail("bad_args", "{} does not take '{}': {} (help {{command: \"{}\"}} says more)", name, k, h->params.empty() ? std::string("it takes no parameters") : "it takes " + std::string(h->params), name);
             }
         }
@@ -8437,6 +8588,11 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
             return Json{{"commands", all}, {"note", "every command also answers help {command} on its own; parameters with ? are optional, a | b are alternatives; family or search narrows the list"}};
         }
         if (const CommandHelp* h = command_help(which)) return command_help_json(*h);
+        if (which == "world.add") {
+            Json j = command_help_json(*command_help("world.set"));
+            j["note"] = "world.add is world.set by another name: it adds the component when the entity has none";
+            return j;
+        }
         return fail("unknown_command", "no command named '{}'{}", which, command_suggestions(which).empty() ? std::string() : "; did you mean " + Json(command_suggestions(which)).dump() + "?");
     }
     if (name == "commands" && opt<bool>(p, "text", false) && family.empty() && search.empty()) {

@@ -246,6 +246,22 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     Json both = s.command("world.set", Json{{"entity", "Ball"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3.5}}}}}, {"MeshRenderer", Json{{"roughness", 0.25}}}}}}).value();
     REQUIRE(both["values"]["Transform"]["position"]["x"] == 3.5);
     REQUIRE(both["values"]["MeshRenderer"]["roughness"] == 0.25);
+    // The component's name in another case, and a path into a field: one part of it changes, through
+    // objects and lists (a number picks an element), the rest as it was.
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"transform", Json{{"position", Json{{"z", -2}}}}}}).value()["values"]["Transform"]["position"]["z"] == -2);
+    REQUIRE(s.command("world.add", Json{{"entity", "Ball"}, {"component", "Velocity"}, {"value", Json{{"linear", Json{{"x", 1}}}}}}).has_value());   // world.set by another name
+    REQUIRE(s.command("help", Json{{"command", "world.add"}}).value()["note"].get<std::string>().find("world.set") != std::string::npos);
+    REQUIRE(s.command("world.get", Json{{"entity", "Ball"}, {"component", "Velocity"}, {"quiet", false}}).has_value());
+    Json part = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position.y", 4}}}}).value();
+    REQUIRE(part["value"]["position"]["y"] == 4);
+    REQUIRE(part["value"]["position"]["x"] == 3.5);
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"lods", Json::array({Json{{"screen", 0.3}}, Json{{"screen", 0.1}}})}}}}).has_value());
+    Json lod = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"lods.1.ratio", 0.2}}}}).value();
+    REQUIRE(lod["value"]["lods"][1]["ratio"].get<double>() == Catch::Approx(0.2));
+    REQUIRE(lod["value"]["lods"][0]["screen"].get<double>() == Catch::Approx(0.3));
+    auto beyond = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"lods.2.ratio", 0.2}}}});
+    REQUIRE_FALSE(beyond.has_value());
+    REQUIRE(beyond.error().message.find("the list has 2") != std::string::npos);
     // A field named by its only start, or by a short form, is that field, and the answer says so;
     // a start two fields share is refused with both in mind.
     Json pos = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"pos", Json{{"x", 1}}}}}}).value();
@@ -392,6 +408,74 @@ TEST_CASE("a camera of higher priority takes the window, blending from the last 
     // Lowered under the left one with no blend of its own on the left: a cut back.
     REQUIRE(s.command("world.set", Json{{"entity", "Right"}, {"component", "Camera"}, {"value", Json{{"priority", -1}}}}).has_value());
     REQUIRE(drawn_x(1) > 100);
+}
+
+TEST_CASE("a sky's time of day stands the sun where it is at that hour, and its day length runs it on", "[runtime][sky][day]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun2"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", "directional"}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Day"}, {"components", Json{{"Sky", Json{{"mode", "atmosphere"}, {"time_of_day", 12}}}}}}).has_value());
+    // The first directional light, wherever it is in the scene.
+    auto sunlight = [&] {
+        world::EntityId sun = 0;
+        for (const Json& e : s.command("world.query", Json{{"with", Json::array({"Light"})}, {"fields", Json::array({"Light.kind"})}}).value()["entities"])
+            if (!sun && e["Light"]["kind"] == 0) sun = e["id"].get<world::EntityId>();
+        const Json q = s.command("world.get", Json{{"entity", sun}, {"component", "Transform"}}).value()["rotation"];
+        const Quat r{q["x"].get<float>(), q["y"].get<float>(), q["z"].get<float>(), q["w"].get<float>()};
+        return r.rotate({0, 0, -1});   // the way the light goes
+    };
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    Vec3 l = sunlight();
+    INFO(l.x << " " << l.y << " " << l.z);
+    REQUIRE(l.y < -0.8f);   // noon: high, shining down
+    REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"time_of_day", 6.0}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    l = sunlight();
+    REQUIRE(l.x < -0.99f);   // sunrise: in the east, shining west along the ground
+    REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"time_of_day", 0.0}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(sunlight().y > 0.5f);   // midnight: under the ground, shining up
+    // A day of 24 seconds: an hour a second.
+    REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"time_of_day", 8.0}, {"day_length", 24.0}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 60}}).has_value());
+    REQUIRE(s.command("world.get", Json{{"entity", "Day"}, {"component", "Sky"}}).value()["time_of_day"].get<double>() == Catch::Approx(9.0).margin(0.05));
+    // A lamp lit after dark is not there by day (no light in the clusters) and lit at night.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Lamp"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 1}, {"z", 0}}}}}, {"Light", Json{{"kind", "point"}, {"range", 50}, {"after_dark", true}}}}}}).has_value());
+    auto entries = [&](double hour) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Day"}, {"component", "Sky"}, {"value", Json{{"time_of_day", hour}, {"day_length", 0}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
+        return s.command("render.stats", Json::object()).value()["lights"]["entries"].get<int>();
+    };
+    const int noon = entries(12), night = entries(23);
+    INFO("cluster entries at noon " << noon << ", at night " << night);
+    REQUIRE(night > noon);
+}
+
+TEST_CASE("the weather wets what it rains on and lays snow, and both go once it stops", "[runtime][weather]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Weather"}, {"components", Json{{"Weather", Json{{"rain", 1.0}}}}}}).has_value());
+    auto field = [&](const char* f) { return s.command("world.get", Json{{"entity", "Weather"}, {"component", "Weather"}}).value()[f].get<double>(); };
+    auto set = [&](Json v) { REQUIRE(s.command("world.set", Json{{"entity", "Weather"}, {"component", "Weather"}, {"value", v}}).has_value()); };
+    REQUIRE(s.command("step", Json{{"ticks", 450}}).has_value());   // 7.5 seconds of a downpour: half wet
+    REQUIRE(field("wet") == Catch::Approx(0.5).margin(0.01));
+    set(Json{{"rain", 0.0}});
+    REQUIRE(s.command("step", Json{{"ticks", 540}}).has_value());   // 9 seconds dry: a tenth less
+    REQUIRE(field("wet") == Catch::Approx(0.4).margin(0.01));
+    set(Json{{"snow", 1.0}});
+    REQUIRE(s.command("step", Json{{"ticks", 600}}).has_value());   // 10 seconds of snow: a quarter lying
+    REQUIRE(field("cover") == Catch::Approx(0.25).margin(0.01));
+    set(Json{{"snow", 0.0}});
+    REQUIRE(s.command("step", Json{{"ticks", 600}}).has_value());   // 10 seconds after: a 24th melted
+    REQUIRE(field("cover") == Catch::Approx(0.25 - 10.0 / 240).margin(0.01));
+    // Rain melts it faster: what is left gone in six seconds of a downpour (in fifty without).
+    set(Json{{"rain", 1.0}});
+    REQUIRE(s.command("step", Json{{"ticks", 360}}).has_value());
+    REQUIRE(field("cover") < 0.01);
 }
 
 TEST_CASE("the toon look outlines each entity where the id under the pixels changes", "[runtime][render][toon]") {
@@ -1471,6 +1555,10 @@ TEST_CASE("the recorder, events.why and render.visible explain a run", "[runtime
     REQUIRE(why["chain"][1]["type"] == "joint.broken");
     REQUIRE(why["complete"] == true);
     REQUIRE(why["story"].get<std::string>().find("component.removed(/Lantern)") == 0);
+    REQUIRE(s.command("events.why", Json{{"id", seq}}).value()["chain"].size() == 2);   // an event's id is its seq
+    REQUIRE(s.command("events.why", Json{{"event", "component.removed"}}).value()["chain"][0]["type"] == "component.removed");   // the latest of a type
+    REQUIRE_FALSE(s.command("events.why", Json{{"event", "no.such"}}).has_value());
+    REQUIRE(s.command("log.tail", Json{{"limit", 3}}).has_value());
     // What the camera sees: the ground covers most of the frame, the ramp is in it, with bounds inside the image.
     Json vis = s.command("render.visible", Json{{"limit", 5}}).value();
     INFO(vis.dump());

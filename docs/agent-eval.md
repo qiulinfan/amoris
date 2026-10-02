@@ -59,6 +59,7 @@ checks the world through the same commands. A task passes or fails; nothing is s
 | `sand_road` | hills | paint a sand-coloured road along a line over the terrain, fully covered near it and untouched far from it, answer with the coverage on the line | `terrain.height` (the paint across the road and beside it, against the setup) |
 | `reed_field` | hills | plant a Scatter of thin reeds on the terrain within an area, all one size, swaying 0.3 and each a collider 0.1 in radius, answer with how many stand | `world.get` on the Scatter, `scatter.copies`, `physics.raycast` onto a reed |
 | `stormy_dusk` | hills | make a windy, cloudy sunset (the atmosphere sky with clouds, the sun low in the west, the wind toward +x), answer with the red of the sun light at the ground | `world.get` on the Sky, Sun and Wind, `wind.at`, `render.stats` (`sun_light`) |
+| `snowy_evening` | hills | a snowy evening that goes on by itself (snow at 0.7 on ground already white, the time of day at 17:30 in a ten-minute day), answer with the hour after ten seconds | the first `Weather` (`snow`, `cover`), the Sky's `day_length` and `time_of_day`, `render.stats` (`weather_drops`) |
 | `dirt_patch` | hills | change one textured layer's height rule and paint another in a patch, answer with its share at the centre | `world.get` on the Terrain's layers, `terrain.height` (the share there and six units out) |
 | `glass_window` | hello | spawn a pane of clear glass with an index of refraction and give the Ball a clear coat, answer with the glass the renderer drew | `world.get` on both MeshRenderers and the Transform, `render.stats` (`glass`) |
 | `night_level` | sprites | make the level night: the map and the player lit, a dark blue ambient, a warm light that goes with the player | `world.get` on the TileMap and Sprite, `render.ambient`, the lights' world positions after the player walks |
@@ -435,6 +436,36 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   40 calls (`opencode-glm-fireworks.json`): the agent found `Trail` in the particles document and
   the components' list, burst sparks from an emitter of their own at each rocket, and looked at its
   own captures three times to tune the glow.
+- **Sixty-two on opencode.** The whole set of sixty-two (the fifty-seven and the five games added
+  since: `platformer`, `sokoban`, `villagers`, `fireworks`, `watchman`) went to opencode with GLM
+  5.3 Flash over MCP on 2026-10-02: 61 of 62 at the first try in 164 minutes, 27.8 million tokens,
+  896 tool calls (`opencode-glm-full62.json`). On the fifty-seven both runs had, all passed again,
+  in 129 minutes against 131, 754 calls against 713 and 22.7 million tokens against 20.6; the spread
+  is the model's, not the engine's (`snake` and `coin_respawn` ran to the runner's 660 seconds
+  testing their games over and over and passed, `breakout` took 31 calls against 55). `sokoban`
+  failed: its agent bound `move_y` with the same signs as `move_z`, so Down moved the player up, and
+  no part of the project said which way +y points on a pad. A binding now turns an axis over with a
+  minus (`"-pad:lefty"`, `docs/design/input.md`) and the template's `project.toml` gives a 2D game's
+  `move_y` beside the 3D `move_z`. Of the sixteen failed calls, seven were opencode's `edit`; three
+  read a `scene.json` the project did not have; the rest each led to a change:
+  `until {state, value}` and the other names agents give a comparison are now read as `equals`,
+  `events.why {id}` takes the id as the event's `seq`, `world.set` takes a component under its name
+  in any case (`transform`, `mesh_renderer`), and a key that is a path into a field
+  (`"layers.1.height"`, `"position.y"`) changes that part only, through lists by index.
+- **Three more.** `glade`, `fps_shotgun` and `guards_footsteps` went to opencode with GLM 5.3 Flash
+  over MCP the same day: 3 of 3 at the first try in 531 seconds (`opencode-glm-new3b.json`). The
+  shotgun took 143 seconds and 12 calls on the fps sample, the footsteps 83 and 12 on the guards
+  sample, and the glade 305 and 35: the agent found the props, the particle presets and the sound
+  presets through six `docs_search` calls without reading a whole document, and looked at two
+  captures of its own. Two of its calls were refused for a parameter's name, and are now read as
+  meant: `log.tail {limit}` (as `n`) and `events.why {event: "campfire.stoked"}` (the latest event
+  of that type).
+- **Snow.** `snowy_evening` went to opencode with GLM 5.3 Flash the day the weather landed: passed
+  at its first run in 76 seconds and 13 calls (`opencode-glm-snowy.json`), the `Weather` found
+  through `world.schema {search}` without a document read. Two calls were refused:
+  `help {command: "world.add"}`, the second run to look for that name, and `world.get` given
+  `quiet`. `world.add` is now `world.set` by another name (it adds the component when missing), and
+  `quiet` is let pass on any command.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI
