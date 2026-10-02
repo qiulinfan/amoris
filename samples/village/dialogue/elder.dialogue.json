@@ -1,0 +1,30 @@
+{
+  "vars": { "apples": 0, "asked": false, "done": false },
+  "start": "greet",
+  "nodes": {
+    "greet": [
+      { "if": "done", "then": [ { "say": "Elder", "text": "Thank you again. The pie will be ready by sundown." }, { "end": true } ] },
+      { "if": "apples >= 3", "then": [ { "goto": "thanks" } ] },
+      { "if": "asked", "then": [ { "say": "Elder", "text": "Still looking? {apples} of three so far. Try round the houses and by the trees." }, { "end": true } ] },
+      { "say": "Elder", "text": "Ah, a new face. Welcome to the village." },
+      { "say": "Elder", "text": "My cart tipped over this morning and three apples rolled away." },
+      { "choice": [
+        { "text": "I'll find them for you", "set": { "asked": true }, "goto": "asked" },
+        { "text": "Not now", "goto": "later" }
+      ] }
+    ],
+    "asked": [
+      { "say": "Elder", "text": "Bless you. Bring all three back to me here by the well." },
+      { "event": "quest.started" }
+    ],
+    "later": [
+      { "say": "Elder", "text": "Another time, then." }
+    ],
+    "thanks": [
+      { "say": "Elder", "text": "All three! You have sharp eyes." },
+      { "set": { "done": true } },
+      { "event": "quest.complete" },
+      { "text": "The elder beams. Somewhere a villager cheers." }
+    ]
+  }
+}

@@ -31,8 +31,10 @@ and `mouse:y` are its motion over the tick (a hundred pixels is full deflection,
 screen), `wheel:x` and `wheel:y` its wheel (a notch is full), all spent by the tick that read them,
 so `look_x = { axis: ["mouse:x", "pad:rightx"], deadzone: 0 }` is mouse look on either device. A
 button contributes its sign; an axis contributes its value past the dead zone (0.15 by default,
-rescaled; set it to 0 for the mouse); the larger magnitude wins and the result is clamped to -1..1.
-`down` means any button is held or an axis is past half.
+rescaled; set it to 0 for the mouse), turned over when its name starts with a minus or it is listed
+under `negative` (a stick pushed up reads -1, so a game where up is +y binds `"-pad:lefty"`); the
+larger magnitude wins and the result is clamped to -1..1. `down` means any button is held or an axis
+is past half.
 
 ## Every frame
 

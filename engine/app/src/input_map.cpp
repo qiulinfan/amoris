@@ -60,6 +60,11 @@ Status InputMap::configure(const Json& actions) {
             if (!v.is_string()) return fail("bad_args", "{}: bindings are strings such as \"Space\" or \"pad:a\"", name);
             std::string s = v.get<std::string>();
             if (s.empty()) return fail("bad_args", "{}: empty binding", name);
+            // "-pad:lefty": the axis turned over (a stick pushed up reads -1; a game where up is +y wants +1).
+            if (s.size() > 1 && s[0] == '-' && is_axis(s.substr(1))) {
+                s = s.substr(1);
+                sign = -sign;
+            }
             if (is_axis(s)) a.axes.push_back({s, sign});
             else a.buttons.push_back({s, sign});
             return {};
@@ -216,7 +221,7 @@ Json InputMap::describe() const {
         Json s;
         Json pos = Json::array(), neg = Json::array(), ax = Json::array();
         for (const Binding& b : a.buttons) (b.sign < 0 ? neg : pos).push_back(b.source);
-        for (const Binding& b : a.axes) ax.push_back(b.source);
+        for (const Binding& b : a.axes) ax.push_back(b.sign < 0 ? "-" + b.source : b.source);
         s["positive"] = pos;
         if (!neg.empty()) s["negative"] = neg;
         if (!ax.empty()) { s["axis"] = ax; s["deadzone"] = a.deadzone; }

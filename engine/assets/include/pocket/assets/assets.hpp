@@ -404,7 +404,7 @@ struct Image {
 Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& base_dir, const std::string& display_path);
 // The built-in humanoid as a glTF binary (docs/design/animation.md, A character without a file):
 // `query` sets its colours ("shirt=#c33&hair=none"); its clips are idle, walk, run, walk_back,
-// strafe_left, strafe_right, crouch, crouch_walk, jump, wave, punch and die.
+// strafe_left, strafe_right, crouch, crouch_walk, jump, wave, punch, die, sit, talk, cheer and pickup.
 Result<std::string> humanoid_glb(const std::string& query);
 // Props without files (docs/design/assets.md, Props): "tree", "pine", "rock", "bush", "barrel",
 // "lamp" and "fence", each with settings after '?' ("tree?height=5&leaves=autumn&seed=3"), as a

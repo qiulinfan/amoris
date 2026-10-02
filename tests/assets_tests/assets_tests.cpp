@@ -816,7 +816,7 @@ TEST_CASE("the built-in humanoid: a skinned model with its clips, its colours fr
     REQUIRE(m->skins[0].joints.size() == 11);
     std::vector<std::string> names;
     for (const assets::AnimationClip& c : m->animations) names.push_back(c.name);
-    for (const char* want : {"idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "crouch", "crouch_walk", "jump", "wave", "punch", "die"})
+    for (const char* want : {"idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "crouch", "crouch_walk", "jump", "wave", "punch", "die", "sit", "talk", "cheer", "pickup"})
         REQUIRE(std::find(names.begin(), names.end(), want) != names.end());
     REQUIRE(m->aabb_min.y == Catch::Approx(0.0f).margin(1e-4));     // standing on its feet at the origin
     REQUIRE(m->aabb_max.y == Catch::Approx(2.02f).margin(0.01));    // two metres and a hair

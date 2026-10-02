@@ -286,9 +286,11 @@ the engine makes itself: boxes on eleven joints named as Mixamo names them (`Hip
 forward, so `NavAgent.face` walks it face first and a `Behavior`'s field of view looks where its
 face does (a model from a file faces +Z as glTF has it, and is turned half round under its entity,
 as the walker's hero is; the humanoid is built that way and turned by a `Root` node above its
-`Hips`), skinned rigidly, in five materials, with twelve clips of its own: `idle`, `walk`, `run`,
-`walk_back`, `strafe_left`, `strafe_right`, `crouch`, `crouch_walk`, `jump`, `wave`, `punch` and
-`die` (the last held where it ends, played with `loop` off). A query sets its colours,
+`Hips`), skinned rigidly, in five materials, with sixteen clips of its own: `idle`, `walk`, `run`,
+`walk_back`, `strafe_left`, `strafe_right`, `crouch`, `crouch_walk`, `jump`, `wave`, `punch`, `die`
+(held where it ends, played with `loop` off), `sit` (on something knee high, its hips half a unit
+up: a bench, a chair, a wall), `talk` (gesturing), `cheer` (arms up, hopping) and `pickup` (down to
+the ground in front and up again, played with `loop` off). A query sets its colours,
 `"humanoid?shirt=red&trousers=navy&skin=#8d5524&hair=none"`: `skin`, `shirt`, `trousers`, `shoes`
 and `hair` take `"#rrggbb"`, `"#rgb"` or a plain name (red, green, blue, yellow, orange, purple,
 pink, brown, black, white, grey, tan, navy, teal, olive), `hair=none` leaves the head bare, and a
@@ -305,7 +307,7 @@ one mesh and material are one instanced draw. `samples/walker`'s hero is the sam
 `tools/scripts/make_sample_assets.py`, with its clips in files of their own.
 `tools/scripts/humanoid_evidence.py` (`tests/evidence/rendering/humanoids.png`) shows six looks
 idling, walking, running, waving, punching and lying where they fell. `assets_tests`
-(`[assets][humanoid]`): its skin of eleven joints and its twelve clips, standing on the origin two
+(`[assets][humanoid]`): its skin of eleven joints and its sixteen clips, standing on the origin two
 metres and a hair tall, a red shirt in linear light, no hair two boxes fewer, an unknown part and an
 unreadable colour refused.
 

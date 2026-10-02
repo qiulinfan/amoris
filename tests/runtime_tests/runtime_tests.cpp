@@ -4174,6 +4174,11 @@ TEST_CASE("pad bindings with a player index answer that pad only", "[runtime][in
     REQUIRE(s.command("input.pad", Json{{"pad", 1}, {"axis", "leftx"}, {"value", 0.0}}).value()["actions"]["p2_move"]["value"].get<double>() == Catch::Approx(0.0));
     REQUIRE(s.command("input.pad", Json{{"pad", 0}, {"axis", "leftx"}, {"value", 0.8}}).value()["actions"]["p2_move"]["value"].get<double>() == Catch::Approx(0.0));
     REQUIRE_FALSE(s.command("input.pad", Json{{"pad", 0}}).has_value());
+    // An axis turned over with a minus: the stick pushed up (-1) is +1 for a game where up is +y.
+    map["up"] = Json{{"axis", Json::array({"-pad:lefty"})}};
+    REQUIRE(s.command("input.map", Json{{"actions", map}}).has_value());
+    REQUIRE(s.command("input.describe", Json::object()).value()["up"]["axis"] == Json::array({"-pad:lefty"}));
+    REQUIRE(s.command("input.pad", Json{{"pad", 0}, {"axis", "lefty"}, {"value", -1.0}}).value()["actions"]["up"]["value"].get<double>() == Catch::Approx(1.0));
     REQUIRE(s.finish().has_value());
 }
 

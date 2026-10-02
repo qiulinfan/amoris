@@ -159,6 +159,42 @@ Pose die_pose(float u) {
     return keyed(u, {{0.0f, at(1.0f, 0, 0, 5, 0)}, {0.35f, at(0.8f, -10, -40, 70, -20)}, {0.8f, at(0.22f, -88, 10, 15, -60)}, {1.0f, at(0.16f, -90, 5, 5, -80)}});
 }
 
+Pose sit_pose(float u) {
+    // Seated on something knee high (a bench, a chair, a wall): thighs level, shins down, hands
+    // on the lap, a slow breath.
+    const float p = 2 * std::numbers::pi_v<float> * u;
+    return {{{"LeftUpLeg", {-90, 3}}, {"RightUpLeg", {-90, -3}}, {"LeftLeg", {90, 0}}, {"RightLeg", {90, 0}}, {"Spine", {-4 + 1.5f * std::sin(p), 0}},
+             {"LeftArm", {-28, 10}}, {"RightArm", {-28, -10}}, {"LeftForeArm", {-55, 0}}, {"RightForeArm", {-55, 0}}, {"Head", {3 - 1.5f * std::sin(p), 0}}},
+            0.5f};
+}
+
+Pose talk_pose(float u) {
+    // Standing, the hands turning over as it explains, the head nodding now and then.
+    const float p = 2 * std::numbers::pi_v<float> * u;
+    return {{{"RightArm", {-30 - 12 * std::sin(p), -14}}, {"RightForeArm", {-70 - 20 * std::sin(2 * p), 0}}, {"LeftArm", {-18 + 10 * std::sin(p + 1.4f), 12}},
+             {"LeftForeArm", {-55 - 15 * std::sin(2 * p + 0.8f), 0}}, {"Head", {4 * std::sin(3 * p), 3 * std::sin(p)}}, {"Spine", {1.5f * std::sin(p), 0}}},
+            0.99f};
+}
+
+Pose cheer_pose(float u) {
+    // Both arms up, hopping, the hands shaking.
+    const float p = 2 * std::numbers::pi_v<float> * u;
+    const float hop = std::max(0.0f, std::sin(2 * p));
+    return {{{"LeftArm", {0, 150 + 8 * std::sin(4 * p)}}, {"RightArm", {0, -150 - 8 * std::sin(4 * p)}}, {"LeftForeArm", {0, 15 * std::sin(4 * p)}}, {"RightForeArm", {0, -15 * std::sin(4 * p)}},
+             {"LeftUpLeg", {-15 * (1 - hop), 0}}, {"RightUpLeg", {-15 * (1 - hop), 0}}, {"LeftLeg", {25 * (1 - hop), 0}}, {"RightLeg", {25 * (1 - hop), 0}}, {"Head", {-10, 0}}},
+            0.95f + 0.12f * hop};
+}
+
+Pose pickup_pose(float u) {
+    // Down to the ground in front, the right hand to it, and up again.
+    auto at = [](float hips, float spine, float thigh, float knee, float arm, float elbow) {
+        return Pose{{{"Spine", {spine, 0}}, {"LeftUpLeg", {thigh, 4}}, {"RightUpLeg", {thigh, -4}}, {"LeftLeg", {knee, 0}}, {"RightLeg", {knee, 0}},
+                     {"RightArm", {arm, -6}}, {"RightForeArm", {elbow, 0}}, {"LeftArm", {-20, 12}}, {"LeftForeArm", {-30, 0}}, {"Head", {-10, 0}}},
+                    hips};
+    };
+    return keyed(u, {{0.0f, at(1.0f, 0, 0, 5, 0, -10)}, {0.4f, at(0.8f, 60, -45, 70, -75, -10)}, {0.6f, at(0.8f, 60, -45, 70, -75, -10)}, {1.0f, at(1.0f, 0, 0, 5, -20, -60)}});
+}
+
 std::vector<Clip> clips() {
     return {
         {"idle", 2.0f, 17, idle_pose},
@@ -173,6 +209,10 @@ std::vector<Clip> clips() {
         {"wave", 1.2f, 25, wave_pose},
         {"punch", 0.5f, 21, punch_pose},
         {"die", 1.0f, 21, die_pose},
+        {"sit", 3.0f, 13, sit_pose},
+        {"talk", 2.4f, 25, talk_pose},
+        {"cheer", 1.0f, 25, cheer_pose},
+        {"pickup", 1.2f, 25, pickup_pose},
     };
 }
 

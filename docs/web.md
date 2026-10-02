@@ -168,7 +168,10 @@ hero through WebGPU. `lights-web.png` and `lights-web.json` (2026-09-29) are the
 `wasm-small` build with the sun dimmed, a spot light that casts shadows and volumetric fog added
 through `pocket.command` in the page: the clustered lights, the shadow atlas and the volumetric pass
 running on WebGPU in Chromium (the beam in the air, the ball's shadow in the spot), with the render
-stats that say so.
+stats that say so. `village-web.jpg` and `village-web.json` (2026-10-02) are the village sample
+packed for the web and running in Chrome 152: its fifty built-in meshes (props and nine humanoids)
+and four pattern textures made in the page, the toon look's outlines, the villagers at their days,
+in 85 draws, with no warning in the console.
 
 ## Two runtimes: Asyncify and JSPI
 
