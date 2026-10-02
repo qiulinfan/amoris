@@ -246,10 +246,15 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     Json both = s.command("world.set", Json{{"entity", "Ball"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3.5}}}}}, {"MeshRenderer", Json{{"roughness", 0.25}}}}}}).value();
     REQUIRE(both["values"]["Transform"]["position"]["x"] == 3.5);
     REQUIRE(both["values"]["MeshRenderer"]["roughness"] == 0.25);
-    // A field named by its start is suggested whole.
-    auto pos = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"pos", Json{{"x", 1}}}}}});
-    REQUIRE_FALSE(pos.has_value());
-    REQUIRE(pos.error().message.find("did you mean 'position'") != std::string::npos);
+    // A field named by its only start, or by a short form, is that field, and the answer says so;
+    // a start two fields share is refused with both in mind.
+    Json pos = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"pos", Json{{"x", 1}}}}}}).value();
+    REQUIRE(pos["value"]["position"]["x"] == 1);
+    REQUIRE(pos["renamed"]["Transform.pos"] == "position");
+    Json made = s.command("world.spawn", Json{{"name", "Slab"}, {"components", Json{{"Transform", Json{{"pos", Json{{"y", 2}}}, {"scl", Json{{"x", 3}}}}}}}}).value();
+    REQUIRE(made["renamed"]["Transform.scl"] == "scale");
+    REQUIRE(s.command("world.get", Json{{"entity", "Slab"}, {"component", "Transform"}}).value()["scale"]["x"] == 3);
+    REQUIRE_FALSE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"clear", 0.5}}}}).has_value());   // clearcoat or clearcoat_roughness
     // world.get without a component: all of them; an id as a string; world.remove without one.
     Json all = s.command("world.get", Json{{"entity", "Ball"}}).value();
     REQUIRE(all.contains("Transform"));
@@ -5264,6 +5269,9 @@ TEST_CASE("sight and a field of view over a tile map stop at walls and at the la
     // Short of it, clear; under its end (row 5 is open), clear; the grass hides nothing by default.
     REQUIRE(sight(104.5, -2.5)["visible"] == true);
     REQUIRE(sight(109.5, -5.5)["visible"] == false);   // the line clips the wall's foot at row 4
+    // The names agents reach for to read a map: tilemap.get (a cell, else the rows), tilemap.text {entity}.
+    REQUIRE(s.command("tilemap.get", Json{{"entity", "Room"}, {"tile_x", 6}, {"tile_y", 2}, {"layer", "walls"}}).value() == s.command("tilemap.tile", Json{{"entity", "Room"}, {"tile_x", 6}, {"tile_y", 2}, {"layer", "walls"}}).value());
+    REQUIRE(s.command("tilemap.text", Json{{"entity", "Room"}}).value() == s.command("tilemap.rows", Json{{"entity", "Room"}}).value());
     REQUIRE(sight(102.5, -5.5)["visible"] == true);
     // Naming the layers that hide: the grass stops the line, the wall no longer does.
     REQUIRE(sight(104.5, -2.5, Json::array({"grass"}))["blocked_at"]["tile_x"] == 3);
@@ -5287,6 +5295,19 @@ TEST_CASE("sight and a field of view over a tile map stop at walls and at the la
     REQUIRE_FALSE(wrong.has_value());
     REQUIRE(wrong.error().code == "bad_args");
     REQUIRE(s.command("tilemap.fov", Json{{"entity", "Room"}, {"from", eye}, {"radius", 8}}).has_value());
+    // A Behavior in the room sees by the same cells: not through the wall, in the open beside it.
+    auto xy = [](double x, double y) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", 0}}}}; };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mark"}, {"components", Json{{"Transform", xy(109.5, -2.5)}}}}).has_value());
+    const Json behavior{{"target", "Mark"}, {"sight", 12},
+                        {"states", Json::array({Json{{"name", "watch"}}, Json{{"name", "alarm"}}})},
+                        {"transitions", Json::array({Json{{"from", "watch"}, {"to", "alarm"}, {"when", "sees"}}, Json{{"from", "alarm"}, {"to", "watch"}, {"when", "not sees"}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", xy(102.5, -2.5)}, {"Behavior", behavior}}}}).has_value());
+    auto state = [&] { return s.command("world.get", Json{{"entity", "Guard"}, {"component", "Behavior"}}).value()["state"].get<std::string>(); };
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(state() == "watch");
+    REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Transform"}, {"value", xy(104.5, -2.5)}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(state() == "alarm");
     REQUIRE(s.finish().has_value());
 }
 

@@ -1088,7 +1088,39 @@ void Session::run_tick() {
     update_hits(before_physics);   // the touches the 3D and 2D steps just reported
     mark(System::Hits);
     if (!behaviors_) behaviors_ = std::make_unique<Behaviors>();
-    behaviors_->step(*world_, physics_.get(), static_cast<float>(clock_.tick_seconds), options_.seed);   // after the hits, before the agents move
+    // In the XY plane, between the two positions: an orthogonal tile map's cells that hide (solid,
+    // or an `opaque` tile), and the 2D bodies but the two's own.
+    auto hidden = [this](world::EntityId self, world::EntityId other, Vec3 a, Vec3 b) {
+        auto& w = *world_;
+        bool hid = false;
+        if (assets_) {
+            w.ecs().each([&](flecs::entity e, const world::TileMap& tm) {
+                if (hid) return;
+                auto m = assets_->tilemap(tm.map);
+                if (!m || !(*m)->orthogonal()) return;
+                const double ts = tm.tile_size > 0 ? tm.tile_size : 1.0;
+                Vec3 origin{0, 0, 0};
+                if (const auto* wt = e.try_get<world::WorldTransform>()) origin = wt->position;
+                const assets::TileMap& map = **m;
+                hid = !map.line_clear((a.x - origin.x) / ts, (origin.y - a.y) / ts, (b.x - origin.x) / ts, (origin.y - b.y) / ts, [&](int x, int y) { return map.hides(x, y); });
+            });
+        }
+        if (hid || !rigid2d_ || !rigid2d_->active()) return hid;
+        auto own = [&](world::EntityId e, world::EntityId of) { return e == of || w.parent(e) == of; };
+        Vec2 from{a.x, a.y};
+        const Vec2 to{b.x, b.y};
+        for (int i = 0; i < 16; ++i) {   // past its own shapes and the map's tiles (looked at above)
+            const auto hit = rigid2d_->raycast(from, to);
+            if (!hit || own(hit->entity, other)) return false;
+            if (!own(hit->entity, self) && !w.try_get<world::TileMap>(hit->entity)) return true;
+            const Vec2 d{to.x - from.x, to.y - from.y};
+            const float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len < 1e-4f) return false;
+            from = Vec2{hit->point.x + d.x / len * 1e-3f, hit->point.y + d.y / len * 1e-3f};
+        }
+        return false;
+    };
+    behaviors_->step(*world_, physics_.get(), static_cast<float>(clock_.tick_seconds), options_.seed, hidden);   // after the hits, before the agents move
     mark(System::Behaviors);
     nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
     mark(System::Navigation);
@@ -3372,22 +3404,7 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         // The cells a segment crosses, in order (Amanatides and Woo); the first opaque one past the
         // start stops it. Answers whether it got through, and where it stopped.
         auto trace = [&](double ax, double ay, double bx, double by, int& hx, int& hy, double& t_hit) {
-            int x = static_cast<int>(std::floor(ax)), y = static_cast<int>(std::floor(ay));
-            const int ex = static_cast<int>(std::floor(bx)), ey = static_cast<int>(std::floor(by));
-            const double dx = bx - ax, dy = by - ay;
-            const int stx = dx > 0 ? 1 : -1, sty = dy > 0 ? 1 : -1;
-            const double tdx = dx != 0 ? std::fabs(1.0 / dx) : 1e30, tdy = dy != 0 ? std::fabs(1.0 / dy) : 1e30;
-            double tmx = dx != 0 ? ((dx > 0 ? std::floor(ax) + 1 - ax : ax - std::floor(ax)) * tdx) : 1e30;
-            double tmy = dy != 0 ? ((dy > 0 ? std::floor(ay) + 1 - ay : ay - std::floor(ay)) * tdy) : 1e30;
-            t_hit = 1.0;
-            for (int guard = 0; guard < 100000 && !(x == ex && y == ey); ++guard) {
-                if (tmx < tmy) { t_hit = tmx; tmx += tdx; x += stx; }
-                else { t_hit = tmy; tmy += tdy; y += sty; }
-                if (t_hit > 1.0) break;
-                if (opaque(x, y)) { hx = x; hy = y; return false; }
-            }
-            t_hit = 1.0;
-            return true;
+            return map->line_clear(ax, ay, bx, by, opaque, &hx, &hy, &t_hit);
         };
         double ax, ay;
         if (!p.contains("from")) return fail("bad_args", "tilemap.{} needs from: {{x, y}}", op);
@@ -6478,7 +6495,36 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     std::uint64_t cause = opt<std::uint64_t>(p, "cause", 0);
     // A field that holds an entity (Joint2D.body, Joint.target...) may name it: "Plank0" or a path,
     // turned into its id here, so a caller need not look ids up first.
+    // A field named by its only start of three letters or more ("pos" for "position") or by a common
+    // short form ("scl") is that field; the answer's `renamed` says what was read as what.
+    Json renamed = Json::object();
+    auto expand = [&](const std::string& comp, Json& value) {
+        if (!value.is_object()) return;
+        const auto infos = w.component_infos_all();
+        const auto ci = std::find_if(infos.begin(), infos.end(), [&](const world::ComponentInfo& c) { return c.name == comp; });
+        if (ci == infos.end()) return;
+        auto field = [&](std::string_view n) { return std::any_of(ci->fields.begin(), ci->fields.end(), [&](const world::FieldInfo& f) { return f.name == n; }); };
+        static const std::map<std::string_view, std::string_view> shorts = {{"pos", "position"}, {"rot", "rotation"}, {"scl", "scale"}, {"col", "color"}, {"colour", "color"}};
+        Json out = Json::object();
+        for (const auto& [k, v] : value.items()) {
+            std::string to;
+            if (!field(k)) {
+                if (const auto s = shorts.find(k); s != shorts.end() && field(s->second)) to = s->second;
+                else if (k.size() >= 3) {
+                    int starts = 0;
+                    for (const world::FieldInfo& f : ci->fields)
+                        if (f.name.size() > k.size() && f.name.substr(0, k.size()) == k) { to = f.name; ++starts; }
+                    if (starts != 1) to.clear();
+                }
+            }
+            if (to.empty() || value.contains(to)) { out[k] = v; continue; }   // left for the check to refuse
+            out[to] = v;
+            renamed[comp + "." + k] = to;
+        }
+        value = std::move(out);
+    };
     auto name_entities = [&](const std::string& comp, Json& value) -> Status {
+        expand(comp, value);
         if (!value.is_object()) return {};
         for (const world::ComponentInfo& info : w.component_infos_all()) {
             if (info.name != comp) continue;
@@ -6507,6 +6553,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         Json j;
         j["id"] = id;
         j["path"] = w.path(id);
+        if (!renamed.empty()) j["renamed"] = renamed;
         return j;
     }
     if (op == "destroy") {
@@ -6551,7 +6598,9 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             POCKET_TRY(now, w.get(id, cname));
             values[cname] = now;
         }
-        return Json{{"ok", true}, {"values", values}};
+        Json j{{"ok", true}, {"values", values}};
+        if (!renamed.empty()) j["renamed"] = renamed;
+        return j;
     }
     if (op == "set") {
         POCKET_TRY(id, need_entity("entity"));
@@ -6564,7 +6613,9 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         POCKET_TRY_VOID(w.set(id, comp, value, cause));
         if (opt<bool>(p, "quiet", false)) return source == "script" ? Json() : Json{{"ok", true}};   // a caller that does not read it back (the SDK: nothing to turn into a value)
         POCKET_TRY(now, w.get(id, comp));
-        return Json{{"ok", true}, {"value", now}};   // the component as it is now, the patch merged in
+        Json j{{"ok", true}, {"value", now}};   // the component as it is now, the patch merged in
+        if (!renamed.empty()) j["renamed"] = renamed;
+        return j;
     }
     if (op == "remove") {
         POCKET_TRY(id, need_entity("entity"));
@@ -7293,6 +7344,10 @@ Result<Json> Session::command(std::string_view name, const Json& params, std::st
 Result<Json> Session::run_command(std::string_view name, const Json& params, std::string_view source) {
     if (!started_) return fail("not_started", "session not started");
     const Json& given = params.is_object() ? params : Json::object();
+    // Reading a tile map under the names agents reach for first: tilemap.get (a cell when given one,
+    // else the map as rows) and tilemap.text {entity} (the map as rows).
+    if (name == "tilemap.get") name = given.contains("tile_x") || given.contains("x") ? "tilemap.tile" : "tilemap.rows";
+    else if (name == "tilemap.text" && given.contains("entity") && !given.contains("rows")) name = "tilemap.rows";
     // A parameter an agent got wrong is said at once: a key a command does not take is refused with
     // the command's parameters (it would otherwise be ignored and the call look like it worked), and
     // `path` stands for `entity` where a command takes an entity and no path.

@@ -39,7 +39,7 @@ Vec3 position_of(const world::World& w, world::EntityId id) {
 
 }  // namespace
 
-void Behaviors::step(world::World& w, const physics::Physics* physics, float dt, std::uint64_t seed) {
+void Behaviors::step(world::World& w, const physics::Physics* physics, float dt, std::uint64_t seed, const Hidden& hidden) {
     // What happened since the last tick: who was hit, which event types were emitted.
     std::set<world::EntityId> hit;
     std::set<std::string> heard;
@@ -138,6 +138,7 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
                     clear = !ray.has_value();
                 }
             }
+            if (facing && clear && hidden) clear = !hidden(id, b.target, at, to);
             sees = facing && clear ? 1 : 0;
         }
         if (sees != 0) {

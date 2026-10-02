@@ -806,6 +806,40 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("a large terrain is drawn in squares whose coarser levels stay within their errors", "[assets][terrain][lod]") {
+    const assets::Terrain t = assets::terrain_from_noise(5, 30.0f, 5, 257, {128, 128}, 16.0f);
+    const assets::Mesh m = assets::terrain_mesh(t, {}, "terrain:lod@1");
+    REQUIRE(m.chunks.size() == 64);   // 256 cells across in squares of 32
+    std::size_t grid = 0;
+    for (const assets::Submesh& sm : m.submeshes) grid += sm.index_count;
+    REQUIRE(m.submeshes.size() == 64);
+    REQUIRE(grid == 256u * 256u * 6u);   // the full grid, once: what collides
+    const std::size_t samples = 257u * 257u;
+    REQUIRE(m.vertices.size() > samples);   // the skirts' own vertices
+    for (std::size_t c = 0; c < m.chunks.size(); c += 9) {
+        const assets::TerrainChunk& ch = m.chunks[c];
+        REQUIRE(ch.levels.size() == 6);   // strides 1 to 32
+        for (std::size_t k = 0; k < ch.levels.size(); ++k) {
+            const assets::TerrainChunk::Level& l = ch.levels[k];
+            REQUIRE(l.stride == (1 << k));
+            if (k > 0) REQUIRE(l.error >= ch.levels[k - 1].error);
+            // Every point of the level's own triangles is within its error of the ground.
+            for (std::uint32_t i = l.first; i + 2 < l.first + l.count; i += 3) {
+                const std::uint32_t a = m.indices[i], b = m.indices[i + 1], d = m.indices[i + 2];
+                if (a >= samples || b >= samples || d >= samples) continue;   // a skirt
+                const Vec3 p0 = m.vertices[a].position, p1 = m.vertices[b].position, p2 = m.vertices[d].position;
+                REQUIRE(cross(p1 - p0, p2 - p0).y > 0);
+                for (float u : {0.2f, 0.45f})
+                    for (float v : {0.15f, 0.4f}) {
+                        const Vec3 q = p0 + (p1 - p0) * u + (p2 - p0) * v;
+                        REQUIRE(std::fabs(t.sample(q.x, q.z) - q.y) <= l.error + 1e-3f);
+                    }
+            }
+            REQUIRE(length(m.vertices[m.indices[l.first]].position - ch.center) <= ch.radius + 1e-3f);
+        }
+    }
+}
+
 TEST_CASE("terrains: noise from a seed, heights the mesh draws, a 16-bit PNG that reads back", "[assets][terrain]") {
     const assets::Terrain a = assets::terrain_from_noise(7, 20.0f, 4, 65, {40, 30}, 10.0f);
     const assets::Terrain b = assets::terrain_from_noise(7, 20.0f, 4, 65, {40, 30}, 10.0f);
@@ -817,13 +851,15 @@ TEST_CASE("terrains: noise from a seed, heights the mesh draws, a 16-bit PNG tha
     REQUIRE(*std::max_element(a.h.begin(), a.h.end()) == Catch::Approx(10));
     // sample() answers what the mesh's triangles hold: a point inside one is on its plane.
     const assets::Mesh m = assets::terrain_mesh(a, {}, "terrain:test@1");
-    REQUIRE(m.vertices.size() == 65u * 65u);
-    REQUIRE(m.indices.size() == 64u * 64u * 6u);
+    REQUIRE(m.vertices.size() == 65u * 65u);   // one square: no skirts
+    REQUIRE(m.submeshes.size() == 1);
+    REQUIRE(m.submeshes[0].first_index == 0);
+    REQUIRE(m.submeshes[0].index_count == 64u * 64u * 6u);
     REQUIRE(m.vertex_colors);
     REQUIRE(m.aabb_min.x == Catch::Approx(-20));
     REQUIRE(m.aabb_max.z == Catch::Approx(15));
     for (int k = 0; k < 200; ++k) {
-        const std::size_t tri = static_cast<std::size_t>((k * 7919) % (m.indices.size() / 3));
+        const std::size_t tri = static_cast<std::size_t>((k * 7919) % (m.submeshes[0].index_count / 3));
         const Vec3 p0 = m.vertices[m.indices[tri * 3]].position, p1 = m.vertices[m.indices[tri * 3 + 1]].position, p2 = m.vertices[m.indices[tri * 3 + 2]].position;
         const float u = 0.2f + 0.1f * static_cast<float>(k % 3), v = 0.25f;
         const Vec3 q = p0 + (p1 - p0) * u + (p2 - p0) * v;

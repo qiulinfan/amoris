@@ -139,6 +139,33 @@ of detail) apply to every copy on its own: the far ones draw a simpler mesh than
 hills' bushes, stones and boulders keep a third of their triangles below a twentieth of the view and
 a tenth below a fiftieth.
 
+## Levels of detail
+
+A terrain of 256 cells or more across is drawn in squares of a sixteenth of it (32 to 64 cells; a
+smaller one is a single square). Each square is a draw of its own, left out when its box is out of
+view and in the shadow cascades that do not reach it, and has levels that take every 2nd, 4th ...
+sample down to its corners alone. When the mesh is made, each level's error is measured: the most a
+sample of the full grid is above or below the level's surface (never less than the level before).
+Each frame a square is drawn at the coarsest level whose error is under 2 pixels on screen and whose
+cells are under 4 pixels across (so the per-sample colours and paint stay as sharp as they look); a
+flat square goes coarse as soon as its cells are small. Where squares at different levels meet, the
+coarser edge can stand above or below the finer one: every sample on a line between squares has a
+twin hanging below it by the worst error of any level (plus a twentieth of a cell), and each
+square's level draws its inner edges down to those twins on both sides, so a crack shows ground
+coloured skirt, not the sky. The terrain's outer edge has no skirt.
+
+The full grid is still one copy of every cell (each square's grid is a submesh after its skirts),
+and it is what collides: characters, bodies, rays and `nav.bake` see the full-resolution ground, as
+the level drawn is only a picture. The coarser levels add about a third to the index buffer, the
+skirts a few vertices per line; nothing is uploaded per frame. `render.stats.lod.simplified` counts
+the squares drawn coarser. `tools/scripts/terrain_lod_evidence.py` draws a 1024-unit terrain of 1025
+by 1025 samples from 95 units up at its southern edge at 1280 by 720
+(`tests/evidence/rendering/terrain-lod.png`): 1.01 million triangles drawn where the single mesh
+drew 2.10 million, 43 of its 256 squares out of view and 176 drawn coarser, the GPU's frame 2.1 ms
+where it was 4.9, and the picture within half a level (of 255) of the full grid's on average.
+`assets_tests` (`[terrain][lod]`) checks the squares, the strides, the errors only growing and every
+point of a level's triangles within its error of the ground.
+
 ## Commands
 
 | Command | SDK | Purpose |
@@ -218,8 +245,9 @@ paint kept through a new seed and a sculpt.
 
 ## Not yet
 
-Detail beyond the grid (holes, caves and overhangs are meshes placed on it), levels of detail and
-streaming for terrains larger than one mesh (a 1025 by 1025 grid is the limit), normal maps and
-roughness per layer (a layer brings its colour only) and more than four layers, blending by the
-images' own heights (a layer's edge is a smooth fade, not sand in the cracks between stones),
-colliders for copies other than upright capsules (a fallen log, a fence).
+Detail beyond the grid (holes, caves and overhangs are meshes placed on it), streaming for terrains
+larger than one mesh (a 1025 by 1025 grid is the limit; its squares share one vertex buffer, so the
+levels save drawing, not memory), blending between levels (a square changes level in one frame),
+normal maps and roughness per layer (a layer brings its colour only) and more than four layers,
+blending by the images' own heights (a layer's edge is a smooth fade, not sand in the cracks between
+stones), colliders for copies other than upright capsules (a fallen log, a fence).

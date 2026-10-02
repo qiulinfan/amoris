@@ -296,18 +296,127 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
             m.vertices.push_back(v);
         }
     }
+    auto idx = [n](int i, int j) { return static_cast<std::uint32_t>(j * n + i); };
+    // The samples along a side from a to b every s, b always among them.
+    auto samples = [](int a, int b, int s) {
+        std::vector<int> v;
+        for (int i = a; i < b; i += s) v.push_back(i);
+        v.push_back(b);
+        return v;
+    };
+    // The cells between those samples, each split along a-d (the diagonal sample() follows), wound
+    // counter-clockwise seen from above.
+    auto grid = [&](std::vector<std::uint32_t>& out, const std::vector<int>& xs, const std::vector<int>& zs) {
+        for (std::size_t b = 0; b + 1 < zs.size(); ++b)
+            for (std::size_t a = 0; a + 1 < xs.size(); ++a) {
+                const std::uint32_t p = idx(xs[a], zs[b]), q = idx(xs[a + 1], zs[b]), r = idx(xs[a], zs[b + 1]), s = idx(xs[a + 1], zs[b + 1]);
+                out.insert(out.end(), {p, s, q, p, r, s});
+            }
+    };
     m.indices.reserve(static_cast<std::size_t>(n - 1) * static_cast<std::size_t>(n - 1) * 6);
-    for (int j = 0; j + 1 < n; ++j) {
-        for (int i = 0; i + 1 < n; ++i) {
-            const auto a = static_cast<std::uint32_t>(j * n + i), b = a + 1, c = a + static_cast<std::uint32_t>(n), d = c + 1;
-            // Split along a-d (the diagonal sample() follows), wound counter-clockwise seen from above.
-            m.indices.insert(m.indices.end(), {a, d, b, a, c, d});
+    grid(m.indices, samples(0, n - 1, 1), samples(0, n - 1, 1));
+    fill_tangents(m);   // from the full grid alone: the skirts and the coarser levels add nothing to them
+    m.indices.clear();
+    // Chunks (docs/design/terrain.md, Levels of detail): a grid of 256 cells or more across is cut
+    // into squares of an eighth of it (32 to 128 cells), a smaller one is a single square; each
+    // square has levels taking every 2nd, 4th ... sample, down to its corners alone.
+    const int cells = n - 1;
+    const int side = cells >= 256 ? std::clamp(cells / 16, 32, 64) : std::max(cells, 1);
+    auto h = [&](int i, int j) { return m.vertices[idx(i, j)].position.y; };
+    // How far the full grid's samples are from a level's surface over a square.
+    auto level_error = [&](const std::vector<int>& xs, const std::vector<int>& zs) {
+        float e = 0;
+        for (std::size_t b = 0; b + 1 < zs.size(); ++b)
+            for (std::size_t a = 0; a + 1 < xs.size(); ++a) {
+                const int xa = xs[a], xb = xs[a + 1], za = zs[b], zb = zs[b + 1];
+                if (xb - xa < 2 && zb - za < 2) continue;
+                const float h00 = h(xa, za), h10 = h(xb, za), h01 = h(xa, zb), h11 = h(xb, zb);
+                for (int j = za; j <= zb; ++j)
+                    for (int i = xa; i <= xb; ++i) {
+                        const float u = static_cast<float>(i - xa) / static_cast<float>(xb - xa), v = static_cast<float>(j - za) / static_cast<float>(zb - za);
+                        const float on = u >= v ? h00 + u * (h10 - h00) + v * (h11 - h10) : h00 + v * (h01 - h00) + u * (h11 - h01);
+                        e = std::max(e, std::fabs(h(i, j) - on));
+                    }
+            }
+        return e;
+    };
+    struct Square { int i0, i1, j0, j1; std::vector<int> strides; std::vector<float> errors; };
+    std::vector<Square> squares;
+    float deepest = 0;
+    for (int j0 = 0; j0 < cells; j0 += side)
+        for (int i0 = 0; i0 < cells; i0 += side) {
+            Square sq{i0, std::min(i0 + side, cells), j0, std::min(j0 + side, cells), {}, {}};
+            float worst = 0;
+            for (int s = 1;; s *= 2) {
+                worst = std::max(worst, s == 1 ? 0.0f : level_error(samples(sq.i0, sq.i1, s), samples(sq.j0, sq.j1, s)));
+                sq.strides.push_back(s);
+                sq.errors.push_back(worst);
+                if (s >= sq.i1 - sq.i0 && s >= sq.j1 - sq.j0) break;
+            }
+            deepest = std::max(deepest, worst);
+            squares.push_back(std::move(sq));
+        }
+    // Skirts: every sample on a line between squares has a twin below it, as deep as the worst
+    // error of any level plus a little, so a crack between two levels shows the skirt, not the sky.
+    const float cell = std::max(t.cell_x(), t.cell_z());
+    const float depth = deepest + 0.05f * cell;
+    std::vector<std::uint32_t> twin(static_cast<std::size_t>(n) * static_cast<std::size_t>(n), 0);
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const bool on_line = (i % side == 0 && i > 0 && i < cells) || (j % side == 0 && j > 0 && j < cells);
+            if (!on_line) continue;
+            MeshVertex v = m.vertices[idx(i, j)];
+            v.position.y -= depth;
+            twin[idx(i, j)] = static_cast<std::uint32_t>(m.vertices.size());
+            m.vertices.push_back(v);
+        }
+    // A square's skirts at a stride, on its edges inside the grid, seen from both sides.
+    auto skirts = [&](std::vector<std::uint32_t>& out, const Square& sq, int s) {
+        auto edge = [&](bool along_x, int fixed, int a, int b) {
+            const std::vector<int> at = samples(a, b, s);
+            for (std::size_t k = 0; k + 1 < at.size(); ++k) {
+                const std::uint32_t p = along_x ? idx(at[k], fixed) : idx(fixed, at[k]), q = along_x ? idx(at[k + 1], fixed) : idx(fixed, at[k + 1]);
+                const std::uint32_t pl = twin[p], ql = twin[q];
+                out.insert(out.end(), {p, q, ql, p, ql, pl, p, ql, q, p, pl, ql});
+            }
+        };
+        if (sq.i0 > 0) edge(false, sq.i0, sq.j0, sq.j1);
+        if (sq.i1 < cells) edge(false, sq.i1, sq.j0, sq.j1);
+        if (sq.j0 > 0) edge(true, sq.j0, sq.i0, sq.i1);
+        if (sq.j1 < cells) edge(true, sq.j1, sq.i0, sq.i1);
+    };
+    // The full grids first, each square's after its skirts (the grids are the submeshes, which
+    // collide; level 0 draws both), then every coarser level with its skirts.
+    for (const Square& sq : squares) {
+        TerrainChunk ch;
+        ch.cell = cell;
+        float y0 = 1e30f, y1 = -1e30f;
+        for (int j = sq.j0; j <= sq.j1; ++j)
+            for (int i = sq.i0; i <= sq.i1; ++i) { y0 = std::min(y0, h(i, j)); y1 = std::max(y1, h(i, j)); }
+        y0 -= depth;
+        const Vec3 lo3{m.vertices[idx(sq.i0, sq.j0)].position.x, y0, m.vertices[idx(sq.i0, sq.j0)].position.z};
+        const Vec3 hi3{m.vertices[idx(sq.i1, sq.j1)].position.x, y1, m.vertices[idx(sq.i1, sq.j1)].position.z};
+        ch.center = (lo3 + hi3) * 0.5f;
+        ch.radius = length(hi3 - lo3) * 0.5f;
+        const auto first = static_cast<std::uint32_t>(m.indices.size());
+        skirts(m.indices, sq, 1);
+        Submesh sm;
+        sm.first_index = static_cast<std::uint32_t>(m.indices.size());
+        grid(m.indices, samples(sq.i0, sq.i1, 1), samples(sq.j0, sq.j1, 1));
+        sm.index_count = static_cast<std::uint32_t>(m.indices.size()) - sm.first_index;
+        m.submeshes.push_back(sm);
+        ch.levels.push_back({first, static_cast<std::uint32_t>(m.indices.size()) - first, 1, 0.0f});
+        m.chunks.push_back(std::move(ch));
+    }
+    for (std::size_t c = 0; c < squares.size(); ++c) {
+        const Square& sq = squares[c];
+        for (std::size_t k = 1; k < sq.strides.size(); ++k) {
+            const auto first = static_cast<std::uint32_t>(m.indices.size());
+            grid(m.indices, samples(sq.i0, sq.i1, sq.strides[k]), samples(sq.j0, sq.j1, sq.strides[k]));
+            skirts(m.indices, sq, sq.strides[k]);
+            m.chunks[c].levels.push_back({first, static_cast<std::uint32_t>(m.indices.size()) - first, sq.strides[k], sq.errors[k]});
         }
     }
-    Submesh sm;
-    sm.index_count = static_cast<std::uint32_t>(m.indices.size());
-    m.submeshes.push_back(sm);
-    fill_tangents(m);
     Material mat;
     mat.name = "terrain";
     mat.roughness = 0.95f;

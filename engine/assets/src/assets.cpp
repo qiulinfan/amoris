@@ -524,6 +524,44 @@ Json TileMap::to_json() const {
 
 bool TileMap::solid_at(int x, int y) const { return solidity_at(x, y) == 1; }
 
+bool TileMap::hides(int x, int y) const {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+    for (const TileLayer& l : layers) {
+        if (x >= l.width || y >= l.height) continue;
+        const std::uint32_t gid = l.gids[static_cast<std::size_t>(y) * static_cast<std::size_t>(l.width) + static_cast<std::size_t>(x)];
+        if (!gid) continue;
+        if (const TileSet* set = tileset_for(gid)) {
+            const int local = static_cast<int>((gid & kIdMask) - set->first_gid);
+            if (auto it = set->tile_properties.find(local); it != set->tile_properties.end() && it->second.contains("opaque") && it->second["opaque"].is_boolean()) return it->second["opaque"].get<bool>();
+        }
+    }
+    return solidity_at(x, y) == 1;
+}
+
+bool TileMap::line_clear(double ax, double ay, double bx, double by, const std::function<bool(int, int)>& opaque, int* hit_x, int* hit_y, double* along) const {
+    int x = static_cast<int>(std::floor(ax)), y = static_cast<int>(std::floor(ay));
+    const int ex = static_cast<int>(std::floor(bx)), ey = static_cast<int>(std::floor(by));
+    const double dx = bx - ax, dy = by - ay;
+    const int stx = dx > 0 ? 1 : -1, sty = dy > 0 ? 1 : -1;
+    const double tdx = dx != 0 ? std::fabs(1.0 / dx) : 1e30, tdy = dy != 0 ? std::fabs(1.0 / dy) : 1e30;
+    double tmx = dx != 0 ? ((dx > 0 ? std::floor(ax) + 1 - ax : ax - std::floor(ax)) * tdx) : 1e30;
+    double tmy = dy != 0 ? ((dy > 0 ? std::floor(ay) + 1 - ay : ay - std::floor(ay)) * tdy) : 1e30;
+    double t = 1.0;
+    for (int guard = 0; guard < 100000 && !(x == ex && y == ey); ++guard) {
+        if (tmx < tmy) { t = tmx; tmx += tdx; x += stx; }
+        else { t = tmy; tmy += tdy; y += sty; }
+        if (t > 1.0) break;
+        if (opaque(x, y)) {
+            if (hit_x) *hit_x = x;
+            if (hit_y) *hit_y = y;
+            if (along) *along = t;
+            return false;
+        }
+    }
+    if (along) *along = 1.0;
+    return true;
+}
+
 int TileMap::solidity_at(int x, int y) const {
     int best = 0;
     for (const TileLayer& l : layers) {

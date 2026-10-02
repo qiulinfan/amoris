@@ -3414,6 +3414,7 @@ struct Renderer::Impl {
         std::uint32_t morph_base = 0, morph_targets = 0, morph_vertices = 0;  // the asset's deltas in the morph buffer
         std::uint64_t revision = 0;   // the asset's revision uploaded (cloth: written again in place when it moves on)
         std::uint32_t vertex_count = 0;
+        std::vector<assets::TerrainChunk> chunks;   // a terrain's squares, each drawn on its own at its level
     };
     std::map<std::string, AssetMesh> asset_meshes;
     // Levels of detail (docs/design/rendering.md): a mesh's vertices with fewer triangles, an index
@@ -8237,6 +8238,7 @@ fn time() -> f32 { return fx.time.x; }
         am.gpu.aabb_max = src.aabb_max;
         am.submeshes = src.submeshes;
         am.materials = src.materials;
+        am.chunks = src.chunks;
         if (!src.morph_targets.empty()) {
             // The targets' deltas appended to the morph buffer: per target, per vertex, position then normal.
             const std::uint32_t targets = std::min<std::uint32_t>(static_cast<std::uint32_t>(src.morph_targets.size()), kMaxMorphTargets);
@@ -9321,6 +9323,41 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
                 im.report_missing(mesh_path + "#" + mr.node, "no such node in the file");
                 return;
             }
+        }
+        // A terrain's squares (docs/design/terrain.md, Levels of detail): each a draw on its own
+        // bounds, whose levels are allowed while a sample's height error stays under a pixel and a
+        // cell under four: for an error e at distance w, e * P11 / w * H / 2 <= 1, so the level
+        // goes in at a screen fraction (r * P11 / w) of 2r / (H e).
+        if (!am->chunks.empty() && only < 0 && !am->materials.empty()) {
+            const assets::Material& mat = am->materials.front();
+            const Vec4 color{decode(mr.color.r) * mat.base_color.x, decode(mr.color.g) * mat.base_color.y, decode(mr.color.b) * mat.base_color.z, mr.color.a * mat.base_color.w};
+            const float across = std::max({std::fabs(t.scale.x), std::fabs(t.scale.z), 1e-6f});
+            const float grow = std::max(across, std::fabs(t.scale.y));
+            const float up = std::max(std::fabs(t.scale.y), 1e-6f);
+            const float view_h = static_cast<float>(std::max(1u, frame.height));
+            for (const assets::TerrainChunk& ch : am->chunks) {
+                if (ch.levels.empty()) continue;
+                const float r = ch.radius * grow;
+                std::shared_ptr<std::vector<LodLevel>> lv;
+                float last = 1e30f;
+                for (std::size_t k = 1; k < ch.levels.size(); ++k) {
+                    const assets::TerrainChunk::Level& l = ch.levels[k];
+                    float at = 2.0f * 4.0f * r / (view_h * static_cast<float>(l.stride) * ch.cell * across);
+                    if (l.error > 0) at = std::min(at, 2.0f * 2.0f * r / (view_h * l.error * up));
+                    last = std::min(last, at);
+                    if (!lv) lv = std::make_shared<std::vector<LodLevel>>();
+                    lv->push_back({last, &am->gpu, l.first, l.count, mesh_path});
+                }
+                pending_lods = lv;
+                const std::size_t before = draws.size();
+                push(&am->gpu, ch.levels[0].first, ch.levels[0].count, mr.texture.empty() ? mat.texture : mr.texture, color, mesh_path, &mat);
+                if (draws.size() > before) {
+                    draws.back().center = model.transform_point(ch.center);
+                    draws.back().radius = r;
+                }
+            }
+            pending_lods = nullptr;
+            return;
         }
         // A posed skin: its joint matrices go into the joint buffer once per entity and skin.
         const Pose* pose = animation ? animation->pose(e.id()) : nullptr;

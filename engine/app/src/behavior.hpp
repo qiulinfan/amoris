@@ -7,6 +7,7 @@
 #include <pocket/world/world.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -17,7 +18,10 @@ class Behaviors {
    public:
     // Each enabled Behavior: perceive (distance, sight, health, hits, events since the last tick),
     // take the first transition that holds, and drive its NavAgent for the state it is in.
-    void step(world::World& w, const physics::Physics* physics, float dt, std::uint64_t seed);
+    // `hidden(self, target, from, to)` says whether what the 3D ray does not see blocks the line
+    // between the two in the XY plane (a tile map's walls, the 2D bodies).
+    using Hidden = std::function<bool(world::EntityId, world::EntityId, Vec3, Vec3)>;
+    void step(world::World& w, const physics::Physics* physics, float dt, std::uint64_t seed, const Hidden& hidden = {});
 
    private:
     struct Compiled {

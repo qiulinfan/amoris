@@ -50,7 +50,9 @@ taken; at most one a tick. A condition is written as an `AnimationGraph`'s is (c
 - `distance`: to the target (a billion with none), from the entities' origins;
 - `sees`: 1 when the target is within `sight`, within `fov` degrees of where the entity faces (its
   -Z, turned about the vertical), and no collider stands on the line between `eye` above the two
-  origins (the two themselves, their children and triggers aside);
+  origins (the two themselves, their children and triggers aside). In a 2D game the line between the
+  two origins in the XY plane must also be clear of an orthogonal tile map's cells that hide (solid
+  ones, or tiles with an `opaque` property, as for `tilemap.sight`) and of the 2D bodies;
 - `unseen`: seconds since it last saw the target (since it started, when it never has), kept in
   `unseen` with where the target was, `seen_at`; so "not seen for 2 seconds" is `unseen > 2`;
 - `time`: seconds in the state;
@@ -84,13 +86,13 @@ mark brought within 5 (with `behavior.changed` and `guard.alerted`), flees 6 awa
 set under 30, takes the state written into it with that state's entry, and says a transition to a
 state that does not exist; a watching guard sees a mark in the open but not behind a pillar, nor
 past its sight, nor behind it with a field of view of 90 degrees; a patrol heads for a path's first
-point, then its second once there.
+point, then its second once there. `[tilemap][sight]`: a guard in a tile room does not see a mark
+behind a wall column and sees it once it is in the open.
 
 ## Not yet
 
 No nested machines or behavior trees; the perception is of one target, by distance and a ray (no
 hearing radius; what it remembers is where it last saw the target and when). A field of view
 narrower than 360 degrees reads where the entity faces, so its `NavAgent` should have `face` on (it
-turns the entity toward where it walks) or the game should turn it. Sight is a ray against the 3D
-colliders: in a 2D game the tile map's walls and the 2D bodies do not block it, and facing is about
-the vertical, not in the XY plane.
+turns the entity toward where it walks) or the game should turn it. Facing is about the vertical, so
+in a 2D game a field of view does not apply (leave `fov` at 360).

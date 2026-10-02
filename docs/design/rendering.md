@@ -412,7 +412,9 @@ distance; skinned meshes keep their detail. `render.stats.lod` counts the draws 
 culled, and `render.stats.triangles` the triangles drawn (every copy and level counted, before the
 view's culling): the hills' scatters with two levels draw 1.15 million triangles where they drew
 1.46 million (`tests/evidence/rendering/lod-levels.png` shows a sphere whole and at a quarter, a
-twelfth and a fiftieth of its triangles). The shadow passes draw the level the camera chose.
+twelfth and a fiftieth of its triangles). The shadow passes draw the level the camera chose. A
+terrain has levels of its own, per square of its grid and chosen by their measured height error
+(`docs/design/terrain.md`, Levels of detail).
 
 ## Cut-outs
 

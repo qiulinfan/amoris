@@ -98,7 +98,7 @@ afterwards.
 
 ### Whole games
 
-Five tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
+Seven tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
 brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
 units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and
 `time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key,
@@ -107,17 +107,24 @@ straight back, `game.over` at the edge), `pause_menu` (a title screen with a `st
 `pause` action that stops the game and shows `resume` and `restart` buttons, `screen` and `time`
 exposed) and `breakout` (a paddle, a ball moved by its `Velocity`, thirty-two bricks, lives,
 `level.clear` and `game.over`; at 203 words its brief is the longest, the geometry being part of the
-contract). The brief is a contract: the names of the entities, the actions and their keys, the
-events with their data, the exposed values, and that the game reads positions from the Transforms
-every tick, so the check can move things with `world.set`. The check is hidden in the harness and
-plays the game: it holds `move_x` for a second and measures the move, counts the rocks and times
-one's fall, puts a rock on the player and waits for `game.over`, then holds the actions again and
-expects nothing to move; for the door it starts the player between the key and the door and walks it
-into the door, puts it on the key, and walks it to the exit; the menu it clicks through by the
-buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and reading `time`; the
-breakout it plays by setting the ball's place and velocity: up into a brick, into a wall, onto the
-paddle, past it, into the last brick left, and, after `project.reload`, past the paddle three times.
-None of it is in the brief beyond the contract.
+contract), `platformer` (a tile map drawn from eight rows given in the brief, a `Body2D` player that
+walks at 6 and jumps at 11, a pit that kills, a flag that ends the level; the runner draws its own
+tiles) and `sokoban` (six rows, two boxes, pushes stopped by walls and by a second box, an `undo`
+action, `level.solved` with the move count). The brief is a contract: the names of the entities, the
+actions and their keys, the events with their data, the exposed values, and that the game reads
+positions from the Transforms every tick, so the check can move things with `world.set`. The check
+is hidden in the harness and plays the game: it holds `move_x` for a second and measures the move,
+counts the rocks and times one's fall, puts a rock on the player and waits for `game.over`, then
+holds the actions again and expects nothing to move; for the door it starts the player between the
+key and the door and walks it into the door, puts it on the key, and walks it to the exit; the menu
+it clicks through by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen
+and reading `time`; the breakout it plays by setting the ball's place and velocity: up into a brick,
+into a wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past
+the paddle three times; the platformer it reads back as solid rows (`tilemap.rows`), walks, follows
+through a jump with `step {watch}`, drops into the pit and walks onto the flag; the puzzle it plays
+by presses only (the game may keep its own grid), into a wall, into two boxes, a move and its undo,
+a push into a wall, and the four moves that solve it. None of it is in the brief beyond the
+contract.
 
 ### Diagnose and fix
 

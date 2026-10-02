@@ -44,6 +44,22 @@ struct TerrainLayers {
     std::vector<std::uint8_t> weights;   // n * n * 4: each layer's share at a sample (0..255, together 255), in the heights' order
 };
 
+// A square of a terrain's grid drawn on its own (docs/design/terrain.md, Levels of detail): its
+// levels take every stride-th sample, and the renderer draws the coarsest whose height error and
+// cells stay small on screen. Skirts hanging from its inner edges hide the cracks between squares
+// drawn at different levels.
+struct TerrainChunk {
+    struct Level {
+        std::uint32_t first = 0, count = 0;   // its triangles and skirts in Mesh::indices
+        int stride = 1;                       // samples per step
+        float error = 0;                      // the most a sample's height is off the level's surface
+    };
+    Vec3 center{0, 0, 0};       // its box (skirts included) in the mesh's space: centre and half diagonal
+    float radius = 0;
+    float cell = 0;             // the grid's larger cell side
+    std::vector<Level> levels;  // the full grid first, then coarser
+};
+
 struct Material {
     Vec4 base_color{1, 1, 1, 1};  // linear RGBA
     std::string texture;       // project-relative image path, empty for none
@@ -193,6 +209,7 @@ struct Mesh {
     std::vector<float> default_weights;     // one per target, from the file's mesh weights (zeros otherwise)
     std::vector<LightDef> lights;
     std::vector<CameraDef> cameras;
+    std::vector<TerrainChunk> chunks;       // a terrain's squares (its submeshes are their full grids, which collide)
     std::string importer = "gltf";          // how the file was read: gltf, obj, stl, or blender (converted to glTF by Blender)
     std::string converted;                  // for blender: the project-relative glTF it became
     [[nodiscard]] bool skinned() const { return !skin_vertices.empty(); }
@@ -355,6 +372,13 @@ struct TileMap {
     // 1 for a floor rising to the right, -1 rising to the left (a horizontally flipped slope tile
     // counts the other way), 0 for no slope at the cell.
     [[nodiscard]] int slope_at(int x, int y) const;
+    // Sight (docs/design/tilemaps.md, Sight). Whether a cell hides what is behind it: solid (not one
+    // way), unless a tile on it says otherwise with an `opaque` property.
+    [[nodiscard]] bool hides(int x, int y) const;
+    // Whether a segment between two points in cell units (y down the map) crosses no cell `opaque`
+    // calls hiding, past the one it starts in (Amanatides and Woo). When not: the cell that stopped
+    // it and how far along the segment, 0..1.
+    [[nodiscard]] bool line_clear(double ax, double ay, double bx, double by, const std::function<bool(int, int)>& opaque, int* hit_x = nullptr, int* hit_y = nullptr, double* along = nullptr) const;
     [[nodiscard]] Json describe() const;
 };
 

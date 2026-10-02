@@ -23,11 +23,11 @@ ENV = dict(os.environ, DEVELOPER_DIR=os.environ.get("DEVELOPER_DIR", "/Library/D
 
 
 class Runtime:
-    def __init__(self, sample, port=4770, size="960x540", release=False, editor=False, extra=()):
+    def __init__(self, sample, port=4770, size="960x540", release=False, editor=False, extra=(), exe=None):
         config = "release" if release else "debug"
         project = sample if os.path.isabs(sample) else os.path.join(ROOT, "samples", sample)
         name = os.path.basename(project.rstrip("/"))
-        args = [os.path.join(ROOT, "build", config, "bin", "pocket_runtime"), "--project", project,
+        args = [exe or os.path.join(ROOT, "build", config, "bin", "pocket_runtime"), "--project", project,
                 "--bundle", os.path.join(ROOT, "build", "ts", name + ".js"), "--headless", "--serve", str(port),
                 "--paused", "--json", "--size", size, "--frames", "1000000", "--log-level", "warn", *extra]
         if editor:

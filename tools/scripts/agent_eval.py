@@ -2116,6 +2116,290 @@ def watchman_solve(env, project_dir):
     return None
 
 
+PLATFORMER_ROWS = [
+    "........................",
+    "........................",
+    "..................F.....",
+    "...............######...",
+    "........###.............",
+    "P.......................",
+    "#######...######...#####",
+    "#######...######...#####",
+]
+PLATFORMER_TOML = GAME_TOML + 'jump = ["Space", "W", "Up"]\n'
+PLATFORMER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#6b4f3a"/><rect width="16" height="4" fill="#79b04a"/></svg>\n'
+PLATFORMER_TS = """import { events, expose, input, onStart, onTick, tilemap, world } from "pocket";
+const ROWS = %s;
+const SPEED = 6;
+const JUMP = 11;
+let player = 0;
+let camera = 0;
+let deaths = 0;
+let complete = false;
+const cell = (ch: string) => {
+    const row = ROWS.findIndex((r) => r.includes(ch));
+    return { x: ROWS[row].indexOf(ch) + 0.5, y: -(row + 0.5) };
+};
+const start = cell("P");
+const flag = cell("F");
+onStart(() => {
+    tilemap.fromText("maps/level.tmj", {
+        rows: ROWS,
+        legend: { "#": { layer: "ground", tile: 0 }, ".": null, P: null, F: null },
+        tilesets: [{ image: "assets/tiles.svg", tile_width: 32, tile_height: 32 }],
+        layers: [{ name: "ground", solid: true }],
+        tile_width: 32,
+        tile_height: 32,
+    });
+    world.spawn("Level", { components: { Transform: { position: { x: 0, y: 0, z: 0 } }, TileMap: { map: "maps/level.tmj" } } });
+    world.spawn("Flag", { components: { Transform: { position: { x: flag.x, y: flag.y, z: 0 } }, Sprite: { size: { x: 0.3, y: 1 }, color: { r: 1, g: 0.85, b: 0.2, a: 1 } } } });
+    player = world.spawn("Player", { components: { Transform: { position: { x: start.x, y: start.y, z: 0 } }, Sprite: { size: { x: 0.8, y: 0.9 }, color: { r: 0.3, g: 0.6, b: 1, a: 1 } }, Body2D: { size: { x: 0.4, y: 0.45 } } } });
+    camera = world.spawn("Camera", { components: { Transform: { position: { x: start.x, y: -4, z: 10 } }, Camera: { orthographic: true, ortho_size: 5 } } });
+});
+onTick(() => {
+    const body = world.get(player, "Body2D")!;
+    if (complete) {
+        world.set(player, "Body2D", { velocity: { x: 0, y: body.velocity.y } });
+        return;
+    }
+    const vy = input.pressed("jump") && body.grounded ? JUMP : body.velocity.y;
+    world.set(player, "Body2D", { velocity: { x: input.axis("move_x") * SPEED, y: vy } });
+    const p = world.get(player, "Transform")!.position;
+    world.set(camera, "Transform", { position: { x: p.x, y: -4, z: 10 } });
+    if (p.y < -12) {
+        deaths++;
+        events.emit("player.died", { deaths });
+        world.set(player, "Transform", { position: { x: start.x, y: start.y, z: 0 } });
+        world.set(player, "Body2D", { velocity: { x: 0, y: 0 } });
+    } else if (Math.hypot(p.x - flag.x, p.y - flag.y) < 0.8) {
+        complete = true;
+        events.emit("level.complete", { deaths });
+    }
+});
+expose("deaths", () => deaths);
+expose("complete", () => complete);
+""" % json.dumps(PLATFORMER_ROWS)
+
+
+def platformer_solve(env, project_dir):
+    write_game(project_dir, "platformer", PLATFORMER_TS)
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(PLATFORMER_TOML.format(name=os.path.basename(project_dir)))
+    os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
+    with open(os.path.join(project_dir, "assets", "tiles.svg"), "w") as f:
+        f.write(PLATFORMER_SVG)
+    return None
+
+
+def platformer_check(env, answer):
+    actions = env.command("input.actions", {})
+    for a in ("move_x", "jump"):
+        if a not in actions:
+            return False, f"no {a} action (actions: {sorted(actions)[:8]})"
+    try:
+        solid = env.command("tilemap.rows", {"entity": "Level", "solid": True})
+    except Exception as e:   # noqa: BLE001 (no Level or no map: said)
+        return False, f"no tile map entity Level: {e}"
+    rows = solid.get("rows") or (solid.get("layers") or [{}])[0].get("rows") or []
+    want = ["".join("#" if c == "#" else "." for c in r) for r in PLATFORMER_ROWS]
+    if [r[:24] for r in rows[:8]] != want:
+        return False, f"the Level's solid cells read {rows[:8]}, not the rows of the brief"
+    lo = env.command("world.get", {"entity": "Level", "component": "Transform"}) or {}
+    if not (near(lo.get("position", {}).get("x", 0), 0, 0.01) and near(lo.get("position", {}).get("y", 0), 0, 0.01)):
+        return False, f"the Level's corner is at {lo.get('position')}, not (0, 0)"
+    body = env.command("world.get", {"entity": "Player", "component": "Body2D"})
+    if not body:
+        return False, "no Player with a Body2D"
+    state = lambda: env.command("state", {})["state"]  # noqa: E731
+    put = lambda x, y: (env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": x, "y": y}}}),  # noqa: E731
+                        env.command("world.set", {"entity": "Player", "component": "Body2D", "value": {"velocity": {"x": 0, "y": 0}}}))
+    env.command("step", {"ticks": 60})
+    p = entity_pos(env, "Player")
+    body = env.command("world.get", {"entity": "Player", "component": "Body2D"})
+    if not body["grounded"] or not near(p["x"], 0.5, 0.2) or not (-6 < p["y"] < -5):
+        return False, f"a second after the start the Player is at {p}, grounded {body['grounded']}, not standing at the start"
+    rest = p["y"]
+    # Walking: 6 units a second.
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    q = entity_pos(env, "Player")
+    if not near(q["x"] - p["x"], 3, 0.35):
+        return False, f"half a second of move_x moved the Player from x {p['x']:.2f} to {q['x']:.2f}, not 3 units"
+    # A jump from the ground: up about 2.5 units and down again.
+    put(3.5, rest)
+    env.command("step", {"ticks": 5})
+    env.command("input.press", {"action": "jump"})
+    r = env.command("step", {"ticks": 70, "watch": ["Player:Transform.position.y"]})
+    w = r.get("watch") or {}
+    w = w.get("Player:Transform.position.y", w) if isinstance(w, dict) else (w[0] if w else {})
+    top = w.get("max")
+    if top is None or not near(top - rest, 2.52, 0.4):
+        return False, f"a jump from y {rest:.2f} rose to {top}, not about 2.5 units higher (watch {w})"
+    if not near(entity_pos(env, "Player")["y"], rest, 0.05):
+        return False, f"a jump on flat ground came down at y {entity_pos(env, 'Player')['y']:.2f}, not {rest:.2f}"
+    # A pit: below y -12 the Player dies and starts again.
+    seq = env.command("events.last_seq", {})["seq"]
+    put(8.5, -5.5)
+    env.command("step", {"ticks": 90})
+    died = env.command("events.since", {"seq": seq, "type": "player.died"})["events"]
+    p = entity_pos(env, "Player")
+    if not died or state().get("deaths") != 1 or not near(p["x"], 0.5, 0.3):
+        return False, f"dropped into the pit at x 8.5: player.died {bool(died)}, deaths {state().get('deaths')}, the Player at {p}"
+    # The flag ends the level, and then the Player no longer walks.
+    seq = env.command("events.last_seq", {})["seq"]
+    put(17.2, -2.55)
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    done = env.command("events.since", {"seq": seq, "type": "level.complete"})["events"]
+    if not done or state().get("complete") is not True:
+        return False, f"walking right on the top platform from x 17.2 to the flag: level.complete {bool(done)}, complete {state().get('complete')}"
+    x = entity_pos(env, "Player")["x"]
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    if abs(entity_pos(env, "Player")["x"] - x) > 0.05:
+        return False, "after level.complete move_x still moves the Player"
+    return True, f"the level's solid cells, standing at the start, walking at 6, a jump of {top - rest:.2f}, a death in the pit, the flag"
+
+
+SOKOBAN_ROWS = [
+    "######",
+    "#.x..#",
+    "#@$$x#",
+    "#....#",
+    "######",
+]
+SOKOBAN_TOML = GAME_TOML + 'undo = ["Z"]\n'
+SOKOBAN_TS = """import { events, expose, input, onStart, onTick, world } from "pocket";
+const ROWS = %s;
+type Cell = { c: number; r: number };
+const walls = new Set<string>();
+const goals: Cell[] = [];
+const key = (c: number, r: number) => `${c},${r}`;
+let player: Cell = { c: 0, r: 0 };
+const boxes: Cell[] = [];
+const ids: number[] = [];
+let playerId = 0;
+let moves = 0;
+let solved = false;
+const history: { player: Cell; boxes: Cell[] }[] = [];
+const place = (id: number, at: Cell) => world.set(id, "Transform", { position: { x: at.c, y: -at.r, z: 0.1 } });
+function draw() {
+    place(playerId, player);
+    boxes.forEach((b, i) => place(ids[i], b));
+}
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 2.5, y: -2, z: 10 } }, Camera: { orthographic: true, ortho_size: 4 } } });
+    ROWS.forEach((row, r) => [...row].forEach((ch, c) => {
+        if (ch === "#") {
+            walls.add(key(c, r));
+            world.spawn(`Wall_${c}_${r}`, { components: { Transform: { position: { x: c, y: -r, z: 0 } }, Sprite: { size: { x: 1, y: 1 }, color: { r: 0.35, g: 0.35, b: 0.4, a: 1 } } } });
+        } else if (ch === "x") {
+            goals.push({ c, r });
+            world.spawn(`Goal_${goals.length - 1}`, { components: { Transform: { position: { x: c, y: -r, z: 0 } }, Sprite: { size: { x: 0.5, y: 0.5 }, color: { r: 0.9, g: 0.8, b: 0.2, a: 1 } } } });
+        } else if (ch === "@") player = { c, r };
+        else if (ch === "$") boxes.push({ c, r });
+    }));
+    playerId = world.spawn("Player", { components: { Transform: { position: { x: player.c, y: -player.r, z: 0.1 } }, Sprite: { size: { x: 0.8, y: 0.8 }, color: { r: 0.3, g: 0.6, b: 1, a: 1 } } } });
+    boxes.forEach((b, i) => ids.push(world.spawn(`Box_${i}`, { components: { Transform: { position: { x: b.c, y: -b.r, z: 0.1 } }, Sprite: { size: { x: 0.9, y: 0.9 }, color: { r: 0.7, g: 0.45, b: 0.2, a: 1 } } } })));
+});
+function step(dc: number, dr: number) {
+    const to = { c: player.c + dc, r: player.r + dr };
+    if (walls.has(key(to.c, to.r))) return;
+    const hit = boxes.findIndex((b) => b.c === to.c && b.r === to.r);
+    const before = { player: { ...player }, boxes: boxes.map((b) => ({ ...b })) };
+    if (hit >= 0) {
+        const past = { c: to.c + dc, r: to.r + dr };
+        if (walls.has(key(past.c, past.r)) || boxes.some((b) => b.c === past.c && b.r === past.r)) return;
+        boxes[hit] = past;
+    }
+    history.push(before);
+    player = to;
+    moves++;
+    draw();
+    events.emit("player.moved", { moves });
+    if (!solved && goals.every((g) => boxes.some((b) => b.c === g.c && b.r === g.r))) {
+        solved = true;
+        events.emit("level.solved", { moves });
+    }
+}
+onTick(() => {
+    if (input.pressed("undo") && history.length) {
+        const last = history.pop()!;
+        player = last.player;
+        last.boxes.forEach((b, i) => (boxes[i] = b));
+        moves--;
+        draw();
+        return;
+    }
+    if (input.pressed("move_x")) step(Math.sign(input.axis("move_x")), 0);
+    else if (input.pressed("move_y")) step(0, -Math.sign(input.axis("move_y")));
+});
+expose("moves", () => moves);
+expose("solved", () => solved);
+""" % json.dumps(SOKOBAN_ROWS)
+
+
+def sokoban_solve(env, project_dir):
+    write_game(project_dir, "sokoban", SOKOBAN_TS)
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(SOKOBAN_TOML.format(name=os.path.basename(project_dir)))
+    return None
+
+
+def sokoban_check(env, answer):
+    actions = env.command("input.actions", {})
+    for a in ("move_x", "move_y", "undo"):
+        if a not in actions:
+            return False, f"no {a} action (actions: {sorted(actions)[:8]})"
+    state = lambda: env.command("state", {})["state"]  # noqa: E731
+
+    def cell(name):
+        p = entity_pos(env, name)
+        return None if p is None else (round(p["x"]), round(-p["y"]))
+
+    def where():
+        return {n: cell(n) for n in ("Player", "Box_0", "Box_1")}
+
+    start = {"Player": (1, 2), "Box_0": (2, 2), "Box_1": (3, 2)}
+    env.command("step", {"ticks": 2})
+    if where() != start:
+        return False, f"at the start the cells are {where()}, not {start}"
+
+    def press(action, sign=1):
+        env.command("input.press", {"action": action, "sign": sign})
+        env.command("step", {"ticks": 3})
+
+    seq = env.command("events.last_seq", {})["seq"]
+    press("move_x", -1)   # a wall
+    press("move_x", 1)    # two boxes in a row
+    if where() != start or state().get("moves") != 0:
+        return False, f"pressing into the wall and into two boxes in a row moved something: {where()}, moves {state().get('moves')}"
+    press("move_y", -1)
+    moved = env.command("events.since", {"seq": seq, "type": "player.moved"})["events"]
+    if cell("Player") != (1, 3) or state().get("moves") != 1 or not moved:
+        return False, f"a press of down: the Player at {cell('Player')}, moves {state().get('moves')}, player.moved {bool(moved)}; not (1, 3), 1 move"
+    press("undo")
+    if where() != start or state().get("moves") != 0:
+        return False, f"undo after one move left {where()} and moves {state().get('moves')}, not the start and 0"
+    seq = env.command("events.last_seq", {})["seq"]
+    for action, sign in (("move_y", -1), ("move_x", 1), ("move_y", 1)):
+        press(action, sign)
+    want = {"Player": (2, 2), "Box_0": (2, 1), "Box_1": (3, 2)}
+    if where() != want or state().get("moves") != 3:
+        return False, f"down, right, up (a push): {where()} with moves {state().get('moves')}, not {want} and 3"
+    press("move_y", 1)    # the box against the top wall
+    if where() != want or state().get("moves") != 3:
+        return False, f"pushing a box into a wall moved something: {where()}, moves {state().get('moves')}"
+    if env.command("events.since", {"seq": seq, "type": "level.solved"})["events"] or state().get("solved"):
+        return False, "level.solved before every box is on a goal"
+    press("move_x", 1)
+    solved = env.command("events.since", {"seq": seq, "type": "level.solved"})["events"]
+    data = solved[0].get("data", solved[0]) if solved else {}
+    if cell("Box_1") != (4, 2) or not solved or state().get("solved") is not True or data.get("moves") != 4:
+        return False, f"the last push: Box_1 at {cell('Box_1')}, level.solved {solved[:1]}, solved {state().get('solved')}; not (4, 2), solved in 4 moves"
+    return True, "walls and two boxes in a row stop a move, a move and its undo, a push, a box against a wall, solved in 4 moves"
+
+
 def watchman_check(env, answer):
     def get(name, comp):
         try:
@@ -3000,6 +3284,10 @@ TASKS = [
      "task": "Make a small game in this blank project with a title screen and a pause menu, replacing its example. In the XY plane: an entity named Box at (0, 0) that move_x (A/D and the arrow keys) moves along x at 4 units a second, only while playing. The game opens on a title screen with a Pocket UI button named start; clicking it starts play (emit game.started). The action pause (Escape) while playing pauses: the Box and the clock stop and a menu shows buttons named resume and restart (emit game.paused). resume plays on (game.resumed); restart puts the Box back at (0, 0) and the clock at 0 and plays again (game.restarted). Expose screen (\"title\", \"playing\" or \"paused\") and time, the seconds played. The game must read the Box's position from its Transform every tick. Answer null."},
     {"name": "breakout", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": breakout_solve, "check": breakout_check,
      "task": "Make a breakout game in this blank project, replacing its example. In the XY plane (x across, y up): a Paddle 2 wide at (0, -6) that move_x (A/D and the arrow keys) moves at 10 units a second, kept between x -7 and 7; a Ball 0.3 across starting at (0, -5), moving up and right at 6 units a second, its motion its Velocity component; walls at x -8 and 8 and a ceiling at y 7 it bounces off; it bounces up off the paddle. Bricks 1.8 by 0.6 named Brick_0 to Brick_31, in 4 rows of 8, centers at x -7, -5, ..., 7 and y 3, 4, 5, 6: a hit removes the brick, bounces the ball, adds 10 to the score and emits brick.broken with {score}. Below y -8 the ball costs a life (3 at the start; emit life.lost with {lives}) and starts again above the paddle; at none, emit game.over and nothing moves after. With no bricks left emit level.clear and stop the ball. Expose score, lives and bricks (how many Brick_ entities the world still has). The game must read the Ball's and the Paddle's Transforms and the Ball's Velocity every tick. Answer null."},
+    {"name": "platformer", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": platformer_solve, "check": platformer_check,
+     "task": "Make a 2D platformer in this blank project, replacing its example. In the XY plane (x right, y up), one unit a tile: a tile map entity named Level, its top-left corner at (0, 0), made from these rows ('#' a solid tile, '.' empty, 'P' where the Player starts and 'F' the flag, each at its cell's center), drawn with tiles of your own: " + json.dumps(PLATFORMER_ROWS) + ". A Player with a Body2D (half extents 0.4 by 0.45, the default gravity) that move_x (A/D and the arrows) walks at 6 units a second; a jump action (Space, W, Up) leaves the ground at 11 units a second. Below y -12 the Player dies: emit player.died with {deaths} and put it back at the start. Coming within 0.8 of the flag's center emits level.complete once, and the Player answers no more input. Expose deaths and complete. A camera follows the Player. Answer null."},
+    {"name": "sokoban", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": sokoban_solve, "check": sokoban_check,
+     "task": "Make a Sokoban puzzle in this blank project, replacing its example. In the XY plane, one unit a cell: the cell in column c and row r (rows counting down) is centered at (c, -r). The level is these rows ('#' a wall, '.' floor, '@' the Player, '$' a box, 'x' a goal): " + json.dumps(SOKOBAN_ROWS) + ". The Player and the boxes are entities named Player, Box_0, Box_1 (boxes in reading order) at their cells' centers. Each press of move_x or move_y (A/D/W/S and the arrows) moves the Player one cell, unless a wall is there; a box in the way is pushed one cell when the cell past it is free (not a wall, not a box), else nothing moves. A move adds one to moves and emits player.moved with {moves}. When every box is on a goal, emit level.solved with {moves} once. An undo action (Z) takes back the last move (and its count). Expose moves and solved. Answer null."},
     {"name": "watchman", "project": "blank", "ticks": 0, "script": True, "solve": watchman_solve, "check": watchman_check,
      "task": "In this blank project, replacing its example, add a guard with the engine's Behavior component. Bake a navigation grid over the ground at the start (x and z from -10 to 10). An entity named Watchman starting at (-6, 0, 6) walks back and forth between (-6, 0, 6) and (6, 0, 6), a Path named Beat, at 2 units a second; when it sees the Player within 6 units it runs after it at 4 units a second; when it has not seen the Player for 2 seconds it goes back to walking its beat. Keep an entity named Player that the game does not move by itself (it may stand still): it is moved with world.set. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
