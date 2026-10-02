@@ -153,6 +153,7 @@ Light probes in a grid through a box (docs/design/rendering.md, Irradiance volum
 | `size` | vec3 | [10.0, 4.0, 10.0] | The box it covers, centred on the entity, in world units (not turned with it). |
 | `probes` | vec3 | [4.0, 2.0, 4.0] | Probes along x, y and z (each rounded and held to 2..16), spread evenly from one wall of the box to the other; at most 1024 across all volumes, later volumes by id left out past that. |
 | `intensity` | f32 | 1.0 | Multiplies the light it gives. |
+| `visibility` | bool | true | Whether a probe that saw a surface between itself and a point counts less there, so light does not come through walls the box crosses (each probe keeps how far it saw in every direction). false weighs the probes by nearness and facing alone. |
 | `enabled` | bool | true | false stops it being used, without removing it. |
 
 ## Decal

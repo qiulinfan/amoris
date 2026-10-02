@@ -354,6 +354,8 @@ export interface IrradianceVolume {
     probes: Vec3;
     /** Multiplies the light it gives. */
     intensity: number;
+    /** Whether a probe that saw a surface between itself and a point counts less there, so light does not come through walls the box crosses (each probe keeps how far it saw in every direction). false weighs the probes by nearness and facing alone. */
+    visibility: boolean;
     /** false stops it being used, without removing it. */
     enabled: boolean;
 }
@@ -1537,7 +1539,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     Lifetime: [["seconds", "n"]],
     Light: [["kind", "n"], ["color", "c"], ["intensity", "n"], ["range", "n"], ["inner_angle", "n"], ["outer_angle", "n"], ["shadows", "b"]],
     ReflectionProbe: [["size", "v3"], ["intensity", "n"], ["box_projection", "b"], ["realtime", "b"], ["enabled", "b"]],
-    IrradianceVolume: [["size", "v3"], ["probes", "v3"], ["intensity", "n"], ["enabled", "b"]],
+    IrradianceVolume: [["size", "v3"], ["probes", "v3"], ["intensity", "n"], ["visibility", "b"], ["enabled", "b"]],
     Fog: [["color", "c"], ["density", "n"], ["height", "n"], ["falloff", "n"], ["start", "n"], ["max_opacity", "n"], ["enabled", "b"], ["volumetric", "b"], ["anisotropy", "n"], ["steps", "n"], ["distance", "n"]],
     Bounds: [["min", "v3"], ["max", "v3"]],
     RigidBody: [["kind", "n"], ["mass", "n"], ["restitution", "n"], ["friction", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["gravity_scale", "n"], ["sleeping", "b"], ["lock_rotation", "b"], ["ccd", "b"]],
@@ -1562,7 +1564,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     CameraRig: { target: "", mode: 0, distance: 6, height: 1, pitch: -20, yaw: 0, offset: { x: 0, y: 10, z: 8 }, follow: 0.15, turn: 0.4, collide: true, orbit_x: "", orbit_y: "", orbit_speed: 120, pitch_min: -80, pitch_max: 30, shake: 0, shake_decay: 1.5, heading: 0 },
     Light: { kind: 0, color: { r: 1, g: 1, b: 1, a: 1 }, intensity: 1, range: 10, inner_angle: 20, outer_angle: 30, shadows: false },
     ReflectionProbe: { size: { x: 10, y: 4, z: 10 }, intensity: 1, box_projection: true, realtime: false, enabled: true },
-    IrradianceVolume: { size: { x: 10, y: 4, z: 10 }, probes: { x: 4, y: 2, z: 4 }, intensity: 1, enabled: true },
+    IrradianceVolume: { size: { x: 10, y: 4, z: 10 }, probes: { x: 4, y: 2, z: 4 }, intensity: 1, visibility: true, enabled: true },
     Decal: { texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, size: { x: 2, y: 1, z: 2 }, roughness: -1, emissive: 0, normal_map: "", bumpiness: 1, angle: 60, order: 0, enabled: true },
     Fog: { color: { r: 0.7, g: 0.75, b: 0.8, a: 1 }, density: 0.03, height: 0, falloff: 0.2, start: 0, max_opacity: 1, enabled: true, volumetric: false, anisotropy: 0.6, steps: 16, distance: 60 },
     Sky: { mode: 1, image: "", zenith: { r: 0.25, g: 0.45, b: 0.8, a: 1 }, horizon: { r: 0.75, g: 0.82, b: 0.9, a: 1 }, ground: { r: 0.33, g: 0.3, b: 0.27, a: 1 }, intensity: 1, rotation: 0, sun_size: 1.5, diffuse: 1, specular: 1, haze: 1, clouds: 0, cloud_height: 1500, cloud_scale: 900, enabled: true },

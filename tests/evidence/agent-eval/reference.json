@@ -1,14 +1,14 @@
 {
   "runner": "reference",
-  "passed": 29,
-  "total": 29,
-  "seconds": 71.3,
+  "passed": 57,
+  "total": 57,
+  "seconds": 18.2,
   "tasks": [
     {
       "name": "spawn_named",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.4,
       "detail": "a red cube at (2, 1, -3)",
       "answer": null,
       "error": null
@@ -17,7 +17,7 @@
       "name": "recolor",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "Ball's color is {'r': 0.0, 'g': 1.0, 'b': 0.0, 'a': 1.0}",
       "answer": null,
       "error": null
@@ -26,7 +26,7 @@
       "name": "tile_edit",
       "project": "sprites",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "cell (3, 2) on ground holds gid 1",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": true,
-      "seconds": 6.1,
+      "seconds": 0.3,
       "detail": "0 enemies remain",
       "answer": null,
       "error": null
@@ -44,7 +44,7 @@
       "name": "play_clip",
       "project": "assets",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "Arm plays 'turn' loop True playing True",
       "answer": null,
       "error": null
@@ -53,16 +53,16 @@
       "name": "path_length",
       "project": "playground",
       "ok": true,
-      "seconds": 0.7,
-      "detail": "answered 22.882, the path is 22.882",
-      "answer": 22.882455825805664,
+      "seconds": 0.2,
+      "detail": "answered 22.942, the path is 22.942",
+      "answer": 22.94249725341797,
       "error": null
     },
     {
       "name": "count_overlap",
       "project": "physics",
       "ok": true,
-      "seconds": 2.5,
+      "seconds": 0.2,
       "detail": "answered 5, there are 5",
       "answer": 5,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": true,
-      "seconds": 10.9,
+      "seconds": 0.3,
       "detail": "answered 'entity.spawned', the root cause is 'entity.spawned'",
       "answer": "entity.spawned",
       "error": null
@@ -80,7 +80,7 @@
       "name": "night_lamp",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "night: the sun at 0.05, a warm lamp at (0, 2, 0) casting shadows, answered 1",
       "answer": 1,
       "error": null
@@ -89,7 +89,7 @@
       "name": "expose_count",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "answer 4, entities 4",
       "answer": null,
       "error": null
@@ -98,7 +98,7 @@
       "name": "ball_lower",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "the ball starts its fall at y 0.9918",
       "answer": null,
       "error": null
@@ -107,7 +107,7 @@
       "name": "spawn_stars",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "Star0 to Star4 along x at y 2, spheres",
       "answer": null,
       "error": null
@@ -116,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.4,
+      "seconds": 0.3,
       "detail": "rose 3.79 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.9,
+      "seconds": 0.3,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
       "answer": null,
       "error": null
@@ -134,8 +134,35 @@
       "name": "jump_sound",
       "project": "sprites",
       "ok": true,
-      "seconds": 1.6,
+      "seconds": 0.3,
       "detail": "assets/jump.wav plays after a jump and again after the next",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "coin_chime",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "assets/chime.sfx (0.30 s) plays when a coin is collected, not before",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "theme_song",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "assets/theme.song: 2 tracks, 2.0 s, looping",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "merchant_talk",
+      "project": "talk",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "two potions bought, gold and potions [(4, 1), (1, 2)], then none offered at 1 gold",
       "answer": null,
       "error": null
     },
@@ -143,7 +170,7 @@
       "name": "lamp_prefab",
       "project": "hello",
       "ok": true,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "three lamps from the prefab, yellow spheres with a point light under each",
       "answer": null,
       "error": null
@@ -152,16 +179,25 @@
       "name": "hill_raise",
       "project": "hills",
       "ok": true,
-      "seconds": 2.6,
+      "seconds": 0.9,
       "detail": "the ground at (20.0, -20.0) raised to 10.28, nothing moved 12 units away",
       "answer": 10.282926559448242,
+      "error": null
+    },
+    {
+      "name": "yard_flag",
+      "project": "walker",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "a red flag on the pole streams out 1.44 in the wind (answered 1.54)",
+      "answer": 1.54,
       "error": null
     },
     {
       "name": "flowers",
       "project": "hills",
       "ok": true,
-      "seconds": 2.2,
+      "seconds": 0.2,
       "detail": "164 red flowers on the hills, none on ground steeper than 19.9 degrees",
       "answer": null,
       "error": null
@@ -170,16 +206,25 @@
       "name": "car_speed",
       "project": "drive",
       "ok": true,
-      "seconds": 11.4,
+      "seconds": 0.2,
       "detail": "top speed 35, power 14, driven to 28.61",
       "answer": 28.606584548950195,
+      "error": null
+    },
+    {
+      "name": "knockout",
+      "project": "walker",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "health used up, the hero limp on 11 bodies with its head at 0.19, the player still (0.00)",
+      "answer": null,
       "error": null
     },
     {
       "name": "walker_sprint",
       "project": "walker",
       "ok": true,
-      "seconds": 1.4,
+      "seconds": 0.3,
       "detail": "a second of walking covers 5.00, with sprint held 9.00 (5 and 9 wanted)",
       "answer": null,
       "error": null
@@ -188,7 +233,7 @@
       "name": "raft",
       "project": "hills",
       "ok": true,
-      "seconds": 8.0,
+      "seconds": 0.3,
       "detail": "the raft floats at 3.31 on the surface at 3.24",
       "answer": 3.293806314468384,
       "error": null
@@ -197,7 +242,7 @@
       "name": "sand_road",
       "project": "hills",
       "ok": true,
-      "seconds": 2.2,
+      "seconds": 0.2,
       "detail": "a sand road from x -30 to 30 along z 0, the ground beside it as it was",
       "answer": 1.0,
       "error": null
@@ -206,7 +251,7 @@
       "name": "reed_field",
       "project": "hills",
       "ok": true,
-      "seconds": 2.0,
+      "seconds": 0.2,
       "detail": "366 reeds that sway 0.3 and stop what runs into them",
       "answer": 366,
       "error": null
@@ -215,7 +260,7 @@
       "name": "stormy_dusk",
       "project": "hills",
       "ok": true,
-      "seconds": 2.0,
+      "seconds": 0.2,
       "detail": "a cloudy sunset from the west, the sun light 0.55, 0.28, 0.05, a wind of 12 toward +x",
       "answer": 0.547944188117981,
       "error": null
@@ -224,7 +269,7 @@
       "name": "dirt_patch",
       "project": "hills",
       "ok": true,
-      "seconds": 2.1,
+      "seconds": 0.2,
       "detail": "sand below 0.2 of the height and a patch of dirt, 0.96 at its centre",
       "answer": 0.9620615839958191,
       "error": null
@@ -233,7 +278,7 @@
       "name": "glass_window",
       "project": "hello",
       "ok": true,
-      "seconds": 0.6,
+      "seconds": 0.2,
       "detail": "a window of glass (ior 1.52) and a lacquered ball; one glass drawn",
       "answer": 1,
       "error": null
@@ -242,7 +287,7 @@
       "name": "persian_locale",
       "project": "ui",
       "ok": true,
-      "seconds": 0.9,
+      "seconds": 0.2,
       "detail": "Persian complete, named in every language; the score reads \u0627\u0645\u062a\u06cc\u0627\u0632 \u06f0",
       "answer": null,
       "error": null
@@ -251,7 +296,7 @@
       "name": "blender_level",
       "project": "assets",
       "ok": true,
-      "seconds": 4.2,
+      "seconds": 1.5,
       "detail": "a level from Blender: a static floor it collides with at 1.5, a pillar with 50 health",
       "answer": 1.494999885559082,
       "error": null
@@ -260,9 +305,219 @@
       "name": "calm_lake",
       "project": "hills",
       "ok": true,
-      "seconds": 2.0,
+      "seconds": 0.2,
       "detail": "a still, clear lake at 3.70",
       "answer": 3.700000047683716,
+      "error": null
+    },
+    {
+      "name": "spike_trap",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "spikes took 60 in four hits; depleted at tick 120",
+      "answer": 120,
+      "error": null
+    },
+    {
+      "name": "brute_enemies",
+      "project": "playground",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "4 enemies, all brutes doing 25",
+      "answer": 4,
+      "error": null
+    },
+    {
+      "name": "roof_mesh",
+      "project": "hello",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a 4-triangle roof spanning y 2..3",
+      "answer": 4,
+      "error": null
+    },
+    {
+      "name": "walled_room",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a walled 10 by 8 room; the pebble rests at -6.750",
+      "answer": -6.750069618225098,
+      "error": null
+    },
+    {
+      "name": "plank_bridge",
+      "project": "crates",
+      "ok": true,
+      "seconds": 0.4,
+      "detail": "five planks hang between the points, lowest at 3.841",
+      "answer": 3.8410396575927734,
+      "error": null
+    },
+    {
+      "name": "dodge",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "moves at 6, rocks fall at 4 one a second, a hit ends it at 4.05",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "snake",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "starts right, eats and grows to 4, a cell every 0.15 s, no reversing, turns, ends at the top edge",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "pause_menu",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "title, start, a second of play (4 units, 1 s), pause holding the Box and the clock, resume, restart at (0, 0)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "breakout",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "32 bricks, a paddle at 10 a second held in, a brick broken from below (score 10), walls and the paddle bounce, a miss costs a life, the last brick clears the level, three misses end it",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "key_door",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "the door held without the key; with it the Exit was reached at tick 182",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "grey_flashback",
+      "project": "crates",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "1 effect(s); the crates and the car are grey",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "svg_coin",
+      "project": "hello",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "an SVG coin, gold [245, 197, 66] with a darker rim [184, 134, 12]",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "orange_ball",
+      "project": "hello",
+      "ok": true,
+      "seconds": 0.6,
+      "detail": "the Ball is drawn [255, 102, 0] through materials/orange.wgsl",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "night_level",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a warm light at {'x': 5.999996662139893, 'y': -2.999000072479248, 'z': 0.5} by the player at {'x': 5.999996662139893, 'y': -2.999000072479248, 'z': 0.0} after it walked",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "guard_view",
+      "project": "dungeon",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "105 cells in view, the torch does not see the player",
+      "answer": {
+        "cells": 105,
+        "sees": false
+      },
+      "error": null
+    },
+    {
+      "name": "vault_level",
+      "project": "dungeon",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a 12 by 8 vault, walled, a solid pillar, 3 coins and a start on its floor",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "slow_swarm",
+      "project": "blank",
+      "ok": true,
+      "seconds": 1.7,
+      "detail": "same swarm, 5.67 -> 0.37 ms of script a tick",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "leaky_cannon",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.4,
+      "detail": "300 pellets left about before, 14 now, the same 286 landings",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sinking_crate",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "BlueCrate rests at y 0.497, the Ghost still sinks; answered 'group'",
+      "answer": "group",
+      "error": null
+    },
+    {
+      "name": "voxel_house",
+      "project": "hello",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "6 by 6 by 7 cells in 4 colours, 128 triangles, at (10, 0, 0)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "frozen_coins",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "four coins taken, the next one glowing each time, level.complete once, no script error",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "festival_flags",
+      "project": "blank",
+      "ok": true,
+      "seconds": 1.1,
+      "detail": "the same 24 flags flying, a tick 7.01 -> 0.79 ms",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "wait_for_coin",
+      "project": "sprites",
+      "ok": true,
+      "seconds": 0.1,
+      "detail": "the first coin went at tick 6",
+      "answer": 6,
       "error": null
     }
   ]

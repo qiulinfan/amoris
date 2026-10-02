@@ -447,6 +447,21 @@ void Session::apply_project_settings() {
             }
             renderer_->set_ssr(s);
         }
+        // [render] ssgi = true, or [render.ssgi] distance, rays, steps, thickness, intensity.
+        if (r.contains("ssgi") && (r["ssgi"].is_object() || r["ssgi"].is_boolean())) {
+            renderer::SsgiSettings s = renderer_->ssgi();
+            if (r["ssgi"].is_boolean()) {
+                s.enabled = r["ssgi"].get<bool>();
+            } else {
+                s.enabled = opt<bool>(r["ssgi"], "enabled", true);
+                s.distance = opt<float>(r["ssgi"], "distance", s.distance);
+                s.rays = opt<int>(r["ssgi"], "rays", s.rays);
+                s.steps = opt<int>(r["ssgi"], "steps", s.steps);
+                s.thickness = opt<float>(r["ssgi"], "thickness", s.thickness);
+                s.intensity = opt<float>(r["ssgi"], "intensity", s.intensity);
+            }
+            renderer_->set_ssgi(s);
+        }
         // [render.dof] focus, aperture, max_blur (on unless enabled = false); [render.motion_blur] strength, samples.
         if (r.contains("dof") && (r["dof"].is_object() || r["dof"].is_boolean())) {
             renderer::DofSettings d = renderer_->dof();
@@ -4419,6 +4434,19 @@ Result<Json> Session::render_command(std::string_view op, const Json& p) {
         r = renderer_->ssr();
         return Json{{"enabled", r.enabled}, {"max_distance", r.max_distance}, {"max_roughness", r.max_roughness}, {"steps", r.steps}, {"thickness", r.thickness}, {"intensity", r.intensity}};
     }
+    if (op == "ssgi") {
+        // Screen-space global illumination: light bounced off what is on screen onto what is near it.
+        renderer::SsgiSettings g = renderer_->ssgi();
+        g.enabled = opt<bool>(p, "enabled", g.enabled);
+        g.distance = opt<float>(p, "distance", g.distance);
+        g.rays = opt<int>(p, "rays", g.rays);
+        g.steps = opt<int>(p, "steps", g.steps);
+        g.thickness = opt<float>(p, "thickness", g.thickness);
+        g.intensity = opt<float>(p, "intensity", g.intensity);
+        renderer_->set_ssgi(g);
+        g = renderer_->ssgi();
+        return Json{{"enabled", g.enabled}, {"distance", g.distance}, {"rays", g.rays}, {"steps", g.steps}, {"thickness", g.thickness}, {"intensity", g.intensity}};
+    }
     if (op == "dof") {
         // Depth of field: a lens focused at `focus`, blurring what is nearer or farther.
         renderer::DofSettings d = renderer_->dof();
@@ -5389,9 +5417,20 @@ void Session::tick_audio(double dt) {
     }
 }
 
-Result<Json> Session::ui_command(std::string_view op, const Json& p) {
+Result<Json> Session::ui_command(std::string_view op, const Json& params) {
     if (!ui_) return fail("ui_unavailable", "Pocket UI is disabled: no font was found (run `pocket setup`)");
     ui::Document& d = *ui_;
+    // An element given by its name (a Button's or a box's `name`) is the first made with it.
+    Json named;
+    for (const char* key : {"id", "root"}) {
+        if (!params.contains(key) || !params[key].is_string()) continue;
+        if (named.is_null()) named = params;
+        const std::string want = params[key].get<std::string>();
+        const Json found = d.query(Json{{"name", want}});
+        if (found.empty()) return fail("ui_no_such_node", "no element named '{}' (ui.query {{name}} finds one, ui.snapshot shows them with their names)", want);
+        named[key] = found[0]["id"];
+    }
+    const Json& p = named.is_null() ? params : named;
     float w = 0, h = 0, scale = 1;
     ui_size(w, h, scale);
     auto layout = [&]() { d.layout(w, h, scale); };
@@ -7746,7 +7785,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

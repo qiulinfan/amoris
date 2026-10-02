@@ -1594,6 +1594,62 @@ TEST_CASE("a look-up table grades the finished frame: identity changes nothing, 
     for (const char* f : {"lut-identity.tga", "lut-invert.tga", "lut-square.tga"}) std::filesystem::remove(dir / f);
 }
 
+TEST_CASE("screen-space global illumination reddens the floor beside a glowing red wall and leaves the far floor", "[renderer][ssgi]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto spawn = [&](Json e) { REQUIRE(s.command("world.spawn", e).has_value()); };
+    Json floor;
+    floor["name"] = "Floor";
+    floor["components"]["Transform"] = Json{{"position", Json{{"x", 0}, {"y", -0.1}, {"z", 0}}}, {"scale", Json{{"x", 40}, {"y", 0.2}, {"z", 40}}}};
+    floor["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0.8}, {"g", 0.8}, {"b", 0.8}, {"a", 1}}}, {"roughness", 0.9}};
+    spawn(floor);
+    Json wall;
+    wall["name"] = "Wall";
+    wall["components"]["Transform"] = Json{{"position", Json{{"x", -1.5}, {"y", 1.5}, {"z", 0}}}, {"scale", Json{{"x", 0.2}, {"y", 3}, {"z", 6}}}};
+    wall["components"]["MeshRenderer"] = Json{{"mesh", "cube"}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 2}, {"g", 0}, {"b", 0}, {"a", 1}}}};
+    spawn(wall);
+    Json sun;
+    sun["name"] = "Sun";
+    sun["components"]["Transform"] = Json{{"rotation", Json{{"x", -0.5}, {"y", -0.3}, {"z", 0}, {"w", 0.81}}}};
+    sun["components"]["Light"] = Json{{"kind", 0}, {"intensity", 0.6}};
+    spawn(sun);
+    Json camera;
+    camera["name"] = "Camera";
+    camera["components"]["Transform"] = Json{{"position", Json{{"x", 1.5}, {"y", 2.5}, {"z", 5}}}, {"rotation", Json{{"x", -0.2}, {"y", 0.1}, {"z", 0}, {"w", 0.97}}}};
+    camera["components"]["Camera"] = Json{{"fov_degrees", 60}};
+    spawn(camera);
+    auto at = [&](double x, double z) {
+        Json q = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", 0}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", q["x"]}, {"y", q["y"]}}}}).value()["pixel"];
+        return std::array<int, 3>{p[0].get<int>(), p[1].get<int>(), p[2].get<int>()};
+    };
+    for (int i = 0; i < 4; ++i) REQUIRE(s.frame().has_value());
+    const auto near_plain = at(-1.0, 0.5), far_plain = at(3.5, 0.5);
+    Json on = s.command("render.ssgi", Json{{"enabled", true}}).value();
+    REQUIRE(on["enabled"] == true);
+    REQUIRE(on["rays"] == 2);
+    for (int i = 0; i < 30; ++i) REQUIRE(s.frame().has_value());
+    const auto near_lit = at(-1.0, 0.5), far_lit = at(3.5, 0.5);
+    Json stats = s.command("render.stats", Json::object()).value();
+    INFO("near " << near_plain[0] << "," << near_plain[1] << "," << near_plain[2] << " -> " << near_lit[0] << "," << near_lit[1] << "," << near_lit[2]
+         << "; far " << far_plain[0] << "," << far_plain[1] << "," << far_plain[2] << " -> " << far_lit[0] << "," << far_lit[1] << "," << far_lit[2]);
+    REQUIRE(stats["ssgi"] == true);
+    REQUIRE(stats["depth_prepass"] == true);
+    REQUIRE(near_lit[0] - near_lit[1] > near_plain[0] - near_plain[1] + 20);   // the floor by the wall reddens
+    REQUIRE(std::abs(near_lit[1] - near_plain[1]) < 12);                       // red only
+    REQUIRE(std::abs((far_lit[0] - far_lit[1]) - (far_plain[0] - far_plain[1])) < 12);   // the far floor much as it was
+    // Off again: the bounce goes.
+    REQUIRE(s.command("render.ssgi", Json{{"enabled", false}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const auto near_off = at(-1.0, 0.5);
+    REQUIRE(std::abs(near_off[0] - near_plain[0]) < 6);
+    REQUIRE(s.command("render.stats", Json::object()).value()["ssgi"] == false);
+}
+
 TEST_CASE("screen-space reflections show what stands on a mirror floor where its mirror image falls", "[renderer][ssr]") {
     app::Options o = playground_options();
     o.width = 256;
@@ -2000,6 +2056,56 @@ TEST_CASE("a reflection probe lights a closed room from what it saw: its lamps, 
     // is left is the lamp's light fading from the captures before, a bounce less each time).
     REQUIRE(3 * (dark[0] + dark[1] + dark[2]) < lamp[0] + lamp[1] + lamp[2]);
     REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("an irradiance volume's probes beyond a wall do not light the room behind it", "[renderer][probes][irradiance][visibility]") {
+    app::Options o = playground_options();
+    o.width = 256;
+    o.height = 144;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    auto box = [&](const char* name, double x, double y, double z, double sx, double sy, double sz, Json mr) {
+        mr["mesh"] = "cube";
+        REQUIRE(s.command("world.spawn", Json{{"name", name}, {"components", Json{{"Transform", Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}, {"scale", Json{{"x", sx}, {"y", sy}, {"z", sz}}}}}, {"MeshRenderer", mr}}}}).has_value());
+    };
+    // Two closed rooms side by side, x -6..0 and 0..6, the wall between them whole; a white panel
+    // glowing in the left one's ceiling is the only light, and one volume spans both.
+    const Json gray{{"color", Json{{"r", 0.7}, {"g", 0.7}, {"b", 0.7}, {"a", 1}}}, {"roughness", 1.0}};
+    box("Floor", 0, -0.1, 0, 12.4, 0.2, 6.4, gray);
+    box("Ceiling", 0, 4.1, 0, 12.4, 0.2, 6.4, gray);
+    box("Far", 0, 2, -3.1, 12, 4, 0.2, gray);
+    box("Near", 0, 2, 3.1, 12, 4, 0.2, gray);
+    box("Left", -6.1, 2, 0, 0.2, 4, 6, gray);
+    box("Right", 6.1, 2, 0, 0.2, 4, 6, gray);
+    box("Between", 0, 2, 0, 0.2, 4, 6, gray);
+    box("Light", -3, 3.95, 0, 3, 0.1, 3, Json{{"color", Json{{"r", 0}, {"g", 0}, {"b", 0}, {"a", 1}}}, {"emissive", Json{{"r", 3}, {"g", 3}, {"b", 3}, {"a", 1}}}, {"roughness", 1.0}});
+    REQUIRE(s.command("render.ambient", Json{{"color", Json::array({0, 0, 0})}, {"intensity", 0}}).has_value());
+    REQUIRE(s.command("render.tonemap", Json{{"auto_exposure", false}, {"exposure", 1.0}}).has_value());   // a dark room stays dark
+    // A sun of no strength: without one the default key light shines in, dimmed by the shadows.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json::object()}, {"Light", Json{{"kind", 0}, {"intensity", 0.0}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Volume"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 2}, {"z", 0}}}}}, {"IrradianceVolume", Json{{"size", Json{{"x", 11.6}, {"y", 3.6}, {"z", 5.6}}}, {"probes", Json{{"x", 8}, {"y", 3}, {"z", 4}}}}}}}}).has_value());
+    // Looking down into the dark room from under its ceiling.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 2.5}, {"y", 3.6}, {"z", 0}}}, {"rotation", Json{{"x", -0.7071}, {"y", 0}, {"z", 0}, {"w", 0.7071}}}}}, {"Camera", Json{{"fov_degrees", 70}}}}}}).has_value());
+    auto pixel_at = [&](double x, double y, double z) {
+        Json at = s.command("render.project", Json{{"point", Json{{"x", x}, {"y", y}, {"z", z}}}}).value();
+        Json p = s.command("capture", Json{{"pixel", Json{{"x", at["x"]}, {"y", at["y"]}}}}).value()["pixel"];
+        return p[0].get<int>() + p[1].get<int>() + p[2].get<int>();
+    };
+    REQUIRE(s.frame().has_value());
+    for (int i = 0; i < 160 && s.command("render.probes", Json::object()).value()["volumes"][0]["passes"].get<int>() > 0; ++i) REQUIRE(s.frame().has_value());
+    REQUIRE(s.command("render.probes", Json::object()).value()["volumes"][0]["passes"] == 0);
+    REQUIRE(s.frame().has_value());
+    const int near_seen = pixel_at(0.5, 0, 0.5), far_seen = pixel_at(4.5, 0, 0.5);
+    // The same probes weighed by nearness and facing alone: the left room's light comes through.
+    REQUIRE(s.command("world.set", Json{{"entity", "Volume"}, {"component", "IrradianceVolume"}, {"value", Json{{"visibility", false}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    const int near_leak = pixel_at(0.5, 0, 0.5), far_leak = pixel_at(4.5, 0, 0.5);
+    INFO("by the wall " << near_seen << " (without visibility " << near_leak << "), across the room " << far_seen << " (" << far_leak << ")");
+    REQUIRE(near_leak > 60);                    // the light that leaked through the wall
+    REQUIRE(near_seen < near_leak / 3);         // most of it stopped
+    REQUIRE(near_seen <= far_seen + 30);        // the floor by the wall no brighter than across the room
+    REQUIRE(far_seen <= far_leak);
 }
 
 TEST_CASE("an irradiance volume's probes light each part of a room by what is near it", "[renderer][probes][irradiance]") {

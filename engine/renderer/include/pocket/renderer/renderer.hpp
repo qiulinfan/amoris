@@ -52,6 +52,17 @@ struct SsrSettings {
     float intensity = 1.0f;
 };
 
+// Screen-space global illumination: light that bounces off what is on screen onto what is near it
+// (a red wall reddening the floor beside it), gathered by rays marched through the depth.
+struct SsgiSettings {
+    bool enabled = false;
+    float distance = 3.0f;     // how far a ray is followed, in world units
+    int rays = 2;              // rays a pixel a frame (at half resolution), 1..8
+    int steps = 12;            // samples along each ray, 4..64
+    float thickness = 0.5f;    // how far behind a surface a ray may pass and still hit it
+    float intensity = 1.0f;
+};
+
 // Depth of field: what is nearer or farther than the focus blurred by how far it is from it, as a
 // lens of the given aperture would (docs/design/rendering.md, Depth of field and motion blur).
 struct DofSettings {
@@ -169,6 +180,7 @@ struct RenderStats {
     bool oit = false;                 // whether translucent meshes were blended order-independently this frame
     bool lut = false;                 // whether a look-up table graded the frame
     bool ssr = false;                 // whether screen-space reflections were traced this frame
+    bool ssgi = false;                // whether screen-space global illumination was gathered this frame
     std::uint32_t probes = 0;         // reflection probes in use (captured)
     std::uint32_t probe_captures = 0; // probes captured this frame (at most one a frame)
     std::uint32_t grids = 0;          // irradiance volumes ready (every probe captured)
@@ -308,6 +320,8 @@ class Renderer {
     [[nodiscard]] bool oit() const;
     void set_ssr(SsrSettings s);
     [[nodiscard]] SsrSettings ssr() const;
+    void set_ssgi(SsgiSettings s);
+    [[nodiscard]] SsgiSettings ssgi() const;
     void set_dof(DofSettings s);
     [[nodiscard]] DofSettings dof() const;
     void set_motion_blur(MotionBlurSettings s);

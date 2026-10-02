@@ -3370,6 +3370,10 @@ TEST_CASE("an interface box draws a project image, fitted, cropped or stretched,
     REQUIRE(px(c["center_pixel"], 2) == Catch::Approx(154).margin(14));
     Json d = s.command("ui.describe", Json{{"id", 50}}).value();
     REQUIRE(d["image"] == "assets/sky.png");
+    // By name as by id; a name nothing has is said.
+    REQUIRE(s.command("ui.describe", Json{{"id", "picture"}}).value() == d);
+    REQUIRE(s.command("ui.click", Json{{"id", "picture"}}).has_value());
+    REQUIRE(s.command("ui.click", Json{{"id", "nothing-named-so"}}).error().code == "ui_no_such_node");
     REQUIRE(d["fit"] == "fill");
     // Contain keeps the column's proportions: a 32x8 strip in a 40x40 box is 40x10 across the middle, the rest of the box empty.
     REQUIRE(s.command("ui.apply", Json{{"ops", Json::array({Json::array({"set", 50, Json{{"fit", "contain"}}})})}}).has_value());

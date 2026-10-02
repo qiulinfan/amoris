@@ -373,10 +373,35 @@ fn sh_at(b: u32, n: vec3f) -> vec3f {
         + probe_sh[b + 6u].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + probe_sh[b + 7u].rgb * (1.092548 * n.x * n.z)
         + probe_sh[b + 8u].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
 }
+// How much a grid probe sees of a point `dist` away along `dir` (from the probe): the probe kept,
+// per texel of an 8 by 8 octahedral map after every slot's harmonics, the mean distance it saw to the
+// nearest surface and the mean of its square; a point past the mean is weighed by Chebyshev's bound
+// on its being in sight, cubed (a probe beyond a wall saw the wall short of the point).
+fn probe_sees(probe: u32, dir: vec3f, dist: f32) -> f32 {
+    let base = u32(frame.grid_info.y) + probe * 32u;
+    let uv = clamp((oct_encode(dir) * 0.5 + 0.5) * 8.0 - 0.5, vec2f(0.0), vec2f(7.0));
+    let t0 = vec2u(floor(uv));
+    let t1 = min(t0 + vec2u(1u), vec2u(7u));
+    let f = uv - floor(uv);
+    var m = vec2f(0.0);
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let t = vec2u(select(t0.x, t1.x, (k & 1u) == 1u), select(t0.y, t1.y, (k & 2u) == 2u));
+        let w = select(1.0 - f.x, f.x, (k & 1u) == 1u) * select(1.0 - f.y, f.y, (k & 2u) == 2u);
+        let i = t.y * 8u + t.x;
+        let v = probe_sh[base + i / 2u];
+        m = m + select(v.xy, v.zw, (i & 1u) == 1u) * w;
+    }
+    if (dist <= m.x) { return 1.0; }
+    let variance = max(m.y - m.x * m.x, 1e-4);
+    let gap = dist - m.x;
+    let c = variance / (variance + gap * gap);
+    return max(c * c * c, 0.0);
+}
 // The diffuse light of the irradiance volume a point is in (the first whose box, grown by half a
 // unit, holds it, once all its probes are captured): the eight probes around it, each weighed by
-// how near it is along each axis and by whether it lies in front of the surface (one behind, seeing
-// the other side of a wall, counts for little), their harmonics at the normal. w as for probes.
+// how near it is along each axis, by whether it lies in front of the surface (one behind, seeing
+// the other side of a wall, counts for little) and, with the volume's visibility, by whether it saw
+// the point, their harmonics at the normal. w as for probes.
 fn grid_diffuse(p: vec3f, n: vec3f) -> vec4f {
     let count = u32(frame.grid_info.x);
     for (var i = 0u; i < count; i = i + 1u) {
@@ -390,6 +415,11 @@ fn grid_diffuse(p: vec3f, n: vec3f) -> vec4f {
         let g = clamp((local + e) / (2.0 * e) * (cells - 1.0), vec3f(0.0), cells - 1.0);
         let g0 = min(floor(g), cells - 2.0);
         let f = g - g0;
+        let seeing = frame.grid_cells[i].w > 1.5;
+        // The point looked at from a little off its surface, so a probe does not lose it behind the
+        // floor it stands on.
+        let spacing = 2.0 * e / max(cells - 1.0, vec3f(1.0));
+        let biased = p + n * (0.25 * min(min(spacing.x, spacing.y), spacing.z));
         var light = vec3f(0.0);
         var total = 0.0;
         for (var k = 0u; k < 8u; k = k + 1u) {
@@ -404,6 +434,11 @@ fn grid_diffuse(p: vec3f, n: vec3f) -> vec4f {
                 w = w * (facing * facing + 0.2);
             }
             let slot = u32(frame.grid_box[i].w) + u32(at.x + at.y * cells.x + at.z * cells.x * cells.y);
+            if (seeing) {
+                let from_probe = biased - (c - e + at / (cells - 1.0) * (2.0 * e));
+                let reach = length(from_probe);
+                if (reach > 1e-4) { w = w * max(probe_sees(slot - u32(frame.grid_info.z), from_probe / reach, reach), 1e-3); }
+            }
             light = light + sh_at(slot * 16u, n) * w;
             total = total + w;
         }
@@ -1374,7 +1409,7 @@ fn unlit(in: VsOut) -> vec4f {
     out.id = in.id;
     out.velocity = motion(in);
     out.surface = vec4f(0.0, 0.0, 1.0, 0.0);   // rough: no reflection traced
-    out.albedo = vec4f(base.rgb, 1.0);
+    out.albedo = vec4f(base.rgb, 0.0);          // alpha 0: unlit, no bounced light added
     return out;
 }
 
@@ -1474,6 +1509,139 @@ fn ssr_px(c: vec4f) -> vec2f {
     let probe = probe_specular(p, n, v, roughness);
     env = mix(env, probe.rgb, probe.w);
     return vec4f(max(center.rgb + (hit - env) * brdf * conf, vec3f(0.0)), center.a);
+}
+
+// Screen-space global illumination (docs/design/rendering.md, Screen-space global illumination):
+// each pixel of a half-size target sends a few rays over the hemisphere about its normal (cosine
+// weighted, every pixel and frame its own) through screen space against the depth; where one meets
+// a surface facing it, that surface's lit color is light arriving. The frames are blended where a
+// pixel's point was seen last frame at the same depth. A full-size pass then adds albedo times
+// what arrived to the frame, the half-size result gathered by depth.
+struct Gi { params: vec4f, more: vec4f };   // distance, intensity, steps, thickness; rays, jitter, history valid, blend
+@group(1) @binding(20) var<uniform> gi: Gi;
+@group(1) @binding(21) var gi_depth: texture_depth_2d;
+@group(1) @binding(22) var gi_surface: texture_2d<f32>;
+@group(1) @binding(23) var gi_scene: texture_2d<f32>;
+@group(1) @binding(24) var gi_light: texture_2d<f32>;   // gathering: last frame's; adding: this frame's
+@group(1) @binding(25) var gi_albedo: texture_2d<f32>;
+// Independent numbers in [0, 1) for a pixel, a frame and a ray (a PCG hash of the three), so each
+// pixel's rays cover the hemisphere over the frames blended.
+fn gi_pcg(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+fn gi_rand(px: vec2u, n: u32) -> f32 {
+    return f32(gi_pcg(px.x ^ gi_pcg(px.y ^ gi_pcg(n))) >> 8u) / 16777216.0;
+}
+fn gi_depth_at(q: vec2i) -> f32 {
+    let d = textureLoad(gi_depth, q, 0);
+    if (d >= 1.0) { return 1e9; }
+    return dot(ssr_world(q, d) - frame.camera_pos.xyz, frame.camera_fwd.xyz);
+}
+@fragment fn fs_gi(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let dims = vec2i(textureDimensions(gi_depth));
+    let full = min(vec2i(pos.xy * 2.0), dims - vec2i(1));
+    let d = textureLoad(gi_depth, full, 0);
+    if (d >= 1.0) { return vec4f(0.0, 0.0, 0.0, -1.0); }
+    let p = ssr_world(full, d);
+    let w_here = (frame.cur_view_proj * vec4f(p, 1.0)).w;
+    let n = oct_decode(textureLoad(gi_surface, full, 0).xy);
+    let side = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let tx = normalize(cross(side, n));
+    let ty = cross(n, tx);
+    let start = p + n * 0.03;
+    let rays = max(u32(gi.more.x), 1u);
+    let steps = max(u32(gi.params.z), 4u);
+    let lo_px = vec2i(frame.viewport.xy);
+    let hi_px = vec2i(frame.viewport.xy + frame.viewport.zw);
+    var sum = vec3f(0.0);
+    let seed = vec2u(pos.xy);
+    let frame_n = u32(gi.more.y) * 48u;
+    for (var r = 0u; r < rays; r = r + 1u) {
+        let u1 = gi_rand(seed, frame_n + r * 3u);
+        let u2 = gi_rand(seed, frame_n + r * 3u + 1u);
+        let phi = 6.2831853 * u1;
+        let rad = sqrt(u2);
+        let dir = normalize(tx * (cos(phi) * rad) + ty * (sin(phi) * rad) + n * sqrt(max(1.0 - u2, 0.0)));
+        var len = gi.params.x;
+        let c0 = frame.cur_view_proj * vec4f(start, 1.0);
+        var c1 = frame.cur_view_proj * vec4f(start + dir * len, 1.0);
+        if (c1.w < 0.05) {
+            len = len * (c0.w - 0.05) / max(c0.w - c1.w, 1e-5);
+            c1 = frame.cur_view_proj * vec4f(start + dir * len, 1.0);
+        }
+        let s0 = ssr_px(c0);
+        let s1 = ssr_px(c1);
+        let k0 = 1.0 / c0.w;
+        let k1 = 1.0 / c1.w;
+        let jitter = gi_rand(seed, frame_n + r * 3u + 2u);
+        for (var i = 0u; i < steps; i = i + 1u) {
+            // Denser near the point, where most of the light that reaches it comes from.
+            var t = (f32(i) + jitter) / f32(steps);
+            t = t * t;
+            let q = vec2i(mix(s0, s1, t));
+            if (any(q < lo_px) || any(q >= hi_px)) { break; }
+            if (all(q == full)) { continue; }
+            let ray_depth = 1.0 / mix(k0, k1, t);
+            let scene_depth = gi_depth_at(q);
+            if (ray_depth > scene_depth && ray_depth - scene_depth < gi.params.w * (1.0 + 0.05 * ray_depth)) {
+                let hn = oct_decode(textureLoad(gi_surface, q, 0).xy);
+                if (dot(hn, dir) < 0.0) {
+                    let uv = (vec2f(q) - frame.viewport.xy) / frame.viewport.zw;
+                    let edge = clamp(min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)) * 10.0, 0.0, 1.0);
+                    sum = sum + textureLoad(gi_scene, q, 0).rgb * edge;
+                }
+                break;
+            }
+        }
+    }
+    var result = vec4f(sum / f32(rays), w_here);
+    if (gi.more.z > 0.5) {
+        // Last frame's at this point, if it saw the same surface there (its depth then as it is now).
+        let prev = frame.prev_view_proj * vec4f(p, 1.0);
+        let pn = prev.xy / prev.w;
+        let puv = vec2f(pn.x * 0.5 + 0.5, 0.5 - pn.y * 0.5);
+        if (prev.w > 0.0 && all(puv >= vec2f(0.0)) && all(puv < vec2f(1.0))) {
+            let ldims = vec2i(textureDimensions(gi_light));
+            let lq = clamp(vec2i((frame.viewport.xy + puv * frame.viewport.zw) * 0.5), vec2i(0), ldims - vec2i(1));
+            let past = textureLoad(gi_light, lq, 0);
+            if (past.a > 0.0 && abs(past.a - prev.w) < 0.05 * prev.w + 0.02) {
+                result = vec4f(mix(past.rgb, result.rgb, gi.more.w), w_here);
+            }
+        }
+    }
+    return result;
+}
+@fragment fn fs_gi_add(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let px = vec2i(pos.xy);
+    let d = textureLoad(gi_depth, px, 0);
+    if (d >= 1.0) { return vec4f(0.0); }
+    let albedo = textureLoad(gi_albedo, px, 0);
+    if (albedo.a < 0.5) { return vec4f(0.0); }   // unlit: nothing falls on it
+    let p = ssr_world(px, d);
+    let w_here = (frame.cur_view_proj * vec4f(p, 1.0)).w;
+    // The half-size pixels around, each by its nearness and by how near its depth is to this one's.
+    let ldims = vec2i(textureDimensions(gi_light));
+    let hp = vec2f(px) * 0.5;
+    let base = vec2i(floor(hp));
+    var sum = vec3f(0.0);
+    var weight = 0.0;
+    // Nine taps two apart cover what twenty-five next to each other would, for a third of the reads.
+    for (var y = -2; y <= 2; y = y + 2) {
+        for (var x = -2; x <= 2; x = x + 2) {
+            let q = clamp(base + vec2i(x, y), vec2i(0), ldims - vec2i(1));
+            let l = textureLoad(gi_light, q, 0);
+            if (l.a <= 0.0) { continue; }
+            let off = vec2f(q) + vec2f(0.5) - hp;
+            let w = exp(-dot(off, off) * 0.3) * exp(-abs(l.a - w_here) / (0.03 * w_here + 0.01));
+            sum = sum + l.rgb * w;
+            weight = weight + w;
+        }
+    }
+    if (weight <= 1e-4) { return vec4f(0.0); }
+    let metallic = textureLoad(gi_surface, px, 0).w;
+    return vec4f(albedo.rgb * (sum / weight) * (1.0 - metallic) * gi.params.y, 0.0);
 }
 
 // Volumetric fog (docs/design/rendering.md, Volumetric light): each pixel of a half-size target
@@ -2281,12 +2449,38 @@ const PI = 3.14159265;
 // up along 64 by 32 directions over the sphere and projected onto nine harmonics, convolved with
 // the cosine lobe as the sky's are, into the probe's slot.
 constexpr const char* kGridShWgsl = R"WGSL(
+// misc: the slot's first vec4 in the buffer, its moments' first, the distance the moments stop at.
 struct GridFill { faces: array<mat4x4f, 6>, center: vec4f, misc: vec4f };
 @group(0) @binding(0) var<uniform> pf: GridFill;
 @group(0) @binding(1) var views: texture_2d_array<f32>;
 @group(0) @binding(2) var samp: sampler;
-@group(0) @binding(3) var<storage, read_write> sh: array<vec4f, 9>;
+@group(0) @binding(3) var<storage, read_write> all_sh: array<vec4f>;
+@group(0) @binding(4) var depths: texture_depth_2d_array;
 var<workgroup> part: array<array<vec3f, 9>, 64>;
+var<workgroup> moments: array<vec2f, 64>;
+// The views' depth range (probe_views: near 0.05, far 1000).
+const NEAR = 0.05;
+const FAR = 1000.0;
+fn oct_dir(e: vec2f) -> vec3f {
+    var n = vec3f(e.x, e.y, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) { n = vec3f((1.0 - abs(n.yx)) * select(vec2f(-1.0), vec2f(1.0), n.xy >= vec2f(0.0)), n.z); }
+    return normalize(n);
+}
+// How far the probe saw along d: the face's depth there, from view depth to distance along d.
+fn seen(d: vec3f) -> f32 {
+    let a = abs(d);
+    var face = 0;
+    var axis = a.x;
+    if (a.x >= a.y && a.x >= a.z) { face = select(1, 0, d.x > 0.0); }
+    else if (a.y >= a.z) { face = select(3, 2, d.y > 0.0); axis = a.y; }
+    else { face = select(5, 4, d.z > 0.0); axis = a.z; }
+    let p = pf.faces[face] * vec4f(pf.center.xyz + d, 1.0);
+    let fuv = clamp(vec2f(p.x / p.w * 0.5 + 0.5, 0.5 - p.y / p.w * 0.5), vec2f(0.0), vec2f(0.9999));
+    let z = textureLoad(depths, vec2i(fuv * vec2f(textureDimensions(depths))), face, 0);
+    if (z >= 1.0) { return pf.misc.z; }
+    let view = FAR * NEAR / (FAR - z * (FAR - NEAR));
+    return min(view / max(axis, 1e-4), pf.misc.z);
+}
 const PI = 3.14159265;
 fn look(d: vec3f) -> vec3f {
     let a = abs(d);
@@ -2320,6 +2514,16 @@ fn look(d: vec3f) -> vec3f {
         c[8] = c[8] + l * (0.546274 * (d.x * d.x - d.y * d.y));
     }
     for (var k = 0; k < 9; k = k + 1) { part[li][k] = c[k]; }
+    // This thread's texel of the 8 by 8 octahedral map: the mean distance seen over it (4 by 4
+    // directions) and the mean of its square.
+    let texel = vec2f(f32(li % 8u), f32(li / 8u));
+    var m = vec2f(0.0);
+    for (var s = 0u; s < 16u; s = s + 1u) {
+        let e = (texel + (vec2f(f32(s % 4u), f32(s / 4u)) + 0.5) / 4.0) / 8.0 * 2.0 - 1.0;
+        let r = seen(oct_dir(e));
+        m = m + vec2f(r, r * r);
+    }
+    moments[li] = m / 16.0;
     workgroupBarrier();
     for (var stride = 32u; stride > 0u; stride = stride / 2u) {
         if (li < stride) {
@@ -2329,8 +2533,9 @@ fn look(d: vec3f) -> vec3f {
     }
     if (li == 0u) {
         var a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
-        for (var k = 0; k < 9; k = k + 1) { sh[k] = vec4f(part[0][k] * a[k], 0.0); }
+        for (var k = 0; k < 9; k = k + 1) { all_sh[u32(pf.misc.x) + u32(k)] = vec4f(part[0][k] * a[k], 0.0); }
     }
+    if (li < 32u) { all_sh[u32(pf.misc.y) + li] = vec4f(moments[li * 2u], moments[li * 2u + 1u]); }
 }
 )WGSL";
 
@@ -2822,6 +3027,21 @@ struct Renderer::Impl {
     WGPURenderPipeline volume_pipeline = nullptr;
     WGPUBuffer volume_uniforms = nullptr;
     WGPUTextureView volume_depth = nullptr;       // the depth view volume_bgs read
+    // Screen-space global illumination: half-size targets in turn (this frame's, last frame's), the
+    // gathering pass and the full-size pass that adds what it gathered.
+    SsgiSettings ssgi;
+    WGPUTexture gi_tex[2]{};
+    WGPUTextureView gi_view[2]{};
+    int gi_cur = 0;
+    bool gi_valid = false;
+    std::uint64_t gi_frame = 0;
+    std::uint32_t gi_w = 0, gi_h = 0;
+    WGPUBindGroupLayout gi_bgl = nullptr;
+    WGPUPipelineLayout gi_layout = nullptr;
+    WGPURenderPipeline gi_pipeline = nullptr, gi_add_pipeline = nullptr;
+    WGPUBuffer gi_uniforms = nullptr;
+    WGPUBindGroup gi_bgs[2]{}, gi_add_bgs[2]{};
+    WGPUTextureView gi_bg_views[4]{};             // depth, surface, scene and albedo the groups were made with
     // The depth prepass: the id pass at one sample with a depth target of its own, sampled by the AO
     // pass and the fog afterwards; a 1x1 stand-in when there is none.
     WGPUTexture prepass_tex = nullptr;
@@ -3014,7 +3234,8 @@ struct Renderer::Impl {
     bool probe_refresh = false;
     std::uint64_t frame_number = 0;
     WGPUTexture probe_env_tex = nullptr, probe_views_tex = nullptr, probe_depth_tex = nullptr;
-    WGPUTextureView probe_env_view = nullptr, probe_views_array = nullptr, probe_depth_view = nullptr;
+    WGPUTextureView probe_env_view = nullptr, probe_views_array = nullptr, probe_depth_array = nullptr;
+    WGPUTextureView probe_depth_face[6]{};       // each view's depth, kept for an irradiance probe's moments
     WGPUTextureView probe_level[kMaxProbes][kProbeLevels]{};
     WGPUTextureView probe_view[6]{};
     WGPUShaderModule probe_fill_shader = nullptr;
@@ -3031,6 +3252,7 @@ struct Renderer::Impl {
         std::uint32_t nx = 0, ny = 0, nz = 0;
         std::uint32_t first = 0;   // its first probe among all the volumes' probes
         float intensity = 1;
+        bool visibility = true;    // probes weighed by whether they saw the point
         int passes = 0;            // passes over its probes still to make
         std::uint32_t next = 0;    // the next probe of this pass
         bool ready = false;        // every probe captured at least once
@@ -3294,6 +3516,13 @@ struct Renderer::Impl {
         if (ao_bgl) wgpuBindGroupLayoutRelease(ao_bgl);
         if (ao_shader) wgpuShaderModuleRelease(ao_shader);
         if (ao_uniforms) wgpuBufferRelease(ao_uniforms);
+        if (gi_uniforms) wgpuBufferRelease(gi_uniforms);
+        for (WGPURenderPipeline gp : {gi_pipeline, gi_add_pipeline}) if (gp) wgpuRenderPipelineRelease(gp);
+        if (gi_layout) wgpuPipelineLayoutRelease(gi_layout);
+        if (gi_bgl) wgpuBindGroupLayoutRelease(gi_bgl);
+        for (WGPUBindGroup g : {gi_bgs[0], gi_bgs[1], gi_add_bgs[0], gi_add_bgs[1]}) if (g) wgpuBindGroupRelease(g);
+        for (WGPUTextureView v : gi_view) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTexture t : gi_tex) if (t) wgpuTextureRelease(t);
         if (volume_uniforms) wgpuBufferRelease(volume_uniforms);
         if (volume_pipeline) wgpuRenderPipelineRelease(volume_pipeline);
         if (volume_layout) wgpuPipelineLayoutRelease(volume_layout);
@@ -3442,7 +3671,8 @@ struct Renderer::Impl {
         if (grid_shader) wgpuShaderModuleRelease(grid_shader);
         for (auto& layer : probe_level) for (WGPUTextureView v : layer) if (v) wgpuTextureViewRelease(v);
         for (WGPUTextureView v : probe_view) if (v) wgpuTextureViewRelease(v);
-        for (WGPUTextureView v : {probe_env_view, probe_views_array, probe_depth_view}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTextureView v : {probe_env_view, probe_views_array, probe_depth_array}) if (v) wgpuTextureViewRelease(v);
+        for (WGPUTextureView v : probe_depth_face) if (v) wgpuTextureViewRelease(v);
         for (WGPUTexture t : {probe_env_tex, probe_views_tex, probe_depth_tex}) if (t) wgpuTextureRelease(t);
         if (shadow_cut_layout) wgpuPipelineLayoutRelease(shadow_cut_layout);
         if (joint_buffer) wgpuBufferRelease(joint_buffer);
@@ -4956,10 +5186,28 @@ fn time() -> f32 { return fx.time.x; }
             fv.usage = WGPUTextureUsage_RenderAttachment;
             probe_view[f] = wgpuTextureCreateView(probe_views_tex, &fv);
         }
-        auto [dt, dv] = make_target("pocket.probe.depth", kProbeFace, kProbeFace, kPrepassDepth, WGPUTextureUsage_RenderAttachment);
-        if (!dt) return fail("gpu_texture_failed", "cannot create the reflection probes' depth");
-        probe_depth_tex = dt;
-        probe_depth_view = dv;
+        td.label = rhi::str("pocket.probe.depth");
+        td.format = kPrepassDepth;
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+        probe_depth_tex = wgpuDeviceCreateTexture(device->device(), &td);
+        if (!probe_depth_tex) return fail("gpu_texture_failed", "cannot create the reflection probes' depth");
+        WGPUTextureViewDescriptor dvd{};
+        dvd.format = kPrepassDepth;
+        dvd.dimension = WGPUTextureViewDimension_2DArray;
+        dvd.mipLevelCount = 1;
+        dvd.arrayLayerCount = 6;
+        dvd.aspect = WGPUTextureAspect_DepthOnly;
+        dvd.usage = WGPUTextureUsage_TextureBinding;
+        probe_depth_array = wgpuTextureCreateView(probe_depth_tex, &dvd);
+        for (std::uint32_t f = 0; f < 6; ++f) {
+            WGPUTextureViewDescriptor fv = dvd;
+            fv.dimension = WGPUTextureViewDimension_2D;
+            fv.baseArrayLayer = f;
+            fv.arrayLayerCount = 1;
+            fv.aspect = WGPUTextureAspect_All;
+            fv.usage = WGPUTextureUsage_RenderAttachment;
+            probe_depth_face[f] = wgpuTextureCreateView(probe_depth_tex, &fv);
+        }
         return {};
     }
 
@@ -5063,7 +5311,7 @@ fn time() -> f32 { return fx.time.x; }
         // Irradiance volumes: the harmonics of a probe straight from its six views.
         POCKET_TRY(gmodule, device->create_shader("pocket.grid.harmonics", kGridShWgsl));
         grid_shader = gmodule;
-        WGPUBindGroupLayoutEntry ge[4]{};
+        WGPUBindGroupLayoutEntry ge[5]{};
         ge[0].binding = 0;
         ge[0].visibility = WGPUShaderStage_Compute;
         ge[0].buffer.type = WGPUBufferBindingType_Uniform;
@@ -5078,10 +5326,14 @@ fn time() -> f32 { return fx.time.x; }
         ge[3].binding = 3;
         ge[3].visibility = WGPUShaderStage_Compute;
         ge[3].buffer.type = WGPUBufferBindingType_Storage;
-        ge[3].buffer.minBindingSize = sizeof(float) * 36;
+        ge[3].buffer.minBindingSize = sizeof(float) * 4;
+        ge[4].binding = 4;
+        ge[4].visibility = WGPUShaderStage_Compute;
+        ge[4].texture.sampleType = WGPUTextureSampleType_Depth;
+        ge[4].texture.viewDimension = WGPUTextureViewDimension_2DArray;
         WGPUBindGroupLayoutDescriptor gbd{};
         gbd.label = rhi::str("pocket.grid.harmonics");
-        gbd.entryCount = 4;
+        gbd.entryCount = 5;
         gbd.entries = ge;
         grid_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &gbd);
         WGPUPipelineLayoutDescriptor gpl{};
@@ -5178,6 +5430,7 @@ fn time() -> f32 { return fx.time.x; }
             if (used + g.count() > kMaxGridProbes) continue;
             g.first = used;
             g.intensity = std::max(v.intensity, 0.0f);
+            g.visibility = v.visibility;
             used += g.count();
             auto was = std::find_if(grids.begin(), grids.end(), [&](const GridVolume& o) { return o.entity == id; });
             const bool same = was != grids.end() && was->first == g.first && was->nx == g.nx && was->ny == g.ny && was->nz == g.nz && length(was->center - g.center) <= 1e-4f && length(was->size - g.size) <= 1e-4f;
@@ -5203,10 +5456,12 @@ fn time() -> f32 { return fx.time.x; }
             fu.grid_ext[shown][0] = g.size.x * 0.5f; fu.grid_ext[shown][1] = g.size.y * 0.5f; fu.grid_ext[shown][2] = g.size.z * 0.5f;
             fu.grid_ext[shown][3] = g.intensity;
             fu.grid_cells[shown][0] = static_cast<float>(g.nx); fu.grid_cells[shown][1] = static_cast<float>(g.ny); fu.grid_cells[shown][2] = static_cast<float>(g.nz);
-            fu.grid_cells[shown][3] = g.ready ? 1.0f : 0.0f;
+            fu.grid_cells[shown][3] = g.ready ? (g.visibility ? 2.0f : 1.0f) : 0.0f;
             ++shown;
         }
         fu.grid_info[0] = static_cast<float>(shown);
+        fu.grid_info[1] = static_cast<float>(16 * (kMaxProbes + kMaxGridProbes));   // the moments' first vec4
+        fu.grid_info[2] = static_cast<float>(kMaxProbes);                           // the grid probes' first slot
         stats.grids = static_cast<std::uint32_t>(std::count_if(grids.begin(), grids.end(), [](const GridVolume& g) { return g.ready; }));
         std::vector<GridCapture> out;
         for (std::size_t v = 0; capture && v < grids.size() && out.empty(); ++v) {
@@ -6314,6 +6569,169 @@ fn time() -> f32 { return fx.time.x; }
         return {};
     }
 
+    // Screen-space global illumination's two passes (docs/design/rendering.md).
+    Status create_gi() {
+        WGPUBindGroupLayoutEntry ge[6]{};
+        ge[0].binding = 20;
+        ge[0].visibility = WGPUShaderStage_Fragment;
+        ge[0].buffer.type = WGPUBufferBindingType_Uniform;
+        ge[0].buffer.minBindingSize = sizeof(float) * 8;
+        ge[1].binding = 21;
+        ge[1].visibility = WGPUShaderStage_Fragment;
+        ge[1].texture.sampleType = WGPUTextureSampleType_Depth;
+        ge[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        for (int i = 2; i < 6; ++i) {
+            ge[i].binding = static_cast<std::uint32_t>(20 + i);
+            ge[i].visibility = WGPUShaderStage_Fragment;
+            ge[i].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+            ge[i].texture.viewDimension = WGPUTextureViewDimension_2D;
+        }
+        WGPUBindGroupLayoutDescriptor bd{};
+        bd.label = rhi::str("pocket.gi");
+        bd.entryCount = 6;
+        bd.entries = ge;
+        gi_bgl = wgpuDeviceCreateBindGroupLayout(device->device(), &bd);
+        WGPUBindGroupLayout layouts[2] = {scene_bgl, gi_bgl};
+        WGPUPipelineLayoutDescriptor pld{};
+        pld.label = rhi::str("pocket.gi");
+        pld.bindGroupLayoutCount = 2;
+        pld.bindGroupLayouts = layouts;
+        gi_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
+        WGPUColorTargetState ct{};
+        ct.format = kHdrFormat;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs{};
+        fs.module = shader;
+        fs.entryPoint = rhi::str("fs_gi");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        WGPURenderPipelineDescriptor rpd{};
+        rpd.label = rhi::str("pocket.gi");
+        rpd.layout = gi_layout;
+        rpd.vertex.module = shader;
+        rpd.vertex.entryPoint = rhi::str("vs_volume");
+        rpd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        rpd.primitive.frontFace = WGPUFrontFace_CCW;
+        rpd.primitive.cullMode = WGPUCullMode_None;
+        rpd.multisample.count = 1;
+        rpd.multisample.mask = 0xFFFFFFFFu;
+        rpd.fragment = &fs;
+        gi_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!gi_pipeline) return fail("gpu_pipeline_failed", "the global illumination pipeline could not be created");
+        // Added to the frame: color plus color, its alpha kept.
+        WGPUBlendState add{};
+        add.color.operation = WGPUBlendOperation_Add;
+        add.color.srcFactor = WGPUBlendFactor_One;
+        add.color.dstFactor = WGPUBlendFactor_One;
+        add.alpha.operation = WGPUBlendOperation_Add;
+        add.alpha.srcFactor = WGPUBlendFactor_Zero;
+        add.alpha.dstFactor = WGPUBlendFactor_One;
+        ct.blend = &add;
+        fs.entryPoint = rhi::str("fs_gi_add");
+        rpd.label = rhi::str("pocket.gi.add");
+        gi_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        if (!gi_add_pipeline) return fail("gpu_pipeline_failed", "the global illumination pipeline could not be created");
+        gi_uniforms = device->create_buffer("pocket.gi", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 8);
+        return {};
+    }
+
+    // Gather the light bounced off what is on screen at half size, then add it to the frame (after
+    // the scene pass, before the reflections; the prepass's depth, surface and albedo must be there).
+    Status draw_gi(rhi::Frame& frame) {
+        const std::uint32_t gw = std::max(1u, (frame.width + 1) / 2), gh = std::max(1u, (frame.height + 1) / 2);
+        bool regroup = !gi_bgs[0] || gi_bg_views[0] != prepass_view || gi_bg_views[1] != surface_view || gi_bg_views[2] != hdr_view || gi_bg_views[3] != albedo_view;
+        if (!gi_tex[0] || gi_w != gw || gi_h != gh) {
+            for (int k = 0; k < 2; ++k) {
+                if (gi_view[k]) wgpuTextureViewRelease(gi_view[k]);
+                if (gi_tex[k]) wgpuTextureRelease(gi_tex[k]);
+                auto [t, v] = make_target("pocket.gi", gw, gh, kHdrFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+                if (!t) return fail("gpu_texture_failed", "cannot create the global illumination target {}x{}", gw, gh);
+                gi_tex[k] = t;
+                gi_view[k] = v;
+            }
+            gi_w = gw;
+            gi_h = gh;
+            gi_valid = false;
+            regroup = true;
+        }
+        if (regroup) {
+            // Gathering into k reads last frame's from the other and the frame; adding into the frame
+            // reads this frame's (k), and in the frame's place the other (unused there: a texture
+            // drawn into may not be bound in the same pass).
+            auto group = [&](WGPUTextureView light, WGPUTextureView scene) {
+                WGPUBindGroupEntry e[6]{};
+                e[0].binding = 20;
+                e[0].buffer = gi_uniforms;
+                e[0].size = sizeof(float) * 8;
+                const WGPUTextureView views[5] = {prepass_view, surface_view, scene, light, albedo_view};
+                for (int i = 0; i < 5; ++i) {
+                    e[i + 1].binding = static_cast<std::uint32_t>(21 + i);
+                    e[i + 1].textureView = views[i];
+                }
+                WGPUBindGroupDescriptor d{};
+                d.label = rhi::str("pocket.gi");
+                d.layout = gi_bgl;
+                d.entryCount = 6;
+                d.entries = e;
+                return wgpuDeviceCreateBindGroup(device->device(), &d);
+            };
+            for (WGPUBindGroup g : {gi_bgs[0], gi_bgs[1], gi_add_bgs[0], gi_add_bgs[1]}) if (g) wgpuBindGroupRelease(g);
+            for (int i = 0; i < 2; ++i) {
+                gi_bgs[i] = group(gi_view[1 - i], hdr_view);
+                gi_add_bgs[i] = group(gi_view[i], gi_view[1 - i]);
+            }
+            gi_bg_views[0] = prepass_view;
+            gi_bg_views[1] = surface_view;
+            gi_bg_views[2] = hdr_view;
+            gi_bg_views[3] = albedo_view;
+        }
+        const int k = 1 - gi_cur;   // write into the one not holding last frame's
+        // A frame without last frame's to blend with (the first, after a cut) sends four times the
+        // rays, so it looks as the blend would.
+        const float rays = static_cast<float>(gi_valid ? ssgi.rays : std::min(ssgi.rays * 4, 16));
+        const float u[8] = {ssgi.distance, ssgi.intensity, static_cast<float>(ssgi.steps), ssgi.thickness,
+                            rays, static_cast<float>(gi_frame++ % 65536), gi_valid ? 1.0f : 0.0f, 0.1f};
+        device->write_buffer(gi_uniforms, 0, u, sizeof u);
+        WGPURenderPassColorAttachment ca{};
+        ca.view = gi_view[k];
+        ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        ca.loadOp = WGPULoadOp_Clear;
+        ca.storeOp = WGPUStoreOp_Store;
+        ca.clearValue = {0, 0, 0, -1};
+        WGPURenderPassDescriptor rp{};
+        rp.label = rhi::str("pocket.gi");
+        rp.colorAttachmentCount = 1;
+        rp.colorAttachments = &ca;
+        WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
+        wgpuRenderPassEncoderSetPipeline(enc, gi_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(enc, 1, gi_bgs[k], 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        WGPURenderPassColorAttachment aca{};
+        aca.view = hdr_view;
+        aca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        aca.loadOp = WGPULoadOp_Load;
+        aca.storeOp = WGPUStoreOp_Store;
+        WGPURenderPassDescriptor arp{};
+        arp.label = rhi::str("pocket.gi.add");
+        arp.colorAttachmentCount = 1;
+        arp.colorAttachments = &aca;
+        enc = begin_pass(frame.encoder, arp);
+        wgpuRenderPassEncoderSetPipeline(enc, gi_add_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(enc, 1, gi_add_bgs[k], 0, nullptr);
+        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(enc);
+        wgpuRenderPassEncoderRelease(enc);
+        gi_cur = k;
+        gi_valid = true;
+        stats.ssgi = true;
+        stats.draw_calls += 2;
+        return {};
+    }
+
     // March the fog into the half-size target (the prepass depth must be there).
     Status draw_volume(rhi::Frame& frame, const world::Fog& fog) {
         const std::uint32_t vw = std::max(1u, (frame.width + 1) / 2), vh = std::max(1u, (frame.height + 1) / 2);
@@ -7170,6 +7588,7 @@ fn time() -> f32 { return fx.time.x; }
         POCKET_TRY_VOID(create_sky());
         POCKET_TRY_VOID(create_ao());
         POCKET_TRY_VOID(create_volume());
+        POCKET_TRY_VOID(create_gi());
         POCKET_TRY_VOID(create_taa());
         POCKET_TRY_VOID(create_fx());
         POCKET_TRY_VOID(create_oit());
@@ -7181,7 +7600,8 @@ fn time() -> f32 { return fx.time.x; }
         sbe[12].binding = 12;
         sbe[12].textureView = probe_env_view;
         {
-            const std::vector<float> zero(4 * 16 * (kMaxProbes + kMaxGridProbes), 0.0f);
+            // Every slot's harmonics (sixteen vec4s), then each grid probe's moments (thirty-two).
+            const std::vector<float> zero(4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 32 * kMaxGridProbes, 0.0f);
             probe_sh_buffer = device->create_buffer("pocket.probes.harmonics", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, zero.size() * sizeof(float), zero.data());
             const std::vector<std::uint32_t> none(2 * kClusters + kMaxLights, 0u);
             probe_cluster_buffer = device->create_buffer("pocket.probes.lights", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, none.size() * sizeof(std::uint32_t), none.data());
@@ -7189,7 +7609,7 @@ fn time() -> f32 { return fx.time.x; }
         }
         sbe[13].binding = 13;
         sbe[13].buffer = probe_sh_buffer;
-        sbe[13].size = sizeof(float) * 4 * 16 * (kMaxProbes + kMaxGridProbes);
+        sbe[13].size = sizeof(float) * (4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 32 * kMaxGridProbes);
         POCKET_TRY_VOID(create_decals());
         POCKET_TRY_VOID(create_timer());
         sbe[14].binding = 14;
@@ -8408,7 +8828,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     bool glass_hint = im.glass_last;
     if (!glass_hint) world.ecs().each([&](flecs::entity, const world::MeshRenderer& mr) { if (mr.visible && mr.transmission > 0) glass_hint = true; });
     const bool ao_pass = im.ao.enabled || im.shadows.contact;   // the half-size pass also holds contact shadows
-    const bool prepass = im.msaa > 1 || ao_pass || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || !im.water_bodies.empty() || glass_hint;
+    const bool prepass = im.msaa > 1 || ao_pass || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || im.ssgi.enabled || !im.water_bodies.empty() || glass_hint;
     if (glass_hint) POCKET_TRY_VOID(im.ensure_glass_target(frame.width, frame.height));
     if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
@@ -9505,7 +9925,7 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             pca.storeOp = WGPUStoreOp_Store;
             pca.clearValue = {bg.r, bg.g, bg.b, 1.0};
             WGPURenderPassDepthStencilAttachment pds{};
-            pds.view = im.probe_depth_view;
+            pds.view = im.probe_depth_face[f];
             pds.depthLoadOp = WGPULoadOp_Clear;
             pds.depthStoreOp = WGPUStoreOp_Store;
             pds.depthClearValue = 1.0f;
@@ -9664,8 +10084,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             std::vector<float> fill(16 * 6 + 8, 0.0f);
             for (int f = 0; f < 6; ++f) to_array(views[static_cast<std::size_t>(f)], fill.data() + 16 * f);
             fill[96] = at.x; fill[97] = at.y; fill[98] = at.z;
+            fill[100] = static_cast<float>(16 * (kMaxProbes + g.first + probe));
+            fill[101] = static_cast<float>(16 * (kMaxProbes + kMaxGridProbes) + 32 * (g.first + probe));
+            // The moments stop at twice the widest gap between probes: farther is in sight.
+            const float gap = std::max({g.size.x / static_cast<float>(g.nx - 1), g.size.y / static_cast<float>(g.ny - 1), g.size.z / static_cast<float>(g.nz - 1)});
+            fill[102] = 2.0f * gap;
             im.device->write_buffer(im.grid_params[k], 0, fill.data(), fill.size() * sizeof(float));
-            WGPUBindGroupEntry ge[4]{};
+            WGPUBindGroupEntry ge[5]{};
             ge[0].binding = 0;
             ge[0].buffer = im.grid_params[k];
             ge[0].size = sizeof(float) * (16 * 6 + 8);
@@ -9675,12 +10100,13 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
             ge[2].sampler = im.env_sampler;
             ge[3].binding = 3;
             ge[3].buffer = im.probe_sh_buffer;
-            ge[3].offset = 256ull * (kMaxProbes + g.first + probe);
-            ge[3].size = sizeof(float) * 36;
+            ge[3].size = sizeof(float) * (4 * 16 * (kMaxProbes + kMaxGridProbes) + 4 * 32 * kMaxGridProbes);
+            ge[4].binding = 4;
+            ge[4].textureView = im.probe_depth_array;
             WGPUBindGroupDescriptor gd{};
             gd.label = rhi::str("pocket.grid.harmonics");
             gd.layout = im.grid_bgl;
-            gd.entryCount = 4;
+            gd.entryCount = 5;
             gd.entries = ge;
             WGPUBindGroup gg = wgpuDeviceCreateBindGroup(im.device->device(), &gd);
             im.grid_groups.push_back(gg);
@@ -9984,6 +10410,8 @@ Status Renderer::render(rhi::Frame& frame, const world::World& world, rhi::Color
     wgpuRenderPassEncoderEnd(pass);
     wgpuRenderPassEncoderRelease(pass);
     if (!im.water_bodies.empty() && split && resolve) POCKET_TRY_VOID(im.draw_water(frame, im.prepass_view, true, set_viewport));
+    if (im.ssgi.enabled && split && im.surface_view && im.albedo_view) POCKET_TRY_VOID(im.draw_gi(frame));
+    else im.gi_valid = false;
     if (im.ssr.enabled && split && im.surface_view) POCKET_TRY_VOID(im.draw_ssr(frame));
     if (im.taa.enabled && split && im.velocity_view) POCKET_TRY_VOID(im.resolve_taa(frame, taa_reproject));
     if ((im.dof.enabled || im.motion_blur.enabled) && split && im.velocity_view) {
@@ -10192,6 +10620,15 @@ void Renderer::set_ssr(SsrSettings s) {
     impl_->ssr = s;
 }
 SsrSettings Renderer::ssr() const { return impl_->ssr; }
+void Renderer::set_ssgi(SsgiSettings s) {
+    s.distance = std::clamp(s.distance, 0.1f, 100.0f);
+    s.rays = std::clamp(s.rays, 1, 8);
+    s.steps = std::clamp(s.steps, 4, 64);
+    s.thickness = std::clamp(s.thickness, 0.001f, 10.0f);
+    s.intensity = std::clamp(s.intensity, 0.0f, 4.0f);
+    impl_->ssgi = s;
+}
+SsgiSettings Renderer::ssgi() const { return impl_->ssgi; }
 Json Renderer::probes() const {
     Json list = Json::array();
     for (std::uint32_t i = 0; i < impl_->probe_count; ++i) {
@@ -10355,6 +10792,7 @@ Json Renderer::describe() const {
     j["oit"] = s.oit;
     j["lut"] = s.lut;
     j["ssr"] = s.ssr;
+    j["ssgi"] = s.ssgi;
     j["probes"] = Json{{"in_use", s.probes}, {"captured", s.probe_captures}, {"volumes", s.grids}, {"volume_captures", s.grid_captures}};
     j["water"] = Json{{"bodies", s.water}, {"underwater", s.underwater}};
     j["decals"] = Json{{"drawn", s.decals}, {"images", s.decal_images}};

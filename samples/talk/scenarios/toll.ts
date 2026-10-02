@@ -56,3 +56,24 @@ scenario("walking away keeps the gate shut and the gold", (g) => {
 scenario("the guard's script is sound", (g) => {
     g.check(() => expect(dialogue.check("dialogue/guard.dialogue.json")).toEqual([]), "no missing nodes, no broken expressions");
 });
+
+scenario("every way through the guard's script, run dry", (g) => {
+    g.check(() => {
+        const { routes, complete } = dialogue.routes("dialogue/guard.dialogue.json");
+        expect(complete).toBe(true);
+        expect(routes.map((r) => r.choices[r.choices.length - 1])).toEqual(["Pay the toll (7 gold left)", "Ask about the castle", "Walk away"]);
+        const [pay, ask, away] = routes;
+        expect(pay.done).toBe(true);
+        expect(pay.vars.gold).toBe(2);
+        expect(pay.events).toEqual([{ name: "gate.open", data: {} }]);
+        expect(pay.said[pay.said.length - 1]).toBe("The gate creaks open.");
+        expect(ask.done).toBe(false);
+        expect(ask.stopped).toBe("loops back to the choice in 'gate'");
+        expect(away.done).toBe(true);
+        expect(away.vars.gold).toBe(7);
+        // One way through by its choices, and a toll the traveller cannot pay.
+        expect(dialogue.play("dialogue/guard.dialogue.json", [1, 0]).events.length).toBe(1);
+        expect(dialogue.routes("dialogue/guard.dialogue.json", { gold: 3 }).routes.length).toBe(2);
+    }, "pay, ask (back to the gate) and walk away, nothing told to the game");
+    g.check(() => expect(g.state("gate_open")).toBe(false), "the dry runs opened nothing");
+});

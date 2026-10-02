@@ -139,7 +139,8 @@ export class Conversation {
     private stack: Array<{ steps: DialogueStep[]; at: number }> = [];
     private open: Array<{ text: string; goto?: string; set?: Record<string, unknown>; event?: string }> = [];
 
-    constructor(private readonly script: DialogueScript, vars: Record<string, unknown> = {}) {
+    /** `emit` takes what the conversation tells (the event log's emit unless given: a dry run keeps its own). */
+    constructor(private readonly script: DialogueScript, vars: Record<string, unknown> = {}, private readonly emit: (name: string, data: unknown) => void = (name, data) => events.emit(name, data)) {
         this.vars = { ...(script.vars ?? {}), ...vars };
         const first = script.start ?? Object.keys(script.nodes)[0];
         this.go(first);
@@ -174,7 +175,7 @@ export class Conversation {
             if (top === undefined) {
                 if (!this.done) {
                     this.done = true;
-                    events.emit("dialogue.end", { node: this.node, vars: this.vars });
+                    this.emit("dialogue.end", { node: this.node, vars: this.vars });
                 }
                 return;
             }
@@ -185,7 +186,7 @@ export class Conversation {
             const step = top.steps[top.at++] as Record<string, unknown>;
             if ("text" in step && !("choice" in step)) {
                 this.line = { speaker: String(step.say ?? ""), text: fill(String(step.text), this.vars) };
-                events.emit("dialogue.line", { speaker: this.line.speaker, text: this.line.text, node: this.node });
+                this.emit("dialogue.line", { speaker: this.line.speaker, text: this.line.text, node: this.node });
                 return;
             }
             if ("choice" in step) {
@@ -200,7 +201,7 @@ export class Conversation {
                 const branch = holds(String(step.if), this.vars) ? step.then : step.else;
                 if (Array.isArray(branch)) this.stack.push({ steps: branch as DialogueStep[], at: 0 });
             } else if ("goto" in step) this.go(String(step.goto));
-            else if ("event" in step) events.emit(String(step.event), step.data ?? {});
+            else if ("event" in step) this.emit(String(step.event), step.data ?? {});
             else if ("end" in step) this.stack = [];
             else throw new Error(`dialogue: a step that says nothing it can do: ${JSON.stringify(step)} (say/text, choice, set, if, goto, event, end)`);
         }
@@ -217,9 +218,9 @@ export class Conversation {
     choose(index: number): void {
         const c = this.open[index];
         if (c === undefined) throw new Error(`dialogue: no choice ${index} (${this.choices.length} open)`);
-        events.emit("dialogue.choice", { index, text: this.choices[index].text, node: this.node });
+        this.emit("dialogue.choice", { index, text: this.choices[index].text, node: this.node });
         if (c.set) this.set(c.set);
-        if (c.event) events.emit(c.event, {});
+        if (c.event) this.emit(c.event, {});
         this.choices = [];
         this.open = [];
         if (c.goto !== undefined) this.go(c.goto);
@@ -312,6 +313,59 @@ function check(script: DialogueScript): DialogueProblem[] {
     return out;
 }
 
+/** One way through a conversation, run dry (docs/design/dialogue.md, Trying it). */
+export interface DialogueRoute {
+    /** The choices taken, by their text. */
+    choices: string[];
+    /** The lines said, "Speaker: text". */
+    said: string[];
+    /** The script's own events, in order, with their data. */
+    events: Array<{ name: string; data: unknown }>;
+    /** The variables at the end. */
+    vars: Record<string, unknown>;
+    /** Whether the conversation ended; else where it stopped and why. */
+    done: boolean;
+    node: string;
+    /** The choices open where a route stopped (not done). */
+    open?: string[];
+    stopped?: string;
+}
+
+// A conversation run with the choices given (indices among those open), its lines passed, its events
+// kept in the route instead of the event log.
+function play(script: DialogueScript, vars: Record<string, unknown>, choices: number[], seen?: Set<string>): { route: DialogueRoute; c: Conversation } {
+    const route: DialogueRoute = { choices: [], said: [], events: [], vars: {}, done: false, node: "" };
+    const c = new Conversation(script, vars, (name, data) => {
+        const d = data as { speaker?: string; text?: string };
+        if (name === "dialogue.line") route.said.push(d.speaker ? `${d.speaker}: ${d.text}` : String(d.text));
+        else if (name === "dialogue.choice") route.choices.push(String(d.text));
+        else if (name !== "dialogue.end") route.events.push({ name, data });
+    });
+    let k = 0;
+    for (let guard = 0; guard < 100000 && !c.done; guard++) {
+        if (c.choices.length === 0) {
+            c.next();
+            continue;
+        }
+        // A menu met again with the same variables on this route: a loop back (a hub of questions).
+        const state = `${c.node}|${c.choices.map((x) => x.text).join("|")}|${JSON.stringify(c.vars)}`;
+        if (seen?.has(state)) {
+            route.stopped = `loops back to the choice in '${c.node}'`;
+            break;
+        }
+        seen?.add(state);
+        if (k >= choices.length) break;
+        const i = choices[k++];
+        if (i < 0 || i >= c.choices.length) throw new Error(`dialogue: choice ${i} is not open in '${c.node}' (${c.choices.length} open: ${c.choices.map((x) => x.text).join(" / ")})`);
+        c.choose(i);
+    }
+    route.vars = { ...c.vars };
+    route.done = c.done;
+    route.node = c.node;
+    if (!c.done) route.open = c.choices.map((x) => x.text);
+    return { route, c };
+}
+
 export const dialogue = {
     /** A conversation from a script object or a project file (JSON), with variables over the script's own. */
     start(source: string | DialogueScript, vars: Record<string, unknown> = {}): Conversation {
@@ -324,6 +378,38 @@ export const dialogue = {
      */
     check(source: string | DialogueScript): DialogueProblem[] {
         return check(read(source));
+    },
+    /**
+     * Run a conversation dry with the choices given (indices among those open, in order): the lines
+     * said, the choices taken, the events, the variables at the end, nothing told to the game.
+     */
+    play(source: string | DialogueScript, choices: number[] = [], vars: Record<string, unknown> = {}): DialogueRoute {
+        return play(read(source), vars, choices).route;
+    },
+    /**
+     * Every way through a conversation, run dry: each route's choices, lines, events and variables
+     * at the end, a route stopping where a choice comes back with nothing changed (a hub of
+     * questions). Up to `limit` routes (64); `complete` says whether that was all of them.
+     */
+    routes(source: string | DialogueScript, vars: Record<string, unknown> = {}, limit = 64): { routes: DialogueRoute[]; complete: boolean } {
+        const script = read(source);
+        const routes: DialogueRoute[] = [];
+        let complete = true;
+        const explore = (prefix: number[]) => {
+            if (routes.length >= limit) {
+                complete = false;
+                return;
+            }
+            const { route, c } = play(script, vars, prefix, new Set());
+            if (route.done || route.stopped !== undefined || prefix.length >= 64) {
+                if (!route.done && route.stopped === undefined) route.stopped = "64 choices deep";
+                routes.push(route);
+                return;
+            }
+            for (let i = 0; i < c.choices.length; i++) explore([...prefix, i]);
+        };
+        explore([]);
+        return { routes, complete };
     },
     /**
      * Show a conversation in a box at the bottom of the window: the speaker, the line letter by

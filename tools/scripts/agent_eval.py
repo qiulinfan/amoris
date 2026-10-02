@@ -1769,6 +1769,312 @@ def snake_check(env, answer):
     return True, f"starts right, eats and grows to 4, a cell every 0.15 s, no reversing, turns, ends at the top edge"
 
 
+
+PAUSE_TOML = GAME_TOML + 'pause = {{ positive = ["Escape"] }}\n'
+
+PAUSE_TS = """import { Button, Label, events, expose, h, input, mount, onStart, onTick, signal, world } from "pocket";
+type Screen = "title" | "playing" | "paused";
+const screen = signal<Screen>("title");
+let box = 0;
+let time = 0;
+function go(next: Screen, event: string) {
+    screen.set(next);
+    events.emit(event, {});
+}
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 0, z: 10 } }, Camera: { orthographic: true, ortho_size: 6 } } });
+    box = world.spawn("Box", { components: { Transform: { position: { x: 0, y: 0, z: 0 } }, Sprite: { color: { r: 1, g: 0.6, b: 0.2, a: 1 } } } });
+    mount(() => {
+        const s = screen();
+        if (s === "playing") return null;
+        const panel = { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, align: "center", justify: "center", direction: "column", gap: 12, background: "#00000080" };
+        if (s === "title") return h("box", panel, Label({ text: "Box", size: 32 }), Button({ label: "Start", name: "start", onClick: () => go("playing", "game.started") }));
+        return h("box", panel, Label({ text: "Paused", size: 28 }),
+            Button({ label: "Resume", name: "resume", onClick: () => go("playing", "game.resumed") }),
+            Button({ label: "Restart", name: "restart", onClick: () => {
+                world.set(box, "Transform", { position: { x: 0, y: 0, z: 0 } });
+                time = 0;
+                go("playing", "game.restarted");
+            } }));
+    });
+});
+onTick((t) => {
+    if (screen() !== "playing") return;
+    if (input.pressed("pause")) {
+        go("paused", "game.paused");
+        return;
+    }
+    time += t.dt;
+    const p = world.get(box, "Transform")!.position;
+    world.set(box, "Transform", { position: { x: p.x + input.axis("move_x") * 4 * t.dt, y: p.y } });
+});
+expose("screen", () => screen());
+expose("time", () => Number(time.toFixed(3)));
+"""
+
+
+def pause_menu_solve(env, project_dir):
+    write_game(project_dir, "pause_menu", PAUSE_TS)
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(PAUSE_TOML.format(name=os.path.basename(project_dir)))
+    return None
+
+
+def pause_menu_check(env, answer):
+    actions = env.command("input.actions", {})
+    for a in ("move_x", "pause"):
+        if a not in actions:
+            return False, f"no {a} action (actions: {sorted(actions)[:8]})"
+    state = lambda: env.command("state", {})["state"]  # noqa: E731
+    box = lambda: entity_pos(env, "Box")  # noqa: E731
+    p0 = box()
+    if p0 is None or not (near(p0["x"], 0, 0.01) and near(p0["y"], 0, 0.01)):
+        return False, f"no Box at (0, 0) at the start ({p0})"
+    if state().get("screen") != "title":
+        return False, f"the game does not open on the title screen: {state()}"
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    if not near(box()["x"], 0, 0.01):
+        return False, f"the Box moved on the title screen (to {box()})"
+
+    def click(name):
+        try:
+            env.command("ui.click", {"id": name})
+        except Exception as e:   # noqa: BLE001 (the runtime's answer, said in the detail)
+            return f"no button named {name} to click: {e}"
+        env.command("step", {"ticks": 2})
+        return None
+
+    def happened(seq, event):
+        return bool(env.command("events.since", {"seq": seq, "type": event})["events"])
+
+    seq = env.command("events.last_seq", {})["seq"]
+    if (err := click("start")) is not None:
+        return False, err
+    if state().get("screen") != "playing" or not happened(seq, "game.started"):
+        return False, f"clicking start: screen {state().get('screen')}, game.started {happened(seq, 'game.started')}"
+    a = box()
+    t0 = state().get("time", 0)
+    env.command("input.hold", {"action": "move_x", "ticks": 60})
+    env.command("step", {"ticks": 60})
+    b = box()
+    t1 = state().get("time", 0)
+    if not near(b["x"] - a["x"], 4, 0.3):
+        return False, f"holding move_x for a second while playing moved the Box from {a} to {b}, not 4 along x"
+    if not near(t1 - t0, 1, 0.1):
+        return False, f"the time went from {t0} to {t1} in a second of play"
+    seq = env.command("events.last_seq", {})["seq"]
+    env.command("input.press", {"action": "pause"})
+    env.command("step", {"ticks": 2})
+    if state().get("screen") != "paused" or not happened(seq, "game.paused"):
+        return False, f"pressing pause: screen {state().get('screen')}, game.paused {happened(seq, 'game.paused')}"
+    c, tc = box(), state().get("time")
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    if not near(box()["x"], c["x"], 0.01) or state().get("time") != tc:
+        return False, f"while paused the Box went from {c} to {box()} and the time from {tc} to {state().get('time')}"
+    seq = env.command("events.last_seq", {})["seq"]
+    if (err := click("resume")) is not None:
+        return False, err
+    if state().get("screen") != "playing" or not happened(seq, "game.resumed"):
+        return False, f"clicking resume: screen {state().get('screen')}, game.resumed {happened(seq, 'game.resumed')}"
+    d = box()
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    if not near(box()["x"] - d["x"], 2, 0.3):
+        return False, f"after resume, half a second of move_x moved the Box from {d} to {box()}"
+    env.command("input.press", {"action": "pause"})
+    env.command("step", {"ticks": 2})
+    seq = env.command("events.last_seq", {})["seq"]
+    if (err := click("restart")) is not None:
+        return False, err
+    e, st = box(), state()
+    if st.get("screen") != "playing" or not happened(seq, "game.restarted"):
+        return False, f"clicking restart: screen {st.get('screen')}, game.restarted {happened(seq, 'game.restarted')}"
+    if not (near(e["x"], 0, 0.05) and near(e["y"], 0, 0.05)) or st.get("time", 1) > 0.1:
+        return False, f"after restart the Box is at {e} and the time {st.get('time')}"
+    return True, "title, start, a second of play (4 units, 1 s), pause holding the Box and the clock, resume, restart at (0, 0)"
+
+
+BREAKOUT_TS = """import { events, expose, input, onStart, onTick, world } from "pocket";
+const R = 0.15;
+const SPEED = 6;
+let paddle = 0;
+let ball = 0;
+let score = 0;
+let lives = 3;
+let over = false;
+let cleared = false;
+const bricksLeft = () => world.query({ name: "Brick_*" }).length;
+function serve() {
+    const px = world.get(paddle, "Transform")!.position.x;
+    world.set(ball, "Transform", { position: { x: px, y: -5, z: 0 } });
+    world.set(ball, "Velocity", { linear: { x: SPEED * Math.SQRT1_2, y: SPEED * Math.SQRT1_2, z: 0 } });
+}
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 0, z: 10 } }, Camera: { orthographic: true, ortho_size: 8 } } });
+    paddle = world.spawn("Paddle", { components: { Transform: { position: { x: 0, y: -6, z: 0 } }, Sprite: { size: { x: 2, y: 0.3 }, color: { r: 0.8, g: 0.8, b: 0.9, a: 1 } } } });
+    ball = world.spawn("Ball", { components: { Transform: { position: { x: 0, y: -5, z: 0 } }, Velocity: { linear: { x: SPEED * Math.SQRT1_2, y: SPEED * Math.SQRT1_2, z: 0 } }, Sprite: { size: { x: 0.3, y: 0.3 }, color: { r: 1, g: 1, b: 1, a: 1 } } } });
+    for (let row = 0; row < 4; row++)
+        for (let col = 0; col < 8; col++)
+            world.spawn(`Brick_${row * 8 + col}`, { components: { Transform: { position: { x: -7 + col * 2, y: 3 + row, z: 0 } }, Sprite: { size: { x: 1.8, y: 0.6 }, color: { r: 0.9, g: 0.3 + row * 0.15, b: 0.2, a: 1 } } } });
+});
+onTick((t) => {
+    if (over || cleared) {
+        world.set(ball, "Velocity", { linear: { x: 0, y: 0, z: 0 } });
+        return;
+    }
+    const pp = world.get(paddle, "Transform")!.position;
+    world.set(paddle, "Transform", { position: { x: Math.max(-7, Math.min(7, pp.x + input.axis("move_x") * 10 * t.dt)), y: pp.y } });
+    const p = world.get(ball, "Transform")!.position;
+    const v = { ...world.get(ball, "Velocity")!.linear };
+    if ((p.x < -8 + R && v.x < 0) || (p.x > 8 - R && v.x > 0)) v.x = -v.x;
+    if (p.y > 7 - R && v.y > 0) v.y = -v.y;
+    const q = world.get(paddle, "Transform")!.position;
+    if (v.y < 0 && Math.abs(p.x - q.x) < 1 + R && Math.abs(p.y - q.y) < 0.15 + R) v.y = Math.abs(v.y);
+    for (const b of world.query({ name: "Brick_*", with: ["Transform"] })) {
+        const c = b.Transform!.position;
+        const dx = p.x - c.x, dy = p.y - c.y;
+        if (Math.abs(dx) < 0.9 + R && Math.abs(dy) < 0.3 + R) {
+            world.destroy(b.id);
+            score += 10;
+            events.emit("brick.broken", { score });
+            if (0.9 + R - Math.abs(dx) < 0.3 + R - Math.abs(dy)) v.x = Math.sign(dx) * Math.abs(v.x);
+            else v.y = Math.sign(dy) * Math.abs(v.y);
+            break;
+        }
+    }
+    world.set(ball, "Velocity", { linear: v });
+    if (p.y < -8) {
+        lives--;
+        events.emit("life.lost", { lives });
+        if (lives <= 0) {
+            over = true;
+            events.emit("game.over", { score });
+            world.set(ball, "Velocity", { linear: { x: 0, y: 0, z: 0 } });
+        } else serve();
+    }
+    if (bricksLeft() === 0 && !cleared) {
+        cleared = true;
+        events.emit("level.clear", { score });
+        world.set(ball, "Velocity", { linear: { x: 0, y: 0, z: 0 } });
+    }
+});
+expose("score", () => score);
+expose("lives", () => lives);
+expose("bricks", bricksLeft);
+"""
+
+
+def breakout_solve(env, project_dir):
+    write_game(project_dir, "breakout", BREAKOUT_TS)
+    return None
+
+
+def breakout_check(env, answer):
+    if "move_x" not in env.command("input.actions", {}):
+        return False, "no move_x action"
+    state = lambda: env.command("state", {})["state"]  # noqa: E731
+    bricks = lambda: env.command("world.query", {"name": "Brick_*", "with": ["Transform"]})["entities"]  # noqa: E731
+    put = lambda name, pos: env.command("world.set", {"entity": name, "component": "Transform", "value": {"position": {"x": pos[0], "y": pos[1]}}})  # noqa: E731
+    aim = lambda vel: env.command("world.set", {"entity": "Ball", "component": "Velocity", "value": {"linear": {"x": vel[0], "y": vel[1], "z": 0}}})  # noqa: E731
+    vel = lambda: (env.command("world.get", {"entity": "Ball", "component": "Velocity"}) or {}).get("linear")  # noqa: E731
+    if entity_pos(env, "Paddle") is None or entity_pos(env, "Ball") is None:
+        return False, "no Paddle and Ball with Transforms"
+    bs = bricks()
+    st = state()
+    if len(bs) != 32 or st.get("bricks") != 32 or st.get("lives") != 3 or st.get("score") != 0:
+        return False, f"at the start {len(bs)} Brick_ entities and the state {st}, not 32 bricks, 3 lives, score 0"
+    v = vel()
+    if not v or not near((v["x"] ** 2 + v["y"] ** 2) ** 0.5, 6, 0.3):
+        return False, f"the Ball's Velocity is {v}, not 6 units a second"
+    # The paddle: 10 a second, kept within x -7..7.
+    put("Paddle", (0, -6))
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    px = entity_pos(env, "Paddle")["x"]
+    if not near(px, 5, 0.3):
+        return False, f"half a second of move_x moved the Paddle from 0 to {px}, not 5"
+    env.command("input.hold", {"action": "move_x", "ticks": 60})
+    env.command("step", {"ticks": 60})
+    if entity_pos(env, "Paddle")["x"] > 7.01:
+        return False, f"the Paddle went past x 7 (to {entity_pos(env, 'Paddle')['x']})"
+    # A brick from below.
+    target = next((b for b in bs if near(b["Transform"]["position"]["x"], -1, 0.05) and near(b["Transform"]["position"]["y"], 3, 0.05)), None)
+    if target is None:
+        return False, "no brick centered at (-1, 3)"
+    put("Paddle", (-6, -6))
+    put("Ball", (-1, 2))
+    aim((0, 6))
+    seq = env.command("events.last_seq", {})["seq"]
+    r = env.command("step", {"ticks": 30, "until": {"event": "brick.broken"}})
+    if not r["until"]["met"]:
+        return False, f"the Ball sent up into the brick at (-1, 3) broke nothing (it is at {entity_pos(env, 'Ball')})"
+    env.command("step", {"ticks": 2})
+    ev = env.command("events.since", {"seq": seq, "type": "brick.broken"})["events"][0]["data"]
+    st = state()
+    if any(b["id"] == target["id"] for b in bricks()) or st.get("score") != 10 or st.get("bricks") != 31 or ev.get("score") != 10:
+        return False, f"after the hit: brick.broken {ev}, state {st}"
+    if not (vel() or {}).get("y", 0) < 0:
+        return False, f"the Ball did not bounce down off the brick (Velocity {vel()})"
+    # A side wall and the paddle.
+    put("Ball", (7.5, 0))
+    aim((6, 0))
+    env.command("step", {"ticks": 10})
+    if not (vel() or {}).get("x", 0) < 0:
+        return False, f"the Ball did not bounce off the wall at x 8 (Velocity {vel()})"
+    put("Paddle", (0, -6))
+    put("Ball", (0, -5.2))
+    aim((0, -6))
+    env.command("step", {"ticks": 15})
+    if not (vel() or {}).get("y", 0) > 0 or state().get("lives") != 3:
+        return False, f"the Ball dropped on the Paddle did not bounce up (Velocity {vel()}, lives {state().get('lives')})"
+    # A miss.
+    put("Paddle", (-6, -6))
+    put("Ball", (5, -7))
+    aim((0, -6))
+    seq = env.command("events.last_seq", {})["seq"]
+    r = env.command("step", {"ticks": 40, "until": {"event": "life.lost"}})
+    if not r["until"]["met"]:
+        return False, f"the Ball fell past the Paddle and no life.lost (Ball at {entity_pos(env, 'Ball')})"
+    env.command("step", {"ticks": 1})
+    lost = env.command("events.since", {"seq": seq, "type": "life.lost"})["events"][0]["data"]
+    b = entity_pos(env, "Ball")
+    if lost.get("lives") != 2 or state().get("lives") != 2 or b["y"] < -6.5:
+        return False, f"after a miss: life.lost {lost}, lives {state().get('lives')}, the Ball at {b}"
+    # The last brick.
+    rest = bricks()
+    for x in rest[1:]:
+        env.command("world.destroy", {"entity": x["id"]})
+    last = rest[0]["Transform"]["position"]
+    put("Ball", (last["x"], last["y"] - 0.8))
+    aim((0, 6))
+    seq = env.command("events.last_seq", {})["seq"]
+    r = env.command("step", {"ticks": 30, "until": {"event": "level.clear"}})
+    if not r["until"]["met"]:
+        return False, f"breaking the last brick brought no level.clear (state {state()})"
+    if state().get("bricks") != 0:
+        return False, f"with no bricks left the state is {state()}"
+    # Again from the start, three misses.
+    env.command("project.reload", {})
+    env.command("step", {"ticks": 1})
+    seq = env.command("events.last_seq", {})["seq"]
+    for i in range(3):
+        put("Paddle", (-6, -6))
+        put("Ball", (5, -7.5))
+        aim((0, -6))
+        env.command("step", {"ticks": 20})
+    over = env.command("events.since", {"seq": seq, "type": "game.over"})["events"]
+    if not over or state().get("lives") != 0:
+        return False, f"three misses: game.over {over}, lives {state().get('lives')}"
+    a, pa = entity_pos(env, "Ball"), entity_pos(env, "Paddle")
+    env.command("input.hold", {"action": "move_x", "ticks": 30})
+    env.command("step", {"ticks": 30})
+    if entity_pos(env, "Ball") != a or entity_pos(env, "Paddle") != pa:
+        return False, "the Ball or the Paddle still moves after the game is over"
+    return True, "32 bricks, a paddle at 10 a second held in, a brick broken from below (score 10), walls and the paddle bounce, a miss costs a life, the last brick clears the level, three misses end it"
+
+
 def grey_flashback_solve(env):
     code = "fn effect(uv: vec2f) -> vec4f { let c = sample_frame(uv); let g = dot(c.rgb, vec3f(0.299, 0.587, 0.114)); return vec4f(g, g, g, c.a); }"
     env.command("render.post", {"effects": [{"code": code, "name": "grey"}]})
@@ -2605,6 +2911,10 @@ TASKS = [
      "task": "Make a small game in this blank project, replacing its example. A dodge game in the XY plane (x across, y up), seen from the front: the player is an entity named Player that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 6 units a second. Every second a rock appears: an entity named Rock_1, Rock_2, ... at a random x between -8 and 8 and y = 6, falling at 4 units a second; rocks below y = -7 are removed. A rock within 0.6 units of the player ends the game: emit an event game.over with {time}, after which nothing moves the player and the clock stops. Expose alive (true until the game is over) and time_alive (seconds alive). The game must read where the player and the rocks are from their Transforms every tick, so that moving one with world.set moves it in the game. Answer null."},
     {"name": "snake", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": snake_solve, "check": snake_check,
      "task": "Make a snake game in this blank project, replacing its example. In the XY plane (x across, y up), on a grid of cells one unit wide, x from 0 to 19 and y from 0 to 14: the snake is a row of entities named Segment_0 (the head), Segment_1, and so on, starting as three at (5, 7), (4, 7) and (3, 7), heading +x, moving one cell every 0.15 seconds. The actions move_x and move_y (A/D, S/W and the arrow keys) turn it, never straight back. An entity named Food sits on a cell: when the head moves onto it the snake grows by one segment, the game emits food.eaten with {length}, and the Food moves to a random free cell. Leaving the grid or running into itself ends the game: emit game.over with {length}, after which nothing moves. Expose length and alive. The game must read where the Food is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
+    {"name": "pause_menu", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": pause_menu_solve, "check": pause_menu_check,
+     "task": "Make a small game in this blank project with a title screen and a pause menu, replacing its example. In the XY plane: an entity named Box at (0, 0) that move_x (A/D and the arrow keys) moves along x at 4 units a second, only while playing. The game opens on a title screen with a Pocket UI button named start; clicking it starts play (emit game.started). The action pause (Escape) while playing pauses: the Box and the clock stop and a menu shows buttons named resume and restart (emit game.paused). resume plays on (game.resumed); restart puts the Box back at (0, 0) and the clock at 0 and plays again (game.restarted). Expose screen (\"title\", \"playing\" or \"paused\") and time, the seconds played. The game must read the Box's position from its Transform every tick. Answer null."},
+    {"name": "breakout", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": breakout_solve, "check": breakout_check,
+     "task": "Make a breakout game in this blank project, replacing its example. In the XY plane (x across, y up): a Paddle 2 wide at (0, -6) that move_x (A/D and the arrow keys) moves at 10 units a second, kept between x -7 and 7; a Ball 0.3 across starting at (0, -5), moving up and right at 6 units a second, its motion its Velocity component; walls at x -8 and 8 and a ceiling at y 7 it bounces off; it bounces up off the paddle. Bricks 1.8 by 0.6 named Brick_0 to Brick_31, in 4 rows of 8, centers at x -7, -5, ..., 7 and y 3, 4, 5, 6: a hit removes the brick, bounces the ball, adds 10 to the score and emits brick.broken with {score}. Below y -8 the ball costs a life (3 at the start; emit life.lost with {lives}) and starts again above the paddle; at none, emit game.over and nothing moves after. With no bricks left emit level.clear and stop the ball. Expose score, lives and bricks (how many Brick_ entities the world still has). The game must read the Ball's and the Paddle's Transforms and the Ball's Velocity every tick. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
      "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "grey_flashback", "project": "crates", "ticks": 30, "solve": grey_flashback_solve, "check": grey_flashback_check,

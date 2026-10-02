@@ -962,6 +962,7 @@ void to_json(Json& j, const IrradianceVolume& v) {
     vec_to_json(j["size"], v.size);
     vec_to_json(j["probes"], v.probes);
     j["intensity"] = v.intensity;
+    j["visibility"] = v.visibility;
     j["enabled"] = v.enabled;
 }
 
@@ -969,6 +970,7 @@ void from_json(const Json& j, IrradianceVolume& v) {
     if (j.is_object() && j.contains("size")) vec_from_json(j["size"], v.size);
     if (j.is_object() && j.contains("probes")) vec_from_json(j["probes"], v.probes);
     scalar_from_json(j, "intensity", v.intensity);
+    scalar_from_json(j, "visibility", v.visibility);
     scalar_from_json(j, "enabled", v.enabled);
 }
 
@@ -980,6 +982,7 @@ void hash_component(StateHasherRef& h, const IrradianceVolume& v) {
     h.f32(v.probes.y);
     h.f32(v.probes.z);
     h.f32(v.intensity);
+    h.u8(v.visibility ? 1 : 0);
     h.u8(v.enabled ? 1 : 0);
 }
 
@@ -3855,11 +3858,12 @@ std::size_t read_numbers(const IrradianceVolume& v, double* out) {
     out[4] = static_cast<double>(v.probes.y);
     out[5] = static_cast<double>(v.probes.z);
     out[6] = static_cast<double>(v.intensity);
-    out[7] = static_cast<double>(v.enabled);
-    return 8;
+    out[7] = static_cast<double>(v.visibility);
+    out[8] = static_cast<double>(v.enabled);
+    return 9;
 }
 bool write_numbers(IrradianceVolume& v, const double* in, std::size_t n) {
-    if (n != 8) return false;
+    if (n != 9) return false;
     v.size.x = static_cast<float>(in[0]);
     v.size.y = static_cast<float>(in[1]);
     v.size.z = static_cast<float>(in[2]);
@@ -3867,7 +3871,8 @@ bool write_numbers(IrradianceVolume& v, const double* in, std::size_t n) {
     v.probes.y = static_cast<float>(in[4]);
     v.probes.z = static_cast<float>(in[5]);
     v.intensity = static_cast<float>(in[6]);
-    v.enabled = in[7] != 0;
+    v.visibility = in[7] != 0;
+    v.enabled = in[8] != 0;
     return true;
 }
 
@@ -4341,10 +4346,11 @@ constexpr std::array<FieldInfo, 5> kReflectionProbeFields = {{
     FieldInfo{"realtime", "bool", "Capture again every frame (six views of the scene each time, each lit by the one before); otherwise three times in a row when it appears, moves or changes size, or on render.probes {refresh: true}.", {}},
     FieldInfo{"enabled", "bool", "false stops it being used, without removing it.", {}},
 }};
-constexpr std::array<FieldInfo, 4> kIrradianceVolumeFields = {{
+constexpr std::array<FieldInfo, 5> kIrradianceVolumeFields = {{
     FieldInfo{"size", "vec3", "The box it covers, centred on the entity, in world units (not turned with it).", {}},
     FieldInfo{"probes", "vec3", "Probes along x, y and z (each rounded and held to 2..16), spread evenly from one wall of the box to the other; at most 1024 across all volumes, later volumes by id left out past that.", {}},
     FieldInfo{"intensity", "f32", "Multiplies the light it gives.", {}},
+    FieldInfo{"visibility", "bool", "Whether a probe that saw a surface between itself and a point counts less there, so light does not come through walls the box crosses (each probe keeps how far it saw in every direction). false weighs the probes by nearness and facing alone.", {}},
     FieldInfo{"enabled", "bool", "false stops it being used, without removing it.", {}},
 }};
 constexpr std::array<FieldInfo, 10> kDecalFields = {{

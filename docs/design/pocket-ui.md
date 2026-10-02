@@ -39,7 +39,7 @@ Everything is a command, so scripts, the HTTP server, `pocket mcp` and tests sha
 | `ui.focus {id}`, `ui.stats` | Focus management; node/paint counters. |
 | `render.viewport {x, y, w, h}` | Confine the scene to a rectangle in points (the editor's scene pane); `{reset: true}` restores the full frame. |
 
-Elements carry an optional `name` that appears in snapshots and queries, so a script can say `<Button name="play" .../>` and an agent can `ui.query {name: "play"}` then `ui.click {id}`.
+Elements carry an optional `name` that appears in snapshots and queries, so a script can say `<Button name="play" .../>` and an agent can `ui.click {id: "play"}`: wherever a command takes an element's `id` (`ui.click`, `ui.drag`, `ui.wheel`, `ui.focus`, `ui.describe`, and `root` in `ui.snapshot`), a name stands for the first element made with it, and a name no element has is an error that says so (a string was once read as no element at all).
 
 ## TypeScript
 

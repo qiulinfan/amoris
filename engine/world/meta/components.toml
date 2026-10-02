@@ -144,6 +144,7 @@ fields = [
     { name = "size", type = "vec3", default = [10.0, 4.0, 10.0], doc = "The box it covers, centred on the entity, in world units (not turned with it)." },
     { name = "probes", type = "vec3", default = [4.0, 2.0, 4.0], doc = "Probes along x, y and z (each rounded and held to 2..16), spread evenly from one wall of the box to the other; at most 1024 across all volumes, later volumes by id left out past that." },
     { name = "intensity", type = "f32", default = 1.0, doc = "Multiplies the light it gives." },
+    { name = "visibility", type = "bool", default = true, doc = "Whether a probe that saw a surface between itself and a point counts less there, so light does not come through walls the box crosses (each probe keeps how far it saw in every direction). false weighs the probes by nearness and facing alone." },
     { name = "enabled", type = "bool", default = true, doc = "false stops it being used, without removing it." },
 ]
 

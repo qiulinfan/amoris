@@ -378,6 +378,7 @@ struct IrradianceVolume {
     Vec3 size{10.0f, 4.0f, 10.0f};
     Vec3 probes{4.0f, 2.0f, 4.0f};
     float intensity = 1.0f;
+    bool visibility = true;
     bool enabled = true;
     constexpr bool operator==(const IrradianceVolume&) const = default;
 };
